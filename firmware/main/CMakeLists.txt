@@ -11,6 +11,9 @@ idf_component_register(
         "record_sink_uart.c"
         "record_sink_file.c"
         "record_sink_ble.c"
+        "display.c"
+        "imu_task.c"
+        "pfd.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp32-rtl-sdr            # our patched RTL-SDR driver component
@@ -20,4 +23,10 @@ idf_component_register(
         joltwallet__littlefs     # on-board ts-format dump partition
         bt                       # NimBLE host (controller proxied via hosted)
         espressif__esp_hosted    # P4 ↔ C6 hosted transport (BT/Wi-Fi remote)
+        esp_lcd                  # ST7789 panel via esp_lcd_panel_st7789
+        esp_driver_spi           # SPI bus for the LCD
+        esp_driver_ledc          # PWM backlight
+        esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
+        esp_driver_gpio          # BNO085 RST pin
+        esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
 )

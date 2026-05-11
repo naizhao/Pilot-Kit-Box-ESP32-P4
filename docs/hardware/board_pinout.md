@@ -144,24 +144,71 @@ within 32 MB.
 - **MIPI-CSI camera connector J1** (22-pin): for OV5647 etc.
 - **2×20 pin headers (J1/J2 backside)**: Raspberry Pi Pico-compatible 40-pin footprint
 
+## Phase 4 add-on peripherals
+
+Pins below are assigned by the firmware (not wired on-board); user
+adds them via the 2x20 GPIO header.
+
+### ST7789 LCD via SPI2 (TK024F3036 240×320 module, 4-wire SPI)
+
+The TK024F3036 module is parallel-default; the user's driver-board
+adapter pre-straps it to 4-wire SPI mode (IM1-2=1, IM0=0) and exposes
+{CS, RST, DC, SCK, MOSI, BL} on a simple header. Voltage is 2.8 V on
+both VCI and IOVCC; the driver board contains the LDO and (if needed)
+a level shifter to interface with the P4's 3.3 V GPIOs.
+
+| Signal | ESP32-P4 GPIO | IO_MUX direct? | Notes |
+|---|---|---|---|
+| SCLK | **GPIO47** | ✅ FSPICLK | Allows full-speed (≤80 MHz) SPI |
+| MOSI | **GPIO45** | ✅ FSPID | Single-line write only (no MISO) |
+| CS   | **GPIO46** | (software) | esp_lcd toggles it per transaction |
+| DC   | **GPIO48** | — | Data/Command select (a.k.a. RS) |
+| RST  | **GPIO49** | — | Hard reset, driven by panel driver |
+| BL   | **GPIO50** | LEDC PWM | 20 kHz, 8-bit duty, brightness control |
+
+Bus configured at 40 MHz in Phase 4a; can be pushed to 80 MHz if the
+driver board / FPC layout proves clean enough.
+
+### BNO085 IMU via I²C0 (SparkFun / Adafruit module, 9-axis sensor fusion)
+
+Shares the existing I²C0 bus with the on-board ES8311 codec (different
+addresses; no conflict). Phase 4b talks SH-2 / SHTP to the sensor and
+enables the Rotation Vector report at 100 Hz.
+
+| Signal | ESP32-P4 GPIO | Notes |
+|---|---|---|
+| SDA  | GPIO7 | (already on-board) |
+| SCL  | GPIO8 | (already on-board) |
+| HOST_INT | **GPIO20** | Active-low; goes low when data ready |
+| RST  | **GPIO21** | Active-low hard reset |
+
+I²C 7-bit address: `0x4A` (default) or `0x4B` (if SA0 pulled high).
+
+### Reserved for Phase 5 (config UI tact buttons)
+
+| Signal | ESP32-P4 GPIO | Notes |
+|---|---|---|
+| BTN1 | GPIO26 | Reserved, not yet driven by firmware |
+| BTN2 | GPIO27 | Reserved |
+
 ## Programmable GPIOs available to the application
 
-After accounting for everything above, the following P4 GPIOs are
-free for firmware-defined use (e.g. Phase 4 GC9A01 SPI display, BNO085
-extras, micro-buttons):
+After accounting for everything above, the following P4 GPIOs remain
+free for future expansion (e.g. additional sensors, GPS NMEA UART,
+status LEDs):
 
 ```
 GPIO0  GPIO1  GPIO2  GPIO3  GPIO4  GPIO5  GPIO6
-GPIO20 GPIO21 GPIO22 GPIO23
-GPIO26 GPIO27 GPIO28 GPIO29 GPIO30 GPIO31 GPIO32 GPIO33
-GPIO36 GPIO45 GPIO46 GPIO47 GPIO48 GPIO49 GPIO50 GPIO51 GPIO52
+GPIO22 GPIO23
+GPIO28 GPIO29 GPIO30 GPIO31 GPIO32 GPIO33
+GPIO36 GPIO51 GPIO52
 ```
 
-(GPIO6 / GPIO0 are technically strapping pins — use with care.)
+(GPIO0 / GPIO6 are strapping pins — use with care.)
 
-That's 28 freely-assignable GPIOs, more than enough for the planned
-1.28" GC9A01 SPI display (5 pins: SCLK, MOSI, CS, DC, RST) plus the
-two micro-tact buttons.
+That's ~16 freely-assignable GPIOs after Phase 4, suitable for a
+NEO-M9N GPS UART, an external SPI flash, status LEDs, or whatever
+Phase 5+ wants to add.
 
 ## Pin-assignment policy
 

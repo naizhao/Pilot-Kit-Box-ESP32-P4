@@ -23,6 +23,9 @@
 #include "pilot_kit.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
+#include "display.h"
+#include "imu_task.h"
+#include "pfd.h"
 #include "record_sink.h"
 
 static const char *TAG = "pilot_kit";
@@ -112,4 +115,35 @@ void app_main(void)
 
     ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
     assert(ok == pdTRUE);
+
+    /* Phase 4a: bring the LCD up and paint a test pattern so we know the
+     * SPI / panel / backlight chain is healthy before the PFD lands. */
+    esp_err_t lcd_err = pk_display_init();
+    if (lcd_err != ESP_OK) {
+        ESP_LOGW(TAG, "display init failed (%s) — running headless",
+                 esp_err_to_name(lcd_err));
+    } else {
+        pk_display_test_pattern();
+    }
+
+    /* Phase 4b: BNO085 IMU. Failure is non-fatal — the rest of the
+     * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
+    esp_err_t imu_err = pk_imu_init();
+    if (imu_err != ESP_OK) {
+        ESP_LOGW(TAG, "IMU init failed (%s) — PFD will run without attitude",
+                 esp_err_to_name(imu_err));
+    } else {
+        ESP_LOGI(TAG, "BNO085 IMU online");
+    }
+
+    /* Phase 4c: PFD render task. Starts after the display + IMU init
+     * so it can read both straight away. Survives either failing. */
+    if (lcd_err == ESP_OK) {
+        esp_err_t pfd_err = pk_pfd_start();
+        if (pfd_err != ESP_OK) {
+            ESP_LOGW(TAG, "PFD start failed (%s)", esp_err_to_name(pfd_err));
+        } else {
+            ESP_LOGI(TAG, "PFD render task running");
+        }
+    }
 }
