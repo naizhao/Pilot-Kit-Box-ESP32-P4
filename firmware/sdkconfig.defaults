@@ -1,0 +1,31 @@
+# Pilot Kit Box (ESP32-P4) default sdkconfig.
+# Generated to capture only the non-default settings the project requires.
+# Run `idf.py menuconfig` to override; this file seeds a fresh sdkconfig.
+
+# --- Target -----------------------------------------------------------------
+CONFIG_IDF_TARGET="esp32p4"
+
+# --- USB Host stack ---------------------------------------------------------
+# RTL-SDR dongles enumerate a single device but some ship via a hub bridge.
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+# Increase the control-transfer descriptor cap so we can read RTL2832U's
+# config/string descriptors without short reads.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
+
+# --- FreeRTOS ---------------------------------------------------------------
+# 2 MSPS bursts need responsive ISR/event handling.
+CONFIG_FREERTOS_HZ=1000
+
+# --- Logging ----------------------------------------------------------------
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# --- Memory -----------------------------------------------------------------
+# RTL-SDR async pipeline holds 15 x 6.4 KiB = ~96 KiB of in-flight URBs in
+# DMA-capable internal RAM. Keep the main task stack modest, give the
+# heap room to breathe.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# --- Compiler ---------------------------------------------------------------
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_COMPILER_WARN_WRITE_STRINGS=y

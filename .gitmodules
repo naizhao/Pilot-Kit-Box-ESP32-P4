@@ -1,0 +1,4 @@
+[submodule "firmware/components/esp32-rtl-sdr"]
+	path = firmware/components/esp32-rtl-sdr
+	url = git@github.com:naizhao/esp32-rtl-sdr.git
+	branch = feat/p4-async-iq-stream

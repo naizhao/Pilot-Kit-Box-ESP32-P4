@@ -1,1 +1,19 @@
 docs/internal/*
+
+# Per-machine ESP-IDF Manager (eim) install path; each developer's tree
+# differs and bringing this into git churns on every machine switch.
+eim_config.toml
+
+# Reference-only library: xtrsdr is consulted for URB tuning patterns,
+# never built into our firmware. Keep it out of version control.
+firmware/components/xtrsdr/
+
+# ESP-IDF build artifacts
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+**/.cache/
+.DS_Store
+
