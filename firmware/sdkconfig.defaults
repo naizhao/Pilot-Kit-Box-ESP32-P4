@@ -29,3 +29,53 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 # --- Compiler ---------------------------------------------------------------
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_COMPILER_WARN_WRITE_STRINGS=y
+
+# --- Bluetooth (NimBLE host over ESP-Hosted VHCI) ---------------------------
+# ESP32-P4 has no native BT controller; the controller lives on the on-board
+# ESP32-C6 and is exposed to the P4 over SDIO via ESP-Hosted. From NimBLE's
+# point of view this is a VHCI controller with no UART or SPI knobs to set.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+# We act as GATT *server* for our app-facing characteristics, but also as
+# GATT *client* toward iOS's Current Time Service after each connect.
+# NimBLE compiles in ble_gattc_* only when ROLE_CENTRAL is enabled; the
+# role flag is just a code-gate, we never actively scan or initiate
+# connections.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+# Bump MTU so a single GDL90 Traffic Report (≤62 B) fits in one ATT PDU.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+
+# --- ESP-Hosted (P4 ↔ C6 transport for BT/Wi-Fi remote) ---------------------
+# Waveshare ESP32-P4-WIFI6 wires C6 via SDIO slot 1 on these GPIOs:
+#   CLK=18 CMD=19 D0=14 D1=15 D2=16 D3=17 RESET=54
+# None of the upstream P4 dev-board presets match, so we run with NONE and
+# set the pins explicitly. Wi-Fi remote stays off — Phase 3b is BLE only.
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_NONE=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
+CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
+CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
+CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
+CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
+CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=y
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+
+# --- Flash & Partitions -----------------------------------------------------
+# Waveshare ESP32-P4-WIFI6 ships 32 MB on-board Nor flash. Use the full chip
+# size and our custom partition table that reserves a 16 MiB LittleFS volume
+# for ADS-B ts-format dump files.
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"

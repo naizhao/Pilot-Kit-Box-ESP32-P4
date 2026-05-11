@@ -28,7 +28,9 @@
  */
 
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,6 +41,8 @@
 #include "mode-s.h"
 #include "pilot_kit.h"
 #include "cpr_decode.h"
+#include "aircraft_state.h"
+#include "record_sink.h"
 
 static const char *TAG      = "dsp";
 static const char *TAG_ADSB = "adsb";
@@ -119,6 +123,33 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
     s_msgs_total++;
     icao_seen_insert(icao24);
 
+    /* Update the per-aircraft fusion table (callsign / altitude /
+     * velocity). The CPR position is fed in separately further down,
+     * once the global decoder has both even+odd frames. */
+    const int64_t now_us = esp_timer_get_time();
+    aircraft_state_ingest(mm, now_us);
+
+    /* Fan-out to record sinks (UART debug + file storage + BLE raw).
+     * The hex payload feeds Pilot-Kit/scripts/adsb_to_track.py verbatim. */
+    {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        record_t rec = {
+            .ts_ms   = (int64_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000LL,
+            .icao24  = icao24,
+            .df      = (uint8_t)mm->msgtype,
+            .hex_len = (uint8_t)(mm->msgbits / 8 * 2),
+        };
+        const int msg_bytes = mm->msgbits / 8;
+        for (int i = 0; i < msg_bytes; ++i) {
+            static const char hex_chars[] = "0123456789ABCDEF";
+            rec.hex[i * 2]     = hex_chars[(mm->msg[i] >> 4) & 0xF];
+            rec.hex[i * 2 + 1] = hex_chars[mm->msg[i]        & 0xF];
+        }
+        rec.hex[msg_bytes * 2] = '\0';
+        record_dispatch(&rec);
+    }
+
     const char *unit_str = (mm->unit == MODE_S_UNIT_METERS) ? "m" : "ft";
 
     switch (mm->msgtype) {
@@ -138,9 +169,12 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
             bool fresh = cpr_decode_position(icao24, mm->fflag,
                                              mm->raw_latitude,
                                              mm->raw_longitude,
-                                             esp_timer_get_time(), &pos);
+                                             now_us, &pos);
             if (pos.valid) {
                 if (fresh) s_pos_decoded++;
+                /* Mirror the freshly decoded position into aircraft_state
+                 * so the GDL90 Traffic Report can carry real lat/lon. */
+                aircraft_state_update_position(icao24, pos.lat, pos.lon, now_us);
                 ESP_LOGI(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 air-pos alt=%d%s  pos=%.5f,%.5f%s",
                          icao24, mm->altitude, unit_str, pos.lat, pos.lon,

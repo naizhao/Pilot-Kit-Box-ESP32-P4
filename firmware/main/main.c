@@ -21,6 +21,9 @@
 #include "usb/usb_host.h"
 
 #include "pilot_kit.h"
+#include "aircraft_state.h"
+#include "ble_gatt.h"
+#include "record_sink.h"
 
 static const char *TAG = "pilot_kit";
 
@@ -77,6 +80,32 @@ void app_main(void)
     /* Block until USB host stack is installed (usb_host_lib_task notifies). */
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     ESP_LOGI(TAG, "USB host stack online — spawning SDR + DSP tasks");
+
+    /* Initialise the per-aircraft fusion table before any sink can write
+     * into it. */
+    aircraft_state_init();
+
+    /* Bring up BLE (NimBLE on top of ESP-Hosted/C6). On boards where the
+     * C6 has no hosted-slave firmware this fails gracefully — sinks stay
+     * configured, BLE notifies just become no-ops. */
+    esp_err_t ble_err = ble_gatt_init();
+    if (ble_err != ESP_OK) {
+        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
+                 esp_err_to_name(ble_err));
+    } else {
+        ESP_LOGI(TAG, "BLE GATT service \"PilotKitBox\" advertising");
+    }
+
+    /* Bring the ADS-B record sinks up before the producer starts. The file
+     * sink mounts LittleFS and may take ~50 ms on first boot (it formats
+     * the partition automatically). The UART sink is always available;
+     * the BLE sink piggybacks on ble_gatt_init's lifecycle. */
+    const char *file_mount = record_sinks_install_defaults();
+    if (file_mount != NULL) {
+        ESP_LOGI(TAG, "ADS-B sinks ready (UART + BLE + file at %s)", file_mount);
+    } else {
+        ESP_LOGW(TAG, "ADS-B file sink unavailable — UART + BLE sinks only");
+    }
 
     ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
     assert(ok == pdTRUE);

@@ -1,0 +1,14 @@
+# Pilot Kit Box (ESP32-P4-WIFI6, 32 MB Nor Flash) partition layout.
+#
+#   nvs        24 KiB   Wi-Fi/BLE provisioning + app config (Phase 3 onward)
+#   phy_init    4 KiB   RF calibration (kept for ESP-Hosted slave on C6)
+#   factory     4 MiB   main firmware (currently ~300 KiB, leaves Phase 3+4 room)
+#   storage    16 MiB   LittleFS for on-board ADS-B ts-format dumps
+#
+# Total used: ~20 MiB of 32 MiB; remaining 12 MiB reserved for future OTA pair.
+#
+# Name,     Type, SubType,  Offset,    Size,    Flags
+nvs,        data, nvs,      0x9000,    0x6000,
+phy_init,   data, phy,      0xf000,    0x1000,
+factory,    app,  factory,  0x10000,   0x400000,
+storage,    data, spiffs,   ,          0x1000000,
