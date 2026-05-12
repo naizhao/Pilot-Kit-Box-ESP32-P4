@@ -5,6 +5,16 @@
 # --- Target -----------------------------------------------------------------
 CONFIG_IDF_TARGET="esp32p4"
 
+# --- ESP32-P4 silicon revision ---------------------------------------------
+# IDF v6.0 defaults to P4 ECO5 (v3.1+). The Waveshare ESP32-P4-WIFI6 boards
+# in our supply chain still ship with the original v1.x silicon (one of
+# our test boards reports v1.3), so the bootloader refuses to start until
+# we opt into the v0.x/v1.x family. Hardware revisions ≥ 3.0 are NOT
+# binary-compatible with this build — if a v3.x P4 ever shows up we'll
+# have to ship a second sdkconfig variant.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
 # --- USB Host stack ---------------------------------------------------------
 # RTL-SDR dongles enumerate a single device but some ship via a hub bridge.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y

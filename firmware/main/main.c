@@ -88,26 +88,17 @@ void app_main(void)
      * into it. */
     aircraft_state_init();
 
-    /* Bring up BLE (NimBLE on top of ESP-Hosted/C6). On boards where the
-     * C6 has no hosted-slave firmware this fails gracefully — sinks stay
-     * configured, BLE notifies just become no-ops. */
-    esp_err_t ble_err = ble_gatt_init();
-    if (ble_err != ESP_OK) {
-        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
-                 esp_err_to_name(ble_err));
-    } else {
-        ESP_LOGI(TAG, "BLE GATT service \"PilotKitBox\" advertising");
-    }
-
-    /* Bring the ADS-B record sinks up before the producer starts. The file
-     * sink mounts LittleFS and may take ~50 ms on first boot (it formats
-     * the partition automatically). The UART sink is always available;
-     * the BLE sink piggybacks on ble_gatt_init's lifecycle. */
+    /* Bring the ADS-B record sinks up before the producer starts. The
+     * file sink mounts LittleFS and may take ~50 ms on first boot (it
+     * formats the partition automatically). The UART sink is always
+     * available; the BLE sink is a thin wrapper that null-guards
+     * everything until ble_gatt_init() succeeds later — safe to
+     * register even if BLE never comes up. */
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {
-        ESP_LOGI(TAG, "ADS-B sinks ready (UART + BLE + file at %s)", file_mount);
+        ESP_LOGI(TAG, "ADS-B sinks ready (UART + file at %s)", file_mount);
     } else {
-        ESP_LOGW(TAG, "ADS-B file sink unavailable — UART + BLE sinks only");
+        ESP_LOGW(TAG, "ADS-B file sink unavailable — UART sink only");
     }
 
     ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
@@ -145,5 +136,22 @@ void app_main(void)
         } else {
             ESP_LOGI(TAG, "PFD render task running");
         }
+    }
+
+    /* Phase 3b: BLE last. nimble_port_init() over ESP-Hosted waits for
+     * the C6 controller to acknowledge HCI commands; on a board whose
+     * C6 has not yet been flashed with esp_hosted slave firmware, this
+     * call can hang. Running it after the display + PFD ensures the
+     * operator at least sees the screen come up before debugging BLE.
+     * The graceful fallback path (file/uart sinks keep streaming) is
+     * already in place. */
+    esp_err_t ble_err = ble_gatt_init();
+    if (ble_err != ESP_OK) {
+        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only "
+                      "(flash C6 esp_hosted slave first, see "
+                      "docs/hardware/c6_slave_firmware.md)",
+                 esp_err_to_name(ble_err));
+    } else {
+        ESP_LOGI(TAG, "BLE GATT service \"PilotKitBox\" advertising");
     }
 }

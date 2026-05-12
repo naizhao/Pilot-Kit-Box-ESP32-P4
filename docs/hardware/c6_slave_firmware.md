@@ -1,10 +1,27 @@
 # Flashing the ESP-Hosted slave firmware onto the C6 module
 
-The Pilot Kit Box firmware delegates **all** Bluetooth + Wi-Fi work to
-the ESP32-C6-MINI-1 daughter-chip. That C6 needs its own firmware —
-specifically, the **ESP-Hosted slave** image — before the P4-side
-NimBLE host can do anything. This document is the one-time bring-up
-guide.
+> 📌 **What this is for**: Pilot Kit Box's main firmware (running on
+> the ESP32-P4) needs to talk to the on-board ESP32-C6 over SDIO to get
+> Bluetooth (and, in a future phase, Wi-Fi). The C6 ships from
+> Waveshare with **factory AT-command firmware** that doesn't speak
+> the protocol our P4 firmware expects, so the C6 needs to be
+> reflashed **once** with Espressif's "ESP-Hosted slave" image. After
+> that the P4 side can flash + run independently like any other ESP-IDF
+> project. Read the parent guide first: [`docs/BUILD.md`](../BUILD.md).
+>
+> ⏱️ **Time required**: ~30 minutes (clone + build + wire + flash).
+>
+> 🛠️ **Skip this entirely?** Yes — the P4 firmware is designed to
+> gracefully degrade. Without the C6 slave firmware:
+> - ✅ RTL-SDR ADS-B reception works
+> - ✅ LittleFS recording (`/storage/pilot_kit_ts_*.txt`) works
+> - ✅ UART console output works
+> - ✅ LCD + PFD rendering works (when the screen is attached)
+> - ✅ BNO085 IMU works (when attached)
+> - ❌ Bluetooth (advertising as `PilotKitBox`) — won't come up
+> - ❌ Wi-Fi (not implemented yet, but planned)
+>
+> If you don't need BLE right now, skip this whole document.
 
 ## 1. What you need
 

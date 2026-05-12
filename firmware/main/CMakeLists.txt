@@ -14,6 +14,7 @@ idf_component_register(
         "display.c"
         "imu_task.c"
         "pfd.c"
+        "pfd_font.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp32-rtl-sdr            # our patched RTL-SDR driver component

@@ -19,9 +19,39 @@
 
 ## 🏗️ 目录结构 (Repository Structure)
 本项目采用软硬件一体 (Monorepo) 管理机制，为创客与飞行员提供完整的解决方案：
-- `/firmware` : 基于 ESP-IDF v5.2+ 的纯 RTOS 固件源码 (C 语言)。
+- `/firmware` : 基于 ESP-IDF v6.0 的纯 RTOS 固件源码 (C 语言)。
 - `/hardware` : 硬件扩展底板图纸 (PCB) 与 3D 打印外壳模型 (STL)。
 - `/docs` : 开发者文档、API 说明与组装指南。
+
+## 🚀 快速开始 (Quick Start)
+
+| 我想… | 看这份文档 |
+|------|----------|
+| **从零开始把固件跑起来**（clone、装环境、编译、烧录） | 📖 [`docs/BUILD.md`](docs/BUILD.md) |
+| 看系统跑起来后的任务 / 数据流架构 | 🏗️ [`docs/architecture.md`](docs/architecture.md) |
+| 调整 sdkconfig（开关 BLE、改频率、改分区等） | ⚙️ [`docs/configuration.md`](docs/configuration.md) |
+| 给 Pilot Kit 移动 App 做 BLE 集成 | 📱 [`docs/ble_protocol.md`](docs/ble_protocol.md) |
+| 改硬件接线 / 看 GPIO 分配 | 🔌 [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) |
+| 启用蓝牙（烧 C6 协处理器固件） | 🔵 [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) |
+
+最短上手路径 — macOS / Linux：
+
+```bash
+# 1. 装 ESP-IDF v6.0.1（一次性）
+curl -L https://dl.espressif.com/dl/eim/eim-installer.sh | bash
+# 选 v6.0.1 + target=all，等约 5-10 分钟
+
+# 2. 拉代码（含 submodule）
+git clone --recursive https://github.com/airclub/Pilot-Kit-Box-ESP32-P4.git
+cd Pilot-Kit-Box-ESP32-P4/firmware
+
+# 3. 编译 + 烧录 + 监视（约 10 分钟首次构建）
+source ~/.espressif/tools/activate_idf_v6.0.1.sh
+idf.py set-target esp32p4
+idf.py -p /dev/cu.usbmodem* flash monitor
+```
+
+遇到问题查 [`docs/BUILD.md` 第 9 节常见问题](docs/BUILD.md#9-常见问题--troubleshooting)。
 
 ## ⚙️ 硬件选型参考 (Hardware Setup)
 - **核心算力主板：** 微雪 (Waveshare) ESP32-P4C6 (P4负责高速USB与DSP，C6负责无线射频)。
