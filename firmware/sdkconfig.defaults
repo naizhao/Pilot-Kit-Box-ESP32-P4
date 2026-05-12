@@ -15,6 +15,34 @@ CONFIG_IDF_TARGET="esp32p4"
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_100=y
 
+# --- External PSRAM (32 MB stacked HEX, on-die with ESP32-P4NRW32) ----------
+# The ESP32-P4NRW32 chip on the Waveshare board ships with 32 MiB of
+# in-package HEX (16-line) PSRAM. ESP-IDF defaults to PSRAM disabled, so
+# without these knobs the firmware only has ~455 KiB of internal SRAM —
+# not enough to bring up ESP-Hosted's SDIO mempool, NimBLE, the IQ ring
+# buffer and the LCD framebuffer at the same time.
+#
+# We:
+#   - turn on PSRAM in HEX mode at 200 MHz (v1.x silicon doesn't allow
+#     250 MHz; the option is hidden by ESP32P4_SELECTS_REV_LESS_V3),
+#   - route plain malloc() into PSRAM for any allocation > 16 KiB so
+#     small DMA-sensitive buffers stay in internal RAM, and
+#   - reserve 64 KiB of internal RAM for the things that absolutely
+#     need it (USB/SDIO DMA descriptors, BLE controller scratch).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Allow EXT_RAM_BSS_ATTR-tagged statics (PFD/BLE scratch tables) to land
+# in PSRAM. Without this, those ~10 KiB of large static arrays sit in
+# internal RAM .bss and starve ESP-Hosted's early-boot mempools + the
+# FreeRTOS timer task stack alloc.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+
 # --- USB Host stack ---------------------------------------------------------
 # RTL-SDR dongles enumerate a single device but some ship via a hub bridge.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
@@ -58,6 +86,12 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
 # Bump MTU so a single GDL90 Traffic Report (≤62 B) fits in one ATT PDU.
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+# Default NimBLE transport for a "controller disabled" host is the H4 UART
+# bound to a couple of fixed GPIOs (4/5 at 921600). We don't have a real
+# UART HCI — the BT controller lives on the C6 and the HCI rides over
+# ESP-Hosted's SDIO VHCI shim instead. Turn UART off so NimBLE picks up
+# the hosted VHCI transport that esp_hosted's BT support installs.
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
 
 # --- ESP-Hosted (P4 ↔ C6 transport for BT/Wi-Fi remote) ---------------------
 # Waveshare ESP32-P4-WIFI6 wires C6 via SDIO slot 1 on these GPIOs:
@@ -79,6 +113,16 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+
+# Shrink ESP-Hosted's per-bus packet pools. Defaults are 20×1536 B per
+# direction, which becomes ~47 KiB of DMA-capable internal RAM per
+# pool — and on the v1.x P4 with the early-boot heap fragmentation
+# pattern we get, the second pool fails to find a 64-byte-aligned
+# contiguous block. 8 deep queues are still plenty for BLE-only
+# traffic (we don't use Wi-Fi remote), and the pool footprint drops
+# to ~29 KiB which fits comfortably.
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 
 # --- Flash & Partitions -----------------------------------------------------
 # Waveshare ESP32-P4-WIFI6 ships 32 MB on-board Nor flash. Use the full chip

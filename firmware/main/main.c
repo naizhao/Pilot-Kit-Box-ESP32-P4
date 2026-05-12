@@ -138,20 +138,21 @@ void app_main(void)
         }
     }
 
-    /* Phase 3b: BLE last. nimble_port_init() over ESP-Hosted waits for
-     * the C6 controller to acknowledge HCI commands; on a board whose
-     * C6 has not yet been flashed with esp_hosted slave firmware, this
-     * call can hang. Running it after the display + PFD ensures the
-     * operator at least sees the screen come up before debugging BLE.
-     * The graceful fallback path (file/uart sinks keep streaming) is
-     * already in place. */
+    /* Phase 3b: BLE init. The hosted vhci driver uses ESP_ERROR_CHECK()
+     * internally — when the C6 isn't responding (because it hasn't been
+     * flashed with esp_hosted slave firmware yet) the entire firmware
+     * aborts. Gate the call behind CONFIG_PK_BLE_ENABLED so a fresh
+     * board boots cleanly. Enable in menuconfig once C6 is ready. */
+#if CONFIG_PK_BLE_ENABLED
     esp_err_t ble_err = ble_gatt_init();
     if (ble_err != ESP_OK) {
-        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only "
-                      "(flash C6 esp_hosted slave first, see "
-                      "docs/hardware/c6_slave_firmware.md)",
+        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
                  esp_err_to_name(ble_err));
     } else {
         ESP_LOGI(TAG, "BLE GATT service \"PilotKitBox\" advertising");
     }
+#else
+    ESP_LOGI(TAG, "BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — "
+                  "UART + file sinks only");
+#endif
 }

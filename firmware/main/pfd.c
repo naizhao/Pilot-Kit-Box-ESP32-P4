@@ -43,6 +43,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -408,7 +409,11 @@ static void pfd_task(void *arg)
         vTaskDelete(NULL);
     }
 
-    aircraft_t scratch[AIRCRAFT_TABLE_CAPACITY];
+    /* Big stack-eaters live here as file-static so they don't blow the
+     * task stack. Pinned to PSRAM (.ext_ram.bss) so they don't compete
+     * with FreeRTOS / ESP-Hosted tasks for scarce DMA-capable
+     * internal RAM during the early-boot constructor storm. */
+    static EXT_RAM_BSS_ATTR aircraft_t scratch[AIRCRAFT_TABLE_CAPACITY];
     int64_t  fps_window_start_us = esp_timer_get_time();
     uint32_t frames_in_window = 0;
 
@@ -450,7 +455,10 @@ static void pfd_task(void *arg)
 
 esp_err_t pk_pfd_start(void)
 {
+    /* 6 KiB stack — generous because trig / floating-point ESP_LOGI
+     * format strings can each chew 1 KiB on RISC-V, and the dashboard
+     * line at the bottom of pfd_task uses both. */
     BaseType_t ok = xTaskCreatePinnedToCore(
-        pfd_task, "pfd", 4096, NULL, 4, NULL, 0);
+        pfd_task, "pfd", 6 * 1024, NULL, 4, NULL, 0);
     return (ok == pdTRUE) ? ESP_OK : ESP_ERR_NO_MEM;
 }

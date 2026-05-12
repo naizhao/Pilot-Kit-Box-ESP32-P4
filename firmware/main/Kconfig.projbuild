@@ -1,0 +1,21 @@
+menu "Pilot Kit Box"
+
+    config PK_BLE_ENABLED
+        bool "Initialise BLE GATT server at boot (requires C6 esp_hosted slave firmware)"
+        default n
+        help
+            When enabled, app_main() calls ble_gatt_init() which in turn
+            kicks NimBLE on top of the ESP-Hosted VHCI transport. NimBLE
+            assumes the BT controller (living on the on-board ESP32-C6)
+            is responsive — if the C6 hasn't been flashed with the
+            esp_hosted slave firmware yet, the call eventually trips an
+            ESP_ERROR_CHECK() inside the hosted vhci_drv.c and aborts
+            the whole P4 firmware. The hosted layer offers no graceful
+            failure path for that case.
+
+            Default is OFF so a freshly-cloned firmware boots cleanly
+            on a board whose C6 still ships the factory AT firmware.
+            Once you flash the C6 slave (see docs/hardware/c6_slave_firmware.md)
+            flip this on with `idf.py menuconfig` and rebuild.
+
+endmenu

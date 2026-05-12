@@ -27,6 +27,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -510,7 +511,10 @@ static void emitter_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "GDL90 emitter task running");
 
-    aircraft_t snap[AIRCRAFT_TABLE_CAPACITY];
+    /* aircraft_t is ~72 bytes × 64 slots ≈ 4.5 KiB — would blow our 6 KiB
+     * stack once NimBLE notify frames pile on. Pinned to PSRAM so it
+     * doesn't squeeze internal RAM during early boot. */
+    static EXT_RAM_BSS_ATTR aircraft_t snap[AIRCRAFT_TABLE_CAPACITY];
     uint8_t    frame[GDL90_MAX_FRAME];
 
     while (1) {

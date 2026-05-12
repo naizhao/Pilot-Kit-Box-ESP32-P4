@@ -118,15 +118,22 @@ RTL2832U 范围 225 kSPS – 3.2 MSPS。ADS-B 必须 ≥ 2 MSPS（每比特 1 µ
 
 ## 4. 蓝牙 / BLE / ESP-Hosted
 
-> ⚠️ **使用 BLE 之前必须先给 C6 烧 esp_hosted slave 固件**，否则 `nimble_port_init()` 会卡住。详见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)。
+> ⚠️ **默认 `CONFIG_PK_BLE_ENABLED=n`，BLE 启动时不初始化**。本仓库特别加了这个开关，因为 esp_hosted v2.x 的 vhci_drv.c 在 C6 不响应时直接 `ESP_ERROR_CHECK()` abort 整个固件——没有优雅降级。
 >
-> 不想用 BLE？直接把下面的 `CONFIG_BT_ENABLED` 关掉即可。
+> **使用 BLE 的前提**：
+> 1. 给 C6 烧 esp_hosted slave 固件 — 见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)
+> 2. `idf.py menuconfig` → Pilot Kit Box → [*] Initialise BLE GATT server at boot
+> 3. 重新 build + flash
+>
+> 完全不要 BLE？把 `CONFIG_BT_ENABLED` 也改成 `n` 可以再省 ~500 KiB flash。
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
-| `CONFIG_BT_ENABLED` | `y` | 启用 BT 子系统。改成 `n` 则连 NimBLE 都不编进固件，可以省 ~500 KiB flash |
+| `CONFIG_PK_BLE_ENABLED` | `n` | **我们自己加的 Kconfig**。`y` 时 app_main 会调 `ble_gatt_init()`；`n` 时跳过整个 NimBLE/hosted vhci 初始化链路，固件可以在 C6 没固件的板子上稳定运行 |
+| `CONFIG_BT_ENABLED` | `y` | 启用 BT 子系统（编进 NimBLE host）。即使 `PK_BLE_ENABLED=n` 也保持 `y`，因为关掉它会让 ble_gatt.c 编不过 |
 | `CONFIG_BT_CONTROLLER_DISABLED` | `y` | P4 自身无原生 BT 控制器，要走 C6。**这个必须是 `y`** |
 | `CONFIG_BT_NIMBLE_ENABLED` | `y` | 用 NimBLE host（不是 Bluedroid） |
+| `CONFIG_BT_NIMBLE_TRANSPORT_UART` | **`n`** | **关键**：默认是 `y`，会让 NimBLE 在 GPIO 4/5 上找 UART HCI controller。我们要走 hosted VHCI 而不是 UART，所以必须显式 `n` |
 | `CONFIG_BT_NIMBLE_ROLE_PERIPHERAL` | `y` | 我们做被连接端 |
 | `CONFIG_BT_NIMBLE_ROLE_CENTRAL` | `y` | 启用 GATT client API（用来读 iOS 的 Current Time Service 同步时钟） |
 | `CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU` | `256` | 让 GDL90 traffic frame 一次发完不分片 |
@@ -151,6 +158,19 @@ CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 ```
 
 **改板子要换引脚**：menuconfig 里 Component config → ESP-Hosted config → SDIO Pin Configuration。
+
+### ESP-Hosted 队列大小
+
+默认 SDIO queue 是 20×1536 字节 per direction，约 47 KiB DMA-capable 内部 RAM per pool。在 ESP-Hosted constructor 早期启动阶段（在 `__libc_init_array()` 里跑、`main()` 之前），内部 RAM 还很碎片化，47 KiB 连续 64-byte aligned 块可能凑不出。
+
+我们把队列缩到 **8**（我们只用 BLE 不用 Wi-Fi 远程，8 完全够）：
+
+```
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
+```
+
+如果将来要走 Wi-Fi 高吞吐场景，可以试着提到 12 或 16，但需要同时增加 `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL`。
 
 ### BLE 设备名
 

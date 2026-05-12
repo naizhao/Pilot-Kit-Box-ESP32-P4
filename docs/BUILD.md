@@ -331,27 +331,34 @@ idf.py -p <PORT> erase-flash
 
 ## 7. 看到什么算成功
 
-烧完后，串口应该有类似这样的开机日志（**没接任何外设的空板**情况）：
+烧完后，串口应该有类似这样的开机日志（**没接任何外设的空板** + 默认 BLE 关闭情况）：
 
 ```
-I (315) pilot_kit:   Pilot Kit Box (ESP32-P4) — Phase 1 boot
-I (315) pilot_kit:   Free internal heap at boot: 5xx KiB
-I (325) pilot_kit:   IQ ring buffer ready: 131072 B (BYTEBUF)
-I (335) pilot_kit:   USB host stack installed
-I (335) pilot_kit:   USB host stack online — spawning SDR + DSP tasks
-I (345) rec_file:    LittleFS mounted at /storage: 0/16384 KiB used   ← 第一次启动会自动格式化 LittleFS
-I (xxx) record_sink: registered sink 'uart' (1 total)
-I (xxx) record_sink: registered sink 'ble_raw' (2 total)
-I (xxx) record_sink: registered sink 'file_littlefs' (3 total)
-I (xxx) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
-I (xxx) sdr:         USB client registered, waiting for RTL-SDR enumeration
-I (xxx) display:     ST7789 240x320 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
-I (xxx) display:     test pattern flushed; backlight @ 70%
-W (xxx) pilot_kit:   IMU init failed (ESP_ERR_TIMEOUT) — PFD will run without attitude
-I (xxx) pfd:         pfd_task running (Phase 4c v2: ladder + arc + tape + text)
-W (xxx) pilot_kit:   BLE init failed (...) — UART + file sinks only (flash C6 first)
-I (xxx) pfd:         PFD 30 FPS  | roll=+0.00 pitch=+0.00 yaw=0.00  imu_valid=0 aircraft=0
-I (xxx) dsp:         stream 0.00 MB/s | msgs/s 0 (...)  | aircraft 0     ← 1Hz 心跳
+I (1559) pilot_kit:   Pilot Kit Box (ESP32-P4) — Phase 1 boot
+I (1564) pilot_kit:   Free internal heap at boot: 350371 B
+I (1569) pilot_kit:   IQ ring buffer ready: 131072 B (BYTEBUF)
+I (1575) pilot_kit:   Installing USB host stack on peripheral_map=0x1
+I (1611) pilot_kit:   USB host stack installed
+I (1611) pilot_kit:   USB host stack online — spawning SDR + DSP tasks
+I (1612) record_sink: registered sink 'uart' (1 total)
+I (1615) record_sink: registered sink 'ble_raw' (2 total)
+I (3236) rec_file:    LittleFS mounted at /storage: 32/16384 KiB used   ← 第一次启动会自动格式化 LittleFS
+I (3470) record_sink: registered sink 'file_littlefs' (3 total)
+I (3472) rec_file:    logging ADS-B to /storage/pilot_kit_ts_1.txt (rotate every 1024 KiB, keep 12 files)
+I (3474) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
+I (3480) sdr:         USB client registered, waiting for RTL-SDR enumeration
+I (3486) dsp:         dsp_task running (Phase 2: dump1090 edge decode)
+I (3610) display:     ST7789 240x320 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
+I (3617) display:     test pattern flushed; backlight @ 70%
+E (4401) imu:         enable_rotation_vector: ESP_ERR_INVALID_RESPONSE         ← 预期（没接 BNO085）
+W (4402) pilot_kit:   IMU init failed (ESP_ERR_INVALID_RESPONSE) — PFD will run without attitude
+I (4405) pfd:         pfd_task running (Phase 4c v2: ladder + arc + tape + text)
+I (4417) pilot_kit:   PFD render task running
+I (4418) pilot_kit:   BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — UART + file sinks only
+I (4424) main_task:   Returned from app_main()
+I (4544) dsp:         stream 0.00 MB/s | msgs/s 0 (...) | aircraft 0           ← 1Hz dashboard 心跳
+I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    ← 1Hz FPS 心跳
+... (PFD + DSP 心跳每秒一行持续输出)
 ```
 
 **关键确认点**：
@@ -359,12 +366,15 @@ I (xxx) dsp:         stream 0.00 MB/s | msgs/s 0 (...)  | aircraft 0     ← 1Hz
 | 看到这条 | 说明 |
 |---------|------|
 | `Pilot Kit Box (ESP32-P4) — Phase 1 boot` | 主应用启动正常 |
+| `Found 32MB PSRAM device` + `Speed: 200MHz` | PSRAM 32 MB 起来了（之前在 1.5 节里看到）|
+| `Reserving pool of 128K of internal memory for DMA/internal allocations` | DMA 内部内存预留 OK |
 | `LittleFS mounted` | 存储分区 OK |
 | `USB host stack online` | USB host 就绪（等 RTL-SDR） |
-| `PFD 30 FPS` 周期出现 | 显示渲染管线 OK |
+| `Returned from app_main()` | 所有初始化完成 |
+| `PFD 30+ FPS` 周期出现 | 显示渲染管线 OK |
 | `dsp: stream 0.00 MB/s` 1Hz 重复 | DSP task 运行中 |
 | `IMU init failed` | 预期（没接 BNO085） |
-| `BLE init failed` | 预期（C6 还没刷 hosted slave） |
+| `BLE disabled at build time` | 预期（默认关闭 BLE，等 C6 刷完 slave 固件再开） |
 
 ### 接外设的预期
 
@@ -380,6 +390,17 @@ I (xxx) dsp:         stream 0.00 MB/s | msgs/s 0 (...)  | aircraft 0     ← 1Hz
 ## 8. （可选）启用 BLE — 烧 C6 esp_hosted slave 固件
 
 > 这一步只有在你**实际要用蓝牙**的时候才需要做。不做也不影响 RTL-SDR / LCD / 串口 / 存储 这些功能。
+>
+> **重要**：默认 BLE 是关闭的（`CONFIG_PK_BLE_ENABLED=n`）。如果不关，C6 没刷 hosted slave 时，`nimble_port_init()` 在 vendor 代码深处的 `ESP_ERROR_CHECK(transport_drv_reconfigure())` 会直接 `abort()` 整个固件——这是 esp_hosted v2.x vhci_drv.c 写死的行为，没有优雅降级。
+>
+> **烧完 C6 之后**：
+> ```bash
+> cd firmware
+> idf.py menuconfig
+> # → Pilot Kit Box → [*] Initialise BLE GATT server at boot
+> idf.py build
+> idf.py -p <PORT> flash
+> ```
 
 详细步骤见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)。简单流程：
 
@@ -443,6 +464,45 @@ rm sdkconfig
 idf.py build
 ```
 重新烧。
+
+### 启动早期 `HS_MP: mempool create failed: no mem` panic
+
+**原因**：ESP-Hosted 在 `__libc_init_array()` 阶段（main 之前）调用 SDIO mempool 初始化，需要约 47 KiB DMA-capable 内部 RAM。如果默认 SDIO queue（20×1536）+ 默认 SPIRAM reserve（32 KiB）+ PSRAM 未启用三个条件中任一不满足，allocator 凑不出连续内存。
+
+**修复**：sdkconfig.defaults 已经包含修复（PSRAM 启用、SDIO queue 缩到 8、reserve 增到 128 KiB）。如果你改过这些配置导致问题复发，恢复以下默认：
+```
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
+```
+
+### `assert failed: vApplicationGetTimerTaskMemory` 启动期 panic
+
+**原因**：内部 RAM 紧张到连 FreeRTOS timer task 的 8 KiB 栈都凑不出。通常是大型静态数组占了 `.bss` 内部段。
+
+**修复**：把大数组（>1 KiB）的 `static` 声明加 `EXT_RAM_BSS_ATTR`（在 `esp_attr.h`）把它们丢到 PSRAM `.ext_ram.bss` 段。本仓库 `pfd.c` 和 `ble_gatt.c` 的 64 槽 `aircraft_t` 表已经这样处理。需要 `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y`。
+
+### `assert failed: hci_h4_frame_start hci_h4.c` 启动期 panic
+
+**原因**：NimBLE 默认走 H4 UART HCI（GPIO 4/5 @ 921600 baud）找 BT controller。我们的 controller 在 C6 上通过 SDIO 接出来，不是 UART。NimBLE 在 GPIO 4/5 上收到的全是垃圾，hci_h4 解码 assert。
+
+**修复**：`CONFIG_BT_NIMBLE_TRANSPORT_UART=n` 已在 sdkconfig.defaults。这样 NimBLE 会自动用 esp_hosted 提供的 VHCI transport。
+
+### `ble_transport_ll_init` 处 `ESP_ERROR_CHECK` 导致 abort
+
+**原因**：ESP-Hosted 的 `transport_drv_reconfigure()` 在 C6 没有响应（没刷 hosted slave 固件）时返回失败；vhci_drv.c 第 154 行用 `ESP_ERROR_CHECK()` 包裹这个返回值，强制 abort。
+
+**修复**：默认 `CONFIG_PK_BLE_ENABLED=n` —— `app_main()` 跳过 `ble_gatt_init()`，整条 NimBLE/hosted vhci 初始化链路不会触发。**烧完 C6 hosted slave 固件**后用 `idf.py menuconfig` → Pilot Kit Box → [*] Initialise BLE GATT server at boot 打开。
+
+### Task "pfd" / "ble_emit" Stack protection fault
+
+**原因**：栈太小放不下大型局部数组（`aircraft_t scratch[64]` ≈ 4.5 KiB on 4 KiB stack）。
+
+**修复**：本仓库已经把这两个数组改成 `static EXT_RAM_BSS_ATTR`（PSRAM BSS），并把任务栈从 4 KiB 提到 6 KiB。如果你新加自己的渲染或采样任务，遵循同样的约定。
 
 ### `Failed to connect to ESP32-P4: Wrong boot mode detected`
 
