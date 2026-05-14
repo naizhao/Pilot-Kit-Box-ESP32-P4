@@ -151,3 +151,12 @@ CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- LittleFS storage -------------------------------------------------------
+# The 16 MiB `storage` partition takes ~5 s to mount because LittleFS has no
+# on-disk index and must scan every block's metadata at boot. That scan runs
+# inside SPI flash critical sections that disable cache + the other CPU, so
+# IDLE0 cannot reset the task watchdog (5 s default) and we get a TWDT trip
+# every boot. esp_littlefs ships a knob that periodically resets the WDT
+# from inside its long loops — turn it on so mount no longer trips the dog.
+CONFIG_LITTLEFS_WDT_RESET=y
