@@ -35,6 +35,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "esp_attr.h"               /* EXT_RAM_BSS_ATTR */
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -218,11 +219,17 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
 
 /* Dump every aircraft currently in the fusion table. Called every few
  * seconds — long enough to be readable, short enough that an
- * approaching plane shows up within ~5 s of first contact. */
+ * approaching plane shows up within ~5 s of first contact.
+ *
+ * The snapshot buffer is ~64 * 72 ≈ 4.5 KiB which overflows dsp_task's
+ * 4 KiB stack, so we keep it in PSRAM .bss (mirrors what ble_gatt.c's
+ * GDL90 emitter does). The function is called from dsp_task only, so
+ * the static buffer doesn't need a lock. */
+static EXT_RAM_BSS_ATTR aircraft_t s_summary_snap[AIRCRAFT_TABLE_CAPACITY];
+
 static void aircraft_summary_emit(int64_t now_us)
 {
-    aircraft_t list[AIRCRAFT_TABLE_CAPACITY];
-    size_t n = aircraft_state_snapshot(list, AIRCRAFT_TABLE_CAPACITY, now_us);
+    size_t n = aircraft_state_snapshot(s_summary_snap, AIRCRAFT_TABLE_CAPACITY, now_us);
     if (n == 0) {
         ESP_LOGI(TAG, "aircraft summary: (none in last %llus window)",
                  (unsigned long long)(AIRCRAFT_STALE_AGE_US / 1000000ULL));
@@ -230,7 +237,7 @@ static void aircraft_summary_emit(int64_t now_us)
     }
     ESP_LOGI(TAG, "aircraft summary: %u tracked", (unsigned)n);
     for (size_t i = 0; i < n; ++i) {
-        const aircraft_t *a = &list[i];
+        const aircraft_t *a = &s_summary_snap[i];
         char buf[160];
         int  pos = 0;
 
