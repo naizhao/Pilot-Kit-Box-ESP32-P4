@@ -283,8 +283,17 @@ static void aircraft_summary_emit(int64_t now_us)
                                        AIRCRAFT_TABLE_CAPACITY,
                                        now_us,
                                        SUMMARY_TIER_OLDER_US);
+
+    /* Block-bracket the whole report with a visible divider so it
+     * stands out against the per-second "dsp:" / "pfd:" / "adsb:"
+     * heartbeat lines. */
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "==================== AIRCRAFT SUMMARY ====================");
+
     if (n == 0) {
-        ESP_LOGI(TAG, "aircraft summary: (none in last 30min window)");
+        ESP_LOGI(TAG, "  (no contacts in the last 30 min)");
+        ESP_LOGI(TAG, "==========================================================");
+        ESP_LOGI(TAG, "");
         return;
     }
 
@@ -297,9 +306,9 @@ static void aircraft_summary_emit(int64_t now_us)
         else                                    ++older_cnt;
     }
     ESP_LOGI(TAG,
-             "aircraft summary: %u tracked (fresh<60s=%u, recent<15min=%u, older<30min=%u)",
-             (unsigned)n, (unsigned)fresh_cnt,
-             (unsigned)recent_cnt, (unsigned)older_cnt);
+             "  %u tracked  |  fresh<60s: %u   recent<15min: %u   older<30min: %u",
+             (unsigned)n,
+             (unsigned)fresh_cnt, (unsigned)recent_cnt, (unsigned)older_cnt);
 
     /* Print one section per tier; each aircraft lands in exactly the
      * freshest tier its age qualifies for. */
@@ -316,7 +325,7 @@ static void aircraft_summary_emit(int64_t now_us)
             uint64_t age = (uint64_t)(now_us - s_summary_snap[i].last_seen_us);
             if (age > tiers[t].hi_us) continue;
             if (!header_printed) {
-                ESP_LOGI(TAG, "  ----- %s -----", tiers[t].label);
+                ESP_LOGI(TAG, "  --- %s ---", tiers[t].label);
                 header_printed = true;
             }
             char line[160];
@@ -325,6 +334,9 @@ static void aircraft_summary_emit(int64_t now_us)
             printed[i] = true;
         }
     }
+
+    ESP_LOGI(TAG, "==========================================================");
+    ESP_LOGI(TAG, "");
 }
 
 static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)

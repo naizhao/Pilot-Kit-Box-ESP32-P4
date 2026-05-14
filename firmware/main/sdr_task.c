@@ -102,6 +102,26 @@ void sdr_task(void *arg)
     ESP_ERROR_CHECK(usb_host_client_register(&client_cfg, &client_hdl));
     ESP_LOGI(TAG, "USB client registered, waiting for RTL-SDR enumeration");
 
+    /* If we got here after a P4-side soft reset (idf.py flash, watchdog
+     * reboot, etc.) and the dongle was already plugged in, the USB bus
+     * never sees a fresh attach event — the dongle's PHY stayed powered
+     * and configured the whole time. USB_HOST_CLIENT_EVENT_NEW_DEV
+     * would never fire and sdr_task would hang forever waiting.
+     *
+     * Cover that path by asking usb_host_lib for already-enumerated
+     * devices right after we register the client. If one's already on
+     * the bus, fake the NEW_DEV event so the rest of the open path
+     * proceeds normally. */
+    uint8_t addr_list[8];
+    int     n_dev = 0;
+    if (usb_host_device_addr_list_fill(sizeof(addr_list), addr_list, &n_dev) == ESP_OK
+        && n_dev > 0) {
+        s_ctx.dev_addr = addr_list[0];
+        ESP_LOGI(TAG, "USB device already on bus at addr %u (persisted from previous boot)",
+                 s_ctx.dev_addr);
+        xEventGroupSetBits(s_ctx.evt, SDR_EVT_NEW_DEV);
+    }
+
     /* Pump client events until NEW_DEV. The callback fires synchronously
      * from inside handle_events, so by the time the bit is set, dev_addr
      * is already populated. */
