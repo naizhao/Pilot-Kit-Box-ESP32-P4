@@ -40,6 +40,10 @@
 #define PK_LCD_SPI_HOST        SPI2_HOST
 #define PK_LCD_PIN_SCLK        47
 #define PK_LCD_PIN_MOSI        33
+#define PK_LCD_PIN_MISO        -1   /* unused — ST7789 only echoes via MISO
+                                       for panel ID reads we don't do at
+                                       runtime. Set to a GPIO if you ever
+                                       want to read panel status registers. */
 #define PK_LCD_PIN_CS          46
 #define PK_LCD_PIN_DC          48
 /* Many TK024F3036-class 7-pin ST7789 modules don't expose RST — the
@@ -51,7 +55,9 @@
 #define PK_LCD_PIN_RST         -1
 #define PK_LCD_PIN_BL          50
 
-#define PK_LCD_SPI_HZ          (40 * 1000 * 1000)  /* 40 MHz; ST7789 max ≈ 80 */
+#define PK_LCD_SPI_HZ          (10 * 1000 * 1000)  /* 10 MHz — safe for dupont
+                                                     jumpers; bump to 40 on a
+                                                     real PCB with short traces */
 #define PK_LCD_BL_PWM_FREQ_HZ  20000               /* outside audible range */
 
 /*

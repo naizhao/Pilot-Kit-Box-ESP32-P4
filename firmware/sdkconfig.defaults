@@ -152,11 +152,16 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
-# --- LittleFS storage -------------------------------------------------------
+# --- LittleFS storage / TWDT timeout ----------------------------------------
 # The 16 MiB `storage` partition takes ~5 s to mount because LittleFS has no
 # on-disk index and must scan every block's metadata at boot. That scan runs
-# inside SPI flash critical sections that disable cache + the other CPU, so
-# IDLE0 cannot reset the task watchdog (5 s default) and we get a TWDT trip
-# every boot. esp_littlefs ships a knob that periodically resets the WDT
-# from inside its long loops — turn it on so mount no longer trips the dog.
-CONFIG_LITTLEFS_WDT_RESET=y
+# inside SPI flash critical sections that disable cache + suspend the other
+# CPU, so IDLE0 physically cannot run — let alone reset its TWDT entry —
+# until mount finishes. That is an ESP32 dual-core architectural fact, not
+# a bug; the only knob we have is the TWDT deadline. Raise it from the 5 s
+# default to 15 s so mount has ~3× headroom while we still catch genuine
+# runaway tasks. (We deliberately do NOT enable CONFIG_LITTLEFS_WDT_RESET:
+# its esp_task_wdt_reset() calls only affect the caller's own TWDT entry,
+# do nothing for IDLE0, and would just spam "task not found" warnings on
+# every fwrite() from the unsubscribed rec_file writer task.)
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15

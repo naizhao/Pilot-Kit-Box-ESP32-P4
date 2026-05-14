@@ -24,7 +24,8 @@ idf_component_register(
         joltwallet__littlefs     # on-board ts-format dump partition
         bt                       # NimBLE host (controller proxied via hosted)
         espressif__esp_hosted    # P4 ↔ C6 hosted transport (BT/Wi-Fi remote)
-        esp_lcd                  # ST7789 panel via esp_lcd_panel_st7789
+        esp_lcd                  # esp_lcd_panel_io_spi + panel ops
+        lcd_tk024f3036           # vendor-specific TK024F3036 init sequence
         esp_driver_spi           # SPI bus for the LCD
         esp_driver_ledc          # PWM backlight
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
