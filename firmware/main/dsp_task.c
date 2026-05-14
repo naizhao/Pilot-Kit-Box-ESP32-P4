@@ -216,6 +216,68 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
     }
 }
 
+/* Dump every aircraft currently in the fusion table. Called every few
+ * seconds — long enough to be readable, short enough that an
+ * approaching plane shows up within ~5 s of first contact. */
+static void aircraft_summary_emit(int64_t now_us)
+{
+    aircraft_t list[AIRCRAFT_TABLE_CAPACITY];
+    size_t n = aircraft_state_snapshot(list, AIRCRAFT_TABLE_CAPACITY, now_us);
+    if (n == 0) {
+        ESP_LOGI(TAG, "aircraft summary: (none in last %llus window)",
+                 (unsigned long long)(AIRCRAFT_STALE_AGE_US / 1000000ULL));
+        return;
+    }
+    ESP_LOGI(TAG, "aircraft summary: %u tracked", (unsigned)n);
+    for (size_t i = 0; i < n; ++i) {
+        const aircraft_t *a = &list[i];
+        char buf[160];
+        int  pos = 0;
+
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "  [%06" PRIX32 "]",
+                        a->icao24);
+
+        if (a->have_callsign) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " cs=%-8s", a->callsign);
+        } else {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " cs=--------");
+        }
+
+        if (a->have_altitude) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " alt=%dft", a->altitude_ft);
+        } else {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, " alt=--");
+        }
+
+        if (a->have_position) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " pos=%.4f,%.4f", a->lat, a->lon);
+        } else {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " pos=--,--");
+        }
+
+        if (a->have_velocity) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                            " hdg=%3d° spd=%dkt vrt=%+dfpm",
+                            a->heading_deg,
+                            a->ground_speed_kt,
+                            a->vert_rate_fpm);
+        }
+
+        int64_t age_us = now_us - a->last_seen_us;
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        " (age=%.1fs)",
+                        (double)age_us / 1e6);
+
+        ESP_LOGI(TAG, "%s", buf);
+    }
+}
+
 static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
 {
     int64_t elapsed_us = now_us - window_start_us;
@@ -270,8 +332,9 @@ void dsp_task(void *arg)
     s_decoder.fix_errors = 0;
     s_decoder.aggressive = 0;
 
-    size_t   filled         = 0;
-    int64_t  window_start_us = esp_timer_get_time();
+    size_t   filled               = 0;
+    int64_t  window_start_us      = esp_timer_get_time();
+    int64_t  summary_last_emit_us = window_start_us;
 
     while (1) {
         /* Greedy fill: pull whatever's currently in the ring buffer until
@@ -305,6 +368,10 @@ void dsp_task(void *arg)
         if (now_us - window_start_us >= 1000000) {
             dashboard_emit_and_reset(now_us, window_start_us);
             window_start_us = now_us;
+        }
+        if (now_us - summary_last_emit_us >= 5000000) {
+            aircraft_summary_emit(now_us);
+            summary_last_emit_us = now_us;
         }
     }
 }

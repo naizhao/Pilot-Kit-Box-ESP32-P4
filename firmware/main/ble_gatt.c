@@ -549,8 +549,24 @@ static void emitter_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(BLE_EMIT_PERIOD_MS);
 
+    /* 5-second rolling counters so we can log notify throughput without
+     * spamming a line per second. Reset every 5 emits. */
+    uint32_t hb_count = 0, traffic_count = 0, raw_count = 0;
+    int      summary_ticks = 0;
+    bool     was_connected = false;
+
     while (1) {
-        if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        bool connected = (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+        if (connected && !was_connected) {
+            ESP_LOGI(TAG, "peer connected, GDL90 notifies start "
+                          "(sub_traffic=%d sub_hb=%d sub_raw=%d)",
+                     s_sub_traffic, s_sub_hb, s_sub_raw);
+        } else if (!connected && was_connected) {
+            ESP_LOGI(TAG, "peer disconnected, GDL90 notifies paused");
+        }
+        was_connected = connected;
+
+        if (connected) {
             /* Heartbeat — required by ForeFlight-style EFB apps. */
             if (s_sub_hb) {
                 struct timeval tv; gettimeofday(&tv, NULL);
@@ -563,7 +579,7 @@ static void emitter_task(void *arg)
                                                   sod,
                                                   /*uplink=*/0,
                                                   /*basic_long=*/0);
-                if (n > 0) notify_bytes(s_chr_hb_handle, frame, n);
+                if (n > 0) { notify_bytes(s_chr_hb_handle, frame, n); ++hb_count; }
             }
 
             /* Traffic Report per aircraft. */
@@ -580,7 +596,7 @@ static void emitter_task(void *arg)
                         a->have_velocity, a->heading_deg,
                         a->ground_speed_kt, a->vert_rate_fpm,
                         a->have_callsign ? a->callsign : "");
-                    if (n > 0) notify_bytes(s_chr_traffic_handle, frame, n);
+                    if (n > 0) { notify_bytes(s_chr_traffic_handle, frame, n); ++traffic_count; }
                 }
             }
 
@@ -591,10 +607,20 @@ static void emitter_task(void *arg)
                 char line[BLE_RAW_LINE_MAX];
                 while (xQueueReceive(s_raw_queue, line, 0) == pdTRUE) {
                     notify_bytes(s_chr_raw_handle, (const uint8_t *)line, strlen(line));
+                    ++raw_count;
                 }
             } else {
                 /* No subscriber → flush queue so it doesn't fill up. */
                 xQueueReset(s_raw_queue);
+            }
+
+            if (++summary_ticks >= 5) {
+                ESP_LOGI(TAG, "BLE emit (last 5s): hb=%lu traffic=%lu raw=%lu",
+                         (unsigned long)hb_count,
+                         (unsigned long)traffic_count,
+                         (unsigned long)raw_count);
+                hb_count = traffic_count = raw_count = 0;
+                summary_ticks = 0;
             }
         }
 
