@@ -27,11 +27,17 @@
 #define PK_USB_PERIPHERAL_MAP    BIT0          /* ESP32-P4 has one USB-OTG */
 
 /* --- Buffering --------------------------------------------------------- *
- * 2 MB/s producer × 128 KiB buffer ≈ 64 ms of head-room. That covers
- * the worst observed dsp_task scheduling jitter on ESP32-P4 with WiFi /
- * BLE coexistence still off; revisit once Phase 3 brings BLE online.
+ * Producer is 2 MSPS × 2 B (IQ8) = 4 MB/s real-time. 128 KiB only gave
+ * us ~32 ms of head-room and we observed occasional overflows
+ * ("DROPPED ~37 KB") once BLE + SDIO + LCD landed on the CPU 1
+ * scheduler. 512 KiB ≈ 128 ms — comfortable margin against any
+ * realistic scheduling burst.
+ *
+ * The buffer is BYTEBUF (no per-item header) and lives in PSRAM via
+ * the CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 threshold — internal
+ * RAM is way too precious to spend on bulk IQ.
  */
-#define PK_IQ_RINGBUF_SIZE_BYTES (128 * 1024)
+#define PK_IQ_RINGBUF_SIZE_BYTES (512 * 1024)
 
 extern RingbufHandle_t g_iq_ringbuf;
 
