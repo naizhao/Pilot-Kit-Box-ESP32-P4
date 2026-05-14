@@ -74,9 +74,12 @@ void aircraft_state_update_position(uint32_t icao24,
                                     int64_t now_us);
 
 /*
- * Copy a snapshot of currently-fresh aircraft into *out (capacity cap).
- * Returns the number of entries written. Aircraft older than
- * AIRCRAFT_STALE_AGE_US are skipped. Snapshot is taken under an
- * internal mutex; safe to call from any task.
+ * Copy a snapshot of recently-seen aircraft into *out (capacity cap).
+ * Returns the number of entries written. Aircraft whose last_seen_us
+ * is older than max_age_us are skipped. Pass AIRCRAFT_STALE_AGE_US
+ * to get the "fresh contacts" window that the BLE/GDL90 emitter uses;
+ * pass a larger value (e.g. 30 minutes) for diagnostic history dumps.
+ * Snapshot is taken under an internal mutex; safe to call from any task.
  */
-size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us);
+size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
+                               int64_t max_age_us);

@@ -585,7 +585,13 @@ static void emitter_task(void *arg)
             /* Traffic Report per aircraft. */
             if (s_sub_traffic) {
                 int64_t now_us = esp_timer_get_time();
-                size_t  n_ac   = aircraft_state_snapshot(snap, sizeof(snap) / sizeof(snap[0]), now_us);
+                /* GDL90 traffic notifies only the "fresh contact" set;
+                 * EFB clients expect a plane to disappear if it stops
+                 * being seen for ~60 s. */
+                size_t  n_ac   = aircraft_state_snapshot(snap,
+                                                         sizeof(snap) / sizeof(snap[0]),
+                                                         now_us,
+                                                         AIRCRAFT_STALE_AGE_US);
                 for (size_t i = 0; i < n_ac; ++i) {
                     const aircraft_t *a = &snap[i];
                     size_t n = gdl90_encode_traffic(frame, sizeof(frame),

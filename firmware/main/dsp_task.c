@@ -217,71 +217,113 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
     }
 }
 
-/* Dump every aircraft currently in the fusion table. Called every few
- * seconds — long enough to be readable, short enough that an
- * approaching plane shows up within ~5 s of first contact.
+/* Dump every aircraft seen in the trailing 30-minute window, bucketed
+ * by recency so the user can tell "in view now" apart from "lost a
+ * while ago." Tier thresholds:
+ *   - fresh:  last seen in the trailing 60s
+ *   - recent: 60s .. 15min
+ *   - older:  15min .. 30min
+ * Each aircraft appears in exactly one tier. Aircraft last seen > 30
+ * min ago are dropped (also the LRU table caps at 64 slots so they
+ * eventually get evicted on first contact with new traffic).
  *
- * The snapshot buffer is ~64 * 72 ≈ 4.5 KiB which overflows dsp_task's
- * 4 KiB stack, so we keep it in PSRAM .bss (mirrors what ble_gatt.c's
- * GDL90 emitter does). The function is called from dsp_task only, so
- * the static buffer doesn't need a lock. */
+ * Snapshot buffer is ~64 * 72 ≈ 4.5 KiB; lives in PSRAM .bss because
+ * dsp_task's stack is only 4 KiB. Single-caller — no lock needed. */
+#define SUMMARY_TIER_FRESH_US   (60ULL * 1000000ULL)          /* 60 s   */
+#define SUMMARY_TIER_RECENT_US  (15ULL * 60ULL * 1000000ULL)  /* 15 min */
+#define SUMMARY_TIER_OLDER_US   (30ULL * 60ULL * 1000000ULL)  /* 30 min */
+
 static EXT_RAM_BSS_ATTR aircraft_t s_summary_snap[AIRCRAFT_TABLE_CAPACITY];
+
+static void format_aircraft_line(char *buf, size_t bufsz,
+                                 const aircraft_t *a, int64_t now_us)
+{
+    int pos = 0;
+    pos += snprintf(buf + pos, bufsz - pos, "    [%06" PRIX32 "]", a->icao24);
+
+    if (a->have_callsign) {
+        pos += snprintf(buf + pos, bufsz - pos, " cs=%-8s", a->callsign);
+    } else {
+        pos += snprintf(buf + pos, bufsz - pos, " cs=--------");
+    }
+
+    if (a->have_altitude) {
+        pos += snprintf(buf + pos, bufsz - pos, " alt=%dft", a->altitude_ft);
+    } else {
+        pos += snprintf(buf + pos, bufsz - pos, " alt=--");
+    }
+
+    if (a->have_position) {
+        pos += snprintf(buf + pos, bufsz - pos,
+                        " pos=%.4f,%.4f", a->lat, a->lon);
+    } else {
+        pos += snprintf(buf + pos, bufsz - pos, " pos=--,--");
+    }
+
+    if (a->have_velocity) {
+        pos += snprintf(buf + pos, bufsz - pos,
+                        " hdg=%3d° spd=%dkt vrt=%+dfpm",
+                        a->heading_deg,
+                        a->ground_speed_kt,
+                        a->vert_rate_fpm);
+    }
+
+    int64_t age_us = now_us - a->last_seen_us;
+    double  age_s  = (double)age_us / 1e6;
+    if (age_s < 60.0) {
+        pos += snprintf(buf + pos, bufsz - pos, " (age=%.1fs)", age_s);
+    } else {
+        pos += snprintf(buf + pos, bufsz - pos, " (age=%.1fmin)", age_s / 60.0);
+    }
+}
 
 static void aircraft_summary_emit(int64_t now_us)
 {
-    size_t n = aircraft_state_snapshot(s_summary_snap, AIRCRAFT_TABLE_CAPACITY, now_us);
+    size_t n = aircraft_state_snapshot(s_summary_snap,
+                                       AIRCRAFT_TABLE_CAPACITY,
+                                       now_us,
+                                       SUMMARY_TIER_OLDER_US);
     if (n == 0) {
-        ESP_LOGI(TAG, "aircraft summary: (none in last %llus window)",
-                 (unsigned long long)(AIRCRAFT_STALE_AGE_US / 1000000ULL));
+        ESP_LOGI(TAG, "aircraft summary: (none in last 30min window)");
         return;
     }
-    ESP_LOGI(TAG, "aircraft summary: %u tracked", (unsigned)n);
+
+    /* Bucket count first so the header can be precise. */
+    size_t fresh_cnt = 0, recent_cnt = 0, older_cnt = 0;
     for (size_t i = 0; i < n; ++i) {
-        const aircraft_t *a = &s_summary_snap[i];
-        char buf[160];
-        int  pos = 0;
+        uint64_t age = (uint64_t)(now_us - s_summary_snap[i].last_seen_us);
+        if      (age <= SUMMARY_TIER_FRESH_US)  ++fresh_cnt;
+        else if (age <= SUMMARY_TIER_RECENT_US) ++recent_cnt;
+        else                                    ++older_cnt;
+    }
+    ESP_LOGI(TAG,
+             "aircraft summary: %u tracked (fresh<60s=%u, recent<15min=%u, older<30min=%u)",
+             (unsigned)n, (unsigned)fresh_cnt,
+             (unsigned)recent_cnt, (unsigned)older_cnt);
 
-        pos += snprintf(buf + pos, sizeof(buf) - pos,
-                        "  [%06" PRIX32 "]",
-                        a->icao24);
-
-        if (a->have_callsign) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " cs=%-8s", a->callsign);
-        } else {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " cs=--------");
+    /* Print one section per tier; each aircraft lands in exactly the
+     * freshest tier its age qualifies for. */
+    struct { const char *label; uint64_t hi_us; } tiers[] = {
+        { "last 60s",       SUMMARY_TIER_FRESH_US  },
+        { "60s .. 15min",   SUMMARY_TIER_RECENT_US },
+        { "15min .. 30min", SUMMARY_TIER_OLDER_US  },
+    };
+    bool printed[AIRCRAFT_TABLE_CAPACITY] = { 0 };
+    for (size_t t = 0; t < sizeof(tiers) / sizeof(tiers[0]); ++t) {
+        bool header_printed = false;
+        for (size_t i = 0; i < n; ++i) {
+            if (printed[i]) continue;
+            uint64_t age = (uint64_t)(now_us - s_summary_snap[i].last_seen_us);
+            if (age > tiers[t].hi_us) continue;
+            if (!header_printed) {
+                ESP_LOGI(TAG, "  ----- %s -----", tiers[t].label);
+                header_printed = true;
+            }
+            char line[160];
+            format_aircraft_line(line, sizeof(line), &s_summary_snap[i], now_us);
+            ESP_LOGI(TAG, "%s", line);
+            printed[i] = true;
         }
-
-        if (a->have_altitude) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " alt=%dft", a->altitude_ft);
-        } else {
-            pos += snprintf(buf + pos, sizeof(buf) - pos, " alt=--");
-        }
-
-        if (a->have_position) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " pos=%.4f,%.4f", a->lat, a->lon);
-        } else {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " pos=--,--");
-        }
-
-        if (a->have_velocity) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                            " hdg=%3d° spd=%dkt vrt=%+dfpm",
-                            a->heading_deg,
-                            a->ground_speed_kt,
-                            a->vert_rate_fpm);
-        }
-
-        int64_t age_us = now_us - a->last_seen_us;
-        pos += snprintf(buf + pos, sizeof(buf) - pos,
-                        " (age=%.1fs)",
-                        (double)age_us / 1e6);
-
-        ESP_LOGI(TAG, "%s", buf);
     }
 }
 

@@ -126,7 +126,8 @@ void aircraft_state_update_position(uint32_t icao24,
     release_lock();
 }
 
-size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us)
+size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
+                               int64_t max_age_us)
 {
     if (out == NULL || cap == 0) return 0;
     size_t n = 0;
@@ -134,7 +135,7 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us)
     for (size_t i = 0; i < AIRCRAFT_TABLE_CAPACITY && n < cap; ++i) {
         const aircraft_t *s = &s_table[i];
         if (s->icao24 == 0) continue;
-        if ((uint64_t)(now_us - s->last_seen_us) > AIRCRAFT_STALE_AGE_US) continue;
+        if ((int64_t)(now_us - s->last_seen_us) > max_age_us) continue;
         out[n++] = *s;
     }
     release_lock();

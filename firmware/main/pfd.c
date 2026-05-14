@@ -426,9 +426,12 @@ static void pfd_task(void *arg)
         float pitch = have ? s.pitch_deg : 0.0f;
         float yaw   = have ? s.yaw_deg   : 0.0f;
 
+        /* PFD only renders aircraft we can still plausibly see — same
+         * "fresh contact" 60s window the BLE GDL90 emitter uses. */
         size_t n_aircraft = aircraft_state_snapshot(
             scratch, sizeof(scratch) / sizeof(scratch[0]),
-            esp_timer_get_time());
+            esp_timer_get_time(),
+            AIRCRAFT_STALE_AGE_US);
 
         draw_horizon(fb, roll, pitch);
         draw_pitch_ladder(fb, roll, pitch);
