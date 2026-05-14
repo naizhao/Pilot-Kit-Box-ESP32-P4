@@ -227,15 +227,17 @@ MAC 后缀来自 C6 模组的 efuse —— 同板跨重启稳定、跨板唯一�
 
 ```c
 #define PK_LCD_SPI_HOST       SPI2_HOST
-#define PK_LCD_PIN_SCLK       47    ← FSPICLK (IO_MUX direct)
-#define PK_LCD_PIN_MOSI       45    ← FSPID (IO_MUX direct)
+#define PK_LCD_PIN_SCLK       47
+#define PK_LCD_PIN_MOSI       33
 #define PK_LCD_PIN_CS         46
 #define PK_LCD_PIN_DC         48
-#define PK_LCD_PIN_RST        49
+#define PK_LCD_PIN_RST        -1    ← TK024F3036 没引出，走 SPI SWRESET
 #define PK_LCD_PIN_BL         50    ← LEDC PWM
 ```
 
-改板子重新分配引脚时**保持 SCLK / MOSI 用 SPI2 IO_MUX direct 引脚**（GPIO47/45）能跑满 80 MHz，走 GPIO matrix 的话顶到 40 MHz 左右。
+> ⚠️ **MOSI 不能用 GPIO 45**。理论上 SPI2 IO_MUX direct 引脚是 GPIO45 (FSPID) 跑得到 80 MHz；但 Waveshare ESP32-P4-WIFI6 的用户引脚 header **没把 GPIO 9-19 和 34-45 引出来**，所以这些 IO_MUX direct 选项都用不上。所有 SPI/control 信号都得走 GPIO matrix，40 MHz 是稳定上限。GPIO 33 是 board_pinout.md 标的 free GPIO，紧挨 46/47/48 在右排底部，焊起来方便。
+>
+> 如果你换的板子引出了 GPIO 45，可以改回 45 然后把时钟提到 80 MHz。
 
 ### SPI 时钟
 

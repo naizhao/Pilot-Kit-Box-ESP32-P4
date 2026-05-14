@@ -32,15 +32,23 @@
 #define PK_DISPLAY_BPP         2          /* RGB565 */
 #define PK_DISPLAY_FB_BYTES    (PK_DISPLAY_W * PK_DISPLAY_H * PK_DISPLAY_BPP)
 
-/* SPI / control pin assignments (Waveshare ESP32-P4-WIFI6, FSPI IO_MUX
- * direct on CLK + MOSI for max clock; remaining GPIOs go through the
- * GPIO matrix which is fine at <80 MHz). */
+/* SPI / control pin assignments (Waveshare ESP32-P4-WIFI6 header
+ * exposure constraints — GPIO 9-19 and 34-45 aren't on the user
+ * headers, so all six SPI/control lines route through the GPIO
+ * matrix. Fine at our 40 MHz target; the matrix adds ~2 ns of
+ * propagation delay which is well within ST7789's setup/hold). */
 #define PK_LCD_SPI_HOST        SPI2_HOST
 #define PK_LCD_PIN_SCLK        47
-#define PK_LCD_PIN_MOSI        45
+#define PK_LCD_PIN_MOSI        33
 #define PK_LCD_PIN_CS          46
 #define PK_LCD_PIN_DC          48
-#define PK_LCD_PIN_RST         49
+/* Many TK024F3036-class 7-pin ST7789 modules don't expose RST — the
+ * breakout has an on-board RC reset network tying RST to VCC. Set to
+ * -1 to skip the GPIO toggle; esp_lcd_panel_st7789 falls back to a
+ * software SWRESET command (0x01) over SPI, which the chip honours
+ * the same way. If your module DOES expose RST, set this to the
+ * GPIO you connected it to (49 was the original assignment). */
+#define PK_LCD_PIN_RST         -1
 #define PK_LCD_PIN_BL          50
 
 #define PK_LCD_SPI_HZ          (40 * 1000 * 1000)  /* 40 MHz; ST7789 max ≈ 80 */

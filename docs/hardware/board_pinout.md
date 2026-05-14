@@ -153,21 +153,33 @@ adds them via the 2x20 GPIO header.
 
 The TK024F3036 module is parallel-default; the user's driver-board
 adapter pre-straps it to 4-wire SPI mode (IM1-2=1, IM0=0) and exposes
-{CS, RST, DC, SCK, MOSI, BL} on a simple header. Voltage is 2.8 V on
-both VCI and IOVCC; the driver board contains the LDO and (if needed)
-a level shifter to interface with the P4's 3.3 V GPIOs.
+either {CS, RST, DC, SCK, MOSI, BL} (8-pin with explicit RST) or
+{CS, DC, SCK, MISO, MOSI, BL} (8-pin where the breakout has an
+on-board RC reset network and exposes MISO instead — common on
+"GMT024-02" / "ZJY154T-002A"-marked adapter boards). Voltage is
+2.8 V on both VCI and IOVCC; the driver board contains the LDO and
+(if needed) a level shifter to interface with the P4's 3.3 V GPIOs.
 
-| Signal | ESP32-P4 GPIO | IO_MUX direct? | Notes |
-|---|---|---|---|
-| SCLK | **GPIO47** | ✅ FSPICLK | Allows full-speed (≤80 MHz) SPI |
-| MOSI | **GPIO45** | ✅ FSPID | Single-line write only (no MISO) |
-| CS   | **GPIO46** | (software) | esp_lcd toggles it per transaction |
-| DC   | **GPIO48** | — | Data/Command select (a.k.a. RS) |
-| RST  | **GPIO49** | — | Hard reset, driven by panel driver |
-| BL   | **GPIO50** | LEDC PWM | 20 kHz, 8-bit duty, brightness control |
+| Signal | ESP32-P4 GPIO | Notes |
+|---|---|---|
+| SCLK | **GPIO47** | SPI clock (GPIO matrix routed) |
+| MOSI | **GPIO33** | Single-line write only (no MISO read-back) |
+| CS   | **GPIO46** | esp_lcd toggles it per transaction |
+| DC   | **GPIO48** | Data/Command select (a.k.a. RS) |
+| RST  | **(none — `-1`)** | If the breakout has no RST pin, leave unwired and esp_lcd_panel_st7789 falls back to SWRESET (cmd 0x01) over SPI. If your board does expose RST, set `PK_LCD_PIN_RST` to a free GPIO (e.g. 49) and wire it up |
+| BL   | **GPIO50** | LEDC PWM @ 20 kHz, 8-bit duty, brightness control |
+| MISO | not connected | We never read back from the panel |
 
-Bus configured at 40 MHz in Phase 4a; can be pushed to 80 MHz if the
-driver board / FPC layout proves clean enough.
+> ⚠️ **Why not IO_MUX direct routing?** ESP32-P4's FSPI IO_MUX pins
+> (GPIO 9–13) and the second SPI controller's natural pins
+> (GPIO 34–45) **aren't exposed on the Waveshare ESP32-P4-WIFI6
+> user-facing headers**. All six SPI/control lines therefore route
+> through the GPIO matrix. At our 40 MHz target the matrix adds
+> ~2 ns of propagation delay, well within ST7789's setup/hold
+> budget. If a future board variant exposes the IO_MUX pins,
+> consider re-routing CLK + MOSI for the option to push to 80 MHz.
+
+Bus configured at 40 MHz in Phase 4a.
 
 ### BNO085 IMU via I²C0 (SparkFun / Adafruit module, 9-axis sensor fusion)
 
@@ -198,15 +210,22 @@ free for future expansion (e.g. additional sensors, GPS NMEA UART,
 status LEDs):
 
 ```
-GPIO0  GPIO1  GPIO2  GPIO3  GPIO4  GPIO5  GPIO6
+GPIO2  GPIO3  GPIO4  GPIO5
 GPIO22 GPIO23
-GPIO28 GPIO29 GPIO30 GPIO31 GPIO32 GPIO33
-GPIO36 GPIO51 GPIO52
+GPIO26 GPIO27 GPIO28 GPIO29 GPIO30 GPIO31 GPIO32
+GPIO49 GPIO51 GPIO52
 ```
 
-(GPIO0 / GPIO6 are strapping pins — use with care.)
+> Listed pins are the ones actually exposed on the Waveshare
+> ESP32-P4-WIFI6 user-facing headers AND not allocated to a
+> peripheral above. ESP32-P4 has 56 GPIOs total but many (notably
+> GPIO 9–19 and 34–45) aren't broken out on this board.
 
-That's ~16 freely-assignable GPIOs after Phase 4, suitable for a
+> `GPIO49` was assigned to LCD RST in Phase 4a but is unwired in
+> the default build (the TK024F3036 driver board exposes no RST
+> pin; we fall back to SWRESET over SPI). Available for reuse.
+
+That's ~15 freely-assignable GPIOs after Phase 4, suitable for a
 NEO-M9N GPS UART, an external SPI flash, status LEDs, or whatever
 Phase 5+ wants to add.
 
