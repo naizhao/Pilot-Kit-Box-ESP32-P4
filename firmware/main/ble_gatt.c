@@ -38,12 +38,19 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include "esp_hosted.h"               /* esp_hosted_connect_to_slave */
+#include "esp_hosted_misc.h"          /* esp_hosted_bt_controller_init/enable */
+
 #include "aircraft_state.h"
 #include "gdl90.h"
 
 static const char *TAG = "ble_gatt";
 
-#define BLE_DEVICE_NAME      "PilotKitBox"
+#define BLE_DEVICE_NAME_PREFIX  "Pilot Kit Box"
+/* "Pilot Kit Box-AABBCC\0" is 21 bytes. Sized to fit any future
+ * tweak of the prefix up to ~26 chars (the adv-packet hard limit). */
+#define BLE_DEVICE_NAME_MAX     32
+static char s_device_name[BLE_DEVICE_NAME_MAX] = BLE_DEVICE_NAME_PREFIX;
 #define BLE_RAW_QUEUE_DEPTH  64
 #define BLE_RAW_LINE_MAX     80
 #define BLE_EMIT_PERIOD_MS   1000
@@ -422,20 +429,31 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 
 static void start_advertising(void)
 {
-    struct ble_hs_adv_fields fields = { 0 };
-    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)BLE_DEVICE_NAME;
-    fields.name_len = strlen(BLE_DEVICE_NAME);
-    fields.name_is_complete = 1;
-    /* Include our 128-bit service UUID so the Pilot Kit mobile app can
-     * filter for "PilotKitBox" without prompting the user. */
-    fields.uuids128 = (ble_uuid128_t *)&s_svc_uuid;
-    fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1;
+    /* BLE adv packet is capped at 31 bytes. flags(3) + complete name
+     * "Pilot Kit Box-AABBCC"(22) + complete 128-bit UUID(18) = 43,
+     * which overflows and ble_gap_adv_set_fields returns
+     * BLE_HS_EINVAL. Standard split: name + flags in adv, UUID in
+     * scan response. */
+    struct ble_hs_adv_fields adv = { 0 };
+    adv.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    adv.name = (uint8_t *)s_device_name;
+    adv.name_len = strlen(s_device_name);
+    adv.name_is_complete = 1;
 
-    int rc = ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&adv);
     if (rc != 0) {
         ESP_LOGE(TAG, "adv_set_fields failed: %d", rc);
+        return;
+    }
+
+    struct ble_hs_adv_fields rsp = { 0 };
+    rsp.uuids128 = (ble_uuid128_t *)&s_svc_uuid;
+    rsp.num_uuids128 = 1;
+    rsp.uuids128_is_complete = 1;
+
+    rc = ble_gap_adv_rsp_set_fields(&rsp);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "adv_rsp_set_fields failed: %d", rc);
         return;
     }
 
@@ -449,7 +467,7 @@ static void start_advertising(void)
         ESP_LOGE(TAG, "adv_start failed: %d", rc);
         return;
     }
-    ESP_LOGI(TAG, "advertising as \"%s\"", BLE_DEVICE_NAME);
+    ESP_LOGI(TAG, "advertising as \"%s\"", s_device_name);
 }
 
 /* --- Sync callback (controller ready) -------------------------------- */
@@ -472,6 +490,17 @@ static void on_sync(void)
         ESP_LOGI(TAG, "BLE address %02x:%02x:%02x:%02x:%02x:%02x type=%d",
                  addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
                  s_own_addr_type);
+        /* Append last 3 MAC bytes as a per-board suffix so multiple
+         * Pilot Kit Boxes in the same hangar can be told apart in a
+         * BLE scanner. addr[] is little-endian per NimBLE convention,
+         * so the human-readable last three bytes are addr[2..0]. */
+        snprintf(s_device_name, sizeof(s_device_name),
+                 BLE_DEVICE_NAME_PREFIX "-%02X%02X%02X",
+                 addr[2], addr[1], addr[0]);
+        int set_rc = ble_svc_gap_device_name_set(s_device_name);
+        if (set_rc != 0) {
+            ESP_LOGW(TAG, "device_name_set (post-addr) failed: %d", set_rc);
+        }
     }
     start_advertising();
 }
@@ -517,9 +546,10 @@ static void emitter_task(void *arg)
     static EXT_RAM_BSS_ATTR aircraft_t snap[AIRCRAFT_TABLE_CAPACITY];
     uint8_t    frame[GDL90_MAX_FRAME];
 
-    while (1) {
-        TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(BLE_EMIT_PERIOD_MS);
+    TickType_t last_wake = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(BLE_EMIT_PERIOD_MS);
 
+    while (1) {
         if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             /* Heartbeat — required by ForeFlight-style EFB apps. */
             if (s_sub_hb) {
@@ -568,7 +598,7 @@ static void emitter_task(void *arg)
             }
         }
 
-        vTaskDelayUntil(&deadline, 0);
+        vTaskDelayUntil(&last_wake, period);
     }
 }
 
@@ -599,7 +629,35 @@ esp_err_t ble_gatt_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = nimble_port_init();
+    /* Bring up the SDIO transport to C6 first. Without this, the BT
+     * controller RPC calls below fail immediately with ESP_FAIL
+     * because esp_hosted's check_transport_up() short-circuits. */
+    int rc_h = esp_hosted_connect_to_slave();
+    if (rc_h != 0) {
+        ESP_LOGE(TAG, "esp_hosted_connect_to_slave: %d", rc_h);
+        return ESP_FAIL;
+    }
+
+    /* The C6's BT controller is gated behind an RPC handshake — the
+     * slave only powers up the controller when the host asks for it.
+     * Without these two calls, nimble_port_init() succeeds (the
+     * VHCI transport is up) but every HCI command times out because
+     * there's nothing on the other side. Mirrors the official
+     * managed_components/.../examples/host_nimble_bleprph_host_only_vhci
+     * sequence: connect_to_slave → bt_controller_init → enable →
+     * nimble_port_init. */
+    esp_err_t err = esp_hosted_bt_controller_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_hosted_bt_controller_init: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_hosted_bt_controller_enable();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_hosted_bt_controller_enable: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nimble_port_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init: %s — ensure C6 ESP-Hosted slave"
                       " firmware is flashed and SDIO pins are correct",
@@ -626,7 +684,9 @@ esp_err_t ble_gatt_init(void)
         return ESP_FAIL;
     }
 
-    rc = ble_svc_gap_device_name_set(BLE_DEVICE_NAME);
+    /* Placeholder name — the MAC-suffixed version lands in on_sync()
+     * once the controller has assigned us an address. */
+    rc = ble_svc_gap_device_name_set(s_device_name);
     if (rc != 0) {
         ESP_LOGE(TAG, "device_name_set: %d", rc);
         return ESP_FAIL;

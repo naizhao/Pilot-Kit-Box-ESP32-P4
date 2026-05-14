@@ -5,6 +5,13 @@
 # --- Target -----------------------------------------------------------------
 CONFIG_IDF_TARGET="esp32p4"
 
+# --- Pilot Kit Box features -------------------------------------------------
+# BLE is on by default — flashing the C6 esp_hosted slave firmware is a
+# one-time per-board setup step (see docs/BUILD.md §3). If you haven't
+# done that step yet (or you're a CI runner without C6 access), set
+# this to n via `idf.py menuconfig` before building.
+CONFIG_PK_BLE_ENABLED=y
+
 # --- ESP32-P4 silicon revision ---------------------------------------------
 # IDF v6.0 defaults to P4 ECO5 (v3.1+). The Waveshare ESP32-P4-WIFI6 boards
 # in our supply chain still ship with the original v1.x silicon (one of
@@ -111,7 +118,18 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=y
+# Waveshare ESP32-P4-WIFI6 (and the related P4-Nano) routes P4-GPIO54
+# through an inverter/level-shifter before it reaches C6's EN pin, so
+# from the P4's point of view the reset signal is ACTIVE-HIGH: driving
+# GPIO54 HIGH asserts reset, driving it LOW releases. This is the
+# opposite of the C6 silicon polarity and the opposite of what the
+# ESP32-P4-Function-EV-Board uses. The clue came from ESPHome user
+# `sobiso` (github.com/esphome/esphome#10393 — same C6 pins as us)
+# whose working YAML uses `active_high: true`, which their adapter
+# translates exactly to CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y.
+# With our previous ACTIVE_LOW setting we were holding C6 in reset
+# right after the P4 boot reset pulse, hence the 0x107 CMD5 failures.
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 
 # Shrink ESP-Hosted's per-bus packet pools. Defaults are 20×1536 B per

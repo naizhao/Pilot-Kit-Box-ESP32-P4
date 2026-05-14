@@ -1,101 +1,231 @@
 # Flashing the ESP-Hosted slave firmware onto the C6 module
 
-> 📌 **What this is for**: Pilot Kit Box's main firmware (running on
-> the ESP32-P4) needs to talk to the on-board ESP32-C6 over SDIO to get
-> Bluetooth (and, in a future phase, Wi-Fi). The C6 ships from
-> Waveshare with **factory AT-command firmware** that doesn't speak
-> the protocol our P4 firmware expects, so the C6 needs to be
-> reflashed **once** with Espressif's "ESP-Hosted slave" image. After
-> that the P4 side can flash + run independently like any other ESP-IDF
-> project. Read the parent guide first: [`docs/BUILD.md`](../BUILD.md).
+> 📌 **What this is**: a **one-time setup** every freshly-unboxed
+> Waveshare ESP32-P4-WIFI6 board needs to go through if you want
+> Bluetooth (and, in a future phase, Wi-Fi) to work. The P4 firmware
+> we ship talks to the on-board C6 over SDIO using Espressif's
+> "ESP-Hosted" protocol; out of the factory the C6 runs a different
+> firmware (AT commands) and doesn't understand us.
 >
-> ⏱️ **Time required**: ~30 minutes (clone + build + wire + flash).
+> Once you've flashed the C6 with the matching slave firmware, the
+> setup is **persistent** — power cycles, P4 re-flashes, brick attacks
+> on the P4 side, none of that affects the C6's slave image. You only
+> repeat this dance:
+>   - per brand-new board (one-time per board), or
+>   - when Espressif publishes a new major ESP-Hosted release whose
+>     wire protocol drifted (rare; the component manager pin both
+>     sides to the same version).
 >
-> 🛠️ **Skip this entirely?** Yes — the P4 firmware is designed to
-> gracefully degrade. Without the C6 slave firmware:
-> - ✅ RTL-SDR ADS-B reception works
-> - ✅ LittleFS recording (`/storage/pilot_kit_ts_*.txt`) works
-> - ✅ UART console output works
-> - ✅ LCD + PFD rendering works (when the screen is attached)
-> - ✅ BNO085 IMU works (when attached)
-> - ❌ Bluetooth (advertising as `PilotKitBox`) — won't come up
-> - ❌ Wi-Fi (not implemented yet, but planned)
+> ⏱️ **Time required**: ~30 minutes including clone + build + wiring +
+> flashing.
 >
-> If you don't need BLE right now, skip this whole document.
+> 🛠️ **What if I don't want to do this right now?** Fine — the P4
+> firmware has a build-time toggle to skip BLE entirely:
+>
+> ```bash
+> cd firmware
+> idf.py menuconfig
+> # → Pilot Kit Box → uncheck [*] Initialise BLE GATT server at boot
+> idf.py build && idf.py -p /dev/cu.usbmodem* flash monitor
+> ```
+>
+> Everything else (RTL-SDR / LittleFS / UART / LCD / IMU) keeps working;
+> only the BLE GATT advertise / GDL90 notify path is disabled. Come
+> back here whenever you're ready to enable BLE.
+>
+> Parent guide: [`docs/BUILD.md`](../BUILD.md). This document is what
+> the parent's Section 3 links to.
 
 ## 1. What you need
 
-- USB-to-serial adapter (any 3V3 TTL UART will do — the P4's CH343P
-  Type-C bridge already works if you don't have a spare one).
-- 4 jumper wires.
-- A checkout of [`espressif/esp-hosted`](https://github.com/espressif/esp-hosted),
-  matching the major version vendored under our
-  `firmware/managed_components/espressif__esp_hosted/` (currently the
-  same `*` version that the IDF Component Manager resolved).
-- ESP-IDF v5.4 or newer, exported into the shell (same install you
-  use for the host firmware works fine).
+- USB-to-serial adapter (any 3V3 TTL UART will do — CP2102 / CH340 /
+  FT232 / etc. Note the P4's CH343P Type-C bridge **does not** work
+  for flashing C6 — it's wired to the P4, not the C6).
+- 3 jumper wires (female-to-female works fine).
+- 1 short / paperclip / extra wire to bridge IO9 to a board GND while
+  flashing (board-local short, not connected to the USB-UART).
+- ESP-IDF v6.0 or newer, exported into the shell (same install you
+  use for the host firmware works fine). Slave sources live at
+  `firmware/managed_components/espressif__esp_hosted/slave/`; just
+  copy that directory anywhere outside the P4 project and build it
+  as a standalone ESP-IDF project against `esp32c6`.
 
 ## 2. Wire the C6 debug header (H4)
 
 The C6's UART0 + bootloader strap (IO9) are broken out to a 4-pin
 header on the back of the Waveshare board labelled `IO9 / GND / RXD /
-TXD` (item 10 in the silkscreen, schematic header `H4`):
+TXD` (item 10 in the silkscreen, schematic header `H4`). You wire
+**3 of the 4 pins to the USB-UART**, plus a **board-local short on
+IO9 to GND**:
 
-| H4 pin | Function | Connect to USB-serial adapter |
+| H4 pin | Function | Wired to |
 |---|---|---|
-| 1 | C6 IO9 (bootloader strap) | **Hold this LOW during reset → release after esptool starts** |
-| 2 | GND | GND |
-| 3 | C6 U0RXD (input to C6) | TX of the adapter |
-| 4 | C6 U0TXD (output from C6) | RX of the adapter |
+| 1 | C6 IO9 (bootloader strap) | **Board-local short to any P4 GND** with a paperclip — keeps C6 in download mode during flash, remove after flashing |
+| 2 | GND | GND of the USB-UART |
+| 3 | C6 U0RXD (input to C6) | TX of the USB-UART |
+| 4 | C6 U0TXD (output from C6) | RX of the USB-UART |
 
-> The C6's RESET line is tied to the P4's GPIO54 (active-low). Either
-> press the board's RST button to reset both chips, or run `idf.py`'s
-> `--before default-reset` which toggles the equivalent serial line.
+> Don't wire IO9 to the USB-UART's DTR — the H4 header doesn't carry
+> the chip RESET line, so there's no way for esptool to toggle reset
+> automatically. Use `--before no-reset` and power-cycle the board
+> manually with the BOOT button held (see §4 step-by-step below).
+>
+> The C6's RESET pin is tied to P4's GPIO54. On the Waveshare board
+> there's an inverter / level shifter between P4-GPIO54 and C6-EN,
+> so from P4 software the reset signal is ACTIVE-HIGH (we drive
+> GPIO54 HIGH to assert reset, LOW to release). Pressing the board's
+> RST button on the front resets the P4, not the C6, so a full power
+> cycle is the only reliable way to reboot C6 cold.
 
 ## 3. Build the slave image
 
+> 💡 **Quickest path — skip this section** and use esphome's
+> prebuilt binary (see the Alternative box in Section 4). Only build
+> the slave yourself if you want to tweak its config or vendor a
+> different ESP-Hosted version.
+
+The slave sources are already vendored under
+`firmware/managed_components/espressif__esp_hosted/slave/`. Copy
+that directory anywhere outside the P4 project (the slave's
+`partitions.esp32c6.csv` collides with the P4 project's partition
+table at build time):
+
 ```bash
-cd ~
-git clone --recursive https://github.com/espressif/esp-hosted.git
-cd esp-hosted/slave_drv  # or `slave/` depending on version
-. ~/.espressif/v6.0.1/esp-idf/export.sh   # the host install works
+cp -R firmware/managed_components/espressif__esp_hosted/slave \
+      ~/hosts/c6_slave
+cd ~/hosts/c6_slave
+. ~/.espressif/tools/activate_idf_v6.0.1.sh
+export PATH="$IDF_PATH/tools:$PATH"   # eim's activate doesn't add this
 idf.py set-target esp32c6
-idf.py menuconfig
 ```
 
-In menuconfig set:
-
-```
-Component config → ESP-Hosted config →
-    Host Interface Choice → SDIO Slave
-    Bluetooth Support → NimBLE (matches our host)
-    SDIO Slave Pin Configuration →
-        CLK = 18, CMD = 19, D0 = 14, D1 = 15, D2 = 16, D3 = 17
-        (must match the host pins — see docs/hardware/board_pinout.md)
-```
-
-Then:
+The slave's `sdkconfig.defaults.esp32c6` already turns on
+`CONFIG_ESP_SDIO_HOST_INTERFACE=y` + `CONFIG_BT_LE_HCI_INTERFACE_USE_RAM=y`
+which is what we need; no menuconfig pass is strictly required.
 
 ```bash
 idf.py build
+# Output: build/network_adapter.bin (~1.2 MB)
 ```
+
+The SDIO slave pins on ESP32-C6 are **hardware-fixed** (HS_SLAVE
+peripheral, not GPIO-matrix routable):
+
+| C6 GPIO | Function | Wired on Waveshare board to P4 GPIO |
+|---|---|---|
+| 18 | SDIO_CMD | P4 GPIO 19 |
+| 19 | SDIO_CLK | P4 GPIO 18 |
+| 20 | SDIO_D0  | P4 GPIO 14 |
+| 21 | SDIO_D1  | P4 GPIO 15 |
+| 22 | SDIO_D2  | P4 GPIO 16 |
+| 23 | SDIO_D3  | P4 GPIO 17 |
+
+You can't (and don't need to) change these on the C6 side. The P4
+host pins are configured separately in our `sdkconfig.defaults`.
 
 ## 4. Flash the C6
 
-While holding C6_IO9 (H4 pin 1) **low** with a jumper to GND:
+**Power-on sequence matters here**. H4 has no RESET line, so esptool
+can't auto-toggle reset; you have to manually arrange for both chips
+to power up with the right strap pin held low:
 
-```bash
-idf.py -p /dev/cu.usbserial-XXXX --baud 460800 flash
-```
+- **C6**: IO9 strap held LOW at power-on → C6 ROM enters download
+  mode and waits for esptool.
+- **P4**: BOOT button held while powering up → P4 ROM enters
+  download mode and **doesn't run our firmware**. This matters
+  because our P4 firmware drives GPIO54 (which is wired to C6's EN
+  through an inverter on this board) — if P4 runs while we're
+  flashing C6, it'll reset C6 mid-write and corrupt the image.
 
-The slave's `idf.py flash` will trigger the C6's bootloader via the
-host-side `--before default-reset` sequence. Watch the output — you
-should see `Hash of data verified.` and `Hard resetting via RTS pin...`
+Step-by-step:
 
-Release the IO9 jumper, press the **RST** button on the front of the
-P4 board to reboot both chips, and disconnect the H4 wiring.
+1. **Unplug P4 Type-C** (board completely powered off, no LEDs on).
+2. **Wire the 3 dupont lines** per §2 (UART GND/TX/RX → H4-2/3/4).
+3. **Bridge H4-1 (IO9) to any P4 GND pin** with a paperclip or a
+   short wire — board-local short, do **not** route this through the
+   UART adapter.
+4. **Plug the USB-UART adapter into the computer first** (not the
+   board's Type-C yet). Verify `ls /dev/cu.usbserial-*` (macOS) or
+   `ls /dev/ttyUSB*` (Linux) shows the adapter — only the adapter is
+   powered at this point, the P4/C6 are still dark.
+5. **Press and hold the BOOT button** on the front of the P4 board.
+6. **Plug the P4 Type-C into the computer** while still holding BOOT.
+   In this single instant:
+   - P4 sees BOOT low → halts in download mode → GPIO54 stays high-Z
+     and never touches C6.
+   - C6 sees IO9 low (your paperclip) → halts in ROM download mode →
+     ready for esptool over UART.
+7. **Release BOOT** (the strap is latched, releasing is harmless).
+8. **Run the esptool flash command** with `--before no-reset` (since
+   esptool can't toggle a reset line that isn't there):
+
+   ```bash
+   # If you built the slave yourself (path B):
+   esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
+       --before no-reset --after hard-reset write-flash \
+       --flash-mode dio --flash-freq 80m --flash-size 4MB \
+       0x0      build/bootloader/bootloader.bin \
+       0x8000   build/partition_table/partition-table.bin \
+       0xd000   build/ota_data_initial.bin \
+       0x10000  build/network_adapter.bin
+
+   # If you downloaded esphome's prebuilt (path A) — only the app:
+   esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
+       --before no-reset --after hard-reset write-flash \
+       --flash-mode dio --flash-freq 80m --flash-size 4MB \
+       0x10000 /tmp/network_adapter_esp32c6.bin
+   ```
+
+   Watch for `Hash of data verified.` That's success.
+
+9. **Unplug P4 Type-C** (kill all power again).
+10. **Remove the IO9 ↔ GND short**. (If you leave it, next power-on
+    C6 enters download mode again and won't run the firmware you
+    just wrote.)
+11. **Plug P4 Type-C back in** — normal cold boot. C6 sees IO9 high
+    this time, runs the hosted slave; P4 runs our firmware; on the
+    P4 console you should see:
+
+    ```
+    I (xxxx) transport: Identified slave [esp32c6]
+    I (xxxx) ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
+    ```
+
+The UART dupont wires can stay connected — they don't interfere
+with normal operation. Or pull them off; doesn't matter for BLE.
+
+> 💡 **Alternative — esphome's prebuilt binary** (path A above):
+> esphome publishes a matching network_adapter.bin at
+> <https://esphome.github.io/esp-hosted-firmware/manifest/esp32c6.json>.
+> Grab the v2.12.7 URL, drop it to `/tmp/`, and flash only `0x10000`
+> (keep your own bootloader + partition table). Verified bit-for-bit
+> functionally equivalent to our own build for ESP-Hosted purposes.
 
 ## 5. Verify from the P4 side
+
+> ✅ **Bring-up status**: fully working as of 2026-05-14 with
+> `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y` + the
+> `connect_to_slave` → `bt_controller_init` → `bt_controller_enable`
+> → `nimble_port_init` sequence in `ble_gatt_init()`. Background
+> writeup in [`c6_bringup_status.md`](c6_bringup_status.md).
+
+### How to confirm C6 itself is healthy (independent of P4 host)
+
+Wire just CP2102 GND + RX (no TX needed) to H4-2 and H4-4, then
+power-cycle the board. C6's UART0 prints its full ESP-Hosted slave
+boot log at 115200 baud — look for:
+
+```
+I (449) co-pro-main: ESP-Hosted-MCU Slave FW version :: 2.12.7
+I (455) co-pro-main: Transport used :: SDIO only
+I (471) SDIO_SLAVE: Using SDIO interface
+I (488) co-pro-main: host reset handler task started
+I (491) main_task: Returned from app_main()
+```
+
+If you see those lines, C6 is good and the problem is on the P4 host.
+
+### Once the SDIO bring-up is fixed (`PK_BLE_ENABLED=y`)
 
 Flash the Pilot Kit Box firmware as usual:
 
@@ -109,24 +239,19 @@ Expected console additions vs. Phase 2:
 ```
 I (xxx) ble_gatt: NimBLE host task running
 I (xxx) ble_gatt: BLE address aa:bb:cc:dd:ee:ff type=1
-I (xxx) ble_gatt: advertising as "PilotKitBox"
+I (xxx) ble_gatt: advertising as "Pilot Kit Box-AABBCC"
 ```
 
-If you instead see something like `nimble_port_init: ESP_ERR_TIMEOUT`
-or a `HCI: command timed out`, the C6 isn't responding over SDIO.
-Double-check:
-
-1. The SDIO pin assignments on both sides match what's in this doc.
-2. The C6 was actually flashed (re-flash and watch the upload progress
-   in `slave_drv`'s `idf.py monitor`).
-3. The RESET line works — bridge `GPIO54` low briefly, then high; the
-   C6 should reboot and re-establish the SDIO link.
+where `AABBCC` is the upper-case hex of the last 3 bytes of the
+shown BLE address (e.g. `8c:fd:49:0b:5a:8a` → name ends `-0B5A8A`).
+Stable across reboots, unique per board.
 
 ## 6. Verify from a phone
 
 Use any BLE scanner (nRF Connect on Android / iOS, LightBlue, etc.):
 
-1. Filter by name `PilotKitBox`.
+1. Filter by name prefix `Pilot Kit Box-` (not the full name — each
+   board has a different suffix).
 2. Connect.
 3. Expand the `1090AD5B-0000-1000-8000-1090AD5B0000` service.
 4. Subscribe to the three notify characteristics:

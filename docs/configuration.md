@@ -118,18 +118,20 @@ RTL2832U 范围 225 kSPS – 3.2 MSPS。ADS-B 必须 ≥ 2 MSPS（每比特 1 µ
 
 ## 4. 蓝牙 / BLE / ESP-Hosted
 
-> ⚠️ **默认 `CONFIG_PK_BLE_ENABLED=n`，BLE 启动时不初始化**。本仓库特别加了这个开关，因为 esp_hosted v2.x 的 vhci_drv.c 在 C6 不响应时直接 `ESP_ERROR_CHECK()` abort 整个固件——没有优雅降级。
+> ✅ **默认 `CONFIG_PK_BLE_ENABLED=y`，BLE 启动时初始化**。Bring-up 已经全链路打通（详细诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)），出厂状态固件会自动跑 `ble_gatt_init()`，板子上电就 advertising。
 >
 > **使用 BLE 的前提**：
-> 1. 给 C6 烧 esp_hosted slave 固件 — 见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)
-> 2. `idf.py menuconfig` → Pilot Kit Box → [*] Initialise BLE GATT server at boot
-> 3. 重新 build + flash
+> 1. 给 C6 烧 esp_hosted slave 固件（一次性，每块板做一次）— 见 [`docs/BUILD.md` §3](BUILD.md#3-新板首次设置烧-esp32-c6-hosted-slave-固件一次性) 或 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)
+> 2. 编译 + 烧 P4 主固件
+> 3. 上电
 >
-> 完全不要 BLE？把 `CONFIG_BT_ENABLED` 也改成 `n` 可以再省 ~500 KiB flash。
+> **暂时不要 BLE？**（比如还没买 USB-UART 转接器、CI 跑、纯 ADS-B 数据路径开发）`idf.py menuconfig → Pilot Kit Box → [ ] Initialise BLE GATT server at boot`，或者直接改 `sdkconfig` 把 `CONFIG_PK_BLE_ENABLED` 设成 `n`。不关 BLE 又跳过 C6 烧录的话 P4 启动时会 `abort()`——vhci_drv.c 在 C6 不响应时硬 `ESP_ERROR_CHECK()`，没有 graceful degrade。
+>
+> **完全不要 BLE**？把 `CONFIG_BT_ENABLED` 也改成 `n` 可以再省 ~500 KiB flash。
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
-| `CONFIG_PK_BLE_ENABLED` | `n` | **我们自己加的 Kconfig**。`y` 时 app_main 会调 `ble_gatt_init()`；`n` 时跳过整个 NimBLE/hosted vhci 初始化链路，固件可以在 C6 没固件的板子上稳定运行 |
+| `CONFIG_PK_BLE_ENABLED` | `y` | **我们自己加的 Kconfig**。`y` 时 app_main 调 `ble_gatt_init()`（要求 C6 已经刷过 hosted slave 固件，见 BUILD.md §3）；`n` 时整条 NimBLE/hosted vhci 初始化跳过，固件在没烧 C6 的板子上也能稳定运行——但 BLE 功能不可用 |
 | `CONFIG_BT_ENABLED` | `y` | 启用 BT 子系统（编进 NimBLE host）。即使 `PK_BLE_ENABLED=n` 也保持 `y`，因为关掉它会让 ble_gatt.c 编不过 |
 | `CONFIG_BT_CONTROLLER_DISABLED` | `y` | P4 自身无原生 BT 控制器，要走 C6。**这个必须是 `y`** |
 | `CONFIG_BT_NIMBLE_ENABLED` | `y` | 用 NimBLE host（不是 Bluedroid） |
@@ -153,9 +155,16 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=y
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 ```
+
+> ⚠️ **`RESET_ACTIVE_HIGH=y` 是 Waveshare 板的关键设置，不要随手改成 `ACTIVE_LOW`**。
+> Waveshare ESP32-P4-WIFI6 PCB 上 P4-GPIO54 跟 C6-EN 之间有反相器/电平转换器，
+> 从 P4 软件看 reset 是高有效（拉高时 C6 在 reset，拉低时 C6 在跑）。这点跟 C6 silicon
+> 自身的低有效 EN 相反，也跟 Espressif 官方 ESP32-P4-Function-EV-Board 用的极性相反。
+> 改错了 SDIO CMD5 会一直返回 `0x107 INVALID_RESPONSE`，C6 看起来 boot 了但其实
+> 一直被 hold 在 reset 里。完整诊断见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
 
 **改板子要换引脚**：menuconfig 里 Component config → ESP-Hosted config → SDIO Pin Configuration。
 
@@ -174,12 +183,14 @@ CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 
 ### BLE 设备名
 
-写死在 `firmware/main/ble_gatt.c`：
+实际广播的名字在 `firmware/main/ble_gatt.c` 的 `on_sync()` 里运行时拼出来：
+
 ```c
-#define BLE_DEVICE_NAME      "PilotKitBox"
+#define BLE_DEVICE_NAME_PREFIX  "Pilot Kit Box"
+/* 运行时拼成 "Pilot Kit Box-AABBCC"，AABBCC = C6 BLE MAC 后 3 字节大写 hex */
 ```
 
-如果你要做多块板，可以改成包含芯片 MAC 后 6 位的形式（方便识别）。
+MAC 后缀来自 C6 模组的 efuse —— 同板跨重启稳定、跨板唯一。一个机库里多块板同时开机也能在 BLE scanner 里区分开。改名只需要改 prefix 一个宏，但要注意改完之后 adv packet 不能超 31 字节（flags 3 + name 总长 + 2 字节 header），prefix 自身建议 ≤ 22 字符。
 
 ### BLE GATT UUID
 

@@ -138,21 +138,25 @@ void app_main(void)
         }
     }
 
-    /* Phase 3b: BLE init. The hosted vhci driver uses ESP_ERROR_CHECK()
-     * internally — when the C6 isn't responding (because it hasn't been
-     * flashed with esp_hosted slave firmware yet) the entire firmware
-     * aborts. Gate the call behind CONFIG_PK_BLE_ENABLED so a fresh
-     * board boots cleanly. Enable in menuconfig once C6 is ready. */
+    /* Phase 3b: BLE init. Requires the on-board ESP32-C6 to have been
+     * pre-flashed with the matching esp_hosted slave firmware (one-time
+     * board setup, see docs/BUILD.md §3). The hosted vhci_drv.c uses
+     * ESP_ERROR_CHECK() internally so if C6 doesn't respond, the whole
+     * P4 firmware aborts — there's no graceful path. Default is on
+     * (CONFIG_PK_BLE_ENABLED=y); turn off via menuconfig if you haven't
+     * flashed C6 yet or are running CI without it. */
 #if CONFIG_PK_BLE_ENABLED
     esp_err_t ble_err = ble_gatt_init();
     if (ble_err != ESP_OK) {
         ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
                  esp_err_to_name(ble_err));
     } else {
-        ESP_LOGI(TAG, "BLE GATT service \"PilotKitBox\" advertising");
+        ESP_LOGI(TAG, "BLE GATT service up — advertised name landed in"
+                      " on_sync (see 'ble_gatt: advertising as ...')");
     }
 #else
     ESP_LOGI(TAG, "BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — "
-                  "UART + file sinks only");
+                  "UART + file sinks only. Flash C6 esp_hosted slave + "
+                  "re-enable in menuconfig once you're ready.");
 #endif
 }

@@ -35,7 +35,7 @@
 ### 软件 / Software prerequisites
 
 - **Git** 2.20+
-- **Python 3.10+**（macOS 用 Homebrew `brew install python` 或 IDF Manager 自带）
+- **Python 3.10+**（使用 [ServBay](https://servbay.com) 安装或 IDF Manager 自带）
 - **CMake 3.16+**（IDF Manager 自带）
 - **Ninja**（IDF Manager 自带）
 
@@ -103,7 +103,8 @@ ESP-IDF v6.0.1
 cd ~/repos
 
 # clone 主仓库 + 拉子模块（重要：esp32-rtl-sdr 是 submodule！）
-git clone --recursive https://github.com/airclub/Pilot-Kit-Box-ESP32-P4.git
+git clone --recursive https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4.git
+cd Pilot-Kit-Box-ESP32-P4
 ```
 
 如果你已经 clone 过但忘了 `--recursive`，补一句：
@@ -144,7 +145,123 @@ Pilot-Kit-Box-ESP32-P4/
 
 ---
 
-## 3. 配置（多数情况下用默认即可）
+## 3. 新板首次设置：烧 ESP32-C6 hosted slave 固件（**一次性**）
+
+> ✅ **BLE 已经全链路跑通**（`CONFIG_PK_BLE_ENABLED=y` 是默认值）。每块全新的 Waveshare ESP32-P4-WIFI6 板第一次用都要做这一步——出厂的 C6 上面跑的是工厂 AT 命令固件，跟我们 P4 上的 ESP-Hosted / NimBLE host 协议对不上。**这一步耗时 ~30 分钟、每块板只做一次**，做完之后 C6 的 hosted slave 固件**永久驻留**（除非你重新烧 AT 固件覆盖），所有后续 P4 固件迭代都不再碰 C6。bring-up 过程的完整诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+>
+> **能不能跳过？** 可以，但 BLE 就不能用。如果你**确定不要 BLE**（比如只做 ADS-B 数据路径开发、没买 USB-UART 转接器、跑 CI），跳到 Section 4 之前先做：
+>
+> ```bash
+> cd firmware
+> idf.py menuconfig
+> # → Pilot Kit Box → 取消 [*] Initialise BLE GATT server at boot
+> ```
+>
+> 然后再做 Section 4 编译。**不关 BLE 又跳过这一节**的话 P4 固件第一次启动就会 `abort()`（vhci_drv 找不到 C6 时强制 abort，没有 graceful degrade）。
+
+### 所需器材
+
+| 必备 | 描述 |
+|------|------|
+| **USB-UART 转接器** | CP2102 / FTDI FT232 / CH340 / CH343 都行，输出 3V3 TTL |
+| **3 根杜邦线（母对公）** | 转接器 ↔ H4 上的 GND / RXD / TXD |
+| **1 段回形针 / 短线** | 板内短接 IO9 到任意 GND（让 C6 进 download mode）|
+
+### 接线（板子背面的 4-pin H4 header）
+
+| H4 pin | 板上标注 | 接到 |
+|--------|---------|------|
+| 1 | C6_IO9 | **板内** 短接到任意 P4 GND 针脚（C6 download mode strap，烧完再拔） |
+| 2 | GND | 转接器的 GND |
+| 3 | C6_RXD | 转接器的 TX |
+| 4 | C6_TXD | 转接器的 RX |
+
+H4-1 (IO9) **不接** 转接器 —— 它只需要在烧录期间被板内短到 GND
+就行，跟 USB-UART 之间没有信号关系。
+
+### 准备 C6 slave 固件二进制
+
+两条路，选一条：
+
+**(A) 最快路径 ——用 esphome 预编译好的二进制**（推荐，省 ~10 分钟，跟我们自己编译的功能完全等价）：
+
+```bash
+curl -L -o /tmp/network_adapter_esp32c6.bin \
+    https://esphome.github.io/esp-hosted-firmware/v2.12.7/network_adapter_esp32c6.bin
+# sha256: ee7c546eb726ba92aa583448969c05f378a0deae5b3556699122761b7a595f51
+```
+
+**(B) 自己编译 slave**（如果你想改 slave config）：
+
+```bash
+# 复制本仓库 vendored 的 slave 工程到外面（slave 的 partitions.esp32c6.csv
+# 会跟 P4 工程的 partitions.csv 冲突，必须在仓库外构建）
+cp -R firmware/managed_components/espressif__esp_hosted/slave ~/hosts/c6_slave
+cd ~/hosts/c6_slave
+
+source ~/.espressif/tools/activate_idf_v6.0.1.sh
+export PATH="$IDF_PATH/tools:$PATH"   # eim 的 activate 不会加这条
+idf.py set-target esp32c6
+# sdkconfig.defaults.esp32c6 已经包含正确的 SDIO + BLE controller 配置，
+# 默认开 CONFIG_ESP_SDIO_HOST_INTERFACE=y + CONFIG_BT_LE_HCI_INTERFACE_USE_RAM=y，
+# 不需要再 menuconfig。
+idf.py build
+# 产物：build/network_adapter.bin (~1.2 MB)
+```
+
+### 烧录步骤（**顺序很重要**）
+
+**关键点**：H4 头只有 UART 信号线，没有引出 C6 的 RESET。要进 download mode 只能"启动时 IO9 拉低"——这要求 C6 在 IO9 已经短接到 GND 的状态下**冷启动**。同时还得防止 P4 在烧 C6 期间通过 GPIO54 把 C6 复位掉，所以也要让 P4 进 download mode 站着不动。
+
+按这个顺序：
+
+1. **断开所有电源**：拔掉 P4 Type-C，板子完全不通电。
+
+2. **接 3 根杜邦线**（按 [§3 接线表](#接线板子背面的-4-pin-h4-header)）：UART 转接器 GND→H4-2、TX→H4-3、RX→H4-4。
+
+3. **板内短接 IO9 → GND**：回形针 / 短跳线，H4-1 短到板上任意 P4 GND 针脚。**别接 UART 转接器的 GND**——板内短接就够了，多接一根反而会引入接地回路。
+
+4. **先把 UART 转接器插上电脑**。此时只有转接器通电（电脑 USB → 转接器），P4 板还没电。`ls /dev/cu.usbserial-*` 应该看到设备出现（macOS 上类似 `/dev/cu.usbserial-0001`，CP2102/CH340 各家命名不同）。
+
+5. **按住板子正面的 BOOT 按钮不放**。
+
+6. **保持按住 BOOT** 的同时，把 P4 Type-C 插上电脑给板子上电。这一瞬间发生的事：
+   - P4 看到 BOOT 是低电平 → 进 download mode、不会跑我们的固件，于是 GPIO54 浮空（不会去乱 reset C6）
+   - C6 看到 IO9 是低电平（你的短接）→ 进 download mode、停在 ROM bootloader 等命令
+
+7. **松开 BOOT 按钮**（已经上电完成、strap 已锁存，松开没影响）。
+
+8. **跑 esptool 烧录命令**。H4 没有 RESET 信号能给 esptool 自动复位，所以用 `--before no-reset`：
+
+   ```bash
+   esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
+       --before no-reset --after hard-reset write-flash \
+       --flash-mode dio --flash-freq 80m --flash-size 4MB \
+       0x10000 /tmp/network_adapter_esp32c6.bin
+   ```
+
+   （路径 A 只烧 app 一个 bin；路径 B 还要加上 bootloader + partition table，详见
+   [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) §4。）
+
+   看到 `Hash of data verified.` 即烧录成功。
+
+9. **断电收线**：
+   - 拔掉 P4 Type-C（断开整板电源）
+   - 拔掉 IO9 ↔ GND 短接（不拔的话下次上电 C6 又会进 download mode）
+   - 杜邦线可以留着也可以拆，下次烧 C6 还能用
+
+10. **重新插上 P4 Type-C**。C6 这次 IO9 是高电平了，正常引导执行 hosted slave 固件；P4 也正常引导执行我们的固件。验证日志里能看到：
+
+    ```
+    I (xxxx) transport: Identified slave [esp32c6]
+    I (xxxx) ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
+    ```
+
+详细分步说明 + 故障排查见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)。
+
+---
+
+## 4. 配置（多数情况下用默认即可）
 
 ### 设置目标芯片
 
@@ -187,7 +304,7 @@ idf.py menuconfig
 
 ---
 
-## 4. 编译
+## 5. 编译
 
 ```bash
 cd firmware
@@ -222,7 +339,7 @@ pilot_kit_box.bin binary size 0xf0xxx bytes. Smallest app partition is 0x400000 
 
 ---
 
-## 5. 连接板子 + 找到串口
+## 6. 连接板子 + 找到串口
 
 ### 接线
 
@@ -269,7 +386,7 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 6. 烧录 + 串口监视
+## 7. 烧录 P4 + 串口监视
 
 ### 一键搞定
 
@@ -329,9 +446,9 @@ idf.py -p <PORT> erase-flash
 
 ---
 
-## 7. 看到什么算成功
+## 8. 看到什么算成功
 
-烧完后，串口应该有类似这样的开机日志（**没接任何外设的空板** + 默认 BLE 关闭情况）：
+烧完后，串口应该有类似这样的开机日志（**没接任何外设的空板** + 已完成 Section 3 的 C6 烧录情况）：
 
 ```
 I (1559) pilot_kit:   Pilot Kit Box (ESP32-P4) — Phase 1 boot
@@ -354,8 +471,13 @@ E (4401) imu:         enable_rotation_vector: ESP_ERR_INVALID_RESPONSE         �
 W (4402) pilot_kit:   IMU init failed (ESP_ERR_INVALID_RESPONSE) — PFD will run without attitude
 I (4405) pfd:         pfd_task running (Phase 4c v2: ladder + arc + tape + text)
 I (4417) pilot_kit:   PFD render task running
-I (4418) pilot_kit:   BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — UART + file sinks only
-I (4424) main_task:   Returned from app_main()
+I (4490) transport:   Identified slave [esp32c6]
+I (4510) vhci_drv:    Host BT Support: Enabled | BT Transport Type: VHCI
+I (4520) ble_gatt:    NimBLE host task running
+I (4530) ble_gatt:    GDL90 emitter task running
+I (4540) ble_gatt:    BLE address 8c:fd:49:0b:5a:8a type=0
+I (4550) ble_gatt:    advertising as "Pilot Kit Box-0B5A8A"
+I (4560) main_task:   Returned from app_main()
 I (4544) dsp:         stream 0.00 MB/s | msgs/s 0 (...) | aircraft 0           ← 1Hz dashboard 心跳
 I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    ← 1Hz FPS 心跳
 ... (PFD + DSP 心跳每秒一行持续输出)
@@ -374,7 +496,9 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 | `PFD 30+ FPS` 周期出现 | 显示渲染管线 OK |
 | `dsp: stream 0.00 MB/s` 1Hz 重复 | DSP task 运行中 |
 | `IMU init failed` | 预期（没接 BNO085） |
-| `BLE disabled at build time` | 预期（默认关闭 BLE，等 C6 刷完 slave 固件再开） |
+| `advertising as "Pilot Kit Box-XXXXXX"` | BLE 起来了，手机能扫到（XXXXXX = 本机 C6 MAC 后 3 字节） |
+
+> 💡 **跳过 Section 3 的情况**（没烧 C6 hosted slave）：`PK_BLE_ENABLED` 改成 `n` 之后，上面 `advertising as ...` 那行会换成 `BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — UART + file sinks only`。其他都一样。
 
 ### 接外设的预期
 
@@ -383,66 +507,7 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 | 通过 4-pin USB 转接器接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
 | 接 ST7789 SPI 屏到正确引脚 | 屏幕亮起 R→G→B 渐变 (~1 秒) → 显示 PFD 仪表 (蓝色天 + 棕色地 + 黄十字 + 黑色数字面板) |
 | 接 BNO085 模块到 I²C0 + INT/RST | 串口出现 `imu: rpy = +1.23 / -0.45 / 187.66 (acc=3 valid=98)` 周期更新，晃动板子时 PFD 的 horizon 跟着翻 |
-| C6 刷完 hosted slave 固件（见第 8 节） | 串口 `ble_gatt: advertising as "PilotKitBox"`，手机用 BLE 扫描器能看到 |
-
----
-
-## 8. （可选）启用 BLE — 烧 C6 esp_hosted slave 固件
-
-> 这一步只有在你**实际要用蓝牙**的时候才需要做。不做也不影响 RTL-SDR / LCD / 串口 / 存储 这些功能。
->
-> **重要**：默认 BLE 是关闭的（`CONFIG_PK_BLE_ENABLED=n`）。如果不关，C6 没刷 hosted slave 时，`nimble_port_init()` 在 vendor 代码深处的 `ESP_ERROR_CHECK(transport_drv_reconfigure())` 会直接 `abort()` 整个固件——这是 esp_hosted v2.x vhci_drv.c 写死的行为，没有优雅降级。
->
-> **烧完 C6 之后**：
-> ```bash
-> cd firmware
-> idf.py menuconfig
-> # → Pilot Kit Box → [*] Initialise BLE GATT server at boot
-> idf.py build
-> idf.py -p <PORT> flash
-> ```
-
-详细步骤见 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)。简单流程：
-
-1. 准备一个外接 USB-UART 转接器（CP2102 / FTDI / CH340 任一）+ 4 根杜邦线
-2. 接到板子背面的 **H4** 4-pin 头：
-
-   | H4 pin | 接 USB-UART | 备注 |
-   |--------|------------|------|
-   | 1 (C6_IO9) | 短接到 GND（用一根线短一下，烧录前持续短接） | C6 进 download 模式的 strap |
-   | 2 (GND) | GND | |
-   | 3 (C6_RXD) | TX | 转接器的 TX |
-   | 4 (C6_TXD) | RX | 转接器的 RX |
-
-3. clone esp-hosted slave 工程：
-   ```bash
-   git clone --recursive https://github.com/espressif/esp-hosted.git
-   cd esp-hosted/slave_drv
-   idf.py set-target esp32c6
-   idf.py menuconfig
-   # → Component config → ESP-Hosted config →
-   #     Host Interface = SDIO Slave
-   #     Bluetooth Support = NimBLE
-   #     SDIO Slave Pin Configuration:
-   #       CLK=18 CMD=19 D0=14 D1=15 D2=16 D3=17
-   idf.py build
-   ```
-
-4. 烧 C6（保持 H4 pin 1 短接到 GND）：
-   ```bash
-   idf.py -p /dev/cu.usbserial-XXXX flash
-   ```
-
-5. 松开 H4 pin 1，按 P4 板上的 RESET 按钮重启全板。
-
-6. 重新跑主固件的 `idf.py -p <P4 串口> monitor`，应看到：
-   ```
-   I (xxx) ble_gatt: NimBLE host task running
-   I (xxx) ble_gatt: BLE address aa:bb:cc:dd:ee:ff type=1
-   I (xxx) ble_gatt: advertising as "PilotKitBox"
-   ```
-
-7. 在手机上用任何 BLE 扫描器（nRF Connect / LightBlue）能看到 `PilotKitBox` 设备。Pilot Kit 移动 App 已知道我们的 GATT UUID，可以直接连接。
+| C6 刷完 hosted slave 固件（见第 3 节） | 串口 `ble_gatt: advertising as "Pilot Kit Box-XXXXXX"`，手机 BLE 扫描器按 `Pilot Kit Box-` 前缀过滤能看到 |
 
 ---
 
@@ -496,7 +561,19 @@ CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 
 **原因**：ESP-Hosted 的 `transport_drv_reconfigure()` 在 C6 没有响应（没刷 hosted slave 固件）时返回失败；vhci_drv.c 第 154 行用 `ESP_ERROR_CHECK()` 包裹这个返回值，强制 abort。
 
-**修复**：默认 `CONFIG_PK_BLE_ENABLED=n` —— `app_main()` 跳过 `ble_gatt_init()`，整条 NimBLE/hosted vhci 初始化链路不会触发。**烧完 C6 hosted slave 固件**后用 `idf.py menuconfig` → Pilot Kit Box → [*] Initialise BLE GATT server at boot 打开。
+**修复**：先按 [§3](#3-新板首次设置烧-esp32-c6-hosted-slave-固件一次性) 烧 C6 hosted slave 固件。已经烧过、还出这个错，再去 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md) 对一下 GPIO54 / SDIO pin / 复位极性。如果暂时不想接 C6，跑：`idf.py menuconfig → Pilot Kit Box → [ ] Initialise BLE GATT server at boot`，或直接编辑 `sdkconfig` 把 `CONFIG_PK_BLE_ENABLED` 改成 `n` 再编。
+
+### CMD5 `sdmmc_init_ocr: send_op_cond returned 0x107` 然后 reboot loop
+
+**原因**：P4 host 发了 SDIO CMD5 但 C6 没正确响应（具体是 `INVALID_RESPONSE`，CRC 错或者根本没回）。在 Waveshare P4-WIFI6 上**最常见的原因是 GPIO54 reset 极性反了**——板子上 P4-GPIO54 跟 C6-EN 之间有 inverter / level shifter，需要软件用 `RESET_ACTIVE_HIGH`，而不是匹配 C6 silicon 的 `ACTIVE_LOW`。
+
+**修复**：sdkconfig.defaults 已经设置 `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`。如果你改过这一项，恢复默认即可。详细排查过程（包括为什么不是 SDIO 时钟、pull-up、LDO 那些常见嫌疑）见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+
+### `BLE_HS_ETIMEOUT_HCI (controller unresponsive)` 反复打印
+
+**原因**：SDIO transport 已经起来（你能看到 `transport: Identified slave [esp32c6]`），但 C6 的 BT controller 没有 enable。ESP-Hosted-MCU 的 slave **不会**在 boot 时自动启 BT controller —— host 要先通过 RPC 显式调用 `esp_hosted_bt_controller_init()` + `esp_hosted_bt_controller_enable()`，再 `nimble_port_init()`。如果你 fork 了 `ble_gatt.c` 删掉了这两步，HCI 命令就会全部 timeout。
+
+**修复**：恢复 `ble_gatt.c::ble_gatt_init()` 里的 connect → init → enable → nimble_port_init 顺序，参照 `managed_components/.../examples/host_nimble_bleprph_host_only_vhci/main/main.c`。
 
 ### Task "pfd" / "ble_emit" Stack protection fault
 

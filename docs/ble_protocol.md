@@ -6,7 +6,7 @@
 | **Status** | Draft — implemented in firmware, ready for client integration |
 | **Audience** | Mobile / desktop client developers integrating with Pilot Kit Box |
 | **Firmware reference** | `firmware/main/ble_gatt.c` |
-| **License** | This document and its reference implementation are released under the same MIT license as the rest of [Pilot-Kit-Box-ESP32-P4](https://github.com/airclub/Pilot-Kit-Box-ESP32-P4) |
+| **License** | This document and its reference implementation are released under the same MIT license as the rest of [Pilot-Kit-Box-ESP32-P4](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4) |
 | **Companion documents** | [`docs/architecture.md`](architecture.md) (system architecture), [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) (radio bring-up) |
 
 ## 1. Overview
@@ -37,17 +37,43 @@ that wants to integrate.
 A Pilot Kit Box advertises continuously while no peer is connected
 and re-starts advertising on every disconnect.
 
+**Advertisement (31 bytes):**
+
 | Field | Value |
 |-------|-------|
-| **Complete Local Name** | `PilotKitBox` |
 | **Flags** | LE General Discoverable + BR/EDR Not Supported |
+| **Complete Local Name** | `Pilot Kit Box-AABBCC` |
+
+**Scan response (31 bytes):**
+
+| Field | Value |
+|-------|-------|
 | **Complete List of 128-bit Service UUIDs** | `1090AD5B-0000-1000-8000-1090AD5B0000` |
+
+**Common:**
+
+| Field | Value |
+|-------|-------|
 | **Advertising interval** | NimBLE default (≈ 100 ms) |
 | **Address type** | Random Static (default NimBLE auto-inferred) |
 
-Clients **MUST** filter by either the Local Name or the 128-bit
-Service UUID when scanning to avoid surfacing unrelated peripherals
-to the user.
+### About the name suffix
+
+`AABBCC` is the **upper-case hex of the last 3 bytes of the device's
+BLE MAC** — stable across reboots (it's burned into the C6's efuse),
+distinct across boards. So in a hangar with multiple Pilot Kit Boxes,
+each shows up as its own discoverable name:
+
+```
+Pilot Kit Box-0B5A8A
+Pilot Kit Box-3F1224
+…
+```
+
+Clients **MUST** filter scan results by either the prefix
+`Pilot Kit Box-` OR the 128-bit Service UUID. **Do not** match the
+full literal `Pilot Kit Box-AABBCC` — that's per-device. Doing a
+substring match on the prefix is fine.
 
 ## 3. GATT Service
 

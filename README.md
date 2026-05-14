@@ -37,15 +37,20 @@
 最短上手路径 — macOS / Linux：
 
 ```bash
-# 1. 装 ESP-IDF v6.0.1（一次性）
+# 1. 装 ESP-IDF v6.0.1（一次性，全局）
 curl -L https://dl.espressif.com/dl/eim/eim-installer.sh | bash
 # 选 v6.0.1 + target=all，等约 5-10 分钟
 
 # 2. 拉代码（含 submodule）
-git clone --recursive https://github.com/airclub/Pilot-Kit-Box-ESP32-P4.git
-cd Pilot-Kit-Box-ESP32-P4/firmware
+git clone --recursive https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4.git
+cd Pilot-Kit-Box-ESP32-P4
 
-# 3. 编译 + 烧录 + 监视（约 10 分钟首次构建）
+# 3. 【新板必做】烧 ESP32-C6 协处理器的 hosted slave 固件（一次性，~30 分钟）
+#    需要 USB-UART 转接器 + 4 根杜邦线接到板子背面 H4 头
+#    详见 docs/BUILD.md §3 (或临时不要 BLE 可跳过: menuconfig 关 PK_BLE_ENABLED)
+
+# 4. 编译 + 烧录 P4 主固件（约 10 分钟首次构建，之后 30 秒一轮）
+cd firmware
 source ~/.espressif/tools/activate_idf_v6.0.1.sh
 idf.py set-target esp32p4
 idf.py -p /dev/cu.usbmodem* flash monitor
