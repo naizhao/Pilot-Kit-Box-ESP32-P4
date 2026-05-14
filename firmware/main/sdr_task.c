@@ -151,6 +151,13 @@ void sdr_task(void *arg)
     ESP_LOGW(TAG, "rtlsdr_read_async returned %d (stream stopped)", r);
 
     rtlsdr_close(dev);
-    ESP_ERROR_CHECK(usb_host_client_deregister(client_hdl));
+    /* Don't ESP_ERROR_CHECK — if the stream aborted with dangling URBs the
+     * client may refuse to deregister; we'd rather log and suspend than
+     * reboot the whole firmware over the SDR alone. */
+    esp_err_t dereg = usb_host_client_deregister(client_hdl);
+    if (dereg != ESP_OK) {
+        ESP_LOGW(TAG, "usb_host_client_deregister: %s — leaking the client",
+                 esp_err_to_name(dereg));
+    }
     vTaskSuspend(NULL);
 }
