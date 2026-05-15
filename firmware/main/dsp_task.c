@@ -37,6 +37,7 @@
 #include "freertos/ringbuf.h"
 #include "esp_attr.h"               /* EXT_RAM_BSS_ATTR */
 #include "esp_log.h"
+#include "esp_system.h"             /* esp_restart() — IQ stall watchdog */
 #include "esp_timer.h"
 
 #include "mode-s.h"
@@ -397,6 +398,16 @@ void dsp_task(void *arg)
     int64_t  window_start_us      = esp_timer_get_time();
     int64_t  summary_last_emit_us = window_start_us;
 
+    /* IQ stall watchdog: real dongles occasionally just stop pushing
+     * samples after hours of uptime (rtl2832u quirk, USB stack
+     * starvation, who knows). When we notice the stream has been
+     * silent for IQ_STALL_LIMIT_MS, reboot — the persisted-device
+     * path in sdr_task immediately re-enumerates the dongle on the
+     * next boot so the visible downtime is just the boot pause. */
+    #define IQ_STALL_LIMIT_MS  60000     /* 60 s */
+    int64_t  last_iq_us           = window_start_us;
+    bool     iq_ever_received     = false;
+
     while (1) {
         /* Greedy fill: pull whatever's currently in the ring buffer until
          * either our working buffer is full or 100 ms have passed. */
@@ -409,6 +420,8 @@ void dsp_task(void *arg)
             memcpy(s_iq_buf + filled, p, got);
             vRingbufferReturnItem(g_iq_ringbuf, p);
             filled += got;
+            last_iq_us = esp_timer_get_time();
+            iq_ever_received = true;
         }
 
         if (filled >= DSP_OVERLAP_BYTES + 2) {
@@ -433,6 +446,23 @@ void dsp_task(void *arg)
         if (now_us - summary_last_emit_us >= 5000000) {
             aircraft_summary_emit(now_us);
             summary_last_emit_us = now_us;
+        }
+
+        /* Stall watchdog. Only arms after we've actually received IQ
+         * at least once — otherwise we'd reboot during normal boot
+         * before the dongle has finished enumerating. */
+        if (iq_ever_received) {
+            int64_t stall_ms = (now_us - last_iq_us) / 1000;
+            if (stall_ms > IQ_STALL_LIMIT_MS) {
+                ESP_LOGE(TAG,
+                         "IQ stream stalled %lld ms (limit %d ms) — "
+                         "rebooting; persisted-device detection in "
+                         "sdr_task will re-enumerate the dongle on boot",
+                         (long long)stall_ms, IQ_STALL_LIMIT_MS);
+                /* Tiny wait so the log line actually drains over UART. */
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+            }
         }
     }
 }
