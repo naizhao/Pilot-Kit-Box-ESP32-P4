@@ -122,62 +122,72 @@ void sdr_task(void *arg)
         xEventGroupSetBits(s_ctx.evt, SDR_EVT_NEW_DEV);
     }
 
-    /* Pump client events until NEW_DEV. The callback fires synchronously
-     * from inside handle_events, so by the time the bit is set, dev_addr
-     * is already populated. */
-    while ((xEventGroupGetBits(s_ctx.evt) & SDR_EVT_NEW_DEV) == 0) {
-        usb_host_client_handle_events(client_hdl, pdMS_TO_TICKS(100));
+    /* Outer reconnect loop. Each iteration opens the dongle, runs the
+     * blocking async stream until it errors out (typically because the
+     * user yanked the USB cable), tears the dongle down, and falls
+     * back into the event pump to wait for the next NEW_DEV. The USB
+     * client stays registered across iterations so the next attach
+     * still gets delivered to us. */
+    while (1) {
+        /* Wait for NEW_DEV. First iteration: either addr_list_fill
+         * pre-set the bit (persisted dongle) or this blocks until cold
+         * plug. Subsequent iterations: blocks until the next replug. */
+        while ((xEventGroupGetBits(s_ctx.evt) & SDR_EVT_NEW_DEV) == 0) {
+            usb_host_client_handle_events(client_hdl, pdMS_TO_TICKS(100));
+        }
+        /* Consume both bits so the next disconnect/reconnect cycle is
+         * detected cleanly — DEV_GONE may have been left set by the
+         * previous iteration's teardown path. */
+        xEventGroupClearBits(s_ctx.evt, SDR_EVT_NEW_DEV | SDR_EVT_DEV_GONE);
+
+        rtlsdr_dev_t *dev = NULL;
+        int r = rtlsdr_open(&dev, s_ctx.dev_addr, client_hdl);
+        if (r < 0 || dev == NULL) {
+            /* Most likely: the device disappeared between NEW_DEV and
+             * here, or addr_list_fill returned a stale address. Don't
+             * suspend — back off and wait for the next attach. */
+            ESP_LOGE(TAG, "rtlsdr_open failed (%d) — waiting for next attach", r);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        ESP_LOGI(TAG, "rtlsdr_open OK (addr %u)", s_ctx.dev_addr);
+
+        if ((r = rtlsdr_set_center_freq(dev, PK_RTLSDR_FREQ_HZ)) < 0) {
+            ESP_LOGE(TAG, "set_center_freq failed (%d)", r);
+        } else {
+            ESP_LOGI(TAG, "Tuned to %lu Hz", (unsigned long)PK_RTLSDR_FREQ_HZ);
+        }
+
+        if ((r = rtlsdr_set_sample_rate(dev, PK_RTLSDR_SAMPLERATE_HZ)) < 0) {
+            ESP_LOGE(TAG, "set_sample_rate failed (%d)", r);
+        } else {
+            ESP_LOGI(TAG, "Sampling at %lu S/s",
+                     (unsigned long)PK_RTLSDR_SAMPLERATE_HZ);
+        }
+
+        /* `manual = 0` enables the tuner's automatic gain control. */
+        if ((r = rtlsdr_set_tuner_gain_mode(dev, 0)) != 0) {
+            ESP_LOGW(TAG, "set_tuner_gain_mode(AGC) failed (%d)", r);
+        } else {
+            ESP_LOGI(TAG, "Tuner gain mode: AGC");
+        }
+
+        if ((r = rtlsdr_reset_buffer(dev)) < 0) {
+            ESP_LOGW(TAG, "reset_buffer failed (%d)", r);
+        }
+
+        ESP_LOGI(TAG, "Starting async IQ stream (defaults: %d URBs)",
+                 /* doc value, kept in sync with DEFAULT_BUF_NUMBER in librtlsdr.c */
+                 15);
+
+        /* Blocks until rtlsdr_cancel_async() or the URB error threshold
+         * trips (typical case on physical unplug). */
+        r = rtlsdr_read_async(dev, on_iq, NULL, /*buf_num=*/0, /*buf_len=*/0);
+        ESP_LOGW(TAG, "rtlsdr_read_async returned %d — closing dongle, waiting for replug", r);
+
+        rtlsdr_close(dev);
+        /* Deliberately do NOT deregister the client here: keep the
+         * USB_HOST_CLIENT_EVENT_NEW_DEV subscription alive so a replug
+         * is picked up on the next loop iteration without rebooting. */
     }
-
-    rtlsdr_dev_t *dev = NULL;
-    int r = rtlsdr_open(&dev, s_ctx.dev_addr, client_hdl);
-    if (r < 0 || dev == NULL) {
-        ESP_LOGE(TAG, "rtlsdr_open failed (%d) — suspending sdr_task", r);
-        vTaskSuspend(NULL);
-    }
-    ESP_LOGI(TAG, "rtlsdr_open OK (addr %u)", s_ctx.dev_addr);
-
-    if ((r = rtlsdr_set_center_freq(dev, PK_RTLSDR_FREQ_HZ)) < 0) {
-        ESP_LOGE(TAG, "set_center_freq failed (%d)", r);
-    } else {
-        ESP_LOGI(TAG, "Tuned to %lu Hz", (unsigned long)PK_RTLSDR_FREQ_HZ);
-    }
-
-    if ((r = rtlsdr_set_sample_rate(dev, PK_RTLSDR_SAMPLERATE_HZ)) < 0) {
-        ESP_LOGE(TAG, "set_sample_rate failed (%d)", r);
-    } else {
-        ESP_LOGI(TAG, "Sampling at %lu S/s",
-                 (unsigned long)PK_RTLSDR_SAMPLERATE_HZ);
-    }
-
-    /* `manual = 0` enables the tuner's automatic gain control. */
-    if ((r = rtlsdr_set_tuner_gain_mode(dev, 0)) != 0) {
-        ESP_LOGW(TAG, "set_tuner_gain_mode(AGC) failed (%d)", r);
-    } else {
-        ESP_LOGI(TAG, "Tuner gain mode: AGC");
-    }
-
-    if ((r = rtlsdr_reset_buffer(dev)) < 0) {
-        ESP_LOGW(TAG, "reset_buffer failed (%d)", r);
-    }
-
-    ESP_LOGI(TAG, "Starting async IQ stream (defaults: %d URBs)",
-             /* doc value, kept in sync with DEFAULT_BUF_NUMBER in librtlsdr.c */
-             15);
-
-    /* Blocks until rtlsdr_cancel_async() — only happens on unrecoverable
-     * USB error in Phase 1 (callback path will trip xfer_errors threshold). */
-    r = rtlsdr_read_async(dev, on_iq, NULL, /*buf_num=*/0, /*buf_len=*/0);
-    ESP_LOGW(TAG, "rtlsdr_read_async returned %d (stream stopped)", r);
-
-    rtlsdr_close(dev);
-    /* Don't ESP_ERROR_CHECK — if the stream aborted with dangling URBs the
-     * client may refuse to deregister; we'd rather log and suspend than
-     * reboot the whole firmware over the SDR alone. */
-    esp_err_t dereg = usb_host_client_deregister(client_hdl);
-    if (dereg != ESP_OK) {
-        ESP_LOGW(TAG, "usb_host_client_deregister: %s — leaking the client",
-                 esp_err_to_name(dereg));
-    }
-    vTaskSuspend(NULL);
 }
