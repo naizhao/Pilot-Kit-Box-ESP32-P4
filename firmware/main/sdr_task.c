@@ -34,6 +34,13 @@ static const char *TAG = "sdr";
 typedef struct {
     EventGroupHandle_t evt;
     uint8_t            dev_addr;
+    /* Pointer to the currently-open rtlsdr_dev_t, or NULL while we are
+     * not streaming. Written by sdr_task around rtlsdr_open/rtlsdr_close;
+     * read by on_client_event when DEV_GONE fires so it can poke
+     * rtlsdr_cancel_async() to break read_async out of its URB loop.
+     * Single-task access pattern (both writer and reader run on
+     * sdr_task), so no synchronisation needed. */
+    rtlsdr_dev_t      *dev;
 } sdr_ctx_t;
 
 static sdr_ctx_t s_ctx;
@@ -60,8 +67,18 @@ static void on_client_event(const usb_host_client_event_msg_t *msg, void *arg)
         break;
 
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
-        ESP_LOGW(TAG, "USB DEV_GONE");
+        ESP_LOGW(TAG, "USB DEV_GONE — canceling async stream");
         xEventGroupSetBits(ctx->evt, SDR_EVT_DEV_GONE);
+        /* Critical: nudge rtlsdr_read_async() out of its URB pump loop.
+         * On physical unplug the URB completion callback path doesn't
+         * reliably deliver USB_TRANSFER_STATUS_NO_DEVICE (verified on
+         * Waveshare P4-WIFI6), so the librtlsdr-internal error-threshold
+         * cancel never trips and read_async would block forever.
+         * rtlsdr_cancel_async just sets a flag — safe from the host
+         * client callback context. */
+        if (ctx->dev != NULL) {
+            rtlsdr_cancel_async(ctx->dev);
+        }
         break;
 
     default:
@@ -151,6 +168,9 @@ void sdr_task(void *arg)
             continue;
         }
         ESP_LOGI(TAG, "rtlsdr_open OK (addr %u)", s_ctx.dev_addr);
+        /* Publish for on_client_event: DEV_GONE will use it to break
+         * read_async out of its URB loop on physical unplug. */
+        s_ctx.dev = dev;
 
         if ((r = rtlsdr_set_center_freq(dev, PK_RTLSDR_FREQ_HZ)) < 0) {
             ESP_LOGE(TAG, "set_center_freq failed (%d)", r);
@@ -185,6 +205,9 @@ void sdr_task(void *arg)
         r = rtlsdr_read_async(dev, on_iq, NULL, /*buf_num=*/0, /*buf_len=*/0);
         ESP_LOGW(TAG, "rtlsdr_read_async returned %d — closing dongle, waiting for replug", r);
 
+        /* Hide the dev pointer before close so any racing event callback
+         * doesn't poke a stale rtlsdr_dev_t (rtlsdr_close frees it). */
+        s_ctx.dev = NULL;
         rtlsdr_close(dev);
         /* Deliberately do NOT deregister the client here: keep the
          * USB_HOST_CLIENT_EVENT_NEW_DEV subscription alive so a replug
