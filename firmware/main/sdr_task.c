@@ -15,6 +15,7 @@
  */
 
 #include <assert.h>
+#include <stdlib.h>     /* malloc/free for gain-table query */
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -172,22 +173,12 @@ void sdr_task(void *arg)
          * read_async out of its URB loop on physical unplug. */
         s_ctx.dev = dev;
 
-        /* Re-open kick: on reconnect the FC0013 tuner's PLL and the
-         * RTL2832U's AGC inherit whatever state they were in when we
-         * cancelled the previous stream — fresh boot decodes the first
-         * frame within ~1 s, but a hot replug can take 30–60 s before
-         * the AGC converges and preambles become detectable.
-         *
-         * Force a clean re-program:
-         *   - detune to 800 MHz first so the next set_center_freq has
-         *     to reprogram the PLL (rules out tuners that no-op on
-         *     "same freq");
-         *   - cycle gain mode manual → AGC so the AGC state machine
-         *     restarts from a known anchor instead of resuming from
-         *     whatever it was doing when the cable was yanked.
-         * Cheap on fresh boot, big win on hot replug. */
+        /* Re-open kick: on reconnect the tuner's PLL inherits stale
+         * state from the previous session. Detune to 800 MHz first so
+         * the next set_center_freq(PK_RTLSDR_FREQ_HZ) is guaranteed
+         * to reprogram the PLL (rules out tuner driver paths that
+         * no-op on "same frequency"). Cheap on fresh boot. */
         (void)rtlsdr_set_center_freq(dev, 800000000UL);
-        (void)rtlsdr_set_tuner_gain_mode(dev, 1);  /* manual */
 
         if ((r = rtlsdr_set_sample_rate(dev, PK_RTLSDR_SAMPLERATE_HZ)) < 0) {
             ESP_LOGE(TAG, "set_sample_rate failed (%d)", r);
@@ -202,11 +193,38 @@ void sdr_task(void *arg)
             ESP_LOGI(TAG, "Tuned to %lu Hz", (unsigned long)PK_RTLSDR_FREQ_HZ);
         }
 
-        /* `manual = 0` enables the tuner's automatic gain control. */
-        if ((r = rtlsdr_set_tuner_gain_mode(dev, 0)) != 0) {
-            ESP_LOGW(TAG, "set_tuner_gain_mode(AGC) failed (%d)", r);
+        /* Fixed manual gain instead of tuner AGC. AGC was observed to
+         * either fail to converge (>55 s before first decode after a
+         * hot replug) or drift into a saturated state after ~60 s of
+         * streaming (4 MB/s IQ keeps flowing but msgs/s drops to 0
+         * permanently). dump1090 and the rest of the ADS-B ecosystem
+         * use fixed max gain for the same reason — ADS-B is a strong
+         * short-pulse signal where max LNA + IF gain works well across
+         * dynamic range. Query the tuner's gain table at runtime so
+         * this isn't pinned to FC0013 (max = 19.7 dB, value 197). */
+        int num_gains = rtlsdr_get_tuner_gains(dev, NULL);
+        if (num_gains > 0) {
+            int *gains = malloc(num_gains * sizeof(int));
+            if (gains) {
+                rtlsdr_get_tuner_gains(dev, gains);
+                int max_gain = gains[num_gains - 1];
+                free(gains);
+                if ((r = rtlsdr_set_tuner_gain_mode(dev, 1)) != 0) {
+                    ESP_LOGW(TAG, "set_tuner_gain_mode(manual) failed (%d)", r);
+                }
+                if ((r = rtlsdr_set_tuner_gain(dev, max_gain)) != 0) {
+                    ESP_LOGW(TAG, "set_tuner_gain(%d) failed (%d)", max_gain, r);
+                } else {
+                    ESP_LOGI(TAG, "Tuner gain: %d.%d dB (manual, max of %d steps)",
+                             max_gain / 10, abs(max_gain % 10), num_gains);
+                }
+            } else {
+                ESP_LOGW(TAG, "OOM querying gain table — falling back to AGC");
+                rtlsdr_set_tuner_gain_mode(dev, 0);
+            }
         } else {
-            ESP_LOGI(TAG, "Tuner gain mode: AGC");
+            ESP_LOGW(TAG, "tuner reports no gain table — falling back to AGC");
+            rtlsdr_set_tuner_gain_mode(dev, 0);
         }
 
         if ((r = rtlsdr_reset_buffer(dev)) < 0) {

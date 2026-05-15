@@ -366,6 +366,15 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
     double  mbps = (double)s_window_bytes / 1e6 / secs;
     uint32_t drops = pk_iq_dropped_bytes_swap();
 
+    /* Stay quiet when there's no IQ to talk about. This happens whenever
+     * the dongle is unplugged (sdr_task is parked in its NEW_DEV wait)
+     * or has never been attached; printing "stream 0.00 MB/s" every
+     * second in that state is just noise that drowns out the rest of
+     * the system. The 1 Hz dashboard resumes the instant IQ flows. */
+    if (s_window_bytes == 0 && drops == 0) {
+        goto reset;
+    }
+
     if (drops == 0) {
         ESP_LOGI(TAG,
                  "stream %.2f MB/s | msgs/s %lu (df11 %lu  df17 id %lu pos %lu "
@@ -387,6 +396,8 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
                  (unsigned long)s_msgs_total,
                  (unsigned long)s_icao_unique);
     }
+
+reset:;
 
     s_window_bytes  = 0;
     s_msgs_total    = 0;
