@@ -318,13 +318,27 @@ static void aircraft_summary_emit(int64_t now_us)
         { "60s .. 15min",   SUMMARY_TIER_RECENT_US },
         { "15min .. 30min", SUMMARY_TIER_OLDER_US  },
     };
+    /* Per-tier print cap. With > ~40 tracked aircraft, the unbounded
+     * loop emitted enough ESP_LOGI lines (each ~130 B blocking the
+     * 115200-baud UART for ~11 ms) that dsp_task stalled long enough
+     * for the IQ ringbuf to overflow. Capping each tier keeps the
+     * summary at most ~24 lines + headers (~260 ms blocking) which
+     * the 512 KiB ringbuf comfortably absorbs. */
+    #define SUMMARY_TIER_PRINT_CAP  8
     bool printed[AIRCRAFT_TABLE_CAPACITY] = { 0 };
     for (size_t t = 0; t < sizeof(tiers) / sizeof(tiers[0]); ++t) {
-        bool header_printed = false;
+        bool   header_printed = false;
+        size_t tier_emitted   = 0;
+        size_t tier_total     = 0;
         for (size_t i = 0; i < n; ++i) {
             if (printed[i]) continue;
             uint64_t age = (uint64_t)(now_us - s_summary_snap[i].last_seen_us);
             if (age > tiers[t].hi_us) continue;
+            tier_total++;
+            if (tier_emitted >= SUMMARY_TIER_PRINT_CAP) {
+                printed[i] = true;   /* still mark consumed so the next tier skips it */
+                continue;
+            }
             if (!header_printed) {
                 ESP_LOGI(TAG, "  --- %s ---", tiers[t].label);
                 header_printed = true;
@@ -333,6 +347,11 @@ static void aircraft_summary_emit(int64_t now_us)
             format_aircraft_line(line, sizeof(line), &s_summary_snap[i], now_us);
             ESP_LOGI(TAG, "%s", line);
             printed[i] = true;
+            tier_emitted++;
+        }
+        if (tier_total > SUMMARY_TIER_PRINT_CAP) {
+            ESP_LOGI(TAG, "    ... and %u more in this tier",
+                     (unsigned)(tier_total - SUMMARY_TIER_PRINT_CAP));
         }
     }
 
@@ -443,7 +462,13 @@ void dsp_task(void *arg)
             dashboard_emit_and_reset(now_us, window_start_us);
             window_start_us = now_us;
         }
-        if (now_us - summary_last_emit_us >= 5000000) {
+        /* Summary every 30 s, not 5 s: with many aircraft tracked the
+         * 30-odd ESP_LOGI lines block the UART (115200 baud) for
+         * several hundred ms, stalling dsp_task long enough for the
+         * IQ ringbuf to overflow ("DROPPED ~1.8 MB" warnings every 5 s
+         * once aircraft count climbed past ~40). 30 s keeps the
+         * blackout below 1% of dsp_task wall time. */
+        if (now_us - summary_last_emit_us >= 30000000) {
             aircraft_summary_emit(now_us);
             summary_last_emit_us = now_us;
         }

@@ -172,17 +172,34 @@ void sdr_task(void *arg)
          * read_async out of its URB loop on physical unplug. */
         s_ctx.dev = dev;
 
-        if ((r = rtlsdr_set_center_freq(dev, PK_RTLSDR_FREQ_HZ)) < 0) {
-            ESP_LOGE(TAG, "set_center_freq failed (%d)", r);
-        } else {
-            ESP_LOGI(TAG, "Tuned to %lu Hz", (unsigned long)PK_RTLSDR_FREQ_HZ);
-        }
+        /* Re-open kick: on reconnect the FC0013 tuner's PLL and the
+         * RTL2832U's AGC inherit whatever state they were in when we
+         * cancelled the previous stream — fresh boot decodes the first
+         * frame within ~1 s, but a hot replug can take 30–60 s before
+         * the AGC converges and preambles become detectable.
+         *
+         * Force a clean re-program:
+         *   - detune to 800 MHz first so the next set_center_freq has
+         *     to reprogram the PLL (rules out tuners that no-op on
+         *     "same freq");
+         *   - cycle gain mode manual → AGC so the AGC state machine
+         *     restarts from a known anchor instead of resuming from
+         *     whatever it was doing when the cable was yanked.
+         * Cheap on fresh boot, big win on hot replug. */
+        (void)rtlsdr_set_center_freq(dev, 800000000UL);
+        (void)rtlsdr_set_tuner_gain_mode(dev, 1);  /* manual */
 
         if ((r = rtlsdr_set_sample_rate(dev, PK_RTLSDR_SAMPLERATE_HZ)) < 0) {
             ESP_LOGE(TAG, "set_sample_rate failed (%d)", r);
         } else {
             ESP_LOGI(TAG, "Sampling at %lu S/s",
                      (unsigned long)PK_RTLSDR_SAMPLERATE_HZ);
+        }
+
+        if ((r = rtlsdr_set_center_freq(dev, PK_RTLSDR_FREQ_HZ)) < 0) {
+            ESP_LOGE(TAG, "set_center_freq failed (%d)", r);
+        } else {
+            ESP_LOGI(TAG, "Tuned to %lu Hz", (unsigned long)PK_RTLSDR_FREQ_HZ);
         }
 
         /* `manual = 0` enables the tuner's automatic gain control. */
