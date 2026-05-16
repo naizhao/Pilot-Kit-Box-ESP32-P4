@@ -95,12 +95,12 @@ Both headers count from the **top** (USB-C side) downward.
 | **20**     | GPIO20   | **IMU INT** (BNO085, polled — not IRQ yet)  |                              |
 | **21**     | GPIO21   | **IMU RST** (BNO085 active-low reset)       |                              |
 | GND        | GND      | —                         |                                                |
-| 22         | GPIO22   | free                      |                                                |
-| 23         | GPIO23   | free                      |                                                |
+| **22**     | GPIO22   | **BTN3 — UP** (list scroll / menu up)       |                                  |
+| **23**     | GPIO23   | **BTN4 — DOWN** (list scroll / menu down)   |                                  |
 | RUN        | RUN      | —                         | System reset button net.                       |
 | **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = tare yaw; long ≥ 3 s = full reorient + persist DCD |
 | GND        | GND      | —                         |                                                |
-| 27         | GPIO27   | reserved (Phase 5 BTN2)   | Future: display mode toggle.                   |
+| **27**     | GPIO27   | **BTN2 — MODE** (cycle PFD → LIST → ABOUT)  |                                  |
 | 32         | GPIO32   | free                      |                                                |
 | 33         | GPIO33   | free                      | (was LCD MOSI in Phase 4a — now on left header)|
 | 46         | GPIO46   | free                      | (was LCD CS  in Phase 4a)                      |
@@ -399,39 +399,90 @@ Driven by `button_task.c`. See §3.4 below.
 
 ### Tact buttons
 
-| Signal | ESP32-P4 GPIO | Header | Driver                | Function                                              |
-|--------|---------------|--------|-----------------------|-------------------------------------------------------|
-| BTN1   | GPIO26        | right  | `button_task.c`       | **IMU Tare / cage** — short = reset yaw to 0; long ≥ 3 s = full reorient + persist DCD |
-| BTN2   | GPIO27        | right  | reserved (Phase 5)    | Future: display mode toggle / page navigation         |
-
-#### BTN1 wiring
-
-Active-low momentary tact switch between **GPIO 26** and **GND**. The
-ESP32-P4 internal pull-up is enabled by `button_task` so no external
-resistor is needed:
+Four active-low momentary tact switches, each between the named GPIO
+and any GND pad. `button_task.c` enables the internal pull-up on all
+four, so no external resistors are needed:
 
 ```
-GPIO 26 ────┬──── tact switch ──── GND
-            │
-            └─ INPUT_PULLUP (internal, enabled by gpio_config)
+GPIO ────┬──── tact switch ──── GND
+         │
+         └─ INPUT_PULLUP (enabled by button_task gpio_config)
 ```
 
-Pressed → GPIO 26 reads `0`. Released → reads `1`.
+Pressed → GPIO reads `0`. Released → reads `1`. Polled at 50 Hz with
+40 ms debounce.
+
+| Button | GPIO | Function                                |
+|--------|------|-----------------------------------------|
+| **TARE** (BTN1) | 26 | IMU Tare / cage                        |
+| **MODE** (BTN2) | 27 | Cycle screens: PFD → LIST → ABOUT       |
+| **UP**   (BTN3) | 22 | List scroll up / menu up               |
+| **DOWN** (BTN4) | 23 | List scroll down / menu down           |
+
+All four GPIOs are on the **right header** — easy to keep all wiring
+on the same side of the breadboard.
 
 #### Press semantics
 
-- **Short press** (release within < 1 s): `pk_imu_tare_yaw()` —
-  zero the yaw axis only. Roll / pitch stay referenced to gravity
-  (you can't tare those without losing absolute attitude). Mirrors
-  the "DG sync" knob on a real heading indicator.
-- **Long press** (held ≥ 3 s): `pk_imu_full_reorient()` — sets the
-  current pose as `(level, heading 0)` *and* writes the BNO085's
-  Dynamic Calibration Data to chip flash so it survives power-cycle.
-  Mirrors "erect & cage" on a directional gyro pre-flight.
+| Press kind                          | TARE                 | MODE              | UP        | DOWN      |
+|-------------------------------------|----------------------|-------------------|-----------|-----------|
+| **Short** (released within < 3 s)   | tare yaw → 0°        | cycle PFD → LIST → ABOUT → PFD … | scroll up | scroll down |
+| **Long**  (held ≥ 3 s)              | full reorient + Save DCD (requires `acc ≥ 2`; refuses otherwise) | **factory reset** — clear tare + clear persistent DCD + reinit BNO085 (use this if heading is stuck wrong) | *(suppressed)* | *(suppressed)* |
+| **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (TODO — Flutter side stub only) | — |
 
-A short LED-style hint can be added later by re-using the LCD; for
-Phase 4b the user feedback is just the immediate change in PFD
-heading.
+#### Calibration / heading-reset workflow
+
+BNO085 magnetometer fusion is **continuously self-learning** — you
+don't have to manually calibrate. But it only converges while the
+device is **rotating** (figure-8 / multi-axis motion). If the device
+sits still, `acc` stays at 0 forever. When `acc` finally reaches 2 or
+3, the heading is trustworthy and a TARE long-press will persist the
+state to BNO085 flash for permanent use.
+
+If you've poisoned the calibration (e.g. by long-pressing TARE while
+`acc=0` — Save DCD wrote unconverged offsets to flash, and the
+heading is wrong even after rebooting), use **MODE long-press** to
+factory-reset the chip:
+
+```
+MODE long-press 3s
+   → fires pk_imu_factory_reset()
+   → clears Tare reference + persistent DCD on the BNO085
+   → pulses RST and replays SH-2 init
+   → fusion engine restarts with no prior calibration in flash
+
+Now do figure-8 motion for ~15 s.
+   → watch `imu: rpy = ... (acc=N)` log line
+   → acc climbs 0 → 1 → 2 → 3 as mag fusion converges
+
+When acc reaches 2 or 3, hold the device in the desired "zero"
+orientation and TARE long-press 3s
+   → persists a clean calibration to flash for next boot
+```
+
+**Why UP / DOWN don't fire single-button long press**: if they did,
+holding UP alone for 3 s would emit `UP_LONG`, then a UP+DOWN combo
+landing 2 s later would arrive *after* the `UP_LONG` event — two
+distinct gestures for what feels like one hold. Suppressing single-key
+long-press on UP and DOWN resolves this cleanly while leaving TARE /
+MODE long presses untouched.
+
+#### Firmware structure
+
+- `firmware/main/button_task.c` — GPIO polling + per-button FSM (4
+  states: RELEASED / PRESSING / HELD_SHORT / HELD_LONG) + combo
+  detector pass. Reports `(id, event)` pairs to the registered
+  callback.
+- `firmware/main/main.c::on_button_event()` — single dispatch point.
+  Routes TARE → `pk_imu_tare_yaw()` / `pk_imu_full_reorient()`,
+  MODE → `pk_ui_toggle_mode()`, UP/DOWN → `pk_ui_list_scroll(±1)`,
+  combo → BLE-pairing stub (`ESP_LOGW(... TODO ...)`).
+- `firmware/main/ui_state.c` — holds current `pk_ui_mode_t` and the
+  list cursor; mutex-protected for concurrent reads from
+  `pfd_task` (render) and `button_task` (input).
+- `firmware/main/pfd.c::pfd_task` — once per frame, branches on
+  `pk_ui_get_mode()`: PFD render path (horizon/ladder/tape/...)
+  or `pk_adsb_list_render()` for the ADS-B list view.
 
 ---
 
@@ -441,12 +492,12 @@ After accounting for everything above, the following P4 GPIOs are
 free for new application use:
 
 ```
-GPIO22  GPIO23                  (right header, top half)
 GPIO32  GPIO33  GPIO46  GPIO47  GPIO48   (right header, lower half)
-GPIO49  GPIO51  GPIO52          (left header)
+GPIO49  GPIO51  GPIO52                    (left header)
 ```
 
-That's **10** GPIOs with no caveats.
+That's **8** GPIOs with no caveats. (Was 10; GPIO 22 and GPIO 23 are
+now claimed by BTN3/BTN4.)
 
 > Note: `GPIO33 / GPIO46 / GPIO47 / GPIO48` were used by the LCD in
 > Phase 4a but have since been freed up — the LCD moved to the SPI2
@@ -473,7 +524,8 @@ contributor ever wants USB JTAG, they'd have to free these up first.
 
 **Not in the free pool**:
 - `GPIO0` (BOOT strap; not broken out anyway)
-- `GPIO26 / GPIO27` (Phase 5 reserved for buttons)
+- `GPIO22 / GPIO23 / GPIO26 / GPIO27` (BTN3 / BTN4 / BTN1 / BTN2 —
+  see "Tact buttons" above)
 - All on-board-only GPIOs (`6`, `9–19`, `34–45`, `53`, `54`) — not on
   user headers.
 

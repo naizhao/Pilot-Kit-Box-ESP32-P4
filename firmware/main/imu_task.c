@@ -67,6 +67,13 @@ static const char *TAG = "imu";
  * control channel). See SH-2 Reference Manual §6.4. */
 #define SH2_COMMAND_TARE         0x03
 #define SH2_COMMAND_SAVE_DCD     0x06
+#define SH2_COMMAND_CLEAR_DCD    0x0B   /* "Clear Persistent DCD" —
+                                           wipes mag/gyro/accel
+                                           calibration data from
+                                           BNO085 internal flash so
+                                           the fusion engine starts
+                                           fresh on the next
+                                           initialisation. */
 
 /* Tare command (0x03) p0 subcommand values. */
 #define SH2_TARE_SUB_NOW         0x00
@@ -510,7 +517,33 @@ esp_err_t pk_imu_tare_yaw(void)
 esp_err_t pk_imu_full_reorient(void)
 {
     if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
-    ESP_LOGI(TAG, "full reorient: tare(XYZ) + persist + save DCD");
+
+    /* Refuse to reorient while the mag fusion is still unreliable.
+     * BNO085 reports accuracy 0..3 in every Rotation Vector frame —
+     * 0 = unreliable (mag fusion has not converged), 1 = low,
+     * 2 = medium, 3 = high. Calling Tare(XYZ) + Save DCD with acc=0
+     * snapshots a garbage reference into the chip's internal flash;
+     * after that even a reboot won't get clean attitude back (the
+     * chip restores its DCD on startup). 2 is the lowest acceptable
+     * threshold — high enough that the heading has stabilised on
+     * north, low enough that the user doesn't have to wait forever.
+     *
+     * Recovery if this fires: figure-8 motion for ~15 s while
+     * watching the 1 Hz imu line for `acc=2` or `acc=3`, then try
+     * the long press again. */
+    pk_imu_sample_t sample;
+    bool have = pk_imu_sample_get(&sample);
+    if (!have || sample.accuracy < 2) {
+        ESP_LOGW(TAG, "full reorient REJECTED: accuracy=%u (need ≥2). "
+                      "Move the device in a figure-8 for ~15 s and watch the "
+                      "1 Hz `imu` line until `acc=2` or `acc=3`, then long-press "
+                      "TARE again. Refusing to write garbage DCD to BNO085 flash.",
+                 have ? sample.accuracy : 0);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "full reorient (acc=%u): tare(XYZ) + persist + save DCD",
+             sample.accuracy);
 
     uint8_t p[9] = {0};
 
@@ -540,6 +573,106 @@ esp_err_t pk_imu_full_reorient(void)
     err = sh2_send_command(SH2_COMMAND_SAVE_DCD, p);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "save DCD failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t pk_imu_clear_dcd(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    ESP_LOGW(TAG, "clear persistent DCD: wiping mag/gyro/accel calibration "
+                  "from BNO085 flash (fusion engine will re-learn next boot)");
+
+    /* SH-2 Command 0x0B "Clear Persistent DCD" takes no parameters.
+     * BNO085 wipes its internal flash DCD region and continues
+     * running with the in-memory calibration unchanged — the wipe
+     * only takes effect after the next power-cycle or soft reset.
+     * pk_imu_factory_reset() composes this with bno_bring_up() to
+     * actually relaunch fusion from a clean state immediately. */
+    uint8_t p[9] = {0};
+    return sh2_send_command(SH2_COMMAND_CLEAR_DCD, p);
+}
+
+esp_err_t pk_imu_factory_reset(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    ESP_LOGW(TAG, "factory reset: clear tare + clear DCD + reinit "
+                  "BNO085 — fusion engine restarts from scratch");
+
+    /* Step 1: clear the reorientation matrix so any bad Tare we
+     * persisted earlier doesn't survive into the fresh start. */
+    esp_err_t err = pk_imu_clear_tare();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: clear_tare step failed (%s) — "
+                      "continuing with DCD wipe anyway",
+                 esp_err_to_name(err));
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Step 2: wipe the persistent DCD so the next fusion start has
+     * no poisoned mag/gyro/accel zero offsets to fall back on. */
+    err = pk_imu_clear_dcd();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: clear_dcd step failed (%s) — "
+                      "continuing with reinit anyway",
+                 esp_err_to_name(err));
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Step 3: hard reset + replay init so the chip actually rebuilds
+     * its fusion state from the now-clean flash. After this returns,
+     * the user should do a figure-8 motion for ~15 s while watching
+     * the 1 Hz imu log line — the `acc` field will climb from 0 to
+     * 3 as the magnetometer fusion converges. Then a TARE long-press
+     * persists the new clean calibration. */
+    err = bno_bring_up();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: reinit failed (%s) — watchdog "
+                      "will retry within 5 s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "factory reset complete — start figure-8 motion to "
+                      "let BNO085 re-learn magnetometer calibration");
+    }
+    return err;
+}
+
+esp_err_t pk_imu_clear_tare(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    ESP_LOGI(TAG, "clear tare: setting reorientation to identity quaternion + persist");
+
+    /* Tare Set Reorientation (subcommand 2) with identity quaternion
+     * (qi=qj=qk=0, qw=1.0). The four components are signed 16-bit
+     * Q14, little-endian, packed into P1..P8:
+     *   P1/P2 = qi (LSB/MSB)   → 0x00 0x00
+     *   P3/P4 = qj             → 0x00 0x00
+     *   P5/P6 = qk             → 0x00 0x00
+     *   P7/P8 = qw             → 0x00 0x40   (16384 in Q14 = 1.0)
+     *
+     * Then Persist (subcommand 1) writes the cleared reference into
+     * BNO085 flash so the next power-cycle doesn't restore the bad
+     * one. DCD (mag/gyro/accel zero offsets) is untouched — that
+     * gets overwritten automatically the next time the fusion engine
+     * decides to update its calibration, typically during the
+     * figure-8 motion the user does after this command. */
+    uint8_t p[9] = {0};
+    p[0] = 0x02;       /* Tare Set Reorientation */
+    p[7] = 0x00;       /* qw LSB */
+    p[8] = 0x40;       /* qw MSB → 0x4000 = 16384 = 1.0 in Q14 */
+    esp_err_t err = sh2_send_command(SH2_COMMAND_TARE, p);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set reorientation (identity) failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    memset(p, 0, sizeof(p));
+    p[0] = SH2_TARE_SUB_PERSIST;
+    err = sh2_send_command(SH2_COMMAND_TARE, p);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "persist cleared tare failed: %s",
+                 esp_err_to_name(err));
     }
     return err;
 }

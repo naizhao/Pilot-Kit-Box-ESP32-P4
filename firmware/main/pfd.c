@@ -47,10 +47,14 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "about_page.h"
+#include "adsb_list.h"
 #include "aircraft_state.h"
+#include "cal_wizard.h"
 #include "display.h"
 #include "imu_task.h"
 #include "pfd_font.h"
+#include "ui_state.h"
 
 static const char *TAG = "pfd";
 
@@ -420,35 +424,68 @@ static void pfd_task(void *arg)
     while (1) {
         TickType_t frame_start = xTaskGetTickCount();
 
+        /* Sample the IMU once per frame. We pass the accuracy into
+         * the UI's calibration-wizard watchdog so the wizard auto-
+         * enters / auto-exits based on fusion convergence, then read
+         * the (possibly just-flipped) UI mode for dispatch. */
         pk_imu_sample_t s;
         bool have = pk_imu_sample_get(&s);
-        float roll  = have ? s.roll_deg  : 0.0f;
-        float pitch = have ? s.pitch_deg : 0.0f;
-        float yaw   = have ? s.yaw_deg   : 0.0f;
+        pk_ui_cal_wizard_tick(have, have ? s.accuracy : 0);
 
-        /* PFD only renders aircraft we can still plausibly see — same
-         * "fresh contact" 60s window the BLE GDL90 emitter uses. */
-        size_t n_aircraft = aircraft_state_snapshot(
-            scratch, sizeof(scratch) / sizeof(scratch[0]),
-            esp_timer_get_time(),
-            AIRCRAFT_STALE_AGE_US);
+        pk_ui_mode_t mode = pk_ui_get_mode();
 
-        draw_horizon(fb, roll, pitch);
-        draw_pitch_ladder(fb, roll, pitch);
-        draw_bank_arc(fb, roll);
-        draw_reticle(fb);
-        draw_heading_tape(fb, yaw);
-        draw_panel_text(fb, &s, have, n_aircraft);
+        switch (mode) {
+        case PK_UI_MODE_CAL_WIZARD:
+            pk_cal_wizard_render(fb);
+            break;
+
+        case PK_UI_MODE_ABOUT:
+            pk_about_page_render(fb);
+            break;
+
+        case PK_UI_MODE_ADSB_LIST:
+            pk_adsb_list_render(fb);
+            break;
+
+        case PK_UI_MODE_PFD:
+        default: {
+            float roll  = have ? s.roll_deg  : 0.0f;
+            float pitch = have ? s.pitch_deg : 0.0f;
+            float yaw   = have ? s.yaw_deg   : 0.0f;
+
+            /* Same "fresh contact" 60s window the BLE GDL90 emitter uses. */
+            size_t n_aircraft = aircraft_state_snapshot(
+                scratch, sizeof(scratch) / sizeof(scratch[0]),
+                esp_timer_get_time(),
+                AIRCRAFT_STALE_AGE_US);
+
+            draw_horizon(fb, roll, pitch);
+            draw_pitch_ladder(fb, roll, pitch);
+            draw_bank_arc(fb, roll);
+            draw_reticle(fb);
+            draw_heading_tape(fb, yaw);
+            draw_panel_text(fb, &s, have, n_aircraft);
+            break;
+        }
+        }
 
         pk_display_flush_full();
         frames_in_window++;
 
         int64_t now = esp_timer_get_time();
         if (now - fps_window_start_us >= 1000000) {
-            ESP_LOGI(TAG, "PFD %lu FPS  | roll=%+6.2f pitch=%+6.2f yaw=%6.2f"
-                          "  imu_valid=%d  aircraft=%u",
+            const char *mode_label = (mode == PK_UI_MODE_ADSB_LIST)  ? "LIST"
+                                   : (mode == PK_UI_MODE_ABOUT)      ? "ABOUT"
+                                   : (mode == PK_UI_MODE_CAL_WIZARD) ? "CAL"
+                                   :                                   "PFD";
+            ESP_LOGI(TAG, "%s %lu FPS  | roll=%+6.2f pitch=%+6.2f yaw=%6.2f"
+                          "  imu_valid=%d",
+                     mode_label,
                      (unsigned long)frames_in_window,
-                     roll, pitch, yaw, have, (unsigned)n_aircraft);
+                     have ? s.roll_deg : 0.0f,
+                     have ? s.pitch_deg : 0.0f,
+                     have ? s.yaw_deg : 0.0f,
+                     have);
             frames_in_window = 0;
             fps_window_start_us = now;
         }

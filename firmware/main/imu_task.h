@@ -73,6 +73,13 @@ esp_err_t pk_imu_tare_yaw(void);
  * dynamic calibration data (mag/gyro/accel zero offsets) into the
  * BNO085's internal flash. Survives a power cycle.
  *
+ * REFUSES if the current sample's accuracy is < 2 (mag fusion not
+ * yet converged), returning ESP_ERR_INVALID_STATE — calling Save DCD
+ * with an uncalibrated mag is the original mistake that poisons the
+ * BNO085 flash and breaks heading on every subsequent boot. Do a
+ * figure-8 motion for ~15 s and watch the `imu: rpy = ... (acc=N)`
+ * 1 Hz log line until `acc=2` or `acc=3`, then long-press again.
+ *
  * Sends three SH-2 commands in sequence with 50 ms gaps so the chip
  * has time to digest each one:
  *   1. Tare Now    (axes = X | Y | Z, basis = Rotation Vector)
@@ -82,3 +89,39 @@ esp_err_t pk_imu_tare_yaw(void);
  * Typical caller: button_task on long press of BTN1.
  */
 esp_err_t pk_imu_full_reorient(void);
+
+/*
+ * Undo a previously-persisted Tare by setting the BNO085's
+ * reorientation matrix to the identity quaternion and persisting that
+ * to flash. Doesn't touch DCD (mag/gyro/accel calibration). Useful as
+ * a standalone "cancel a bad Tare" command. Internally a building
+ * block of pk_imu_factory_reset().
+ */
+esp_err_t pk_imu_clear_tare(void);
+
+/*
+ * Wipe the persistent Dynamic Calibration Data (DCD) from BNO085
+ * flash via SH-2 Command 0x0B. Erases the stored magnetometer,
+ * gyroscope and accelerometer zero-offset estimates so the next
+ * fusion startup learns them fresh from raw sensor data. Doesn't
+ * take effect until the BNO085 is re-initialised; pair with
+ * bno_bring_up() (or call pk_imu_factory_reset() which does both).
+ */
+esp_err_t pk_imu_clear_dcd(void);
+
+/*
+ * "Factory reset" — composes pk_imu_clear_tare() + pk_imu_clear_dcd()
+ * + a hard reset + replay of the SH-2 init handshake, so the BNO085
+ * comes back from a guaranteed-clean state with no leftover Tare and
+ * no poisoned calibration data.
+ *
+ * After this returns, the user should hold the device and do a
+ * figure-8 motion for ~15 seconds so the magnetometer fusion can
+ * re-learn the local magnetic field. Watch the 1 Hz `imu` log line
+ * — `acc` will climb from 0 toward 3 as fusion converges. Once
+ * `acc >= 2`, a TARE long-press will succeed and persist a clean
+ * calibration for the long term.
+ *
+ * Typical caller: button_task on long press of BTN2 (MODE).
+ */
+esp_err_t pk_imu_factory_reset(void);

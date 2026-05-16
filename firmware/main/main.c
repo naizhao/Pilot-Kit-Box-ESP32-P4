@@ -23,15 +23,80 @@
 #include "pilot_kit.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
+#include "boot_splash.h"
 #include "button_task.h"
 #include "display.h"
 #include "imu_task.h"
 #include "pfd.h"
 #include "record_sink.h"
+#include "ui_state.h"
 
 static const char *TAG = "pilot_kit";
 
 RingbufHandle_t g_iq_ringbuf = NULL;
+
+/* --- Button → action routing ----------------------------------------- *
+ *
+ * Single source of truth for what each button does in each UI mode.
+ * Stays in main.c so the button task doesn't have to depend on
+ * imu_task + ui_state directly — keeps modules loosely coupled.
+ *
+ * Press semantics defined in button_task.h:
+ *   - PK_BTN_EVT_SHORT_PRESS    fires on release (< 3 s held)
+ *   - PK_BTN_EVT_LONG_PRESS     fires at 3 s while still held
+ *                               (TARE / MODE only — UP/DOWN suppress
+ *                                long-press in favour of the combo)
+ *   - PK_BTN_EVT_COMBO_BLE_PAIR fires on PK_BTN_UP at 5 s while both
+ *                               UP and DOWN are still held
+ */
+static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
+{
+    switch (id) {
+    case PK_BTN_TARE:
+        if (evt == PK_BTN_EVT_SHORT_PRESS) {
+            (void)pk_imu_tare_yaw();
+        } else if (evt == PK_BTN_EVT_LONG_PRESS) {
+            (void)pk_imu_full_reorient();
+        }
+        break;
+
+    case PK_BTN_MODE:
+        if (evt == PK_BTN_EVT_SHORT_PRESS) {
+            pk_ui_toggle_mode();
+        } else if (evt == PK_BTN_EVT_LONG_PRESS) {
+            /* "Erase everything" — wipes Tare reference + persistent
+             * DCD (magnetometer/gyro/accel zero-offset calibration)
+             * from BNO085 flash and re-initialises the chip from a
+             * clean state. After this, the user must do a figure-8
+             * motion for ~15 s so the fusion engine re-learns the
+             * local magnetic field; then a TARE long-press persists
+             * the clean calibration for long-term use. */
+            (void)pk_imu_factory_reset();
+        }
+        break;
+
+    case PK_BTN_UP:
+        if (evt == PK_BTN_EVT_SHORT_PRESS) {
+            pk_ui_list_scroll(-1);
+        } else if (evt == PK_BTN_EVT_COMBO_BLE_PAIR) {
+            /* TODO(BLE pairing): trigger BLE pairing flow once the
+             * Flutter side adds a pairing-window UI. For now, just
+             * log it so the gesture is observably detected. */
+            ESP_LOGW(TAG, "UP+DOWN combo: BLE pairing requested "
+                          "(TODO — Flutter side not implemented yet)");
+        }
+        break;
+
+    case PK_BTN_DOWN:
+        if (evt == PK_BTN_EVT_SHORT_PRESS) {
+            pk_ui_list_scroll(+1);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
 
 void usb_host_lib_task(void *arg)
 {
@@ -108,14 +173,20 @@ void app_main(void)
     ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
     assert(ok == pdTRUE);
 
-    /* Phase 4a: bring the LCD up and paint a test pattern so we know the
-     * SPI / panel / backlight chain is healthy before the PFD lands. */
+    /* Phase 4a: bring up the LCD and paint the boot splash (logo +
+     * "Booting ..." text). The splash stays on screen until the PFD
+     * render task starts ~1 s later — gives the user something to
+     * look at instead of staring at the test pattern (or worse,
+     * the transflective panel's bare backlight) through the
+     * USB/SDIO/IMU init storm. */
     esp_err_t lcd_err = pk_display_init();
     if (lcd_err != ESP_OK) {
         ESP_LOGW(TAG, "display init failed (%s) — running headless",
                  esp_err_to_name(lcd_err));
     } else {
-        pk_display_test_pattern();
+        pk_boot_splash_render(pk_display_framebuffer());
+        (void)pk_display_flush_full();
+        pk_display_set_brightness(180);
     }
 
     /* Phase 4b: BNO085 IMU. Failure is non-fatal — the rest of the
@@ -126,16 +197,24 @@ void app_main(void)
                  esp_err_to_name(imu_err));
     } else {
         ESP_LOGI(TAG, "BNO085 IMU online");
+    }
 
-        /* BTN1 (GPIO 26) drives BNO085 Tare/cage. Skip the button task
-         * when IMU init failed — pressing the button would just return
-         * ESP_ERR_INVALID_STATE anyway. */
-        esp_err_t btn_err = pk_button_init();
-        if (btn_err != ESP_OK) {
-            ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
-        } else {
-            ESP_LOGI(TAG, "BTN1 task running (tare/cage on GPIO 26)");
-        }
+    /* UI state lives in its own module so the button callback can flip
+     * the mode without touching the render task directly. Default mode
+     * is PFD; survives an IMU-init failure (you can still scroll the
+     * ADS-B list with no attitude). */
+    esp_err_t ui_err = pk_ui_init();
+    if (ui_err != ESP_OK) {
+        ESP_LOGW(TAG, "ui_state init failed (%s)", esp_err_to_name(ui_err));
+    }
+
+    /* Tact buttons: TARE/MODE/UP/DOWN on GPIO 26/27/22/23. Spawned
+     * even when IMU init failed — only the TARE button does anything
+     * without an IMU (no-ops out, harmless), and MODE/UP/DOWN still
+     * drive the UI. */
+    esp_err_t btn_err = pk_button_init(on_button_event);
+    if (btn_err != ESP_OK) {
+        ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
     }
 
     /* Phase 4c: PFD render task. Starts after the display + IMU init
