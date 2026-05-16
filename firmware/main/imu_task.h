@@ -61,14 +61,26 @@
  * INVERT flags are applied first; the offset is applied last
  * (after invert) and wraps yaw into [0, 360).
  *
- * Defaults below match the breadboard build where the BNO085
- * GY-BN008X module appears rotated 180° around its Y axis relative
- * to the desired aerospace frame (yaw flipped 180°, pitch sign
- * flipped). Tune to suit your actual mounting. */
+ * Defaults below match the breadboard build photographed during
+ * bring-up: GY-BN008X module installed component-side up on the
+ * perfboard's user-facing edge, pin row pointing toward the
+ * device's forward direction (perfboard interior). In that pose,
+ * chip +X aligns with device +X (forward), chip +Y points to the
+ * device's left (= -device_Y), and chip +Z aligns with device +Z
+ * (down). The only correction needed is a pitch sign flip
+ * (rotation about Y picks up a minus sign because chip_Y is
+ * reversed); roll and yaw need nothing.
+ *
+ * The original YAW_OFFSET=180 default that earlier commits shipped
+ * was a misdiagnosis — that 180° drift was uncalibrated-mag noise,
+ * not a true mounting offset. Applying it on top of a clean tare
+ * also broke the heading-reset semantics (TARE short-press would
+ * set the chip's internal reference to 0 but firmware would then
+ * add 180, defeating the gesture). Cleared back to 0. */
 #define PK_IMU_MOUNT_INVERT_ROLL       0
 #define PK_IMU_MOUNT_INVERT_PITCH      1
 #define PK_IMU_MOUNT_INVERT_YAW        0
-#define PK_IMU_MOUNT_YAW_OFFSET_DEG    180
+#define PK_IMU_MOUNT_YAW_OFFSET_DEG    0
 
 typedef struct {
     int64_t  ts_us;        /* esp_timer_get_time() at sample */
