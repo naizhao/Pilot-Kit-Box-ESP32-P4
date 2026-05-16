@@ -545,6 +545,62 @@ CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
 CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 ```
 
+### 启动早期 `spi_mempool_create spi_drv.c:141 (buf_mp_g)` panic
+
+**症状**：开机几乎立即崩溃，串口出现：
+```
+E (1534) HS_MP: mempool create failed: no mem
+assert failed: spi_mempool_create spi_drv.c:141 (buf_mp_g)
+```
+然后栈展开里看到 `bus_init_internal at spi_drv.c:302` ← 注意这里是 **SPI**，跟上一节的 SDIO 看起来像但**根因完全不同**。
+
+**根因**：ESP-Hosted 把 co-processor 当成 **ESP32-H2 走 SPI transport** 而不是预期的 **ESP32-C6 走 SDIO**。后果是 SPI 队列默认要 20×1536 B 内部 RAM，凑不出 → assert。
+
+为什么 H2/SPI 替代了 C6/SDIO？因为 ESP-IDF v6.0.1 不再把 `ESP_IDF_VERSION` 环境变量塞进 Kconfig build env（只塞 `IDF_VERSION`），但 `managed_components/espressif__esp_wifi_remote/Kconfig` 仍然写着：
+
+```kconfig
+orsource "./Kconfig.idf_v$ESP_IDF_VERSION.in"
+```
+
+变量为空 → `Kconfig.idf_v6.0.in` silently 不加载 → `SLAVE_IDF_TARGET_ESP32C6` 选项不存在 → `ESP_HOSTED_CP_TARGET_ESP32C6` 因 `depends on SLAVE_IDF_TARGET_ESP32C6` 而隐藏 → choice 唯一未隐藏的 H2 选项被默认选中 → H2 默认走 SPI → 崩溃。
+
+**快速识别**：看 `firmware/sdkconfig` 是否含：
+```
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32H2=y          ← 错的
+CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=12    ← 应该是 54
+# CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE is not set
+```
+
+如果是，说明踩到了。
+
+**修复**：
+
+1. 备份再删 `sdkconfig`：
+   ```sh
+   cd firmware
+   mv sdkconfig sdkconfig.broken-$(date +%Y%m%d-%H%M)
+   ```
+
+2. **设 `ESP_IDF_VERSION=6.0`** 后再 reconfigure：
+   ```sh
+   ESP_IDF_VERSION=6.0 idf.py reconfigure
+   ```
+
+   或更省事 —— 用项目自带的 `firmware/build.sh` wrapper，它自动设这个 env：
+   ```sh
+   ./build.sh reconfigure
+   ./build.sh build
+   ./build.sh -p /dev/cu.usbserial-XXX flash monitor
+   ```
+
+3. 检查 `sdkconfig` 现在写的是 C6/SDIO：
+   ```sh
+   grep -E "ESP_HOSTED_CP_TARGET_ESP32C6|ESP_HOSTED_SDIO_HOST_INTERFACE|ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=54" sdkconfig
+   ```
+   全部要在输出里。
+
+**为什么不在应用层做"容错"绕过？** 这个 panic 发生在 `__libc_init_array`（C++ 全局构造器阶段），早于 `app_main()`，连 ESP_LOG 之外的应用代码都没机会跑。`CONFIG_PK_BLE_ENABLED` 那个 guard 只挡得住 `ble_gatt_init()` 这种 main-time 调用，挡不住 esp_hosted 的全局构造器。这是**配置层 bug**，应用层无解。
+
 ### `assert failed: vApplicationGetTimerTaskMemory` 启动期 panic
 
 **原因**：内部 RAM 紧张到连 FreeRTOS timer task 的 8 KiB 栈都凑不出。通常是大型静态数组占了 `.bss` 内部段。

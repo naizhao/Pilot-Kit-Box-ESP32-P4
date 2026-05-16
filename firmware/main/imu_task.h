@@ -54,3 +54,31 @@ esp_err_t pk_imu_init(void);
  * or still booting). Safe to call from any task.
  */
 bool pk_imu_sample_get(pk_imu_sample_t *out);
+
+/*
+ * Zero the yaw axis only — "DG sync" / heading reset. Subsequent
+ * Rotation Vector reports will treat the current heading as 0°. Roll
+ * and pitch are unaffected (they stay referenced to gravity, which is
+ * absolute). Fire-and-forget; the call returns as soon as the SH-2
+ * Tare Now command has been pushed onto the bus.
+ *
+ * Safe to call from any task. Typical caller: button_task on short
+ * press of BTN1.
+ */
+esp_err_t pk_imu_tare_yaw(void);
+
+/*
+ * "Erect and cage" — set the current pose as the new (level, heading
+ * 0) reference for ALL three axes, then persist the tare and the
+ * dynamic calibration data (mag/gyro/accel zero offsets) into the
+ * BNO085's internal flash. Survives a power cycle.
+ *
+ * Sends three SH-2 commands in sequence with 50 ms gaps so the chip
+ * has time to digest each one:
+ *   1. Tare Now    (axes = X | Y | Z, basis = Rotation Vector)
+ *   2. Persist Tare
+ *   3. Save DCD
+ *
+ * Typical caller: button_task on long press of BTN1.
+ */
+esp_err_t pk_imu_full_reorient(void);

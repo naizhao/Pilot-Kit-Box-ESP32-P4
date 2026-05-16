@@ -32,32 +32,46 @@
 #define PK_DISPLAY_BPP         2          /* RGB565 */
 #define PK_DISPLAY_FB_BYTES    (PK_DISPLAY_W * PK_DISPLAY_H * PK_DISPLAY_BPP)
 
-/* SPI / control pin assignments (Waveshare ESP32-P4-WIFI6 header
- * exposure constraints — GPIO 9-19 and 34-45 aren't on the user
- * headers, so all six SPI/control lines route through the GPIO
- * matrix. Fine at our 40 MHz target; the matrix adds ~2 ns of
- * propagation delay which is well within ST7789's setup/hold). */
+/* SPI / control pin assignments on the Waveshare ESP32-P4-WIFI6 left
+ * header.
+ *
+ * SCK/MOSI/CS use GPIO 30/29/28 — these are SPI2's IO_MUX direct pins
+ * (SPI2_CK_PAD / SPI2_D_PAD / SPI2_CS_PAD per datasheet Table 2-3),
+ * so the lines bypass the GPIO matrix and are eligible for the full
+ * 80 MHz ST7789 SPI ceiling. DC is on GPIO 31 — esp_lcd toggles it
+ * as a plain GPIO output around every command/parameter boundary, so
+ * it doesn't need IO_MUX direct.
+ *
+ * Right header was previously used but is land-mined: pins 46 and 47
+ * are separated by a GND pad, which any multi-pin Dupont housing will
+ * short one signal to ground (verified — caused the "init OK but
+ * panel uniform pale blue" symptom during Phase 4a bring-up). The
+ * left-header 28/29/30/31 region has the GND below it, not between
+ * the signal pads, so a 4- or 5-pin housing is safe here.
+ *
+ * See docs/hardware/board_pinout.md §1 for the silkscreen-to-GPIO
+ * map and §3 for the LCD wiring diagram. */
 #define PK_LCD_SPI_HOST        SPI2_HOST
-#define PK_LCD_PIN_SCLK        47
-#define PK_LCD_PIN_MOSI        33
-#define PK_LCD_PIN_MISO        -1   /* unused — ST7789 only echoes via MISO
-                                       for panel ID reads we don't do at
-                                       runtime. Set to a GPIO if you ever
-                                       want to read panel status registers. */
-#define PK_LCD_PIN_CS          46
-#define PK_LCD_PIN_DC          48
-/* Many TK024F3036-class 7-pin ST7789 modules don't expose RST — the
- * breakout has an on-board RC reset network tying RST to VCC. Set to
- * -1 to skip the GPIO toggle; esp_lcd_panel_st7789 falls back to a
- * software SWRESET command (0x01) over SPI, which the chip honours
- * the same way. If your module DOES expose RST, set this to the
- * GPIO you connected it to (49 was the original assignment). */
+#define PK_LCD_PIN_SCLK        30   /* SPI2_CK_PAD (IO_MUX direct) */
+#define PK_LCD_PIN_MOSI        29   /* SPI2_D_PAD  (IO_MUX direct) */
+#define PK_LCD_PIN_MISO        -1   /* unused at runtime; would be GPIO 31
+                                       (SPI2_Q_PAD) if we ever read RDDID */
+#define PK_LCD_PIN_CS          28   /* SPI2_CS_PAD (IO_MUX direct) */
+#define PK_LCD_PIN_DC          31   /* plain GPIO output, software-toggled */
+/* TK024F304189-SPI breakout has an on-board RC reset (R8=18k, C7=100n)
+ * tying RST to VCC, so we don't drive it from the host. esp_lcd_panel
+ * falls back to a software SWRESET (cmd 0x01) over SPI. If a future
+ * variant exposes RST, set this to the GPIO you wired it to. */
 #define PK_LCD_PIN_RST         -1
 #define PK_LCD_PIN_BL          50
 
-#define PK_LCD_SPI_HZ          (10 * 1000 * 1000)  /* 10 MHz — safe for dupont
-                                                     jumpers; bump to 40 on a
-                                                     real PCB with short traces */
+#define PK_LCD_SPI_HZ          (40 * 1000 * 1000)  /* 40 MHz — comfortable
+                                                     on IO_MUX direct
+                                                     (SPI2_CK/D/CS_PAD).
+                                                     ST7789 spec ceiling is
+                                                     ~80 MHz; on a real PCB
+                                                     with short traces we can
+                                                     try 60-80 later. */
 #define PK_LCD_BL_PWM_FREQ_HZ  20000               /* outside audible range */
 
 /*

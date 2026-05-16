@@ -37,7 +37,9 @@
 #include "freertos/ringbuf.h"
 #include "esp_attr.h"               /* EXT_RAM_BSS_ATTR */
 #include "esp_log.h"
-#include "esp_system.h"             /* esp_restart() — IQ stall watchdog */
+/* Stall recovery is now graceful: pk_sdr_request_reinit() (sdr_task)
+ * tears down + re-opens the dongle without touching IMU / PFD / BLE.
+ * esp_restart() only happens inside sdr_task after the attempt cap. */
 #include "esp_timer.h"
 
 #include "mode-s.h"
@@ -431,11 +433,20 @@ void dsp_task(void *arg)
     /* IQ stall watchdog: real dongles occasionally just stop pushing
      * samples after hours of uptime (rtl2832u quirk, USB stack
      * starvation, who knows). When we notice the stream has been
-     * silent for IQ_STALL_LIMIT_MS, reboot — the persisted-device
-     * path in sdr_task immediately re-enumerates the dongle on the
-     * next boot so the visible downtime is just the boot pause. */
-    #define IQ_STALL_LIMIT_MS  60000     /* 60 s */
+     * silent for IQ_STALL_LIMIT_MS, ask sdr_task to tear down its
+     * librtlsdr session and re-open the dongle (no USB unplug needed).
+     * Re-init happens in-place — IMU, PFD and BLE stay running. After
+     * a successful re-init, sdr_task waits for IQ to start flowing
+     * again before clearing its own attempt counter.
+     *
+     * IQ_REINIT_BACKOFF_MS prevents this watchdog from spamming
+     * pk_sdr_request_reinit() faster than sdr_task can act on it —
+     * the tear-down + re-open path itself takes ~1-2 s, during which
+     * last_iq_us obviously won't advance. */
+    #define IQ_STALL_LIMIT_MS    10000   /* 10 s with no IQ → reinit request */
+    #define IQ_REINIT_BACKOFF_MS  3000   /* don't re-request within 3 s of last */
     int64_t  last_iq_us           = window_start_us;
+    int64_t  last_reinit_req_us   = 0;
     bool     iq_ever_received     = false;
 
     while (1) {
@@ -485,19 +496,25 @@ void dsp_task(void *arg)
         }
 
         /* Stall watchdog. Only arms after we've actually received IQ
-         * at least once — otherwise we'd reboot during normal boot
-         * before the dongle has finished enumerating. */
+         * at least once — otherwise we'd request a re-init during normal
+         * boot before the dongle has finished enumerating. */
         if (iq_ever_received) {
             int64_t stall_ms = (now_us - last_iq_us) / 1000;
-            if (stall_ms > IQ_STALL_LIMIT_MS) {
-                ESP_LOGE(TAG,
-                         "IQ stream stalled %lld ms (limit %d ms) — "
-                         "rebooting; persisted-device detection in "
-                         "sdr_task will re-enumerate the dongle on boot",
+            int64_t since_last_req_ms = (now_us - last_reinit_req_us) / 1000;
+            if (stall_ms > IQ_STALL_LIMIT_MS &&
+                since_last_req_ms > IQ_REINIT_BACKOFF_MS) {
+                char reason[64];
+                snprintf(reason, sizeof(reason),
+                         "IQ stream stalled %lld ms (limit %d ms)",
                          (long long)stall_ms, IQ_STALL_LIMIT_MS);
-                /* Tiny wait so the log line actually drains over UART. */
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
+                ESP_LOGW(TAG, "%s — requesting sdr_task re-init", reason);
+                pk_sdr_request_reinit(reason);
+                last_reinit_req_us = now_us;
+                /* Don't clear last_iq_us: if the re-init succeeds, on_iq
+                 * will refresh it; if it doesn't, we'll re-request after
+                 * IQ_REINIT_BACKOFF_MS, and sdr_task's own attempt
+                 * counter will escalate to esp_restart() after
+                 * SDR_REINIT_MAX_ATTEMPTS failures. */
             }
         }
     }

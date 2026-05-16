@@ -54,3 +54,17 @@ void dsp_task(void *arg);
  * synchronisation is needed for this single-producer/single-consumer use.
  */
 uint32_t pk_iq_dropped_bytes_swap(void);
+
+/* --- SDR re-init signal (dsp_task → sdr_task) --------------------------- *
+ *
+ * Callable from any task. Asks sdr_task to tear down the current
+ * librtlsdr session (close + re-open the same USB device address — no
+ * USB unplug/replug needed) and rebuild the streaming pipeline. Used
+ * by dsp_task's IQ-stall watchdog instead of esp_restart() so a hung
+ * dongle no longer drags IMU / PFD / BLE down with it.
+ *
+ * `reason` is logged as the cause. After N consecutive re-inits that
+ * fail to restore a live IQ stream, sdr_task escalates to esp_restart()
+ * as a last-resort recovery.
+ */
+void pk_sdr_request_reinit(const char *reason);

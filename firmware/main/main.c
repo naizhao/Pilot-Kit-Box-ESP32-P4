@@ -23,6 +23,7 @@
 #include "pilot_kit.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
+#include "button_task.h"
 #include "display.h"
 #include "imu_task.h"
 #include "pfd.h"
@@ -125,6 +126,16 @@ void app_main(void)
                  esp_err_to_name(imu_err));
     } else {
         ESP_LOGI(TAG, "BNO085 IMU online");
+
+        /* BTN1 (GPIO 26) drives BNO085 Tare/cage. Skip the button task
+         * when IMU init failed — pressing the button would just return
+         * ESP_ERR_INVALID_STATE anyway. */
+        esp_err_t btn_err = pk_button_init();
+        if (btn_err != ESP_OK) {
+            ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
+        } else {
+            ESP_LOGI(TAG, "BTN1 task running (tare/cage on GPIO 26)");
+        }
     }
 
     /* Phase 4c: PFD render task. Starts after the display + IMU init

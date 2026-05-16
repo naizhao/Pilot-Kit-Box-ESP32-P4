@@ -12,6 +12,7 @@ firmware/components/xtrsdr/
 firmware/build/
 firmware/sdkconfig
 firmware/sdkconfig.old
+firmware/sdkconfig.broken-backup-*
 firmware/managed_components/
 firmware/dependencies.lock
 **/.cache/

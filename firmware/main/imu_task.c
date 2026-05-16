@@ -60,7 +60,26 @@ static const char *TAG = "imu";
 #define SHTP_MAX_PAYLOAD         128   /* plenty for Rotation Vector + slack */
 
 #define SH2_CMD_SET_FEATURE      0xFD
+#define SH2_CMD_REQUEST          0xF2
 #define SH2_REPORT_ROTATION_VECTOR  0x05
+
+/* SH-2 Command Request codes (sent inside a 0xF2 report on the
+ * control channel). See SH-2 Reference Manual §6.4. */
+#define SH2_COMMAND_TARE         0x03
+#define SH2_COMMAND_SAVE_DCD     0x06
+
+/* Tare command (0x03) p0 subcommand values. */
+#define SH2_TARE_SUB_NOW         0x00
+#define SH2_TARE_SUB_PERSIST     0x01
+
+/* Tare Now (subcommand 0x00) p1 axes mask — OR these together. */
+#define SH2_TARE_AXIS_X          0x01
+#define SH2_TARE_AXIS_Y          0x02
+#define SH2_TARE_AXIS_Z          0x04
+#define SH2_TARE_AXIS_ALL        (SH2_TARE_AXIS_X | SH2_TARE_AXIS_Y | SH2_TARE_AXIS_Z)
+
+/* Tare Now (subcommand 0x00) p2 basis rotation vector to tare against. */
+#define SH2_TARE_BASIS_ROT_VEC   0x00
 
 /* Set Feature Command payload layout — 17 bytes (see SH-2 ref §6.5.4). */
 typedef struct __attribute__((packed)) {
@@ -79,6 +98,8 @@ static i2c_master_dev_handle_t    s_dev;
 static SemaphoreHandle_t          s_sample_lock;
 static pk_imu_sample_t            s_sample;
 static uint8_t                    s_tx_seq[6];   /* per-channel SHTP sequence */
+static uint8_t                    s_cmd_seq;     /* SH-2 Command Request sequence */
+static bool                       s_imu_ready;   /* true after pk_imu_init() succeeds */
 
 /* --- I²C bring-up ---------------------------------------------------- */
 static esp_err_t i2c_bring_up(void)
@@ -167,6 +188,29 @@ static esp_err_t shtp_recv(uint8_t *out_cargo, size_t out_cap,
     if (*out_cargo_len > out_cap) *out_cargo_len = out_cap;
     memcpy(out_cargo, scratch + SHTP_HEADER_LEN, *out_cargo_len);
     return ESP_OK;
+}
+
+/* --- SH-2 Command Request helper ------------------------------------- *
+ *
+ * A Command Request is a 12-byte cargo on the control channel:
+ *
+ *   byte 0:  0xF2  (report ID)
+ *   byte 1:  command-request sequence (incrementing, separate from SHTP)
+ *   byte 2:  command code (0x03 Tare, 0x06 Save DCD, ...)
+ *   byte 3-11: P0..P8 (9 command-specific parameter bytes)
+ *
+ * BNO085 replies with a 0xF1 Command Response on the same channel,
+ * carrying the same sequence number. We don't read it — the user-visible
+ * confirmation is the change in attitude reports a moment later. */
+static esp_err_t sh2_send_command(uint8_t command, const uint8_t params[9])
+{
+    uint8_t cargo[12];
+    cargo[0] = SH2_CMD_REQUEST;
+    cargo[1] = s_cmd_seq++;
+    cargo[2] = command;
+    if (params) memcpy(&cargo[3], params, 9);
+    else        memset(&cargo[3], 0, 9);
+    return shtp_send(SHTP_CH_CONTROL, cargo, sizeof(cargo));
 }
 
 /* --- Set Feature: Rotation Vector at 100 Hz -------------------------- */
@@ -267,42 +311,139 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     return true;
 }
 
-/* --- IMU polling task ------------------------------------------------ */
+/* --- Bring-up sequence (used both at boot and by the watchdog) ------- *
+ *
+ * Pulses RST, drains the boot-time SHTP advertisement, and re-enables
+ * the Rotation Vector report. Safe to call from any task. Resets the
+ * SHTP per-channel sequence counters too — BNO085 starts back at seq=0
+ * after a reset and would reject our frames if our side kept counting. */
+static esp_err_t bno_bring_up(void)
+{
+    bno_reset_pulse();
+
+    /* SHTP and command-request sequence numbers restart at 0 on the
+     * BNO085 side after a hard reset. Mirror that on our side. */
+    memset(s_tx_seq, 0, sizeof(s_tx_seq));
+    s_cmd_seq = 0;
+
+    /* Drain whatever SH-2 sent us during boot (advertisement + Reset
+     * Complete + a couple of internal acks). 500 ms is plenty even on
+     * slow firmware revisions. */
+    uint8_t  scratch[SHTP_MAX_PAYLOAD];
+    uint8_t  ch;
+    size_t   clen;
+    int64_t  deadline = esp_timer_get_time() + 500000;
+    while (esp_timer_get_time() < deadline) {
+        if (shtp_recv(scratch, sizeof(scratch), &ch, &clen) != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+
+    return bno_enable_rotation_vector();
+}
+
+/* --- IMU polling task ------------------------------------------------ *
+ *
+ * Polls SHTP at 200 Hz, parses Rotation Vector reports, logs a 1 Hz
+ * summary with classified recv counters, and runs a watchdog that
+ * re-inits the BNO085 if no valid report has arrived in IMU_STALL_TIMEOUT_US.
+ *
+ * Why a watchdog is needed: the BNO085 occasionally hangs mid-stream
+ * (chip firmware bug or I²C bus glitch). Once that happens the chip
+ * stops emitting reports entirely and there's no spontaneous recovery
+ * without a hard reset on the RST line. We catch it by tracking the
+ * last successful parse and pulsing RST + replaying init when the gap
+ * crosses a threshold. */
+
+#define IMU_STALL_TIMEOUT_US      (5 * 1000000LL)   /* 5 s with no valid RV report → re-init */
+#define IMU_REINIT_MIN_GAP_US     (3 * 1000000LL)   /* don't retry sooner than this after a re-init attempt */
+
 static void imu_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "imu_task running (polling @ 200 Hz)");
+    ESP_LOGI(TAG, "imu_task running (polling @ 200 Hz, stall watchdog @ 5 s)");
 
     uint8_t cargo[SHTP_MAX_PAYLOAD];
-    int64_t last_log_us = 0;
-    uint32_t valid_count = 0;
-    uint32_t parse_fail  = 0;
+    int64_t last_log_us    = 0;
+    int64_t last_valid_us  = esp_timer_get_time();
+    int64_t last_reinit_us = 0;
+
+    /* Per-second counters (zeroed in the 1 Hz dump). */
+    uint32_t valid_count        = 0;   /* successfully parsed RV reports */
+    uint32_t parse_fail         = 0;   /* SHTP frame on CH3 but not an RV report */
+    uint32_t recv_not_found     = 0;   /* shtp_recv returned ESP_ERR_NOT_FOUND (no data this tick) */
+    uint32_t recv_i2c_err       = 0;   /* shtp_recv returned a real I²C bus error */
+    uint32_t recv_wrong_channel = 0;   /* SHTP frame received but channel != 3 (CH 0/1/2/4 etc.) */
 
     while (1) {
         uint8_t channel;
         size_t  cargo_len = 0;
         esp_err_t err = shtp_recv(cargo, sizeof(cargo), &channel, &cargo_len);
-        if (err == ESP_OK && channel == SHTP_CH_SENSORHUB) {
-            if (parse_rotation_vector(cargo, cargo_len)) valid_count++;
-            else parse_fail++;
-        } else if (err == ESP_OK) {
-            ESP_LOGD(TAG, "shtp ch=%u cargo=%u (ignored)",
-                     channel, (unsigned)cargo_len);
+        if (err == ESP_OK) {
+            if (channel == SHTP_CH_SENSORHUB) {
+                if (parse_rotation_vector(cargo, cargo_len)) {
+                    valid_count++;
+                    last_valid_us = esp_timer_get_time();
+                } else {
+                    parse_fail++;
+                }
+            } else {
+                recv_wrong_channel++;
+                ESP_LOGD(TAG, "shtp ch=%u cargo=%u (ignored)",
+                         channel, (unsigned)cargo_len);
+            }
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            recv_not_found++;
+        } else {
+            recv_i2c_err++;
         }
 
         int64_t now = esp_timer_get_time();
+
+        /* --- Watchdog: re-init if no valid RV report in N seconds --- */
+        if (now - last_valid_us > IMU_STALL_TIMEOUT_US &&
+            now - last_reinit_us > IMU_REINIT_MIN_GAP_US) {
+            ESP_LOGW(TAG, "no valid RV report for %.1fs — re-init BNO085",
+                     (double)(now - last_valid_us) / 1e6);
+
+            /* Mark sample invalid so PFD knows we lost the stream. */
+            xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+            s_sample.valid = false;
+            xSemaphoreGive(s_sample_lock);
+
+            esp_err_t bu = bno_bring_up();
+            last_reinit_us = esp_timer_get_time();
+            /* Reset the stall clock so we give the chip time to start
+             * producing reports again before retrying. */
+            last_valid_us = last_reinit_us;
+            if (bu != ESP_OK) {
+                ESP_LOGW(TAG, "bring-up after stall failed: %s",
+                         esp_err_to_name(bu));
+            } else {
+                ESP_LOGI(TAG, "BNO085 re-init complete; waiting for reports");
+            }
+        }
+
+        /* --- 1 Hz summary log --- */
         if (now - last_log_us >= 1000000) {
             pk_imu_sample_t s;
             pk_imu_sample_get(&s);
             ESP_LOGI(TAG, "rpy = %+7.2f / %+7.2f / %7.2f  "
-                          "(acc=%u valid=%lu parse_fail=%lu)",
+                          "(acc=%u valid=%lu parse_fail=%lu "
+                          "nf=%lu i2c_err=%lu wrong_ch=%lu)",
                      s.roll_deg, s.pitch_deg, s.yaw_deg,
                      s.accuracy,
                      (unsigned long)valid_count,
-                     (unsigned long)parse_fail);
-            valid_count = 0;
-            parse_fail = 0;
-            last_log_us = now;
+                     (unsigned long)parse_fail,
+                     (unsigned long)recv_not_found,
+                     (unsigned long)recv_i2c_err,
+                     (unsigned long)recv_wrong_channel);
+            valid_count        = 0;
+            parse_fail         = 0;
+            recv_not_found     = 0;
+            recv_i2c_err       = 0;
+            recv_wrong_channel = 0;
+            last_log_us        = now;
         }
         vTaskDelay(pdMS_TO_TICKS(5));   /* 200 Hz polling */
     }
@@ -330,29 +471,75 @@ esp_err_t pk_imu_init(void)
         return err;
     }
 
-    bno_reset_pulse();
-
-    /* Drain whatever SH-2 sent us during boot (advertisement +
-     * Reset Complete + a couple of internal acks). 500 ms is plenty
-     * even on slow firmware revisions. */
-    uint8_t  scratch[SHTP_MAX_PAYLOAD];
-    uint8_t  ch;
-    size_t   clen;
-    int64_t  deadline = esp_timer_get_time() + 500000;
-    while (esp_timer_get_time() < deadline) {
-        if (shtp_recv(scratch, sizeof(scratch), &ch, &clen) != ESP_OK) {
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
-    }
-
-    err = bno_enable_rotation_vector();
+    err = bno_bring_up();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "enable_rotation_vector: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "bno_bring_up: %s", esp_err_to_name(err));
         return err;
     }
     ESP_LOGI(TAG, "BNO085 rotation vector enabled @ 100 Hz");
 
     BaseType_t ok = xTaskCreatePinnedToCore(
         imu_task, "imu", 4096, NULL, 5, NULL, 0);
-    return (ok == pdTRUE) ? ESP_OK : ESP_ERR_NO_MEM;
+    if (ok != pdTRUE) return ESP_ERR_NO_MEM;
+    s_imu_ready = true;
+    return ESP_OK;
+}
+
+/* --- Tare / cage API (public) ---------------------------------------- *
+ *
+ * These can be invoked from any task (typically button_task). They
+ * fire SH-2 Command Requests on the control channel and return as
+ * soon as the I²C write completes — they don't wait for the BNO085's
+ * Command Response. Concurrent access with the imu_task polling loop
+ * is safe because ESP-IDF's i2c_master driver serialises transactions
+ * on the same device handle internally. The shtp_send seq counter
+ * (s_tx_seq[]) and s_cmd_seq are only mutated from a single task at
+ * a time in practice (init thread → then exactly one button task). */
+
+esp_err_t pk_imu_tare_yaw(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    uint8_t p[9] = {0};
+    p[0] = SH2_TARE_SUB_NOW;
+    p[1] = SH2_TARE_AXIS_Z;             /* yaw only — leave roll/pitch alone */
+    p[2] = SH2_TARE_BASIS_ROT_VEC;
+    ESP_LOGI(TAG, "tare yaw (Z-axis only)");
+    return sh2_send_command(SH2_COMMAND_TARE, p);
+}
+
+esp_err_t pk_imu_full_reorient(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    ESP_LOGI(TAG, "full reorient: tare(XYZ) + persist + save DCD");
+
+    uint8_t p[9] = {0};
+
+    /* 1) Tare all three axes against the current Rotation Vector. */
+    p[0] = SH2_TARE_SUB_NOW;
+    p[1] = SH2_TARE_AXIS_ALL;
+    p[2] = SH2_TARE_BASIS_ROT_VEC;
+    esp_err_t err = sh2_send_command(SH2_COMMAND_TARE, p);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "tare(XYZ) failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    /* 2) Persist the tare offset into BNO085 flash. */
+    memset(p, 0, sizeof(p));
+    p[0] = SH2_TARE_SUB_PERSIST;
+    err = sh2_send_command(SH2_COMMAND_TARE, p);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "persist tare failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    /* 3) Save Dynamic Calibration Data (mag/gyro/accel zero offsets). */
+    memset(p, 0, sizeof(p));
+    err = sh2_send_command(SH2_COMMAND_SAVE_DCD, p);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "save DCD failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }

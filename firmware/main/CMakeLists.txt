@@ -13,6 +13,7 @@ idf_component_register(
         "record_sink_ble.c"
         "display.c"
         "imu_task.c"
+        "button_task.c"
         "pfd.c"
         "pfd_font.c"
     INCLUDE_DIRS "."

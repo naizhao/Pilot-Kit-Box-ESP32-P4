@@ -16,12 +16,15 @@
 
 #include <assert.h>
 #include <stdlib.h>     /* malloc/free for gain-table query */
+#include <stdatomic.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "freertos/event_groups.h"
 #include "esp_log.h"
+#include "esp_system.h"     /* esp_restart() — final-fallback only */
+#include "esp_timer.h"      /* esp_timer_get_time() for stream-healthy timer */
 #include "usb/usb_host.h"
 
 #include "rtl-sdr.h"
@@ -31,6 +34,17 @@ static const char *TAG = "sdr";
 
 #define SDR_EVT_NEW_DEV   BIT0
 #define SDR_EVT_DEV_GONE  BIT1
+
+/* Re-init policy:
+ *
+ * If a re-init attempt brings the IQ stream back and it stays healthy
+ * for SDR_REINIT_RESET_AFTER_US, the consecutive-failure counter is
+ * cleared. If we burn through SDR_REINIT_MAX_ATTEMPTS without ever
+ * seeing the stream recover that long, fall back to esp_restart() —
+ * something deeper is wrong (USB host stuck, dongle hardware fault,
+ * peripheral_map error) and a clean boot is the safer move. */
+#define SDR_REINIT_MAX_ATTEMPTS     5
+#define SDR_REINIT_RESET_AFTER_US   (5 * 1000000LL)
 
 typedef struct {
     EventGroupHandle_t evt;
@@ -54,6 +68,27 @@ uint32_t pk_iq_dropped_bytes_swap(void)
     uint32_t v = s_iq_dropped_bytes;
     s_iq_dropped_bytes = 0;
     return v;
+}
+
+/* --- Re-init request path (dsp_task → sdr_task) --------------------- *
+ *
+ * dsp_task sets `s_reinit_pending` then we cancel the current async
+ * read so sdr_task's main loop unblocks; the next iteration takes the
+ * reinit branch (skips NEW_DEV wait, re-opens the same address). */
+static atomic_bool s_reinit_pending;
+static int64_t     s_last_iq_us;            /* updated in on_iq, read by sdr_task */
+static uint32_t    s_reinit_attempts;       /* consecutive failed re-inits */
+
+void pk_sdr_request_reinit(const char *reason)
+{
+    ESP_LOGW(TAG, "re-init requested: %s", reason ? reason : "(no reason)");
+    atomic_store(&s_reinit_pending, true);
+    /* Same trick as the DEV_GONE callback uses: nudge read_async out
+     * of its URB pump. Safe to call from any task; rtlsdr_cancel_async
+     * just sets a flag inside librtlsdr. */
+    if (s_ctx.dev != NULL) {
+        rtlsdr_cancel_async(s_ctx.dev);
+    }
 }
 
 static void on_client_event(const usb_host_client_event_msg_t *msg, void *arg)
@@ -90,6 +125,11 @@ static void on_client_event(const usb_host_client_event_msg_t *msg, void *arg)
 static void on_iq(unsigned char *buf, uint32_t len, void *cb_ctx)
 {
     (void)cb_ctx;
+
+    /* Track IQ liveness for the re-init attempt counter. Same task as
+     * sdr_task's main loop (URB callback fires from read_async's pump),
+     * so a plain int64_t store is fine. */
+    s_last_iq_us = esp_timer_get_time();
 
     /* Non-blocking send. The callback is invoked from rtlsdr_read_async()'s
      * usb_host_client_handle_events() loop, which is the same task that
@@ -141,17 +181,46 @@ void sdr_task(void *arg)
     }
 
     /* Outer reconnect loop. Each iteration opens the dongle, runs the
-     * blocking async stream until it errors out (typically because the
-     * user yanked the USB cable), tears the dongle down, and falls
-     * back into the event pump to wait for the next NEW_DEV. The USB
-     * client stays registered across iterations so the next attach
-     * still gets delivered to us. */
+     * blocking async stream until it errors out, tears the dongle down,
+     * and falls back into either:
+     *   - the event pump waiting for the next NEW_DEV (normal unplug
+     *     path — physical USB removal), or
+     *   - immediately re-opening the same address (re-init path —
+     *     dsp_task called pk_sdr_request_reinit() because the IQ
+     *     stream stalled while USB was still up).
+     * The USB client stays registered across iterations so the next
+     * attach still gets delivered to us. */
     while (1) {
-        /* Wait for NEW_DEV. First iteration: either addr_list_fill
-         * pre-set the bit (persisted dongle) or this blocks until cold
-         * plug. Subsequent iterations: blocks until the next replug. */
-        while ((xEventGroupGetBits(s_ctx.evt) & SDR_EVT_NEW_DEV) == 0) {
-            usb_host_client_handle_events(client_hdl, pdMS_TO_TICKS(100));
+        bool reinit_branch = atomic_exchange(&s_reinit_pending, false);
+
+        if (reinit_branch) {
+            s_reinit_attempts++;
+            if (s_reinit_attempts > SDR_REINIT_MAX_ATTEMPTS) {
+                ESP_LOGE(TAG, "re-init attempts exhausted (%lu/%d) — "
+                              "falling back to esp_restart()",
+                         (unsigned long)s_reinit_attempts,
+                         SDR_REINIT_MAX_ATTEMPTS);
+                vTaskDelay(pdMS_TO_TICKS(100));   /* let UART drain */
+                esp_restart();
+            }
+            ESP_LOGW(TAG, "re-init attempt %lu/%d — re-opening dongle at addr %u "
+                          "without waiting for fresh USB enumeration",
+                     (unsigned long)s_reinit_attempts,
+                     SDR_REINIT_MAX_ATTEMPTS,
+                     s_ctx.dev_addr);
+            /* Skip the NEW_DEV wait — the USB device is still on the
+             * bus, just our librtlsdr session is gone. */
+        } else {
+            /* Wait for NEW_DEV. First iteration: either addr_list_fill
+             * pre-set the bit (persisted dongle) or this blocks until
+             * cold plug. Subsequent iterations: blocks until next
+             * replug. */
+            while ((xEventGroupGetBits(s_ctx.evt) & SDR_EVT_NEW_DEV) == 0) {
+                usb_host_client_handle_events(client_hdl, pdMS_TO_TICKS(100));
+            }
+            /* Real attach: any prior re-init failures are irrelevant
+             * since this is a fresh hardware event. */
+            s_reinit_attempts = 0;
         }
         /* Consume both bits so the next disconnect/reconnect cycle is
          * detected cleanly — DEV_GONE may have been left set by the
@@ -235,10 +304,39 @@ void sdr_task(void *arg)
                  /* doc value, kept in sync with DEFAULT_BUF_NUMBER in librtlsdr.c */
                  15);
 
-        /* Blocks until rtlsdr_cancel_async() or the URB error threshold
-         * trips (typical case on physical unplug). */
+        /* Mark "stream just started — we haven't seen any IQ yet" so the
+         * health check below knows the difference between "stream ran
+         * for hours then died" and "open succeeded but nothing ever
+         * came through". */
+        s_last_iq_us = 0;
+        int64_t stream_start_us = esp_timer_get_time();
+
+        /* Blocks until rtlsdr_cancel_async() (called by either DEV_GONE
+         * handler on physical unplug, or pk_sdr_request_reinit() on
+         * IQ stall) or the URB error threshold trips. */
         r = rtlsdr_read_async(dev, on_iq, NULL, /*buf_num=*/0, /*buf_len=*/0);
-        ESP_LOGW(TAG, "rtlsdr_read_async returned %d — closing dongle, waiting for replug", r);
+
+        /* Was this an actually healthy run? If we saw IQ for at least
+         * SDR_REINIT_RESET_AFTER_US, clear the attempts counter so the
+         * next stall doesn't immediately fall into the esp_restart()
+         * escalation path. */
+        int64_t now_us = esp_timer_get_time();
+        int64_t healthy_us = (s_last_iq_us > 0)
+            ? (s_last_iq_us - stream_start_us) : 0;
+        if (healthy_us >= SDR_REINIT_RESET_AFTER_US) {
+            if (s_reinit_attempts > 0) {
+                ESP_LOGI(TAG, "stream was healthy for %.1fs before exit — "
+                              "clearing re-init attempt counter (was %lu)",
+                         (double)healthy_us / 1e6,
+                         (unsigned long)s_reinit_attempts);
+            }
+            s_reinit_attempts = 0;
+        }
+
+        ESP_LOGW(TAG, "rtlsdr_read_async returned %d after %.1fs of IQ "
+                      "(healthy_us=%lld, now_us=%lld) — closing dongle",
+                 r, (double)healthy_us / 1e6,
+                 (long long)healthy_us, (long long)now_us);
 
         /* Hide the dev pointer before close so any racing event callback
          * doesn't poke a stale rtlsdr_dev_t (rtlsdr_close frees it). */
