@@ -307,6 +307,24 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     float roll, pitch, yaw;
     quat_to_euler(qi, qj, qk, qw, &roll, &pitch, &yaw);
 
+    /* Mounting-orientation corrections — see imu_task.h for the
+     * diagnostic recipe and the rationale for each knob. These
+     * compile away when the corresponding define is 0. */
+#if PK_IMU_MOUNT_INVERT_ROLL
+    roll = -roll;
+#endif
+#if PK_IMU_MOUNT_INVERT_PITCH
+    pitch = -pitch;
+#endif
+#if PK_IMU_MOUNT_INVERT_YAW
+    yaw = 360.0f - yaw;
+#endif
+#if PK_IMU_MOUNT_YAW_OFFSET_DEG != 0
+    yaw += (float)PK_IMU_MOUNT_YAW_OFFSET_DEG;
+    while (yaw >= 360.0f) yaw -= 360.0f;
+    while (yaw <    0.0f) yaw += 360.0f;
+#endif
+
     xSemaphoreTake(s_sample_lock, portMAX_DELAY);
     s_sample.ts_us     = esp_timer_get_time();
     s_sample.roll_deg  = roll;

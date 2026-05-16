@@ -30,6 +30,46 @@
 
 #include "esp_err.h"
 
+/* --- Mounting orientation corrections (breadboard / debug only) ----- *
+ *
+ * Applied to the Euler output AFTER BNO085's quaternion → euler
+ * conversion. Use these while the chip is glued onto the board in
+ * an orientation that doesn't match the "chip +X forward, +Y right,
+ * +Z down" aerospace convention.
+ *
+ * Once the final PCB physically orients the BNO085 correctly, set
+ * all four back to 0 / false and this section becomes dead code.
+ *
+ * Diagnostic recipe — set them all to 0 / 0 first, then adjust:
+ *
+ *   Step 1.  Place device LEVEL on a desk, "front" edge pointing
+ *            away from you, "right" edge to your right.
+ *   Step 2.  Check PFD HDG. If it reads ~180° when you face north
+ *            (or any consistent 180° offset from the expected value),
+ *            set MOUNT_YAW_OFFSET_DEG = 180. Other values (90 / 270)
+ *            work too for different mounting rotations.
+ *   Step 3.  Tilt the FRONT edge of the device downward (nose-down).
+ *            Pitch should read NEGATIVE. If it reads positive,
+ *            set MOUNT_INVERT_PITCH = 1.
+ *   Step 4.  Tilt the RIGHT edge of the device downward (right-wing-
+ *            down). Roll should read POSITIVE. If negative,
+ *            set MOUNT_INVERT_ROLL = 1.
+ *   Step 5.  Rotate device clockwise viewed from above. HDG should
+ *            INCREASE 0→90→180→270. If it decreases, set
+ *            MOUNT_INVERT_YAW = 1.
+ *
+ * INVERT flags are applied first; the offset is applied last
+ * (after invert) and wraps yaw into [0, 360).
+ *
+ * Defaults below match the breadboard build where the BNO085
+ * GY-BN008X module appears rotated 180° around its Y axis relative
+ * to the desired aerospace frame (yaw flipped 180°, pitch sign
+ * flipped). Tune to suit your actual mounting. */
+#define PK_IMU_MOUNT_INVERT_ROLL       0
+#define PK_IMU_MOUNT_INVERT_PITCH      1
+#define PK_IMU_MOUNT_INVERT_YAW        0
+#define PK_IMU_MOUNT_YAW_OFFSET_DEG    180
+
 typedef struct {
     int64_t  ts_us;        /* esp_timer_get_time() at sample */
     float    roll_deg;     /* -180 .. +180 */
