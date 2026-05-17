@@ -18,10 +18,39 @@ are converted in-place.
 
 import sys
 import os
-from PIL import Image
+from PIL import Image, ImageChops
 
-# Match firmware/main/about_page.c / cal_wizard.c COL_BG (12, 12, 16)
-BG = (12, 12, 16)
+# Composite background (white) for the boot splash logo container —
+# matches the white rounded card that boot_splash.c draws behind the
+# logo. If the firmware ever changes the container colour, update
+# this and re-run the script.
+LOGO_BG = (255, 255, 255)
+
+
+def auto_crop_to_content(img):
+    """Trim surrounding solid-white padding so the logo content fills the
+    output canvas. Many vendor "export" PNGs come with a huge white
+    margin around the artwork (here: only ~18% of the canvas is
+    actual logo, the rest is white). Without cropping, the logo
+    appears as a tiny mark in the corner of whatever destination we
+    scale it into."""
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    white = Image.new("RGB", img.size, (255, 255, 255))
+    diff = ImageChops.difference(img, white)
+    bbox = diff.getbbox()
+    if bbox is None:
+        return img        # All-white image — nothing to crop
+    # Add a 2% margin around the detected bbox so the artwork doesn't
+    # touch the edges of the output.
+    w, h = img.size
+    pad = max(2, min(w, h) // 50)
+    cropped = img.crop((max(0, bbox[0] - pad),
+                        max(0, bbox[1] - pad),
+                        min(w, bbox[2] + pad),
+                        min(h, bbox[3] + pad)))
+    print(f"  auto-cropped: {img.size} → {cropped.size} (content bbox {bbox})")
+    return cropped
 
 
 def main():
@@ -33,11 +62,18 @@ def main():
     dst = sys.argv[2]
     size = int(sys.argv[3]) if len(sys.argv) == 4 else 128
 
-    img = Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS)
-    # Composite alpha onto BG so transparent regions match the firmware's clear colour.
-    bg = Image.new("RGB", img.size, BG)
+    img = Image.open(src).convert("RGBA")
+    # Composite onto white BACKGROUND first so the auto-crop sees a
+    # consistent picture (any alpha would have shown as black/garbage
+    # under the difference). The firmware's rounded white card behind
+    # the logo will continue the background colour seamlessly.
+    bg = Image.new("RGB", img.size, LOGO_BG)
     bg.paste(img, mask=img.split()[3])
     img = bg
+
+    img = auto_crop_to_content(img)
+
+    img = img.resize((size, size), Image.LANCZOS)
 
     out = bytearray()
     for y in range(img.height):

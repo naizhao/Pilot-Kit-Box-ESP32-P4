@@ -61,24 +61,15 @@
  * INVERT flags are applied first; the offset is applied last
  * (after invert) and wraps yaw into [0, 360).
  *
- * Defaults below match the breadboard build photographed during
- * bring-up: GY-BN008X module installed component-side up on the
- * perfboard's user-facing edge, pin row pointing toward the
- * device's forward direction (perfboard interior). In that pose,
- * chip +X aligns with device +X (forward), chip +Y points to the
- * device's left (= -device_Y), and chip +Z aligns with device +Z
- * (down). The only correction needed is a pitch sign flip
- * (rotation about Y picks up a minus sign because chip_Y is
- * reversed); roll and yaw need nothing.
- *
- * The original YAW_OFFSET=180 default that earlier commits shipped
- * was a misdiagnosis — that 180° drift was uncalibrated-mag noise,
- * not a true mounting offset. Applying it on top of a clean tare
- * also broke the heading-reset semantics (TARE short-press would
- * set the chip's internal reference to 0 but firmware would then
- * add 180, defeating the gesture). Cleared back to 0. */
+ * Defaults are all 0 / off — the chip is assumed to be mounted in
+ * the canonical "chip +X forward, +Y right, +Z down" aerospace
+ * orientation. The temporary INVERT_PITCH=1 default that earlier
+ * commits shipped was for an incorrectly-mounted breadboard build
+ * that the user is now re-soldering. Once the new mount is in place,
+ * walk through the diagnostic recipe above (steps 1-5) and only set
+ * a knob if its corresponding test actually fails. */
 #define PK_IMU_MOUNT_INVERT_ROLL       0
-#define PK_IMU_MOUNT_INVERT_PITCH      1
+#define PK_IMU_MOUNT_INVERT_PITCH      0
 #define PK_IMU_MOUNT_INVERT_YAW        0
 #define PK_IMU_MOUNT_YAW_OFFSET_DEG    0
 

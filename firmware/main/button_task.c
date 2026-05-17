@@ -206,6 +206,15 @@ static void button_task(void *arg)
              s_buttons[PK_BTN_UP].gpio,
              s_buttons[PK_BTN_DOWN].gpio);
 
+    /* DIAG: per-second snapshot of all four button GPIO levels.
+     * Lets us diagnose "button doesn't respond" without instrumenting
+     * the button under test — just press the dead one and watch the
+     * relevant column. Level 0 = pressed (internal pull-up + switch
+     * to GND); level 1 = released. If a column is stuck at 1 while
+     * the user reports they're pressing it, the GPIO can't read the
+     * line — switch/solder/electrical problem, not a firmware bug. */
+    int64_t last_diag_us = esp_timer_get_time();
+
     while (1) {
         int64_t now = esp_timer_get_time();
 
@@ -213,6 +222,20 @@ static void button_task(void *arg)
             poll_button(&s_buttons[i], now);
         }
         detect_combo(now);
+
+        if (now - last_diag_us >= 1000000) {
+            ESP_LOGI(TAG, "levels — TARE(GPIO%d)=%d  MODE(GPIO%d)=%d  "
+                          "UP(GPIO%d)=%d  DOWN(GPIO%d)=%d",
+                     s_buttons[PK_BTN_TARE].gpio,
+                     gpio_get_level(s_buttons[PK_BTN_TARE].gpio),
+                     s_buttons[PK_BTN_MODE].gpio,
+                     gpio_get_level(s_buttons[PK_BTN_MODE].gpio),
+                     s_buttons[PK_BTN_UP].gpio,
+                     gpio_get_level(s_buttons[PK_BTN_UP].gpio),
+                     s_buttons[PK_BTN_DOWN].gpio,
+                     gpio_get_level(s_buttons[PK_BTN_DOWN].gpio));
+            last_diag_us = now;
+        }
 
         vTaskDelay(pdMS_TO_TICKS(BTN_POLL_MS));
     }
