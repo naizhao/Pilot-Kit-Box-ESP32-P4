@@ -27,8 +27,8 @@
 
 #include "esp_err.h"
 
-#define PK_DISPLAY_W           240
-#define PK_DISPLAY_H           320
+#define PK_DISPLAY_W           320
+#define PK_DISPLAY_H           240
 #define PK_DISPLAY_BPP         2          /* RGB565 */
 #define PK_DISPLAY_FB_BYTES    (PK_DISPLAY_W * PK_DISPLAY_H * PK_DISPLAY_BPP)
 
