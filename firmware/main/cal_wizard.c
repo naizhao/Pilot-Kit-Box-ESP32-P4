@@ -25,21 +25,20 @@
 #include "pfd_font.h"
 #include "ui_state.h"
 
-/* Layout */
-#define WZ_FIG8_CX           (PK_DISPLAY_W / 2)
-#define WZ_FIG8_CY           140
-#define WZ_FIG8_R            70           /* horizontal half-extent of the
-                                             figure-8 in pixels */
-#define WZ_FIG8_VSCALE       2.0f         /* multiplier on y so the figure
-                                             looks taller than its raw 1:1
-                                             aspect ratio */
+/* Layout — landscape 320×240. Figure-8 sits in the top 60% of the
+ * screen, instructions + progress bar in the bottom 40%. */
+#define WZ_FIG8_CX           (PK_DISPLAY_W / 2)        /* 160 */
+#define WZ_FIG8_CY           90
+#define WZ_FIG8_R            50           /* horizontal half-extent (px) */
+#define WZ_FIG8_VSCALE       1.4f         /* vertical stretch — total y span
+                                             ±70 px around WZ_FIG8_CY */
 #define WZ_FIG8_OUTLINE_PTS  240          /* sample count for the dim outline */
 #define WZ_FIG8_PERIOD_US    3000000      /* one full pass every 3 s */
 
-#define WZ_INSTR_Y           220
-#define WZ_BAR_Y             266
+#define WZ_INSTR_Y           170
+#define WZ_BAR_Y             190
 #define WZ_BAR_W             200
-#define WZ_BAR_H             16
+#define WZ_BAR_H             14
 #define WZ_BAR_X             ((PK_DISPLAY_W - WZ_BAR_W) / 2)
 
 /* Palette */
