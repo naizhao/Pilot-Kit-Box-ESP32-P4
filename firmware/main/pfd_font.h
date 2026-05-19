@@ -7,10 +7,17 @@
  * "font5x7"); each character is 5 columns × 7 rows packed column-major
  * with bit 0 = top row.
  *
- * Two rendering scales are supported. Scale 1 → 5 px wide × 7 px tall
- * (with a 1-px gap → 6×8 effective cell). Scale 2 doubles every pixel
- * → 10×14 visible (12×16 cell), legible from arm's length on the
- * 240×320 ST7789 panel.
+ * Any integer scale ≥ 1 is supported. The inner loop duplicates each
+ * glyph pixel scale × scale times, and the cell width/height grow
+ * proportionally via PK_FONT_CELL_{W,H}.
+ *
+ *   scale 1 →  5 ×  7 visible,  6 ×  8 cell
+ *   scale 2 → 10 × 14 visible, 12 × 16 cell  (the workhorse for labels)
+ *   scale 3 → 15 × 21 visible, 18 × 24 cell  (G1000 ALT / HDG boxes)
+ *
+ * The single-glyph advance gap is one source pixel × scale (i.e. the
+ * gap doubles in scale 2, triples in scale 3). Callers right-justifying
+ * compute `len * PK_FONT_CELL_W(scale)`.
  */
 #pragma once
 
