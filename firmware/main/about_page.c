@@ -1,26 +1,25 @@
 /*
  * about_page.c — "About" screen renderer.
  *
- * Layout (240 × 320 portrait):
+ * Layout (320 × 240 landscape):
  *
- *   y =   0   ┌─────────────────────────────────────┐
- *             │ ABOUT                  (cyan)       │  header
- *   y =  20   ├─────────────────────────────────────┤
- *             │ Project : PILOT KIT BOX             │
- *             │ Version : abb7989-dirty             │
- *             │ Build   : May 16 2026 16:09:12      │
- *             │ ESP-IDF : v6.0.1                    │
- *             │ Board   : Waveshare ESP32-P4-WIFI6  │
- *             │ Chip rev: v1.3                      │
- *             │ Display : TK024F3036 240×320 @40MHz │
- *             │ IMU     : BNO085 (I²C0 @ 0x4A)      │
- *             │ Dongle  : RTL-SDR @ 2 MS/s          │
- *   y = ...   │                                     │
- *             ├─────────────────────────────────────┤
- *             │ IMU calibration: ●●○  (acc 2/3)     │
- *             │ (mag fusion converged — TARE-long-  │
- *             │  press to persist)                  │
- *   y = 320   └─────────────────────────────────────┘
+ *   y =   0   ┌────────────────────────────────────────────────────┐
+ *             │ ABOUT                  (cyan)                       │  header
+ *   y =  20   ├────────────────────────────────────────────────────┤
+ *             │ Project : PILOT KIT BOX                             │
+ *             │ Version : abb7989-dirty                             │
+ *             │ Build   : May 20 2026 14:30:00                      │
+ *             │ ESP-IDF : v6.0.1                                    │
+ *             │ Board   : Waveshare ESP32-P4-WIFI6                  │
+ *             │ Chip rev: v1.3                                      │
+ *             │ Display : TK024F3036 320×240 SPI 40MHz              │
+ *             │ IMU     : BNO085 (I²C0 @ 0x4A)                      │
+ *             │ Dongle  : RTL-SDR @ 2 MS/s                          │
+ *   y = 170   │ IMU cal : ●●○ (acc 2/3)                             │
+ *   y = 190   │ (Fusion converged.)                                 │
+ *   y = 226   ├────────────────────────────────────────────────────┤
+ *             │ MODE to cycle    UP/DOWN scroll                     │
+ *   y = 240   └────────────────────────────────────────────────────┘
  *
  * Pure pixel pushing — no I/O.
  */
@@ -44,8 +43,8 @@
 #define ABOUT_HEADER_Y       4
 #define ABOUT_BODY_Y         24
 #define ABOUT_LINE_H         14
-#define ABOUT_CAL_Y          240
-#define ABOUT_HINT_Y         260
+#define ABOUT_CAL_Y          170
+#define ABOUT_HINT_Y         190
 
 /* Palette */
 #define COL_BG               pk_rgb565( 12,  12,  16)
@@ -167,7 +166,7 @@ void pk_about_page_render(uint16_t *fb)
     draw_kv(fb, y, "Chip rev:", tmp);
     y += ABOUT_LINE_H;
 
-    draw_kv(fb, y, "Display :", "TK024F3036 240x320 SPI 40MHz");
+    draw_kv(fb, y, "Display :", "TK024F3036 320x240 SPI 40MHz");
     y += ABOUT_LINE_H;
 
     draw_kv(fb, y, "IMU     :", "BNO085 (I2C0 0x4A)");
