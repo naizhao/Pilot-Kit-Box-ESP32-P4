@@ -15,19 +15,18 @@
  * uint16_t* when blitting since the binary is pre-packed in little-
  * endian RGB565 by tools/png_to_rgb565.py.
  *
- * Layout (240 × 320 portrait):
+ * Layout (320 × 240 landscape):
  *
- *   y =   0   ╔═══════════════════════════╗
- *             ║          (BG_COLOR)        ║
- *   y =  20   ║    ╭───────────────────╮   ║  ← rounded white card,
- *             ║    │                   │   ║    192×192, r=14
- *             ║    │      [LOGO]       │   ║
- *             ║    │     160×160       │   ║
- *             ║    │                   │   ║
- *             ║    ╰───────────────────╯   ║
- *   y = 232   ║      PILOT KIT BOX         ║  scale-2 title
- *             ║      Booting abc1234 ...   ║  scale-1 version
- *   y = 320   ╚═══════════════════════════╝
+ *   y =   0   ╔═══════════════════════════════════╗
+ *             ║                                    ║
+ *   y =   4   ║         ╭──────────────────╮       ║  ← rounded white card,
+ *             ║         │                  │       ║    170×170, r=12
+ *             ║         │     [LOGO]       │       ║
+ *             ║         │    160×160       │       ║
+ *             ║         ╰──────────────────╯       ║
+ *   y = 182   ║         PILOT KIT BOX              ║  scale-2 title
+ *   y = 204   ║         Booting abc1234 ...        ║  scale-1 version
+ *   y = 240   ╚═══════════════════════════════════╝
  *
  * Static rendering only — once the PFD task starts spinning the next
  * frame will overwrite us. No animation needed.
@@ -49,17 +48,20 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
 #define PK_LOGO_H 160
 
 /* Layout — keep card and logo concentric so the white margin around
- * the logo is even on all sides. */
-#define CARD_W              192
-#define CARD_H              192
-#define CARD_RADIUS         14
-#define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)   /* 24 */
-#define CARD_Y              20
-#define LOGO_X              (CARD_X + (CARD_W - PK_LOGO_W) / 2)   /* 40 */
-#define LOGO_Y              (CARD_Y + (CARD_H - PK_LOGO_H) / 2)   /* 36 */
+ * the logo is even on all sides. Landscape 320x240 leaves less
+ * vertical room than the old portrait layout, so the card is sized
+ * just enough to enclose the native 160x160 logo with a 5 px white
+ * margin on each side; title + version stack below. */
+#define CARD_W              170
+#define CARD_H              170
+#define CARD_RADIUS         12
+#define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)   /* 75 */
+#define CARD_Y              4
+#define LOGO_X              (CARD_X + (CARD_W - PK_LOGO_W) / 2)   /* 80 */
+#define LOGO_Y              (CARD_Y + (CARD_H - PK_LOGO_H) / 2)   /* 9  */
 
-#define TITLE_Y             (CARD_Y + CARD_H + 14)          /* 226 */
-#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + 6)
+#define TITLE_Y             (CARD_Y + CARD_H + 8)           /* 182 */
+#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + 6)  /* 204 */
 
 /* Palette */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
