@@ -20,6 +20,7 @@ idf_component_register(
         "cal_wizard.c"
         "boot_splash.c"
         "pfd.c"
+        "pfd_draw.c"
         "pfd_font.c"
     INCLUDE_DIRS "."
     EMBED_FILES
