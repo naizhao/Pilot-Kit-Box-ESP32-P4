@@ -34,11 +34,14 @@
 #include "imu_task.h"
 #include "pfd_attitude.h"
 #include "pfd_draw.h"
+#include "pfd_font.h"
 #include "pfd_hsi.h"
 #include "pfd_statusbar.h"
 #include "pfd_tape.h"
 #include "sdkconfig.h"
 #include "ui_state.h"
+
+#include <stdio.h>
 
 static const char *TAG = "pfd";
 
@@ -129,6 +132,51 @@ static void pfd_task(void *arg)
             pk_pfd_attitude_render(fb, &imu);
             pk_pfd_alt_tape_render(fb, &alt);
             pk_pfd_hsi_render(fb, &hsi);
+
+            /* GS readout — bottom-left, x in [0, 90), y in [138, 168). */
+            {
+                const uint16_t COL_LABEL = pk_rgb565( 70, 220, 250);
+                const uint16_t COL_VALUE = pk_rgb565(240, 240, 240);
+                const uint16_t COL_STALE = pk_rgb565(100, 100, 100);
+                char buf[8];
+                bool gs_valid = own_valid && own.have_velocity;
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             4, 142, "GS", COL_LABEL, 2);
+                if (gs_valid) {
+                    snprintf(buf, sizeof(buf), "%3d", own.ground_speed_kt);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 32, 142, buf, COL_VALUE, 2);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 70, 142, "KT", COL_LABEL, 2);
+                } else {
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 32, 142, "---", COL_STALE, 2);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 70, 142, "KT", COL_STALE, 2);
+                }
+            }
+
+            /* VS readout — bottom-right. "VS" label + signed value;
+             * the FPM suffix is intentionally omitted (would overflow
+             * the 320 px panel at scale 2; "VS" + signed integer
+             * conveys the unit by aviation convention). */
+            {
+                const uint16_t COL_LABEL = pk_rgb565( 70, 220, 250);
+                const uint16_t COL_VALUE = pk_rgb565(240, 240, 240);
+                const uint16_t COL_STALE = pk_rgb565(100, 100, 100);
+                char buf[12];
+                bool vs_valid = own_valid && own.have_velocity;
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             224, 142, "VS", COL_LABEL, 2);
+                if (vs_valid) {
+                    snprintf(buf, sizeof(buf), "%+5d", own.vert_rate_fpm);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 252, 142, buf, COL_VALUE, 2);
+                } else {
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 252, 142, "-----", COL_STALE, 2);
+                }
+            }
             break;
         }
         }
