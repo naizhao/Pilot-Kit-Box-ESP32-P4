@@ -83,3 +83,14 @@ void aircraft_state_update_position(uint32_t icao24,
  */
 size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
                                int64_t max_age_us);
+
+/*
+ * Copy the slot for `icao24` into *out, but only if its last_seen_us
+ * is within max_age_us of now_us. Returns true on fresh hit, false if
+ * not present or stale. Takes the same internal mutex as
+ * aircraft_state_snapshot/_ingest; safe to call from any task. Used
+ * by the PFD to source own-ship altitude / VS / GS from the live ADS-B
+ * receive pipeline.
+ */
+bool aircraft_state_get_own(uint32_t icao24, int64_t now_us,
+                            int64_t max_age_us, aircraft_t *out);

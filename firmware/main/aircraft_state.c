@@ -141,3 +141,22 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     release_lock();
     return n;
 }
+
+bool aircraft_state_get_own(uint32_t icao24, int64_t now_us,
+                            int64_t max_age_us, aircraft_t *out)
+{
+    if (icao24 == 0 || out == NULL) return false;
+    bool fresh = false;
+    take_lock();
+    for (size_t i = 0; i < AIRCRAFT_TABLE_CAPACITY; ++i) {
+        const aircraft_t *s = &s_table[i];
+        if (s->icao24 != icao24) continue;
+        if ((int64_t)(now_us - s->last_seen_us) <= max_age_us) {
+            *out  = *s;
+            fresh = true;
+        }
+        break;
+    }
+    release_lock();
+    return fresh;
+}

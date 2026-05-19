@@ -15,4 +15,25 @@ menu "Pilot Kit Box"
             init will abort. Turn this OFF for CI runners or while
             developing data-path features that don't need BLE.
 
+    config PK_OWN_ICAO
+        hex "Own aircraft ICAO24 (0 = disabled)"
+        default 0x000000
+        range 0x000000 0xFFFFFF
+        help
+            24-bit Mode-S ICAO address of the aircraft this Pilot Kit
+            is installed in. When non-zero, the PFD pulls altitude /
+            vertical speed / ground speed from ADS-B reports matching
+            this ICAO. Leave 0 to disable; ALT / VS / GS will show "--".
+
+            Changing this value requires a rebuild + reflash.
+
+    config PK_OWN_STALE_AGE_MS
+        int "Own-ship data stale threshold (ms)"
+        default 5000
+        range 500 60000
+        help
+            How long after the last own-ship ADS-B message we keep
+            displaying its altitude / VS / GS. Typical transponders
+            broadcast position/velocity at 1-2 Hz, so 5 s is generous.
+
 endmenu

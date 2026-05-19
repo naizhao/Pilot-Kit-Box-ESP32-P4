@@ -36,6 +36,8 @@
 #include "pfd_draw.h"
 #include "pfd_hsi.h"
 #include "pfd_statusbar.h"
+#include "pfd_tape.h"
+#include "sdkconfig.h"
 #include "ui_state.h"
 
 static const char *TAG = "pfd";
@@ -85,6 +87,8 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_PFD:
         default: {
+            int64_t now_us = esp_timer_get_time();
+
             pk_pfd_imu_t imu = {
                 .valid     = have,
                 .roll_deg  = have ? s.roll_deg  : 0.0f,
@@ -94,8 +98,14 @@ static void pfd_task(void *arg)
             /* Same "fresh contact" 60s window the BLE GDL90 emitter uses. */
             size_t n_aircraft = aircraft_state_snapshot(
                 scratch, sizeof(scratch) / sizeof(scratch[0]),
-                esp_timer_get_time(),
-                AIRCRAFT_STALE_AGE_US);
+                now_us, AIRCRAFT_STALE_AGE_US);
+
+            /* Own-ship: ALT/VS/GS sourced from the bound transponder's
+             * ADS-B reports. Stale window is PK_OWN_STALE_AGE_MS. */
+            aircraft_t own;
+            bool own_valid = aircraft_state_get_own(
+                CONFIG_PK_OWN_ICAO, now_us,
+                (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own);
 
             pk_pfd_status_t stat = {
                 .imu_valid      = have,
@@ -106,17 +116,18 @@ static void pfd_task(void *arg)
                 .imu_valid = have,
                 .yaw_deg   = have ? s.yaw_deg : 0.0f,
             };
+            pk_pfd_alt_tape_t alt = {
+                .valid       = own_valid && own.have_altitude,
+                .altitude_ft = (own_valid && own.have_altitude)
+                                   ? own.altitude_ft : 0,
+            };
 
-            /* Clear the whole frame first — the attitude widget owns
-             * only its 198×120 sub-region; statusbar fills the top
-             * strip; HSI fills the bottom; the left ~50 px and right
-             * ~72 px of the attitude band stay COL_PANEL_BG until phase
-             * E paints the ALT tape on the right. */
             pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H,
                              COL_PANEL_BG);
 
             pk_pfd_statusbar_render(fb, &stat);
             pk_pfd_attitude_render(fb, &imu);
+            pk_pfd_alt_tape_render(fb, &alt);
             pk_pfd_hsi_render(fb, &hsi);
             break;
         }
