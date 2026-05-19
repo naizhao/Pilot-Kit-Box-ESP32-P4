@@ -6,10 +6,10 @@
  * cursor from ui_state, and renders into the caller's framebuffer.
  *
  * The list uses scale-1 (5×7) font so we can fit ICAO + callsign +
- * altitude + speed + heading on one 240-px row (≈ 40 columns wide).
- * The detail pane below uses scale-2 (10×14) for the "ICAO:" /
- * "Callsign:" key columns and scale-1 for the values that need more
- * width (lat/lon).
+ * altitude + speed + heading + vertical-rate on one 320-px landscape
+ * row (≈ 52 columns wide). The detail pane below uses scale-2 (10×14)
+ * for the "ICAO:" / "Callsign:" key columns and scale-1 for the
+ * values that need more width (lat/lon).
  */
 
 #include "adsb_list.h"
@@ -31,12 +31,20 @@
 #define LIST_COLTITLES_Y    14
 #define LIST_ROW0_Y         24
 #define LIST_ROW_H          10        /* scale-1 cell (8 px) + 2 px gap */
-#define LIST_BOTTOM_Y       200       /* end of list area */
-#define DETAIL_TOP_Y        204
-#define DETAIL_LINE_H       14
+#define LIST_BOTTOM_Y       154       /* end of list area (landscape: 240H - 86 px detail) */
+#define DETAIL_TOP_Y        158
+#define DETAIL_LINE_H       13        /* tightened from 14 so 6 rows fit */
 
 #define LIST_LEFT_PAD       4
 #define LIST_RIGHT_LIMIT    (PK_DISPLAY_W - 2)
+
+/* Column x-positions (scale-1 cell = 6 px) — laid out for 320 wide */
+#define COL_X_ICAO    (LIST_LEFT_PAD)
+#define COL_X_CALL    (LIST_LEFT_PAD +  48)
+#define COL_X_ALT     (LIST_LEFT_PAD + 116)
+#define COL_X_SPD     (LIST_LEFT_PAD + 166)
+#define COL_X_HDG     (LIST_LEFT_PAD + 206)
+#define COL_X_VS      (LIST_LEFT_PAD + 246)
 
 /* --- Palette --------------------------------------------------------- */
 #define COL_BG              pk_rgb565( 12,  12,  16)   /* very dark grey */
@@ -123,23 +131,21 @@ static void render_header(uint16_t *fb, size_t n_aircraft)
 static void render_col_titles(uint16_t *fb)
 {
     /* Column positions (scale-1 char width = 6 px).
-     * Total budget: PK_DISPLAY_W - LIST_LEFT_PAD - 2  = 234 px.
-     * Each char ≈ 6 px. */
+     * Total budget: PK_DISPLAY_W - LIST_LEFT_PAD - 2 = 314 px.
+     * Layout: ICAO (6 chars), CALL (8), ALT (5), SPD (3), HDG (3),
+     * VS (5 signed). */
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD,        LIST_COLTITLES_Y,
-                 "ICAO",   COL_COL_TITLE, 1);
+                 COL_X_ICAO, LIST_COLTITLES_Y, "ICAO", COL_COL_TITLE, 1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 44,   LIST_COLTITLES_Y,
-                 "CALL",   COL_COL_TITLE, 1);
+                 COL_X_CALL, LIST_COLTITLES_Y, "CALL", COL_COL_TITLE, 1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 104,  LIST_COLTITLES_Y,
-                 "ALT",    COL_COL_TITLE, 1);
+                 COL_X_ALT,  LIST_COLTITLES_Y, "ALT",  COL_COL_TITLE, 1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 148,  LIST_COLTITLES_Y,
-                 "SPD",    COL_COL_TITLE, 1);
+                 COL_X_SPD,  LIST_COLTITLES_Y, "SPD",  COL_COL_TITLE, 1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 188,  LIST_COLTITLES_Y,
-                 "HDG",    COL_COL_TITLE, 1);
+                 COL_X_HDG,  LIST_COLTITLES_Y, "HDG",  COL_COL_TITLE, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 COL_X_VS,   LIST_COLTITLES_Y, "VS",   COL_COL_TITLE, 1);
 }
 
 static void render_row(uint16_t *fb, int row_idx, int y, bool selected,
@@ -154,36 +160,38 @@ static void render_row(uint16_t *fb, int row_idx, int y, bool selected,
     char buf[16];
 
     fmt_icao(buf, sizeof(buf), a->icao24);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ICAO, y, buf, fg, 1);
 
     fmt_callsign(buf, sizeof(buf), a);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 44, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_CALL, y, buf, fg, 1);
 
     if (a->have_altitude) {
         snprintf(buf, sizeof(buf), "%5d", a->altitude_ft);
     } else {
         snprintf(buf, sizeof(buf), "%5s", "-----");
     }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 104, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ALT, y, buf, fg, 1);
 
     if (a->have_velocity) {
         snprintf(buf, sizeof(buf), "%3d", a->ground_speed_kt);
     } else {
         snprintf(buf, sizeof(buf), "%3s", "---");
     }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 148, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_SPD, y, buf, fg, 1);
 
     if (a->have_velocity) {
         snprintf(buf, sizeof(buf), "%3d", a->heading_deg);
     } else {
         snprintf(buf, sizeof(buf), "%3s", "---");
     }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 188, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_HDG, y, buf, fg, 1);
+
+    if (a->have_velocity) {
+        snprintf(buf, sizeof(buf), "%+5d", a->vert_rate_fpm);
+    } else {
+        snprintf(buf, sizeof(buf), "%5s", "-----");
+    }
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_VS, y, buf, fg, 1);
 
     (void)row_idx;
 }
