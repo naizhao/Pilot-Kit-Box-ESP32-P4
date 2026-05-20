@@ -18,12 +18,12 @@ plus one **combo gesture**:
         ●      ●      ●      ●
 ```
 
-| Button | Short press (released < 3 s) | Long press (held ≥ 3 s) |
-|--------|------------------------------|--------------------------|
-| **TARE** | Reset heading to 0° (`yaw` only — roll/pitch stay referenced to gravity) | Persist current calibration to BNO085 flash. *Refused when `acc < 2`* — calibrate first. |
-| **MODE** | Cycle screen: **PFD → ADS-B LIST → ABOUT → PFD** | **Factory reset** the IMU (clear tare + clear DCD + reinit). Use this if heading is stuck wrong. |
-| **UP**   | Scroll list selection up | *(no single-button long press — reserved for the combo)* |
-| **DOWN** | Scroll list selection down | *(no single-button long press — reserved for the combo)* |
+| Button | Short press (< 3 s) | Long press (≥ 3 s) | Very-long press (≥ 10 s) |
+|--------|---------------------|--------------------|---------------------------|
+| **TARE** | Live tare — snapshot current pose as the new "zero" (yaw/roll/pitch all reference it; not saved across reboot) | **Persist** the current tare to NVS so it survives reboot | **Factory reset** — wipe NVS tare + BNO's persisted DCD + reinit the chip. Use this if heading is stuck wrong after a reboot. |
+| **MODE** | Cycle screen: **PFD → ADS-B LIST → ABOUT → PFD** | *(reserved — power on/off; currently a TODO log until Phase C lands)* | — |
+| **UP**   | Scroll list selection up | *(suppressed — reserved for the combo)* | — |
+| **DOWN** | Scroll list selection down | *(suppressed — reserved for the combo)* | — |
 
 ### Combo gestures
 
@@ -43,16 +43,16 @@ The recovery is:
 ### Step 1 — Factory reset the IMU
 
 ```
-MODE long-press 3 s
+TARE very-long-press 10 s
 ```
 
 You'll see in the serial log:
 
 ```
-W (xxx) imu: factory reset: clear tare + clear DCD + reinit BNO085
-            — fusion engine restarts from scratch
-I (xxx) imu: factory reset complete — start figure-8 motion to let
-            BNO085 re-learn magnetometer calibration
+W (xxx) imu: factory reset: wipe SW tare + NVS + BNO persisted
+            state + reinit chip
+I (xxx) imu: BNO: clearing persisted reorientation (identity quat + persist)
+I (xxx) imu: BNO: clearing persisted DCD (mag/gyro/accel zero offsets)
 ```
 
 ### Step 2 — Figure-8 motion (~15 seconds)
@@ -77,11 +77,17 @@ imu: rpy = ... (acc=3 ...)   ← high confidence
 > auto-dismisses once `acc` reaches 2 and stays there for a few
 > seconds.
 
-### Step 3 — Persist the clean calibration
+### Step 3 — Persist your chosen zero pose
 
 Hold the device level, with the **chip's +X axis pointing toward
 your intended "forward" direction** (the silkscreen X/Y/Z arrows
-are on the back of the BNO085 breakout):
+are on the back of the BNO085 breakout). First take a live tare:
+
+```
+TARE short-press           ← snapshot this pose as the new zero
+```
+
+Then save it so it survives a reboot:
 
 ```
 TARE long-press 3 s
@@ -90,12 +96,14 @@ TARE long-press 3 s
 Serial log:
 
 ```
-I (xxx) imu: full reorient (acc=2): tare(XYZ) + persist + save DCD
+I (xxx) imu: software tare: captured (w,i,j,k) = ...
+I (xxx) imu: software tare persisted to NVS (survives reboot)
 ```
 
-This writes the clean calibration **into BNO085 internal flash**, so
-the next power-cycle starts already calibrated — you don't need to
-repeat figure-8 every time.
+This writes your chosen zero-attitude quaternion to the ESP32's NVS.
+The BNO085's magnetometer calibration (DCD) is a separate thing —
+the fusion engine persists that into BNO internal flash on its own
+as it converges. You don't need to trigger DCD save manually.
 
 ---
 
@@ -131,9 +139,12 @@ The catch:
 2. **Magnetic interference matters.** Keep the device away from
    speakers, motors, laptops (yes, including the one running your
    serial monitor), and large metal surfaces while calibrating.
-3. **Once `acc=3` is reached and persisted to flash via TARE
-   long-press**, the calibration survives power-cycles. Next boot
-   starts at high accuracy directly.
+3. **DCD persistence is automatic.** Once the fusion engine reaches
+   high accuracy, the BNO085 saves the calibration into its own
+   internal flash on its own schedule. You don't trigger this with
+   a button — it just happens in the background. (The TARE
+   long-press on this device persists your chosen zero pose to the
+   ESP32's NVS — a separate thing from BNO's DCD.)
 
 If you move to a magnetically very different location (different
 city, indoor → outdoor, near a large new metal structure), the
@@ -160,8 +171,7 @@ Use **UP / DOWN** in `ADS-B LIST` mode to move the highlight.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Heading stuck at a single value, doesn't respond to rotation | Magnetometer fusion uncalibrated (`acc=0`) | Figure-8 for 15 s, see §2 |
-| Heading wrong even after rebooting | Bad DCD persisted to BNO085 flash | MODE long-press → factory reset, then re-calibrate (§2) |
-| TARE long-press refused with `accuracy < 2` log | (intended) — guard against poisoning flash again | Calibrate first (§2 step 2), retry |
+| Heading wrong even after rebooting | Bad DCD persisted to BNO085 flash, or a stale TARE saved to NVS | **TARE very-long-press (10 s)** → factory reset, then re-calibrate (§2) |
 | Screen shows uniform pale blue on first boot | LCD wiring fault: a signal line shorted to GND | See `docs/hardware/board_pinout.md` §3 wiring diagram |
 | `acc` never climbs past 1 even after lots of motion | Magnetic interference (laptop, phone, speakers, metal table) | Move to a clean environment, retry |
 | Heading drifts slowly over minutes | Normal — small DCD nudge from background fusion | Short-press TARE to re-zero |

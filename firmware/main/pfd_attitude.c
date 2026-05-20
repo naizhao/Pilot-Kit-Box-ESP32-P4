@@ -62,11 +62,12 @@
 
 /* --- Palette (spec §4, RGB565, panel byte order) ------------------- */
 #define COL_HORIZON_LINE        pk_rgb565(255, 255, 255)
-#define COL_RETICLE             pk_rgb565(255, 215,   0)
+#define COL_RETICLE             pk_rgb565(255, 255,   0)   /* pure yellow */
 #define COL_PITCH_LINE          pk_rgb565(255, 255, 255)
 #define COL_BANK_TICK           pk_rgb565(255, 255, 255)
-#define COL_BANK_POINTER        pk_rgb565(255, 215,   0)
+#define COL_BANK_POINTER        pk_rgb565(255, 255,   0)   /* pure yellow */
 #define COL_SKY_POINTER         pk_rgb565(255, 255, 255)
+#define COL_BANK_ARC            pk_rgb565(255, 255, 255)
 
 /* --- Gradient LUTs (sky/ground), built once on first render -------- */
 
@@ -196,12 +197,38 @@ static const int8_t bank_ticks[] = { -60, -45, -30, -20, -10, 10, 20, 30, 45, 60
 
 static void draw_bank_arc(uint16_t *fb, float roll_deg)
 {
-    /* Tick marks: short radial segments. Major marks (±30°/±45°/±60°)
-     * extend 8 px outward; minor (±10°/±20°) extend 5 px. */
+    /* White inner arc connecting all the tick bases — a smooth thin
+     * curve from -60° to +60°. Sample one point per 0.5° (so adjacent
+     * samples land roughly 1.5 px apart on a R=170 arc) and plot it
+     * 2 px thick (radially) so the line stays continuous at low
+     * resolutions. */
+    for (int step = -120; step <= 120; ++step) {
+        float a   = (float)step * 0.5f;
+        float rad = a * (float)M_PI / 180.0f;
+        int x_in  = (int)((float)BANK_ARC_CX +
+                          (float)(BANK_ARC_R - 1) * sinf(rad) + 0.5f);
+        int y_in  = (int)((float)BANK_ARC_CY -
+                          (float)(BANK_ARC_R - 1) * cosf(rad) + 0.5f);
+        int x_out = (int)((float)BANK_ARC_CX +
+                          (float)BANK_ARC_R * sinf(rad) + 0.5f);
+        int y_out = (int)((float)BANK_ARC_CY -
+                          (float)BANK_ARC_R * cosf(rad) + 0.5f);
+        pk_pfd_put_pixel(fb, x_in,  y_in,  COL_BANK_ARC);
+        pk_pfd_put_pixel(fb, x_out, y_out, COL_BANK_ARC);
+    }
+
+    /* Tick marks: three-tier lengths so the visual hierarchy reads
+     * cleanly — ±10° smallest, ±20° medium, ±30°/±45°/±60° longest.
+     * Garmin uses similar graduated lengths. */
     for (size_t i = 0; i < sizeof(bank_ticks) / sizeof(bank_ticks[0]); ++i) {
         int angle = bank_ticks[i];
         int abs_a = angle < 0 ? -angle : angle;
-        int tick_len = (abs_a == 10 || abs_a == 20) ? 5 : 8;
+        int tick_len;
+        switch (abs_a) {
+            case 10:           tick_len =  4; break;
+            case 20:           tick_len =  6; break;
+            default:           tick_len = 10; break;   /* 30, 45, 60 */
+        }
         int x0, y0;
         place_on_arc((float)angle, &x0, &y0);
         float rad = (float)angle * (float)M_PI / 180.0f;

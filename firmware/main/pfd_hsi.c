@@ -45,6 +45,7 @@
 #define COL_LABEL      pk_rgb565(240, 240, 240)
 #define COL_BORDER     pk_rgb565(255, 255, 255)
 #define COL_AIRCRAFT   pk_rgb565(255, 255, 255)
+#define COL_HDG_BUG    pk_rgb565(255,   0, 255)   /* magenta — Garmin course / heading bug */
 #define COL_STALE      pk_rgb565(100, 100, 100)
 
 void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
@@ -100,14 +101,42 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         }
     }
 
-    /* Aircraft symbol — small white filled triangle pointing up at the
-     * mid-HSI Y. The rose center is virtual (below the panel) so we
-     * place the icon inside the visible region by hand. */
+    /* Magenta course line — a long vertical bar running through the
+     * aircraft icon, from just below the HDG box to near the bottom
+     * of the rose. Garmin uses this to indicate the current selected
+     * course; we draw it fixed (always pointing "up" relative to the
+     * rotating rose) until a real course source exists. */
+    pk_pfd_fill_rect(fb,
+                     HSI_CX - 1, HSI_TOP + 26,
+                     HSI_CX + 2, HSI_BOT  -  4,
+                     COL_HDG_BUG);
+    /* Arrow head at the top of the course line. */
     pk_pfd_draw_triangle(fb,
-                         HSI_CX,      AIRCRAFT_Y - 6,
-                         HSI_CX - 5,  AIRCRAFT_Y + 4,
-                         HSI_CX + 5,  AIRCRAFT_Y + 4,
-                         COL_AIRCRAFT);
+                         HSI_CX,     HSI_TOP + 20,
+                         HSI_CX - 5, HSI_TOP + 28,
+                         HSI_CX + 5, HSI_TOP + 28,
+                         COL_HDG_BUG);
+
+    /* Aircraft silhouette — small fuselage + wings + tail, centered
+     * on (HSI_CX, AIRCRAFT_Y). Drawn AFTER the magenta line so the
+     * white icon overlays the line at the aircraft body. */
+    {
+        int cx = HSI_CX;
+        int cy = AIRCRAFT_Y;
+        /* Fuselage — 2 px wide vertical bar, 10 px tall, with a small
+         * point at the nose. */
+        pk_pfd_fill_rect(fb, cx - 1, cy - 5, cx + 2, cy + 5, COL_AIRCRAFT);
+        pk_pfd_draw_triangle(fb,
+                             cx,     cy - 7,
+                             cx - 1, cy - 5,
+                             cx + 2, cy - 5,
+                             COL_AIRCRAFT);
+        /* Wings — horizontal bar, 16 px wide, 2 px tall, slightly
+         * forward of center. */
+        pk_pfd_fill_rect(fb, cx - 8, cy - 1, cx + 9, cy + 1, COL_AIRCRAFT);
+        /* Tail — short horizontal at the back. */
+        pk_pfd_fill_rect(fb, cx - 4, cy + 4, cx + 5, cy + 6, COL_AIRCRAFT);
+    }
 
     /* HDG box: transparent interior + 1 px white border + scale-3
      * digits. The interior shows the attitude background; the white

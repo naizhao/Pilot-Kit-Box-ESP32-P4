@@ -27,8 +27,12 @@
 #define TAPE_X0   248
 #define TAPE_X1   320
 #define TAPE_TOP   18
-#define TAPE_BOT  138
-#define TAPE_CY    78
+#define TAPE_BOT  208       /* extended down to ~just-above the VS pad
+                               (VS pad starts at y=210). Tape now spans
+                               190 px instead of 120 — closer to the
+                               Garmin proportion where ALT dominates
+                               the right edge. */
+#define TAPE_CY   ((TAPE_TOP + TAPE_BOT) / 2)   /* 113 */
 
 #define MINOR_FT      20
 #define MAJOR_FT     100
@@ -36,8 +40,8 @@
 
 #define BOX_X0   246
 #define BOX_X1   320
-#define BOX_Y0    66
-#define BOX_Y1    90
+#define BOX_Y0   (TAPE_CY - 12)   /* 101 */
+#define BOX_Y1   (TAPE_CY + 12)   /* 125 */
 
 #define COL_BG         pk_rgb565(  8,   8,  12)
 #define COL_BORDER_L   pk_rgb565( 70, 220, 250)   /* cyan left edge */
@@ -56,11 +60,12 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
     pk_pfd_darken_rect(fb, TAPE_X0, TAPE_TOP, TAPE_X1, TAPE_BOT, 128);
     pk_pfd_fill_rect(fb, TAPE_X0, TAPE_TOP, TAPE_X0 + 1, TAPE_BOT, COL_BORDER_L);
 
-    /* Walk minor ticks across the visible window: +- 300 ft around
-     * center, snapped to a multiple of MINOR_FT. */
+    /* Walk minor ticks across the visible window: tape spans
+     * (TAPE_BOT - TAPE_TOP) px at 5 ft/px = 950 ft, so ±475 ft around
+     * center. Round up to 500 for clean tick layout. */
     int center_ft = a->valid ? a->altitude_ft : 5000;
-    int low  = ((center_ft - 300) / MINOR_FT) * MINOR_FT;
-    int high = ((center_ft + 300) / MINOR_FT) * MINOR_FT;
+    int low  = ((center_ft - 500) / MINOR_FT) * MINOR_FT;
+    int high = ((center_ft + 500) / MINOR_FT) * MINOR_FT;
     for (int ft = low; ft <= high; ft += MINOR_FT) {
         /* 1 px = 5 ft → multiply ft-delta by 0.2 to get pixel offset. */
         int y = TAPE_CY - ((ft - center_ft) / 5);
