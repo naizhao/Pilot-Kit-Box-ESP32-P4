@@ -31,14 +31,18 @@
  * the rose — same G1000 trick we use for the bank arc. */
 #define HSI_CX         160
 #define HSI_CY         240
-#define HSI_R           70
+#define HSI_R           65
 
 #define HDGBOX_X0      123
 #define HDGBOX_Y0      138
 #define HDGBOX_X1      197
 #define HDGBOX_Y1      162
 
-#define AIRCRAFT_Y     (HSI_TOP + 50)
+/* Aircraft symbol sits near the bottom of the visible rose, slightly
+ * above the panel's bottom edge — the Garmin convention is to put it
+ * at the lower-middle of the half-rose, not the rose's mathematical
+ * center (which is off-screen below). */
+#define AIRCRAFT_Y     (HSI_BOT - 22)   /* y = 218 */
 
 /* --- Palette ------------------------------------------------------- */
 #define COL_TICK       pk_rgb565(220, 220, 220)
@@ -79,23 +83,19 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 
         pk_pfd_draw_line(fb, (int)cx, (int)cy, (int)tx, (int)ty, COL_TICK);
 
-        if (major30) {
-            const char *lbl;
-            char numbuf[4];
-            switch (hdg) {
-                case   0: lbl = "N"; break;
-                case  90: lbl = "E"; break;
-                case 180: lbl = "S"; break;
-                case 270: lbl = "W"; break;
-                default:
-                    snprintf(numbuf, sizeof(numbuf), "%d", hdg / 10);
-                    lbl = numbuf;
-                    break;
-            }
+        /* Labels only for the four cardinal directions — dropping the
+         * intermediate "3"/"6"/"9"/"12"/"15"/etc. numeric labels keeps
+         * the rose visually lighter. The font is already scale-1; we
+         * compensate by labelling sparsely. */
+        if (hdg == 0 || hdg == 90 || hdg == 180 || hdg == 270) {
+            const char *lbl = (hdg == 0)   ? "N"
+                            : (hdg == 90)  ? "E"
+                            : (hdg == 180) ? "S"
+                            :                "W";
             int lx = (int)((float)HSI_CX +
-                           (float)(HSI_R - 20) * cosf(rad)) - 3;
+                           (float)(HSI_R - 15) * cosf(rad)) - 2;
             int ly = (int)((float)HSI_CY -
-                           (float)(HSI_R - 20) * sinf(rad)) - 3;
+                           (float)(HSI_R - 15) * sinf(rad)) - 3;
             pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                          lx, ly, lbl, COL_LABEL, 1);
         }

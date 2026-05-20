@@ -48,12 +48,13 @@
 
 /* Bank arc: virtual center placed below the visible region so the
  * arc curves cleanly across the top of the attitude indicator. With
- * R=170 and CY=200, the 0° tick lands at y≈30 (just below the
- * statusbar) and ±60° ticks land at x≈307/13 (just inside the panel
- * edges). */
+ * R=100 and CY=130, the 0° tick lands at y=30 (just below the
+ * statusbar) and ±60° ticks land at x=160±87 → arc spans ~174 px
+ * wide ≈ 54% of the 320-px panel (Garmin G1000 keeps the bank
+ * indicator inside the middle 1/3..3/5 of screen width). */
 #define BANK_ARC_CX             160
-#define BANK_ARC_CY             200
-#define BANK_ARC_R              170
+#define BANK_ARC_CY             130
+#define BANK_ARC_R              100
 
 /* Gradient LUT size: max perpendicular distance from horizon we map
  * to distinct colors. Beyond this the gradient saturates at the "far"
