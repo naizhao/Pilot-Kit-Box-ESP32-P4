@@ -115,20 +115,23 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         }
     }
 
-    /* Magenta course line — a long vertical bar running through the
-     * aircraft icon, from just below the HDG box to near the bottom
-     * of the rose. Garmin uses this to indicate the current selected
-     * course; we draw it fixed (always pointing "up" relative to the
-     * rotating rose) until a real course source exists. */
+    /* Magenta course line — a vertical bar running through the
+     * aircraft icon. Tip sits 6 px below the HDG box bottom so the
+     * arrow has clearance and doesn't poke into the framed digits;
+     * line extends down to within 4 px of the panel edge. Garmin
+     * uses this to indicate the current selected course; we draw
+     * it fixed (always pointing "up" relative to the rotating rose)
+     * until a real course source exists. */
+    const int arrow_tip_y  = HDGBOX_Y1 + 6;             /* y = 168 */
+    const int arrow_base_y = arrow_tip_y + 8;           /* y = 176, 8-px arrow */
     pk_pfd_fill_rect(fb,
-                     HSI_CX - 1, HSI_TOP + 26,
-                     HSI_CX + 2, HSI_BOT  -  4,
+                     HSI_CX - 1, arrow_base_y - 2,
+                     HSI_CX + 2, HSI_BOT      - 4,
                      COL_HDG_BUG);
-    /* Arrow head at the top of the course line. */
     pk_pfd_draw_triangle(fb,
-                         HSI_CX,     HSI_TOP + 20,
-                         HSI_CX - 5, HSI_TOP + 28,
-                         HSI_CX + 5, HSI_TOP + 28,
+                         HSI_CX,     arrow_tip_y,
+                         HSI_CX - 5, arrow_base_y,
+                         HSI_CX + 5, arrow_base_y,
                          COL_HDG_BUG);
 
     /* Aircraft silhouette — small fuselage + wings + tail, centered
