@@ -349,10 +349,12 @@ esp_err_t pk_display_init(void)
 
     /* 4. TK024F3036 vendor driver (see file header).
      *
-     * Vendor init writes MADCTL=0xA0 (MV=1, MY=1) which is landscape
-     * 320x240 with origin at top-left — exactly what the G1000-style
-     * PFD wants. We accept this as-is. invert_color(false) leaves the
-     * vendor's INVON (0x21, emitted inside init) in effect. */
+     * Vendor init writes MADCTL=0xA0 (MV=1, MY=1) which gives landscape
+     * 320x240 with origin at top-left. We flip the panel 180° (origin
+     * at bottom-right) by toggling MX on and MY off → MADCTL=0x60
+     * (MV=1, MX=1). The vendor driver's mirror() handler updates only
+     * the named bits, so a single call does it. invert_color(false)
+     * leaves the vendor's INVON (0x21) in effect. */
     const esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = PK_LCD_PIN_RST,
         .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
@@ -366,6 +368,7 @@ esp_err_t pk_display_init(void)
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, false));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
