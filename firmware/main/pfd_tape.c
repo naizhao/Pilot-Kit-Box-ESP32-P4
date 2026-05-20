@@ -49,8 +49,11 @@
 
 void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
 {
-    /* Tape background + 1 px cyan left edge. */
-    pk_pfd_fill_rect(fb, TAPE_X0, TAPE_TOP, TAPE_X1, TAPE_BOT, COL_BG);
+    /* Semi-transparent dark band over the attitude background — pilot
+     * still sees sky/ground through the tape but with enough contrast
+     * for the ticks + labels. 50% darken (alpha=128). The 1 px cyan
+     * left edge stays fully opaque as the visual divider. */
+    pk_pfd_darken_rect(fb, TAPE_X0, TAPE_TOP, TAPE_X1, TAPE_BOT, 128);
     pk_pfd_fill_rect(fb, TAPE_X0, TAPE_TOP, TAPE_X0 + 1, TAPE_BOT, COL_BORDER_L);
 
     /* Walk minor ticks across the visible window: +- 300 ft around

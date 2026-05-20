@@ -45,8 +45,6 @@
 
 static const char *TAG = "pfd";
 
-#define COL_PANEL_BG  pk_rgb565(8, 8, 12)
-
 static void pfd_task(void *arg)
 {
     (void)arg;
@@ -145,7 +143,7 @@ static void pfd_task(void *arg)
                 char buf[8];
                 bool gs_valid = own_valid && own.have_velocity;
 
-                pk_pfd_fill_rect(fb, 0, 210, 78, 232, COL_PANEL_BG);
+                pk_pfd_darken_rect(fb, 0, 210, 78, 232, 128);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                              4, 216, "GS", LBL, 1);
                 if (gs_valid) {
@@ -176,8 +174,7 @@ static void pfd_task(void *arg)
                 char buf[12];
                 bool vs_valid = own_valid && own.have_velocity;
 
-                pk_pfd_fill_rect(fb, 240, 210, PK_DISPLAY_W, 232,
-                                 COL_PANEL_BG);
+                pk_pfd_darken_rect(fb, 240, 210, PK_DISPLAY_W, 232, 128);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                              244, 216, "VS", LBL, 1);
                 if (vs_valid) {

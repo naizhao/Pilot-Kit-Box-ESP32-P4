@@ -18,16 +18,14 @@
 
 /* --- Layout ---------------------------------------------------------- *
  *
- * The HSI is an opaque overlay over the attitude background. To leave
- * room for the GS / VS readouts in the lower-left and lower-right
- * corners of the panel, the HSI fill is a centered rectangle 160 px
- * wide (x ∈ [80, 240)) covering the HDG box at the top and the rose
- * at the bottom.
+ * The HSI is fully transparent over the attitude background: the rose
+ * ticks, cardinal labels, aircraft icon, and HDG box border draw
+ * directly onto the sky/ground. Garmin G1000 keeps this region
+ * unobstructed so the pilot still has a horizon reference around the
+ * compass rose.
  */
 #define HSI_TOP        138
 #define HSI_BOT        240
-#define HSI_FILL_X0     80
-#define HSI_FILL_X1    240
 
 /* Virtual center is *below* the panel so we only see the top half of
  * the rose — same G1000 trick we use for the bank arc. */
@@ -43,7 +41,6 @@
 #define AIRCRAFT_Y     (HSI_TOP + 50)
 
 /* --- Palette ------------------------------------------------------- */
-#define COL_BG         pk_rgb565(  8,   8,  12)
 #define COL_TICK       pk_rgb565(220, 220, 220)
 #define COL_LABEL      pk_rgb565(240, 240, 240)
 #define COL_BORDER     pk_rgb565(255, 255, 255)
@@ -52,9 +49,10 @@
 
 void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 {
-    /* Centered opaque rectangle — leaves the left and right corners
-     * for the GS / VS readouts. */
-    pk_pfd_fill_rect(fb, HSI_FILL_X0, HSI_TOP, HSI_FILL_X1, HSI_BOT, COL_BG);
+    /* Fully transparent — the rose ticks, cardinal labels, aircraft
+     * icon, and HDG box draw directly over the attitude indicator.
+     * Garmin keeps the bottom compass area unobstructed so the pilot
+     * still sees the sky/ground reference around the rose. */
 
     float yaw = h->imu_valid ? h->yaw_deg : 0.0f;
 
@@ -111,8 +109,9 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
                          HSI_CX + 5,  AIRCRAFT_Y + 4,
                          COL_AIRCRAFT);
 
-    /* HDG box: black fill + 1 px white border + scale-3 digits. */
-    pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y0,     HDGBOX_X1,     HDGBOX_Y1,     COL_BG);
+    /* HDG box: transparent interior + 1 px white border + scale-3
+     * digits. The interior shows the attitude background; the white
+     * border anchors the box visually. */
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y0,     HDGBOX_X1,     HDGBOX_Y0 + 1, COL_BORDER);
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y1 - 1, HDGBOX_X1,     HDGBOX_Y1,     COL_BORDER);
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y0,     HDGBOX_X0 + 1, HDGBOX_Y1,     COL_BORDER);

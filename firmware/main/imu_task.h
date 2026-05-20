@@ -73,6 +73,52 @@
 #define PK_IMU_MOUNT_INVERT_YAW        0
 #define PK_IMU_MOUNT_YAW_OFFSET_DEG    0
 
+/* --- Mounting quaternion (axis-remap, beyond what INVERT can do) ----- *
+ *
+ * Applied to the raw BNO085 Rotation Vector BEFORE the quaternion is
+ * fed to quat_to_euler(). Use this when the chip cannot be glued in
+ * the canonical aerospace orientation (chip +X forward, +Y right,
+ * +Z down) and INVERT/OFFSET alone cannot fix it — i.e. when the
+ * physical mount requires a 90°/180° axis SWAP, not just a sign flip.
+ *
+ * Convention: this quaternion represents R_chip→aircraft, the rotation
+ * that takes a vector expressed in chip body frame and re-expresses
+ * it in aircraft NED frame. Concretely, with components (W, X, Y, Z):
+ *
+ *     q_aircraft = q_bno_raw · q_mount   (Hamilton product, right-mul)
+ *
+ * Identity (no remap):   W=1,  X=0,  Y=0,  Z=0
+ *
+ * Current build — chip face toward pilot, header on the (pilot's) left,
+ * VCC pin at the top edge. Mapping:
+ *     chip +X  →  aircraft up    (= -aircraft +Z)
+ *     chip +Y  →  aircraft left  (= -aircraft +Y)
+ *     chip +Z  →  aircraft back  (= -aircraft +X)
+ * Rotation: 180° around axis (1, 0, -1)/√2 → q = (0, √2/2, 0, -√2/2).
+ *
+ * Diagnostic recipe if rpy comes out wrong:
+ *
+ *   Step 1.  Set q to identity (1,0,0,0). PFD will show whatever raw
+ *            chip-body Euler the sensor produces.
+ *   Step 2.  Recompute q for your actual mount: identify where
+ *            chip +X / +Y / +Z each point in aircraft NED, build the
+ *            R_chip→aircraft matrix (each column = chip basis vector
+ *            in aircraft coords), convert to a quaternion. The 24
+ *            axis-permutation cases are tabulated in BNO080 datasheet
+ *            section 4 "BNO080 Orientation" — same table, different
+ *            interpretation: that table is for the BNO FRS record but
+ *            uses the same R_chip→device semantics.
+ *   Step 3.  If pitch and roll come out swapped, or the rotation looks
+ *            mirrored across one axis, the quaternion multiplication
+ *            order may be wrong for the BNO Rotation Vector convention.
+ *            Try swapping the two operands inside quat_mul() in
+ *            parse_rotation_vector() (left-mul vs right-mul) before
+ *            retuning the quaternion components themselves. */
+#define PK_IMU_MOUNT_QUAT_W            0.0f
+#define PK_IMU_MOUNT_QUAT_X            0.7071068f
+#define PK_IMU_MOUNT_QUAT_Y            0.0f
+#define PK_IMU_MOUNT_QUAT_Z           -0.7071068f
+
 typedef struct {
     int64_t  ts_us;        /* esp_timer_get_time() at sample */
     float    roll_deg;     /* -180 .. +180 */

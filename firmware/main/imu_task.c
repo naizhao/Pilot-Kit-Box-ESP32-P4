@@ -235,6 +235,26 @@ static esp_err_t bno_enable_rotation_vector(void)
     return shtp_send(SHTP_CH_CONTROL, (const uint8_t *)&cmd, sizeof(cmd));
 }
 
+/* --- Hamilton quaternion product: out = a · b ----------------------- *
+ *
+ * Used to apply a constant mounting rotation to the BNO085's Rotation
+ * Vector before Euler extraction — see PK_IMU_MOUNT_QUAT_* in
+ * imu_task.h for the rationale and the diagnostic recipe.
+ *
+ * When the mounting quaternion is identity (1,0,0,0), this function
+ * is invoked with W=1, X=Y=Z=0 and the compiler's constant
+ * propagation collapses the body to `*out = a`, so the no-remap
+ * build path pays nothing for this hook. */
+static inline void quat_mul(float aw, float ax, float ay, float az,
+                            float bw, float bx, float by, float bz,
+                            float *ow, float *ox, float *oy, float *oz)
+{
+    *ow = aw * bw - ax * bx - ay * by - az * bz;
+    *ox = aw * bx + ax * bw + ay * bz - az * by;
+    *oy = aw * by - ax * bz + ay * bw + az * bx;
+    *oz = aw * bz + ax * by - ay * bx + az * bw;
+}
+
 /* --- Quaternion → Euler (ZYX Tait-Bryan, aerospace convention) ------ */
 static void quat_to_euler(float qi, float qj, float qk, float qw,
                           float *roll_deg, float *pitch_deg, float *yaw_deg)
@@ -304,8 +324,19 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     float qk = (float)qk_raw * Q14;
     float qw = (float)qw_raw * Q14;
 
+    /* Mounting rotation: re-express the chip-body quaternion in the
+     * aircraft NED frame before Euler extraction. Right-multiply by
+     * the mounting quaternion (R_chip→aircraft). If validation shows
+     * pitch/roll swapped or mirrored, swap the operand order here as
+     * the first diagnostic step — see imu_task.h notes. */
+    float aqw, aqi, aqj, aqk;
+    quat_mul(qw, qi, qj, qk,
+             PK_IMU_MOUNT_QUAT_W, PK_IMU_MOUNT_QUAT_X,
+             PK_IMU_MOUNT_QUAT_Y, PK_IMU_MOUNT_QUAT_Z,
+             &aqw, &aqi, &aqj, &aqk);
+
     float roll, pitch, yaw;
-    quat_to_euler(qi, qj, qk, qw, &roll, &pitch, &yaw);
+    quat_to_euler(aqi, aqj, aqk, aqw, &roll, &pitch, &yaw);
 
     /* Mounting-orientation corrections — see imu_task.h for the
      * diagnostic recipe and the rationale for each knob. These

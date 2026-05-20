@@ -47,6 +47,40 @@ void pk_pfd_draw_line(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
     }
 }
 
+/* Darken every pixel toward black by alpha/256 (alpha in [0, 256]).
+ * Works directly in RGB565: unpack 5/6/5 channels, scale each by the
+ * "keep" factor (256 - alpha), repack. Output is in panel byte order
+ * since input was. ~6 ALU ops per pixel — at 30 FPS this is fine for
+ * the few thousand-pixel overlay regions we use it on. */
+void pk_pfd_darken_rect(uint16_t *fb, int x0, int y0, int x1, int y1, int alpha)
+{
+    if (alpha <= 0) return;
+    if (alpha > 256) alpha = 256;
+    if (x0 < 0) x0 = 0;
+    if (x1 > PK_DISPLAY_W) x1 = PK_DISPLAY_W;
+    if (y0 < 0) y0 = 0;
+    if (y1 > PK_DISPLAY_H) y1 = PK_DISPLAY_H;
+
+    const int keep = 256 - alpha;
+    for (int y = y0; y < y1; ++y) {
+        uint16_t *row = fb + y * PK_DISPLAY_W;
+        for (int x = x0; x < x1; ++x) {
+            uint16_t px = row[x];
+            /* Framebuffer holds panel-byte-order RGB565; undo the swap
+             * to get the native R5G6B5 layout, scale, repack, re-swap. */
+            uint16_t v = (uint16_t)((px >> 8) | (px << 8));
+            uint16_t r = (v >> 11) & 0x1F;
+            uint16_t g = (v >>  5) & 0x3F;
+            uint16_t b =  v        & 0x1F;
+            r = (uint16_t)((r * keep) >> 8);
+            g = (uint16_t)((g * keep) >> 8);
+            b = (uint16_t)((b * keep) >> 8);
+            uint16_t nv = (uint16_t)((r << 11) | (g << 5) | b);
+            row[x] = (uint16_t)((nv >> 8) | (nv << 8));
+        }
+    }
+}
+
 /* Filled triangle via bounding-box scan + sign-of-cross-product test. */
 void pk_pfd_draw_triangle(uint16_t *fb,
                           int ax, int ay, int bx, int by, int cx, int cy,
