@@ -35,11 +35,15 @@
 #define HSI_R           65
 
 /* HDG numeric box — scale-2 digits (4 chars × 12 = 48 px wide × 14 tall).
- * Box interior 48×14 + 1 px border + small padding → 54×18. */
+ * Box interior 48×14 + 1 px border + small padding → 54×18.
+ *
+ * Y position: bottom stays at y=162 (same as the old scale-3 box's
+ * bottom), top moves down to y=144. Keeps the gap from box-bottom to
+ * the visible top of the rose (~y=175) consistent across the resize. */
 #define HDGBOX_X0      133
-#define HDGBOX_Y0      138
+#define HDGBOX_Y0      144
 #define HDGBOX_X1      187
-#define HDGBOX_Y1      156
+#define HDGBOX_Y1      162
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly
  * above the panel's bottom edge — the Garmin convention is to put it
