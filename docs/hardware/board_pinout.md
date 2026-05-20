@@ -72,7 +72,7 @@ Both headers count from the **top** (USB-C side) downward.
 | GND        | GND      | —                              |                                                |
 | **50**     | GPIO50   | **LCD BL (LEDC PWM)**          | Backlight on TK024F304189-SPI.                 |
 | 49         | GPIO49   | free (was LCD RST in Phase 4a) | TK024F304189-SPI has on-board RC reset.        |
-| 5          | GPIO5    | free                           | ⚠ JTAG MTDO default — using disables JTAG.     |
+| **5**      | GPIO5    | **BTN2 — MODE** (LP_IO, deep-sleep wake) | LP_IO required so MODE long-press can sleep and a press can wake — see §3.4 and the power-button plan. JTAG MTDO default is moot: project doesn't use JTAG. |
 | 4          | GPIO4    | free                           | ⚠ JTAG MTMS default — using disables JTAG.     |
 | GND        | GND      | —                              |                                                |
 | 3          | GPIO3    | free                           | ⚠ JTAG MTDI default — using disables JTAG.     |
@@ -100,7 +100,7 @@ Both headers count from the **top** (USB-C side) downward.
 | RUN        | RUN      | —                         | System reset button net.                       |
 | **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = tare yaw; long ≥ 3 s = full reorient + persist DCD |
 | GND        | GND      | —                         |                                                |
-| **27**     | GPIO27   | **BTN2 — MODE** (cycle PFD → LIST → ABOUT)  |                                  |
+| 27         | GPIO27   | free (was BTN2 — MODE; moved to GPIO5 for LP_IO wake) |                        |
 | 32         | GPIO32   | free                      |                                                |
 | 33         | GPIO33   | free                      | (was LCD MOSI in Phase 4a — now on left header)|
 | 46         | GPIO46   | free                      | (was LCD CS  in Phase 4a)                      |
@@ -412,22 +412,29 @@ GPIO ────┬──── tact switch ──── GND
 Pressed → GPIO reads `0`. Released → reads `1`. Polled at 50 Hz with
 40 ms debounce.
 
-| Button | GPIO | Function                                |
-|--------|------|-----------------------------------------|
-| **TARE** (BTN1) | 26 | IMU Tare / cage                        |
-| **MODE** (BTN2) | 27 | Cycle screens: PFD → LIST → ABOUT       |
-| **UP**   (BTN3) | 22 | List scroll up / menu up               |
-| **DOWN** (BTN4) | 23 | List scroll down / menu down           |
+| Button | GPIO | Header | Function                                |
+|--------|------|--------|-----------------------------------------|
+| **TARE** (BTN1) | 26 | right | tare / persist / factory reset (short / long / very-long) |
+| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → LIST → ABOUT; long = power off (deep sleep, wake on next press) |
+| **UP**   (BTN3) | 22 | right | list scroll up / menu up               |
+| **DOWN** (BTN4) | 23 | right | list scroll down / menu down           |
 
-All four GPIOs are on the **right header** — easy to keep all wiring
-on the same side of the breadboard.
+TARE / UP / DOWN cluster on the **right header** so their wiring stays on
+one side of the breadboard. MODE sits on **GPIO5 on the left header**
+because GPIO0–15 are the only LP_IO pins on this chip — the LP_IO
+domain is the only one still powered during deep sleep, so a press on
+GPIO5 (low level) can wake the device. HP_IO pins (anything ≥16) are
+fully unpowered while sleeping and can't act as wake sources. The
+left/right split is acceptable: MODE doesn't share a gesture with the
+other three buttons.
 
 #### Press semantics
 
 | Press kind                          | TARE                 | MODE              | UP        | DOWN      |
 |-------------------------------------|----------------------|-------------------|-----------|-----------|
-| **Short** (released within < 3 s)   | tare yaw → 0°        | cycle PFD → LIST → ABOUT → PFD … | scroll up | scroll down |
-| **Long**  (held ≥ 3 s)              | full reorient + Save DCD (requires `acc ≥ 2`; refuses otherwise) | **factory reset** — clear tare + clear persistent DCD + reinit BNO085 (use this if heading is stuck wrong) | *(suppressed)* | *(suppressed)* |
+| **Short** (released within < 3 s)   | live tare — snapshot current pose as zero (RAM only) | cycle PFD → LIST → ABOUT → PFD … | scroll up | scroll down |
+| **Long**  (held ≥ 3 s)              | persist current tare to NVS (survives reboot) | *(reserved — power on/off; TODO log until Phase C of `docs/superpowers/plans/2026-05-21-power-button.md` lands)* | *(suppressed)* | *(suppressed)* |
+| **Very-long** (held ≥ 10 s)         | **factory reset** — wipe NVS tare + BNO's persisted reorientation + DCD, reinit chip | — | — | — |
 | **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (TODO — Flutter side stub only) | — |
 
 #### Calibration / heading-reset workflow
@@ -439,25 +446,29 @@ sits still, `acc` stays at 0 forever. When `acc` finally reaches 2 or
 3, the heading is trustworthy and a TARE long-press will persist the
 state to BNO085 flash for permanent use.
 
-If you've poisoned the calibration (e.g. by long-pressing TARE while
-`acc=0` — Save DCD wrote unconverged offsets to flash, and the
-heading is wrong even after rebooting), use **MODE long-press** to
-factory-reset the chip:
+If the heading is wrong even after a reboot, either a stale TARE
+is saved in NVS or the BNO's persisted DCD is bad. Use **TARE
+very-long-press** to factory-reset:
 
 ```
-MODE long-press 3s
+TARE very-long-press 10s
    → fires pk_imu_factory_reset()
-   → clears Tare reference + persistent DCD on the BNO085
+   → wipes the persisted software tare (NVS key on ESP32)
+   → clears BNO's persisted reorientation matrix + DCD
    → pulses RST and replays SH-2 init
    → fusion engine restarts with no prior calibration in flash
 
 Now do figure-8 motion for ~15 s.
    → watch `imu: rpy = ... (acc=N)` log line
    → acc climbs 0 → 1 → 2 → 3 as mag fusion converges
+   → BNO persists DCD into its own internal flash automatically
+     as accuracy improves — no user action needed
 
 When acc reaches 2 or 3, hold the device in the desired "zero"
-orientation and TARE long-press 3s
-   → persists a clean calibration to flash for next boot
+orientation, then:
+   TARE short-press           → snapshot this pose as the new zero
+   TARE long-press 3s         → save that zero pose to ESP32 NVS
+                                (so the next boot wakes up zeroed)
 ```
 
 **Why UP / DOWN don't fire single-button long press**: if they did,
@@ -467,6 +478,16 @@ distinct gestures for what feels like one hold. Suppressing single-key
 long-press on UP and DOWN resolves this cleanly while leaving TARE /
 MODE long presses untouched.
 
+**Why only TARE emits very-long-press (≥10 s)**: factory reset is a
+destructive action that should require a sustained, unambiguous hold
+the user clearly meant to make. Putting it on the same button as the
+much more frequent "live tare" + "persist tare" gestures (TARE short
+/ long) keeps related-by-meaning operations under one finger, with
+the danger gradient (3 s long = recoverable; 10 s very-long = wipe)
+matching the press effort. MODE's long-press slot is reserved for
+power on/off instead — see Phase C of
+`docs/superpowers/plans/2026-05-21-power-button.md`.
+
 #### Firmware structure
 
 - `firmware/main/button_task.c` — GPIO polling + per-button FSM (4
@@ -474,8 +495,10 @@ MODE long presses untouched.
   detector pass. Reports `(id, event)` pairs to the registered
   callback.
 - `firmware/main/main.c::on_button_event()` — single dispatch point.
-  Routes TARE → `pk_imu_tare_yaw()` / `pk_imu_full_reorient()`,
-  MODE → `pk_ui_toggle_mode()`, UP/DOWN → `pk_ui_list_scroll(±1)`,
+  Routes TARE → `pk_imu_tare_now()` / `pk_imu_tare_persist()` /
+  `pk_imu_factory_reset()` for SHORT / LONG / VERY_LONG,
+  MODE → `pk_ui_toggle_mode()` on SHORT (LONG reserved for power
+  on/off — currently a TODO log), UP/DOWN → `pk_ui_list_scroll(±1)`,
   combo → BLE-pairing stub (`ESP_LOGW(... TODO ...)`).
 - `firmware/main/ui_state.c` — holds current `pk_ui_mode_t` and the
   list cursor; mutex-protected for concurrent reads from
@@ -492,12 +515,12 @@ After accounting for everything above, the following P4 GPIOs are
 free for new application use:
 
 ```
-GPIO32  GPIO33  GPIO46  GPIO47  GPIO48   (right header, lower half)
-GPIO49  GPIO51  GPIO52                    (left header)
+GPIO27  GPIO32  GPIO33  GPIO46  GPIO47  GPIO48   (right header, lower half)
+GPIO49  GPIO51  GPIO52                            (left header)
 ```
 
-That's **8** GPIOs with no caveats. (Was 10; GPIO 22 and GPIO 23 are
-now claimed by BTN3/BTN4.)
+That's **9** GPIOs with no caveats. (Was 8 before the MODE button moved
+from GPIO27 to GPIO5; GPIO27 is back in the free pool, GPIO5 leaves it.)
 
 > Note: `GPIO33 / GPIO46 / GPIO47 / GPIO48` were used by the LCD in
 > Phase 4a but have since been freed up — the LCD moved to the SPI2
@@ -513,19 +536,21 @@ now claimed by BTN3/BTN4.)
 | GPIO2   | left       | JTAG MTCK default — using disables JTAG over the USB Serial/JTAG port |
 | GPIO3   | left       | JTAG MTDI default — same                                              |
 | GPIO4   | left       | JTAG MTMS default — same                                              |
-| GPIO5   | left       | JTAG MTDO default — same                                              |
 | GPIO24  | left "DM"  | USB Serial/JTAG D− default (USB1P1_N0) — using disables on-chip USB JTAG |
 | GPIO25  | left "DP"  | USB Serial/JTAG D+ default (USB1P1_P0) — same                         |
 
+(GPIO5 was previously in this table as JTAG MTDO; it now hosts BTN2 — MODE, see §3.4.)
+
 In practice JTAG-via-USB-Serial isn't used by this project (we have
 the CH343P UART console and SWD via the C6 debug header), so
-GPIO2–5 and GPIO24/25 are de-facto available. But if a future
+GPIO2–4 and GPIO24/25 are de-facto available. But if a future
 contributor ever wants USB JTAG, they'd have to free these up first.
 
 **Not in the free pool**:
 - `GPIO0` (BOOT strap; not broken out anyway)
-- `GPIO22 / GPIO23 / GPIO26 / GPIO27` (BTN3 / BTN4 / BTN1 / BTN2 —
-  see "Tact buttons" above)
+- `GPIO22 / GPIO23 / GPIO26 / GPIO5` (BTN3 / BTN4 / BTN1 / BTN2 —
+  see "Tact buttons" above; BTN2 = MODE on GPIO5 because deep-sleep
+  wake needs an LP_IO pin)
 - All on-board-only GPIOs (`6`, `9–19`, `34–45`, `53`, `54`) — not on
   user headers.
 

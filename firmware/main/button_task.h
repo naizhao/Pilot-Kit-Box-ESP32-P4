@@ -8,8 +8,8 @@
  *
  * Button layout (mirrors docs/hardware/board_pinout.md §3):
  *
- *   PK_BTN_TARE  →  GPIO 26   "TARE"   IMU heading reset / full reorient
- *   PK_BTN_MODE  →  GPIO 27   "MODE"   PFD ↔ ADS-B list toggle
+ *   PK_BTN_TARE  →  GPIO 26   "TARE"   tare snapshot / persist / factory reset
+ *   PK_BTN_MODE  →  GPIO  5   "MODE"   PFD/list toggle + deep-sleep wake (LP_IO)
  *   PK_BTN_UP    →  GPIO 22   "UP"     list scroll up / brightness up
  *   PK_BTN_DOWN  →  GPIO 23   "DOWN"   list scroll down / brightness down
  *
@@ -59,8 +59,8 @@
 #include "esp_err.h"
 
 typedef enum {
-    PK_BTN_TARE = 0,    /* GPIO 26 — IMU Tare / cage */
-    PK_BTN_MODE,        /* GPIO 27 — PFD/list mode toggle */
+    PK_BTN_TARE = 0,    /* GPIO 26 — tare / persist / factory reset */
+    PK_BTN_MODE,        /* GPIO  5 — PFD/list toggle + deep-sleep wake (LP_IO) */
     PK_BTN_UP,          /* GPIO 22 — list scroll up */
     PK_BTN_DOWN,        /* GPIO 23 — list scroll down */
     PK_BTN_COUNT,

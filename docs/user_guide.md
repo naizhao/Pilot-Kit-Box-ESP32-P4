@@ -8,14 +8,17 @@ implementation details, see `docs/hardware/board_pinout.md`.
 
 ## 1. Buttons at a glance
 
-The board has **four physical buttons** on the right-side header,
-plus one **combo gesture**:
+The board has **four physical buttons** plus one **combo gesture**.
+TARE / UP / DOWN cluster on the right-side header; MODE sits on the
+left-side header at GPIO5 because the deep-sleep wake hardware needs
+an LP_IO pin (see `docs/hardware/board_pinout.md` §3.4 for the why):
 
 ```
-       TARE   MODE    UP    DOWN
-       (26)   (27)   (22)   (23)
-        |      |      |      |
-        ●      ●      ●      ●
+   left header      right header
+       MODE         TARE   UP    DOWN
+       ( 5)         (26)  (22)   (23)
+        |            |     |      |
+        ●            ●     ●      ●
 ```
 
 | Button | Short press (< 3 s) | Long press (≥ 3 s) | Very-long press (≥ 10 s) |

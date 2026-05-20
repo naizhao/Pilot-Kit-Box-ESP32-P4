@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "display.h"
 #include "pfd_draw.h"
@@ -33,10 +34,12 @@
 #define HSI_CY         240
 #define HSI_R           65
 
-#define HDGBOX_X0      123
+/* HDG numeric box — scale-2 digits (4 chars × 12 = 48 px wide × 14 tall).
+ * Box interior 48×14 + 1 px border + small padding → 54×18. */
+#define HDGBOX_X0      133
 #define HDGBOX_Y0      138
-#define HDGBOX_X1      197
-#define HDGBOX_Y1      162
+#define HDGBOX_X1      187
+#define HDGBOX_Y1      156
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly
  * above the panel's bottom edge — the Garmin convention is to put it
@@ -83,17 +86,24 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 
         pk_pfd_draw_line(fb, (int)cx, (int)cy, (int)tx, (int)ty, COL_TICK);
 
-        /* Labels only for the four cardinal directions — dropping the
-         * intermediate "3"/"6"/"9"/"12"/"15"/etc. numeric labels keeps
-         * the rose visually lighter. The font is already scale-1; we
-         * compensate by labelling sparsely. */
-        if (hdg == 0 || hdg == 90 || hdg == 180 || hdg == 270) {
-            const char *lbl = (hdg == 0)   ? "N"
-                            : (hdg == 90)  ? "E"
-                            : (hdg == 180) ? "S"
-                            :                "W";
+        if (major30) {
+            const char *lbl;
+            char numbuf[4];
+            switch (hdg) {
+                case   0: lbl = "N"; break;
+                case  90: lbl = "E"; break;
+                case 180: lbl = "S"; break;
+                case 270: lbl = "W"; break;
+                default:
+                    /* Garmin convention: label numeric headings by
+                     * tens-of-degrees (30→"3", 120→"12", etc.). */
+                    snprintf(numbuf, sizeof(numbuf), "%d", hdg / 10);
+                    lbl = numbuf;
+                    break;
+            }
+            int len   = (int)strlen(lbl);
             int lx = (int)((float)HSI_CX +
-                           (float)(HSI_R - 15) * cosf(rad)) - 2;
+                           (float)(HSI_R - 15) * cosf(rad)) - len * 3;
             int ly = (int)((float)HSI_CY -
                            (float)(HSI_R - 15) * sinf(rad)) - 3;
             pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -150,12 +160,12 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         char buf[8];
         int hdg = ((int)yaw + 360) % 360;
         snprintf(buf, sizeof(buf), "%03d~", hdg);
-        /* Interior 72 × 22 px fits 4 glyphs scale 3 (72 × 21) with
-         * 0.5 px vertical breathing room (use y = HDGBOX_Y0 + 1). */
+        /* 4 glyphs scale 2 = 48 × 14; box interior 52 × 16; center
+         * with 3 px left padding + 2 px top padding. */
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     HDGBOX_X0 + 1, HDGBOX_Y0 + 1, buf, COL_LABEL, 3);
+                     HDGBOX_X0 + 3, HDGBOX_Y0 + 2, buf, COL_LABEL, 2);
     } else {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     HDGBOX_X0 + 1, HDGBOX_Y0 + 1, "---~", COL_STALE, 3);
+                     HDGBOX_X0 + 3, HDGBOX_Y0 + 2, "---~", COL_STALE, 2);
     }
 }

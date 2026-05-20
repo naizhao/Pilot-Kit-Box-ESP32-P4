@@ -156,9 +156,10 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
     for (size_t i = 0; i < sizeof(pitch_marks) / sizeof(pitch_marks[0]); ++i) {
         int p = pitch_marks[i];
         int abs_p = p < 0 ? -p : p;
-        /* Mark half-widths sized for the full 320-wide attitude:
-         * ±10° → 140 px wide, ±20° → 100 px, ±30° → 70 px. */
-        int half_w = (abs_p == 10) ? 70 : (abs_p == 20 ? 50 : 35);
+        /* Mark half-widths sized to sit inside the bank-arc footprint
+         * (~170 px wide) without crowding the reticle: ±10° → 70 px
+         * wide, ±20° → 48 px, ±30° → 32 px. */
+        int half_w = (abs_p == 10) ? 35 : (abs_p == 20 ? 24 : 16);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
         if (mark_y < PFD_ATTITUDE_TOP - 20 || mark_y > PFD_ATTITUDE_BOT + 20) {

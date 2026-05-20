@@ -24,7 +24,7 @@
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
-#define TAPE_X0   248
+#define TAPE_X0   256       /* tape band: 64 px wide (was 72) */
 #define TAPE_X1   320
 #define TAPE_TOP   18
 #define TAPE_BOT  208       /* extended down to ~just-above the VS pad

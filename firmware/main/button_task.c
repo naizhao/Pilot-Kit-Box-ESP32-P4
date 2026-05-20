@@ -88,7 +88,12 @@ static button_t s_buttons[PK_BTN_COUNT] = {
         .label = "TARE",
     },
     [PK_BTN_MODE] = {
-        .id = PK_BTN_MODE, .gpio = 27,
+        /* GPIO5 (left header) — LP_IO so the long-press handler can put
+         * the device into deep sleep and a subsequent press can wake it.
+         * GPIO27 (HP_IO) was the original wiring but can't survive
+         * deep-sleep power gating. See docs/superpowers/plans/
+         * 2026-05-21-power-button.md. */
+        .id = PK_BTN_MODE, .gpio = 5,
         .combo_eligible = false,
         .emits_long_press = true, .emits_very_long_press = false,
         .label = "MODE",
