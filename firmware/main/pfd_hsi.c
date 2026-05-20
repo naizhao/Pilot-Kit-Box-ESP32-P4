@@ -16,9 +16,18 @@
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
-/* --- Layout (spec §3) ---------------------------------------------- */
+/* --- Layout ---------------------------------------------------------- *
+ *
+ * The HSI is an opaque overlay over the attitude background. To leave
+ * room for the GS / VS readouts in the lower-left and lower-right
+ * corners of the panel, the HSI fill is a centered rectangle 160 px
+ * wide (x ∈ [80, 240)) covering the HDG box at the top and the rose
+ * at the bottom.
+ */
 #define HSI_TOP        138
 #define HSI_BOT        240
+#define HSI_FILL_X0     80
+#define HSI_FILL_X1    240
 
 /* Virtual center is *below* the panel so we only see the top half of
  * the rose — same G1000 trick we use for the bank arc. */
@@ -43,7 +52,9 @@
 
 void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 {
-    pk_pfd_fill_rect(fb, 0, HSI_TOP, PK_DISPLAY_W, HSI_BOT, COL_BG);
+    /* Centered opaque rectangle — leaves the left and right corners
+     * for the GS / VS readouts. */
+    pk_pfd_fill_rect(fb, HSI_FILL_X0, HSI_TOP, HSI_FILL_X1, HSI_BOT, COL_BG);
 
     float yaw = h->imu_valid ? h->yaw_deg : 0.0f;
 

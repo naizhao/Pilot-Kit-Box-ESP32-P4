@@ -31,23 +31,34 @@
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
-/* --- Layout constants (spec §3) ------------------------------------- */
-#define PFD_ATTITUDE_LEFT       50
-#define PFD_ATTITUDE_RIGHT      248
-#define PFD_ATTITUDE_TOP        18
-#define PFD_ATTITUDE_BOT        138
-#define PFD_CX                  149
-#define PFD_CY                  78
+/* --- Layout constants ----------------------------------------------- *
+ *
+ * The attitude indicator fills the WHOLE panel below the top status
+ * bar — Garmin G1000 treats it as the screen background, not a small
+ * sub-region. Other widgets (statusbar / ALT tape / HSI / GS / VS)
+ * draw OVER the attitude as opaque overlays.
+ */
+#define PFD_ATTITUDE_LEFT       0
+#define PFD_ATTITUDE_RIGHT      PK_DISPLAY_W                   /* 320 */
+#define PFD_ATTITUDE_TOP        18                              /* just below statusbar */
+#define PFD_ATTITUDE_BOT        PK_DISPLAY_H                   /* 240 */
+#define PFD_CX                  (PK_DISPLAY_W / 2)             /* 160 */
+#define PFD_CY                  ((PFD_ATTITUDE_TOP + PFD_ATTITUDE_BOT) / 2)  /* 129 */
 #define PFD_PIXELS_PER_DEG      3
 
-/* Bank arc: virtual center below the attitude region. Visible arc
- * curves cleanly across the top with radius 145 from a center at
- * (149, 200). */
-#define BANK_ARC_CX             149
+/* Bank arc: virtual center placed below the visible region so the
+ * arc curves cleanly across the top of the attitude indicator. With
+ * R=170 and CY=200, the 0° tick lands at y≈30 (just below the
+ * statusbar) and ±60° ticks land at x≈307/13 (just inside the panel
+ * edges). */
+#define BANK_ARC_CX             160
 #define BANK_ARC_CY             200
-#define BANK_ARC_R              145
+#define BANK_ARC_R              170
 
-#define ATTITUDE_HEIGHT         (PFD_ATTITUDE_BOT - PFD_ATTITUDE_TOP)   /* 120 */
+/* Gradient LUT size: max perpendicular distance from horizon we map
+ * to distinct colors. Beyond this the gradient saturates at the "far"
+ * end. 160 keeps the gradient ramp visible across the full screen. */
+#define ATTITUDE_HEIGHT         160
 
 /* --- Palette (spec §4, RGB565, panel byte order) ------------------- */
 #define COL_HORIZON_LINE        pk_rgb565(255, 255, 255)
@@ -143,9 +154,9 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
     for (size_t i = 0; i < sizeof(pitch_marks) / sizeof(pitch_marks[0]); ++i) {
         int p = pitch_marks[i];
         int abs_p = p < 0 ? -p : p;
-        /* Wider marks for the bigger 198-wide attitude region (was
-         * 30/20/14 in the 240-wide portrait layout). */
-        int half_w = (abs_p == 10) ? 50 : (abs_p == 20 ? 35 : 22);
+        /* Mark half-widths sized for the full 320-wide attitude:
+         * ±10° → 140 px wide, ±20° → 100 px, ±30° → 70 px. */
+        int half_w = (abs_p == 10) ? 70 : (abs_p == 20 ? 50 : 35);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
         if (mark_y < PFD_ATTITUDE_TOP - 20 || mark_y > PFD_ATTITUDE_BOT + 20) {

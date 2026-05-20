@@ -125,56 +125,71 @@ static void pfd_task(void *arg)
                                    ? own.altitude_ft : 0,
             };
 
-            pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H,
-                             COL_PANEL_BG);
-
-            pk_pfd_statusbar_render(fb, &stat);
+            /* Attitude fills the full panel as the screen background.
+             * Statusbar / ALT tape / HSI / GS / VS draw on top as
+             * opaque overlays — no need to pre-clear the frame. */
             pk_pfd_attitude_render(fb, &imu);
+            pk_pfd_statusbar_render(fb, &stat);
             pk_pfd_alt_tape_render(fb, &alt);
             pk_pfd_hsi_render(fb, &hsi);
 
-            /* GS readout — bottom-left, x in [0, 90), y in [138, 168). */
+            /* GS readout — bottom-left corner. Sits to the left of the
+             * HSI fill (which starts at x=80), so we have x=[0, 78)
+             * for an opaque pad + label/value. Mixed scales (label
+             * scale-1, value scale-2) match the G1000 convention of
+             * smaller unit text and larger digits. */
             {
-                const uint16_t COL_LABEL = pk_rgb565( 70, 220, 250);
-                const uint16_t COL_VALUE = pk_rgb565(240, 240, 240);
-                const uint16_t COL_STALE = pk_rgb565(100, 100, 100);
+                const uint16_t LBL   = pk_rgb565( 70, 220, 250);
+                const uint16_t VAL   = pk_rgb565(240, 240, 240);
+                const uint16_t STALE = pk_rgb565(100, 100, 100);
                 char buf[8];
                 bool gs_valid = own_valid && own.have_velocity;
+
+                pk_pfd_fill_rect(fb, 0, 210, 78, 232, COL_PANEL_BG);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             4, 142, "GS", COL_LABEL, 2);
+                             4, 216, "GS", LBL, 1);
                 if (gs_valid) {
-                    snprintf(buf, sizeof(buf), "%3d", own.ground_speed_kt);
+                    int gs = own.ground_speed_kt;
+                    if (gs < 0)   gs = 0;
+                    if (gs > 999) gs = 999;
+                    snprintf(buf, sizeof(buf), "%3d", gs);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 32, 142, buf, COL_VALUE, 2);
+                                 20, 212, buf, VAL, 2);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 70, 142, "KT", COL_LABEL, 2);
+                                 58, 216, "KT", LBL, 1);
                 } else {
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 32, 142, "---", COL_STALE, 2);
+                                 20, 212, "---", STALE, 2);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 70, 142, "KT", COL_STALE, 2);
+                                 58, 216, "KT", STALE, 1);
                 }
             }
 
-            /* VS readout — bottom-right. "VS" label + signed value;
-             * the FPM suffix is intentionally omitted (would overflow
-             * the 320 px panel at scale 2; "VS" + signed integer
-             * conveys the unit by aviation convention). */
+            /* VS readout — bottom-right corner. Sits to the right of
+             * the HSI fill (which ends at x=240), so x=[240, 320) is
+             * free. Mixed scales (label scale-1, signed value scale-2)
+             * lets us fit a 5-char "%+5d" value (±9999 FPM range). */
             {
-                const uint16_t COL_LABEL = pk_rgb565( 70, 220, 250);
-                const uint16_t COL_VALUE = pk_rgb565(240, 240, 240);
-                const uint16_t COL_STALE = pk_rgb565(100, 100, 100);
+                const uint16_t LBL   = pk_rgb565( 70, 220, 250);
+                const uint16_t VAL   = pk_rgb565(240, 240, 240);
+                const uint16_t STALE = pk_rgb565(100, 100, 100);
                 char buf[12];
                 bool vs_valid = own_valid && own.have_velocity;
+
+                pk_pfd_fill_rect(fb, 240, 210, PK_DISPLAY_W, 232,
+                                 COL_PANEL_BG);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             224, 142, "VS", COL_LABEL, 2);
+                             244, 216, "VS", LBL, 1);
                 if (vs_valid) {
-                    snprintf(buf, sizeof(buf), "%+5d", own.vert_rate_fpm);
+                    int vs = own.vert_rate_fpm;
+                    if (vs >  9999) vs =  9999;
+                    if (vs < -9999) vs = -9999;
+                    snprintf(buf, sizeof(buf), "%+5d", vs);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 252, 142, buf, COL_VALUE, 2);
+                                 260, 212, buf, VAL, 2);
                 } else {
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 252, 142, "-----", COL_STALE, 2);
+                                 260, 212, "-----", STALE, 2);
                 }
             }
             break;
