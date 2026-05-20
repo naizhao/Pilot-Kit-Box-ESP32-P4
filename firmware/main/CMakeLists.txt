@@ -47,6 +47,7 @@ idf_component_register(
         esp_driver_ledc          # PWM backlight
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
         esp_driver_gpio          # BNO085 RST pin
+        nvs_flash                # software-tare persistence (imu_task.c)
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about
         esp_hw_support           # esp_chip_info() for About page

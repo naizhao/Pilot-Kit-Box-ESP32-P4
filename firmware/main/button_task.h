@@ -25,6 +25,15 @@
  *    don't, so their long-press time can be reserved for the combo
  *    (a 5 s "UP+DOWN" hold would otherwise race with two separate
  *    3 s single-key long presses).
+ *  - **Very-long press** (held ≥ 10 s without release) fires
+ *    PK_BTN_EVT_VERY_LONG_PRESS once at the 10 s threshold. Only TARE
+ *    emits this — used for "factory reset" via the TARE button so
+ *    MODE's long-press slot can be reserved for power on/off.
+ *    Order on a sustained hold: SHORT does NOT fire (only on early
+ *    release), LONG fires at 3 s, VERY_LONG fires at 10 s. The
+ *    application accepts both LONG and VERY_LONG arriving on the same
+ *    hold; the VERY_LONG action should be designed to subsume or
+ *    override whatever LONG did.
  *  - **UP + DOWN combo** (both held ≥ 5 s, with the second press
  *    landing within 1 s of the first) fires
  *    PK_BTN_EVT_COMBO_BLE_PAIR on PK_BTN_UP. Suppresses any
@@ -60,6 +69,7 @@ typedef enum {
 typedef enum {
     PK_BTN_EVT_SHORT_PRESS = 0,   /* press + release within <3 s */
     PK_BTN_EVT_LONG_PRESS,        /* held ≥3 s (TARE / MODE only) */
+    PK_BTN_EVT_VERY_LONG_PRESS,   /* held ≥10 s (TARE only) */
     PK_BTN_EVT_COMBO_BLE_PAIR,    /* UP+DOWN held ≥5 s (fires on PK_BTN_UP) */
 } pk_button_event_t;
 

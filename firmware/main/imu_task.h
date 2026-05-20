@@ -73,47 +73,54 @@
 #define PK_IMU_MOUNT_INVERT_YAW        0
 #define PK_IMU_MOUNT_YAW_OFFSET_DEG    0
 
-/* --- Mounting quaternion (axis-remap, beyond what INVERT can do) ----- *
+/* --- Mounting + world-frame transformation (sandwich form) ---------- *
  *
- * Applied to the raw BNO085 Rotation Vector BEFORE the quaternion is
- * fed to quat_to_euler(). Use this when the chip cannot be glued in
- * the canonical aerospace orientation (chip +X forward, +Y right,
- * +Z down) and INVERT/OFFSET alone cannot fix it — i.e. when the
- * physical mount requires a 90°/180° axis SWAP, not just a sign flip.
+ * The BNO085 outputs the Rotation Vector in the standard Android
+ * convention: world reference frame = Earth ENU (East-North-Up), and
+ * the device frame = chip body axes. To convert that to the aerospace
+ * convention quat_to_euler() expects (aircraft body in NED world), we
+ * need TWO rotations, not just one — a left-mul to fix the world
+ * frame, and a right-mul to fix the body frame:
  *
- * Convention: this quaternion represents R_chip→aircraft, the rotation
- * that takes a vector expressed in chip body frame and re-expresses
- * it in aircraft NED frame. Concretely, with components (W, X, Y, Z):
+ *     q_aircraft  =  q_world_fix  ·  q_bno_raw  ·  q_body_fix
  *
- *     q_aircraft = q_bno_raw · q_mount   (Hamilton product, right-mul)
+ *     ─ q_world_fix = R_ENU→NED — turns the BNO's ENU world reference
+ *       into NED. Geometrically a 180° rotation around (1,1,0)/√2:
  *
- * Identity (no remap):   W=1,  X=0,  Y=0,  Z=0
+ *           q_world_fix = (0, √2/2, √2/2, 0)
  *
- * Current build — chip face toward pilot, header on the (pilot's) left,
- * VCC pin at the top edge. Mapping:
+ *       This is a FIXED constant — independent of how the chip is
+ *       physically mounted. Don't touch it unless we change which
+ *       Euler convention quat_to_euler() implements.
+ *
+ *     ─ q_body_fix  = R_aircraft→chip — turns aircraft body vectors
+ *       into chip body vectors. Numerically equal to the inverse of
+ *       R_chip→aircraft. For a 180° rotation the matrix is its own
+ *       inverse, so we can just store R_chip→aircraft directly here.
+ *       THIS is the per-mount knob.
+ *
+ * Identity body fix (chip body == aircraft body):
+ *     W=1, X=0, Y=0, Z=0
+ *
+ * Current build — chip face toward pilot, header on the pilot's left,
+ * VCC pin at the top edge, board vertical. Mapping:
  *     chip +X  →  aircraft up    (= -aircraft +Z)
  *     chip +Y  →  aircraft left  (= -aircraft +Y)
  *     chip +Z  →  aircraft back  (= -aircraft +X)
- * Rotation: 180° around axis (1, 0, -1)/√2 → q = (0, √2/2, 0, -√2/2).
+ * Rotation: 180° around (1, 0, -1)/√2  →  q = (0, √2/2, 0, -√2/2).
  *
- * Diagnostic recipe if rpy comes out wrong:
- *
- *   Step 1.  Set q to identity (1,0,0,0). PFD will show whatever raw
- *            chip-body Euler the sensor produces.
- *   Step 2.  Recompute q for your actual mount: identify where
- *            chip +X / +Y / +Z each point in aircraft NED, build the
- *            R_chip→aircraft matrix (each column = chip basis vector
- *            in aircraft coords), convert to a quaternion. The 24
- *            axis-permutation cases are tabulated in BNO080 datasheet
- *            section 4 "BNO080 Orientation" — same table, different
- *            interpretation: that table is for the BNO FRS record but
- *            uses the same R_chip→device semantics.
- *   Step 3.  If pitch and roll come out swapped, or the rotation looks
- *            mirrored across one axis, the quaternion multiplication
- *            order may be wrong for the BNO Rotation Vector convention.
- *            Try swapping the two operands inside quat_mul() in
- *            parse_rotation_vector() (left-mul vs right-mul) before
- *            retuning the quaternion components themselves. */
+ * Math sanity check: for "level facing N" pose in the above mounting,
+ * BNO outputs q_bno = (0.5, 0.5, -0.5, 0.5); applying the sandwich
+ * with the q's below yields q_aircraft = (-1, 0, 0, 0), which is
+ * identity as a rotation, so quat_to_euler() returns (0, 0, 0). ✓ */
+
+/* q_world_fix — DO NOT EDIT unless quat_to_euler() changes. */
+#define PK_IMU_WORLD_FIX_W             0.0f
+#define PK_IMU_WORLD_FIX_X             0.7071068f
+#define PK_IMU_WORLD_FIX_Y             0.7071068f
+#define PK_IMU_WORLD_FIX_Z             0.0f
+
+/* q_body_fix — set this to match the physical chip mounting. */
 #define PK_IMU_MOUNT_QUAT_W            0.0f
 #define PK_IMU_MOUNT_QUAT_X            0.7071068f
 #define PK_IMU_MOUNT_QUAT_Y            0.0f
@@ -145,72 +152,69 @@ esp_err_t pk_imu_init(void);
 bool pk_imu_sample_get(pk_imu_sample_t *out);
 
 /*
- * Zero the yaw axis only — "DG sync" / heading reset. Subsequent
- * Rotation Vector reports will treat the current heading as 0°. Roll
- * and pitch are unaffected (they stay referenced to gravity, which is
- * absolute). Fire-and-forget; the call returns as soon as the SH-2
- * Tare Now command has been pushed onto the bus.
+ * "Tare now" — capture the current attitude (post-sandwich, in
+ * aircraft NED frame) and use its conjugate as a software offset
+ * applied to every subsequent frame, so the PFD reads (0, 0, 0)
+ * immediately and tracks differential rotation from this reference
+ * onwards.
  *
- * Safe to call from any task. Typical caller: button_task on short
- * press of BTN1.
+ * Implemented purely in firmware (no BNO SH-2 Tare commands) so that
+ * it composes cleanly with the world/body-frame sandwich applied by
+ * parse_rotation_vector(). DOES NOT touch BNO flash and DOES NOT touch
+ * the magnetometer Dynamic Calibration Data (DCD) — those survive
+ * across this call.
+ *
+ * No accuracy precondition: works even when the BNO's mag fusion has
+ * not converged (acc=0). That makes it the right operation to fire on
+ * "cage on power-up before flight" workflows where the operator
+ * doesn't want to wait for figure-8 mag calibration.
+ *
+ * Volatile: the new offset lives only in RAM. It is overwritten on
+ * the next tare and wiped on power-cycle. Use pk_imu_tare_persist()
+ * if the reference should survive a reboot.
+ *
+ * Safe to call from any task. Typical caller: button_task on TARE
+ * short-press.
  */
-esp_err_t pk_imu_tare_yaw(void);
+esp_err_t pk_imu_tare_now(void);
 
 /*
- * "Erect and cage" — set the current pose as the new (level, heading
- * 0) reference for ALL three axes, then persist the tare and the
- * dynamic calibration data (mag/gyro/accel zero offsets) into the
- * BNO085's internal flash. Survives a power cycle.
+ * Same effect on the live attitude as pk_imu_tare_now(), additionally
+ * writes the new offset quaternion into NVS so it is restored on the
+ * next boot inside pk_imu_init(). Use this when the operator is
+ * happy with the current calibration and wants it to persist across
+ * power cycles.
  *
- * REFUSES if the current sample's accuracy is < 2 (mag fusion not
- * yet converged), returning ESP_ERR_INVALID_STATE — calling Save DCD
- * with an uncalibrated mag is the original mistake that poisons the
- * BNO085 flash and breaks heading on every subsequent boot. Do a
- * figure-8 motion for ~15 s and watch the `imu: rpy = ... (acc=N)`
- * 1 Hz log line until `acc=2` or `acc=3`, then long-press again.
+ * Returns the NVS write status — ESP_OK on success, the underlying
+ * nvs_* error code on failure. The in-RAM tare is updated either way
+ * (a flash-write failure does not invalidate the live calibration).
  *
- * Sends three SH-2 commands in sequence with 50 ms gaps so the chip
- * has time to digest each one:
- *   1. Tare Now    (axes = X | Y | Z, basis = Rotation Vector)
- *   2. Persist Tare
- *   3. Save DCD
- *
- * Typical caller: button_task on long press of BTN1.
+ * Typical caller: button_task on TARE long-press (≥3 s).
  */
-esp_err_t pk_imu_full_reorient(void);
+esp_err_t pk_imu_tare_persist(void);
 
 /*
- * Undo a previously-persisted Tare by setting the BNO085's
- * reorientation matrix to the identity quaternion and persisting that
- * to flash. Doesn't touch DCD (mag/gyro/accel calibration). Useful as
- * a standalone "cancel a bad Tare" command. Internally a building
- * block of pk_imu_factory_reset().
- */
-esp_err_t pk_imu_clear_tare(void);
-
-/*
- * Wipe the persistent Dynamic Calibration Data (DCD) from BNO085
- * flash via SH-2 Command 0x0B. Erases the stored magnetometer,
- * gyroscope and accelerometer zero-offset estimates so the next
- * fusion startup learns them fresh from raw sensor data. Doesn't
- * take effect until the BNO085 is re-initialised; pair with
- * bno_bring_up() (or call pk_imu_factory_reset() which does both).
- */
-esp_err_t pk_imu_clear_dcd(void);
-
-/*
- * "Factory reset" — composes pk_imu_clear_tare() + pk_imu_clear_dcd()
- * + a hard reset + replay of the SH-2 init handshake, so the BNO085
- * comes back from a guaranteed-clean state with no leftover Tare and
- * no poisoned calibration data.
+ * "Factory reset" — wipe the persistent NVS tare offset AND the BNO's
+ * persistent calibration state, then re-initialise the chip.
+ * Specifically:
+ *   1. Reset the in-RAM software tare back to identity (so the PFD
+ *      reverts to the raw mounting-corrected attitude).
+ *   2. Erase the NVS tare key so the next boot starts clean.
+ *   3. Tell the BNO to clear its persistent Dynamic Calibration Data
+ *      (SH-2 Command 0x0B) — undoes any mag/gyro/accel zero-offset
+ *      poisoning that may have been written by older firmware that
+ *      used BNO Tare directly.
+ *   4. Also clear the BNO's internal reorientation matrix (set to
+ *      identity quaternion + persist) — same reason: undo any old
+ *      BNO Tare that may still be in chip flash.
+ *   5. Hard-reset the chip and replay SH-2 init so the fusion engine
+ *      restarts from a guaranteed-clean state.
  *
- * After this returns, the user should hold the device and do a
- * figure-8 motion for ~15 seconds so the magnetometer fusion can
- * re-learn the local magnetic field. Watch the 1 Hz `imu` log line
- * — `acc` will climb from 0 toward 3 as fusion converges. Once
- * `acc >= 2`, a TARE long-press will succeed and persist a clean
- * calibration for the long term.
+ * After this returns, do a figure-8 motion for ~15 s so the
+ * magnetometer fusion re-converges. Once `acc >= 2` on the 1 Hz log
+ * line, a TARE long-press persists a clean calibration for the long
+ * term.
  *
- * Typical caller: button_task on long press of BTN2 (MODE).
+ * Typical caller: button_task on TARE very-long-press (≥10 s).
  */
 esp_err_t pk_imu_factory_reset(void);

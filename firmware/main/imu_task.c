@@ -39,6 +39,8 @@
 #include "esp_timer.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "imu";
 
@@ -107,6 +109,46 @@ static pk_imu_sample_t            s_sample;
 static uint8_t                    s_tx_seq[6];   /* per-channel SHTP sequence */
 static uint8_t                    s_cmd_seq;     /* SH-2 Command Request sequence */
 static bool                       s_imu_ready;   /* true after pk_imu_init() succeeds */
+
+/* Last raw quaternion from the BNO — stashed for the 1 Hz diagnostic
+ * log only. Volatile because the 1 Hz logger reads it from the imu
+ * task itself; torn reads only cause a one-frame skew in the printout,
+ * not a correctness issue. */
+static volatile float             s_last_raw_qw, s_last_raw_qi, s_last_raw_qj, s_last_raw_qk;
+
+/* Last post-sandwich, pre-tare-offset aircraft quaternion. Captured
+ * every frame so pk_imu_tare_now() can snapshot "current attitude"
+ * without rerunning the sandwich math. Protected by s_sample_lock. */
+static float                      s_last_aircraft_qw = 1.0f,
+                                  s_last_aircraft_qi = 0.0f,
+                                  s_last_aircraft_qj = 0.0f,
+                                  s_last_aircraft_qk = 0.0f;
+
+/* Software tare offset — LEFT-multiplied onto the post-sandwich
+ * quaternion every frame (q_displayed = s_tare · q_aircraft).
+ * Identity = no offset. Set by pk_imu_tare_now() /
+ * pk_imu_tare_persist() to the conjugate (= inverse, for a unit
+ * quaternion) of the current post-sandwich attitude, so the
+ * displayed quaternion is identity at the moment of tare. Left-mul
+ * decomposes the differential in the tare-time aircraft body frame,
+ * matching the aerospace convention for ZYX roll/pitch/yaw — see the
+ * detailed rationale in parse_rotation_vector() at the multiplication
+ * call site. Protected by s_sample_lock. */
+static float                      s_tare_qw = 1.0f,
+                                  s_tare_qi = 0.0f,
+                                  s_tare_qj = 0.0f,
+                                  s_tare_qk = 0.0f;
+
+/* NVS keys — namespace + blob key for the persisted software tare.
+ * Blob layout: 4 little-endian IEEE 754 floats in (w, x, y, z) order. */
+#define IMU_NVS_NAMESPACE   "pk_imu"
+#define IMU_NVS_KEY_TARE    "tare_quat"
+
+/* Forward declarations for NVS helpers used by pk_imu_init() before
+ * the definitions further down. */
+static esp_err_t imu_nvs_load_tare(float *w, float *x, float *y, float *z);
+static esp_err_t imu_nvs_save_tare(float w, float x, float y, float z);
+static esp_err_t imu_nvs_erase_tare(void);
 
 /* --- I²C bring-up ---------------------------------------------------- */
 static esp_err_t i2c_bring_up(void)
@@ -324,19 +366,58 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     float qk = (float)qk_raw * Q14;
     float qw = (float)qw_raw * Q14;
 
-    /* Mounting rotation: re-express the chip-body quaternion in the
-     * aircraft NED frame before Euler extraction. Right-multiply by
-     * the mounting quaternion (R_chip→aircraft). If validation shows
-     * pitch/roll swapped or mirrored, swap the operand order here as
-     * the first diagnostic step — see imu_task.h notes. */
+    /* TEMPORARY: stash raw quaternion for the 1 Hz diagnostic log. */
+    s_last_raw_qw = qw;
+    s_last_raw_qi = qi;
+    s_last_raw_qj = qj;
+    s_last_raw_qk = qk;
+
+    /* Sandwich transform: q_aircraft = q_world_fix · q_bno · q_body_fix.
+     * Left mul re-expresses the world reference from BNO's ENU to the
+     * aerospace NED that quat_to_euler() expects; right mul re-expresses
+     * the body frame from chip axes to aircraft axes (the mounting
+     * remap). See imu_task.h for the geometric derivation. */
+    float tw, ti, tj, tk;
+    quat_mul(PK_IMU_WORLD_FIX_W, PK_IMU_WORLD_FIX_X,
+             PK_IMU_WORLD_FIX_Y, PK_IMU_WORLD_FIX_Z,
+             qw, qi, qj, qk,
+             &tw, &ti, &tj, &tk);
     float aqw, aqi, aqj, aqk;
-    quat_mul(qw, qi, qj, qk,
+    quat_mul(tw, ti, tj, tk,
              PK_IMU_MOUNT_QUAT_W, PK_IMU_MOUNT_QUAT_X,
              PK_IMU_MOUNT_QUAT_Y, PK_IMU_MOUNT_QUAT_Z,
              &aqw, &aqi, &aqj, &aqk);
 
+    /* Snapshot the post-sandwich attitude under the lock so
+     * pk_imu_tare_now() can read a torn-free copy when the user
+     * triggers a tare; then apply the software tare offset by
+     * LEFT-multiplying s_tare_* onto the current aircraft attitude.
+     *
+     * Left-mul (not right-mul) matters: with s_tare_* = conjugate of
+     * the tare-time aircraft attitude, s_tare · q_now decomposes the
+     * differential rotation in the TARE-TIME aircraft body frame, so
+     * Euler extraction yields roll-around-body-X, pitch-around-body-Y,
+     * yaw-around-body-Z — the aerospace convention. Right-mul instead
+     * expresses the differential in world NED, which produces correct
+     * results only when the tare-time aircraft pose happens to be
+     * level/facing-N (q_at_tare ≈ identity); for any tilted mounting
+     * the world-frame decomposition tangles roll/pitch/yaw, especially
+     * near pitch = ±90° gimbal lock. */
+    float dqw, dqi, dqj, dqk;
+    xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+    s_last_aircraft_qw = aqw;
+    s_last_aircraft_qi = aqi;
+    s_last_aircraft_qj = aqj;
+    s_last_aircraft_qk = aqk;
+    float tare_w = s_tare_qw, tare_x = s_tare_qi,
+          tare_y = s_tare_qj, tare_z = s_tare_qk;
+    xSemaphoreGive(s_sample_lock);
+    quat_mul(tare_w, tare_x, tare_y, tare_z,
+             aqw, aqi, aqj, aqk,
+             &dqw, &dqi, &dqj, &dqk);
+
     float roll, pitch, yaw;
-    quat_to_euler(aqi, aqj, aqk, aqw, &roll, &pitch, &yaw);
+    quat_to_euler(dqi, dqj, dqk, dqw, &roll, &pitch, &yaw);
 
     /* Mounting-orientation corrections — see imu_task.h for the
      * diagnostic recipe and the rationale for each knob. These
@@ -485,9 +566,11 @@ static void imu_task(void *arg)
             pk_imu_sample_t s;
             pk_imu_sample_get(&s);
             ESP_LOGI(TAG, "rpy = %+7.2f / %+7.2f / %7.2f  "
+                          "raw_q(w,i,j,k) = %+0.4f %+0.4f %+0.4f %+0.4f  "
                           "(acc=%u valid=%lu parse_fail=%lu "
                           "nf=%lu i2c_err=%lu wrong_ch=%lu)",
                      s.roll_deg, s.pitch_deg, s.yaw_deg,
+                     s_last_raw_qw, s_last_raw_qi, s_last_raw_qj, s_last_raw_qk,
                      s.accuracy,
                      (unsigned long)valid_count,
                      (unsigned long)parse_fail,
@@ -521,6 +604,45 @@ esp_err_t pk_imu_init(void)
     s_sample_lock = xSemaphoreCreateMutex();
     if (s_sample_lock == NULL) return ESP_ERR_NO_MEM;
 
+    /* NVS bring-up. Idempotent: returns ESP_ERR_INVALID_STATE if some
+     * other subsystem (BLE / esp_hosted) already initialised it, which
+     * is fine — we just want to make sure it's up before opening our
+     * namespace below. ESP_ERR_NVS_NO_FREE_PAGES / NEW_VERSION_FOUND
+     * is the standard "first boot or partition layout changed" path:
+     * erase and try again. */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES ||
+        nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition needs erase (%s) — wiping and retrying",
+                 esp_err_to_name(nvs_err));
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    if (nvs_err != ESP_OK && nvs_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "nvs_flash_init: %s — tare persistence disabled",
+                 esp_err_to_name(nvs_err));
+        /* Non-fatal: software tare in RAM still works, just no
+         * cross-reboot persistence. */
+    } else {
+        /* Try to restore a previously-persisted software tare. Missing
+         * key on a fresh install is the normal path, not an error. */
+        float w, x, y, z;
+        esp_err_t load_err = imu_nvs_load_tare(&w, &x, &y, &z);
+        if (load_err == ESP_OK) {
+            s_tare_qw = w; s_tare_qi = x; s_tare_qj = y; s_tare_qk = z;
+            ESP_LOGI(TAG, "loaded persisted software tare from NVS: "
+                          "(w,i,j,k) = %+0.4f %+0.4f %+0.4f %+0.4f",
+                     w, x, y, z);
+        } else if (load_err == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGI(TAG, "no persisted software tare in NVS — "
+                          "starting with identity (TARE long-press to save)");
+        } else {
+            ESP_LOGW(TAG, "load persisted software tare failed (%s) — "
+                          "starting with identity",
+                     esp_err_to_name(load_err));
+        }
+    }
+
     esp_err_t err = i2c_bring_up();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2c_bring_up: %s", esp_err_to_name(err));
@@ -541,154 +663,89 @@ esp_err_t pk_imu_init(void)
     return ESP_OK;
 }
 
-/* --- Tare / cage API (public) ---------------------------------------- *
+/* --- Tare API (software-side) --------------------------------------- *
  *
- * These can be invoked from any task (typically button_task). They
- * fire SH-2 Command Requests on the control channel and return as
- * soon as the I²C write completes — they don't wait for the BNO085's
- * Command Response. Concurrent access with the imu_task polling loop
- * is safe because ESP-IDF's i2c_master driver serialises transactions
- * on the same device handle internally. The shtp_send seq counter
- * (s_tx_seq[]) and s_cmd_seq are only mutated from a single task at
- * a time in practice (init thread → then exactly one button task). */
+ * The user-facing tare functions don't talk to the BNO at all (with
+ * one exception: factory_reset, which has to clean up legacy persisted
+ * state inside BNO flash). Instead, "tare" means "set s_tare_* to the
+ * conjugate of the current post-sandwich attitude" so that next frame
+ * the displayed quaternion is identity.
+ *
+ * Why not the BNO's own SH-2 Tare command: the world-frame fix
+ * (ENU→NED) and the body-frame remap (chip→aircraft) are applied as
+ * a sandwich around the BNO output in parse_rotation_vector(). When
+ * BNO Tare zeroes its internal output to identity, the sandwich math
+ * turns that identity into q_world_fix · q_body_fix ≠ identity — the
+ * decoded Euler angles hit gimbal lock at pitch = -90°. A pure-software
+ * tare sidesteps that entirely. */
 
-esp_err_t pk_imu_tare_yaw(void)
+/* Conjugate of a unit quaternion = (w, -x, -y, -z) — represents the
+ * inverse rotation. */
+static inline void quat_conj(float w, float x, float y, float z,
+                             float *ow, float *ox, float *oy, float *oz)
 {
-    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
-    uint8_t p[9] = {0};
-    p[0] = SH2_TARE_SUB_NOW;
-    p[1] = SH2_TARE_AXIS_Z;             /* yaw only — leave roll/pitch alone */
-    p[2] = SH2_TARE_BASIS_ROT_VEC;
-    ESP_LOGI(TAG, "tare yaw (Z-axis only)");
-    return sh2_send_command(SH2_COMMAND_TARE, p);
+    *ow =  w;
+    *ox = -x;
+    *oy = -y;
+    *oz = -z;
 }
 
-esp_err_t pk_imu_full_reorient(void)
+/* --- NVS load/save for the persisted software tare ------------------ */
+static esp_err_t imu_nvs_load_tare(float *w, float *x, float *y, float *z)
 {
-    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(IMU_NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
 
-    /* Refuse to reorient while the mag fusion is still unreliable.
-     * BNO085 reports accuracy 0..3 in every Rotation Vector frame —
-     * 0 = unreliable (mag fusion has not converged), 1 = low,
-     * 2 = medium, 3 = high. Calling Tare(XYZ) + Save DCD with acc=0
-     * snapshots a garbage reference into the chip's internal flash;
-     * after that even a reboot won't get clean attitude back (the
-     * chip restores its DCD on startup). 2 is the lowest acceptable
-     * threshold — high enough that the heading has stabilised on
-     * north, low enough that the user doesn't have to wait forever.
-     *
-     * Recovery if this fires: figure-8 motion for ~15 s while
-     * watching the 1 Hz imu line for `acc=2` or `acc=3`, then try
-     * the long press again. */
-    pk_imu_sample_t sample;
-    bool have = pk_imu_sample_get(&sample);
-    if (!have || sample.accuracy < 2) {
-        ESP_LOGW(TAG, "full reorient REJECTED: accuracy=%u (need ≥2). "
-                      "Move the device in a figure-8 for ~15 s and watch the "
-                      "1 Hz `imu` line until `acc=2` or `acc=3`, then long-press "
-                      "TARE again. Refusing to write garbage DCD to BNO085 flash.",
-                 have ? sample.accuracy : 0);
-        return ESP_ERR_INVALID_STATE;
-    }
+    float buf[4];
+    size_t len = sizeof(buf);
+    err = nvs_get_blob(h, IMU_NVS_KEY_TARE, buf, &len);
+    nvs_close(h);
+    if (err != ESP_OK) return err;
+    if (len != sizeof(buf)) return ESP_ERR_INVALID_SIZE;
 
-    ESP_LOGI(TAG, "full reorient (acc=%u): tare(XYZ) + persist + save DCD",
-             sample.accuracy);
+    *w = buf[0]; *x = buf[1]; *y = buf[2]; *z = buf[3];
+    return ESP_OK;
+}
 
-    uint8_t p[9] = {0};
+static esp_err_t imu_nvs_save_tare(float w, float x, float y, float z)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(IMU_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
 
-    /* 1) Tare all three axes against the current Rotation Vector. */
-    p[0] = SH2_TARE_SUB_NOW;
-    p[1] = SH2_TARE_AXIS_ALL;
-    p[2] = SH2_TARE_BASIS_ROT_VEC;
-    esp_err_t err = sh2_send_command(SH2_COMMAND_TARE, p);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "tare(XYZ) failed: %s", esp_err_to_name(err));
-        return err;
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    /* 2) Persist the tare offset into BNO085 flash. */
-    memset(p, 0, sizeof(p));
-    p[0] = SH2_TARE_SUB_PERSIST;
-    err = sh2_send_command(SH2_COMMAND_TARE, p);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "persist tare failed: %s", esp_err_to_name(err));
-        return err;
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    /* 3) Save Dynamic Calibration Data (mag/gyro/accel zero offsets). */
-    memset(p, 0, sizeof(p));
-    err = sh2_send_command(SH2_COMMAND_SAVE_DCD, p);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "save DCD failed: %s", esp_err_to_name(err));
-    }
+    const float buf[4] = { w, x, y, z };
+    err = nvs_set_blob(h, IMU_NVS_KEY_TARE, buf, sizeof(buf));
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
     return err;
 }
 
-esp_err_t pk_imu_clear_dcd(void)
+static esp_err_t imu_nvs_erase_tare(void)
 {
-    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
-    ESP_LOGW(TAG, "clear persistent DCD: wiping mag/gyro/accel calibration "
-                  "from BNO085 flash (fusion engine will re-learn next boot)");
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(IMU_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
 
-    /* SH-2 Command 0x0B "Clear Persistent DCD" takes no parameters.
-     * BNO085 wipes its internal flash DCD region and continues
-     * running with the in-memory calibration unchanged — the wipe
-     * only takes effect after the next power-cycle or soft reset.
-     * pk_imu_factory_reset() composes this with bno_bring_up() to
-     * actually relaunch fusion from a clean state immediately. */
-    uint8_t p[9] = {0};
-    return sh2_send_command(SH2_COMMAND_CLEAR_DCD, p);
-}
-
-esp_err_t pk_imu_factory_reset(void)
-{
-    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
-    ESP_LOGW(TAG, "factory reset: clear tare + clear DCD + reinit "
-                  "BNO085 — fusion engine restarts from scratch");
-
-    /* Step 1: clear the reorientation matrix so any bad Tare we
-     * persisted earlier doesn't survive into the fresh start. */
-    esp_err_t err = pk_imu_clear_tare();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "factory reset: clear_tare step failed (%s) — "
-                      "continuing with DCD wipe anyway",
-                 esp_err_to_name(err));
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    /* Step 2: wipe the persistent DCD so the next fusion start has
-     * no poisoned mag/gyro/accel zero offsets to fall back on. */
-    err = pk_imu_clear_dcd();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "factory reset: clear_dcd step failed (%s) — "
-                      "continuing with reinit anyway",
-                 esp_err_to_name(err));
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    /* Step 3: hard reset + replay init so the chip actually rebuilds
-     * its fusion state from the now-clean flash. After this returns,
-     * the user should do a figure-8 motion for ~15 s while watching
-     * the 1 Hz imu log line — the `acc` field will climb from 0 to
-     * 3 as the magnetometer fusion converges. Then a TARE long-press
-     * persists the new clean calibration. */
-    err = bno_bring_up();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "factory reset: reinit failed (%s) — watchdog "
-                      "will retry within 5 s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "factory reset complete — start figure-8 motion to "
-                      "let BNO085 re-learn magnetometer calibration");
-    }
+    err = nvs_erase_key(h, IMU_NVS_KEY_TARE);
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK; /* already absent — fine */
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
     return err;
 }
 
-esp_err_t pk_imu_clear_tare(void)
+/* --- Legacy BNO state cleanup (factory reset only) ------------------- *
+ *
+ * Old firmware revisions wrote a persistent Tare and Save-DCD into BNO
+ * internal flash via SH-2 commands. Those writes can survive a
+ * software upgrade, so on factory_reset we still need to wipe them or
+ * they leak into the new software-tare regime. Neither of these is
+ * exposed in the public API anymore — they're internal helpers for
+ * pk_imu_factory_reset() only. */
+
+static esp_err_t bno_clear_persisted_tare(void)
 {
-    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
-    ESP_LOGI(TAG, "clear tare: setting reorientation to identity quaternion + persist");
+    ESP_LOGI(TAG, "BNO: clearing persisted reorientation (identity quat + persist)");
 
     /* Tare Set Reorientation (subcommand 2) with identity quaternion
      * (qi=qj=qk=0, qw=1.0). The four components are signed 16-bit
@@ -696,32 +753,128 @@ esp_err_t pk_imu_clear_tare(void)
      *   P1/P2 = qi (LSB/MSB)   → 0x00 0x00
      *   P3/P4 = qj             → 0x00 0x00
      *   P5/P6 = qk             → 0x00 0x00
-     *   P7/P8 = qw             → 0x00 0x40   (16384 in Q14 = 1.0)
-     *
-     * Then Persist (subcommand 1) writes the cleared reference into
-     * BNO085 flash so the next power-cycle doesn't restore the bad
-     * one. DCD (mag/gyro/accel zero offsets) is untouched — that
-     * gets overwritten automatically the next time the fusion engine
-     * decides to update its calibration, typically during the
-     * figure-8 motion the user does after this command. */
+     *   P7/P8 = qw             → 0x00 0x40   (16384 in Q14 = 1.0) */
     uint8_t p[9] = {0};
     p[0] = 0x02;       /* Tare Set Reorientation */
     p[7] = 0x00;       /* qw LSB */
     p[8] = 0x40;       /* qw MSB → 0x4000 = 16384 = 1.0 in Q14 */
     esp_err_t err = sh2_send_command(SH2_COMMAND_TARE, p);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "set reorientation (identity) failed: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
+    if (err != ESP_OK) return err;
     vTaskDelay(pdMS_TO_TICKS(50));
 
     memset(p, 0, sizeof(p));
     p[0] = SH2_TARE_SUB_PERSIST;
-    err = sh2_send_command(SH2_COMMAND_TARE, p);
+    return sh2_send_command(SH2_COMMAND_TARE, p);
+}
+
+static esp_err_t bno_clear_persisted_dcd(void)
+{
+    ESP_LOGI(TAG, "BNO: clearing persisted DCD (mag/gyro/accel zero offsets)");
+
+    /* SH-2 Command 0x0B "Clear Persistent DCD" takes no parameters.
+     * BNO085 wipes its internal flash DCD region and continues running
+     * with the in-memory calibration unchanged — the wipe only takes
+     * effect after the next power-cycle or soft reset, which the
+     * caller (pk_imu_factory_reset) performs via bno_bring_up(). */
+    uint8_t p[9] = {0};
+    return sh2_send_command(SH2_COMMAND_CLEAR_DCD, p);
+}
+
+/* --- Public Tare API ------------------------------------------------- */
+
+esp_err_t pk_imu_tare_now(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+
+    /* Snapshot the latest post-sandwich attitude under the lock,
+     * compute its conjugate, and stash that as the new offset. Next
+     * frame, parse_rotation_vector() will multiply (aircraft attitude)
+     * by (conjugate of attitude at tare moment), which collapses to
+     * identity here and to the differential rotation as the chip moves
+     * away from the tared pose. */
+    xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+    float aw = s_last_aircraft_qw, ax = s_last_aircraft_qi,
+          ay = s_last_aircraft_qj, az = s_last_aircraft_qk;
+    quat_conj(aw, ax, ay, az,
+              &s_tare_qw, &s_tare_qi, &s_tare_qj, &s_tare_qk);
+    float ow = s_tare_qw, oi = s_tare_qi, oj = s_tare_qj, ok = s_tare_qk;
+    xSemaphoreGive(s_sample_lock);
+
+    ESP_LOGI(TAG, "software tare: captured (w,i,j,k) = "
+                  "%+0.4f %+0.4f %+0.4f %+0.4f (PFD now reads 0/0/0)",
+             ow, oi, oj, ok);
+    return ESP_OK;
+}
+
+esp_err_t pk_imu_tare_persist(void)
+{
+    esp_err_t err = pk_imu_tare_now();
+    if (err != ESP_OK) return err;
+
+    err = imu_nvs_save_tare(s_tare_qw, s_tare_qi, s_tare_qj, s_tare_qk);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "persist cleared tare failed: %s",
+        ESP_LOGW(TAG, "software tare persisted in RAM but NVS write "
+                      "failed: %s — value lost on next reboot",
                  esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "software tare persisted to NVS (survives reboot)");
+    }
+    return err;
+}
+
+esp_err_t pk_imu_factory_reset(void)
+{
+    if (!s_imu_ready) return ESP_ERR_INVALID_STATE;
+    ESP_LOGW(TAG, "factory reset: wipe SW tare + NVS + BNO persisted "
+                  "state + reinit chip");
+
+    /* Step 1: in-RAM software tare → identity. From this point the
+     * PFD reverts to raw mounting-corrected attitude. */
+    xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+    s_tare_qw = 1.0f;
+    s_tare_qi = 0.0f;
+    s_tare_qj = 0.0f;
+    s_tare_qk = 0.0f;
+    xSemaphoreGive(s_sample_lock);
+
+    /* Step 2: erase the persisted tare key so the next boot doesn't
+     * restore a stale one. */
+    esp_err_t err = imu_nvs_erase_tare();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: NVS tare erase failed (%s) — "
+                      "continuing", esp_err_to_name(err));
+    }
+
+    /* Step 3: scrub BNO's own persisted reorientation matrix (legacy
+     * firmware may have written one via SH-2 Tare Persist). Belt and
+     * braces: even if we never write it again, leaving it stale could
+     * silently bias the raw output. */
+    err = bno_clear_persisted_tare();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: BNO clear-reorient failed (%s) — "
+                      "continuing", esp_err_to_name(err));
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Step 4: wipe the persisted DCD so mag/gyro/accel calibration
+     * re-learns on next fusion start. */
+    err = bno_clear_persisted_dcd();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: BNO clear-DCD failed (%s) — "
+                      "continuing", esp_err_to_name(err));
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Step 5: hard reset + replay init so the chip rebuilds fusion
+     * state from now-clean flash. */
+    err = bno_bring_up();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset: chip reinit failed (%s) — "
+                      "watchdog will retry within 5 s",
+                 esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "factory reset complete — start figure-8 motion "
+                      "to let BNO085 re-learn magnetometer calibration");
     }
     return err;
 }

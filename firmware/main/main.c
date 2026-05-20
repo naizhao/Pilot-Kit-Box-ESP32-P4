@@ -42,21 +42,33 @@ RingbufHandle_t g_iq_ringbuf = NULL;
  * imu_task + ui_state directly — keeps modules loosely coupled.
  *
  * Press semantics defined in button_task.h:
- *   - PK_BTN_EVT_SHORT_PRESS    fires on release (< 3 s held)
- *   - PK_BTN_EVT_LONG_PRESS     fires at 3 s while still held
- *                               (TARE / MODE only — UP/DOWN suppress
- *                                long-press in favour of the combo)
- *   - PK_BTN_EVT_COMBO_BLE_PAIR fires on PK_BTN_UP at 5 s while both
- *                               UP and DOWN are still held
+ *   - PK_BTN_EVT_SHORT_PRESS      fires on release (< 3 s held)
+ *   - PK_BTN_EVT_LONG_PRESS       fires at 3 s while still held
+ *                                 (TARE / MODE only — UP/DOWN suppress
+ *                                  long-press in favour of the combo)
+ *   - PK_BTN_EVT_VERY_LONG_PRESS  fires at 10 s while still held
+ *                                 (TARE only — reserves MODE long for
+ *                                  power on/off)
+ *   - PK_BTN_EVT_COMBO_BLE_PAIR   fires on PK_BTN_UP at 5 s while both
+ *                                 UP and DOWN are still held
+ *
+ * TARE actions form a graduated cage: short = "zero the live attitude
+ * for this session", long = "also persist to NVS so it survives a
+ * reboot", very-long = "wipe everything (NVS + BNO state) and start
+ * over". The application accepts both LONG and VERY_LONG arriving on
+ * the same sustained hold; factory_reset() running after tare_persist()
+ * cleanly undoes it.
  */
 static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
 {
     switch (id) {
     case PK_BTN_TARE:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            (void)pk_imu_tare_yaw();
+            (void)pk_imu_tare_now();
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            (void)pk_imu_full_reorient();
+            (void)pk_imu_tare_persist();
+        } else if (evt == PK_BTN_EVT_VERY_LONG_PRESS) {
+            (void)pk_imu_factory_reset();
         }
         break;
 
@@ -64,14 +76,11 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_toggle_mode();
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            /* "Erase everything" — wipes Tare reference + persistent
-             * DCD (magnetometer/gyro/accel zero-offset calibration)
-             * from BNO085 flash and re-initialises the chip from a
-             * clean state. After this, the user must do a figure-8
-             * motion for ~15 s so the fusion engine re-learns the
-             * local magnetic field; then a TARE long-press persists
-             * the clean calibration for long-term use. */
-            (void)pk_imu_factory_reset();
+            /* TODO(power): hand off to power management — MODE
+             * long-press is reserved for "on/off" by the operator.
+             * Placeholder log so the event isn't silently dropped
+             * during development. */
+            ESP_LOGW(TAG, "MODE LONG_PRESS: TODO — power on/off (reserved)");
         }
         break;
 

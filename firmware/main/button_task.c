@@ -47,13 +47,14 @@
 static const char *TAG = "btn";
 
 /* --- Tunables -------------------------------------------------------- */
-#define BTN_POLL_MS              20             /* 50 Hz */
-#define BTN_DEBOUNCE_US          (40   * 1000)
-#define BTN_LONG_PRESS_US        (3000 * 1000)  /* single-button long press */
-#define BTN_COMBO_PRESS_US       (5000 * 1000)  /* UP+DOWN combo */
-#define BTN_COMBO_WINDOW_US      (1000 * 1000)  /* the two presses must land
-                                                   within this of each other
-                                                   to count as "together" */
+#define BTN_POLL_MS              20              /* 50 Hz */
+#define BTN_DEBOUNCE_US          (40    * 1000)
+#define BTN_LONG_PRESS_US        (3000  * 1000)  /* single-button long press */
+#define BTN_VERY_LONG_PRESS_US   (10000 * 1000)  /* single-button very-long press */
+#define BTN_COMBO_PRESS_US       (5000  * 1000)  /* UP+DOWN combo */
+#define BTN_COMBO_WINDOW_US      (1000  * 1000)  /* the two presses must land
+                                                    within this of each other
+                                                    to count as "together" */
 
 /* --- Per-button state ----------------------------------------------- */
 typedef enum {
@@ -61,41 +62,47 @@ typedef enum {
     BTN_PRESSING,
     BTN_HELD_SHORT,
     BTN_HELD_LONG,
+    BTN_HELD_VERY_LONG,
 } btn_state_t;
 
 typedef struct {
     pk_button_id_t  id;
     int             gpio;
-    bool            combo_eligible;     /* part of UP+DOWN combo */
-    bool            emits_long_press;   /* single-button long press allowed */
-    const char     *label;              /* for logs */
+    bool            combo_eligible;          /* part of UP+DOWN combo */
+    bool            emits_long_press;        /* single-button long press allowed */
+    bool            emits_very_long_press;   /* single-button very-long press allowed */
+    const char     *label;                   /* for logs */
 
     btn_state_t     state;
-    int64_t         down_us;            /* when current press started */
-    bool            consumed_by_combo;  /* this press has been swallowed by
-                                           the combo handler — don't emit
-                                           SHORT_PRESS on release */
+    int64_t         down_us;                 /* when current press started */
+    bool            consumed_by_combo;       /* this press has been swallowed by
+                                                the combo handler — don't emit
+                                                SHORT_PRESS on release */
 } button_t;
 
 static button_t s_buttons[PK_BTN_COUNT] = {
     [PK_BTN_TARE] = {
         .id = PK_BTN_TARE, .gpio = 26,
-        .combo_eligible = false, .emits_long_press = true,
+        .combo_eligible = false,
+        .emits_long_press = true, .emits_very_long_press = true,
         .label = "TARE",
     },
     [PK_BTN_MODE] = {
         .id = PK_BTN_MODE, .gpio = 27,
-        .combo_eligible = false, .emits_long_press = true,
+        .combo_eligible = false,
+        .emits_long_press = true, .emits_very_long_press = false,
         .label = "MODE",
     },
     [PK_BTN_UP] = {
         .id = PK_BTN_UP, .gpio = 22,
-        .combo_eligible = true, .emits_long_press = false,
+        .combo_eligible = true,
+        .emits_long_press = false, .emits_very_long_press = false,
         .label = "UP",
     },
     [PK_BTN_DOWN] = {
         .id = PK_BTN_DOWN, .gpio = 23,
-        .combo_eligible = true, .emits_long_press = false,
+        .combo_eligible = true,
+        .emits_long_press = false, .emits_very_long_press = false,
         .label = "DOWN",
     },
 };
@@ -106,10 +113,11 @@ static pk_button_callback_t s_user_cb;
 static const char *evt_name(pk_button_event_t evt)
 {
     switch (evt) {
-    case PK_BTN_EVT_SHORT_PRESS:    return "SHORT_PRESS";
-    case PK_BTN_EVT_LONG_PRESS:     return "LONG_PRESS";
-    case PK_BTN_EVT_COMBO_BLE_PAIR: return "COMBO_BLE_PAIR";
-    default:                        return "?";
+    case PK_BTN_EVT_SHORT_PRESS:     return "SHORT_PRESS";
+    case PK_BTN_EVT_LONG_PRESS:      return "LONG_PRESS";
+    case PK_BTN_EVT_VERY_LONG_PRESS: return "VERY_LONG_PRESS";
+    case PK_BTN_EVT_COMBO_BLE_PAIR:  return "COMBO_BLE_PAIR";
+    default:                         return "?";
     }
 }
 
@@ -161,6 +169,19 @@ static void poll_button(button_t *b, int64_t now)
         break;
 
     case BTN_HELD_LONG:
+        if (level != 0) {
+            b->state = BTN_RELEASED;
+        } else if (b->emits_very_long_press &&
+                   now - b->down_us >= BTN_VERY_LONG_PRESS_US) {
+            /* held past very-long threshold (TARE only) */
+            if (!b->consumed_by_combo) {
+                emit(b->id, PK_BTN_EVT_VERY_LONG_PRESS);
+            }
+            b->state = BTN_HELD_VERY_LONG;
+        }
+        break;
+
+    case BTN_HELD_VERY_LONG:
         if (level != 0) b->state = BTN_RELEASED;
         break;
     }
@@ -178,8 +199,12 @@ static void detect_combo(int64_t now)
     button_t *up   = &s_buttons[PK_BTN_UP];
     button_t *down = &s_buttons[PK_BTN_DOWN];
 
-    bool up_held   = (up->state   == BTN_HELD_SHORT || up->state   == BTN_HELD_LONG);
-    bool down_held = (down->state == BTN_HELD_SHORT || down->state == BTN_HELD_LONG);
+    bool up_held   = (up->state   == BTN_HELD_SHORT ||
+                      up->state   == BTN_HELD_LONG  ||
+                      up->state   == BTN_HELD_VERY_LONG);
+    bool down_held = (down->state == BTN_HELD_SHORT ||
+                      down->state == BTN_HELD_LONG  ||
+                      down->state == BTN_HELD_VERY_LONG);
 
     if (!up_held || !down_held) return;
     if (up->consumed_by_combo || down->consumed_by_combo) return;
