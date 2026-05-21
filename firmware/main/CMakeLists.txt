@@ -5,6 +5,8 @@ idf_component_register(
         "dsp_task.c"
         "cpr_decode.c"
         "aircraft_state.c"
+        "icao_country.c"
+        "airline_codes.c"
         "aircraft_db.c"
         "gdl90.c"
         "ble_gatt.c"
