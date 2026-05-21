@@ -31,12 +31,14 @@
 
 #include <string.h>
 
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"             /* esp_rom_delay_us */
@@ -49,11 +51,28 @@ static const char *TAG = "display";
 static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t    s_panel;
 static uint16_t                 *s_fb;
+static SemaphoreHandle_t         s_flush_done;
 
 #define BL_LEDC_TIMER     LEDC_TIMER_0
 #define BL_LEDC_MODE      LEDC_LOW_SPEED_MODE
 #define BL_LEDC_CHANNEL   LEDC_CHANNEL_0
 #define BL_LEDC_DUTY_BITS LEDC_TIMER_8_BIT       /* 0..255 maps directly */
+#define LCD_FLUSH_TIMEOUT_MS 250
+
+static bool IRAM_ATTR lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t io,
+                                              esp_lcd_panel_io_event_data_t *edata,
+                                              void *user_ctx)
+{
+    (void)io;
+    (void)edata;
+
+    BaseType_t high_task_woken = pdFALSE;
+    SemaphoreHandle_t sem = (SemaphoreHandle_t)user_ctx;
+    if (sem != NULL) {
+        xSemaphoreGiveFromISR(sem, &high_task_woken);
+    }
+    return high_task_woken == pdTRUE;
+}
 
 /* --- Backlight ------------------------------------------------------- */
 
@@ -339,6 +358,12 @@ esp_err_t pk_display_init(void)
         return err;
     }
 
+    s_flush_done = xSemaphoreCreateBinary();
+    if (s_flush_done == NULL) {
+        ESP_LOGE(TAG, "LCD flush semaphore alloc failed");
+        return ESP_ERR_NO_MEM;
+    }
+
     /* 3. Panel IO layer (DC framing, CS automatic). */
     const esp_lcd_panel_io_spi_config_t io_cfg = {
         .cs_gpio_num         = PK_LCD_PIN_CS,
@@ -346,6 +371,8 @@ esp_err_t pk_display_init(void)
         .spi_mode            = 0,
         .pclk_hz             = PK_LCD_SPI_HZ,
         .trans_queue_depth   = 10,
+        .on_color_trans_done = lcd_color_trans_done_cb,
+        .user_ctx            = s_flush_done,
         .lcd_cmd_bits        = 8,
         .lcd_param_bits      = 8,
     };
@@ -414,13 +441,29 @@ esp_err_t pk_display_draw(uint16_t x0, uint16_t y0,
                           uint16_t x1, uint16_t y1,
                           const uint16_t *pixels)
 {
-    if (s_panel == NULL || pixels == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_panel == NULL || s_flush_done == NULL || pixels == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (x0 >= PK_DISPLAY_W) x0 = PK_DISPLAY_W - 1;
     if (y0 >= PK_DISPLAY_H) y0 = PK_DISPLAY_H - 1;
     if (x1 >  PK_DISPLAY_W) x1 = PK_DISPLAY_W;
     if (y1 >  PK_DISPLAY_H) y1 = PK_DISPLAY_H;
     if (x1 <= x0 || y1 <= y0) return ESP_ERR_INVALID_ARG;
-    return esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, pixels);
+
+    while (xSemaphoreTake(s_flush_done, 0) == pdTRUE) {
+        /* Drop stale completion tokens before submitting a new frame. */
+    }
+
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, pixels);
+    if (err != ESP_OK) return err;
+
+    if (xSemaphoreTake(s_flush_done,
+                       pdMS_TO_TICKS(LCD_FLUSH_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG, "LCD flush timeout after %u ms",
+                 (unsigned)LCD_FLUSH_TIMEOUT_MS);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
 }
 
 esp_err_t pk_display_flush_full(void)
