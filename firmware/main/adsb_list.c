@@ -335,12 +335,14 @@ void pk_adsb_list_render(uint16_t *fb)
         return;
     }
 
-    /* Clamp selection cursor against the live count, then publish back
-     * so future scrolls anchor at the live ceiling. */
-    int sel = pk_ui_list_get_index();
-    if (sel >= (int)n) sel = (int)(n - 1);
-    if (sel < 0)       sel = 0;
-    pk_ui_list_set_index(sel);
+    /* Resolve the selected row against the live (sorted-by-ICAO)
+     * snapshot. The resolver tracks selection by ICAO under the hood,
+     * so the highlight sticks to the same aircraft across snapshot
+     * reshuffles (entries entering / leaving the trailing-60s window)
+     * and consumes any buffered UP/DOWN intent in the process. */
+    uint32_t sel_icaos[AIRCRAFT_TABLE_CAPACITY];
+    for (size_t i = 0; i < n; ++i) sel_icaos[i] = scratch[i].icao24;
+    int sel = pk_ui_list_resolve_row(sel_icaos, n);
 
     render_col_titles(fb);
 

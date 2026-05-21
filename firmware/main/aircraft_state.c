@@ -9,6 +9,7 @@
 
 #include "aircraft_state.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -151,6 +152,19 @@ void aircraft_state_update_position(uint32_t icao24,
     release_lock();
 }
 
+/* qsort comparator: ascending by ICAO24. Stable row order is what the
+ * list view + index-based cursor rely on; without it the hash-table
+ * scan order shuffles whenever an aircraft enters or leaves the table
+ * and the selection cursor lands on a different aircraft. */
+static int cmp_aircraft_by_icao(const void *a, const void *b)
+{
+    uint32_t la = ((const aircraft_t *)a)->icao24;
+    uint32_t lb = ((const aircraft_t *)b)->icao24;
+    if (la < lb) return -1;
+    if (la > lb) return  1;
+    return 0;
+}
+
 size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
                                int64_t max_age_us)
 {
@@ -164,6 +178,7 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
         out[n++] = *s;
     }
     release_lock();
+    if (n > 1) qsort(out, n, sizeof(*out), cmp_aircraft_by_icao);
     return n;
 }
 

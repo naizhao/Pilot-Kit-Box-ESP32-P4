@@ -22,9 +22,10 @@
  *   y = 320     └────────────────────────────────────────┘
  *
  * Selection is driven by pk_ui_list_scroll(±1) from button_task.
- * adsb_list reads pk_ui_list_get_index(), clamps it against the live
- * aircraft count, and writes the clamped value back so that future
- * scrolls start from a valid index.
+ * adsb_list resolves the highlight via pk_ui_list_resolve_row() each
+ * frame — ui_state tracks the selection by ICAO under the hood so the
+ * highlight stays anchored to the same aircraft even as the sorted
+ * snapshot reshuffles when aircraft enter / leave the 60s window.
  *
  * Refresh model: re-rendered every PFD-task frame when the UI mode is
  * PK_UI_MODE_ADSB_LIST. Cheap to redraw — same fill_rect + bitmap font

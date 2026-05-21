@@ -33,6 +33,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -77,17 +78,38 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy);
 uint8_t pk_ui_cal_wizard_last_accuracy(void);
 
 /* Move the list selection by `delta` rows (negative = up, positive =
- * down). Clamping to the actual aircraft count happens in the list
- * renderer because only it knows the current count. Saturates the
- * internal "intent" cursor in the range [0, 999] so repeated UP/DOWN
- * presses don't overflow. */
+ * down). The scroll intent is buffered as a pending delta and applied
+ * by the next pk_ui_list_resolve_row() call, which knows the live
+ * snapshot. Saturates the pending delta in the range [-999, +999] so
+ * holding UP/DOWN forever can't overflow. */
 void pk_ui_list_scroll(int delta);
 
-/* Read the current (un-clamped) list cursor. The list renderer should
- * clamp this against the live aircraft snapshot count and call
- * pk_ui_list_set_index() to persist the clamp. */
-int pk_ui_list_get_index(void);
-void pk_ui_list_set_index(int idx);
+/*
+ * Resolve the highlighted row against the current aircraft snapshot.
+ *
+ * The list renderer calls this once per frame, passing the sorted
+ * ICAO array from aircraft_state_snapshot(). The function:
+ *   1. finds the row currently occupied by the previously-selected
+ *      ICAO (0 if no prior selection or the aircraft has expired),
+ *   2. adds any pending scroll delta accumulated by pk_ui_list_scroll
+ *      (the delta is cleared atomically inside the call),
+ *   3. clamps to [0, n-1],
+ *   4. commits the ICAO at the new row as the new selection so a
+ *      future call after a snapshot reshuffle still tracks the same
+ *      aircraft,
+ *   5. returns the new row index.
+ *
+ * For n == 0 the call returns 0, leaves the pending delta intact, and
+ * does not touch the saved ICAO — so an empty-list refresh doesn't
+ * silently swallow a press the user made while no aircraft was tracked.
+ */
+int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n);
+
+/* The ICAO of the currently-highlighted aircraft, or 0 if none has
+ * been committed yet (no aircraft seen since boot, or the user hasn't
+ * scrolled). Used by the TARE handler to bind own-ship by ICAO
+ * directly, sidestepping any race against a re-snapshot. */
+uint32_t pk_ui_list_get_selected_icao(void);
 
 /*
  * Runtime own-ship binding — which ADS-B aircraft drives the PFD's

@@ -74,23 +74,19 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             if (pk_ui_get_mode() == PK_UI_MODE_ADSB_LIST) {
                 /* Bind the currently-highlighted aircraft as own-ship.
-                 * Re-snapshot the table here rather than caching from
-                 * the renderer — the list view is stateless and we
-                 * stay decoupled from its render pipeline. */
-                static aircraft_t bind_scratch[AIRCRAFT_TABLE_CAPACITY];
-                size_t n = aircraft_state_snapshot(
-                    bind_scratch,
-                    AIRCRAFT_TABLE_CAPACITY,
-                    esp_timer_get_time(),
-                    AIRCRAFT_STALE_AGE_US);
-                int idx = pk_ui_list_get_index();
-                if (idx >= 0 && idx < (int)n) {
-                    pk_ui_set_own_icao(bind_scratch[idx].icao24);
+                 * ui_state tracks the highlight by ICAO, so we don't
+                 * need to re-snapshot the aircraft table here — just
+                 * read whichever ICAO the list renderer last committed
+                 * as the selection. Returns 0 when the user hasn't
+                 * scrolled yet OR the previously-highlighted aircraft
+                 * has dropped out of the 60s window without being
+                 * replaced (snapshot was empty on the last frame). */
+                uint32_t sel_icao = pk_ui_list_get_selected_icao();
+                if (sel_icao != 0) {
+                    pk_ui_set_own_icao(sel_icao);
                 } else {
                     ESP_LOGW(TAG, "TARE in ADSB list: no aircraft "
-                                  "highlighted (idx=%d, count=%u) — "
-                                  "binding skipped",
-                             idx, (unsigned)n);
+                                  "highlighted yet — binding skipped");
                 }
             } else {
                 (void)pk_imu_tare_now();
