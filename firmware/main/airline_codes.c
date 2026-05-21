@@ -326,6 +326,7 @@ static const pk_airline_t s_airlines[] = {
     { "HEJ", "T4", "Hellas Jet" },
     { "HER", "UD", "Hex'Air" },
     { "HFR", "8H", "Heli France" },
+    { "HGO", "HE", "One Air" },
     { "HHI", "4R", "Hamburg International" },
     { "HKC", "RH", "Hongkong Air Cargo" },
     { "HKE", "UO", "Hong Kong Express Airways" },
