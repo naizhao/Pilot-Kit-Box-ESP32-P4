@@ -38,10 +38,14 @@
 #define MAJOR_FT     100
 #define LABEL_EVERY  200
 
-#define BOX_X0   246
+/* Center value box — scale-2 digits (12 px wide × 14 tall), 5 chars
+ * for altitudes up to 99999 ft. Interior 60 px wide + 1 px border each
+ * side + 2 px horizontal padding → 64 wide. Aligned flush with the
+ * tape band (no bleed into the attitude indicator). */
+#define BOX_X0   256
 #define BOX_X1   320
-#define BOX_Y0   (TAPE_CY - 12)   /* 101 */
-#define BOX_Y1   (TAPE_CY + 12)   /* 125 */
+#define BOX_Y0   (TAPE_CY - 10)   /* 103 */
+#define BOX_Y1   (TAPE_CY + 10)   /* 123 */
 
 #define COL_BG         pk_rgb565(  8,   8,  12)
 #define COL_BORDER_L   pk_rgb565( 70, 220, 250)   /* cyan left edge */
@@ -87,9 +91,9 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
         }
     }
 
-    /* Center value box — fill, border, then digits. The box deliberately
-     * bleeds 2 px left of the tape band so the rectangle straddles the
-     * tape edge like the real G1000 ALT box. */
+    /* Center value box — fill, border, then digits. Sits flush with
+     * the tape band (no bleed) at scale-2 font so 5-digit altitudes
+     * (up to 99999 ft) fit cleanly inside the 64 px box. */
     pk_pfd_fill_rect(fb, BOX_X0, BOX_Y0, BOX_X1, BOX_Y1, COL_BG);
     pk_pfd_fill_rect(fb, BOX_X0,     BOX_Y0,     BOX_X1,     BOX_Y0 + 1, COL_BOX_BRDR);
     pk_pfd_fill_rect(fb, BOX_X0,     BOX_Y1 - 1, BOX_X1,     BOX_Y1,     COL_BOX_BRDR);
@@ -99,15 +103,17 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
     if (a->valid) {
         char buf[8];
         int alt = a->altitude_ft;
-        if (alt < 0)    alt = 0;
-        if (alt > 9999) alt = 9999;
-        snprintf(buf, sizeof(buf), "%4d", alt);
-        /* 4 glyphs scale 3 = 72 px wide; box interior is 72 px;
-         * 1 px left margin to clear the white border. */
+        if (alt < 0)     alt = 0;
+        if (alt > 99999) alt = 99999;
+        snprintf(buf, sizeof(buf), "%5d", alt);
+        /* 5 glyphs scale 2 = 60 px wide; box interior 60 px; 2 px
+         * horizontal padding (1 border + 1 visual breathing room);
+         * 3 px top padding centers the 14-px digit cells in the 20-
+         * px box interior. */
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     BOX_X0 + 1, BOX_Y0 + 1, buf, COL_VALUE, 3);
+                     BOX_X0 + 2, BOX_Y0 + 3, buf, COL_VALUE, 2);
     } else {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     BOX_X0 + 1, BOX_Y0 + 1, "----", COL_STALE, 3);
+                     BOX_X0 + 2, BOX_Y0 + 3, "-----", COL_STALE, 2);
     }
 }
