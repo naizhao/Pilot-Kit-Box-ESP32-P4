@@ -26,3 +26,5 @@ firmware/dependencies.lock
 **/.cache/
 .DS_Store
 
+IMPLEMENTATION_PLAN.md
+__pycache__

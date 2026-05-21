@@ -12,11 +12,21 @@
 #include <stdbool.h>
 
 void pk_pfd_put_pixel(uint16_t *fb, int x, int y, uint16_t c);
+void pk_pfd_blend_pixel(uint16_t *fb, int x, int y, uint16_t c, uint8_t alpha);
 void pk_pfd_fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c);
 void pk_pfd_draw_line(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c);
+void pk_pfd_draw_line_aa(uint16_t *fb,
+                         float x0, float y0, float x1, float y1,
+                         float width, uint16_t c);
+void pk_pfd_draw_arc_aa(uint16_t *fb,
+                        float cx, float cy, float radius,
+                        float start_deg, float end_deg,
+                        float width, uint16_t c);
 void pk_pfd_draw_triangle(uint16_t *fb,
                           int ax, int ay, int bx, int by, int cx, int cy,
                           uint16_t c);
+
+uint16_t pk_pfd_rgb565_dither(uint8_t r, uint8_t g, uint8_t b, int x, int y);
 
 /*
  * Blend every pixel in the given rectangle toward black by `alpha`/256.

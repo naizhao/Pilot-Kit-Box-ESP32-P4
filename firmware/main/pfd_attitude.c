@@ -72,30 +72,32 @@
 
 /* --- Gradient LUTs (sky/ground), built once on first render -------- */
 
-static EXT_RAM_BSS_ATTR uint16_t s_sky_grad[ATTITUDE_HEIGHT];
-static EXT_RAM_BSS_ATTR uint16_t s_ground_grad[ATTITUDE_HEIGHT];
+static EXT_RAM_BSS_ATTR uint16_t s_sky_grad[16][ATTITUDE_HEIGHT];
+static EXT_RAM_BSS_ATTR uint16_t s_ground_grad[16][ATTITUDE_HEIGHT];
 static bool s_grad_built = false;
 
-static uint16_t blend_rgb565(uint8_t r0, uint8_t g0, uint8_t b0,
-                             uint8_t r1, uint8_t g1, uint8_t b1,
-                             int t)
+static uint8_t blend_u8(uint8_t a, uint8_t b, int t)
 {
-    /* t in [0, 256]: 0 returns (r0,g0,b0), 256 returns (r1,g1,b1). */
-    uint8_t r = (uint8_t)((r0 * (256 - t) + r1 * t) >> 8);
-    uint8_t g = (uint8_t)((g0 * (256 - t) + g1 * t) >> 8);
-    uint8_t b = (uint8_t)((b0 * (256 - t) + b1 * t) >> 8);
-    return pk_rgb565(r, g, b);
+    return (uint8_t)(((int)a * (256 - t) + (int)b * t) >> 8);
 }
 
 static void build_gradient_luts(void)
 {
     if (s_grad_built) return;
-    for (int i = 0; i < ATTITUDE_HEIGHT; ++i) {
-        int t = (i * 256) / (ATTITUDE_HEIGHT - 1);   /* 0 near, 256 far */
-        s_sky_grad[i]    = blend_rgb565( 35, 145, 235,
-                                         15,  70, 140, t);
-        s_ground_grad[i] = blend_rgb565(170, 125,  80,
-                                         95,  65,  35, t);
+    for (int cell = 0; cell < 16; ++cell) {
+        int dx = cell & 3;
+        int dy = cell >> 2;
+        for (int i = 0; i < ATTITUDE_HEIGHT; ++i) {
+            int t = (i * 256) / (ATTITUDE_HEIGHT - 1);   /* 0 near, 256 far */
+            uint8_t sky_r = blend_u8( 35,  15, t);
+            uint8_t sky_g = blend_u8(145,  70, t);
+            uint8_t sky_b = blend_u8(235, 140, t);
+            uint8_t gnd_r = blend_u8(170,  95, t);
+            uint8_t gnd_g = blend_u8(125,  65, t);
+            uint8_t gnd_b = blend_u8( 80,  35, t);
+            s_sky_grad[cell][i] = pk_pfd_rgb565_dither(sky_r, sky_g, sky_b, dx, dy);
+            s_ground_grad[cell][i] = pk_pfd_rgb565_dither(gnd_r, gnd_g, gnd_b, dx, dy);
+        }
     }
     s_grad_built = true;
 }
@@ -106,7 +108,7 @@ static void draw_horizon(uint16_t *fb, float roll_deg, float pitch_deg)
 {
     const float rad      = roll_deg * (float)M_PI / 180.0f;
     const float slope    = -tanf(rad);
-    const float cos_roll = cosf(rad);
+    const float cos_roll = fabsf(cosf(rad));
     const float pitch_px = pitch_deg * PFD_PIXELS_PER_DEG;
 
     for (int y = PFD_ATTITUDE_TOP; y < PFD_ATTITUDE_BOT; ++y) {
@@ -118,18 +120,17 @@ static void draw_horizon(uint16_t *fb, float roll_deg, float pitch_deg)
             float perp = fabsf(dy) * cos_roll;
             int idx = (int)perp;
             if (idx >= ATTITUDE_HEIGHT) idx = ATTITUDE_HEIGHT - 1;
-            row[x] = (dy < 0.0f) ? s_sky_grad[idx] : s_ground_grad[idx];
-        }
-    }
+            int cell = ((y & 3) << 2) | (x & 3);
+            row[x] = (dy < 0.0f) ? s_sky_grad[cell][idx] : s_ground_grad[cell][idx];
 
-    /* 2 px white horizon line along the rotated horizon, clipped to
-     * the attitude region. */
-    for (int x = PFD_ATTITUDE_LEFT; x < PFD_ATTITUDE_RIGHT; ++x) {
-        float hy = (float)PFD_CY + pitch_px +
-                   slope * ((float)x - (float)PFD_CX);
-        int yi = (int)(hy + 0.5f);
-        pk_pfd_put_pixel(fb, x, yi,     COL_HORIZON_LINE);
-        pk_pfd_put_pixel(fb, x, yi - 1, COL_HORIZON_LINE);
+            float coverage = 1.5f - perp;  /* 2 px horizon line + 1 px AA fringe. */
+            if (coverage > 0.0f) {
+                uint8_t alpha = coverage >= 1.0f
+                                    ? 255
+                                    : (uint8_t)(coverage * 255.0f + 0.5f);
+                pk_pfd_blend_pixel(fb, x, y, COL_HORIZON_LINE, alpha);
+            }
+        }
     }
 }
 
@@ -168,14 +169,16 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
         int lx, ly, rx, ry;
         rotate_about_center(cs, sn, PFD_CX - half_w, mark_y, &lx, &ly);
         rotate_about_center(cs, sn, PFD_CX + half_w, mark_y, &rx, &ry);
-        pk_pfd_draw_line(fb, lx, ly, rx, ry, COL_PITCH_LINE);
+        pk_pfd_draw_line_aa(fb, (float)lx, (float)ly, (float)rx, (float)ry,
+                            1.4f, COL_PITCH_LINE);
         if (p < 0) {
             /* "Below the horizon" marks rendered with an extra half-
              * length overlay — closest we get to a dashed line without
              * background-aware erasing. */
             int mx = (lx + rx) / 2;
             int my = (ly + ry) / 2;
-            pk_pfd_draw_line(fb, lx, ly, mx, my, COL_PITCH_LINE);
+            pk_pfd_draw_line_aa(fb, (float)lx, (float)ly, (float)mx, (float)my,
+                                1.4f, COL_PITCH_LINE);
         }
         char label[4];
         snprintf(label, sizeof(label), "%d", abs_p);
@@ -199,25 +202,9 @@ static const int8_t bank_ticks[] = { -60, -45, -30, -20, -10, 10, 20, 30, 45, 60
 
 static void draw_bank_arc(uint16_t *fb, float roll_deg)
 {
-    /* White inner arc connecting all the tick bases — a smooth thin
-     * curve from -60° to +60°. Sample one point per 0.5° (so adjacent
-     * samples land roughly 1.5 px apart on a R=170 arc) and plot it
-     * 2 px thick (radially) so the line stays continuous at low
-     * resolutions. */
-    for (int step = -120; step <= 120; ++step) {
-        float a   = (float)step * 0.5f;
-        float rad = a * (float)M_PI / 180.0f;
-        int x_in  = (int)((float)BANK_ARC_CX +
-                          (float)(BANK_ARC_R - 1) * sinf(rad) + 0.5f);
-        int y_in  = (int)((float)BANK_ARC_CY -
-                          (float)(BANK_ARC_R - 1) * cosf(rad) + 0.5f);
-        int x_out = (int)((float)BANK_ARC_CX +
-                          (float)BANK_ARC_R * sinf(rad) + 0.5f);
-        int y_out = (int)((float)BANK_ARC_CY -
-                          (float)BANK_ARC_R * cosf(rad) + 0.5f);
-        pk_pfd_put_pixel(fb, x_in,  y_in,  COL_BANK_ARC);
-        pk_pfd_put_pixel(fb, x_out, y_out, COL_BANK_ARC);
-    }
+    pk_pfd_draw_arc_aa(fb, (float)BANK_ARC_CX, (float)BANK_ARC_CY,
+                       (float)BANK_ARC_R - 0.5f,
+                       -60.0f, 60.0f, 2.0f, COL_BANK_ARC);
 
     /* Tick marks: three-tier lengths so the visual hierarchy reads
      * cleanly — ±10° smallest, ±20° medium, ±30°/±45°/±60° longest.
@@ -238,7 +225,8 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
                        (float)(BANK_ARC_R + tick_len) * sinf(rad) + 0.5f);
         int y1 = (int)((float)BANK_ARC_CY -
                        (float)(BANK_ARC_R + tick_len) * cosf(rad) + 0.5f);
-        pk_pfd_draw_line(fb, x0, y0, x1, y1, COL_BANK_TICK);
+        pk_pfd_draw_line_aa(fb, (float)x0, (float)y0, (float)x1, (float)y1,
+                            1.4f, COL_BANK_TICK);
     }
 
     /* Sky pointer — fixed downward-pointing inverted white triangle

@@ -1,15 +1,14 @@
 /*
- * pfd_font.h — minimal 5×7 ASCII font + draw helpers for the PFD.
+ * pfd_font.h — PFD font helpers.
  *
- * Drop-in dependency-free renderer aimed at the PFD's numeric readouts
- * and the heading-tape / bank-arc labels. The glyph table mirrors the
- * canonical 5×7 ASCII font (public domain, widely circulated as
- * "font5x7"); each character is 5 columns × 7 rows packed column-major
- * with bit 0 = top row.
+ * Scale-1 and fallback rendering use a dependency-free 5×7 ASCII bitmap.
+ * Scale-2 first tries the generated 4bpp alpha glyph subset in
+ * `pfd_font_aa.c`, giving the primary English/numeric PFD readouts
+ * antialiased edges while preserving the existing fixed 12×16 cell.
  *
- * Any integer scale ≥ 1 is supported. The inner loop duplicates each
- * glyph pixel scale × scale times, and the cell width/height grow
- * proportionally via PK_FONT_CELL_{W,H}.
+ * Any integer scale ≥ 1 is supported. Characters not present in the
+ * alpha subset use the bitmap fallback, whose inner loop duplicates
+ * each glyph pixel scale × scale times.
  *
  *   scale 1 →  5 ×  7 visible,  6 ×  8 cell
  *   scale 2 → 10 × 14 visible, 12 × 16 cell  (the workhorse for labels)

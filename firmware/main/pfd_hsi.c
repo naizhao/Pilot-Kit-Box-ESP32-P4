@@ -44,6 +44,7 @@
 #define HDGBOX_Y0      144
 #define HDGBOX_X1      187
 #define HDGBOX_Y1      162
+#define HDGBOX_BG_ALPHA 150
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly
  * above the panel's bottom edge — the Garmin convention is to put it
@@ -88,7 +89,7 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         float tx = (float)HSI_CX + (float)(HSI_R - tick_len) * cosf(rad);
         float ty = (float)HSI_CY - (float)(HSI_R - tick_len) * sinf(rad);
 
-        pk_pfd_draw_line(fb, (int)cx, (int)cy, (int)tx, (int)ty, COL_TICK);
+        pk_pfd_draw_line_aa(fb, cx, cy, tx, ty, 1.3f, COL_TICK);
 
         if (major30) {
             const char *lbl;
@@ -155,9 +156,12 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         pk_pfd_fill_rect(fb, cx - 4, cy + 4, cx + 5, cy + 6, COL_AIRCRAFT);
     }
 
-    /* HDG box: transparent interior + 1 px white border + scale-3
-     * digits. The interior shows the attitude background; the white
-     * border anchors the box visually. */
+    /* HDG box: dimmed translucent interior + 1 px white border +
+     * scale-2 digits. The darkened pad keeps the heading readable
+     * without fully blocking the attitude background. */
+    pk_pfd_darken_rect(fb, HDGBOX_X0 + 1, HDGBOX_Y0 + 1,
+                       HDGBOX_X1 - 1, HDGBOX_Y1 - 1,
+                       HDGBOX_BG_ALPHA);
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y0,     HDGBOX_X1,     HDGBOX_Y0 + 1, COL_BORDER);
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y1 - 1, HDGBOX_X1,     HDGBOX_Y1,     COL_BORDER);
     pk_pfd_fill_rect(fb, HDGBOX_X0,     HDGBOX_Y0,     HDGBOX_X0 + 1, HDGBOX_Y1,     COL_BORDER);

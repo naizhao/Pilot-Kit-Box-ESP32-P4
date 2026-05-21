@@ -8,15 +8,104 @@
 
 #include "pfd_draw.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
 
 #include "display.h"
 
+static uint16_t rgb565_to_native(uint16_t c)
+{
+    return (uint16_t)((c >> 8) | (c << 8));
+}
+
+static uint16_t native_to_rgb565(uint16_t c)
+{
+    return (uint16_t)((c >> 8) | (c << 8));
+}
+
+static uint8_t clamp_u8(int v)
+{
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
+static float clampf(float v, float lo, float hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static int floor_to_int(float v)
+{
+    return (int)floorf(v);
+}
+
+static int ceil_to_int(float v)
+{
+    return (int)ceilf(v);
+}
+
 void pk_pfd_put_pixel(uint16_t *fb, int x, int y, uint16_t c)
 {
     if (x < 0 || x >= PK_DISPLAY_W || y < 0 || y >= PK_DISPLAY_H) return;
     fb[y * PK_DISPLAY_W + x] = c;
+}
+
+void pk_pfd_blend_pixel(uint16_t *fb, int x, int y, uint16_t c, uint8_t alpha)
+{
+    if (alpha == 0) return;
+    if (x < 0 || x >= PK_DISPLAY_W || y < 0 || y >= PK_DISPLAY_H) return;
+    if (alpha == 255) {
+        fb[y * PK_DISPLAY_W + x] = c;
+        return;
+    }
+
+    uint16_t *dstp = fb + y * PK_DISPLAY_W + x;
+    uint16_t dst = rgb565_to_native(*dstp);
+    uint16_t src = rgb565_to_native(c);
+
+    int sr = (src >> 11) & 0x1F;
+    int sg = (src >>  5) & 0x3F;
+    int sb =  src        & 0x1F;
+    int dr = (dst >> 11) & 0x1F;
+    int dg = (dst >>  5) & 0x3F;
+    int db =  dst        & 0x1F;
+
+    int a = alpha;
+    int ia = 255 - a;
+    int r = (sr * a + dr * ia + 127) / 255;
+    int g = (sg * a + dg * ia + 127) / 255;
+    int b = (sb * a + db * ia + 127) / 255;
+
+    *dstp = native_to_rgb565((uint16_t)((r << 11) | (g << 5) | b));
+}
+
+static uint8_t quantize_dither(uint8_t v, int levels, int threshold)
+{
+    int scaled = (int)v * levels;
+    int q = scaled / 255;
+    int rem = scaled - q * 255;
+    if (q < levels && rem > threshold) ++q;
+    return clamp_u8(q);
+}
+
+uint16_t pk_pfd_rgb565_dither(uint8_t r, uint8_t g, uint8_t b, int x, int y)
+{
+    static const uint8_t bayer4[16] = {
+         0,  8,  2, 10,
+        12,  4, 14,  6,
+         3, 11,  1,  9,
+        15,  7, 13,  5,
+    };
+    int cell = ((y & 3) << 2) | (x & 3);
+    int threshold = ((int)bayer4[cell] * 255 + 127) / 16;
+    int r5 = quantize_dither(r, 31, threshold);
+    int g6 = quantize_dither(g, 63, threshold);
+    int b5 = quantize_dither(b, 31, threshold);
+    return native_to_rgb565((uint16_t)((r5 << 11) | (g6 << 5) | b5));
 }
 
 void pk_pfd_fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
@@ -44,6 +133,79 @@ void pk_pfd_draw_line(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
         if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+void pk_pfd_draw_line_aa(uint16_t *fb,
+                         float x0, float y0, float x1, float y1,
+                         float width, uint16_t c)
+{
+    if (width < 1.0f) width = 1.0f;
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float len2 = dx * dx + dy * dy;
+    float half = width * 0.5f;
+    float pad = half + 1.0f;
+
+    int xmin = floor_to_int(fminf(x0, x1) - pad);
+    int xmax = ceil_to_int (fmaxf(x0, x1) + pad);
+    int ymin = floor_to_int(fminf(y0, y1) - pad);
+    int ymax = ceil_to_int (fmaxf(y0, y1) + pad);
+    if (xmin < 0) xmin = 0;
+    if (xmax >= PK_DISPLAY_W) xmax = PK_DISPLAY_W - 1;
+    if (ymin < 0) ymin = 0;
+    if (ymax >= PK_DISPLAY_H) ymax = PK_DISPLAY_H - 1;
+
+    if (len2 <= 0.0001f) {
+        pk_pfd_blend_pixel(fb, (int)(x0 + 0.5f), (int)(y0 + 0.5f), c, 255);
+        return;
+    }
+
+    for (int y = ymin; y <= ymax; ++y) {
+        float py = (float)y + 0.5f;
+        for (int x = xmin; x <= xmax; ++x) {
+            float px = (float)x + 0.5f;
+            float t = ((px - x0) * dx + (py - y0) * dy) / len2;
+            t = clampf(t, 0.0f, 1.0f);
+            float nx = x0 + t * dx;
+            float ny = y0 + t * dy;
+            float ex = px - nx;
+            float ey = py - ny;
+            float dist = sqrtf(ex * ex + ey * ey);
+            float coverage = half + 0.5f - dist;
+            if (coverage <= 0.0f) continue;
+            uint8_t alpha = coverage >= 1.0f
+                                ? 255
+                                : (uint8_t)(coverage * 255.0f + 0.5f);
+            pk_pfd_blend_pixel(fb, x, y, c, alpha);
+        }
+    }
+}
+
+void pk_pfd_draw_arc_aa(uint16_t *fb,
+                        float cx, float cy, float radius,
+                        float start_deg, float end_deg,
+                        float width, uint16_t c)
+{
+    if (radius <= 0.0f) return;
+    float span = end_deg - start_deg;
+    while (span < 0.0f) span += 360.0f;
+    if (span <= 0.0f) return;
+
+    int steps = ceil_to_int(span / 1.5f);
+    if (steps < 1) steps = 1;
+
+    float prev_a = start_deg * (float)M_PI / 180.0f;
+    float prev_x = cx + radius * sinf(prev_a);
+    float prev_y = cy - radius * cosf(prev_a);
+    for (int i = 1; i <= steps; ++i) {
+        float a_deg = start_deg + span * (float)i / (float)steps;
+        float a = a_deg * (float)M_PI / 180.0f;
+        float x = cx + radius * sinf(a);
+        float y = cy - radius * cosf(a);
+        pk_pfd_draw_line_aa(fb, prev_x, prev_y, x, y, width, c);
+        prev_x = x;
+        prev_y = y;
     }
 }
 

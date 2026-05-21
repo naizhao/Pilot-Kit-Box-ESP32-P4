@@ -27,6 +27,7 @@ idf_component_register(
         "pfd_attitude.c"
         "pfd_draw.c"
         "pfd_font.c"
+        "pfd_font_aa.c"
         "pfd_hsi.c"
         "pfd_statusbar.c"
         "pfd_tape.c"
