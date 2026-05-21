@@ -35,6 +35,28 @@
  * we don't otherwise emit) into 0x7F at call-time. */
 #define PK_FONT_DEGREE  0x7F
 
+/* Custom glyphs at 0x80..0x87 — eight-direction compass arrows for
+ * traffic-display annotations (HDG column shows relative bearing
+ * compared to own-ship; VS column re-uses N/S for climb/descent). The
+ * ordering is the standard 45° boxed-compass sequence starting at N. */
+#define PK_FONT_ARROW_N    ((char)0x80)
+#define PK_FONT_ARROW_NE   ((char)0x81)
+#define PK_FONT_ARROW_E    ((char)0x82)
+#define PK_FONT_ARROW_SE   ((char)0x83)
+#define PK_FONT_ARROW_S    ((char)0x84)
+#define PK_FONT_ARROW_SW   ((char)0x85)
+#define PK_FONT_ARROW_W    ((char)0x86)
+#define PK_FONT_ARROW_NW   ((char)0x87)
+
+/*
+ * Convert a relative-bearing delta in degrees (positive = right of
+ * own-ship's nose, negative = left, wraps at ±180) into one of the
+ * 8 compass-arrow characters above. 45°-wide sectors centred on each
+ * cardinal/intercardinal bearing — e.g. a delta of +60° → NE arrow,
+ * -160° → SW arrow.
+ */
+char pk_font_arrow_for_delta_deg(int delta_deg);
+
 /*
  * Render one ASCII character into the RGB565 framebuffer.
  *
