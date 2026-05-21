@@ -28,6 +28,7 @@
  *   y = 186   ║       Booting abc1234 ...          ║  scale-1 git hash
  *   y = 198   ║     Built May 21 2026 12:34:56     ║  scale-1 build stamp
  *   y = 210   ║         ESP-IDF v6.0.1             ║  scale-1 IDF version
+ *   y = 228   ║        (C) 2026 Pilot Kit          ║  scale-1 copyright footer
  *   y = 240   ╚═══════════════════════════════════╝
  *
  * The 160×160 source blob is downsampled 2:1 (nearest-neighbour) to
@@ -96,6 +97,11 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
                                                                   /* 198 */
 #define IDF_Y               (BUILD_Y   + PK_FONT_CELL_H(1) + INFO_LINE_GAP)
                                                                   /* 210 */
+/* Copyright footer pinned to the bottom edge with a small 4 px margin,
+ * not stacked at INFO_LINE_GAP — visually separates it from the build
+ * info above. */
+#define COPYRIGHT_Y         (PK_DISPLAY_H - PK_FONT_CELL_H(1) - 4)
+                                                                  /* 228 */
 
 /* Palette */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
@@ -238,6 +244,15 @@ void pk_boot_splash_render(uint16_t *fb)
     w = (int)strlen(line) * PK_FONT_CELL_W(1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                  (PK_DISPLAY_W - w) / 2, IDF_Y, line, VERSION_COLOR, 1);
+
+    /* Copyright footer pinned to the bottom edge. The pfd_font 5×7
+     * bitmap can't render the U+00A9 © glyph (the inner C inside the
+     * outer circle needs ≥7 px wide to be legible), so we use the
+     * widely-accepted ASCII '(C)' form here. */
+    const char *cr = "(C) 2026 Pilot Kit";
+    w = (int)strlen(cr) * PK_FONT_CELL_W(1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 (PK_DISPLAY_W - w) / 2, COPYRIGHT_Y, cr, VERSION_COLOR, 1);
 
     /* Suppress unused-symbol warning for pk_logo_end — keeps it in
      * scope so future code can compute the blob size if needed. */
