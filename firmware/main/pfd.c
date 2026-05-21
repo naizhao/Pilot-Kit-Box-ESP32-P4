@@ -111,14 +111,37 @@ static void pfd_task(void *arg)
                 pk_ui_get_own_icao(), now_us,
                 (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own);
 
+            /* HDG source priority: bound own-ship's ADS-B ground track
+             * (DF17 metype 19) beats IMU magnetic yaw whenever both
+             * are available. The bound transponder reports the actual
+             * ground track of the aircraft we're flying in, which is
+             * what a pilot cares about — the IMU only reports where
+             * the kit happens to be pointing (could be the panel, a
+             * pocket, a yoke clamp, etc.). IMU is the fallback when no
+             * own-ship is bound or its velocity isn't fresh. The
+             * imu_valid field in pk_pfd_status_t / pk_pfd_hsi_t is now
+             * really "yaw_valid" — left renamed for the moment to
+             * avoid churning two more headers; the consumers in
+             * pfd_statusbar.c / pfd_hsi.c only use it as a "is the
+             * yaw_deg good" gate. */
+            float yaw_deg     = 0.0f;
+            bool  yaw_valid   = false;
+            if (own_valid && own.have_velocity) {
+                yaw_deg   = (float)own.heading_deg;
+                yaw_valid = true;
+            } else if (have) {
+                yaw_deg   = s.yaw_deg;
+                yaw_valid = true;
+            }
+
             pk_pfd_status_t stat = {
-                .imu_valid      = have,
-                .yaw_deg        = have ? s.yaw_deg : 0.0f,
+                .imu_valid      = yaw_valid,
+                .yaw_deg        = yaw_deg,
                 .aircraft_count = n_aircraft,
             };
             pk_pfd_hsi_t hsi = {
-                .imu_valid = have,
-                .yaw_deg   = have ? s.yaw_deg : 0.0f,
+                .imu_valid = yaw_valid,
+                .yaw_deg   = yaw_deg,
             };
             pk_pfd_alt_tape_t alt = {
                 .valid       = own_valid && own.have_altitude,
