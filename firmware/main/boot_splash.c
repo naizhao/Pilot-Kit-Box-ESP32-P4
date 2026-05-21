@@ -25,7 +25,9 @@
  *             ║              │ 80×80  │            ║
  *             ║              ╰────────╯            ║
  *   y = 162   ║         PILOT KIT BOX              ║  scale-2 title
- *   y = 186   ║         Booting abc1234 ...        ║  scale-1 version
+ *   y = 186   ║       Booting abc1234 ...          ║  scale-1 git hash
+ *   y = 198   ║     Built May 21 2026 12:34:56     ║  scale-1 build stamp
+ *   y = 210   ║         ESP-IDF v6.0.1             ║  scale-1 IDF version
  *   y = 240   ╚═══════════════════════════════════╝
  *
  * The 160×160 source blob is downsampled 2:1 (nearest-neighbour) to
@@ -38,8 +40,10 @@
 #include "boot_splash.h"
 
 #include <string.h>
+#include <stdio.h>
 
 #include "esp_app_desc.h"
+#include "esp_idf_version.h"
 
 #include "display.h"
 #include "pfd_font.h"
@@ -81,12 +85,17 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
 #define LOGO_X              (CARD_X + (CARD_W - LOGO_DISP_W) / 2)/* 120 */
 #define LOGO_Y              (CARD_Y + (CARD_H - LOGO_DISP_H) / 2)/* 48  */
 
-#define CARD_TITLE_GAP      24                                    /* was 8 */
-#define TITLE_VERSION_GAP   8                                     /* was 6 */
+#define CARD_TITLE_GAP      24                                    /* card→title */
+#define TITLE_VERSION_GAP   8                                     /* title→ver  */
+#define INFO_LINE_GAP       4                                     /* between ver/build/idf */
 
 #define TITLE_Y             (CARD_Y + CARD_H + CARD_TITLE_GAP)    /* 162 */
 #define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + TITLE_VERSION_GAP)
                                                                   /* 186 */
+#define BUILD_Y             (VERSION_Y + PK_FONT_CELL_H(1) + INFO_LINE_GAP)
+                                                                  /* 198 */
+#define IDF_Y               (BUILD_Y   + PK_FONT_CELL_H(1) + INFO_LINE_GAP)
+                                                                  /* 210 */
 
 /* Palette */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
@@ -193,21 +202,42 @@ void pk_boot_splash_render(uint16_t *fb)
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                  title_x, TITLE_Y, title, TITLE_COLOR, 2);
 
-    /* Version line — pulls the git short-hash baked into the app
-     * descriptor at build time. esp_app_desc_t.version is a fixed
-     * 32-byte field, so reserve enough room here and bound the
-     * format specifier to keep gcc -Wformat-truncation happy. */
+    /* Version info — three centred scale-1 lines below the title.
+     * All pulled from the app descriptor / IDF compile-time macros
+     * so the splash matches the binary exactly with no manual sync.
+     * esp_app_desc_t.version / .date / .time are fixed-length fields,
+     * the %.32s / %.16s caps keep gcc -Wformat-truncation happy. */
     const esp_app_desc_t *app = esp_app_get_description();
-    char ver[64];
+    char line[64];
+
+    /* Line 1 — "Booting <git-hash> ..." (kept as before). */
     if (app) {
-        snprintf(ver, sizeof(ver), "Booting %.32s ...", app->version);
+        snprintf(line, sizeof(line), "Booting %.32s ...", app->version);
     } else {
-        snprintf(ver, sizeof(ver), "Booting ...");
+        snprintf(line, sizeof(line), "Booting ...");
     }
-    int ver_w = (int)strlen(ver) * PK_FONT_CELL_W(1);
-    int ver_x = (PK_DISPLAY_W - ver_w) / 2;
+    int w = (int)strlen(line) * PK_FONT_CELL_W(1);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 ver_x, VERSION_Y, ver, VERSION_COLOR, 1);
+                 (PK_DISPLAY_W - w) / 2, VERSION_Y, line, VERSION_COLOR, 1);
+
+    /* Line 2 — "Built <date> <time>" baked at link time. */
+    if (app) {
+        snprintf(line, sizeof(line), "Built %.16s %.8s",
+                 app->date, app->time);
+    } else {
+        snprintf(line, sizeof(line), "Built %s %s", __DATE__, __TIME__);
+    }
+    w = (int)strlen(line) * PK_FONT_CELL_W(1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 (PK_DISPLAY_W - w) / 2, BUILD_Y, line, VERSION_COLOR, 1);
+
+    /* Line 3 — ESP-IDF version that built the firmware. */
+    snprintf(line, sizeof(line), "ESP-IDF v%d.%d.%d",
+             ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR,
+             ESP_IDF_VERSION_PATCH);
+    w = (int)strlen(line) * PK_FONT_CELL_W(1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 (PK_DISPLAY_W - w) / 2, IDF_Y, line, VERSION_COLOR, 1);
 
     /* Suppress unused-symbol warning for pk_logo_end — keeps it in
      * scope so future code can compute the blob size if needed. */
