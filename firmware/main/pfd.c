@@ -134,6 +134,32 @@ static void pfd_task(void *arg)
                 yaw_valid = true;
             }
 
+            /* Bank source priority — mirrors the yaw logic above:
+             *   1) Derive from the bound aircraft's smoothed turn rate
+             *      + ground speed (coordinated-turn formula). This is
+             *      the actual aircraft's bank, irrespective of kit
+             *      orientation.
+             *   2) Fall back to IMU roll (the kit's tilt).
+             * Pitch stays IMU-only — ADS-B carries no AoA, so we can
+             * at best compute flight-path angle (atan(VS/GS)) which
+             * isn't the same as aircraft pitch attitude.
+             *
+             * When the bank override fires we LEAVE imu.valid alone:
+             * the attitude indicator gates on imu.valid for whether to
+             * draw at all, and we still want to draw (with IMU pitch +
+             * ADS-B bank) even if IMU itself is briefly stale, as long
+             * as one or the other is fresh. */
+            if (own_valid) {
+                float bank_deg;
+                if (pk_aircraft_derive_bank(
+                        pk_ui_get_own_icao(), now_us,
+                        (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL,
+                        &bank_deg)) {
+                    imu.roll_deg = bank_deg;
+                    imu.valid    = true;
+                }
+            }
+
             pk_pfd_status_t stat = {
                 .imu_valid      = yaw_valid,
                 .yaw_deg        = yaw_deg,

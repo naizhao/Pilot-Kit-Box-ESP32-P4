@@ -9,6 +9,7 @@
 
 #include "aircraft_state.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -228,6 +229,32 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
              * instead of -1984 / +64 fpm) which also propagated into
              * gdl90.c's GDL90 emit (divides by 64 again → almost
              * always 0) and pfd.c's own-ship VS readout. */
+            /* Update turn-rate estimate BEFORE overwriting heading_deg —
+             * we need the previous and current values to compute the
+             * delta. Sample-to-sample delta is noisy (heading_deg is
+             * integer-valued, dt jitters around 1 s), so smooth with an
+             * EMA. Skip the update if dt is unrealistic (< 100 ms means
+             * frame duplication; > 5 s means stale gap, restart fresh). */
+            if (a->prev_velocity_us != 0) {
+                int64_t dt_us = now_us - a->prev_velocity_us;
+                if (dt_us > 100000 && dt_us < 5000000) {
+                    int delta = mm->heading - a->prev_heading_deg;
+                    while (delta >  180) delta -= 360;
+                    while (delta < -180) delta += 360;
+                    float new_rate_dps =
+                        (float)delta * 1000000.0f / (float)dt_us;
+                    if (a->have_turn_rate) {
+                        a->turn_rate_dps =
+                            0.5f * a->turn_rate_dps + 0.5f * new_rate_dps;
+                    } else {
+                        a->turn_rate_dps = new_rate_dps;
+                        a->have_turn_rate = true;
+                    }
+                }
+            }
+            a->prev_heading_deg  = mm->heading;
+            a->prev_velocity_us  = now_us;
+
             a->heading_deg     = mm->heading;
             a->ground_speed_kt = mm->velocity;
             if (mm->vert_rate == 0) {
@@ -341,4 +368,49 @@ bool aircraft_state_get_own(uint32_t icao24, int64_t now_us,
     }
     release_lock();
     return fresh;
+}
+
+bool pk_aircraft_derive_bank(uint32_t icao24, int64_t now_us,
+                             int64_t max_age_us, float *out_bank_deg)
+{
+    if (icao24 == 0 || out_bank_deg == NULL) return false;
+
+    aircraft_t a;
+    if (!aircraft_state_get_own(icao24, now_us, max_age_us, &a)) return false;
+    if (!a.have_turn_rate || !a.have_velocity) return false;
+    /* Coordinated-turn assumption breaks down at low GS — heading
+     * changes are dominated by wind / yaw / skidding rather than a
+     * banked turn. 60 kt is a typical airliner taxi / final-approach
+     * floor; below it the derivation isn't meaningful. */
+    if (a.ground_speed_kt < 60) return false;
+    /* Also gate on freshness of the velocity sample: if the latest
+     * DF17 metype 19 is more than ~10 s old, the turn-rate EMA is
+     * stale (the aircraft may have already rolled out of the turn). */
+    if ((int64_t)(now_us - a.prev_velocity_us) > 10LL * 1000000LL) {
+        return false;
+    }
+
+    /* bank = atan(V × ω / g)   — coordinated-turn formula
+     *   V in m/s              = kt × 0.514444
+     *   ω in rad/s            = deg/s × π/180
+     *   g = 9.81 m/s²
+     * Sign of ω carries through to the bank sign (right turn → + ω →
+     * + bank), matching the PFD attitude-indicator convention.
+     *
+     * Bank rate-of-change isn't smoothed beyond the EMA on turn-rate
+     * itself — the PFD draws once every ~33 ms so any high-freq
+     * residue averages out visually. Clamp to ±60° to keep wild noise
+     * (e.g. heading wrap glitches we missed) from rotating the
+     * horizon line all the way around. */
+    const float KT_TO_MPS = 0.514444f;
+    const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+    const float G_MPSS = 9.81f;
+    float v_mps     = (float)a.ground_speed_kt * KT_TO_MPS;
+    float omega_rps = a.turn_rate_dps * DEG_TO_RAD;
+    float bank_rad  = atanf(v_mps * omega_rps / G_MPSS);
+    float bank_deg  = bank_rad * (180.0f / 3.14159265358979323846f);
+    if (bank_deg >  60.0f) bank_deg =  60.0f;
+    if (bank_deg < -60.0f) bank_deg = -60.0f;
+    *out_bank_deg = bank_deg;
+    return true;
 }

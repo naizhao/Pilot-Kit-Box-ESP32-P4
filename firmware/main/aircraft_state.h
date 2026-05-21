@@ -81,6 +81,23 @@ typedef struct {
 
     bool     on_ground;       /* true if last position-bearing frame was
                                  DF17 metype 5-8 (surface position) */
+
+    /* Turn-rate tracking, used to DERIVE bank angle from coordinated-
+     * turn geometry (bank = atan(V × ω / g)). ADS-B doesn't broadcast
+     * bank or pitch, so the only way to surface the aircraft's actual
+     * attitude over Mode-S is to estimate it from the velocity vector's
+     * evolution between successive DF17 metype 19 frames.
+     *
+     *   - prev_heading_deg / prev_velocity_us hold the previous sample;
+     *   - turn_rate_dps is an exponentially-smoothed
+     *     delta-heading / delta-time in degrees per second
+     *     (signed; + = right turn).
+     * have_turn_rate flips on once we've consumed at least two velocity
+     * samples within a sane temporal window (≈100 ms to 5 s apart). */
+    bool     have_turn_rate;
+    float    turn_rate_dps;
+    int      prev_heading_deg;
+    int64_t  prev_velocity_us;
 } aircraft_t;
 
 /* Single-letter abbreviation for the list view (one column). Returns
@@ -90,6 +107,32 @@ char pk_wake_letter(pk_wake_t w);
 
 /* Human-readable name for the detail pane. Returns "" for PK_WAKE_NONE. */
 const char *pk_wake_name(pk_wake_t w);
+
+/*
+ * Derive an estimated bank angle (degrees, signed: + = right bank)
+ * from the bound aircraft's smoothed turn rate and ground speed using
+ * the coordinated-turn formula  bank = atan(V × ω / g)  where V is
+ * approximated by GS in m/s and ω is the yaw rate in rad/s.
+ *
+ * Returns true and fills *out_bank_deg only when:
+ *   - the aircraft has at least 2 fresh velocity samples
+ *     (have_turn_rate is set);
+ *   - the latest velocity report is within max_age_us of now_us;
+ *   - ground speed is high enough (≥ 60 kt) for the coordinated-turn
+ *     assumption to be sensible — at lower speeds the heading is
+ *     dominated by skidding / wind and the derivation devolves to
+ *     noise.
+ *
+ * Returns false (and leaves *out_bank_deg untouched) otherwise. Caller
+ * is expected to fall back to IMU roll or render the attitude
+ * indicator un-banked in that case.
+ *
+ * Note this is the AIRCRAFT'S bank under the coordinated-turn
+ * assumption — useful when own-ship is bound to a transponder; the
+ * kit's own IMU stays authoritative when there's no ADS-B reference.
+ */
+bool pk_aircraft_derive_bank(uint32_t icao24, int64_t now_us,
+                             int64_t max_age_us, float *out_bank_deg);
 
 /* Reset table. Call once on boot. */
 void aircraft_state_init(void);
