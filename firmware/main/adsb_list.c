@@ -58,6 +58,8 @@
 #define COL_DETAIL_KEY      pk_rgb565( 80, 220, 240)   /* cyan          */
 #define COL_DETAIL_VAL      pk_rgb565(240, 240, 240)
 #define COL_EMPTY_HINT      pk_rgb565(160, 160, 160)
+#define COL_OWN_BIND        pk_rgb565(255,   0, 255)   /* magenta — runtime
+                                                          own-ship binding */
 
 /* --- Primitives ----------------------------------------------------- */
 static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
@@ -149,7 +151,7 @@ static void render_col_titles(uint16_t *fb)
 }
 
 static void render_row(uint16_t *fb, int row_idx, int y, bool selected,
-                       const aircraft_t *a)
+                       bool is_own_bound, const aircraft_t *a)
 {
     uint16_t fg = selected ? COL_SELECTED_FG : COL_ROW_FG;
     uint16_t bg = selected ? COL_SELECTED_BG : COL_ROW_BG;
@@ -159,8 +161,13 @@ static void render_row(uint16_t *fb, int row_idx, int y, bool selected,
 
     char buf[16];
 
+    /* ICAO column — magenta if this aircraft is the runtime own-ship
+     * binding (set via TARE short-press), unless this row is also the
+     * selection highlight (yellow takes precedence so the cursor
+     * stays unambiguous). */
+    uint16_t icao_fg = (is_own_bound && !selected) ? COL_OWN_BIND : fg;
     fmt_icao(buf, sizeof(buf), a->icao24);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ICAO, y, buf, fg, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ICAO, y, buf, icao_fg, 1);
 
     fmt_callsign(buf, sizeof(buf), a);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_CALL, y, buf, fg, 1);
@@ -209,12 +216,23 @@ static void render_detail(uint16_t *fb, const aircraft_t *a, int64_t now_us)
     int y = DETAIL_TOP_Y;
     char buf[48];
 
-    /* ICAO */
+    uint32_t own_icao = pk_ui_get_own_icao();
+    bool is_own_bound = (own_icao != 0 && a->icao24 == own_icao);
+
+    /* ICAO — magenta if this aircraft is the runtime own-ship binding,
+     * with an "(OWN)" suffix so the binding state is obvious without
+     * having to recognise the colour. */
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                  LIST_LEFT_PAD, y, "ICAO   :", COL_DETAIL_KEY, 1);
     fmt_icao(buf, sizeof(buf), a->icao24);
+    uint16_t icao_fg = is_own_bound ? COL_OWN_BIND : COL_DETAIL_VAL;
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD + 60, y, buf, COL_DETAIL_VAL, 1);
+                 LIST_LEFT_PAD + 60, y, buf, icao_fg, 1);
+    if (is_own_bound) {
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                     LIST_LEFT_PAD + 60 + 6 * 6 + 4, y,
+                     "(OWN)", COL_OWN_BIND, 1);
+    }
     y += DETAIL_LINE_H;
 
     /* Callsign */
@@ -338,10 +356,17 @@ void pk_adsb_list_render(uint16_t *fb)
         if (first + n_visible > (int)n) first = (int)n - n_visible;
     }
 
+    /* Resolve the currently-bound own-ship ICAO once per frame so each
+     * row render is a cheap equality check. */
+    uint32_t own_icao = pk_ui_get_own_icao();
+
     for (int row = 0; row < n_visible && (first + row) < (int)n; ++row) {
         int y = LIST_ROW0_Y + row * LIST_ROW_H;
-        bool is_selected = ((first + row) == sel);
-        render_row(fb, first + row, y, is_selected, &scratch[first + row]);
+        bool is_selected   = ((first + row) == sel);
+        bool is_own_bound  = (own_icao != 0 &&
+                              scratch[first + row].icao24 == own_icao);
+        render_row(fb, first + row, y, is_selected, is_own_bound,
+                   &scratch[first + row]);
     }
 
     render_divider(fb);

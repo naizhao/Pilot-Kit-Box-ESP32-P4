@@ -88,3 +88,18 @@ void pk_ui_list_scroll(int delta);
  * pk_ui_list_set_index() to persist the clamp. */
 int pk_ui_list_get_index(void);
 void pk_ui_list_set_index(int idx);
+
+/*
+ * Runtime own-ship binding — which ADS-B aircraft drives the PFD's
+ * ALT / VS / GS readouts. Volatile: lives in RAM only, cleared on
+ * reboot (no NVS write). The PFD reads via pk_ui_get_own_icao(); when
+ * the runtime value has never been set (or is 0), the getter falls
+ * back to the compile-time CONFIG_PK_OWN_ICAO default.
+ *
+ * Set this from the TARE short-press handler when the user is in
+ * PK_UI_MODE_ADSB_LIST — that's the gesture the kit exposes for
+ * "this highlighted aircraft is me". Re-pressing TARE on another
+ * aircraft replaces the binding; a power cycle wipes it.
+ */
+void     pk_ui_set_own_icao(uint32_t icao24);
+uint32_t pk_ui_get_own_icao(void);

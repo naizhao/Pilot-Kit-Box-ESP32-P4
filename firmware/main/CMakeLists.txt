@@ -19,6 +19,7 @@ idf_component_register(
         "about_page.c"
         "cal_wizard.c"
         "boot_splash.c"
+        "power.c"
         "pfd.c"
         "pfd_attitude.c"
         "pfd_draw.c"

@@ -102,10 +102,13 @@ static void pfd_task(void *arg)
                 now_us, AIRCRAFT_STALE_AGE_US);
 
             /* Own-ship: ALT/VS/GS sourced from the bound transponder's
-             * ADS-B reports. Stale window is PK_OWN_STALE_AGE_MS. */
+             * ADS-B reports. pk_ui_get_own_icao() returns the runtime
+             * binding (set via TARE short-press in ADS-B list mode)
+             * or falls back to the compile-time CONFIG_PK_OWN_ICAO.
+             * Stale window is PK_OWN_STALE_AGE_MS. */
             aircraft_t own;
             bool own_valid = aircraft_state_get_own(
-                CONFIG_PK_OWN_ICAO, now_us,
+                pk_ui_get_own_icao(), now_us,
                 (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own);
 
             pk_pfd_status_t stat = {

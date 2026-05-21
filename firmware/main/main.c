@@ -18,6 +18,8 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_intr_alloc.h"
+#include "esp_sleep.h"
+#include "esp_timer.h"
 #include "usb/usb_host.h"
 
 #include "pilot_kit.h"
@@ -28,6 +30,7 @@
 #include "display.h"
 #include "imu_task.h"
 #include "pfd.h"
+#include "power.h"
 #include "record_sink.h"
 #include "ui_state.h"
 
@@ -58,13 +61,40 @@ RingbufHandle_t g_iq_ringbuf = NULL;
  * over". The application accepts both LONG and VERY_LONG arriving on
  * the same sustained hold; factory_reset() running after tare_persist()
  * cleanly undoes it.
+ *
+ * Exception: in the ADS-B aircraft-list view, TARE short-press is
+ * repurposed to "bind the highlighted aircraft as own-ship" — that's
+ * the runtime override for the PFD's ALT/VS/GS data source. Long
+ * and very-long TARE still do their IMU actions in any mode.
  */
 static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
 {
     switch (id) {
     case PK_BTN_TARE:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            (void)pk_imu_tare_now();
+            if (pk_ui_get_mode() == PK_UI_MODE_ADSB_LIST) {
+                /* Bind the currently-highlighted aircraft as own-ship.
+                 * Re-snapshot the table here rather than caching from
+                 * the renderer — the list view is stateless and we
+                 * stay decoupled from its render pipeline. */
+                static aircraft_t bind_scratch[AIRCRAFT_TABLE_CAPACITY];
+                size_t n = aircraft_state_snapshot(
+                    bind_scratch,
+                    AIRCRAFT_TABLE_CAPACITY,
+                    esp_timer_get_time(),
+                    AIRCRAFT_STALE_AGE_US);
+                int idx = pk_ui_list_get_index();
+                if (idx >= 0 && idx < (int)n) {
+                    pk_ui_set_own_icao(bind_scratch[idx].icao24);
+                } else {
+                    ESP_LOGW(TAG, "TARE in ADSB list: no aircraft "
+                                  "highlighted (idx=%d, count=%u) — "
+                                  "binding skipped",
+                             idx, (unsigned)n);
+                }
+            } else {
+                (void)pk_imu_tare_now();
+            }
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
             (void)pk_imu_tare_persist();
         } else if (evt == PK_BTN_EVT_VERY_LONG_PRESS) {
@@ -76,11 +106,10 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_toggle_mode();
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            /* TODO(power): hand off to power management — MODE
-             * long-press is reserved for "on/off" by the operator.
-             * Placeholder log so the event isn't silently dropped
-             * during development. */
-            ESP_LOGW(TAG, "MODE LONG_PRESS: TODO — power on/off (reserved)");
+            /* Soft power-off: drop backlight, configure GPIO5 as ext1
+             * wake source, enter deep sleep. Does not return — next
+             * press of MODE is a cold boot. */
+            pk_power_enter_sleep();
         }
         break;
 
@@ -140,6 +169,16 @@ void usb_host_lib_task(void *arg)
 void app_main(void)
 {
     ESP_LOGI(TAG, "Pilot Kit Box (ESP32-P4) — Phase 1 boot");
+
+    /* Log wakeup cause + ext1 status. After a deep-sleep wake, cause
+     * should be ESP_SLEEP_WAKEUP_EXT1 (=4) and ext1_status should have
+     * bit 5 set (= 0x20) — that's GPIO5 reading low. Anything else
+     * tells us self-wake came from a different source. */
+    esp_sleep_wakeup_cause_t wake_cause = esp_sleep_get_wakeup_cause();
+    uint64_t ext1_status = esp_sleep_get_ext1_wakeup_status();
+    ESP_LOGI(TAG, "boot wakeup_cause=%d  ext1_status=0x%llx",
+             (int)wake_cause, (unsigned long long)ext1_status);
+
     ESP_LOGI(TAG, "Free internal heap at boot: %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 

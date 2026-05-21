@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "ui";
 
@@ -33,6 +34,12 @@ static const char *TAG = "ui";
 static SemaphoreHandle_t s_lock;
 static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
 static int               s_list_index         = 0;
+
+/* Runtime own-ship binding. s_own_icao_set distinguishes "user
+ * explicitly bound something" (even if to 0) from "never set, use
+ * Kconfig default". RAM-only — wiped on every reboot. */
+static uint32_t          s_own_icao_runtime;
+static bool              s_own_icao_set;
 
 /* Calibration wizard state. acc_first_low_us = first time we saw
  * acc=0 in the current "low streak"; acc_first_high_us = first time
@@ -180,4 +187,25 @@ void pk_ui_list_set_index(int idx)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_list_index = idx;
     xSemaphoreGive(s_lock);
+}
+
+void pk_ui_set_own_icao(uint32_t icao24)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_own_icao_runtime = icao24 & 0xFFFFFF;
+    s_own_icao_set     = true;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "own ICAO bound at runtime → %06lX",
+             (unsigned long)(icao24 & 0xFFFFFF));
+}
+
+uint32_t pk_ui_get_own_icao(void)
+{
+    if (s_lock == NULL) return (uint32_t)CONFIG_PK_OWN_ICAO;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint32_t v = s_own_icao_set ? s_own_icao_runtime
+                                : (uint32_t)CONFIG_PK_OWN_ICAO;
+    xSemaphoreGive(s_lock);
+    return v;
 }

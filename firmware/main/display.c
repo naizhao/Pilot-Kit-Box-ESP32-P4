@@ -86,6 +86,15 @@ void pk_display_set_brightness(uint8_t level)
     ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
 }
 
+void pk_display_panel_off(void)
+{
+    if (s_panel == NULL) return;
+    /* DISPOFF (0x28). Liquid-crystal segments go fully dark; framebuffer
+     * data is ignored until the next disp_on_off(true). Safe no-op if
+     * the panel isn't initialised yet. */
+    esp_lcd_panel_disp_on_off(s_panel, false);
+}
+
 /* --- Panel ----------------------------------------------------------- */
 
 #if 0  /* Bring-up diagnostics — kept here in case we ever return to debug

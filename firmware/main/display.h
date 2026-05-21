@@ -98,6 +98,16 @@ esp_err_t pk_display_init(void);
 void pk_display_set_brightness(uint8_t level);
 
 /*
+ * Issue an ST7789 display-off command (DISPOFF, 0x28 — wrapped by
+ * esp_lcd_panel_disp_on_off). All liquid-crystal segments turn fully
+ * dark regardless of the framebuffer contents. Use this before deep
+ * sleep so the panel doesn't keep showing the last frame. The next
+ * pk_display_init() (e.g. after a deep-sleep cold boot) restores
+ * normal display automatically.
+ */
+void pk_display_panel_off(void);
+
+/*
  * Push one rectangle of RGB565 pixels to the panel. The caller owns
  * the pixel buffer (must remain valid until the blocking flush
  * returns). All coordinates are clipped to the panel rectangle.
