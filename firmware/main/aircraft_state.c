@@ -14,10 +14,15 @@
 #include <string.h>
 
 #include "esp_attr.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "mode-s.h"  /* struct mode_s_msg + MODE_S_UNIT_FEET */
+#include "mode-s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
+#include "ui_state.h" /* pk_ui_get_own_icao() — pin the bound own-ship
+                       * slot against LRU eviction (see lookup_or_claim) */
+
+static const char *TAG = "aircraft";
 
 /* s_table lives in PSRAM (EXT_RAM_BSS). aircraft_t grew enough with the
  * squawk / wake / on_ground additions that keeping all 64 slots in
@@ -39,21 +44,44 @@ void aircraft_state_init(void)
 }
 
 /* Locate an existing slot or claim a free one. LRU eviction on full table.
- * Must be called under s_lock. */
+ * Must be called under s_lock.
+ *
+ * Own-ship pinning: the slot whose icao24 matches pk_ui_get_own_icao()
+ * is excluded from LRU candidacy. After a packet-loss gap the PFD
+ * relies on the slot's preserved altitude / velocity / position to
+ * keep ALT/VS/GS visible the instant the bound aircraft's first
+ * post-gap message arrives — without pinning, that slot can get
+ * evicted under a busy sky (≥ 64 unique ICAOs) and reappear empty,
+ * which makes the PFD look like it "lost" the binding even though
+ * pk_ui_get_own_icao() still points at the correct ICAO. */
 static aircraft_t *lookup_or_claim(uint32_t icao24, int64_t now_us)
 {
-    const uint32_t base  = icao24 % AIRCRAFT_TABLE_CAPACITY;
-    aircraft_t    *empty = NULL;
-    aircraft_t    *lru   = &s_table[base];
+    const uint32_t base     = icao24 % AIRCRAFT_TABLE_CAPACITY;
+    const uint32_t own_icao = pk_ui_get_own_icao();
+    aircraft_t    *empty    = NULL;
+    aircraft_t    *lru      = NULL;
 
     for (uint32_t step = 0; step < AIRCRAFT_TABLE_CAPACITY; ++step) {
         aircraft_t *s = &s_table[(base + step) % AIRCRAFT_TABLE_CAPACITY];
         if (s->icao24 == icao24) return s;
         if (!empty && s->icao24 == 0) empty = s;
-        if (s->last_seen_us < lru->last_seen_us) lru = s;
+        /* Skip the bound own-ship slot when picking an eviction victim. */
+        if (own_icao != 0 && s->icao24 == own_icao) continue;
+        if (lru == NULL || s->last_seen_us < lru->last_seen_us) lru = s;
     }
 
     aircraft_t *chosen = empty ? empty : lru;
+    if (chosen == NULL) {
+        /* Pathological: every slot is pinned. Can only happen if the
+         * own_icao matches the entire table, which lookup_or_claim's
+         * "at most one slot per icao24" invariant prevents. Defensive
+         * fallback: just reuse the home slot so we don't crash. */
+        ESP_LOGW(TAG, "lookup_or_claim: no eviction candidate for %06lX "
+                      "(own_icao=%06lX, table full of pinned?) — using "
+                      "home slot",
+                 (unsigned long)icao24, (unsigned long)own_icao);
+        chosen = &s_table[base];
+    }
     memset(chosen, 0, sizeof(*chosen));
     chosen->icao24       = icao24;
     chosen->last_seen_us = now_us;
