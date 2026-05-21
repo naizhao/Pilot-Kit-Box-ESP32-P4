@@ -24,8 +24,8 @@
  *             ║              │ [LOGO] │            ║    100×100, r=8
  *             ║              │ 80×80  │            ║
  *             ║              ╰────────╯            ║
- *   y = 158   ║         PILOT KIT BOX              ║  scale-2 title
- *   y = 180   ║         Booting abc1234 ...        ║  scale-1 version
+ *   y = 162   ║         PILOT KIT BOX              ║  scale-2 title
+ *   y = 186   ║         Booting abc1234 ...        ║  scale-1 version
  *   y = 240   ╚═══════════════════════════════════╝
  *
  * The 160×160 source blob is downsampled 2:1 (nearest-neighbour) to
@@ -69,17 +69,24 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
  * the logo is even on all sides. Card sized to enclose the 80×80
  * displayed logo with a 10 px white margin on each side; the whole
  * content block (card + title + version) is vertically centered in
- * the 240-tall panel. */
+ * the 240-tall panel. CARD_TITLE_GAP gives the breathing room between
+ * the white card and the title text — the shrunk card freed up
+ * vertical space, so we hand it back to this gap instead of leaving
+ * it as dead air below the version line. */
 #define CARD_W              100
 #define CARD_H              100
 #define CARD_RADIUS         8
 #define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)        /* 110 */
-#define CARD_Y              50
+#define CARD_Y              38
 #define LOGO_X              (CARD_X + (CARD_W - LOGO_DISP_W) / 2)/* 120 */
-#define LOGO_Y              (CARD_Y + (CARD_H - LOGO_DISP_H) / 2)/* 60  */
+#define LOGO_Y              (CARD_Y + (CARD_H - LOGO_DISP_H) / 2)/* 48  */
 
-#define TITLE_Y             (CARD_Y + CARD_H + 8)                /* 158 */
-#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + 6)    /* 180 */
+#define CARD_TITLE_GAP      24                                    /* was 8 */
+#define TITLE_VERSION_GAP   8                                     /* was 6 */
+
+#define TITLE_Y             (CARD_Y + CARD_H + CARD_TITLE_GAP)    /* 162 */
+#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + TITLE_VERSION_GAP)
+                                                                  /* 186 */
 
 /* Palette */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
