@@ -85,11 +85,20 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
             a->have_callsign = (a->callsign[0] != '\0');
         } else if (mm->metype >= 9 && mm->metype <= 18) {
             /* Airborne position — altitude only (position arrives via CPR
-             * path, see aircraft_state_update_position). */
-            a->altitude_ft = (mm->unit == MODE_S_UNIT_METERS)
-                                 ? (int)(mm->altitude * 3.28084 + 0.5)
-                                 : mm->altitude;
-            a->have_altitude = true;
+             * path, see aircraft_state_update_position).
+             *
+             * decode_ac12_field returns 0 as a sentinel when the Q-bit
+             * is clear (Gillham 100ft encoding — vendored decoder TODO,
+             * not implemented). Treat altitude==0 as "could not decode"
+             * and keep the previous good value, otherwise an airborne
+             * plane reporting alt=FL350 will flicker to 0 every time
+             * a Gillham-encoded frame slips in. */
+            if (mm->altitude != 0) {
+                a->altitude_ft = (mm->unit == MODE_S_UNIT_METERS)
+                                     ? (int)(mm->altitude * 3.28084 + 0.5)
+                                     : mm->altitude;
+                a->have_altitude = true;
+            }
         } else if (mm->metype == 19) {
             /* Airborne velocity (sub-types 1-4). */
             a->heading_deg     = mm->heading;
@@ -101,8 +110,24 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
         }
     }
 
-    /* DF20 / DF21 (Mode-S long surveillance replies) also report altitude. */
-    if (df == 20 || df == 21) {
+    /* DF20 (Comm-B altitude reply) carries an AC13 altitude field.
+     * DF21 (Comm-B identity reply) occupies the same bit positions
+     * with the Squawk identity code instead — there is NO altitude in
+     * a DF21 frame, and the vendored mode_s_decode() reflects that by
+     * skipping decode_ac13_field() for msgtype 21 (mode-s.c:458-463
+     * only handles DF0/4/16/20). Crucially `struct mode_s_msg mm;` in
+     * mode_s_detect (mode-s.c:804) is uninitialised, so for a DF21
+     * frame `mm->altitude` is whatever the previous decoder call left
+     * on the stack — almost always a neighbour aircraft's recently-
+     * decoded altitude. Ingesting that scribbles random "altitudes"
+     * (often 5000 / 16700 / 33000 ft, depending on what's overhead)
+     * over the real aircraft's known altitude, which is exactly the
+     * "altitude jumps between 5000, 19900, 33000 for CSZ993X" symptom.
+     *
+     * Same sentinel-0 guard as the DF17 path: decode_ac13_field
+     * returns 0 when the M-bit is set (meters mode — vendored decoder
+     * TODO) or when Q=0 / M=0 (Gillham 100ft — also TODO). */
+    if (df == 20 && mm->altitude != 0) {
         a->altitude_ft = (mm->unit == MODE_S_UNIT_METERS)
                              ? (int)(mm->altitude * 3.28084 + 0.5)
                              : mm->altitude;

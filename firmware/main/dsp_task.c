@@ -206,10 +206,19 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
         break;
 
     case 20:
-    case 21:
         s_msgs_df20_21++;
-        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF%d Mode-S long  alt=%d%s",
-                 icao24, mm->msgtype, mm->altitude, unit_str);
+        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF20 Mode-S long  alt=%d%s",
+                 icao24, mm->altitude, unit_str);
+        break;
+
+    case 21:
+        /* DF21 is Comm-B Identity Reply — it carries Squawk identity in
+         * the bits where DF20 has altitude. The vendored decoder doesn't
+         * populate mm->altitude for DF21 (so it's stack residue from the
+         * previous decode); only mm->identity is meaningful here. */
+        s_msgs_df20_21++;
+        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF21 Mode-S long  squawk=%04d",
+                 icao24, mm->identity);
         break;
 
     default:
