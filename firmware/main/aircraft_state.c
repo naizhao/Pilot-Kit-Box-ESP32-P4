@@ -12,13 +12,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 #include "mode-s.h"  /* struct mode_s_msg + MODE_S_UNIT_FEET */
 
-static aircraft_t        s_table[AIRCRAFT_TABLE_CAPACITY];
-static SemaphoreHandle_t s_lock;
+/* s_table lives in PSRAM (EXT_RAM_BSS). aircraft_t grew enough with the
+ * squawk / wake / on_ground additions that keeping all 64 slots in
+ * internal DRAM started squeezing ESP-Hosted's boot-time timer-task
+ * allocation off the heap. Mutex-guarded reads from PSRAM are cheap
+ * enough for the dsp_task ingest path (~30-50 calls/s). */
+static EXT_RAM_BSS_ATTR aircraft_t s_table[AIRCRAFT_TABLE_CAPACITY];
+static SemaphoreHandle_t           s_lock;
 
 static void take_lock(void)    { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void release_lock(void) { xSemaphoreGive(s_lock); }
@@ -53,12 +59,107 @@ static aircraft_t *lookup_or_claim(uint32_t icao24, int64_t now_us)
     return chosen;
 }
 
+/* Decode the ADS-B aircraft category (DF17 metype 1-4) into the
+ * compact pk_wake_t enum. Caller passes the message's metype (1..4 →
+ * Category Sets D/C/B/A — note the ordering is reversed) and mesub
+ * (0..7). Returns PK_WAKE_NONE for combinations we don't categorise. */
+static pk_wake_t decode_wake_category(int metype, int mesub)
+{
+    /* DO-260B Table 2-67: metype 4 = Set A (most common — airborne
+     * powered), metype 3 = Set B (gliders, LTAs, UAV, ...), metype 2
+     * = Set C (surface vehicles), metype 1 = Set D (reserved). */
+    if (metype == 4) {
+        switch (mesub) {
+        case 1: return PK_WAKE_LIGHT;
+        case 2: return PK_WAKE_SMALL;
+        case 3: return PK_WAKE_LARGE;
+        case 4: return PK_WAKE_HIGH_VORTEX;
+        case 5: return PK_WAKE_HEAVY;
+        case 6: return PK_WAKE_HIGH_PERF;
+        case 7: return PK_WAKE_ROTOR;
+        default: return PK_WAKE_NONE;
+        }
+    }
+    if (metype == 3) {
+        switch (mesub) {
+        case 1: return PK_WAKE_GLIDER;
+        case 2: return PK_WAKE_LTA;
+        case 3: return PK_WAKE_PARACHUTE;
+        case 4: return PK_WAKE_ULTRALIGHT;
+        case 6: return PK_WAKE_UAV;
+        case 7: return PK_WAKE_SPACE;
+        default: return PK_WAKE_NONE;
+        }
+    }
+    if (metype == 2) {
+        switch (mesub) {
+        case 1: return PK_WAKE_SURFACE_EMERG;
+        case 3: return PK_WAKE_SURFACE_SERVICE;
+        case 4: case 5: case 6: case 7:
+            return PK_WAKE_SURFACE_OBSTACLE;
+        default: return PK_WAKE_NONE;
+        }
+    }
+    return PK_WAKE_NONE;
+}
+
+char pk_wake_letter(pk_wake_t w)
+{
+    switch (w) {
+    case PK_WAKE_LIGHT:           return 'L';
+    case PK_WAKE_SMALL:           return 'S';
+    case PK_WAKE_LARGE:           return 'M';   /* M = Medium (FAA convention) */
+    case PK_WAKE_HIGH_VORTEX:     return 'V';
+    case PK_WAKE_HEAVY:           return 'H';
+    case PK_WAKE_HIGH_PERF:       return 'F';   /* F = Fast / Fighter */
+    case PK_WAKE_ROTOR:           return 'R';
+    case PK_WAKE_GLIDER:          return 'G';
+    case PK_WAKE_LTA:             return 'B';   /* B = Balloon */
+    case PK_WAKE_PARACHUTE:       return 'P';
+    case PK_WAKE_ULTRALIGHT:      return 'U';
+    case PK_WAKE_UAV:             return 'D';   /* D = Drone */
+    case PK_WAKE_SPACE:           return 'X';
+    case PK_WAKE_SURFACE_EMERG:   return 'E';
+    case PK_WAKE_SURFACE_SERVICE: return 'T';   /* T = Tug / service */
+    case PK_WAKE_SURFACE_OBSTACLE:return 'O';
+    case PK_WAKE_NONE:
+    default:                      return ' ';
+    }
+}
+
+const char *pk_wake_name(pk_wake_t w)
+{
+    switch (w) {
+    case PK_WAKE_LIGHT:            return "Light";
+    case PK_WAKE_SMALL:            return "Small";
+    case PK_WAKE_LARGE:            return "Medium";
+    case PK_WAKE_HIGH_VORTEX:      return "B757-class";
+    case PK_WAKE_HEAVY:            return "Heavy";
+    case PK_WAKE_HIGH_PERF:        return "High-perf";
+    case PK_WAKE_ROTOR:            return "Rotorcraft";
+    case PK_WAKE_GLIDER:           return "Glider";
+    case PK_WAKE_LTA:              return "Balloon/LTA";
+    case PK_WAKE_PARACHUTE:        return "Parachute";
+    case PK_WAKE_ULTRALIGHT:       return "Ultralight";
+    case PK_WAKE_UAV:              return "Drone/UAV";
+    case PK_WAKE_SPACE:            return "Spacecraft";
+    case PK_WAKE_SURFACE_EMERG:    return "Emergency vehicle";
+    case PK_WAKE_SURFACE_SERVICE:  return "Service vehicle";
+    case PK_WAKE_SURFACE_OBSTACLE: return "Surface object";
+    case PK_WAKE_NONE:
+    default:                       return "";
+    }
+}
+
 void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
 {
     if (mm == NULL || !mm->crcok || mm->errorbit >= 0) return;
-    /* Only DF11 / DF17 / DF18 / DF20 / DF21 carry useful per-aircraft data. */
+    /* Only DF5 / DF11 / DF17 / DF18 / DF20 / DF21 carry useful per-aircraft
+     * data. DF5 (surveillance identity reply) carries Squawk; DF20
+     * (Comm-B altitude) carries altitude; DF21 (Comm-B identity) carries
+     * Squawk. Identity-bearing DFs need a separate ingest hook below. */
     const int df = mm->msgtype;
-    if (df != 11 && df != 17 && df != 18 && df != 20 && df != 21) return;
+    if (df != 5 && df != 11 && df != 17 && df != 18 && df != 20 && df != 21) return;
 
     const uint32_t icao24 = ((uint32_t)mm->aa1 << 16)
                           | ((uint32_t)mm->aa2 << 8)
@@ -72,7 +173,9 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
     /* DF17 / DF18 carry the Extended Squitter sub-types. */
     if (df == 17 || df == 18) {
         if (mm->metype >= 1 && mm->metype <= 4) {
-            /* Aircraft identification — callsign. */
+            /* Aircraft identification — callsign + wake category.
+             * metype 1..4 maps to Category Sets D/C/B/A; mesub gives
+             * the in-set position (Light/Small/Large/Heavy/etc.). */
             memcpy(a->callsign, mm->flight, AIRCRAFT_CALLSIGN_LEN - 1);
             a->callsign[AIRCRAFT_CALLSIGN_LEN - 1] = '\0';
             /* Strip dump1090 trailing underscores for nicer display. */
@@ -84,6 +187,14 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
                 }
             }
             a->have_callsign = (a->callsign[0] != '\0');
+            pk_wake_t w = decode_wake_category(mm->metype, mm->mesub);
+            if (w != PK_WAKE_NONE) a->wake = w;
+        } else if (mm->metype >= 5 && mm->metype <= 8) {
+            /* Surface position — aircraft is on the ground (taxi /
+             * runway / apron). Don't try to decode the CPR here; the
+             * surface CPR encoding is different from airborne and not
+             * yet wired through cpr_decode.c. We just flag the state. */
+            a->on_ground = true;
         } else if (mm->metype >= 9 && mm->metype <= 18) {
             /* Airborne position — altitude only (position arrives via CPR
              * path, see aircraft_state_update_position).
@@ -100,15 +211,46 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
                                      : mm->altitude;
                 a->have_altitude = true;
             }
+            /* Airborne position implies the aircraft is no longer on
+             * the ground — clear the on_ground flag so a freshly-
+             * departed aircraft doesn't keep showing the GND badge
+             * after climb-out. */
+            a->on_ground = false;
         } else if (mm->metype == 19) {
-            /* Airborne velocity (sub-types 1-4). */
+            /* Airborne velocity (sub-types 1-4).
+             *
+             * mm->vert_rate is the 9-bit encoded value per RTCA DO-260B
+             * Table 2-69: real fpm = (encoded - 1) * 64; encoded == 0
+             * means "vertical rate information not available". The
+             * vendored decoder (mode-s.c:508) leaves the value un-
+             * scaled, so we apply the conversion here. Without it,
+             * vert_rate_fpm was off by ~×64 (caller saw raw -32 / +2
+             * instead of -1984 / +64 fpm) which also propagated into
+             * gdl90.c's GDL90 emit (divides by 64 again → almost
+             * always 0) and pfd.c's own-ship VS readout. */
             a->heading_deg     = mm->heading;
             a->ground_speed_kt = mm->velocity;
-            a->vert_rate_fpm   = (mm->vert_rate_sign == 0)
-                                     ?  mm->vert_rate
-                                     : -mm->vert_rate;
+            if (mm->vert_rate == 0) {
+                a->vert_rate_fpm = 0;   /* "not available" — leave at 0 */
+            } else {
+                int v_fpm = (mm->vert_rate - 1) * 64;
+                a->vert_rate_fpm = (mm->vert_rate_sign == 0) ? v_fpm : -v_fpm;
+            }
             a->have_velocity   = true;
         }
+    }
+
+    /* DF5 (Surveillance Identity Reply) and DF21 (Comm-B Identity
+     * Reply) both decode the Squawk (4-octal Mode-A code) into
+     * mm->identity. Other DFs leave it as stack residue, so only
+     * ingest from these two. The decoder always populates the
+     * identity field unconditionally (mode-s.c:412-428 is outside
+     * any if-block), but for DF other than 5/21 the bit positions
+     * map to altitude / other things — interpreting those as a
+     * Squawk would be garbage. */
+    if (df == 5 || df == 21) {
+        a->squawk      = mm->identity;
+        a->have_squawk = true;
     }
 
     /* DF20 (Comm-B altitude reply) carries an AC13 altitude field.

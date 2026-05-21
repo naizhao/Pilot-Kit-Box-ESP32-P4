@@ -28,6 +28,31 @@ struct mode_s_msg;  /* forward decl from mode-s.h */
 #define AIRCRAFT_STALE_AGE_US     (60ULL * 1000000ULL)  /* 60 s */
 #define AIRCRAFT_CALLSIGN_LEN     9                     /* 8 chars + NUL */
 
+/* Wake-vortex / aircraft-category enum compatible with ADS-B
+ * Category Sets A/B/C (DO-260B section 2.2.3.2.5.2). The mapping
+ * from raw (metype, mesub) is performed by aircraft_state_ingest.
+ * Single-letter rendering for the list view comes from
+ * pk_wake_letter(); full names from pk_wake_name(). */
+typedef enum {
+    PK_WAKE_NONE = 0,        /* unknown / not yet reported */
+    PK_WAKE_LIGHT,           /* A1 */
+    PK_WAKE_SMALL,           /* A2 */
+    PK_WAKE_LARGE,           /* A3 */
+    PK_WAKE_HIGH_VORTEX,     /* A4 — B757 */
+    PK_WAKE_HEAVY,           /* A5 — B777/A330/... */
+    PK_WAKE_HIGH_PERF,       /* A6 — high-performance / fighter */
+    PK_WAKE_ROTOR,           /* A7 — helicopter */
+    PK_WAKE_GLIDER,          /* B1 */
+    PK_WAKE_LTA,             /* B2 — balloon / blimp */
+    PK_WAKE_PARACHUTE,       /* B3 */
+    PK_WAKE_ULTRALIGHT,      /* B4 */
+    PK_WAKE_UAV,             /* B6 — drone */
+    PK_WAKE_SPACE,           /* B7 — spacecraft */
+    PK_WAKE_SURFACE_EMERG,   /* C1 — emergency vehicle */
+    PK_WAKE_SURFACE_SERVICE, /* C3 — service vehicle */
+    PK_WAKE_SURFACE_OBSTACLE,/* C4..C7 */
+} pk_wake_t;
+
 typedef struct {
     uint32_t icao24;          /* 0 → empty slot */
     int64_t  last_seen_us;
@@ -47,7 +72,24 @@ typedef struct {
     int      heading_deg;     /* 0..359 */
     int      ground_speed_kt;
     int      vert_rate_fpm;   /* signed; positive = climb */
+
+    bool     have_squawk;     /* set when a DF5/DF21 identity reply was
+                                 decoded for this aircraft */
+    int      squawk;          /* 4-digit octal Mode-A code 0000..7777 */
+
+    pk_wake_t wake;           /* PK_WAKE_NONE until DF17 metype 1-4 seen */
+
+    bool     on_ground;       /* true if last position-bearing frame was
+                                 DF17 metype 5-8 (surface position) */
 } aircraft_t;
+
+/* Single-letter abbreviation for the list view (one column). Returns
+ * ' ' (space) for PK_WAKE_NONE so the column renders blank rather than
+ * showing a misleading code. */
+char pk_wake_letter(pk_wake_t w);
+
+/* Human-readable name for the detail pane. Returns "" for PK_WAKE_NONE. */
+const char *pk_wake_name(pk_wake_t w);
 
 /* Reset table. Call once on boot. */
 void aircraft_state_init(void);
