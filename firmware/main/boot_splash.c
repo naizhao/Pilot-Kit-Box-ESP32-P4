@@ -52,6 +52,19 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
 #define LOGO_DISP_W         (PK_LOGO_W / 2)    /* 80 — displayed size */
 #define LOGO_DISP_H         (PK_LOGO_H / 2)
 
+/* The SVG that produced pk_logo.rgb565 bakes in whitespace around the
+ * actual mark — without compensation, the displayed logo sits well
+ * inside the card with too much margin. We crop LOGO_SRC_CROP source
+ * pixels off each side so only the central content area gets sampled
+ * into the 80×80 display window. With crop=24, effective source area
+ * is 112×112 → effective zoom = 160/112 ≈ 1.43× vs straight 2:1
+ * decimation, i.e. the logo content appears ~43% bigger on the card.
+ * Bump if even more zoom is needed (cap at ~36 before the content
+ * itself starts getting clipped). */
+#define LOGO_SRC_CROP       24
+#define LOGO_SRC_USED_W     (PK_LOGO_W - 2 * LOGO_SRC_CROP)
+#define LOGO_SRC_USED_H     (PK_LOGO_H - 2 * LOGO_SRC_CROP)
+
 /* Layout — keep card and logo concentric so the white margin around
  * the logo is even on all sides. Card sized to enclose the 80×80
  * displayed logo with a 10 px white margin on each side; the whole
@@ -132,17 +145,21 @@ static void blit_logo(uint16_t *fb, int dst_x, int dst_y)
     const uint16_t *src = (const uint16_t *)pk_logo_start;
     /* The embedded blob is PK_LOGO_W × PK_LOGO_H × 2 bytes, pre-packed
      * in the same little-endian RGB565 format the panel uses on the
-     * wire. We display it at LOGO_DISP_W × LOGO_DISP_H (half size)
-     * via 2:1 nearest-neighbour decimation — pick every other column
-     * of every other row. The logo is mostly large solid regions so
-     * the lack of filtering doesn't show. */
+     * wire. We sample the central LOGO_SRC_USED_{W,H} pixels (skipping
+     * LOGO_SRC_CROP px of SVG whitespace on each side) and resample to
+     * LOGO_DISP_W × LOGO_DISP_H via nearest-neighbour — gives a tighter
+     * zoom into the actual logo content than a straight 2:1 decimation.
+     * Step ratio is LOGO_SRC_USED_W / LOGO_DISP_W, kept in integer
+     * fixed-point (×LOGO_DISP_W) to avoid floats in the hot path. */
     for (int dy = 0; dy < LOGO_DISP_H; ++dy) {
         int fy = dst_y + dy;
         if (fy < 0 || fy >= PK_DISPLAY_H) continue;
+        int src_y = LOGO_SRC_CROP + (dy * LOGO_SRC_USED_H) / LOGO_DISP_H;
         uint16_t       *row_dst = fb + fy * PK_DISPLAY_W + dst_x;
-        const uint16_t *row_src = src + (dy * 2) * PK_LOGO_W;
+        const uint16_t *row_src = src + src_y * PK_LOGO_W;
         for (int dx = 0; dx < LOGO_DISP_W; ++dx) {
-            row_dst[dx] = row_src[dx * 2];
+            int src_x = LOGO_SRC_CROP + (dx * LOGO_SRC_USED_W) / LOGO_DISP_W;
+            row_dst[dx] = row_src[src_x];
         }
     }
 }
