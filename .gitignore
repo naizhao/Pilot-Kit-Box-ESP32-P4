@@ -1,5 +1,13 @@
 docs/internal/*
 
+# Per-developer plan / spec working directory (superpowers workflow).
+# Each agent / developer accumulates plans + specs locally; these are
+# work-in-progress notes, not project deliverables, and should never
+# enter the shared history. (We learned the hard way after some agent
+# committed superpowers/ contents into unrelated firmware commits —
+# scrubbed via git-filter-repo on 2026-05-21.)
+docs/superpowers/
+
 # Per-machine ESP-IDF Manager (eim) install path; each developer's tree
 # differs and bringing this into git churns on every machine switch.
 eim_config.toml
