@@ -5,6 +5,7 @@ idf_component_register(
         "dsp_task.c"
         "cpr_decode.c"
         "aircraft_state.c"
+        "aircraft_db.c"
         "gdl90.c"
         "ble_gatt.c"
         "record_sink.c"
@@ -34,6 +35,11 @@ idf_component_register(
         # Pilot-Kit-Dashboard/public/pilot-kit-export-logo.png).
         # Linked into .rodata via _binary_pk_logo_rgb565_{start,end}.
         "pk_logo.rgb565"
+        # Compact ICAO24 → aircraft type/model database (~2.4 MB,
+        # ~500 k records). Generated offline by
+        # firmware/scripts/gen_aircraft_db.py from the tar1090-db dump.
+        # Linked into .rodata via _binary_aircraft_db_bin_{start,end}.
+        "aircraft_db.bin"
     REQUIRES
         esp32-rtl-sdr            # our patched RTL-SDR driver component
         espressif__usb           # USB host library (was core `usb` pre-IDF v6.0)

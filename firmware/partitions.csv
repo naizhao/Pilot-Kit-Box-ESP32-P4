@@ -2,13 +2,22 @@
 #
 #   nvs        24 KiB   Wi-Fi/BLE provisioning + app config (Phase 3 onward)
 #   phy_init    4 KiB   RF calibration (kept for ESP-Hosted slave on C6)
-#   factory     4 MiB   main firmware (currently ~300 KiB, leaves Phase 3+4 room)
-#   storage    16 MiB   LittleFS for on-board ADS-B ts-format dumps
+#   factory    10 MiB   main firmware — bumped from 4 MiB to hold the
+#                       embedded ICAO24 → type/model/registration DB
+#                       (aircraft_db.bin ≈ 8 MB) alongside the ~1 MB app
+#   storage    10 MiB   LittleFS for on-board ADS-B ts-format dumps
+#                       (shrunk from 16 MiB; still holds the 12 × 1 MiB
+#                       rotation comfortably)
 #
-# Total used: ~20 MiB of 32 MiB; remaining 12 MiB reserved for future OTA pair.
+# Total used: ~20.5 MiB of 32 MiB; remaining ~11.5 MiB reserved for future
+# OTA pair / aircraft-DB updates.
+#
+# WARNING: changing factory partition size shifts the storage partition's
+# offset, which makes any existing storage data unreadable on first boot
+# after re-flashing. LittleFS will auto-reformat on mount.
 #
 # Name,     Type, SubType,  Offset,    Size,    Flags
 nvs,        data, nvs,      0x9000,    0x6000,
 phy_init,   data, phy,      0xf000,    0x1000,
-factory,    app,  factory,  0x10000,   0x400000,
-storage,    data, spiffs,   ,          0x1000000,
+factory,    app,  factory,  0x10000,   0xa00000,
+storage,    data, spiffs,   ,          0xa00000,
