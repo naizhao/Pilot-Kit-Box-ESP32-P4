@@ -28,6 +28,7 @@
 | 我想… | 看这份文档 |
 |------|----------|
 | **从零开始把固件跑起来**（clone、装环境、编译、烧录） | 📖 [`docs/BUILD.md`](docs/BUILD.md) |
+| **给已出厂设备发布 / 网页更新 ESP32-P4 固件** | 🌐 [`docs/firmware_update.md`](docs/firmware_update.md) |
 | 看系统跑起来后的任务 / 数据流架构 | 🏗️ [`docs/architecture.md`](docs/architecture.md) |
 | 调整 sdkconfig（开关 BLE、改频率、改分区等） | ⚙️ [`docs/configuration.md`](docs/configuration.md) |
 | 给 Pilot Kit 移动 App 做 BLE 集成 | 📱 [`docs/ble_protocol.md`](docs/ble_protocol.md) |

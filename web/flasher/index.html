@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pilot Kit Box ESP32-P4 固件更新</title>
+    <meta
+      name="description"
+      content="Pilot Kit Box ESP32-P4 browser firmware updater"
+    />
+    <script
+      type="module"
+      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+    ></script>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #19212a;
+        --muted: #526171;
+        --line: #d7dde4;
+        --panel: #ffffff;
+        --page: #f3f6f8;
+        --accent: #0d6efd;
+        --accent-dark: #064eb4;
+        --ok: #15803d;
+        --warn: #a16207;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px 16px;
+      }
+
+      .shell {
+        width: min(920px, 100%);
+        display: grid;
+        gap: 20px;
+      }
+
+      .header {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 18px;
+        align-items: center;
+      }
+
+      .mark {
+        width: 58px;
+        height: 58px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0f1720;
+        color: white;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 42px);
+        line-height: 1.06;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 22px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .item {
+        padding: 14px;
+        min-height: 94px;
+        border-right: 1px solid var(--line);
+        background: #fbfcfd;
+      }
+
+      .item:last-child {
+        border-right: 0;
+      }
+
+      .label {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .value {
+        display: block;
+        margin-top: 8px;
+        font-size: 15px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+      }
+
+      esp-web-install-button {
+        --esp-tools-button-color: var(--accent);
+        --esp-tools-button-text-color: #ffffff;
+        --esp-tools-button-border-radius: 8px;
+      }
+
+      button[slot="activate"] {
+        min-height: 48px;
+        border: 0;
+        border-radius: 8px;
+        padding: 0 18px;
+        background: var(--accent);
+        color: white;
+        font: inherit;
+        font-weight: 750;
+        cursor: pointer;
+      }
+
+      button[slot="activate"]:hover {
+        background: var(--accent-dark);
+      }
+
+      .download {
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 16px;
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 700;
+        background: #fff;
+      }
+
+      .note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .status {
+        display: grid;
+        gap: 10px;
+      }
+
+      .status p {
+        margin: 0;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfd;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .status strong {
+        color: var(--ink);
+      }
+
+      @media (max-width: 720px) {
+        main {
+          place-items: start;
+        }
+
+        .header {
+          grid-template-columns: 1fr;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .item {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .item:last-child {
+          border-bottom: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="shell">
+        <header class="header">
+          <div class="mark" aria-hidden="true">PK</div>
+          <div>
+            <h1>Pilot Kit Box ESP32-P4 固件更新</h1>
+            <p class="subtitle">
+              为已出厂预刷 C6 的设备更新 ESP32-P4 主固件。请使用 Chrome 或 Edge，并连接靠近 BOOT 按键的 Type-C 数据口。
+            </p>
+          </div>
+        </header>
+
+        <section class="panel" aria-label="固件更新">
+          <div class="grid">
+            <div class="item">
+              <span class="label">目标芯片</span>
+              <span class="value">ESP32-P4</span>
+            </div>
+            <div class="item">
+              <span class="label">刷写清单</span>
+              <span class="value">firmware/esp32p4/latest/manifest-esp32p4.json</span>
+            </div>
+            <div class="item">
+              <span class="label">更新范围</span>
+              <span class="value">P4 主固件，不更新 ESP32-C6</span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <esp-web-install-button
+              manifest="firmware/esp32p4/latest/manifest-esp32p4.json"
+            >
+              <button slot="activate">连接并刷入 ESP32-P4 固件</button>
+              <span slot="unsupported">当前浏览器不支持 Web Serial。请使用 Chrome 或 Edge。</span>
+              <span slot="not-allowed">刷写页面需要通过 HTTPS 或 localhost 打开。</span>
+            </esp-web-install-button>
+            <a
+              class="download"
+              href="https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/releases/latest"
+              >下载 esp32p4 bin</a
+            >
+          </div>
+
+          <div class="status">
+            <p>
+              <strong>正常更新：</strong>选择连接设备后，网页会写入一个 merged factory bin，刷写地址为 0x0。
+            </p>
+            <p>
+              <strong>数据保留：</strong>ESP Web Tools 会在必要时询问是否擦除数据；普通升级选择保留数据。
+            </p>
+          </div>
+
+          <p class="note">
+            如果连接失败，按住 BOOT，短按 RESET，松开 BOOT 后再次连接。
+          </p>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

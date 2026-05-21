@@ -1,0 +1,116 @@
+name: Release ESP32-P4 firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "esp32p4-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label used for packaged ESP32-P4 assets"
+        required: true
+        default: "manual-esp32p4"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "esp32p4-firmware-${{ github.ref }}"
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
+jobs:
+  build:
+    name: Build and package ESP32-P4 firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build ESP-IDF project and package release assets
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32p4
+          path: firmware
+          command: |
+            bash -lc '
+              set -euo pipefail
+              export ESP_IDF_VERSION=6.0
+              idf.py set-target esp32p4
+              idf.py build
+              python ../tools/firmware_release/prepare_esp32p4_release.py \
+                --build-dir build \
+                --dist-dir ../dist \
+                --web-dir ../web/flasher \
+                --version "$RELEASE_VERSION"
+            '
+
+      - name: Upload firmware package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-kit-box-esp32p4-${{ env.RELEASE_VERSION }}
+          path: dist/release/*
+          if-no-files-found: error
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/site
+
+      - name: Publish GitHub Release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="dist/release/RELEASE_NOTES-esp32p4.md"
+          cat > "$notes" <<EOF
+          Pilot Kit Box ESP32-P4 firmware ${RELEASE_VERSION}
+
+          User-facing update path:
+          - Open the GitHub Pages firmware updater.
+          - Connect the ESP32-P4 Type-C serial port.
+          - Flash the latest ESP32-P4 firmware from the browser.
+
+          Release assets intentionally include "esp32p4" in their filenames so future board families can coexist safely.
+          This release updates only the ESP32-P4 main firmware. It does not update the ESP32-C6 hosted slave firmware.
+          EOF
+
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_VERSION" dist/release/* --clobber
+          else
+            gh release create "$RELEASE_VERSION" dist/release/* \
+              --title "Pilot Kit Box ESP32-P4 ${RELEASE_VERSION}" \
+              --notes-file "$notes"
+          fi
+
+  deploy-pages:
+    name: Deploy firmware updater to GitHub Pages
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
