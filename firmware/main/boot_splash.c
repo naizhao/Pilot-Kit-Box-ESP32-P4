@@ -19,17 +19,20 @@
  *
  *   y =   0   ╔═══════════════════════════════════╗
  *             ║                                    ║
- *   y =   4   ║         ╭──────────────────╮       ║  ← rounded white card,
- *             ║         │                  │       ║    170×170, r=12
- *             ║         │     [LOGO]       │       ║
- *             ║         │    160×160       │       ║
- *             ║         ╰──────────────────╯       ║
- *   y = 182   ║         PILOT KIT BOX              ║  scale-2 title
- *   y = 204   ║         Booting abc1234 ...        ║  scale-1 version
+ *             ║                                    ║
+ *   y =  50   ║              ╭────────╮            ║  ← rounded white card,
+ *             ║              │ [LOGO] │            ║    100×100, r=8
+ *             ║              │ 80×80  │            ║
+ *             ║              ╰────────╯            ║
+ *   y = 158   ║         PILOT KIT BOX              ║  scale-2 title
+ *   y = 180   ║         Booting abc1234 ...        ║  scale-1 version
  *   y = 240   ╚═══════════════════════════════════╝
  *
- * Static rendering only — once the PFD task starts spinning the next
- * frame will overwrite us. No animation needed.
+ * The 160×160 source blob is downsampled 2:1 (nearest-neighbour) to
+ * 80×80 on screen — the logo file in flash stays unchanged, only the
+ * blit reads every other source pixel. Static rendering only — once
+ * the PFD task starts spinning the next frame will overwrite us. No
+ * animation needed.
  */
 
 #include "boot_splash.h"
@@ -44,24 +47,26 @@
 extern const uint8_t pk_logo_start[] asm("_binary_pk_logo_rgb565_start");
 extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
 
-#define PK_LOGO_W 160
-#define PK_LOGO_H 160
+#define PK_LOGO_W           160                /* source blob in flash */
+#define PK_LOGO_H           160
+#define LOGO_DISP_W         (PK_LOGO_W / 2)    /* 80 — displayed size */
+#define LOGO_DISP_H         (PK_LOGO_H / 2)
 
 /* Layout — keep card and logo concentric so the white margin around
- * the logo is even on all sides. Landscape 320x240 leaves less
- * vertical room than the old portrait layout, so the card is sized
- * just enough to enclose the native 160x160 logo with a 5 px white
- * margin on each side; title + version stack below. */
-#define CARD_W              170
-#define CARD_H              170
-#define CARD_RADIUS         12
-#define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)   /* 75 */
-#define CARD_Y              4
-#define LOGO_X              (CARD_X + (CARD_W - PK_LOGO_W) / 2)   /* 80 */
-#define LOGO_Y              (CARD_Y + (CARD_H - PK_LOGO_H) / 2)   /* 9  */
+ * the logo is even on all sides. Card sized to enclose the 80×80
+ * displayed logo with a 10 px white margin on each side; the whole
+ * content block (card + title + version) is vertically centered in
+ * the 240-tall panel. */
+#define CARD_W              100
+#define CARD_H              100
+#define CARD_RADIUS         8
+#define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)        /* 110 */
+#define CARD_Y              50
+#define LOGO_X              (CARD_X + (CARD_W - LOGO_DISP_W) / 2)/* 120 */
+#define LOGO_Y              (CARD_Y + (CARD_H - LOGO_DISP_H) / 2)/* 60  */
 
-#define TITLE_Y             (CARD_Y + CARD_H + 8)           /* 182 */
-#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + 6)  /* 204 */
+#define TITLE_Y             (CARD_Y + CARD_H + 8)                /* 158 */
+#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + 6)    /* 180 */
 
 /* Palette */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
@@ -125,16 +130,20 @@ static void fill_rounded_rect(uint16_t *fb,
 static void blit_logo(uint16_t *fb, int dst_x, int dst_y)
 {
     const uint16_t *src = (const uint16_t *)pk_logo_start;
-    /* The embedded blob is exactly PK_LOGO_W × PK_LOGO_H × 2 bytes,
-     * pre-packed in the same little-endian RGB565 format the panel
-     * uses on the wire, so memcpy of one source row into the
-     * destination row is exact. */
-    for (int y = 0; y < PK_LOGO_H; ++y) {
-        int fy = dst_y + y;
+    /* The embedded blob is PK_LOGO_W × PK_LOGO_H × 2 bytes, pre-packed
+     * in the same little-endian RGB565 format the panel uses on the
+     * wire. We display it at LOGO_DISP_W × LOGO_DISP_H (half size)
+     * via 2:1 nearest-neighbour decimation — pick every other column
+     * of every other row. The logo is mostly large solid regions so
+     * the lack of filtering doesn't show. */
+    for (int dy = 0; dy < LOGO_DISP_H; ++dy) {
+        int fy = dst_y + dy;
         if (fy < 0 || fy >= PK_DISPLAY_H) continue;
-        memcpy(fb + fy * PK_DISPLAY_W + dst_x,
-               src + y * PK_LOGO_W,
-               PK_LOGO_W * sizeof(uint16_t));
+        uint16_t       *row_dst = fb + fy * PK_DISPLAY_W + dst_x;
+        const uint16_t *row_src = src + (dy * 2) * PK_LOGO_W;
+        for (int dx = 0; dx < LOGO_DISP_W; ++dx) {
+            row_dst[dx] = row_src[dx * 2];
+        }
     }
 }
 
