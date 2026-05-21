@@ -39,6 +39,13 @@
  */
 #define PK_IQ_RINGBUF_SIZE_BYTES (512 * 1024)
 
+/* Boot splash minimum on-screen time. Init work (IMU/UI/buttons/BLE/
+ * SDR) overlaps with this hold, so we only sleep for the remainder
+ * if init was faster than the target. 3 s is long enough to read the
+ * version line and watch the panel stabilise; bump to 5000 if you
+ * want to admire the logo. */
+#define PK_BOOT_SPLASH_MIN_MS    3000
+
 extern RingbufHandle_t g_iq_ringbuf;
 
 /* --- Task entry points ------------------------------------------------- */

@@ -23,6 +23,7 @@
 #include "usb/usb_host.h"
 
 #include "pilot_kit.h"
+#include "aircraft_db.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
@@ -198,6 +199,11 @@ void app_main(void)
      * into it. */
     aircraft_state_init();
 
+    /* Validate the embedded ICAO24 → type/model database (aircraft_db.bin
+     * in .rodata). Bad header is non-fatal — lookups will silently return
+     * NULL and the UI just falls back to "----" for the TYPE column. */
+    pk_aircraft_db_init();
+
     /* Bring the ADS-B record sinks up before the producer starts. The
      * file sink mounts LittleFS and may take ~50 ms on first boot (it
      * formats the partition automatically). The UART sink is always
@@ -219,11 +225,14 @@ void app_main(void)
 
     /* Phase 4a: bring up the LCD and paint the boot splash (logo +
      * "Booting ..." text). The splash stays on screen until the PFD
-     * render task starts ~1 s later — gives the user something to
-     * look at instead of staring at the test pattern (or worse,
-     * the transflective panel's bare backlight) through the
-     * USB/SDIO/IMU init storm. */
+     * render task starts — we time-stamp here and enforce a minimum
+     * hold (PK_BOOT_SPLASH_MIN_MS) just before pk_pfd_start() below
+     * so the user can read the logo + version even if init finishes
+     * quickly. Init work (IMU/UI/buttons/BLE/SDR) happens during the
+     * visible splash window and counts against the hold, so we only
+     * sleep if init was faster than the target. */
     esp_err_t lcd_err = pk_display_init();
+    int64_t splash_shown_us = 0;
     if (lcd_err != ESP_OK) {
         ESP_LOGW(TAG, "display init failed (%s) — running headless",
                  esp_err_to_name(lcd_err));
@@ -231,6 +240,7 @@ void app_main(void)
         pk_boot_splash_render(pk_display_framebuffer());
         (void)pk_display_flush_full();
         pk_display_set_brightness(180);
+        splash_shown_us = esp_timer_get_time();
     }
 
     /* Phase 4b: BNO085 IMU. Failure is non-fatal — the rest of the
@@ -262,8 +272,28 @@ void app_main(void)
     }
 
     /* Phase 4c: PFD render task. Starts after the display + IMU init
-     * so it can read both straight away. Survives either failing. */
+     * so it can read both straight away. Survives either failing.
+     *
+     * Before kicking the PFD render task, make sure the boot splash
+     * has been visible for at least PK_BOOT_SPLASH_MIN_MS. Init work
+     * above has already used some of that budget; we only sleep for
+     * the remainder. */
     if (lcd_err == ESP_OK) {
+        const int64_t splash_min_ms = PK_BOOT_SPLASH_MIN_MS;
+        int64_t elapsed_ms = (esp_timer_get_time() - splash_shown_us) / 1000;
+        int64_t remaining_ms = splash_min_ms - elapsed_ms;
+        if (remaining_ms > 0) {
+            ESP_LOGI(TAG, "splash hold: init took %lld ms, sleeping %lld ms "
+                          "more (target %lld ms)",
+                     (long long)elapsed_ms,
+                     (long long)remaining_ms,
+                     (long long)splash_min_ms);
+            vTaskDelay(pdMS_TO_TICKS(remaining_ms));
+        } else {
+            ESP_LOGI(TAG, "splash hold: init took %lld ms (≥ %lld ms target), "
+                          "no extra wait",
+                     (long long)elapsed_ms, (long long)splash_min_ms);
+        }
         esp_err_t pfd_err = pk_pfd_start();
         if (pfd_err != ESP_OK) {
             ESP_LOGW(TAG, "PFD start failed (%s)", esp_err_to_name(pfd_err));
