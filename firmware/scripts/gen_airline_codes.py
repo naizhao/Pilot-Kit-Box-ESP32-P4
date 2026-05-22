@@ -194,6 +194,10 @@ MANUAL_ADDITIONS: list[tuple[str, str, str]] = [
     ("EPA", "DZ", "Donghai Airlines"),               # 东海航空
     ("AHK", "LD", "AHK Air Hong Kong"),              # 香港华民航空 / DHL
     ("HKC", "RH", "Hongkong Air Cargo"),             # 香港货运航空
+    # IATA fixups — Wikipedia lists these without an IATA code but the
+    # carrier actually has one. Without an IATA the list-view fmt_call
+    # path would print just the flight number (e.g. "RLH5301" → "5301").
+    ("RLH", "DR", "Ruili Airlines"),                 # 瑞丽航空
 ]
 
 

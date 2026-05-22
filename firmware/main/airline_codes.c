@@ -4049,7 +4049,7 @@ static const pk_airline_t s_airlines[] = {
     { "RKW", "", "Rockwell Collins Avionics" },
     { "RLA", "A5", "Airlinair" },
     { "RLE", "C7", "Rico Linhas Aéreas" },
-    { "RLH", "", "Ruili Airlines" },
+    { "RLH", "DR", "Ruili Airlines" },
     { "RLI", "", "Reliant Air" },
     { "RLL", "", "Air Leone" },
     { "RLM", "", "Royal American Airways" },
