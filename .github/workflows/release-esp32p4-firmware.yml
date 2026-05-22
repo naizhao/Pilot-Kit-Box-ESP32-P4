@@ -93,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          notes="dist/release/RELEASE_NOTES-esp32p4.md"
+          notes="${RUNNER_TEMP}/RELEASE_NOTES-esp32p4.md"
           cat > "$notes" <<EOF
           Pilot Kit Box ESP32-P4 firmware ${RELEASE_VERSION}
 

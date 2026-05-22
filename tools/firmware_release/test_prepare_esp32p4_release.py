@@ -99,6 +99,14 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn("if: steps.pages.outputs.enabled == 'true'", text)
         self.assertIn("needs.build.outputs.pages-enabled == 'true'", text)
 
+    def test_release_workflow_writes_notes_outside_docker_owned_dist(self):
+        workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
+
+        text = workflow.read_text("utf-8")
+
+        self.assertIn('notes="${RUNNER_TEMP}/RELEASE_NOTES-esp32p4.md"', text)
+        self.assertNotIn('notes="dist/release/RELEASE_NOTES-esp32p4.md"', text)
+
     def test_firmware_update_docs_explain_version_source(self):
         docs = REPO_ROOT / "docs" / "firmware_update.md"
 
