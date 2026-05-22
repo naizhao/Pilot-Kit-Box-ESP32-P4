@@ -80,7 +80,12 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
 
         text = workflow.read_text("utf-8")
 
+        self.assertIn('RELEASE_VERSION="${{ env.RELEASE_VERSION }}"', text)
         self.assertIn('RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"', text)
+        self.assertLess(
+            text.index('RELEASE_VERSION="${{ env.RELEASE_VERSION }}"'),
+            text.index('RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"'),
+        )
         self.assertIn('idf.py -DPROJECT_VER="$RELEASE_VERSION" build', text)
         self.assertNotIn("bash -lc", text)
 

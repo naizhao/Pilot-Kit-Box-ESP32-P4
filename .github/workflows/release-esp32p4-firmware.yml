@@ -44,6 +44,7 @@ jobs:
           command: |
             set -euo pipefail
             export ESP_IDF_VERSION=6.0
+            RELEASE_VERSION="${{ env.RELEASE_VERSION }}"
             RELEASE_VERSION="${RELEASE_VERSION#refs/tags/}"
             RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"
             idf.py set-target esp32p4
