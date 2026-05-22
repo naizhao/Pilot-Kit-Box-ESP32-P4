@@ -160,7 +160,7 @@ static void fmt_call_column(char *buf, size_t cap, const aircraft_t *a)
     }
     const char *flight_no = NULL;
     const pk_airline_t *air = pk_airline_from_callsign(raw, &flight_no);
-    if (air && air->iata2 && flight_no && flight_no[0]) {
+    if (air && air->iata2 && air->iata2[0] && flight_no && flight_no[0]) {
         snprintf(buf, cap, "%s%s", air->iata2, flight_no);
     } else {
         snprintf(buf, cap, "%s", raw);
@@ -496,7 +496,7 @@ static void render_detail(uint16_t *fb, int detail_top_y,
         } else {
             const char *flight_no = NULL;
             const pk_airline_t *air = pk_airline_from_callsign(raw, &flight_no);
-            if (air && air->iata2 && flight_no && flight_no[0]) {
+            if (air && air->iata2 && air->iata2[0] && flight_no && flight_no[0]) {
                 snprintf(buf, sizeof(buf), "%s  ->  %s%s",
                          raw, air->iata2, flight_no);
             } else {
