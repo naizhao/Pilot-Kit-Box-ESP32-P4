@@ -42,19 +42,17 @@ jobs:
           target: esp32p4
           path: firmware
           command: |
-            bash -lc '
-              set -euo pipefail
-              export ESP_IDF_VERSION=6.0
-              RELEASE_VERSION="${RELEASE_VERSION#refs/tags/}"
-              RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"
-              idf.py set-target esp32p4
-              idf.py -DPROJECT_VER="$RELEASE_VERSION" build
-              python ../tools/firmware_release/prepare_esp32p4_release.py \
-                --build-dir build \
-                --dist-dir ../dist \
-                --web-dir ../web/flasher \
-                --version "$RELEASE_VERSION"
-            '
+            set -euo pipefail
+            export ESP_IDF_VERSION=6.0
+            RELEASE_VERSION="${RELEASE_VERSION#refs/tags/}"
+            RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"
+            idf.py set-target esp32p4
+            idf.py -DPROJECT_VER="$RELEASE_VERSION" build
+            python ../tools/firmware_release/prepare_esp32p4_release.py \
+              --build-dir build \
+              --dist-dir ../dist \
+              --web-dir ../web/flasher \
+              --version "$RELEASE_VERSION"
 
       - name: Upload firmware package artifact
         uses: actions/upload-artifact@v4

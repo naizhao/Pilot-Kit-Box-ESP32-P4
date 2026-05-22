@@ -82,6 +82,7 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
 
         self.assertIn('RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"', text)
         self.assertIn('idf.py -DPROJECT_VER="$RELEASE_VERSION" build', text)
+        self.assertNotIn("bash -lc", text)
 
     def test_firmware_update_docs_explain_version_source(self):
         docs = REPO_ROOT / "docs" / "firmware_update.md"
