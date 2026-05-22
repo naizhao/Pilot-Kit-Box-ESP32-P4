@@ -10,10 +10,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class Esp32p4ReleasePlanTest(unittest.TestCase):
     def test_default_version_reads_firmware_version_file(self):
-        self.assertEqual(release.default_version(), "v0.4.0")
+        self.assertEqual(release.default_version(), "v0.5.0")
 
     def test_normalize_version_strips_board_tag_prefix(self):
-        self.assertEqual(release.normalize_version("refs/tags/esp32p4-v0.4.0"), "v0.4.0")
+        self.assertEqual(release.normalize_version("refs/tags/esp32p4-v0.5.0"), "v0.5.0")
 
     def test_artifact_names_include_board_id(self):
         names = release.artifact_names("v1.2.3")
