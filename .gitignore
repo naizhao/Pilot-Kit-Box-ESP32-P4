@@ -7,6 +7,7 @@ docs/internal/*
 # committed superpowers/ contents into unrelated firmware commits —
 # scrubbed via git-filter-repo on 2026-05-21.)
 docs/superpowers/
+.superpowers/
 
 # Per-machine ESP-IDF Manager (eim) install path; each developer's tree
 # differs and bringing this into git churns on every machine switch.
