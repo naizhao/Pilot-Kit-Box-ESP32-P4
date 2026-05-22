@@ -89,6 +89,16 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn('idf.py -DPROJECT_VER="$RELEASE_VERSION" build', text)
         self.assertNotIn("bash -lc", text)
 
+    def test_release_workflow_skips_pages_when_pages_is_not_enabled(self):
+        workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
+
+        text = workflow.read_text("utf-8")
+
+        self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/pages"', text)
+        self.assertIn('echo "enabled=false" >> "$GITHUB_OUTPUT"', text)
+        self.assertIn("if: steps.pages.outputs.enabled == 'true'", text)
+        self.assertIn("needs.build.outputs.pages-enabled == 'true'", text)
+
     def test_firmware_update_docs_explain_version_source(self):
         docs = REPO_ROOT / "docs" / "firmware_update.md"
 
