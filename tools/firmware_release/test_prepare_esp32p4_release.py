@@ -97,7 +97,11 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/pages"', text)
         self.assertIn('echo "enabled=false" >> "$GITHUB_OUTPUT"', text)
         self.assertIn("if: steps.pages.outputs.enabled == 'true'", text)
-        self.assertIn("needs.build.outputs.pages-enabled == 'true'", text)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", text)
+        self.assertIn(
+            "if: github.event_name == 'workflow_dispatch' && needs.build.outputs.pages-enabled == 'true'",
+            text,
+        )
 
     def test_release_workflow_writes_notes_outside_docker_owned_dist(self):
         workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
