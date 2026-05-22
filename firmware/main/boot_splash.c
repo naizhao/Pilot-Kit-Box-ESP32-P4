@@ -216,7 +216,7 @@ void pk_boot_splash_render(uint16_t *fb)
     const esp_app_desc_t *app = esp_app_get_description();
     char line[64];
 
-    /* Line 1 — "Booting <git-hash> ..." (kept as before). */
+    /* Line 1 — "Booting <product-version> ...". */
     if (app) {
         snprintf(line, sizeof(line), "Booting %.32s ...", app->version);
     } else {

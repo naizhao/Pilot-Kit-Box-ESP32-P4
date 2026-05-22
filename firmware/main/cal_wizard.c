@@ -17,12 +17,12 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
 #include "esp_timer.h"
 
 #include "display.h"
-#include "pfd_font.h"
+#include "i18n.h"
+#include "text.h"
 #include "ui_state.h"
 
 /* Layout — landscape 320×240. Figure-8 sits in the top 60% of the
@@ -127,9 +127,10 @@ static void draw_progress_bar(uint16_t *fb, uint8_t accuracy)
 
     /* Numeric label below the bar */
     char buf[40];
-    snprintf(buf, sizeof(buf), "Quality:  %u / 3", accuracy);
-    int label_w = (int)strlen(buf) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+    snprintf(buf, sizeof(buf), "%s:  %u / 3",
+             pk_i18n_text(PK_TR_CAL_QUALITY), accuracy);
+    int label_w = pk_text_width(buf, 1);
+    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                  (PK_DISPLAY_W - label_w) / 2, WZ_BAR_Y + WZ_BAR_H + 4,
                  buf, COL_INSTR, 1);
 }
@@ -140,25 +141,25 @@ void pk_cal_wizard_render(uint16_t *fb)
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
     /* Header */
-    const char *hdr = "COMPASS CAL";
-    int hdr_w = (int)strlen(hdr) * PK_FONT_CELL_W(2);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - hdr_w) / 2, 8, hdr, COL_HEADER, 2);
+    const char *hdr = pk_i18n_text(PK_TR_CAL_TITLE);
+    int hdr_w = pk_text_title_width(hdr);
+    pk_text_puts_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                       (PK_DISPLAY_W - hdr_w) / 2, 8, hdr, COL_HEADER);
 
     /* Figure-8 outline + moving dot */
     draw_outline(fb);
     draw_animated_dot(fb);
 
     /* Instruction lines */
-    const char *line1 = "Move device in a figure-8";
-    const char *line2 = "rotating in all directions";
-    int w1 = (int)strlen(line1) * PK_FONT_CELL_W(1);
-    int w2 = (int)strlen(line2) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+    const char *line1 = pk_i18n_text(PK_TR_CAL_LINE1);
+    const char *line2 = pk_i18n_text(PK_TR_CAL_LINE2);
+    int w1 = pk_text_width(line1, 1);
+    int w2 = pk_text_width(line2, 1);
+    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                  (PK_DISPLAY_W - w1) / 2, WZ_INSTR_Y,
                  line1, COL_INSTR, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - w2) / 2, WZ_INSTR_Y + 12,
+    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 (PK_DISPLAY_W - w2) / 2, WZ_INSTR_Y + 16,
                  line2, COL_INSTR, 1);
 
     /* Progress bar driven by latest accuracy */
@@ -166,9 +167,9 @@ void pk_cal_wizard_render(uint16_t *fb)
     draw_progress_bar(fb, acc);
 
     /* Footer hint */
-    const char *foot = "Press MODE to skip";
-    int fw = (int)strlen(foot) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - fw) / 2, PK_DISPLAY_H - 14,
+    const char *foot = pk_i18n_text(PK_TR_CAL_FOOTER);
+    int fw = pk_text_width(foot, 1);
+    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 (PK_DISPLAY_W - fw) / 2, PK_DISPLAY_H - 18,
                  foot, COL_INSTR_DIM, 1);
 }

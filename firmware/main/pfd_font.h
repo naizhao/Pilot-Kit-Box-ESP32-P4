@@ -1,14 +1,15 @@
 /*
  * pfd_font.h — PFD font helpers.
  *
- * Scale-1 and fallback rendering use a dependency-free 5×7 ASCII bitmap.
- * Scale-2 first tries the generated 4bpp alpha glyph subset in
- * `pfd_font_aa.c`, giving the primary English/numeric PFD readouts
- * antialiased edges while preserving the existing fixed 12×16 cell.
+ * Scale-1 and normal scaled rendering use a dependency-free 5×7 ASCII
+ * bitmap. PFD numeric readouts can opt into a generated 1-bit cockpit
+ * glyph subset in `pfd_font_aa.c`, preserving the fixed 12×16 cell
+ * without gray antialiasing fringes or TTF hinting artifacts.
  *
- * Any integer scale ≥ 1 is supported. Characters not present in the
- * alpha subset use the bitmap fallback, whose inner loop duplicates
- * each glyph pixel scale × scale times.
+ * Any integer scale ≥ 1 is supported by the normal bitmap renderer. The
+ * cockpit renderer is deliberately scale-2 only and should be used only
+ * for compact avionics readouts, not for general UI text or future
+ * UTF-8/CJK text.
  *
  *   scale 1 →  5 ×  7 visible,  6 ×  8 cell
  *   scale 2 → 10 × 14 visible, 12 × 16 cell  (the workhorse for labels)
@@ -75,3 +76,11 @@ void pk_font_putchar(uint16_t *fb, int fb_w, int fb_h,
 int pk_font_puts(uint16_t *fb, int fb_w, int fb_h,
                  int x, int y, const char *s,
                  uint16_t color, int scale);
+
+/* Render a null-terminated string with the generated 12×16 cockpit
+ * glyphs. Characters missing from the generated subset fall back to
+ * the normal scale-2 bitmap font. Returns the fixed 12 px per-glyph
+ * advance. */
+int pk_font_puts_cockpit(uint16_t *fb, int fb_w, int fb_h,
+                         int x, int y, const char *s,
+                         uint16_t color);

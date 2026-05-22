@@ -17,6 +17,7 @@ PRODUCT_NAME = "Pilot Kit Box"
 PRODUCT_SLUG = "pilot-kit-box"
 BOARD_ID = "esp32p4"
 CHIP_FAMILY = "ESP32-P4"
+DEFAULT_VERSION_FILE = Path(__file__).resolve().parents[2] / "firmware" / "version.txt"
 
 FLASH_MODE = "dio"
 FLASH_FREQ = "80m"
@@ -39,9 +40,18 @@ def normalize_version(version: str) -> str:
     value = version.strip()
     if value.startswith("refs/tags/"):
         value = value.removeprefix("refs/tags/")
+    board_tag_prefix = f"{BOARD_ID}-"
+    if value.startswith(board_tag_prefix):
+        value = value.removeprefix(board_tag_prefix)
     if not value:
         raise ValueError("version must not be empty")
     return value
+
+
+def default_version(version_file: Path = DEFAULT_VERSION_FILE) -> str:
+    if not version_file.is_file():
+        raise FileNotFoundError(f"default firmware version file not found: {version_file}")
+    return normalize_version(version_file.read_text("utf-8"))
 
 
 def artifact_names(version: str) -> dict[str, str]:
@@ -269,7 +279,10 @@ def main() -> int:
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--web-dir", type=Path, default=Path("web/flasher"))
-    parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--version",
+        help="Version label used for release assets; defaults to firmware/version.txt.",
+    )
     parser.add_argument(
         "--esptool-cmd",
         help="Optional esptool command prefix, for example: 'python -m esptool'.",
@@ -280,7 +293,7 @@ def main() -> int:
         build_dir=args.build_dir,
         dist_dir=args.dist_dir,
         web_dir=args.web_dir,
-        version=args.version,
+        version=args.version or default_version(),
         esptool_cmd=shlex.split(args.esptool_cmd) if args.esptool_cmd else None,
     )
     return 0

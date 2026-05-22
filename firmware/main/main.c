@@ -30,6 +30,7 @@
 #include "button_task.h"
 #include "display.h"
 #include "imu_task.h"
+#include "i18n.h"
 #include "pfd.h"
 #include "power.h"
 #include "record_sink.h"
@@ -73,7 +74,14 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
     switch (id) {
     case PK_BTN_TARE:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            if (pk_ui_get_mode() == PK_UI_MODE_ADSB_LIST) {
+            pk_ui_mode_t mode = pk_ui_get_mode();
+            if (mode == PK_UI_MODE_SETTINGS) {
+                esp_err_t err = pk_i18n_toggle_lang();
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "language toggle failed (%s)",
+                             esp_err_to_name(err));
+                }
+            } else if (mode == PK_UI_MODE_ADSB_LIST) {
                 /* Bind the currently-highlighted aircraft as own-ship.
                  * ui_state tracks the highlight by ICAO, so we don't
                  * need to re-snapshot the aircraft table here — just
@@ -112,7 +120,12 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
 
     case PK_BTN_UP:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_list_scroll(-1);
+            pk_ui_mode_t mode = pk_ui_get_mode();
+            if (mode == PK_UI_MODE_ADSB_LIST) {
+                pk_ui_list_scroll(-1);
+            } else if (mode == PK_UI_MODE_ABOUT) {
+                pk_ui_about_scroll(-1);
+            }
         } else if (evt == PK_BTN_EVT_COMBO_BLE_PAIR) {
             /* TODO(BLE pairing): trigger BLE pairing flow once the
              * Flutter side adds a pairing-window UI. For now, just
@@ -124,7 +137,12 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
 
     case PK_BTN_DOWN:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_list_scroll(+1);
+            pk_ui_mode_t mode = pk_ui_get_mode();
+            if (mode == PK_UI_MODE_ADSB_LIST) {
+                pk_ui_list_scroll(+1);
+            } else if (mode == PK_UI_MODE_ABOUT) {
+                pk_ui_about_scroll(+1);
+            }
         }
         break;
 
@@ -260,6 +278,12 @@ void app_main(void)
     esp_err_t ui_err = pk_ui_init();
     if (ui_err != ESP_OK) {
         ESP_LOGW(TAG, "ui_state init failed (%s)", esp_err_to_name(ui_err));
+    }
+
+    esp_err_t i18n_err = pk_i18n_init();
+    if (i18n_err != ESP_OK) {
+        ESP_LOGW(TAG, "i18n init failed (%s) — default language remains English",
+                 esp_err_to_name(i18n_err));
     }
 
     /* Tact buttons: TARE/MODE/UP/DOWN on GPIO 26/27/22/23. Spawned

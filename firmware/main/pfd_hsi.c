@@ -173,10 +173,10 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         snprintf(buf, sizeof(buf), "%03d~", hdg);
         /* 4 glyphs scale 2 = 48 × 14; box interior 52 × 16; center
          * with 3 px left padding + 2 px top padding. */
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     HDGBOX_X0 + 3, HDGBOX_Y0 + 2, buf, COL_LABEL, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             HDGBOX_X0 + 3, HDGBOX_Y0 + 2, buf, COL_LABEL);
     } else {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     HDGBOX_X0 + 3, HDGBOX_Y0 + 2, "---~", COL_STALE, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             HDGBOX_X0 + 3, HDGBOX_Y0 + 2, "---~", COL_STALE);
     }
 }

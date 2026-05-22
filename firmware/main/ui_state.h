@@ -5,6 +5,7 @@
  *   PK_UI_MODE_PFD        — primary flight display (default at boot)
  *   PK_UI_MODE_ADSB_LIST  — scrollable list of currently-tracked ADS-B
  *                            aircraft + detail pane of the selected row
+ *   PK_UI_MODE_SETTINGS   — user settings, including active language
  *   PK_UI_MODE_ABOUT      — project name, version, build time, hardware
  *                            summary, calibration quality
  *   PK_UI_MODE_CAL_WIZARD — figure-8 calibration overlay (auto-entered
@@ -17,8 +18,8 @@
  * renderer. Mode transitions happen in O(1) — just a flag flip — so
  * the next frame already shows the new view.
  *
- * MODE short-press cycles through the three USER-visible modes:
- *     PFD → ADSB_LIST → ABOUT → PFD …
+ * MODE short-press cycles through the USER-visible modes:
+ *     PFD → ADSB_LIST → SETTINGS → ABOUT → PFD …
  * CAL_WIZARD is not in the cycle — it's auto-entered/auto-exited
  * based on IMU calibration state (see pk_ui_cal_wizard_tick below)
  * and the user can also dismiss it manually by pressing MODE.
@@ -41,6 +42,7 @@
 typedef enum {
     PK_UI_MODE_PFD = 0,
     PK_UI_MODE_ADSB_LIST,
+    PK_UI_MODE_SETTINGS,
     PK_UI_MODE_ABOUT,
     PK_UI_MODE_CAL_WIZARD,
 } pk_ui_mode_t;
@@ -53,7 +55,7 @@ esp_err_t pk_ui_init(void);
 pk_ui_mode_t pk_ui_get_mode(void);
 
 /* Cycle the user-visible mode forward:
- *     PFD → ADSB_LIST → ABOUT → PFD …
+ *     PFD → ADSB_LIST → SETTINGS → ABOUT → PFD …
  * Selection is preserved across toggles (re-entering list mode
  * lands on the same highlight). If the current mode is
  * CAL_WIZARD, the cycle returns to PFD and dismisses the wizard. */
@@ -83,6 +85,12 @@ uint8_t pk_ui_cal_wizard_last_accuracy(void);
  * snapshot. Saturates the pending delta in the range [-999, +999] so
  * holding UP/DOWN forever can't overflow. */
 void pk_ui_list_scroll(int delta);
+
+/* Scroll the About page by one coarse page step (negative = up,
+ * positive = down). The renderer reads the pixel offset via
+ * pk_ui_about_scroll_y(). */
+void pk_ui_about_scroll(int delta);
+int  pk_ui_about_scroll_y(void);
 
 /*
  * Resolve the highlighted row against the current aircraft snapshot.

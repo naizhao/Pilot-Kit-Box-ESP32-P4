@@ -1,10 +1,20 @@
 import json
 import unittest
+from pathlib import Path
 
 from . import prepare_esp32p4_release as release
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 class Esp32p4ReleasePlanTest(unittest.TestCase):
+    def test_default_version_reads_firmware_version_file(self):
+        self.assertEqual(release.default_version(), "v0.4.0")
+
+    def test_normalize_version_strips_board_tag_prefix(self):
+        self.assertEqual(release.normalize_version("refs/tags/esp32p4-v0.4.0"), "v0.4.0")
+
     def test_artifact_names_include_board_id(self):
         names = release.artifact_names("v1.2.3")
 
@@ -64,6 +74,22 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn("0x2000", command)
         self.assertIn("0x8000", command)
         self.assertIn("0x10000", command)
+
+    def test_release_workflow_injects_version_into_firmware_build(self):
+        workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
+
+        text = workflow.read_text("utf-8")
+
+        self.assertIn('RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"', text)
+        self.assertIn('idf.py -DPROJECT_VER="$RELEASE_VERSION" build', text)
+
+    def test_firmware_update_docs_explain_version_source(self):
+        docs = REPO_ROOT / "docs" / "firmware_update.md"
+
+        text = docs.read_text("utf-8")
+
+        self.assertIn("firmware/version.txt", text)
+        self.assertIn("PROJECT_VER", text)
 
 
 if __name__ == "__main__":

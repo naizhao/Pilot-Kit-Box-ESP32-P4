@@ -32,24 +32,24 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 
     /* Left: "HDG" (cyan, scale 2 = 36 px) + " NNN°" (4 glyphs scale 2
      * = 48 px → ends at x≈90). */
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 6, 1, "HDG", COL_LABEL, 2);
+    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                         6, 1, "HDG", COL_LABEL);
     if (s->imu_valid) {
         int hdg = ((int)s->yaw_deg + 360) % 360;
         snprintf(buf, sizeof(buf), "%03d~", hdg);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     46, 1, buf, COL_GREEN, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             46, 1, buf, COL_GREEN);
     } else {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     46, 1, "---~", COL_STALE, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             46, 1, "---~", COL_STALE);
     }
 
     /* Right: "ADSB NN" — right-justified-ish. "ADSB" = 4 glyphs × 12 =
      * 48 px at scale 2; we place it so the trailing NN sits flush
      * with x=312 leaving a 2-px right margin on the 320-wide panel. */
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 232, 1, "ADSB", COL_LABEL, 2);
+    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                         232, 1, "ADSB", COL_LABEL);
     snprintf(buf, sizeof(buf), "%2u", (unsigned)s->aircraft_count);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 288, 1, buf, COL_GREEN, 2);
+    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                         288, 1, buf, COL_GREEN);
 }

@@ -110,10 +110,10 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
          * horizontal padding (1 border + 1 visual breathing room);
          * 3 px top padding centers the 14-px digit cells in the 20-
          * px box interior. */
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     BOX_X0 + 2, BOX_Y0 + 3, buf, COL_VALUE, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             BOX_X0 + 2, BOX_Y0 + 3, buf, COL_VALUE);
     } else {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     BOX_X0 + 2, BOX_Y0 + 3, "-----", COL_STALE, 2);
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             BOX_X0 + 2, BOX_Y0 + 3, "-----", COL_STALE);
     }
 }

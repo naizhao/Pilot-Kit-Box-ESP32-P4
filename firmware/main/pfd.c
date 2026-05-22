@@ -39,6 +39,7 @@
 #include "pfd_statusbar.h"
 #include "pfd_tape.h"
 #include "sdkconfig.h"
+#include "settings_page.h"
 #include "ui_state.h"
 
 #include <stdio.h>
@@ -84,6 +85,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_ADSB_LIST:
             pk_adsb_list_render(fb);
+            break;
+
+        case PK_UI_MODE_SETTINGS:
+            pk_settings_page_render(fb);
             break;
 
         case PK_UI_MODE_PFD:
@@ -203,13 +208,13 @@ static void pfd_task(void *arg)
                     if (gs < 0)   gs = 0;
                     if (gs > 999) gs = 999;
                     snprintf(buf, sizeof(buf), "%3d", gs);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 20, 212, buf, VAL, 2);
+                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                         20, 212, buf, VAL);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                                  58, 216, "KT", LBL, 1);
                 } else {
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 20, 212, "---", STALE, 2);
+                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                         20, 212, "---", STALE);
                     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                                  58, 216, "KT", STALE, 1);
                 }
@@ -234,11 +239,11 @@ static void pfd_task(void *arg)
                     if (vs >  9999) vs =  9999;
                     if (vs < -9999) vs = -9999;
                     snprintf(buf, sizeof(buf), "%+5d", vs);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 260, 212, buf, VAL, 2);
+                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                         260, 212, buf, VAL);
                 } else {
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 260, 212, "-----", STALE, 2);
+                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                         260, 212, "-----", STALE);
                 }
             }
             break;
@@ -251,6 +256,7 @@ static void pfd_task(void *arg)
         int64_t now = esp_timer_get_time();
         if (now - fps_window_start_us >= 1000000) {
             const char *mode_label = (mode == PK_UI_MODE_ADSB_LIST)  ? "LIST"
+                                   : (mode == PK_UI_MODE_SETTINGS)   ? "SET"
                                    : (mode == PK_UI_MODE_ABOUT)      ? "ABOUT"
                                    : (mode == PK_UI_MODE_CAL_WIZARD) ? "CAL"
                                    :                                   "PFD";

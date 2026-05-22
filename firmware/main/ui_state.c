@@ -25,6 +25,8 @@ static const char *TAG = "ui";
                                             forever before the next
                                             renderer tick consumes the
                                             buffered presses */
+#define UI_ABOUT_SCROLL_STEP_PX     24
+#define UI_ABOUT_SCROLL_MAX_PX      40
 
 /* Calibration-wizard auto-trigger thresholds. The 10 s enter window
  * is long enough that we don't bother the user with the wizard
@@ -46,6 +48,7 @@ static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
  * order shifts (aircraft enters/leaves the trailing-60s window). */
 static uint32_t          s_list_selected_icao;
 static int               s_list_pending_delta;
+static int               s_about_scroll_y;
 
 /* Runtime own-ship binding. s_own_icao_set distinguishes "user
  * explicitly bound something" (even if to 0) from "never set, use
@@ -85,6 +88,7 @@ static const char *mode_name(pk_ui_mode_t m)
     switch (m) {
     case PK_UI_MODE_PFD:         return "PFD";
     case PK_UI_MODE_ADSB_LIST:   return "ADSB_LIST";
+    case PK_UI_MODE_SETTINGS:    return "SETTINGS";
     case PK_UI_MODE_ABOUT:       return "ABOUT";
     case PK_UI_MODE_CAL_WIZARD:  return "CAL_WIZARD";
     default:                     return "?";
@@ -95,13 +99,15 @@ void pk_ui_toggle_mode(void)
 {
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    /* Three-way cycle: PFD → ADSB_LIST → ABOUT → PFD …
+    /* User-visible cycle: PFD → ADSB_LIST → SETTINGS → ABOUT → PFD …
      * The CAL_WIZARD mode is outside the cycle: pressing MODE while
      * in it returns to PFD and dismisses the wizard (the auto-
      * trigger state machine will re-arm next time accuracy drops). */
     switch (s_mode) {
     case PK_UI_MODE_PFD:         s_mode = PK_UI_MODE_ADSB_LIST; break;
-    case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_ABOUT;     break;
+    case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_SETTINGS;  break;
+    case PK_UI_MODE_SETTINGS:    s_mode = PK_UI_MODE_ABOUT;
+                                  s_about_scroll_y = 0;          break;
     case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_PFD;       break;
     case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;       break;
     default:                     s_mode = PK_UI_MODE_PFD;       break;
@@ -180,6 +186,26 @@ void pk_ui_list_scroll(int delta)
     if (v >  UI_LIST_PENDING_DELTA_MAX) v =  UI_LIST_PENDING_DELTA_MAX;
     s_list_pending_delta = v;
     xSemaphoreGive(s_lock);
+}
+
+void pk_ui_about_scroll(int delta)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int v = s_about_scroll_y + delta * UI_ABOUT_SCROLL_STEP_PX;
+    if (v < 0) v = 0;
+    if (v > UI_ABOUT_SCROLL_MAX_PX) v = UI_ABOUT_SCROLL_MAX_PX;
+    s_about_scroll_y = v;
+    xSemaphoreGive(s_lock);
+}
+
+int pk_ui_about_scroll_y(void)
+{
+    if (s_lock == NULL) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int v = s_about_scroll_y;
+    xSemaphoreGive(s_lock);
+    return v;
 }
 
 int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n)

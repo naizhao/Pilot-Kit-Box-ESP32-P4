@@ -45,8 +45,10 @@ jobs:
             bash -lc '
               set -euo pipefail
               export ESP_IDF_VERSION=6.0
+              RELEASE_VERSION="${RELEASE_VERSION#refs/tags/}"
+              RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"
               idf.py set-target esp32p4
-              idf.py build
+              idf.py -DPROJECT_VER="$RELEASE_VERSION" build
               python ../tools/firmware_release/prepare_esp32p4_release.py \
                 --build-dir build \
                 --dist-dir ../dist \
