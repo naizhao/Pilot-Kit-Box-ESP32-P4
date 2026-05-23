@@ -89,19 +89,35 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn('idf.py -DPROJECT_VER="$RELEASE_VERSION" build', text)
         self.assertNotIn("bash -lc", text)
 
-    def test_release_workflow_skips_pages_when_pages_is_not_enabled(self):
+    def test_release_workflow_exports_pages_site_without_deploying_pages(self):
         workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
 
         text = workflow.read_text("utf-8")
 
-        self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/pages"', text)
-        self.assertIn('echo "enabled=false" >> "$GITHUB_OUTPUT"', text)
-        self.assertIn("if: steps.pages.outputs.enabled == 'true'", text)
-        self.assertIn("if: github.event_name == 'workflow_dispatch'", text)
+        self.assertIn("name: pilot-kit-box-esp32p4-pages-site", text)
+        self.assertIn("path: dist/site", text)
+        self.assertNotIn("actions/configure-pages", text)
+        self.assertNotIn("actions/upload-pages-artifact", text)
+        self.assertNotIn("actions/deploy-pages", text)
+        self.assertNotIn("environment:\n      name: github-pages", text)
+
+    def test_pages_workflow_deploys_site_artifact_from_release_run(self):
+        workflow = REPO_ROOT / ".github" / "workflows" / "deploy-esp32p4-pages.yml"
+
+        text = workflow.read_text("utf-8")
+
+        self.assertIn("workflow_run:", text)
+        self.assertIn("Release ESP32-P4 firmware", text)
+        self.assertIn("actions: read", text)
+        self.assertIn("actions/download-artifact@v4", text)
+        self.assertIn("name: pilot-kit-box-esp32p4-pages-site", text)
         self.assertIn(
-            "if: github.event_name == 'workflow_dispatch' && needs.build.outputs.pages-enabled == 'true'",
+            "run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event.inputs.run_id }}",
             text,
         )
+        self.assertIn("actions/upload-pages-artifact@v4", text)
+        self.assertIn("actions/deploy-pages@v4", text)
+        self.assertIn("environment:\n      name: github-pages", text)
 
     def test_release_workflow_writes_notes_outside_docker_owned_dist(self):
         workflow = REPO_ROOT / ".github" / "workflows" / "release-esp32p4-firmware.yml"
