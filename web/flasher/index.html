@@ -8,6 +8,7 @@
       name="description"
       content="Pilot Kit Box ESP32-P4 browser firmware updater"
     />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <script
       type="module"
       src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
@@ -66,10 +67,13 @@
         place-items: center;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: #0f1720;
-        color: white;
-        font-weight: 800;
-        letter-spacing: 0;
+        background: #ffffff;
+      }
+
+      .mark img {
+        width: 46px;
+        height: 46px;
+        display: block;
       }
 
       h1 {
@@ -227,7 +231,9 @@
     <main>
       <div class="shell">
         <header class="header">
-          <div class="mark" aria-hidden="true">PK</div>
+          <div class="mark" aria-hidden="true">
+            <img src="favicon.svg" alt="" />
+          </div>
           <div>
             <h1>Pilot Kit Box ESP32-P4 固件更新</h1>
             <p class="subtitle">

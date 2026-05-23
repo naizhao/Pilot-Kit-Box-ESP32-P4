@@ -135,6 +135,23 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertIn("firmware/version.txt", text)
         self.assertIn("PROJECT_VER", text)
 
+    def test_readme_points_to_public_firmware_updater(self):
+        readme = REPO_ROOT / "README.md"
+
+        text = readme.read_text("utf-8")
+
+        self.assertIn("https://updater.pilotkit.app", text)
+
+    def test_flasher_page_uses_shared_svg_icon(self):
+        page = REPO_ROOT / "web" / "flasher" / "index.html"
+        icon = REPO_ROOT / "web" / "flasher" / "favicon.svg"
+
+        text = page.read_text("utf-8")
+
+        self.assertTrue(icon.is_file())
+        self.assertIn('<link rel="icon" type="image/svg+xml" href="favicon.svg" />', text)
+        self.assertIn('<img src="favicon.svg" alt="" />', text)
+
 
 if __name__ == "__main__":
     unittest.main()
