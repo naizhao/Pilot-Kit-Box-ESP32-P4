@@ -218,9 +218,9 @@ void app_main(void)
      * into it. */
     aircraft_state_init();
 
-    /* Validate the embedded ICAO24 → type/model database (aircraft_db.bin
-     * in .rodata). Bad header is non-fatal — lookups will silently return
-     * NULL and the UI just falls back to "----" for the TYPE column. */
+    /* Validate the embedded ICAO24 -> type/model/registration database
+     * (aircraft_db.bin in .rodata). Bad header is non-fatal: lookups
+     * return NULL and the UI falls back to blank / placeholder fields. */
     pk_aircraft_db_init();
 
     /* Bring the ADS-B record sinks up before the producer starts. The

@@ -20,9 +20,9 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 
 ## 当前状态 / Current Status
 
-截至 **2026-05-23**，主固件已经覆盖 ADS-B 接收、解码、BLE 分发、本地记录、LCD PFD、BNO085 姿态融合、四按钮交互、中英文 UI 和 MODE 长按深睡眠。
+截至 **2026-05-25**，主固件已经覆盖 ADS-B 接收、解码、BLE 分发、本地记录、LCD PFD、ADS-B 列表内置航空识别数据库、BNO085 姿态融合、四按钮交互、中英文 UI 和 MODE 长按深睡眠。
 
-As of **2026-05-23**, the main firmware includes ADS-B reception and decode, BLE distribution, local recording, LCD PFD rendering, BNO085 attitude fusion, four-button interaction, English/Chinese UI pages, and MODE long-press deep sleep.
+As of **2026-05-25**, the main firmware includes ADS-B reception and decode, BLE distribution, local recording, LCD PFD rendering, embedded aviation identity databases for the ADS-B list, BNO085 attitude fusion, four-button interaction, English/Chinese UI pages, and MODE long-press deep sleep.
 
 ## 核心特性 / Features
 
@@ -39,6 +39,7 @@ As of **2026-05-23**, the main firmware includes ADS-B reception and decode, BLE
 | TK024F3036 / ST7789 320x240 SPI 屏幕，PFD 约 30 FPS | TK024F3036 / ST7789 320x240 SPI display, PFD around 30 FPS | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |
 | ADS-B 列表页：ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE 和详情面板 | ADS-B list page: ICAO, callsign, country, ALT, SPD, HDG, VS, SQK, TYPE, and detail pane | 已实现 / Implemented |
+| 内置航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Embedded aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
 | TARE 在 ADS-B 列表中绑定 own-ship，PFD 可用本机 ADS-B 数据显示 ALT/GS/VS | TARE binds own-ship in ADS-B list; PFD can source ALT/GS/VS from bound ADS-B traffic | 已实现 / Implemented |
 | BNO085 100 Hz 姿态融合、校准向导、TARE 归零/持久化/工厂重置 | BNO085 100 Hz attitude fusion, calibration wizard, TARE zero/persist/factory reset | 已实现 / Implemented |
 | Settings / About / Compass Calibration 中英文 UI，语言写入 NVS | English/Chinese Settings, About, and Compass Calibration UI, persisted in NVS | 已实现 / Implemented |
@@ -113,12 +114,26 @@ The following RMB costs are reference prices for the current prototype and will 
 | 路径 | Path | 内容 / Contents |
 |---|---|---|
 | `firmware/` | `firmware/` | ESP-IDF v6.0.1 固件工程 / ESP-IDF v6.0.1 firmware project |
-| `firmware/main/` | `firmware/main/` | 应用层 C 源码 / Application C sources |
+| `firmware/main/` | `firmware/main/` | 应用层 C 源码和内置航空识别数据库 / Application C sources and embedded aviation identity databases |
 | `firmware/components/esp32-rtl-sdr/` | `firmware/components/esp32-rtl-sdr/` | RTL-SDR USB/SDR 组件 / RTL-SDR USB/SDR component |
 | `firmware/scripts/` | `firmware/scripts/` | 字体、数据库和测试脚本 / Font, database, and test scripts |
 | `docs/` | `docs/` | 构建、协议、架构、用户和硬件文档 / Build, protocol, architecture, user, and hardware docs |
 | `web/flasher/` | `web/flasher/` | ESP Web Tools 网页刷机页面 / ESP Web Tools web flasher |
 | `tools/firmware_release/` | `tools/firmware_release/` | 固件发布打包工具 / Firmware release packaging tools |
+
+## 内置航空识别数据库 / Embedded Aviation Identity Databases
+
+固件内置三类本地识别数据库，用于把 ADS-B / Mode-S 中收到的 ICAO24 地址和呼号显示为更容易核对的航空信息。它们不是航班计划、航线、时刻表或实时联网数据；终端用户通过更新完整固件获得新的数据库快照。
+
+The firmware embeds three local identity databases so ICAO24 addresses and ADS-B callsigns can be rendered as operationally useful aviation information. These are not flight-plan, route, timetable, or live network databases; end users receive refreshed snapshots through full firmware updates.
+
+| 数据库 | Database | 用途 / Purpose | 仓库位置 / Repository Location | 更新脚本 / Update Script |
+|---|---|---|---|---|
+| 飞机 ICAO24 数据库 | Aircraft ICAO24 database | ICAO24 -> 注册号、ICAO 机型代码、型号名称、Doc 8643 技术描述；当前快照约 570k 条记录、8.16 MiB。<br>ICAO24 -> registration, ICAO type code, model name, and Doc 8643 descriptor; the current snapshot is about 570k records / 8.16 MiB. | `firmware/main/aircraft_db.bin`, `firmware/main/aircraft_db.c`, `firmware/main/aircraft_db.h` | `firmware/scripts/gen_aircraft_db.py` |
+| 航司代码表 | Airline code table | ADS-B 呼号前三位 ICAO 航司代码 -> IATA 代码和运营人名称，用于把 `CSN1234` 等显示为更常见的航班号形式。<br>ADS-B callsign ICAO prefix -> IATA code and operator name, used to render callsigns such as `CSN1234` in a more familiar form. | `firmware/main/airline_codes.c`, `firmware/main/airline_codes.h` | `firmware/scripts/gen_airline_codes.py --update-source` |
+| ICAO24 国家地址段 | ICAO24 country ranges | ICAO24 地址段 -> ISO 3166-1 alpha-2 国家/地区代码和名称，用于 ADS-B LIST 的 CT 列和详情面板。<br>ICAO24 address range -> ISO 3166-1 alpha-2 country/region code and name for the ADS-B LIST CT column and detail pane. | `firmware/main/icao_country.c`, `firmware/main/icao_country.h` | `firmware/scripts/gen_icao_country.py` |
+
+维护流程详见 / Maintenance workflow: [`docs/database_maintenance.md`](docs/database_maintenance.md) / [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md)。
 
 ## 快速开始 / Quick Start
 
@@ -130,6 +145,7 @@ The following RMB costs are reference prices for the current prototype and will 
 | 看运行时任务和数据流 | Understand runtime tasks and data flow | [`docs/architecture.md`](docs/architecture.md) | [`docs/architecture-zh_CN.md`](docs/architecture-zh_CN.md) |
 | 调整 sdkconfig | Tune sdkconfig options | [`docs/configuration.md`](docs/configuration.md) | [`docs/configuration-zh_CN.md`](docs/configuration-zh_CN.md) |
 | 集成移动端 BLE | Integrate a mobile BLE client | [`docs/ble_protocol.md`](docs/ble_protocol.md) | [`docs/ble_protocol-zh_CN.md`](docs/ble_protocol-zh_CN.md) |
+| 维护内置航空识别数据库 | Maintain embedded aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
 | 使用四按钮和 PFD | Use the four buttons and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
 | 接 LCD、IMU、按钮、RTL-SDR | Wire LCD, IMU, buttons, and RTL-SDR | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |

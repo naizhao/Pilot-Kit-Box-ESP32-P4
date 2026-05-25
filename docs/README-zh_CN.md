@@ -15,6 +15,7 @@
 | 配置参考 | [`configuration.md`](configuration.md) | [`configuration-zh_CN.md`](configuration-zh_CN.md) | 固件定制 |
 | 固件架构 | [`architecture.md`](architecture.md) | [`architecture-zh_CN.md`](architecture-zh_CN.md) | 固件开发者 |
 | BLE 协议 | [`ble_protocol.md`](ble_protocol.md) | [`ble_protocol-zh_CN.md`](ble_protocol-zh_CN.md) | 移动端 / EFB 客户端开发者 |
+| 数据库维护 | [`database_maintenance.md`](database_maintenance.md) | [`database_maintenance-zh_CN.md`](database_maintenance-zh_CN.md) | 固件维护者 |
 | 用户指南 | [`user_guide.md`](user_guide.md) | [`user_guide-zh_CN.md`](user_guide-zh_CN.md) | 设备使用者 |
 | 固件发布与网页刷写 | [`firmware_update.md`](firmware_update.md) | [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md) | 维护者和终端用户 |
 | 硬件资料索引 | [`hardware/README.md`](hardware/README.md) | [`hardware/README-zh_CN.md`](hardware/README-zh_CN.md) | 硬件搭建者 |
@@ -30,6 +31,7 @@
 - 目标开发板是 **Waveshare ESP32-P4-WIFI6**。P4 负责 USB、DSP、UI 和存储；C6 负责 BLE。
 - RTL-SDR 通过 P1 USB 2.0 HS OTG 口接入，默认 1090 MHz、2 MSPS。
 - 当前推荐的 SDR dongle tuner 是 **FC0013**，主要原因是 BOM 成本低。
+- 内置识别数据库包括 `firmware/main/aircraft_db.bin` 的 ICAO24 飞机数据库、`firmware/main/airline_codes.c` 的航司代码表，以及 `firmware/main/icao_country.c` 的 ICAO24 国家地址段表。
 - LCD 是 **2.4 寸 TK024F3036 / ST7789 320x240 半透反射 SPI 屏**，当前接在左排 GPIO 28/29/30/31，背光 GPIO50。
 - IMU 是 **BNO085 / GY-BN008X**，I2C0 使用 GPIO7 / GPIO8，INT GPIO20，RST GPIO21。
 - UI 模式循环是 **PFD -> ADS-B LIST -> SETTINGS -> ABOUT -> PFD**。

@@ -182,7 +182,7 @@ def main() -> int:
             "  curl -sL https://api.github.com/repos/wiedehopf/tar1090-db/contents/db \\\n"
             "    | python3 -c \"import sys,json;[print(i['name']) for i in json.load(sys.stdin) if i['name'].endswith('.js')]\" \\\n"
             "    | xargs -I {} -P 16 curl -sLO https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/{}\n"
-            "  curl -sLO https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/icao_aircraft_types.json -o /tmp/types.json\n"
+            "  curl -sL -o /tmp/types.json https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/icao_aircraft_types.json\n"
             "Then re-run this script.\n")
         return 1
 

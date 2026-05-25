@@ -1,17 +1,16 @@
 /*
  * icao_country.h — ICAO 24-bit address → country lookup.
  *
- * ICAO Annex 10 Vol III (Doc 7910) assigns contiguous 24-bit address
- * blocks to each contracting state. The blocks are static and well
- * documented; this module embeds a curated subset covering all major
- * aviation nations (China + the user's regional traffic + the global
- * top-30 sources). Lookups not covered return NULL (caller renders
- * empty / "Unknown").
+ * ICAO Annex 10 Vol III (Doc 7910) assigns 24-bit address blocks to
+ * contracting states. This module embeds a generated table derived from
+ * tar1090's flags.js range list. Lookups not covered by that source
+ * return NULL (caller renders empty / "Unknown").
  *
- * Not exhaustive — see the expansion note at the top of icao_country.c.
- * Static C arrays in flash, no NVS / SD / net.
+ * Static C arrays in flash, no NVS / SD / net. Refresh with
+ * firmware/scripts/gen_icao_country.py.
  *
- * Lookup is O(log n) binary search over sorted-by-low-bound ranges.
+ * Lookup is O(n) over ~200 generated ranges and returns the smallest
+ * matching span so territory sub-ranges override larger parent blocks.
  */
 #pragma once
 

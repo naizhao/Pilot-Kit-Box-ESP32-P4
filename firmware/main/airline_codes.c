@@ -24,10 +24,10 @@
  * and assumes this property — keep it stable when adding entries
  * manually, or re-run the regen script.
  *
- * Regen recipe (offline, one-shot):
+ * Regen recipe (online, one-shot):
  *   cd firmware
- *   scripts/gen_airline_codes.py --letters all --out-block /tmp/x.c
- *   # then splice the block between the s_airlines[] braces below
+ *   scripts/gen_airline_codes.py --letters all \
+ *       --update-source main/airline_codes.c
  *
  * The script polls the Wikipedia API at 1 req/s with a contact UA per
  * their automated-access policy, fetching ~25 KB of wikitext per

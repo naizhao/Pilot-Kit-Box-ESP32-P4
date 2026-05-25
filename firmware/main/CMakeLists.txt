@@ -45,9 +45,10 @@ idf_component_register(
         # Pilot-Kit-Dashboard/public/pilot-kit-export-logo.png).
         # Linked into .rodata via _binary_pk_logo_rgb565_{start,end}.
         "pk_logo.rgb565"
-        # Compact ICAO24 → aircraft type/model database (~2.4 MB,
-        # ~500 k records). Generated offline by
-        # firmware/scripts/gen_aircraft_db.py from the tar1090-db dump.
+        # Compact ICAO24 -> aircraft type/model/registration database.
+        # Generated offline by firmware/scripts/gen_aircraft_db.py from
+        # tar1090-db; checked-in snapshot size and record count vary with
+        # the upstream source (current blob is about 8 MiB / 570k records).
         # Linked into .rodata via _binary_aircraft_db_bin_{start,end}.
         "aircraft_db.bin"
     REQUIRES

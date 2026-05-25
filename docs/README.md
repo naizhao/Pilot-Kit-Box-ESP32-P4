@@ -15,6 +15,7 @@ The root project README remains bilingual because it is the public landing page.
 | Configuration | [`configuration.md`](configuration.md) | [`configuration-zh_CN.md`](configuration-zh_CN.md) | Firmware customisation |
 | Firmware architecture | [`architecture.md`](architecture.md) | [`architecture-zh_CN.md`](architecture-zh_CN.md) | Firmware developers |
 | BLE protocol | [`ble_protocol.md`](ble_protocol.md) | [`ble_protocol-zh_CN.md`](ble_protocol-zh_CN.md) | Mobile / EFB client developers |
+| Database maintenance | [`database_maintenance.md`](database_maintenance.md) | [`database_maintenance-zh_CN.md`](database_maintenance-zh_CN.md) | Firmware maintainers |
 | User guide | [`user_guide.md`](user_guide.md) | [`user_guide-zh_CN.md`](user_guide-zh_CN.md) | Device users |
 | Firmware release and web flashing | [`firmware_update.md`](firmware_update.md) | [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md) | Maintainers and end users |
 | Hardware reference index | [`hardware/README.md`](hardware/README.md) | [`hardware/README-zh_CN.md`](hardware/README-zh_CN.md) | Hardware builders |
@@ -32,6 +33,7 @@ All public docs should match this baseline:
 - Target board: **Waveshare ESP32-P4-WIFI6**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
 - RTL-SDR attaches to the P1 USB 2.0 HS OTG port. The firmware defaults to 1090 MHz at 2 MSPS.
 - Current recommended SDR dongle tuner: **FC0013**, mainly because the BOM cost is low.
+- Embedded identity databases include the ICAO24 aircraft database at `firmware/main/aircraft_db.bin`, the airline code table at `firmware/main/airline_codes.c`, and the ICAO24 country table at `firmware/main/icao_country.c`.
 - LCD: **2.4-inch TK024F3036 / ST7789 320x240 transflective SPI display**, wired on left-header GPIO 28/29/30/31 with backlight on GPIO50.
 - IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, INT on GPIO20, RST on GPIO21.
 - UI mode cycle: **PFD -> ADS-B LIST -> SETTINGS -> ABOUT -> PFD**.

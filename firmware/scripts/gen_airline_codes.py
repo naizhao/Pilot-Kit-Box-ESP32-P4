@@ -35,9 +35,14 @@ Usage:
         --letters all \\
         --out-block /tmp/airlines_block.c
 
-Then splice the block into airline_codes.c. The script also writes a
-debug summary to stderr with the number of entries pulled per letter,
-so you can spot pages that failed.
+Or update the firmware source directly:
+
+    scripts/gen_airline_codes.py \\
+        --letters all \\
+        --update-source main/airline_codes.c
+
+The script also writes a debug summary to stderr with the number of
+entries pulled per letter, so you can spot pages that failed.
 
 Wikipedia API etiquette: we pass a descriptive User-Agent including a
 contact email (per their automated-access policy) and rate-limit at
@@ -209,6 +214,10 @@ def main() -> int:
                     help="cache raw wikitext here to avoid refetching")
     ap.add_argument("--out-block", default="/tmp/airlines_block.c",
                     help="emit the s_airlines[] initialiser block here")
+    ap.add_argument("--update-source",
+                    help="replace s_airlines[] inside this airline_codes.c")
+    ap.add_argument("--check", action="store_true",
+                    help="with --update-source, fail if source would change")
     args = ap.parse_args()
 
     if args.letters == "all":
@@ -222,11 +231,13 @@ def main() -> int:
     for L in letters:
         cache_path = os.path.join(args.cache_dir, f"{L}.wikitext")
         if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
-            wt = open(cache_path).read()
+            with open(cache_path, encoding="utf-8") as f:
+                wt = f.read()
         else:
             sys.stderr.write(f"fetching {L} ...\n")
             wt = fetch_letter(L)
-            open(cache_path, "w").write(wt)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                f.write(wt)
             time.sleep(1.0)   # be polite
 
         rows = parse_page(L, wt)
@@ -245,12 +256,45 @@ def main() -> int:
     sorted_rows = sorted(all_rows.values(), key=lambda r: r[0])
     sys.stderr.write(f"\nTotal unique ICAO codes: {len(sorted_rows)}\n")
 
-    with open(args.out_block, "w") as f:
-        for icao, iata, name in sorted_rows:
-            # Escape any " or \ in the name
-            n = name.replace("\\", "\\\\").replace("\"", "\\\"")
-            f.write(f'    {{ "{icao}", "{iata}", "{n}" }},\n')
+    block_lines: list[str] = []
+    for icao, iata, name in sorted_rows:
+        # Escape any " or \ in the name.
+        n = name.replace("\\", "\\\\").replace("\"", "\\\"")
+        block_lines.append(f'    {{ "{icao}", "{iata}", "{n}" }},\n')
+    block = "".join(block_lines)
+
+    with open(args.out_block, "w", encoding="utf-8") as f:
+        f.write(block)
     sys.stderr.write(f"wrote {args.out_block} ({len(sorted_rows)} rows)\n")
+
+    if args.update_source:
+        src_path = args.update_source
+        with open(src_path, encoding="utf-8") as f:
+            old = f.read()
+        pattern = re.compile(
+            r"(static const pk_airline_t s_airlines\[\] = \{\n)"
+            r".*?"
+            r"(\};\n)",
+            re.DOTALL,
+        )
+        new, nsubs = pattern.subn(
+            lambda m: m.group(1) + block + m.group(2),
+            old,
+            count=1,
+        )
+        if nsubs != 1:
+            raise RuntimeError(f"could not locate s_airlines[] in {src_path}")
+        if args.check:
+            if new != old:
+                sys.stderr.write(f"{src_path} is out of date\n")
+                return 1
+            sys.stderr.write(f"{src_path} is up to date\n")
+        elif new != old:
+            with open(src_path, "w", encoding="utf-8") as f:
+                f.write(new)
+            sys.stderr.write(f"updated {src_path}\n")
+        else:
+            sys.stderr.write(f"{src_path} already up to date\n")
     return 0
 
 

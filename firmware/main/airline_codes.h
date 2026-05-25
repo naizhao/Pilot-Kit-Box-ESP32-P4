@@ -6,16 +6,15 @@
  * passengers recognise the IATA form ("CZ1234") instead. This module
  * provides the static lookup CSN → ("CZ", "China Southern Airlines").
  *
- * Curated to cover:
- *   - China major carriers (the user's coverage area)
- *   - Global top-50 airlines by fleet size
- *   - Major cargo carriers
+ * Generated from Wikipedia's per-letter airline code pages, with a
+ * small maintainer-reviewed MANUAL_ADDITIONS list in the generator for
+ * carriers missing from those pages.
  *
- * Not exhaustive — unknown ICAO codes return NULL and the renderer
+ * Not exhaustive: unknown ICAO codes return NULL and the renderer
  * falls back to the raw ICAO callsign.
  *
- * Lookup: linear scan with early exit (< 200 entries, ~3 µs worst case).
- * Could switch to binary search if the table grows past 500.
+ * Lookup: binary search over the sorted generated table, currently
+ * about 5500 entries. Refresh with firmware/scripts/gen_airline_codes.py.
  */
 #pragma once
 
