@@ -32,7 +32,7 @@ As of **2026-05-23**, the main firmware includes ADS-B reception and decode, BLE
 | USB 2.0 HS 直连 RTL-SDR，1090 MHz，2 MSPS IQ8 数据流 | USB 2.0 HS RTL-SDR path at 1090 MHz, 2 MSPS IQ8 | 已实现 / Implemented |
 | 512 KiB IQ ring buffer、非阻塞 USB 回调、DSP 任务解码 | 512 KiB IQ ring buffer, non-blocking USB callback, DSP decode task | 已实现 / Implemented |
 | dump1090 派生 Mode-S 解码、CRC 过滤、CPR 全球定位 | dump1090-derived Mode-S decode, CRC filtering, CPR global position decode | 已实现 / Implemented |
-| 64 架飞机状态表：呼号、高度、位置、速度、垂直速度、应答机码、机型 | 64-aircraft state table: callsign, altitude, position, velocity, vertical rate, squawk, type | 已实现 / Implemented |
+| 最多同时跟踪 64 个 ADS-B / Mode-S 目标，并聚合呼号、高度、位置、速度、垂直速度、应答机码和机型信息 | Tracks up to 64 ADS-B / Mode-S targets at once, aggregating callsign, altitude, position, velocity, vertical rate, squawk, and aircraft type | 已实现 / Implemented |
 | UART、LittleFS 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS files, and BLE raw ts-line output | 已实现 / Implemented |
 | BLE GATT：GDL90 Traffic、Heartbeat、Raw、Time Sync 特征 | BLE GATT: GDL90 Traffic, Heartbeat, Raw, and Time Sync characteristics | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
@@ -69,21 +69,21 @@ As of **2026-05-23**, the main firmware includes ADS-B reception and decode, BLE
 
 ### BOM 成本参考 / BOM Cost Reference
 
-以下为当前原型的人民币成本参考，实际价格会随采购渠道、数量、运费和替代料变化。
+以下为当前原型的人民币成本参考，实际价格会随采购渠道、数量、运费和替代料变化。美元价格按粗略汇率 **¥1 ≈ $0.15** 估算；反向参考 **$1 ≈ ¥6.78**。
 
-The following RMB costs are reference prices for the current prototype and will vary with supplier, quantity, shipping, and substitutions.
+The following RMB costs are reference prices for the current prototype and will vary with supplier, quantity, shipping, and substitutions. USD prices are rough estimates using **¥1 ≈ $0.15**; reverse reference is **$1 ≈ ¥6.78**.
 
-| 物料 | Part | 参考成本 / Reference Cost |
-|---|---|---:|
-| 微雪 ESP32P4C6 | Waveshare ESP32P4C6 | ¥76 |
-| BNO085 | BNO085 | ¥76 |
-| RTL-SDR FC0013 | RTL-SDR FC0013 | ¥10 |
-| IPEX、MCX、SMA 线、座子等 | IPEX / MCX / SMA cables, sockets, and RF adapters | ¥2 |
-| 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | ¥4 |
-| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | ¥25 |
-| 2.4 寸半透反射屏 | 2.4-inch transflective display | ¥38 |
-| USB-A 母座 | USB-A female socket | ¥0.3 |
-| **合计** | **Total** | **约 ¥231.3** |
+| 物料 | Part | 人民币参考 / RMB Reference | 美元估算 / USD Estimate |
+|---|---|---:|---:|
+| 微雪 ESP32P4C6 | Waveshare ESP32P4C6 | ¥76 | ~$11.40 |
+| BNO085 | BNO085 | ¥76 | ~$11.40 |
+| RTL-SDR FC0013 | RTL-SDR FC0013 | ¥10 | ~$1.50 |
+| IPEX、MCX、SMA 线、座子等 | IPEX / MCX / SMA cables, sockets, and RF adapters | ¥2 | ~$0.30 |
+| 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | ¥4 | ~$0.60 |
+| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | ¥25 | ~$3.75 |
+| 2.4 寸半透反射屏 | 2.4-inch transflective display | ¥38 | ~$5.70 |
+| USB-A 母座 | USB-A female socket | ¥0.3 | ~$0.05 |
+| **合计** | **Total** | **约 ¥231.3** | **约 $34.70** |
 
 ### 首次设置或选配 / Setup And Optional
 
