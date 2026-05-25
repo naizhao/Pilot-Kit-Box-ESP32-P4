@@ -1,5 +1,7 @@
 # Waveshare ESP32-P4-WIFI6 — pin & GPIO map
 
+Chinese version: [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md)
+
 All assignments below are cross-checked against three sources:
 
 1. `ESP32-P4-WIFI6-datasheet.pdf` — Waveshare schematic (board-level wiring).
@@ -71,7 +73,7 @@ Both headers count from the **top** (USB-C side) downward.
 | **28**     | GPIO28   | **LCD CS**                     | SPI2_CS_PAD — IO_MUX direct                    |
 | GND        | GND      | —                              |                                                |
 | **50**     | GPIO50   | **LCD BL (LEDC PWM)**          | Backlight on TK024F304189-SPI.                 |
-| 49         | GPIO49   | free (was LCD RST in Phase 4a) | TK024F304189-SPI has on-board RC reset.        |
+| 49         | GPIO49   | free (was LCD RST in an earlier bring-up build) | TK024F304189-SPI has on-board RC reset.        |
 | **5**      | GPIO5    | **BTN2 — MODE** (LP_IO, deep-sleep wake) | LP_IO required so MODE long-press can sleep and a press can wake — see §3.4 and the power-button plan. JTAG MTDO default is moot: project doesn't use JTAG. |
 | 4          | GPIO4    | free                           | ⚠ JTAG MTMS default — using disables JTAG.     |
 | GND        | GND      | —                              |                                                |
@@ -98,15 +100,15 @@ Both headers count from the **top** (USB-C side) downward.
 | **22**     | GPIO22   | **BTN3 — UP** (list scroll / menu up)       |                                  |
 | **23**     | GPIO23   | **BTN4 — DOWN** (list scroll / menu down)   |                                  |
 | RUN        | RUN      | —                         | System reset button net.                       |
-| **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = tare yaw; long ≥ 3 s = full reorient + persist DCD |
+| **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = live software tare; long ≥ 3 s = persist software tare to NVS; very-long ≥ 10 s = IMU factory reset |
 | GND        | GND      | —                         |                                                |
 | 27         | GPIO27   | free (was BTN2 — MODE; moved to GPIO5 for LP_IO wake) |                        |
 | 32         | GPIO32   | free                      |                                                |
-| 33         | GPIO33   | free                      | (was LCD MOSI in Phase 4a — now on left header)|
-| 46         | GPIO46   | free                      | (was LCD CS  in Phase 4a)                      |
+| 33         | GPIO33   | free                      | (was LCD MOSI in an earlier bring-up build — now on left header)|
+| 46         | GPIO46   | free                      | (was LCD CS in an earlier bring-up build)      |
 | GND        | GND      | —                         | ⚠ Between GPIO46 and GPIO47 — easy to misplace |
-| 47         | GPIO47   | free                      | (was LCD SCK in Phase 4a)                      |
-| 48         | GPIO48   | free                      | (was LCD DC  in Phase 4a)                      |
+| 47         | GPIO47   | free                      | (was LCD SCK in an earlier bring-up build)     |
+| 48         | GPIO48   | free                      | (was LCD DC in an earlier bring-up build)      |
 
 ### Other access points (board midline)
 
@@ -163,15 +165,20 @@ SDIO slave. Pins match Espressif's eval-board layout, so upstream
 | IO13   | D1                 | GPIO15        |
 | IO14   | D2                 | GPIO16        |
 | IO15   | D3                 | GPIO17        |
-| EN     | RESET (active-low) | GPIO54        |
+| EN     | RESET (P4 software view is active-high) | GPIO54        |
 | IO2    | (boot strap)       | GPIO6         |
 
 Configured via:
 ```
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=y
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 ```
 (see `firmware/sdkconfig.defaults`).
+
+On this Waveshare board, P4 GPIO54 reaches the C6 EN path through
+board-level logic, so the reset signal is active-high from the P4
+software point of view. Do not change this to active-low; the common
+failure mode is SDIO CMD5 returning `0x107 INVALID_RESPONSE`.
 
 ### USB-to-UART bridge (CH343P U4) — `idf.py monitor` console
 
@@ -185,7 +192,7 @@ auto-bootloader transistor pair (U5, MMDT3906DW). Don't use GPIO35
 as an application GPIO — it would fight the auto-reset circuit.
 (Moot in practice: GPIO35 isn't broken out anyway.)
 
-### I²C0 (ES8311 codec + Phase 4 BNO085 IMU)
+### I²C0 (ES8311 codec + BNO085 IMU)
 
 Bus is shared; addresses don't collide.
 
@@ -236,13 +243,13 @@ on v1.x silicon. Bound to chip-package pins, not muxed to any GPIO.
 
 ---
 
-## 3. Phase 4 add-on peripherals (user-wired)
+## 3. Current add-on peripherals (user-wired)
 
 ### ST7789 LCD via SPI2 — TK024F3036 module on `TK024F304189-SPI` breakout
 
-**Status**: ✅ Verified working (2026-05-16). PFD renders over SPI2
-IO_MUX direct on the left header at 10 MHz; `display: TK024F3036
-240x320 ready` followed by `pfd: PFD 30 FPS` in the serial log.
+**Status**: Verified working (2026-05-16). PFD renders over SPI2
+IO_MUX direct on the left header at 40 MHz; `display: TK024F3036
+320x240 ready` followed by `pfd: PFD 30 FPS` in the serial log.
 
 The bare TK024F3036 FPC is **parallel-default** (39-pin). The
 `TK024F304189-SPI` breakout (silkscreen "TK024F304189-SPI" on the back
@@ -272,8 +279,8 @@ Wire as follows (all signals on the **left** header):
 | MOSI           | **GPIO29**   | left header               | **SPI2_D_PAD — IO_MUX direct**              |
 
 The five `T_*` pins on `P3` are the resistive-touch lines into the
-on-breakout XPT2046 IC. Leave unconnected — we don't drive touch
-in Phase 4.
+on-breakout XPT2046 IC. Leave unconnected — the current firmware does
+not drive touch input.
 
 Physical layout (left header, top → bottom around the LCD signals):
 
@@ -297,7 +304,7 @@ to use as long as the housing pin order matches the table above.
 > `SPI2_D_PAD`, `SPI2_CK_PAD`, `SPI2_Q_PAD` on the F2 alternate of
 > these GPIOs). All four are on the Waveshare left header, so SPI2
 > can bypass the GPIO matrix and stay valid up to ST7789's 80 MHz
-> ceiling. The Phase 4a assignment (GPIO 33/46/47/48 on the right
+> ceiling. The earlier assignment (GPIO 33/46/47/48 on the right
 > header) routed through the GPIO matrix instead, and worse, sat
 > across a header GND pad that turned multi-pin Dupont housings into
 > guaranteed shorts. That assignment is deprecated.
@@ -310,9 +317,10 @@ to use as long as the housing pin order matches the table above.
 > pale blue) because CS/SCK/MOSI/DC is shorted to GND. The left-header
 > layout above avoids this entirely.
 
-SPI bus configured at `PK_LCD_SPI_HZ` (10 MHz currently — conservative
-for Dupont jumpers; with IO_MUX direct routing in place you can push
-to 80 MHz once you're on a real PCB with short traces).
+SPI bus is configured at `PK_LCD_SPI_HZ = 40 MHz` in
+`firmware/main/display.h`. The ST7789 data sheet allows higher clocks
+in suitable layouts, but any move toward 60-80 MHz should be verified
+on the actual cable or PCB rather than documented as assumed margin.
 
 ### BNO085 IMU via I²C0 — GY-BN008X 10-pin breakout
 
@@ -322,8 +330,8 @@ on the side that we leave open. The breakout has an on-board 3.3 V
 LDO and 4.7 kΩ I²C pull-ups, so 3.3 V from the ESP host is fine.
 
 Shares the on-board I²C0 bus with the ES8311 codec (different
-addresses; no conflict). Phase 4b uses SH-2 / SHTP, Rotation Vector
-report at 100 Hz.
+addresses; no conflict). The firmware uses SH-2 / SHTP Rotation
+Vector reports at 100 Hz.
 
 10-pin wiring (top → bottom on the GY-BN008X header):
 
@@ -388,10 +396,10 @@ are available — pick whichever fits the build:
    offset and applies it to every subsequent report. Survives a soft
    reset only; `Save DCD` is needed to persist across power-on.
 
-For Phase 4b the firmware assumes option (1) with identity rotation
-— i.e., the breakout is glued with chip +X pointing toward the PFD
-edge of the board. Phase 4c may add a build-time mounting matrix if
-the case layout makes the direct orientation inconvenient.
+The current firmware includes a fixed mounting quaternion in
+`firmware/main/imu_task.h`. Keep the physical mounting and that
+constant in agreement; changing one without the other produces
+misleading roll, pitch, and heading.
 
 #### Tare / cage button (BTN1, GPIO 26)
 
@@ -415,7 +423,7 @@ Pressed → GPIO reads `0`. Released → reads `1`. Polled at 50 Hz with
 | Button | GPIO | Header | Function                                |
 |--------|------|--------|-----------------------------------------|
 | **TARE** (BTN1) | 26 | right | tare / persist / factory reset (short / long / very-long) |
-| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → LIST → ABOUT; long = power off (deep sleep, wake on next press) |
+| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → LIST → SETTINGS → ABOUT; long = power off (deep sleep, wake on next press) |
 | **UP**   (BTN3) | 22 | right | list scroll up / menu up               |
 | **DOWN** (BTN4) | 23 | right | list scroll down / menu down           |
 
@@ -432,10 +440,10 @@ other three buttons.
 
 | Press kind                          | TARE                 | MODE              | UP        | DOWN      |
 |-------------------------------------|----------------------|-------------------|-----------|-----------|
-| **Short** (released within < 3 s)   | live tare — snapshot current pose as zero (RAM only) | cycle PFD → LIST → ABOUT → PFD … | scroll up | scroll down |
-| **Long**  (held ≥ 3 s)              | persist current tare to NVS (survives reboot) | *(reserved — power on/off; TODO log until Phase C of `docs/superpowers/plans/2026-05-21-power-button.md` lands)* | *(suppressed)* | *(suppressed)* |
+| **Short** (released within < 3 s)   | context-sensitive: Settings toggles language, ADS-B LIST binds own-ship, other modes snapshot current pose as zero (RAM only) | cycle PFD → LIST → SETTINGS → ABOUT → PFD … | scroll up | scroll down |
+| **Long**  (held ≥ 3 s)              | persist current tare to NVS (survives reboot) | enter deep sleep; next MODE press wakes / cold-boots | *(suppressed)* | *(suppressed)* |
 | **Very-long** (held ≥ 10 s)         | **factory reset** — wipe NVS tare + BNO's persisted reorientation + DCD, reinit chip | — | — | — |
-| **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (TODO — Flutter side stub only) | — |
+| **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (firmware records request; mobile UI handling not implemented yet) | — |
 
 #### Calibration / heading-reset workflow
 
@@ -443,8 +451,10 @@ BNO085 magnetometer fusion is **continuously self-learning** — you
 don't have to manually calibrate. But it only converges while the
 device is **rotating** (figure-8 / multi-axis motion). If the device
 sits still, `acc` stays at 0 forever. When `acc` finally reaches 2 or
-3, the heading is trustworthy and a TARE long-press will persist the
-state to BNO085 flash for permanent use.
+3, the heading is usable for this device's situational-awareness UI.
+The BNO085 saves Dynamic Calibration Data on its own schedule; a TARE
+long-press persists only the ESP32-side software tare quaternion to
+NVS.
 
 If the heading is wrong even after a reboot, either a stale TARE
 is saved in NVS or the BNO's persisted DCD is bad. Use **TARE
@@ -484,8 +494,8 @@ the user clearly meant to make. Putting it on the same button as the
 much more frequent "live tare" + "persist tare" gestures (TARE short
 / long) keeps related-by-meaning operations under one finger, with
 the danger gradient (3 s long = recoverable; 10 s very-long = wipe)
-matching the press effort. MODE's long-press slot is reserved for
-power on/off instead — see Phase C of
+matching the press effort. MODE's long-press slot is used for
+soft power off / deep sleep instead — see
 `docs/superpowers/plans/2026-05-21-power-button.md`.
 
 #### Firmware structure
@@ -495,11 +505,12 @@ power on/off instead — see Phase C of
   detector pass. Reports `(id, event)` pairs to the registered
   callback.
 - `firmware/main/main.c::on_button_event()` — single dispatch point.
-  Routes TARE → `pk_imu_tare_now()` / `pk_imu_tare_persist()` /
-  `pk_imu_factory_reset()` for SHORT / LONG / VERY_LONG,
-  MODE → `pk_ui_toggle_mode()` on SHORT (LONG reserved for power
-  on/off — currently a TODO log), UP/DOWN → `pk_ui_list_scroll(±1)`,
-  combo → BLE-pairing stub (`ESP_LOGW(... TODO ...)`).
+  Routes TARE SHORT by current UI mode (Settings language toggle,
+  ADS-B LIST own-ship bind, otherwise IMU tare), TARE LONG / VERY_LONG
+  to `pk_imu_tare_persist()` / `pk_imu_factory_reset()`,
+  MODE SHORT to `pk_ui_toggle_mode()`, MODE LONG to
+  `pk_power_enter_sleep()`, UP/DOWN to list/About scrolling, and the
+  combo to the BLE-pairing request log path.
 - `firmware/main/ui_state.c` — holds current `pk_ui_mode_t` and the
   list cursor; mutex-protected for concurrent reads from
   `pfd_task` (render) and `button_task` (input).
@@ -523,7 +534,7 @@ That's **9** GPIOs with no caveats. (Was 8 before the MODE button moved
 from GPIO27 to GPIO5; GPIO27 is back in the free pool, GPIO5 leaves it.)
 
 > Note: `GPIO33 / GPIO46 / GPIO47 / GPIO48` were used by the LCD in
-> Phase 4a but have since been freed up — the LCD moved to the SPI2
+> an earlier bring-up build but have since been freed up — the LCD moved to the SPI2
 > IO_MUX direct pins on the left header (GPIO 28–31, see §3). Be
 > aware that GPIO46 and GPIO47 still bracket a header GND, so if you
 > reassign these to a single peripheral, prefer individual jumpers

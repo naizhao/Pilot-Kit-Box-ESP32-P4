@@ -1,5 +1,5 @@
 /*
- * dsp_task.c — Phase 2 ADS-B edge decoder.
+ * dsp_task.c — ADS-B edge decoder.
  *
  * Drains g_iq_ringbuf in fixed-size chunks, runs the dump1090-derived
  * magnitude / preamble / Manchester decode chain inherited from
@@ -17,8 +17,8 @@
  * 10 s, and both falling in the same NL longitude zone — matching
  * RTCA DO-260B. Until that happens, position lines say "pos=pending".
  *
- * In parallel the task continues to emit the Phase 1 throughput
- * dashboard line once per second:
+ * In parallel the task emits a throughput dashboard line once per
+ * second:
  *
  *   I (xxx) dsp: stream 2.00 MB/s | msgs/s 23 (df17_pos 8 df17_id 2) | aircraft 14
  *
@@ -117,7 +117,7 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
     (void)self;
 
     /* Drop frames whose CRC is bad (or only became "ok" after a
-     * single-bit forced correction — too noisy for Phase 2's bar). */
+     * single-bit forced correction — too noisy for live traffic). */
     if (!mm->crcok || mm->errorbit >= 0) return;
 
     uint32_t icao24 = ((uint32_t)mm->aa1 << 16)
@@ -424,7 +424,7 @@ reset:;
 void dsp_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "dsp_task running (Phase 2: dump1090 edge decode)");
+    ESP_LOGI(TAG, "dsp_task running (dump1090-derived edge decode)");
 
     cpr_init();
     mode_s_init(&s_decoder);

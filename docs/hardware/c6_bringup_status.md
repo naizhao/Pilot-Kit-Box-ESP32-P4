@@ -1,5 +1,7 @@
 # C6 hosted slave bring-up — RESOLVED
 
+Chinese version: [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md)
+
 > ✅ **Resolved 2026-05-14**: BLE GATT server advertising as
 > `Pilot Kit Box-XXXXXX` (per-board MAC suffix) confirmed
 > end-to-end. ESP32-P4 host ↔ ESP32-C6 slave SDIO + VHCI is up;
@@ -8,7 +10,7 @@
 
 ## What it took to fix
 
-There were **three** stacked bugs hiding behind the original
+There were **four** stacked bugs hiding behind the original
 `sdmmc_init_ocr: send_op_cond returned 0x107` failure. None of them
 were ESP-Hosted internals — all three were on the Pilot Kit Box
 side. In order of "things that masked the next thing":
@@ -58,7 +60,21 @@ not mentioned in the BLE protocol spec; you only spot them by
 diffing against the working example. Fix lives in `ble_gatt_init()`
 (firmware/main/ble_gatt.c).
 
-### 3. `vTaskDelayUntil(&deadline, 0)` in GDL90 emitter
+### 3. ESP-Hosted SDIO queues were too large for early internal RAM pressure
+
+ESP-Hosted's default SDIO queues allocate large DMA-capable internal
+RAM pools early during startup. With PSRAM, USB, LCD, BLE, and the
+rest of this firmware enabled, the default queue depth can fail before
+`app_main()` has a chance to recover.
+
+Fix: keep the SDIO queue depth at 8 for the BLE-only use case:
+
+```text
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
+```
+
+### 4. `vTaskDelayUntil(&deadline, 0)` in GDL90 emitter
 
 A latent bug in `emitter_task` — we passed `xTimeIncrement = 0`,
 which FreeRTOS rejects with
@@ -124,8 +140,9 @@ project setup. Our own build steps are documented in
   connect; haven't yet confirmed an iOS phone actually pushes the
   time. To test once a mobile client connects.
 - BLE security: currently no pairing / bonding. Acceptable for ADS-B
-  broadcast data but worth a follow-up if we ever send anything
-  sensitive (e.g. cockpit-side telemetry the pilot wants kept private).
+  broadcast visibility only, but no private, control, or cockpit-
+  sensitive data should be added before bonding / encryption is
+  designed and documented.
 - ESP-Hosted upstream has open issues
   ([#167](https://github.com/espressif/esp-hosted-mcu/issues/167),
   [#180](https://github.com/espressif/esp-hosted-mcu/issues/180))

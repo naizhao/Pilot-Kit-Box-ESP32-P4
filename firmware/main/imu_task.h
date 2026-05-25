@@ -1,5 +1,5 @@
 /*
- * imu_task.h — Phase 4b BNO085 sensor-fusion driver.
+ * imu_task.h — BNO085 sensor-fusion driver.
  *
  * Talks SH-2 / SHTP over the on-board I²C0 bus (shared with the ES8311
  * codec, no address conflict — codec is 0x18, BNO085 default is 0x4A).
@@ -8,8 +8,8 @@
  * report at 100 Hz to the rest of the firmware: it doesn't expose
  * accelerometer, gyro, or magnetometer streams; it doesn't run
  * calibration commands; it doesn't speak the executable channel for
- * firmware updates. Those can be added incrementally once Phase 4
- * verifies the pipeline.
+ * firmware updates. Add those only when a concrete firmware feature
+ * needs them.
  *
  *   Reset → drain SHTP advertisement → enable "Rotation Vector" report
  *   (Sensor Report ID 0x05) at 10 ms interval → poll input reports on
@@ -20,8 +20,8 @@
  *   roll  = rotation about the sensor's X axis  (right-wing-down +)
  *   pitch = rotation about the sensor's Y axis  (nose-up +)
  *   yaw   = rotation about the sensor's Z axis  (clockwise-from-above +)
- * Mounting offset will be configurable in Phase 4c. For now, the sensor
- * frame is the PFD frame.
+ * The fixed mounting quaternion below must match the physical IMU
+ * orientation in the current enclosure or breadboard build.
  */
 #pragma once
 

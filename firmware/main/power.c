@@ -8,10 +8,11 @@
  *   2. pk_display_set_brightness(0) — LEDC duty 0 drives the backlight
  *      PWM pin to a continuous low level (the LEDC channel itself stays
  *      configured, but its output is 0).
- *   3. pk_display_panel_off() — send ST7789 DISPOFF (0x28). All liquid-
- *      crystal segments turn fully dark regardless of framebuffer
- *      contents. This is what gives the user "screen is off" visually,
- *      not the backlight (see note in step 6 about silicon errata).
+ *   3. Do not send ST7789 DISPOFF on this hardware revision. Testing
+ *      showed that calling esp_lcd_panel_disp_on_off() before sleep can
+ *      leave the LCD/SPI peripheral in a state that prevents deep sleep
+ *      from being entered. We blank the user-visible output by setting
+ *      the backlight duty to 0 and accept the last framebuffer content.
  *   4. Wait for the user to release MODE. The wake source we arm in
  *      step 6 is "GPIO5 low," and the same physical button that
  *      triggered LONG_PRESS is still being held — its line is at 0.
@@ -109,19 +110,18 @@ void pk_power_enter_sleep(void)
      * leave the LCD/LEDC peripheral in a state that blocks the deep
      * sleep transition entirely (chip never actually sleeps).
      *
-     * The pk_display_panel_off() call above sends ST7789 DISPOFF (0x28)
-     * which blanks all liquid-crystal segments. Combined with LEDC
-     * duty=0, the user perceives a fully dark screen. The backlight LED
-     * may still draw a few mA from the floating GPIO50 (chip rev
-     * limitation), but the panel shows nothing — visually equivalent
-     * to "off." A rev >= 3.0 silicon would let us also cut backlight
-     * power; on this rev we accept the residual drain. */
+     * Because pk_display_panel_off() is intentionally not called on
+     * this board revision, the last framebuffer may remain visible if
+     * ambient light reaches the transflective panel. LEDC duty=0 still
+     * removes the active backlight. A rev >= 3.0 silicon would let us
+     * hold or cut the backlight GPIO more cleanly; on this rev we
+     * accept the residual drain and document it as a hardware limit. */
 
     vTaskDelay(pdMS_TO_TICKS(50));   /* UART drain */
 
     /* HP_PERIPH_PD wake path — see esp_sleep.h. IDF handles the
-     * internal pull-up automatically. Confirmed working on hardware
-     * (wakeup_cause=7, GPIO5 low triggers cold boot). */
+     * internal pull-up automatically. Confirmed working on hardware:
+     * GPIO5 low triggers a cold boot with ESP_SLEEP_WAKEUP_GPIO set. */
     const uint64_t wake_mask = 1ULL << PK_POWER_WAKE_GPIO;
     ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(
         wake_mask, ESP_GPIO_WAKEUP_GPIO_LOW));

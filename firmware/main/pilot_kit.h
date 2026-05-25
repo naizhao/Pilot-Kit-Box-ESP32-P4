@@ -1,5 +1,5 @@
 /*
- * pilot_kit.h — Phase 1 shared declarations for the Pilot Kit Box firmware.
+ * pilot_kit.h — shared declarations for the Pilot Kit Box firmware.
  *
  * Three tasks cooperate to deliver a stable IQ data pipeline:
  *

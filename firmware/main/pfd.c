@@ -4,16 +4,15 @@
  * Renders one of four UI modes into the 320×240 ST7789 framebuffer at
  * 30 FPS:
  *
- *   PFD         — G1000-style attitude + statusbar + HSI + (later) ALT
- *                 tape + GS / VS readouts.
+ *   PFD         — G1000-style attitude + statusbar + HSI + ALT tape +
+ *                 GS / VS readouts.
  *   CAL_WIZARD  — IMU compass-calibration figure-8 prompt.
  *   ABOUT       — system info page.
  *   ADSB_LIST   — live ADS-B contacts table + detail pane.
  *
  * Each PFD widget owns its screen region and reads from a small
  * per-frame POD assembled here (pk_pfd_imu_t, pk_pfd_status_t,
- * pk_pfd_hsi_t). Phase E adds an own-ship ADS-B snapshot to the
- * PFD-mode case; phase F adds the GS/VS inline readouts.
+ * pk_pfd_hsi_t, plus the optional own-ship ADS-B snapshot).
  */
 
 #include "pfd.h"

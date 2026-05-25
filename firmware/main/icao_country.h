@@ -8,8 +8,8 @@
  * top-30 sources). Lookups not covered return NULL (caller renders
  * empty / "Unknown").
  *
- * Not exhaustive — see the // TODO at the top of icao_country.c for a
- * note on how to expand. Static C arrays in flash, no NVS / SD / net.
+ * Not exhaustive — see the expansion note at the top of icao_country.c.
+ * Static C arrays in flash, no NVS / SD / net.
  *
  * Lookup is O(log n) binary search over sorted-by-low-bound ranges.
  */

@@ -4,7 +4,17 @@ A daily-driver guide for the four-button Pilot Kit Box hardware. For
 the engineer-facing pinout, GPIO assignments, and SH-2 command
 implementation details, see `docs/hardware/board_pinout.md`.
 
+Chinese version: [`user_guide-zh_CN.md`](user_guide-zh_CN.md)
+
 ---
+
+## Safety boundary
+
+Pilot Kit Box is a situational-awareness and development device, not
+a certified flight instrument, backup instrument, navigation source,
+or collision-avoidance system. Use certified aircraft instruments,
+approved procedures, visual scan, and applicable regulations for all
+flight decisions.
 
 ## 1. Buttons at a glance
 
@@ -23,8 +33,8 @@ an LP_IO pin (see `docs/hardware/board_pinout.md` §3.4 for the why):
 
 | Button | Short press (< 3 s) | Long press (≥ 3 s) | Very-long press (≥ 10 s) |
 |--------|---------------------|--------------------|---------------------------|
-| **TARE** | Live tare — snapshot current pose as the new "zero" (yaw/roll/pitch all reference it; not saved across reboot) | **Persist** the current tare to NVS so it survives reboot | **Factory reset** — wipe NVS tare + BNO's persisted DCD + reinit the chip. Use this if heading is stuck wrong after a reboot. |
-| **MODE** | Cycle screen: **PFD → ADS-B LIST → ABOUT → PFD** | *(reserved — power on/off; currently a TODO log until Phase C lands)* | — |
+| **TARE** | Context-sensitive: live IMU tare on PFD/ABOUT; toggle language on SETTINGS; bind highlighted aircraft as own-ship on ADS-B LIST | **Persist** the current IMU tare to NVS so it survives reboot | **Factory reset** — wipe NVS tare + BNO's persisted DCD + reinit the chip. Use this if heading is stuck wrong after a reboot. |
+| **MODE** | Cycle screen: **PFD → ADS-B LIST → SETTINGS → ABOUT → PFD** | **Soft power off** — backlight off + ESP32-P4 deep sleep; press MODE again to wake/cold-boot | — |
 | **UP**   | Scroll list selection up | *(suppressed — reserved for the combo)* | — |
 | **DOWN** | Scroll list selection down | *(suppressed — reserved for the combo)* | — |
 
@@ -32,7 +42,7 @@ an LP_IO pin (see `docs/hardware/board_pinout.md` §3.4 for the why):
 
 | Gesture | Action |
 |---|---|
-| **UP + DOWN held together ≥ 5 s** | Open BLE pairing window. (Flutter side not implemented yet — logs a TODO message.) |
+| **UP + DOWN held together ≥ 5 s** | Open BLE pairing window. The current firmware records the request; mobile UI handling is not implemented yet. |
 
 ---
 
@@ -121,9 +131,9 @@ press:
 TARE short-press
 ```
 
-This only zeroes `yaw` (heading), leaving `roll` and `pitch` referenced
-to gravity. It's the same gesture you'd do mid-flight on a real PFD
-when the compass drifts.
+This captures the current corrected attitude as the temporary
+software-tare reference. It is useful after moving or re-mounting the
+device, but it does not change the safety boundary above.
 
 ---
 
@@ -162,10 +172,12 @@ gets stuck.
 | Mode | What it shows |
 |------|---------------|
 | **PFD** *(default)* | Primary flight display: sky/ground horizon, pitch ladder, bank arc, heading tape, attitude readout, ADS-B aircraft count. |
-| **ADS-B LIST** | Scrollable list of tracked aircraft. Top half: ICAO, callsign, altitude, speed, heading. Bottom half: detail pane for the highlighted row. |
+| **ADS-B LIST** | Scrollable list of tracked aircraft. Top half: ICAO, callsign, country, altitude, speed, heading, vertical speed, squawk, and type. Bottom half: detail pane for the highlighted row. Short-press **TARE** here to bind the highlighted ICAO as own-ship for PFD ALT / GS / VS. |
+| **SETTINGS** | Language page. Short-press **TARE** to switch English / Chinese; the selection is saved to NVS and survives reboot. |
 | **ABOUT** | Project version, build time, hardware summary, calibration status. |
+| **COMPASS CAL** *(automatic overlay)* | Figure-8 calibration wizard. It appears automatically when BNO085 accuracy stays at 0 for long enough, exits after convergence, and can be dismissed with MODE. |
 
-Use **UP / DOWN** in `ADS-B LIST` mode to move the highlight.
+Use **UP / DOWN** in `ADS-B LIST` mode to move the highlight. Use **UP / DOWN** in `ABOUT` mode to scroll the page.
 
 ---
 

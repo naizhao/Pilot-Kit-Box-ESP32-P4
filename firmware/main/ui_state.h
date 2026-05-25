@@ -1,7 +1,7 @@
 /*
  * ui_state.h — single source of truth for which view the LCD is showing.
  *
- * Top-level views in Phase 4:
+ * Top-level LCD views:
  *   PK_UI_MODE_PFD        — primary flight display (default at boot)
  *   PK_UI_MODE_ADSB_LIST  — scrollable list of currently-tracked ADS-B
  *                            aircraft + detail pane of the selected row

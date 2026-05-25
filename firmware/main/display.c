@@ -1,6 +1,5 @@
 /*
- * display.c — Phase 4a TK024F3036 (ST7789 + transflective TFT) LCD
- * bring-up.
+ * display.c — TK024F3036 (ST7789 + transflective TFT) LCD bring-up.
  *
  * The panel is the Holocene Technology TK024F3036 240x320 2.4-inch
  * transflective IPS module. Its driver IC is ST7789 BUT the panel needs
@@ -23,8 +22,7 @@
  * turn uses GDMA for the SPI transfer.
  *
  * The backlight is driven by an LEDC PWM channel rather than a fixed
- * GPIO so Phase 4d can implement smooth dim-on / dim-off plus reflect
- * configurable brightness once the buttons + UI land.
+ * GPIO so UI code can dim or blank the display without rewiring pins.
  */
 
 #include "display.h"

@@ -7,15 +7,12 @@
  * below are kept here for the few places — sdkconfig.defaults aside —
  * that need to wire them up.
  *
- * Phase 4 is split:
- *   4a (this file)  — panel init + LEDC backlight + a single framebuffer
- *                     in PSRAM + a draw-bitmap blit helper. Plus a
- *                     test-pattern entry point that fills the screen
- *                     with a vertical RGB565 gradient so first-light
- *                     can be confirmed before the PFD code lands.
- *   4b              — BNO085 IMU driver feeds quaternions to…
- *   4c              — …pfd_render.c which paints into our framebuffer.
- *   4d              — double-buffer / GDMA tuning for 60 FPS.
+ * Current display stack:
+ *   - panel init + LEDC backlight
+ *   - single RGB565 framebuffer in PSRAM
+ *   - synchronous full-frame SPI flush at roughly 30 FPS
+ *   - PFD, ADS-B LIST, SETTINGS, ABOUT, and calibration views rendered
+ *     by the UI layer into this framebuffer.
  *
  * All draw operations are RGB565, big-endian on the wire (ST7789's
  * native byte order in 16-bit colour mode).
@@ -45,7 +42,7 @@
  * Right header was previously used but is land-mined: pins 46 and 47
  * are separated by a GND pad, which any multi-pin Dupont housing will
  * short one signal to ground (verified — caused the "init OK but
- * panel uniform pale blue" symptom during Phase 4a bring-up). The
+ * panel uniform pale blue" symptom during early LCD bring-up). The
  * left-header 28/29/30/31 region has the GND below it, not between
  * the signal pads, so a 4- or 5-pin housing is safe here.
  *
@@ -100,10 +97,10 @@ void pk_display_set_brightness(uint8_t level);
 /*
  * Issue an ST7789 display-off command (DISPOFF, 0x28 — wrapped by
  * esp_lcd_panel_disp_on_off). All liquid-crystal segments turn fully
- * dark regardless of the framebuffer contents. Use this before deep
- * sleep so the panel doesn't keep showing the last frame. The next
- * pk_display_init() (e.g. after a deep-sleep cold boot) restores
- * normal display automatically.
+ * dark regardless of the framebuffer contents. The current MODE sleep
+ * path deliberately does not call this on ESP32-P4 rev 1.x hardware
+ * because testing showed it can block deep sleep entry; keep it for
+ * controlled tests and future board revisions.
  */
 void pk_display_panel_off(void);
 
@@ -118,20 +115,19 @@ esp_err_t pk_display_draw(uint16_t x0, uint16_t y0,
 
 /*
  * Pointer to the firmware-owned single framebuffer in PSRAM
- * (PK_DISPLAY_W × PK_DISPLAY_H × 2 B). Phase 4c writes here; the
- * 4d double-buffer split will redefine this getter.
+ * (PK_DISPLAY_W × PK_DISPLAY_H × 2 B). UI renderers write here before
+ * pk_display_flush_full() pushes the frame to the panel.
  */
 uint16_t *pk_display_framebuffer(void);
 
 /*
- * Push the entire framebuffer to the panel synchronously. Phase 4a/c
- * use this; 4d swaps it for an asynchronous queue + GDMA flush.
+ * Push the entire framebuffer to the panel synchronously.
  */
 esp_err_t pk_display_flush_full(void);
 
 /*
- * Phase 4a sanity check: paint a vertical R→G→B gradient into the
- * framebuffer and push it once. If you see a clean sweep, SPI + panel
- * init + backlight + memory access ordering are all working.
+ * Sanity check: paint a vertical R→G→B gradient into the framebuffer
+ * and push it once. If you see a clean sweep, SPI + panel init +
+ * backlight + memory access ordering are all working.
  */
 void pk_display_test_pattern(void);

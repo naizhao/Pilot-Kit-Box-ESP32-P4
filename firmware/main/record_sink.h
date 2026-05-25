@@ -8,7 +8,7 @@
  *   - record_sink_uart  prints "<ts_ms> *<HEX>;" to the console
  *   - record_sink_file  appends the same line to a rotated LittleFS
  *                       log file (later: SD card variant)
- *   - record_sink_ble   (Phase 3b) encodes GDL90 + queues to GATT notify
+ *   - record_sink_ble   encodes GDL90 + queues to GATT notify
  *
  * Sinks live in a small static registry populated at boot, so there is
  * no allocation on the hot path. The dispatcher walks the registry and
@@ -65,7 +65,7 @@ void record_dispatch(const record_t *rec);
 /*
  * Helper invoked once during app_main, after task spawning prerequisites
  * (LittleFS mount, UART) have been satisfied. Constructs the default set
- * of sinks for Phase 3a and registers them.
+ * of sinks and registers them.
  *
  * Returns the LittleFS mount point used by the file sink (or NULL if
  * the file sink failed to initialise), purely for diagnostic logging.

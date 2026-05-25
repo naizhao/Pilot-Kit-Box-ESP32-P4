@@ -2,12 +2,14 @@
 
 | Item | Value |
 |------|-------|
-| **Document version** | 1.0 (Phase 3b) |
+| **Document version** | 1.0 |
 | **Status** | Draft — implemented in firmware, ready for client integration |
 | **Audience** | Mobile / desktop client developers integrating with Pilot Kit Box |
 | **Firmware reference** | `firmware/main/ble_gatt.c` |
 | **License** | This document and its reference implementation are released under the same MIT license as the rest of [Pilot-Kit-Box-ESP32-P4](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4) |
 | **Companion documents** | [`docs/architecture.md`](architecture.md) (system architecture), [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) (radio bring-up) |
+
+Chinese version: [`ble_protocol-zh_CN.md`](ble_protocol-zh_CN.md)
 
 ## 1. Overview
 
@@ -20,8 +22,10 @@ broadcast.
 The protocol is intentionally minimal:
 
 - **One primary GATT service** with **four characteristics**
-- **No bonding, no pairing, no encryption** — surveillance data is
-  inherently non-sensitive and the radio range is short (10–30 m)
+- **No bonding, no pairing, no encryption in protocol v1.0** — treat
+  the link as open local telemetry. ADS-B traffic is publicly
+  broadcast, but clients must not use this BLE link for confidential
+  data, aircraft control, or safety-critical command paths.
 - **No vendor extensions** beyond the published GDL90 standard for
   traffic frames
 - **Auto-time-sync via SIG-standard Current Time Service** on iOS;
@@ -128,14 +132,14 @@ the same service.
 The firmware requests **ATT_MTU = 256** at link-up so a single
 GDL90 Traffic Report (≤ 62 bytes after escaping) fits in one PDU
 without fragmentation. Clients **SHOULD** negotiate up to at least
-**ATT_MTU = 64**; failure to do so may force the firmware to split
-frames into multiple notifications, which is unsupported in this
-protocol revision.
+**ATT_MTU = 64**. This protocol revision does not define
+cross-notification frame reassembly, so clients should treat smaller
+MTUs as unsupported for GDL90 traffic.
 
 ### 4.2. Multiple clients
 
 The firmware supports one peer at a time. Subsequent connection
-requests while another peer is bonded **MAY** be rejected by the
+requests while another peer is connected **MAY** be rejected by the
 NimBLE controller; clients **MUST** handle a connection failure
 gracefully by retrying after a short backoff.
 
@@ -265,10 +269,10 @@ clients **SHOULD** treat absence for > 5 s as a stale link.
 | 2..3 | UAT Time Stamp lower 16 bits (LSB first), seconds since 0000Z UTC |
 | 4..5 | Message counts (uplink + basic/long, see spec §3.1) |
 
-Currently the firmware emits `gps_valid = 0` (no GPS yet),
+Currently the firmware emits `gps_valid = 0` (no GPS input yet),
 `uat_initialised = 1`, `utc_ok = 0` until time-sync happens, then
-`utc_ok = 1`. Phase 4 will populate `gps_valid` once the IMU/GPS
-extension lands.
+`utc_ok = 1`. A future GPS / ownship source would be required before
+the firmware can mark `gps_valid`.
 
 ### 6.3. Raw ts-line (`…0003`, NOTIFY)
 
@@ -380,9 +384,9 @@ Adding a brand-new optional characteristic does **not** require a
 revision bump — existing clients ignore unknown UUIDs (§3).
 
 The firmware does not currently expose its build version over BLE.
-Phase 4 will add a standard Bluetooth Device Information Service
-(`0x180A`) with the Firmware Revision String characteristic so
-clients can detect future protocol incompatibilities.
+A future firmware revision should add a standard Bluetooth Device
+Information Service (`0x180A`) with the Firmware Revision String
+characteristic so clients can detect protocol incompatibilities.
 
 ## 9. Open questions / future work
 
@@ -390,13 +394,13 @@ The following items are **not** part of this protocol revision but
 are on the firmware roadmap; they will get their own sections once
 implemented:
 
-- **Ownship Report (GDL90 msg ID `0x0A`)** — requires the Phase 4
-  GPS hookup
+- **Ownship Report (GDL90 msg ID `0x0A`)** — requires a GPS or other
+  trustworthy ownship position source
 - **Device Info Service (0x180A)** for firmware version
 - **Configuration write characteristic** — set RTL-SDR sample
   rate / gain / centre frequency from the app
-- **Bonding + LESC encryption** if surveillance data ever moves
-  to a sensitive role (e.g. private flight tracking)
+- **Bonding + LESC encryption** before adding any non-public,
+  user-identifying, control, or cockpit-sensitive data path
 - **Multiple concurrent peers** — currently one at a time
 
 ## 10. References

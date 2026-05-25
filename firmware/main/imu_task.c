@@ -50,7 +50,7 @@ static const char *TAG = "imu";
 #define IMU_I2C_SCL              8
 #define IMU_I2C_HZ               400000
 #define IMU_I2C_ADDR             0x4A
-#define IMU_PIN_INT              20    /* unused in polled mode (Phase 4b first cut) */
+#define IMU_PIN_INT              20    /* unused in current polled mode */
 #define IMU_PIN_RST              21
 
 /* --- SH-2 constants -------------------------------------------------- */

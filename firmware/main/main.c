@@ -1,11 +1,12 @@
 /*
- * main.c — Pilot Kit Box (ESP32-P4) Phase 1 boot strap.
+ * main.c — Pilot Kit Box (ESP32-P4) application boot strap.
  *
  *   1. Allocate the shared IQ ring buffer.
  *   2. Spawn usb_host_lib_task on CPU 0 (USB stack lifecycle pump).
  *   3. Wait until the USB host library is installed.
  *   4. Spawn sdr_task on CPU 1 (RTL-SDR control + async IQ producer).
- *   5. Spawn dsp_task on CPU 1 (consumer + 1 Hz throughput meter).
+ *   5. Spawn dsp_task on CPU 1 (consumer + decoder + 1 Hz meter).
+ *   6. Bring up storage sinks, LCD, IMU, UI state, buttons, PFD, and BLE.
  *
  * app_main returns; the three tasks own the rest of the runtime.
  */
@@ -111,8 +112,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_toggle_mode();
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            /* Soft power-off: drop backlight, configure GPIO5 as ext1
-             * wake source, enter deep sleep. Does not return — next
+            /* Soft power-off: drop backlight, configure GPIO5 as the
+             * deep-sleep wake GPIO, enter deep sleep. Does not return — next
              * press of MODE is a cold boot. */
             pk_power_enter_sleep();
         }
@@ -127,11 +128,11 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 pk_ui_about_scroll(-1);
             }
         } else if (evt == PK_BTN_EVT_COMBO_BLE_PAIR) {
-            /* TODO(BLE pairing): trigger BLE pairing flow once the
-             * Flutter side adds a pairing-window UI. For now, just
-             * log it so the gesture is observably detected. */
+            /* BLE pairing request gesture is verified in firmware.
+             * Mobile UI handling is intentionally left for the client
+             * integration layer. */
             ESP_LOGW(TAG, "UP+DOWN combo: BLE pairing requested "
-                          "(TODO — Flutter side not implemented yet)");
+                          "(mobile UI handling not implemented yet)");
         }
         break;
 
@@ -183,16 +184,16 @@ void usb_host_lib_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Pilot Kit Box (ESP32-P4) — Phase 1 boot");
+    ESP_LOGI(TAG, "Pilot Kit Box (ESP32-P4) boot");
 
-    /* Log wakeup cause + ext1 status. After a deep-sleep wake, cause
-     * should be ESP_SLEEP_WAKEUP_EXT1 (=4) and ext1_status should have
-     * bit 5 set (= 0x20) — that's GPIO5 reading low. Anything else
-     * tells us self-wake came from a different source. */
-    esp_sleep_wakeup_cause_t wake_cause = esp_sleep_get_wakeup_cause();
-    uint64_t ext1_status = esp_sleep_get_ext1_wakeup_status();
-    ESP_LOGI(TAG, "boot wakeup_cause=%d  ext1_status=0x%llx",
-             (int)wake_cause, (unsigned long long)ext1_status);
+    /* Log wakeup causes + GPIO wake status. MODE sleep uses
+     * esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(), so a
+     * successful MODE wake sets the ESP_SLEEP_WAKEUP_GPIO bit and
+     * should include GPIO5 in gpio_status. */
+    uint32_t wake_causes = esp_sleep_get_wakeup_causes();
+    uint64_t gpio_status = esp_sleep_get_gpio_wakeup_status();
+    ESP_LOGI(TAG, "boot wakeup_causes=0x%lx  gpio_status=0x%llx",
+             (unsigned long)wake_causes, (unsigned long long)gpio_status);
 
     ESP_LOGI(TAG, "Free internal heap at boot: %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -241,7 +242,7 @@ void app_main(void)
     ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
     assert(ok == pdTRUE);
 
-    /* Phase 4a: bring up the LCD and paint the boot splash (logo +
+    /* Bring up the LCD and paint the boot splash (logo +
      * "Booting ..." text). The splash stays on screen until the PFD
      * render task starts — we time-stamp here and enforce a minimum
      * hold (PK_BOOT_SPLASH_MIN_MS) just before pk_pfd_start() below
@@ -261,7 +262,7 @@ void app_main(void)
         splash_shown_us = esp_timer_get_time();
     }
 
-    /* Phase 4b: BNO085 IMU. Failure is non-fatal — the rest of the
+    /* BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
     esp_err_t imu_err = pk_imu_init();
     if (imu_err != ESP_OK) {
@@ -286,7 +287,7 @@ void app_main(void)
                  esp_err_to_name(i18n_err));
     }
 
-    /* Tact buttons: TARE/MODE/UP/DOWN on GPIO 26/27/22/23. Spawned
+    /* Tact buttons: TARE/MODE/UP/DOWN on GPIO 26/5/22/23. Spawned
      * even when IMU init failed — only the TARE button does anything
      * without an IMU (no-ops out, harmless), and MODE/UP/DOWN still
      * drive the UI. */
@@ -295,7 +296,7 @@ void app_main(void)
         ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
     }
 
-    /* Phase 4c: PFD render task. Starts after the display + IMU init
+    /* PFD render task. Starts after the display + IMU init
      * so it can read both straight away. Survives either failing.
      *
      * Before kicking the PFD render task, make sure the boot splash
@@ -326,7 +327,7 @@ void app_main(void)
         }
     }
 
-    /* Phase 3b: BLE init. Requires the on-board ESP32-C6 to have been
+    /* BLE init. Requires the on-board ESP32-C6 to have been
      * pre-flashed with the matching esp_hosted slave firmware (one-time
      * board setup, see docs/BUILD.md §3). The hosted vhci_drv.c uses
      * ESP_ERROR_CHECK() internally so if C6 doesn't respond, the whole

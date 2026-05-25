@@ -12,10 +12,10 @@
  * Sorting: ascending by `lo`. Binary search assumes non-overlapping
  * (which ICAO 7910 guarantees) ranges.
  *
- * TODO: expand to the full Doc 7910 table (~280 entries) by transcribing
- * the canonical ICAO PDF, or by running a generator over readsb's
- * src/track.c (BSD) — both are offline-available. Until that's done,
- * unknown ICAOs render with an empty country column (intentional — no
+ * Future expansion: replace this curated subset with the full Doc 7910
+ * table (~280 entries), either transcribed from the canonical ICAO PDF
+ * or generated from readsb's src/track.c (BSD). Until then, unknown
+ * ICAOs render with an empty country column (intentional — no
  * misleading guesses).
  */
 

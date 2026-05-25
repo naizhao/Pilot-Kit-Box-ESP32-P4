@@ -229,8 +229,8 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
              * path, see aircraft_state_update_position).
              *
              * decode_ac12_field returns 0 as a sentinel when the Q-bit
-             * is clear (Gillham 100ft encoding — vendored decoder TODO,
-             * not implemented). Treat altitude==0 as "could not decode"
+             * is clear (Gillham 100ft encoding — not implemented in the
+             * vendored decoder). Treat altitude==0 as "could not decode"
              * and keep the previous good value, otherwise an airborne
              * plane reporting alt=FL350 will flicker to 0 every time
              * a Gillham-encoded frame slips in. */
@@ -323,8 +323,9 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
      * "altitude jumps between 5000, 19900, 33000 for CSZ993X" symptom.
      *
      * Same sentinel-0 guard as the DF17 path: decode_ac13_field
-     * returns 0 when the M-bit is set (meters mode — vendored decoder
-     * TODO) or when Q=0 / M=0 (Gillham 100ft — also TODO). */
+     * returns 0 when the M-bit is set (meters mode — not implemented
+     * in the vendored decoder) or when Q=0 / M=0 (Gillham 100ft — also
+     * not implemented). */
     if (df == 20 && mm->altitude != 0) {
         a->altitude_ft = (mm->unit == MODE_S_UNIT_METERS)
                              ? (int)(mm->altitude * 3.28084 + 0.5)

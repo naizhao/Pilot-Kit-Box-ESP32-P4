@@ -2,7 +2,7 @@
  * power.h — Soft power management for Pilot Kit Box.
  *
  * Single entry point that puts the device into ESP32-P4 deep sleep
- * with GPIO5 (MODE button, LP_IO) configured as the ext1 wake source.
+ * with GPIO5 (MODE button, LP_IO) configured as the deep-sleep wake GPIO.
  * Wake = full cold boot from app_main(), so there is no "resume" path
  * to design — boot splash, every pk_*_init(), the lot, runs fresh.
  *

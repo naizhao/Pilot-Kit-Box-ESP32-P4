@@ -15,8 +15,8 @@
  *      CPR_PAIR_MAX_AGE_US) and computes the geodetic position.
  *   3. The decoded position is cached on the per-aircraft entry so
  *      subsequent calls can be answered even when only one parity is
- *      currently fresh — useful for the surface-position metype 5-8
- *      sub-protocol we don't decode in Phase 2 but plan for in Phase 3.
+ *      currently fresh. Surface-position metype 5-8 remains future
+ *      work because this firmware currently focuses on airborne ADS-B.
  *
  * The decoder is intentionally allocation-free and fixed-capacity; on
  * an ESP32-P4 the entire table fits in <8 KiB of RAM.

@@ -1,79 +1,81 @@
-# ESP32-P4 固件发布与网页刷写
+# ESP32-P4 Firmware Release And Web Flashing
 
-本文档说明如何发布 Pilot Kit Box 的 ESP32-P4 主固件，以及普通用户如何通过网页完成更新。
+Chinese version: [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md)
 
-## 适用范围
+This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware releases, and how end users update the ESP32-P4 main firmware from a browser.
 
-- 适用于已经出厂预刷 ESP32-C6 hosted slave 固件的设备。
-- 只更新 ESP32-P4 主固件。
-- 不更新 ESP32-C6 协处理器固件。
-- 不要求用户安装 ESP-IDF、Python、CMake 或 Ninja。
+## Scope
 
-## 发布流程
+- Applies to devices whose on-board ESP32-C6 has already been flashed with the ESP-Hosted slave firmware.
+- Updates only the ESP32-P4 main firmware.
+- Does not update the ESP32-C6 co-processor firmware.
+- Does not require end users to install ESP-IDF, Python, CMake, or Ninja.
 
-1. 确认 `firmware/` 可以本地构建通过。
-2. 发正式版本前，把 `firmware/version.txt` 更新为同一个产品版本号，例如 `v0.5.0`。
-   本地构建会把这个值写入 ESP-IDF 的 `PROJECT_VER`，启动页和 ABOUT 页都会显示它。
-3. 创建并推送同名 tag，例如：
+## Maintainer Release Flow
+
+1. Confirm that `firmware/` builds locally.
+2. Before a formal release, update `firmware/version.txt` to the product version, for example `v0.5.0`.
+   Local builds embed this value into ESP-IDF `PROJECT_VER`; the boot splash and ABOUT page show the same value.
+3. Create and push the matching tag:
 
    ```bash
    git tag v0.5.0
    git push origin v0.5.0
    ```
 
-4. GitHub Actions 会运行 `.github/workflows/release-esp32p4-firmware.yml`。
-5. CI 使用 tag / 手动输入的 release 版本覆盖 `PROJECT_VER` 构建 `firmware/`，然后生成 release assets。
-6. CI 会创建或更新 GitHub Release，并部署 GitHub Pages 刷写页面。
+4. GitHub Actions runs `.github/workflows/release-esp32p4-firmware.yml`.
+5. CI builds `firmware/` with the release version from the tag or manual workflow input.
+6. CI creates or updates the GitHub Release assets and deploys the GitHub Pages flasher.
 
-首次使用 GitHub Pages 前，在仓库设置里确认：
+Before first use of GitHub Pages, confirm these repository settings:
 
-- Settings → Pages → Build and deployment → Source 选择 `GitHub Actions`
-- Actions 权限允许 workflow 写入 Releases 和 Pages
+- Settings -> Pages -> Build and deployment -> Source: `GitHub Actions`
+- Actions permissions allow writing Releases and Pages.
 
-## 版本号来源
+## Version Source
 
-- 默认产品版本写在 `firmware/version.txt`，当前为 `v0.5.0`。
-- ESP-IDF 会优先读取 `firmware/version.txt` 作为 `PROJECT_VER`，所以本地构建不再退回到 commit id。
-- CI 打包时会显式传入 `-DPROJECT_VER="$RELEASE_VERSION"`，让固件内嵌版本、manifest 版本和产物文件名保持一致。
-- 如果使用板型前缀 tag（例如 `esp32p4-v0.5.0`），发布脚本会把它归一为产品版本 `v0.5.0`，避免产物名里重复出现 `esp32p4`。
+- The default product version lives in `firmware/version.txt`; the current value is `v0.5.0`.
+- ESP-IDF reads `firmware/version.txt` as `PROJECT_VER`, so local builds do not fall back to a commit id.
+- CI passes `-DPROJECT_VER="$RELEASE_VERSION"` so the embedded firmware version, manifest version, and asset names match.
+- If a board-prefixed tag is used, for example `esp32p4-v0.5.0`, the release script normalises it to product version `v0.5.0` so asset names do not repeat `esp32p4`.
 
-## 产物命名
+## Release Assets
 
-所有 ESP32-P4 产物文件名都包含 `esp32p4`，为未来其他板型预留空间。
+All ESP32-P4 assets include `esp32p4` in the filename to leave room for future boards.
 
-以 `v1.2.3` 为例：
+For release `v1.2.3`:
 
-| 文件 | 用途 |
+| File | Purpose |
 |---|---|
-| `pilot-kit-box-esp32p4-v1.2.3-factory.bin` | 网页刷写使用的 merged bin，写入 offset `0x0` |
-| `pilot-kit-box-esp32p4-v1.2.3-bootloader.bin` | 维护者排障用，写入 offset `0x2000` |
-| `pilot-kit-box-esp32p4-v1.2.3-partition-table.bin` | 维护者排障用，写入 offset `0x8000` |
-| `pilot-kit-box-esp32p4-v1.2.3-app.bin` | 维护者排障用，写入 offset `0x10000` |
-| `manifest-esp32p4.json` | ESP Web Tools 刷写清单 |
-| `SHA256SUMS-esp32p4.txt` | 校验和 |
-| `pilot-kit-box-esp32p4-v1.2.3.zip` | 面向下载的完整包 |
+| `pilot-kit-box-esp32p4-v1.2.3-factory.bin` | Merged binary for web flashing at offset `0x0` |
+| `pilot-kit-box-esp32p4-v1.2.3-bootloader.bin` | Maintainer troubleshooting asset, flash at offset `0x2000` |
+| `pilot-kit-box-esp32p4-v1.2.3-partition-table.bin` | Maintainer troubleshooting asset, flash at offset `0x8000` |
+| `pilot-kit-box-esp32p4-v1.2.3-app.bin` | Maintainer troubleshooting asset, flash at offset `0x10000` |
+| `manifest-esp32p4.json` | ESP Web Tools manifest |
+| `SHA256SUMS-esp32p4.txt` | Checksums |
+| `pilot-kit-box-esp32p4-v1.2.3.zip` | Complete downloadable package |
 
-网页刷写采用 merged bin，是因为 ESP Web Tools 对 ESP-IDF v4+ 固件推荐使用合并后的单个二进制，由 `esptool merge-bin` 在 CI 中生成。
+The web flasher uses the merged binary because ESP Web Tools recommends a single merged image for ESP-IDF v4+ firmware. CI produces it with `esptool merge-bin`.
 
-## 用户更新流程
+## End-User Web Update Flow
 
-1. 用 Chrome 或 Edge 打开 GitHub Pages 刷写页。
-2. 用 USB-C 数据线连接 Pilot Kit Box 靠近 BOOT 按键的 Type-C 口。
-3. 点击“连接并刷入 ESP32-P4 固件”。
-4. 浏览器弹出串口选择框后，选择 Pilot Kit Box 对应的 USB 串口。
-5. 如果网页询问是否擦除数据，普通固件升级选择保留数据。
-6. 等待刷写完成，设备会自动重启。
+1. Open the GitHub Pages flasher in Chrome or Edge.
+2. Connect Pilot Kit Box to the Type-C port near the BOOT button with a USB-C data cable.
+3. Click "Connect and flash ESP32-P4 firmware".
+4. Pick the Pilot Kit Box USB serial port in the browser serial picker.
+5. If the page asks whether to erase data, choose to keep data for normal firmware upgrades.
+6. Wait for flashing to finish; the device reboots automatically.
 
-如果连接失败：
+If connection fails:
 
-1. 按住 BOOT。
-2. 短按 RESET。
-3. 松开 BOOT。
-4. 回到网页重新连接。
+1. Hold BOOT.
+2. Tap RESET.
+3. Release BOOT.
+4. Return to the web page and reconnect.
 
-## 限制
+## Limits
 
-- iPhone / iPad Safari 不支持 Web Serial，不能直接刷写。
-- Android 浏览器支持情况不稳定，不作为主要路径。
-- 这条路径不处理 ESP32-C6 首次烧录；C6 必须在出厂时预刷好。
-- 如果未来增加其他板型，需要新增对应 workflow、manifest 路径和文件名前缀，不要复用 `esp32p4` 产物名。
+- iPhone / iPad Safari does not support Web Serial and cannot flash directly.
+- Android browser Web Serial support is inconsistent and is not the primary path.
+- This path does not handle first-time ESP32-C6 flashing; the C6 must already contain the hosted slave image.
+- Future board variants need their own workflow, manifest path, and filename prefix. Do not reuse `esp32p4` asset names for other boards.

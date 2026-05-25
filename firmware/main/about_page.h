@@ -7,7 +7,8 @@
  * current IMU calibration accuracy (with a colour-coded indicator
  * so the user knows when it's safe to TARE long-press).
  *
- * Reached via MODE short-press cycle: PFD → ADSB_LIST → ABOUT → PFD.
+ * Reached via MODE short-press cycle:
+ * PFD → ADSB_LIST → SETTINGS → ABOUT → PFD.
  */
 #pragma once
 

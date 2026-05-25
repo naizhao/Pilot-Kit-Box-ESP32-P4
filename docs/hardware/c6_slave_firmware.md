@@ -1,5 +1,7 @@
 # Flashing the ESP-Hosted slave firmware onto the C6 module
 
+Chinese version: [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md)
+
 > 📌 **What this is**: a **one-time setup** every freshly-unboxed
 > Waveshare ESP32-P4-WIFI6 board needs to go through if you want
 > Bluetooth (and, in a future phase, Wi-Fi) to work. The P4 firmware
@@ -234,7 +236,7 @@ cd ~/path/to/Pilot-Kit-Box-ESP32-P4/firmware
 idf.py -p /dev/cu.usbmodem* flash monitor
 ```
 
-Expected console additions vs. Phase 2:
+Expected console additions after flashing P4 firmware with BLE enabled:
 
 ```
 I (xxx) ble_gatt: NimBLE host task running

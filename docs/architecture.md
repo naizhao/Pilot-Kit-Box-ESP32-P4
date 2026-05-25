@@ -1,8 +1,10 @@
 # Pilot Kit Box — Firmware Architecture
 
-Snapshot of the firmware's runtime topology after Phases 1, 2, 3a,
-and **3b** landed. Phase 4 (display + IMU) is sketched in dotted
-outlines where it intersects the current code path.
+Chinese version: [`architecture-zh_CN.md`](architecture-zh_CN.md)
+
+Snapshot of the current firmware runtime topology after the ADS-B,
+BLE, local UI, IMU, i18n, and soft-power work landed. Display and IMU
+are now active runtime paths rather than future sketches.
 
 ## Big picture
 
@@ -16,8 +18,9 @@ flowchart LR
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\npartition: storage 16 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
-        BNO["BNO085 IMU\n(Phase 4)\nI²C 7=SDA 8=SCL"]
-        SCREEN["GC9A01 SPI\n(Phase 4)"]
+        BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\nINT=20 RST=21"]
+        SCREEN["TK024F3036 / ST7789\n320×240 SPI\nCS=28 MOSI=29 SCK=30 DC=31 BL=50"]
+        BUTTONS["4 buttons\nTARE=26 MODE=5\nUP=22 DOWN=23"]
         BLE_PEER["iPad / iPhone\nPilot Kit app"]
     end
 
@@ -34,7 +37,7 @@ flowchart LR
             CB["on_iq cb\n(non-blocking, push only)"]
         end
 
-        RBUF["g_iq_ringbuf\n128 KiB BYTEBUF"]
+        RBUF["g_iq_ringbuf\n512 KiB BYTEBUF\nPSRAM-backed"]
 
         subgraph T_DSP["dsp_task — CPU 1, prio 4"]
             DRAIN["xRingbufferReceiveUpTo\n8 KiB chunks + 480 B overlap"]
@@ -85,12 +88,13 @@ flowchart LR
     SDIO_C6 <-->C6
     C6 -- BLE 5 --> BLE_PEER
 
-    SD -.Phase 4 option\nrec_sink_sdmmc.-> SINK_FILE
-    BNO -.Phase 4.-> P4
-    SCREEN -.Phase 4.-> P4
+    SD -.future SDMMC record sink.-> SINK_FILE
+    BNO --> P4
+    SCREEN --> P4
+    BUTTONS --> P4
 
     classDef pending stroke-dasharray:5 5,fill:#f7f7f7
-    class SD,BNO,SCREEN pending
+    class SD pending
 ```
 
 ## ASCII view (when the SVG render is unavailable)
@@ -106,7 +110,7 @@ flowchart LR
                        │     │  ┌── on_iq cb (zero compute) ──┘     │
                        │     │  │                                   │
                        │     │  ▼                                   │
-                       │   g_iq_ringbuf  128 KiB BYTEBUF            │
+                       │   g_iq_ringbuf  512 KiB BYTEBUF            │
                        │     │                                      │
                        │     ▼                                      │
                        │ dsp_task (CPU1)                            │
@@ -141,6 +145,9 @@ flowchart LR
 | `sdr`             | 1   | 6    | 8 KiB | Owns the USB client, opens the RTL-SDR, drives `rtlsdr_read_async()`. The async URB callback runs *on this same task* (`rtlsdr_read_async`'s wait loop pumps client events itself), so the IQ producer is a single-task design with no cross-CPU contention. |
 | `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
 | `rec_file`        | 0   | 3    | 4 KiB | Per-sink writer for the LittleFS file backend; keeps the dsp task off slow flash writes. |
+| `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
+| `buttons`         | 0   | 3    | 3 KiB | Polls TARE / MODE / UP / DOWN, debounces short/long/very-long presses, and detects the UP+DOWN combo. |
+| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, ADS-B LIST, SETTINGS, ABOUT, and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
 | `nimble_host`     | 0   | 4    | 4 KiB | NimBLE host event loop, hosts the GATT server; events arrive from the C6 controller over the SDIO/VHCI transport. |
 | `ble_emit`        | 0   | 3    | 6 KiB | 1 Hz timer task: snapshots `aircraft_state` and emits GDL90 Heartbeat + one Traffic Report per fresh aircraft on the BLE notify pipes; also drains the raw-ts-line queue produced by the BLE sink. |
 
@@ -148,27 +155,28 @@ flowchart LR
 
 | Region | Size | Owner |
 |--------|------|-------|
-| IQ ring buffer | 128 KiB | `g_iq_ringbuf` (DMA-capable internal RAM) |
+| IQ ring buffer | 512 KiB | `g_iq_ringbuf` (bulk IQ buffering, PSRAM-backed under current malloc threshold) |
 | URB pool       | ~96 KiB | 15 × 6400 B in-flight USB transfers |
 | DSP working set| ~12 KiB | 8 KiB IQ buf + 4 KiB magnitude buf |
 | CPR table      | ~5 KiB  | 64 aircraft slots in `cpr_decode.c` |
 | aircraft_state | ~7 KiB  | 64 slots in `aircraft_state.c` (callsign + alt + position + velocity) |
+| PFD framebuffer | 150 KiB | 320×240×16 bpp framebuffer in PSRAM |
 | file_sink queue| ~10 KiB | 256 × 40 B `file_record_t` items |
 | ble_raw queue  | ~5 KiB  | 64 × 80 B ts-line strings for the BLE Raw characteristic |
 | NimBLE host    | ~30 KiB | event loop, GATT DB, peer connection state (typical IDF v6 footprint) |
 
-Even with all phases active the firmware consumes well under 300 KiB
-of the P4's 768 KiB internal SRAM, leaving headroom for Phase 4's PFD
-framebuffer (240×240×16 bpp ≈ 115 KiB) and any libdsp temporaries.
+Large bulk buffers now live in PSRAM where practical, preserving the
+P4's 768 KiB internal SRAM for DMA-capable allocations, FreeRTOS stacks,
+ESP-Hosted queues, and USB host descriptors.
 
 ## Failure isolation
 
 ```
-URB error      → librtlsdr.c::_libusb_callback bumps xfer_errors;
-                 ≥ DEFAULT_BUF_NUMBER errors trip rtlsdr_cancel_async()
-                 which exits rtlsdr_read_async() → sdr_task suspends.
-                 (Recoverable: USB re-enumeration triggers a new
-                 NEW_DEV event; we currently don't re-open — Phase 3+.)
+URB / IQ stall → librtlsdr.c::_libusb_callback bumps xfer_errors;
+                 repeated errors trip rtlsdr_cancel_async(). dsp_task can
+                 also call pk_sdr_request_reinit() when IQ stalls. sdr_task
+                 closes and re-opens the same dongle address; after repeated
+                 failed attempts it escalates to esp_restart().
 
 Ring overflow  → xRingbufferSend in on_iq fails → counter incremented
                  (pk_iq_dropped_bytes_swap); dashboard logs a WARN line
@@ -272,7 +280,8 @@ A few non-obvious choices that this diagram makes load-bearing:
    own backpressure. The DSP loop guarantees forward progress on the
    IQ stream regardless of what flash, BLE peers, or operators do.
 
-4. **The on-wire format is the on-disk format is the on-BLE format.**
-   Every sink emits the same `<ts_ms> *<HEX>;` triple, which keeps
-   the GDL90 encoder optional. Phase 3b can keep the raw ts line as a
-   fallback "characteristic" for clients that prefer it over GDL90.
+4. **The raw on-wire format matches the on-disk format.** Serial,
+   LittleFS, and the BLE Raw characteristic all use the same
+   `<ts_ms> *<HEX>;` line shape. The GDL90 encoder is the structured
+   BLE traffic path, while raw ts-lines remain the debug and
+   compatibility path.
