@@ -1,16 +1,72 @@
 # Pilot Kit Box (ESP32-P4 Edition)
 
 <p align="center">
-  <strong>开源便携式 MCU 航电网关 | Open-source portable MCU avionics gateway</strong><br>
+  <strong>开源低成本飞行数据盒子与态势感知设备 | Open-source low-cost flight data box and situational-awareness device</strong><br>
   官方网站 / Official website: <a href="https://air.club">air.club</a><br>
   网页刷机 / Web flasher: <a href="https://updater.pilotkit.app">updater.pilotkit.app</a>
 </p>
 
 ## 项目概览 / Overview
 
-**Pilot Kit Box** 是面向通用航空态势感知的便携式航电设备。当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构：ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR，实时接收 1090 MHz ADS-B / Mode-S 信号，在本机完成 dump1090 派生的 DSP 解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口和本地 LittleFS 文件输出给移动端或调试工具。
+**Pilot Kit Box** 是一个开源、低成本、便携式的飞行数据盒子和航空态势感知设备，可与 [Pilot Kit](https://air.club) 深度结合使用，也可以作为独立设备运行。
 
-**Pilot Kit Box** is a portable avionics gateway for general-aviation situational awareness. The ESP32-P4 edition removes the Linux SBC from the ADS-B path: the P4 drives an RTL-SDR receiver over native USB 2.0 HS, decodes 1090 MHz ADS-B / Mode-S frames on-device, fuses per-aircraft state, and publishes traffic over BLE GATT, serial output, and local LittleFS logs.
+如果你熟悉 Stratux、Sentry、Garmin GDL 系列或 uAvionix ping 这类便携式 ADS-B / 飞行数据盒子，可以把 Pilot Kit Box 理解成一个更开放、更低成本、可自己搭建和二次开发的替代方案。它面向飞行员、飞行学员、飞行爱好者以及通航开发者，用常见硬件完成飞行记录、姿态显示、周边交通接收和后续数据分析。
+
+它的核心价值不是单纯“看天上有哪些飞机”，而是帮助用户低成本记录、理解和管理自己的飞行数据。它可以随飞机一起使用，记录每一次飞行中的关键数据，用于飞行日志、回放、分享和分析；也可以接收附近飞机公开广播的 ADS-B / Mode-S 信号，在本机屏幕上显示周边交通信息。
+
+你可以把它理解成一个“飞行员自己的小型数据记录与接收盒子”：它既能独立工作，也能和 Pilot Kit 紧密结合；未来也可以通过标准航空数据格式与 Garmin Pilot、ForeFlight 等第三方 EFB 软件配合使用。
+
+Pilot Kit Box can work as a standalone device or integrate closely with [Pilot Kit](https://air.club). If you know products such as Stratux, Sentry, Garmin GDL, or uAvionix ping, Pilot Kit Box is best understood as a more open, lower-cost, builder-friendly flight data and ADS-B box. It is intended for pilots, student pilots, aviation enthusiasts, and general-aviation developers who want local flight recording, attitude display, nearby traffic reception, and data they can later review or share.
+
+The main point is not just watching aircraft overhead. Pilot Kit Box is meant to help users record, understand, and manage their own flying at a much lower cost. It can record each flight for logs, replay, sharing, and analysis; it can also receive public ADS-B / Mode-S broadcasts from nearby aircraft and show surrounding traffic on the built-in display.
+
+Think of it as a pilot's own small flight data recorder and receiver: it can run independently, integrate tightly with Pilot Kit, and evolve toward standard aviation data outputs for third-party EFB apps such as Garmin Pilot and ForeFlight.
+
+## 使用场景 / Use Cases
+
+Pilot Kit Box 的核心用途是：让普通飞行员、飞行学员和飞行爱好者，也能用较低成本拥有一个自己的飞行记录和态势感知盒子。
+
+Pilot Kit Box is designed to give pilots, student pilots, and aviation enthusiasts an affordable personal flight recording and situational-awareness box.
+
+- 记录自己的每一次飞行，为飞行日志、回放、分享和分析提供数据基础。<br>Record each flight as source data for logs, replay, sharing, and analysis.
+- 在本机屏幕上显示姿态、航向、高度、速度、垂直速度等飞行状态信息。<br>Display flight state such as attitude, heading, altitude, speed, and vertical speed on the local screen.
+- 接收附近飞机的 ADS-B / Mode-S 广播，显示周边交通、航班号、国家、航司、机型和注册号等信息。<br>Receive nearby ADS-B / Mode-S traffic and show callsign, country, airline, aircraft type, and registration when known.
+- 在没有互联网的情况下，本地接收和记录航空数据，而不是依赖在线航班网站。<br>Receive and record aviation data locally without relying on online flight-tracking websites.
+- 与 Pilot Kit 软件结合，把硬件采集到的数据用于更完整的飞行记录、回放、分析和分享体验。<br>Use captured device data with Pilot Kit for richer flight records, replay, analysis, and sharing.
+- 作为通用飞行数据盒子继续扩展；路线图中的 GDL90 over Wi-Fi 目标是连接 Garmin Pilot、ForeFlight 等 EFB。<br>Continue evolving as a general-purpose flight data box; the roadmap GDL90 over Wi-Fi path targets EFBs such as Garmin Pilot and ForeFlight.
+- 给通航、航电、嵌入式和 SDR 爱好者提供一个完整、开源、可学习的参考实现。<br>Provide a complete open-source reference for general aviation, avionics, embedded systems, and SDR builders.
+
+## 为什么要做这个设备 / Why Build This
+
+市面上已经有 Stratux、Sentry、Garmin GDL、uAvionix ping 等便携式 ADS-B 接收器、飞行记录盒子和通航辅助设备，但很多产品要么价格较高，要么生态相对封闭，要么不方便用户理解、修改和扩展内部的数据链路。
+
+Pilot Kit Box 想解决的是这个问题：
+
+- **低成本**：用 ESP32-P4、RTL-SDR、屏幕、IMU 和常见电源模块，做出一个普通用户也能负担的飞行数据盒子。
+- **通用性**：它不是只能配合某一个 App 使用的封闭硬件；它可以独立使用，也可以面向标准航空数据接口继续扩展。
+- **与 Pilot Kit 紧密结合**：Pilot Kit 可以充分利用 Box 采集的数据，提供更完整的飞行记录、回放、分析和分享能力。
+- **本地记录**：飞行数据可以在设备本地记录，为飞行复盘和个人飞行档案提供基础。
+- **态势感知**：除了记录自己的飞行，也能接收附近 ADS-B / Mode-S 交通，帮助理解周边空域情况。
+- **开源透明**：从 SDR 接收、ADS-B 解码、状态聚合、屏幕显示到数据库维护，整个链路都可以检查、修改和复现。
+- **可继续扩展**：它可以是一个低成本替代方案，也可以作为移动端、云端分析、EFB 集成、Wi-Fi GDL90 输出和硬件外壳迭代的平台。
+
+Portable ADS-B receivers and flight data boxes already exist, including Stratux, Sentry, Garmin GDL, and uAvionix ping. Many of them are effective products, but they can be expensive, relatively closed, or hard for users to inspect, modify, and extend.
+
+Pilot Kit Box focuses on:
+
+- **Low cost**: ESP32-P4, RTL-SDR, display, IMU, and common power modules keep the hardware approachable.
+- **General-purpose use**: it is not locked to one app; it can run on its own and evolve toward standard aviation data interfaces.
+- **Tight Pilot Kit integration**: Pilot Kit can use Box data for richer flight records, replay, analysis, and sharing.
+- **Local recording**: flight data can be recorded on the device for review and personal archives.
+- **Situational awareness**: the same box can receive nearby ADS-B / Mode-S traffic and help users understand surrounding airspace.
+- **Open implementation**: SDR reception, ADS-B decoding, state fusion, display rendering, and database maintenance are all inspectable and reproducible.
+- **Room to grow**: it can be a low-cost alternative today and a platform for mobile apps, cloud analysis, EFB integration, Wi-Fi GDL90 output, and enclosure iterations later.
+
+## 技术概览 / Technical Overview
+
+当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构：ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR，实时接收 1090 MHz ADS-B / Mode-S 信号，在本机完成 dump1090 派生的 DSP 解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口和本地 LittleFS 文件输出给移动端或调试工具。
+
+The ESP32-P4 edition removes the Linux SBC from the ADS-B path: the P4 drives an RTL-SDR receiver over native USB 2.0 HS, decodes 1090 MHz ADS-B / Mode-S frames on-device, fuses per-aircraft state, and publishes traffic over BLE GATT, serial output, and local LittleFS logs.
 
 ## 安全与适航边界 / Safety And Certification Boundary
 
