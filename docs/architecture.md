@@ -247,6 +247,30 @@ Frames produced before the first sync still go down all sinks; the
 ts_ms reads small (seconds since boot). Clients can detect and
 discard them — the reference Pilot Kit app does.
 
+### Planned: carrier-board sensors (GPS / baro / microSD)
+
+The Pilot Kit Box carrier board wires up a GT-U8 GPS (UART + 1 PPS on
+GPIO46), a BMP388 barometer (I²C0, `0x76`), and routes recording to the
+on-board microSD slot. **Firmware drivers are pending** — design in
+[`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md).
+Summary of how each will slot into the architecture above:
+
+- **GPS time discipline** — GPS UTC + PPS seeds `settimeofday()`. GPS is
+  **preferred (most accurate)**, BLE is the backup; overwrite protection
+  keeps a lower-quality source from clobbering a good GPS fix. The clock
+  self-disciplines without a phone, and SETTINGS shows sync state (source
+  + age since last sync). PPS aligns the UTC second edge for
+  higher-precision Mode-S timestamps.
+- **GPS own-ship** — only a **fallback** when no aircraft is manually
+  bound in the ADS-B LIST; a manual binding always wins. Feeds the same
+  `aircraft_state` own-ship path + GDL90 ownship report.
+- **BMP388 baro** — altitude / vertical-speed shown as a **reference
+  only** (unreliable in a pressurised cabin), never the authoritative
+  altitude.
+- **microSD record sink** — preferred over LittleFS when a card is
+  inserted; Settings-selectable (auto / flash / microSD). Extends the
+  `record_dispatch` file-sink path already shown above.
+
 ## What goes on the wire / on disk
 
 The exact line shape every sink produces for one Mode-S frame:
