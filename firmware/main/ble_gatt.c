@@ -43,6 +43,8 @@
 
 #include "aircraft_state.h"
 #include "gdl90.h"
+#include "gps.h"
+#include "own_ship.h"
 
 static const char *TAG = "ble_gatt";
 
@@ -567,13 +569,22 @@ static void emitter_task(void *arg)
         was_connected = connected;
 
         if (connected) {
+            /* Snapshot own-ship + GPS state once per tick; used by both
+             * Heartbeat (gps_fix) and Ownship Report (own_valid/own). */
+            int64_t now_us = esp_timer_get_time();
+            aircraft_t own; pk_own_src_t own_src;
+            bool own_valid = pk_own_ship_resolve(
+                now_us, AIRCRAFT_STALE_AGE_US, &own, &own_src);
+            pk_gps_state_t gps; bool gps_fix = pk_gps_get(&gps);
+            (void)own_src;
+
             /* Heartbeat — required by ForeFlight-style EFB apps. */
             if (s_sub_hb) {
                 struct timeval tv; gettimeofday(&tv, NULL);
                 /* Seconds-since-midnight UTC (will read low until SNTP). */
                 uint32_t sod = (uint32_t)(tv.tv_sec % 86400);
                 size_t n = gdl90_encode_heartbeat(frame, sizeof(frame),
-                                                  /*gps_valid=*/false,
+                                                  /*gps_valid=*/gps_fix,
                                                   /*uat_initialised=*/true,
                                                   /*utc_ok=*/false,
                                                   sod,
@@ -584,7 +595,19 @@ static void emitter_task(void *arg)
 
             /* Traffic Report per aircraft. */
             if (s_sub_traffic) {
-                int64_t now_us = esp_timer_get_time();
+                /* Ownship Report (msg 0x0A) — sent before other traffic. */
+                if (own_valid) {
+                    size_t no = gdl90_encode_traffic(frame, sizeof(frame),
+                        /*is_ownship=*/true,
+                        own.icao24,
+                        own.have_position, own.lat, own.lon,
+                        own.have_altitude, own.altitude_ft,
+                        own.have_velocity, own.heading_deg,
+                        own.ground_speed_kt, own.vert_rate_fpm,
+                        /*callsign=*/"");
+                    if (no > 0) { notify_bytes(s_chr_traffic_handle, frame, no); }
+                }
+
                 /* GDL90 traffic notifies only the "fresh contact" set;
                  * EFB clients expect a plane to disappear if it stops
                  * being seen for ~60 s. */

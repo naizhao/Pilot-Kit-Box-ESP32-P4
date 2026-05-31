@@ -5,6 +5,8 @@ idf_component_register(
         "dsp_task.c"
         "cpr_decode.c"
         "aircraft_state.c"
+        "gps_task.c"
+        "own_ship.c"
         "icao_country.c"
         "airline_codes.c"
         "aircraft_db.c"
@@ -69,4 +71,5 @@ idf_component_register(
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about
         esp_hw_support           # esp_chip_info() for About page
+        esp_driver_uart          # UART driver for GT-U8 GPS (UART1)
 )

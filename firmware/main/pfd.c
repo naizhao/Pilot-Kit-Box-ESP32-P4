@@ -28,6 +28,7 @@
 #include "about_page.h"
 #include "adsb_list.h"
 #include "aircraft_state.h"
+#include "own_ship.h"
 #include "cal_wizard.h"
 #include "display.h"
 #include "imu_task.h"
@@ -111,9 +112,17 @@ static void pfd_task(void *arg)
              * or falls back to the compile-time CONFIG_PK_OWN_ICAO.
              * Stale window is PK_OWN_STALE_AGE_MS. */
             aircraft_t own;
-            bool own_valid = aircraft_state_get_own(
-                pk_ui_get_own_icao(), now_us,
-                (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own);
+            pk_own_src_t own_src;
+            bool own_valid = pk_own_ship_resolve(
+                now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &own_src);
+
+            static int64_t own_log = 0;
+            if(now_us - own_log > 1000000){
+                own_log = now_us;
+                /* TODO: 硬件验证后降级为 ESP_LOGD 或删除 */
+                ESP_LOGI("pfd", "own src=%d valid=%d lat=%.5f lon=%.5f",
+                         own_src, own_valid, own.lat, own.lon);
+            }
 
             /* HDG source priority: bound own-ship's ADS-B ground track
              * (DF17 metype 19) beats IMU magnetic yaw whenever both

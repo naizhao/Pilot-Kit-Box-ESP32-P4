@@ -25,6 +25,7 @@
 
 #include "aircraft_db.h"
 #include "aircraft_state.h"
+#include "own_ship.h"
 #include "airline_codes.h"
 #include "display.h"
 #include "icao_country.h"
@@ -452,13 +453,11 @@ static void render_detail(uint16_t *fb, int detail_top_y,
     bool is_own_bound = (own_icao != 0 && a->icao24 == own_icao);
 
     /* Own-ship snapshot — used for relative altitude + dist/bearing.
-     * NULL out if not bound or stale. */
+     * Resolves bound ADS-B transponder first; falls back to GPS fix. */
     aircraft_t own;
-    bool have_own = false;
-    if (own_icao != 0) {
-        have_own = aircraft_state_get_own(own_icao, now_us,
-                                          AIRCRAFT_STALE_AGE_US, &own);
-    }
+    pk_own_src_t own_src;
+    bool have_own = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US, &own, &own_src);
+    (void)own_src;   /* src not consumed in detail pane */
     (void)have_own;  /* used below for rel-alt / dist */
 
     /* --- ICAO + country + own-binding marker --- */
@@ -703,11 +702,10 @@ void pk_adsb_list_render(uint16_t *fb)
      * stash the whole record once and read out the relevant bits. */
     uint32_t   own_icao   = pk_ui_get_own_icao();
     aircraft_t own;
-    bool       have_own   = false;
-    if (own_icao != 0) {
-        have_own = aircraft_state_get_own(own_icao, now_us,
-                                          AIRCRAFT_STALE_AGE_US, &own);
-    }
+    pk_own_src_t own_src_list;
+    bool       have_own   = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US,
+                                                &own, &own_src_list);
+    (void)own_src_list;  /* src not consumed in list renderer */
     bool have_own_velocity = have_own && own.have_velocity;
     int  own_heading_deg   = have_own_velocity ? own.heading_deg : 0;
 
