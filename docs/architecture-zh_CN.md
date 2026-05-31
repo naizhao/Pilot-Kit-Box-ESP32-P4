@@ -114,6 +114,24 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 校时前输出的 Mode-S frame 仍会进入所有 sink，只是 `ts_ms` 很小（接近开机以来毫秒数）。客户端可以识别并丢弃这些 pre-sync frame。
 
+### 规划中：载板传感器（GPS / 气压 / microSD）
+
+Pilot Kit Box 载板布线了 GT-U8 GPS（UART + GPIO46 上的 1 PPS）、BMP388
+气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。**固件驱动待实现**
+—— 设计见
+[`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md)。
+各能力如何接入上面的架构：
+
+- **GPS 授时**：GPS UTC + PPS 校正 `settimeofday()`。**GPS 优先（最准）**，
+  BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可
+  自主校时，SETTINGS 显示同步状态（来源 + 距上次同步时长）。PPS 对齐 UTC 整秒沿，
+  提升 Mode-S 时间戳精度。
+- **GPS own-ship**：仅在 ADS-B LIST 未手动绑定飞机时作**兜底**；绑定优先。
+  接入现有 `aircraft_state` own-ship 路径 + GDL90 ownship report。
+- **BMP388 气压**：高度/升降率仅作**参考**显示（增压座舱内失真），不作权威高度。
+- **microSD 记录后端**：插卡时优先于 LittleFS；Settings 可选（自动/flash/microSD）。
+  扩展上面 `record_dispatch` 的 file sink 路径。
+
 ## 数据格式
 
 所有 sink 对同一条 Mode-S frame 使用相同文本形状：

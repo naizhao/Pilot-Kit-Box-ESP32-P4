@@ -26,6 +26,7 @@
 #include "pilot_kit.h"
 #include "aircraft_db.h"
 #include "aircraft_state.h"
+#include "gps.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
 #include "button_task.h"
@@ -217,6 +218,7 @@ void app_main(void)
     /* Initialise the per-aircraft fusion table before any sink can write
      * into it. */
     aircraft_state_init();
+    pk_gps_start();   /* GT-U8 GPS on UART1 */
 
     /* Validate the embedded ICAO24 -> type/model/registration database
      * (aircraft_db.bin in .rodata). Bad header is non-fatal: lookups

@@ -86,10 +86,10 @@
 | RUN | RUN | 系统复位 | 板载 reset net |
 | **26** | GPIO26 | **BTN1 / TARE** | IMU tare / 语言切换 / own-ship 绑定 |
 | GND | GND | 地 |  |
-| 27 | GPIO27 | 空闲 | MODE 已移到 GPIO5 |
-| 32 | GPIO32 | 空闲 |  |
-| 33 | GPIO33 | 空闲 | 旧 LCD MOSI，已废弃 |
-| 46 | GPIO46 | 空闲 | 旧 LCD CS，已废弃 |
+| **27** | GPIO27 | **BARO_INT**（BMP388，载板）| data-ready 中断；固件驱动待实现 |
+| **32** | GPIO32 | **GPS RX**（载板）| P4 UART **TX** → GPS RXD；固件驱动待实现 |
+| **33** | GPIO33 | **GPS TX**（载板）| GPS TXD → P4 UART **RX**；旧 LCD MOSI |
+| **46** | GPIO46 | **GPS PPS**（载板）| 1 Hz 秒脉冲，用于授时 |
 | GND | GND | 地 | 位于 GPIO46 与 GPIO47 之间，容易误短路 |
 | 47 | GPIO47 | 空闲 | 旧 LCD SCK，已废弃 |
 | 48 | GPIO48 | 空闲 | 旧 LCD DC，已废弃 |
@@ -153,6 +153,7 @@ CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 
 - ES8311 audio codec：`0x18`
 - BNO085 IMU：`0x4A`（AD0 拉高时为 `0x4B`）
+- BMP388 气压计：`0x76`（SDO→GND）—— 载板，固件驱动待实现
 
 ### USB HS OTG P1
 
@@ -217,14 +218,52 @@ P1: VBUS / D- / D+ / GND
 
 UP + DOWN 同时按住 5 秒保留给 BLE pairing window。
 
+### BMP388 气压计（I2C0，载板）
+
+**状态**：载板已布线，固件驱动待实现。提供气压高度 + 升降率，详见
+GPS / 气压 / 授时能力 spec。
+
+与 ES8311、BNO085 共用 I2C0（地址不冲突）。
+
+| BMP388 引脚 | net | 接到 | 说明 |
+|---|---|---|---|
+| VCC | +3V3 | 3V3 | |
+| GND | GND | GND | |
+| SCL | I2C0_SCL | GPIO8 | 共用总线 |
+| SDA | I2C0_SDA | GPIO7 | 共用总线 |
+| SDO | GND | GND | 地址 `0x76` |
+| CSB | +3V3 | 3V3 | 拉高选 I2C 模式 |
+| INT | BARO_INT | **GPIO27** | data-ready 中断（可选）|
+
+### GPS 模块（GT-U8 / ATGM336H，UART + PPS，载板）
+
+**状态**：载板已布线，固件驱动待实现。提供本机位置 / 速度 / 航向，以及
+1 PPS 授时脉冲，详见 GPS / 气压 / 授时能力 spec。
+
+GOOUUU **GT-U8** 模块（AT6558 / ATGM336H GNSS 核心）。板载 LDO 宽压
+3.3–5 V；GNSS 核心与 UART 都是 3.3 V，UART 直连 ESP32-P4，无需电平转换。
+
+| GPS 引脚 | net | 接到 | 说明 |
+|---|---|---|---|
+| V (VCC) | +3V3 | 3V3 | 丝印写 "5v"，但宽压模块接 3.3 V 即可，**不要**误以为必须 5 V |
+| G (GND) | GND | GND | |
+| T (TXD) | GPS_TX | **GPIO33** | GPS → **P4 UART RX**（交叉）|
+| R (RXD) | GPS_RX | **GPIO32** | **P4 UART TX** → GPS（交叉）|
+| P (PPS) | GPS_PPS | **GPIO46** | 1 Hz 秒脉冲，上升沿对齐 UTC 整秒 |
+
+> UART 按标准交叉（GPS TX → P4 RX，GPS RX → P4 TX）。
+
 ## 4. 当前空闲 GPIO
 
 扣除当前固件使用和板载固定外设后，主要可自由使用的 header GPIO：
 
 ```text
-GPIO27  GPIO32  GPIO33  GPIO46  GPIO47  GPIO48
+GPIO47  GPIO48
 GPIO49  GPIO51  GPIO52
 ```
+
+载板占用了原 free pool 的 4 个：GPIO27 → BMP388 INT、GPIO32/33 → GPS UART、
+GPIO46 → GPS PPS（见 §3）。载板前为 9 个。
 
 注意 GPIO46 与 GPIO47 中间有 GND，做排线时要避免误插导致短路。
 

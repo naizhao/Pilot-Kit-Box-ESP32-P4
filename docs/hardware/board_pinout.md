@@ -102,10 +102,10 @@ Both headers count from the **top** (USB-C side) downward.
 | RUN        | RUN      | —                         | System reset button net.                       |
 | **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = live software tare; long ≥ 3 s = persist software tare to NVS; very-long ≥ 10 s = IMU factory reset |
 | GND        | GND      | —                         |                                                |
-| 27         | GPIO27   | free (was BTN2 — MODE; moved to GPIO5 for LP_IO wake) |                        |
-| 32         | GPIO32   | free                      |                                                |
-| 33         | GPIO33   | free                      | (was LCD MOSI in an earlier bring-up build — now on left header)|
-| 46         | GPIO46   | free                      | (was LCD CS in an earlier bring-up build)      |
+| **27**     | GPIO27   | **BARO_INT** (BMP388, carrier board) | data-ready IRQ; firmware driver pending |
+| **32**     | GPIO32   | **GPS RX** (carrier board) | P4 UART **TX** → GPS RXD; firmware driver pending |
+| **33**     | GPIO33   | **GPS TX** (carrier board) | GPS TXD → P4 UART **RX**; (was LCD MOSI in an earlier build) |
+| **46**     | GPIO46   | **GPS PPS** (carrier board) | 1 Hz pulse for time discipline; (was LCD CS earlier) |
 | GND        | GND      | —                         | ⚠ Between GPIO46 and GPIO47 — easy to misplace |
 | 47         | GPIO47   | free                      | (was LCD SCK in an earlier bring-up build)     |
 | 48         | GPIO48   | free                      | (was LCD DC in an earlier bring-up build)      |
@@ -192,7 +192,7 @@ auto-bootloader transistor pair (U5, MMDT3906DW). Don't use GPIO35
 as an application GPIO — it would fight the auto-reset circuit.
 (Moot in practice: GPIO35 isn't broken out anyway.)
 
-### I²C0 (ES8311 codec + BNO085 IMU)
+### I²C0 (ES8311 codec + BNO085 IMU + BMP388 baro)
 
 Bus is shared; addresses don't collide.
 
@@ -204,6 +204,7 @@ Bus is shared; addresses don't collide.
 Slaves currently on the bus:
 - **ES8311 audio codec** — `0x18` (on-board)
 - **BNO085 IMU** — `0x4A` (or `0x4B` if SA0 strap pulled high)
+- **BMP388 barometer** — `0x76` (SDO→GND) — carrier board; firmware driver pending
 
 ### I²S0 (ES8311 codec audio)
 
@@ -518,6 +519,48 @@ soft power off / deep sleep instead — see
   `pk_ui_get_mode()`: PFD render path (horizon/ladder/tape/...)
   or `pk_adsb_list_render()` for the ADS-B list view.
 
+### BMP388 barometric pressure sensor via I²C0 (carrier board)
+
+**Status**: Wired on the Pilot Kit Box carrier board; firmware driver
+pending. Provides barometric altitude + vertical speed — see the
+GPS / baro / time-discipline capability spec.
+
+Shares the on-board I²C0 bus with the ES8311 codec and BNO085 IMU
+(distinct addresses, no conflict).
+
+| BMP388 pin | Net      | ESP32-P4 pin | Notes                              |
+|------------|----------|--------------|------------------------------------|
+| VCC        | +3V3     | 3V3          |                                    |
+| GND        | GND      | GND          |                                    |
+| SCL        | I²C0 SCL | GPIO8        | shared bus                         |
+| SDA        | I²C0 SDA | GPIO7        | shared bus                         |
+| SDO        | GND      | GND          | I²C address strap → `0x76`         |
+| CSB        | +3V3     | 3V3          | tie high to select I²C mode        |
+| INT        | BARO_INT | **GPIO27**   | data-ready IRQ (optional)          |
+
+### GPS receiver (GT-U8 / ATGM336H) via UART + PPS (carrier board)
+
+**Status**: Wired on the carrier board; firmware driver pending.
+Provides own-ship position / velocity / course and a 1 PPS pulse for
+precise time discipline — see the GPS / baro / time-discipline spec.
+
+GOOUUU **GT-U8** module (AT6558 / ATGM336H GNSS core). Wide-range
+3.3–5 V supply via an on-board LDO; the GNSS core and its UART run at
+3.3 V, so the UART lines connect **directly** to the ESP32-P4 with no
+level shifting.
+
+| GPS pin | Net      | ESP32-P4 pin | Notes                                                |
+|---------|----------|--------------|------------------------------------------------------|
+| V (VCC) | +3V3     | 3V3          | silkscreen reads "5v", but 3.3 V is fine on this wide-range module — do **not** assume 5 V is required |
+| G (GND) | GND      | GND          |                                                      |
+| T (TXD) | GPS_TX   | **GPIO33**   | GPS → **P4 UART RX** (crossed)                        |
+| R (RXD) | GPS_RX   | **GPIO32**   | **P4 UART TX** → GPS (crossed)                        |
+| P (PPS) | GPS_PPS  | **GPIO46**   | 1 Hz pulse-per-second; rising edge marks the UTC second |
+
+> UART is crossed the standard way (GPS TX → P4 RX, GPS RX → P4 TX).
+> `GPIO46/47` bracket a header GND on the dev-board headers; on the
+> carrier board these are fixed traces so the gotcha doesn't apply.
+
 ---
 
 ## 4. Freely-assignable GPIOs
@@ -526,19 +569,20 @@ After accounting for everything above, the following P4 GPIOs are
 free for new application use:
 
 ```
-GPIO27  GPIO32  GPIO33  GPIO46  GPIO47  GPIO48   (right header, lower half)
+GPIO47  GPIO48                                    (right header, lower half)
 GPIO49  GPIO51  GPIO52                            (left header)
 ```
 
-That's **9** GPIOs with no caveats. (Was 8 before the MODE button moved
-from GPIO27 to GPIO5; GPIO27 is back in the free pool, GPIO5 leaves it.)
+That's **5** GPIOs with no caveats. The carrier board consumed four of
+the former free pool: GPIO27 → BMP388 INT, GPIO32/33 → GPS UART,
+GPIO46 → GPS PPS (see §3). Before the carrier board there were 9.
 
 > Note: `GPIO33 / GPIO46 / GPIO47 / GPIO48` were used by the LCD in
-> an earlier bring-up build but have since been freed up — the LCD moved to the SPI2
-> IO_MUX direct pins on the left header (GPIO 28–31, see §3). Be
-> aware that GPIO46 and GPIO47 still bracket a header GND, so if you
-> reassign these to a single peripheral, prefer individual jumpers
-> over multi-pin housings.
+> an earlier bring-up build, then freed when the LCD moved to the SPI2
+> IO_MUX direct pins on the left header (GPIO 28–31, see §3). On the
+> carrier board GPIO33 (GPS TX) and GPIO46 (GPS PPS) are used again;
+> only GPIO47/48 remain free here. GPIO46 and GPIO47 still bracket a
+> header GND, so prefer individual jumpers over multi-pin housings.
 
 **Available but with caveats** — usable if you accept the trade-off:
 
