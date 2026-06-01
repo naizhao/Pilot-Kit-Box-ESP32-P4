@@ -29,3 +29,6 @@ firmware/dependencies.lock
 
 IMPLEMENTATION_PLAN.md
 __pycache__
+
+# EasyEDA raw-export backups (kept locally, not tracked)
+*.ori
