@@ -111,6 +111,24 @@ As of **2026-05-25**, the main firmware includes ADS-B reception and decode, BLE
 |---|---|
 | <img src="images/PFD.jpg" alt="Pilot Kit Box PFD hardware preview" width="360"> | <img src="images/adsb-list.jpg" alt="Pilot Kit Box ADS-B list hardware preview" width="360"> |
 
+### 载板与外壳 / Carrier Board & Enclosure
+
+2.4 寸版载板（120×80 mm）把 ESP32-P4 模组、GPS（GT-U8）、IMU（BNO085）、气压计（BMP388）、RTL-SDR 接口和**板载 1090 MHz IFA 天线**集成到一块 PCB，配 3.7V 锂电 + 充电模块做便携供电；配套 3D 打印外壳带屏窗、四按钮孔和航空风格面板。立创EDA 工程见 [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/)（含完整 `.epro2` 工程、原理图/PCB 源码、3D 外壳）。
+
+The 2.4-inch carrier board (120×80 mm) integrates the ESP32-P4 module, GPS (GT-U8), IMU (BNO085), barometer (BMP388), RTL-SDR interface, and an **on-board 1090 MHz IFA antenna** on a single PCB, powered portably by a 3.7V Li-ion cell plus charger module; a matching 3D-printed enclosure provides a display window, four button holes, and an aviation-style faceplate. EasyEDA project: [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/) (full `.epro2` project, schematic/PCB sources, 3D shell).
+
+| 载板 3D · 正面 / PCB 3D Front | 载板 3D · 背面（电池面）/ PCB 3D Back (battery side) |
+|---|---|
+| <img src="images/pcb-3d-front.png" alt="Pilot Kit Box carrier board 3D front" width="360"> | <img src="images/pcb-3d-back.png" alt="Pilot Kit Box carrier board 3D back, battery side" width="360"> |
+
+| 布线 · 顶层 / Routing Top | 布线 · 底层 / Routing Bottom |
+|---|---|
+| <img src="images/pcb-front.png" alt="Pilot Kit Box carrier board routing top" width="360"> | <img src="images/pcb-back.png" alt="Pilot Kit Box carrier board routing bottom" width="360"> |
+
+| 外壳面板 / Enclosure Faceplate | 外壳成品 / Enclosure |
+|---|---|
+| <img src="images/panel.png" alt="Pilot Kit Box enclosure faceplate" width="360"> | <img src="images/3d-case-front.png" alt="Pilot Kit Box enclosure with carrier board" width="360"> |
+
 ### 必备硬件 / Required
 
 | 硬件 | Hardware | 说明 / Notes |
