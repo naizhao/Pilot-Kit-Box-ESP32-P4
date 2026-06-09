@@ -29,6 +29,7 @@
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "aircraft_state.h"
+#include "gps.h"
 #include "own_ship.h"
 #include "cal_wizard.h"
 #include "display.h"
@@ -45,6 +46,7 @@
 #include "ui_state.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "pfd";
 
@@ -179,10 +181,15 @@ static void pfd_task(void *arg)
                 }
             }
 
+            pk_gps_state_t gps;
+            pk_gps_get(&gps);
+
             pk_pfd_status_t stat = {
                 .imu_valid      = yaw_valid,
                 .yaw_deg        = yaw_deg,
                 .aircraft_count = n_aircraft,
+                .gps_have_fix   = gps.have_fix,
+                .gps_sats       = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats)),
             };
             pk_pfd_hsi_t hsi = {
                 .imu_valid = yaw_valid,
@@ -232,6 +239,63 @@ static void pfd_task(void *arg)
                 } else {
                     pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                                          260, 212, "-----", STALE);
+                }
+            }
+
+            /* Own-ship source badge — bottom-left x[0,78] y[210,232].
+             * Three states:
+             *   BOUND_ADSB → callsign (cyan) or ICAO hex (cyan)
+             *   GPS        → "GPS" (white)
+             *   NONE/stale → "--" (grey) */
+#define PFD_SRC_BADGE_X1  78
+#define PFD_SRC_BADGE_Y0  210
+#define PFD_SRC_BADGE_Y1  232
+            {
+                /* Cyan matches project-wide COL_LABEL (70,220,250). */
+                const uint16_t SRC_ADSB  = pk_rgb565( 70, 220, 250);
+                const uint16_t SRC_GPS   = pk_rgb565(240, 240, 240);
+                const uint16_t SRC_NONE  = pk_rgb565(100, 100, 100);
+                char src_buf[8];
+                uint16_t src_col;
+
+                if (!own_valid || own_src == PK_OWN_SRC_NONE) {
+                    src_buf[0] = '-'; src_buf[1] = '-'; src_buf[2] = '\0';
+                    src_col = SRC_NONE;
+                } else if (own_src == PK_OWN_SRC_BOUND_ADSB) {
+                    bool used_callsign = false;
+                    if (own.have_callsign) {
+                        /* Copy at most 6 chars (72 px max in 78-px badge)
+                         * then strip trailing spaces. */
+                        int i;
+                        for (i = 0; i < 6 && own.callsign[i]; i++)
+                            src_buf[i] = own.callsign[i];
+                        src_buf[i] = '\0';
+                        while (i > 0 && src_buf[i - 1] == ' ')
+                            src_buf[--i] = '\0';
+                        if (src_buf[0] != '\0') used_callsign = true;
+                    }
+                    if (!used_callsign) {
+                        snprintf(src_buf, sizeof(src_buf), "%06lX",
+                                 (unsigned long)own.icao24);
+                    }
+                    src_col = SRC_ADSB;
+                } else {
+                    /* PK_OWN_SRC_GPS */
+                    src_buf[0] = 'G'; src_buf[1] = 'P'; src_buf[2] = 'S';
+                    src_buf[3] = '\0';
+                    src_col = SRC_GPS;
+                }
+
+                pk_pfd_darken_rect(fb, 0, PFD_SRC_BADGE_Y0,
+                                   PFD_SRC_BADGE_X1, PFD_SRC_BADGE_Y1, 128);
+                /* Cockpit font, scale-2: 12 px per glyph.
+                 * Left-pad within the 78-px box so text appears centred. */
+                {
+                    int txt_x = (PFD_SRC_BADGE_X1 - (int)strlen(src_buf) * 12) / 2;
+                    if (txt_x < 2) txt_x = 2;
+                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                         txt_x, PFD_SRC_BADGE_Y0 + 2,
+                                         src_buf, src_col);
                 }
             }
             break;

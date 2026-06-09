@@ -11,9 +11,11 @@
 #include <stddef.h>
 
 typedef struct {
-    bool   imu_valid;
-    float  yaw_deg;
-    size_t aircraft_count;
+    bool    imu_valid;
+    float   yaw_deg;
+    size_t  aircraft_count;
+    bool    gps_have_fix;
+    uint8_t gps_sats;
 } pk_pfd_status_t;
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s);

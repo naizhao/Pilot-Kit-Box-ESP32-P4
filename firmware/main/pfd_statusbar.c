@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "display.h"
 #include "pfd_draw.h"
@@ -23,12 +24,16 @@
 #define COL_LABEL  pk_rgb565( 70, 220, 250)
 #define COL_GREEN  pk_rgb565(  0, 220,  60)
 #define COL_STALE  pk_rgb565(100, 100, 100)
+#define COL_RED    pk_rgb565(255,  80,  60)
+
+/* Centre of the unused mid-span x[90,232). */
+#define MID_CENTRE_X 161
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 {
     pk_pfd_fill_rect(fb, 0, STATUSBAR_TOP, PK_DISPLAY_W, STATUSBAR_BOT, COL_BG);
 
-    char buf[8];
+    char buf[12];
 
     /* Left: "HDG" (cyan, scale 2 = 36 px) + " NNN°" (4 glyphs scale 2
      * = 48 px → ends at x≈90). */
@@ -42,6 +47,28 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
     } else {
         pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                              46, 1, "---~", COL_STALE);
+    }
+
+    /* Centre x[90,232): GPS reception status.
+     * Each cockpit glyph is 12 px wide (scale-2 fixed advance).
+     * We build the string, compute its pixel width, then start it
+     * so it is horizontally centred in the 142-px gap. */
+    {
+        uint16_t  gps_col;
+        if (s->gps_have_fix) {
+            snprintf(buf, sizeof(buf), "GPS (%u)", (unsigned)s->gps_sats);
+            gps_col = COL_GREEN;
+        } else {
+            snprintf(buf, sizeof(buf), "NO GPS");
+            gps_col = COL_RED;
+        }
+        /* strlen * 12 px per cockpit glyph, centred on x=161 */
+        {
+            int len = (int)strlen(buf);
+            int gps_x = MID_CENTRE_X - (len * 12) / 2;
+            pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 gps_x, 1, buf, gps_col);
+        }
     }
 
     /* Right: "ADSB NN" — right-justified-ish. "ADSB" = 4 glyphs × 12 =
