@@ -32,6 +32,7 @@
 #include "button_task.h"
 #include "display.h"
 #include "imu_task.h"
+#include "baro.h"
 #include "i18n.h"
 #include "pfd.h"
 #include "power.h"
@@ -273,6 +274,7 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "BNO085 IMU online");
     }
+    pk_baro_start();   /* BMP388 on shared I²C0 */
 
     /* UI state lives in its own module so the button callback can flip
      * the mode without touching the render task directly. Default mode

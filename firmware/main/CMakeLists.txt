@@ -18,6 +18,7 @@ idf_component_register(
         "record_sink_ble.c"
         "display.c"
         "imu_task.c"
+        "baro_task.c"
         "button_task.c"
         "ui_state.c"
         "i18n.c"

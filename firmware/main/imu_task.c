@@ -678,6 +678,17 @@ esp_err_t pk_imu_init(void)
     return ESP_OK;
 }
 
+/* --- I²C0 bus handle export ----------------------------------------- *
+ *
+ * 暴露 I²C0 主总线 handle,供同总线的其它 device(BMP388)复用。
+ * i2c_new_master_bus() 全局只能建一次,此 handle 是唯一入口。
+ * baro_task 用它 i2c_master_bus_add_device() 挂自己的 BMP388 device。
+ * 返回 NULL 表示 IMU 尚未初始化(总线未建)。 */
+i2c_master_bus_handle_t pk_i2c0_bus_get(void)
+{
+    return s_bus;
+}
+
 /* --- Tare API (software-side) --------------------------------------- *
  *
  * The user-facing tare functions don't talk to the BNO at all (with

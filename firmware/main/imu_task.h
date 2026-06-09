@@ -29,6 +29,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "driver/i2c_master.h"
 
 /* --- Mounting orientation corrections (breadboard / debug only) ----- *
  *
@@ -224,3 +225,13 @@ esp_err_t pk_imu_tare_persist(void);
  * Typical caller: button_task on TARE very-long-press (≥10 s).
  */
 esp_err_t pk_imu_factory_reset(void);
+
+/*
+ * 暴露 I²C0 主总线 handle,供同总线的其它 device(BMP388)复用。
+ * i2c_new_master_bus() 全局只能建一次,此 handle 是唯一入口。
+ * baro_task 用它 i2c_master_bus_add_device() 挂自己的 BMP388 device。
+ * 返回 NULL 表示 IMU 尚未初始化(总线未建)。
+ */
+/* 必须在 pk_imu_init() 返回后调用(s_bus 此时已建)。无并发保护,
+ * s_bus 由 app_main 单线程在 init 期写入,之后只读。 */
+i2c_master_bus_handle_t pk_i2c0_bus_get(void);
