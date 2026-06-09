@@ -27,12 +27,11 @@
 #define TAPE_X0   256       /* tape band: 64 px wide (was 72) */
 #define TAPE_X1   320
 #define TAPE_TOP   18
-#define TAPE_BOT  208       /* extended down to ~just-above the VS pad
-                               (VS pad starts at y=210). Tape now spans
-                               190 px instead of 120 — closer to the
-                               Garmin proportion where ALT dominates
-                               the right edge. */
-#define TAPE_CY   ((TAPE_TOP + TAPE_BOT) / 2)   /* 113 */
+#define TAPE_BOT  168       /* shortened to y=168 to make room for the
+                               three info boxes (BARO / metric / VS)
+                               below the tape. TAPE_CY shifts from 113
+                               to 93 automatically. */
+#define TAPE_CY   ((TAPE_TOP + TAPE_BOT) / 2)   /* 93 */
 
 #define MINOR_FT      20
 #define MAJOR_FT     100

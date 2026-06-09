@@ -41,10 +41,12 @@
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
+#include "baro.h"
 #include "sdkconfig.h"
 #include "settings_page.h"
 #include "ui_state.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -215,30 +217,86 @@ static void pfd_task(void *arg)
             pk_pfd_speed_tape_render(fb, &spd);
             pk_pfd_hsi_render(fb, &hsi);
 
-            /* VS readout — bottom-right corner. Sits to the right of
-             * the HSI fill (which ends at x=240), so x=[240, 320) is
-             * free. Mixed scales (label scale-1, signed value scale-2)
-             * lets us fit a 5-char "%+5d" value (±9999 FPM range). */
+            /* Three right-column info boxes below the ALT tape (y=168).
+             * Each box: x=[256,320) = 64 px wide, 18 px tall, 2 px gap.
+             *   Box 1 y[170,188]: BARO  — barometric altitude ft
+             *   Box 2 y[190,208]: metric alt (ft × 0.3048) in metres
+             *   Box 3 y[210,228]: VS    — vertical speed fpm
+             * Source: BMP388 gas baro snapshot + own-ship ADS-B (VS). */
             {
-                const uint16_t LBL   = pk_rgb565( 70, 220, 250);
-                const uint16_t VAL   = pk_rgb565(240, 240, 240);
-                const uint16_t STALE = pk_rgb565(100, 100, 100);
-                char buf[12];
-                bool vs_valid = own_valid && own.have_velocity;
+                pk_baro_state_t baro;
+                pk_baro_get(&baro);
 
-                pk_pfd_darken_rect(fb, 240, 210, PK_DISPLAY_W, 232, 128);
+                const uint16_t COL_BARO_LBL  = pk_rgb565(230, 200,  74); /* amber */
+                const uint16_t COL_WHITE      = pk_rgb565(255, 255, 255);
+                const uint16_t COL_BLUE       = pk_rgb565(150, 200, 255); /* light blue */
+                const uint16_t COL_CYAN       = pk_rgb565( 70, 220, 250);
+                const uint16_t COL_STALE      = pk_rgb565(100, 100, 100);
+                char buf[16];
+
+                /* ── Box 1: BARO altitude (ft) ─────────────────────── */
+                pk_pfd_darken_rect(fb, 256, 170, PK_DISPLAY_W, 188, 160);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             244, 216, "VS", LBL, 1);
-                if (vs_valid) {
-                    int vs = own.vert_rate_fpm;
-                    if (vs >  9999) vs =  9999;
-                    if (vs < -9999) vs = -9999;
-                    snprintf(buf, sizeof(buf), "%+5d", vs);
-                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         260, 212, buf, VAL);
+                             258, 173, "BARO", COL_BARO_LBL, 1);
+                if (baro.valid) {
+                    int balt = baro.alt_ft;
+                    if (balt <  -9999) balt = -9999;
+                    if (balt > 99999)  balt = 99999;
+                    snprintf(buf, sizeof(buf), "%5d", balt);
                 } else {
-                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         260, 212, "-----", STALE);
+                    snprintf(buf, sizeof(buf), "   --");
+                }
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             288, 173, buf, baro.valid ? COL_WHITE : COL_STALE, 1);
+
+                /* ── Box 2: metric altitude (m) ─────────────────────── */
+                pk_pfd_darken_rect(fb, 256, 190, PK_DISPLAY_W, 208, 160);
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             258, 193, "ALT", COL_BARO_LBL, 1);
+                if (baro.valid) {
+                    /* 修复4: 先钳 alt_ft(与 Box1 BARO 同范围),再换算 */
+                    int balt_clamped = baro.alt_ft;
+                    if (balt_clamped <  -9999) balt_clamped = -9999;
+                    if (balt_clamped >  99999) balt_clamped = 99999;
+                    /* 修复5: lroundf 四舍五入 */
+                    int alt_m = (int)lroundf((float)balt_clamped * 0.3048f);
+                    if (alt_m < -9999) alt_m = -9999;
+                    if (alt_m > 99999) alt_m = 99999;
+                    snprintf(buf, sizeof(buf), "%5d", alt_m);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 288, 193, buf, COL_BLUE, 1);
+                } else {
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 288, 193, "   --", COL_STALE, 1);
+                }
+
+                /* ── Box 3: VS (vertical speed, fpm) ────────────────── */
+                pk_pfd_darken_rect(fb, 256, 210, PK_DISPLAY_W, 228, 160);
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             258, 213, "VS", COL_CYAN, 1);
+                {
+                    bool adsb_vs = own_valid && own.have_velocity;
+                    if (adsb_vs) {
+                        /* Priority 1: own-ship ADS-B vertical rate */
+                        int vs = own.vert_rate_fpm;
+                        if (vs >  9999) vs =  9999;
+                        if (vs < -9999) vs = -9999;
+                        snprintf(buf, sizeof(buf), "%+5d", vs);
+                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                     276, 213, buf, COL_WHITE, 1);
+                    } else if (baro.valid) {
+                        /* Priority 2: baro-derived VS (reference, amber) */
+                        int vs = baro.vs_fpm;
+                        if (vs >  9999) vs =  9999;
+                        if (vs < -9999) vs = -9999;
+                        snprintf(buf, sizeof(buf), "%+5d", vs);
+                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                     276, 213, buf, COL_BARO_LBL, 1);
+                    } else {
+                        /* Priority 3: no data */
+                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                     276, 213, "   --", COL_STALE, 1);
+                    }
                 }
             }
 
