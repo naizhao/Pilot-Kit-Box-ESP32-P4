@@ -90,6 +90,7 @@ static const char *mode_name(pk_ui_mode_t m)
     case PK_UI_MODE_ADSB_LIST:   return "ADSB_LIST";
     case PK_UI_MODE_SETTINGS:    return "SETTINGS";
     case PK_UI_MODE_ABOUT:       return "ABOUT";
+    case PK_UI_MODE_DIAG:        return "DIAG";
     case PK_UI_MODE_CAL_WIZARD:  return "CAL_WIZARD";
     default:                     return "?";
     }
@@ -108,7 +109,8 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_SETTINGS;  break;
     case PK_UI_MODE_SETTINGS:    s_mode = PK_UI_MODE_ABOUT;
                                   s_about_scroll_y = 0;          break;
-    case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_PFD;       break;
+    case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;      break;
+    case PK_UI_MODE_DIAG:        s_mode = PK_UI_MODE_PFD;       break;
     case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;       break;
     default:                     s_mode = PK_UI_MODE_PFD;       break;
     }

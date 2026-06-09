@@ -27,6 +27,7 @@
 
 #include "about_page.h"
 #include "adsb_list.h"
+#include "diag_page.h"
 #include "aircraft_state.h"
 #include "own_ship.h"
 #include "cal_wizard.h"
@@ -81,6 +82,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_ABOUT:
             pk_about_page_render(fb);
+            break;
+
+        case PK_UI_MODE_DIAG:
+            pk_diag_page_render(fb);
             break;
 
         case PK_UI_MODE_ADSB_LIST:
@@ -266,6 +271,7 @@ static void pfd_task(void *arg)
             const char *mode_label = (mode == PK_UI_MODE_ADSB_LIST)  ? "LIST"
                                    : (mode == PK_UI_MODE_SETTINGS)   ? "SET"
                                    : (mode == PK_UI_MODE_ABOUT)      ? "ABOUT"
+                                   : (mode == PK_UI_MODE_DIAG)       ? "DIAG"
                                    : (mode == PK_UI_MODE_CAL_WIZARD) ? "CAL"
                                    :                                   "PFD";
             ESP_LOGI(TAG, "%s %lu FPS  | roll=%+6.2f pitch=%+6.2f yaw=%6.2f"

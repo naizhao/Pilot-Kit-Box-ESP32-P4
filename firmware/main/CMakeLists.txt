@@ -30,6 +30,7 @@ idf_component_register(
         "adsb_list.c"
         "settings_page.c"
         "about_page.c"
+        "diag_page.c"
         "cal_wizard.c"
         "boot_splash.c"
         "power.c"
