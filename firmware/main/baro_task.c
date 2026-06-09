@@ -20,6 +20,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "imu_task.h"   /* pk_i2c0_bus_get */
+#include "config_qnh.h" /* pk_qnh_get() — 动态 QNH(修正海压) */
 
 static const char *TAG = "baro";
 
@@ -184,7 +185,7 @@ static void baro_task(void *arg)
     s_ready = (configure_and_calibrate() == ESP_OK);
 
     /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
-    static const float QNH_PA = 101325.0f;   /* 标准大气压,Task 9 改为可调 */
+    /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
     static const float VS_ALPHA = 0.2f;      /* EMA 平滑系数 */
 
     int     prev_alt_ft  = 0;
@@ -234,8 +235,9 @@ static void baro_task(void *arg)
             continue;
         }
 
-        /* 气压高度(国际民航标准大气公式) */
-        float alt_m  = 44330.0f * (1.0f - powf(press_pa / QNH_PA, 0.190295f));
+        /* 气压高度(国际民航标准大气公式);QNH 每轮读取,支持运行时调整 */
+        float qnh_pa = pk_qnh_get() * 100.0f;   /* hPa → Pa */
+        float alt_m  = 44330.0f * (1.0f - powf(press_pa / qnh_pa, 0.190295f));
         int   alt_ft = (int)roundf(alt_m * 3.28084f);
 
         /* VS: 高度对时间微分 + EMA 平滑 */

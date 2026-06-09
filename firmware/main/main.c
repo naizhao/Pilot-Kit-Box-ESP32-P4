@@ -30,6 +30,7 @@
 #include "ble_gatt.h"
 #include "boot_splash.h"
 #include "button_task.h"
+#include "config_qnh.h"
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
@@ -37,6 +38,7 @@
 #include "pfd.h"
 #include "power.h"
 #include "record_sink.h"
+#include "settings_page.h"
 #include "ui_state.h"
 
 static const char *TAG = "pilot_kit";
@@ -79,11 +81,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_mode_t mode = pk_ui_get_mode();
             if (mode == PK_UI_MODE_SETTINGS) {
-                esp_err_t err = pk_i18n_toggle_lang();
-                if (err != ESP_OK) {
-                    ESP_LOGW(TAG, "language toggle failed (%s)",
-                             esp_err_to_name(err));
-                }
+                /* TARE 短按:切换选中行(Language <-> QNH) */
+                pk_settings_cursor_next();
             } else if (mode == PK_UI_MODE_ADSB_LIST) {
                 /* Bind the currently-highlighted aircraft as own-ship.
                  * ui_state tracks the highlight by ICAO, so we don't
@@ -124,7 +123,19 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
     case PK_BTN_UP:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_mode_t mode = pk_ui_get_mode();
-            if (mode == PK_UI_MODE_ADSB_LIST) {
+            if (mode == PK_UI_MODE_SETTINGS) {
+                if (pk_settings_cursor_row() == 1) {
+                    /* QNH 行:UP +0.25 hPa */
+                    pk_qnh_set(pk_qnh_get() + 0.25f);
+                } else {
+                    /* Language 行:切语言 */
+                    esp_err_t err = pk_i18n_toggle_lang();
+                    if (err != ESP_OK) {
+                        ESP_LOGW(TAG, "language toggle failed (%s)",
+                                 esp_err_to_name(err));
+                    }
+                }
+            } else if (mode == PK_UI_MODE_ADSB_LIST) {
                 pk_ui_list_scroll(-1);
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(-1);
@@ -141,7 +152,19 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
     case PK_BTN_DOWN:
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_mode_t mode = pk_ui_get_mode();
-            if (mode == PK_UI_MODE_ADSB_LIST) {
+            if (mode == PK_UI_MODE_SETTINGS) {
+                if (pk_settings_cursor_row() == 1) {
+                    /* QNH 行:DOWN -0.25 hPa */
+                    pk_qnh_set(pk_qnh_get() - 0.25f);
+                } else {
+                    /* Language 行:切语言 */
+                    esp_err_t err = pk_i18n_toggle_lang();
+                    if (err != ESP_OK) {
+                        ESP_LOGW(TAG, "language toggle failed (%s)",
+                                 esp_err_to_name(err));
+                    }
+                }
+            } else if (mode == PK_UI_MODE_ADSB_LIST) {
                 pk_ui_list_scroll(+1);
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(+1);
@@ -274,6 +297,7 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "BNO085 IMU online");
     }
+    pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
 
     /* UI state lives in its own module so the button callback can flip

@@ -16,6 +16,7 @@ idf_component_register(
         "record_sink_uart.c"
         "record_sink_file.c"
         "record_sink_ble.c"
+        "config_qnh.c"
         "display.c"
         "imu_task.c"
         "baro_task.c"

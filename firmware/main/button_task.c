@@ -298,6 +298,6 @@ esp_err_t pk_button_init(pk_button_callback_t cb)
     }
 
     BaseType_t ok = xTaskCreatePinnedToCore(
-        button_task, "btn", 3072, NULL, 3, NULL, 0);
+        button_task, "btn", 4096, NULL, 3, NULL, 0);
     return (ok == pdTRUE) ? ESP_OK : ESP_ERR_NO_MEM;
 }
