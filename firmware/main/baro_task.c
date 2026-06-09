@@ -211,6 +211,7 @@ static void baro_task(void *arg)
         if (reg_read(BMP388_REG_DATA, d, 6) != ESP_OK) {
             ESP_LOGW(TAG, "BMP388 data read failed");
             has_prev = false;   /* 读失败后清除前次状态,防止恢复后 VS 出现尖峰 */
+            vs_ema = 0.0f;
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_state.valid = false;
             xSemaphoreGive(s_mutex);
@@ -228,6 +229,7 @@ static void baro_task(void *arg)
         /* 守卫:press_pa <= 0 会使 powf 底数为负,产生 NaN → (int)NaN UB */
         if (!(press_pa > 0.0f)) {
             has_prev = false;
+            vs_ema = 0.0f;
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_state.valid = false;
             xSemaphoreGive(s_mutex);

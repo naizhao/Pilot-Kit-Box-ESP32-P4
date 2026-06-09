@@ -121,7 +121,7 @@ static void pfd_task(void *arg)
              * binding (set via TARE short-press in ADS-B list mode)
              * or falls back to the compile-time CONFIG_PK_OWN_ICAO.
              * Stale window is PK_OWN_STALE_AGE_MS. */
-            aircraft_t own;
+            aircraft_t own = {0};
             pk_own_src_t own_src;
             bool own_valid = pk_own_ship_resolve(
                 now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &own_src);
@@ -275,7 +275,7 @@ static void pfd_task(void *arg)
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                              258, 213, "VS", COL_CYAN, 1);
                 {
-                    bool adsb_vs = own_valid && own.have_velocity;
+                    bool adsb_vs = own_valid && own.have_velocity && (own_src == PK_OWN_SRC_BOUND_ADSB);
                     if (adsb_vs) {
                         /* Priority 1: own-ship ADS-B vertical rate */
                         int vs = own.vert_rate_fpm;

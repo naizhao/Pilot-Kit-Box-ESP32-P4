@@ -9,6 +9,8 @@
 
 #include "esp_log.h"
 #include "nvs.h"
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "qnh";
 
@@ -22,6 +24,20 @@ static const char *TAG = "qnh";
 /* volatile:baro_task 读 / settings 写;float 32-bit 对齐,RISC-V 单指令读写原子 */
 static volatile float s_qnh_hpa = QNH_DEFAULT_HPA;
 
+/* 临界区锁:跨任务读写 s_qnh_hpa 的原子性防御 */
+static portMUX_TYPE s_qnh_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* ── 内部:确保 NVS 已初始化(幂等;多次调用安全) ── */
+static void ensure_nvs(void)
+{
+    esp_err_t e = nvs_flash_init();
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+    /* ESP_OK 或 ESP_ERR_INVALID_STATE(已初始化)均视为就绪,不做额外处理 */
+}
+
 /* ── 内部:钳制辅助 ── */
 static float clamp_qnh(float v)
 {
@@ -34,15 +50,23 @@ static float clamp_qnh(float v)
 
 float pk_qnh_get(void)
 {
-    return s_qnh_hpa;
+    portENTER_CRITICAL(&s_qnh_mux);
+    float v = s_qnh_hpa;
+    portEXIT_CRITICAL(&s_qnh_mux);
+    return v;
 }
 
 void pk_qnh_set(float hpa)
 {
     float clamped = clamp_qnh(hpa);
+
+    /* 临界区内只做内存写,NVS flash I/O 在临界区外 */
+    portENTER_CRITICAL(&s_qnh_mux);
     s_qnh_hpa = clamped;
+    portEXIT_CRITICAL(&s_qnh_mux);
 
     /* NVS 持久化:照 imu_task.c imu_nvs_save_tare 的 blob 范式 */
+    ensure_nvs();
     nvs_handle_t h;
     esp_err_t err = nvs_open(QNH_NVS_NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK) {
@@ -63,6 +87,7 @@ void pk_qnh_set(float hpa)
 void pk_qnh_load(void)
 {
     /* 照 imu_task.c imu_nvs_load_tare 的 blob 范式 */
+    ensure_nvs();
     nvs_handle_t h;
     esp_err_t err = nvs_open(QNH_NVS_NAMESPACE, NVS_READONLY, &h);
     if (err == ESP_ERR_NVS_NOT_FOUND) {

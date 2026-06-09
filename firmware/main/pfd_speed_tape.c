@@ -75,6 +75,7 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
      * Tape spans (STAPE_BOT - STAPE_TOP) = 150 px at 2 kt/px = 300 kt total.
      * Show ±150 kt around centre; clamp minimum to 0. */
     int center_kt = s->valid ? s->ground_speed_kt : 60;
+    if (center_kt < 0) center_kt = 0;
     int low  = ((center_kt - 150) / MINOR_KT) * MINOR_KT;
     int high = ((center_kt + 150) / MINOR_KT) * MINOR_KT;
     if (low < 0) low = 0;

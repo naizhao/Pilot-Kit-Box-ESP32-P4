@@ -105,7 +105,7 @@ static uint16_t s_chr_hb_handle;
 static uint16_t s_chr_raw_handle;
 static uint16_t s_chr_time_handle;
 
-static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static volatile uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool     s_sub_traffic;
 static bool     s_sub_hb;
 static bool     s_sub_raw;

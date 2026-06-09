@@ -38,7 +38,7 @@
 #define SETTINGS_ROW_GAP         4   /* 两行之间的间隔 */
 
 /* 当前选中行:0=Language, 1=QNH */
-static int s_sel_row = 0;
+static volatile int s_sel_row = 0;
 
 /* ── 光标控制 ── */
 

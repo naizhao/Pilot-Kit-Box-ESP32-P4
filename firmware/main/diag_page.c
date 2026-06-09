@@ -211,12 +211,15 @@ void pk_diag_page_render(uint16_t *fb)
      * No hard "online" concept — shows connection state
      * ------------------------------------------------------------------ */
     {
+        /* 一次性快照,避免两次调用之间状态变化导致 TOCTOU 判断矛盾 */
+        bool ble_conn = ble_gatt_is_connected();
+        bool ble_adv  = ble_gatt_is_advertising();
         const char *ble_val;
         uint16_t    ble_col;
-        if (ble_gatt_is_connected()) {
+        if (ble_conn) {
             ble_val = "connected";
             ble_col = COL_ONLINE;
-        } else if (ble_gatt_is_advertising()) {
+        } else if (ble_adv) {
             ble_val = "advertising";
             ble_col = COL_OFFLINE;
         } else {
