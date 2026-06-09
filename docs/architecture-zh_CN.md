@@ -62,8 +62,9 @@ flowchart LR
 | `dsp` | 1 | 4 | 4 KiB | 从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位，并输出 1 Hz dashboard。 |
 | `rec_file` | 0 | 3 | 4 KiB | LittleFS 文件写入任务，避免 DSP hot path 被 flash 写入阻塞。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
+| `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `buttons` | 0 | 3 | 3 KiB | 轮询 TARE / MODE / UP / DOWN，处理短按、长按、超长按和 UP+DOWN 组合。 |
-| `pfd` | 0 | 4 | 6 KiB | 把 PFD、ADS-B LIST、SETTINGS、ABOUT 和校准向导渲染到 ST7789 framebuffer。 |
+| `pfd` | 0 | 4 | 6 KiB | 把 PFD、ADS-B LIST、SETTINGS、ABOUT、DIAG（各硬件实时状态诊断）和校准向导渲染到 ST7789 framebuffer。 |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host 事件循环，通过 C6 的 SDIO / VHCI controller 处理 BLE。 |
 | `ble_emit` | 0 | 3 | 6 KiB | 每秒快照 `aircraft_state`，发送 GDL90 Heartbeat 和 Traffic Report，同时发送 raw ts-line 队列。 |
 
@@ -114,21 +115,21 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 校时前输出的 Mode-S frame 仍会进入所有 sink，只是 `ts_ms` 很小（接近开机以来毫秒数）。客户端可以识别并丢弃这些 pre-sync frame。
 
-### 规划中：载板传感器（GPS / 气压 / microSD）
+### 载板传感器（GPS / 气压 / microSD）
 
 Pilot Kit Box 载板布线了 GT-U8 GPS（UART + GPIO46 上的 1 PPS）、BMP388
-气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。**固件驱动待实现**
+气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。GPS 和气压驱动均已实现
 —— 设计见
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md)。
 各能力如何接入上面的架构：
 
-- **GPS 授时**：GPS UTC + PPS 校正 `settimeofday()`。**GPS 优先（最准）**，
+- **GPS 授时**（`gps_task.c`）：GPS UTC + PPS 校正 `settimeofday()`。**GPS 优先（最准）**，
   BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可
   自主校时，SETTINGS 显示同步状态（来源 + 距上次同步时长）。PPS 对齐 UTC 整秒沿，
   提升 Mode-S 时间戳精度。
-- **GPS own-ship**：仅在 ADS-B LIST 未手动绑定飞机时作**兜底**；绑定优先。
+- **GPS own-ship**（`gps_task.c`）：仅在 ADS-B LIST 未手动绑定飞机时作**兜底**；绑定优先。
   接入现有 `aircraft_state` own-ship 路径 + GDL90 ownship report。
-- **BMP388 气压**：高度/升降率仅作**参考**显示（增压座舱内失真），不作权威高度。
+- **BMP388 气压**（`baro_task.c`）：高度/升降率仅作**参考**显示（增压座舱内失真），不作权威高度；QNH 可在 SETTINGS 中调整。
 - **microSD 记录后端**：插卡时优先于 LittleFS；Settings 可选（自动/flash/microSD）。
   扩展上面 `record_dispatch` 的 file sink 路径。
 

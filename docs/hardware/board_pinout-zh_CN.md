@@ -86,8 +86,8 @@
 | RUN | RUN | 系统复位 | 板载 reset net |
 | **26** | GPIO26 | **BTN1 / TARE** | IMU tare / 语言切换 / own-ship 绑定 |
 | GND | GND | 地 |  |
-| **27** | GPIO27 | **BARO_INT**（BMP388，载板）| data-ready 中断；固件驱动待实现 |
-| **32** | GPIO32 | **GPS RX**（载板）| P4 UART **TX** → GPS RXD；固件驱动待实现 |
+| **27** | GPIO27 | **BARO_INT**（BMP388，载板）| data-ready 中断；驱动已实现（`baro_task.c`，轮询 ~10 Hz）|
+| **32** | GPIO32 | **GPS RX**（载板）| P4 UART **TX** → GPS RXD；驱动已实现（`gps_task.c`，UART1 NMEA）|
 | **33** | GPIO33 | **GPS TX**（载板）| GPS TXD → P4 UART **RX**；旧 LCD MOSI |
 | **46** | GPIO46 | **GPS PPS**（载板）| 1 Hz 秒脉冲，用于授时 |
 | GND | GND | 地 | 位于 GPIO46 与 GPIO47 之间，容易误短路 |
@@ -153,7 +153,7 @@ CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 
 - ES8311 audio codec：`0x18`
 - BNO085 IMU：`0x4A`（AD0 拉高时为 `0x4B`）
-- BMP388 气压计：`0x76`（SDO→GND）—— 载板，固件驱动待实现
+- BMP388 气压计：`0x76`（SDO→GND）—— 载板，驱动已实现（`baro_task.c`，轮询 ~10 Hz）
 
 ### USB HS OTG P1
 
@@ -220,8 +220,9 @@ UP + DOWN 同时按住 5 秒保留给 BLE pairing window。
 
 ### BMP388 气压计（I2C0，载板）
 
-**状态**：载板已布线，固件驱动待实现。提供气压高度 + 升降率，详见
-GPS / 气压 / 授时能力 spec。
+**状态**：驱动已实现——`baro_task.c`，经 I2C0 轮询 ~10 Hz。
+提供气压高度 + 升降率（QNH 可调）；结果写入 `g_baro_state`，
+在 PFD 右侧面板和 DIAG 诊断 view 中渲染。
 
 与 ES8311、BNO085 共用 I2C0（地址不冲突）。
 
@@ -237,8 +238,8 @@ GPS / 气压 / 授时能力 spec。
 
 ### GPS 模块（GT-U8 / ATGM336H，UART + PPS，载板）
 
-**状态**：载板已布线，固件驱动待实现。提供本机位置 / 速度 / 航向，以及
-1 PPS 授时脉冲，详见 GPS / 气压 / 授时能力 spec。
+**状态**：驱动已实现——`gps_task.c`，UART1 NMEA 解析。
+提供本机位置 / 速度 / 航向，以及 1 PPS 精密授时脉冲。
 
 GOOUUU **GT-U8** 模块（AT6558 / ATGM336H GNSS 核心）。板载 LDO 宽压
 3.3–5 V；GNSS 核心与 UART 都是 3.3 V，UART 直连 ESP32-P4，无需电平转换。

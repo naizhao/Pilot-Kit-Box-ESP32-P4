@@ -146,8 +146,9 @@ flowchart LR
 | `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
 | `rec_file`        | 0   | 3    | 4 KiB | Per-sink writer for the LittleFS file backend; keeps the dsp task off slow flash writes. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
+| `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `buttons`         | 0   | 3    | 3 KiB | Polls TARE / MODE / UP / DOWN, debounces short/long/very-long presses, and detects the UP+DOWN combo. |
-| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, ADS-B LIST, SETTINGS, ABOUT, and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
+| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, ADS-B LIST, SETTINGS, ABOUT, DIAG (real-time hardware diagnostics), and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
 | `nimble_host`     | 0   | 4    | 4 KiB | NimBLE host event loop, hosts the GATT server; events arrive from the C6 controller over the SDIO/VHCI transport. |
 | `ble_emit`        | 0   | 3    | 6 KiB | 1 Hz timer task: snapshots `aircraft_state` and emits GDL90 Heartbeat + one Traffic Report per fresh aircraft on the BLE notify pipes; also drains the raw-ts-line queue produced by the BLE sink. |
 
@@ -247,26 +248,27 @@ Frames produced before the first sync still go down all sinks; the
 ts_ms reads small (seconds since boot). Clients can detect and
 discard them — the reference Pilot Kit app does.
 
-### Planned: carrier-board sensors (GPS / baro / microSD)
+### Carrier-board sensors (GPS / baro / microSD)
 
 The Pilot Kit Box carrier board wires up a GT-U8 GPS (UART + 1 PPS on
 GPIO46), a BMP388 barometer (I²C0, `0x76`), and routes recording to the
-on-board microSD slot. **Firmware drivers are pending** — design in
+on-board microSD slot. GPS and baro drivers are implemented; design
+notes in
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md).
-Summary of how each will slot into the architecture above:
+How each slots into the architecture:
 
-- **GPS time discipline** — GPS UTC + PPS seeds `settimeofday()`. GPS is
+- **GPS time discipline** (`gps_task.c`) — GPS UTC + PPS seeds `settimeofday()`. GPS is
   **preferred (most accurate)**, BLE is the backup; overwrite protection
   keeps a lower-quality source from clobbering a good GPS fix. The clock
   self-disciplines without a phone, and SETTINGS shows sync state (source
   + age since last sync). PPS aligns the UTC second edge for
   higher-precision Mode-S timestamps.
-- **GPS own-ship** — only a **fallback** when no aircraft is manually
+- **GPS own-ship** (`gps_task.c`) — only a **fallback** when no aircraft is manually
   bound in the ADS-B LIST; a manual binding always wins. Feeds the same
   `aircraft_state` own-ship path + GDL90 ownship report.
-- **BMP388 baro** — altitude / vertical-speed shown as a **reference
+- **BMP388 baro** (`baro_task.c`) — altitude / vertical-speed shown as a **reference
   only** (unreliable in a pressurised cabin), never the authoritative
-  altitude.
+  altitude. QNH is user-adjustable from SETTINGS.
 - **microSD record sink** — preferred over LittleFS when a card is
   inserted; Settings-selectable (auto / flash / microSD). Extends the
   `record_dispatch` file-sink path already shown above.

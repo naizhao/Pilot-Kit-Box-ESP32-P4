@@ -102,8 +102,8 @@ Both headers count from the **top** (USB-C side) downward.
 | RUN        | RUN      | —                         | System reset button net.                       |
 | **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = live software tare; long ≥ 3 s = persist software tare to NVS; very-long ≥ 10 s = IMU factory reset |
 | GND        | GND      | —                         |                                                |
-| **27**     | GPIO27   | **BARO_INT** (BMP388, carrier board) | data-ready IRQ; firmware driver pending |
-| **32**     | GPIO32   | **GPS RX** (carrier board) | P4 UART **TX** → GPS RXD; firmware driver pending |
+| **27**     | GPIO27   | **BARO_INT** (BMP388, carrier board) | data-ready IRQ; driver implemented (`baro_task.c`, polling ~10 Hz) |
+| **32**     | GPIO32   | **GPS RX** (carrier board) | P4 UART **TX** → GPS RXD; driver implemented (`gps_task.c`, UART1 NMEA) |
 | **33**     | GPIO33   | **GPS TX** (carrier board) | GPS TXD → P4 UART **RX**; (was LCD MOSI in an earlier build) |
 | **46**     | GPIO46   | **GPS PPS** (carrier board) | 1 Hz pulse for time discipline; (was LCD CS earlier) |
 | GND        | GND      | —                         | ⚠ Between GPIO46 and GPIO47 — easy to misplace |
@@ -204,7 +204,7 @@ Bus is shared; addresses don't collide.
 Slaves currently on the bus:
 - **ES8311 audio codec** — `0x18` (on-board)
 - **BNO085 IMU** — `0x4A` (or `0x4B` if SA0 strap pulled high)
-- **BMP388 barometer** — `0x76` (SDO→GND) — carrier board; firmware driver pending
+- **BMP388 barometer** — `0x76` (SDO→GND) — carrier board; driver implemented (`baro_task.c`, polling ~10 Hz)
 
 ### I²S0 (ES8311 codec audio)
 
@@ -521,9 +521,10 @@ soft power off / deep sleep instead — see
 
 ### BMP388 barometric pressure sensor via I²C0 (carrier board)
 
-**Status**: Wired on the Pilot Kit Box carrier board; firmware driver
-pending. Provides barometric altitude + vertical speed — see the
-GPS / baro / time-discipline capability spec.
+**Status**: Driver implemented — `baro_task.c`, polling ~10 Hz over I²C0.
+Provides barometric altitude + vertical speed (QNH-adjustable); results
+written to `g_baro_state` and rendered on the PFD right-side panel and
+DIAG view.
 
 Shares the on-board I²C0 bus with the ES8311 codec and BNO085 IMU
 (distinct addresses, no conflict).
@@ -540,9 +541,9 @@ Shares the on-board I²C0 bus with the ES8311 codec and BNO085 IMU
 
 ### GPS receiver (GT-U8 / ATGM336H) via UART + PPS (carrier board)
 
-**Status**: Wired on the carrier board; firmware driver pending.
+**Status**: Driver implemented — `gps_task.c`, UART1 NMEA parsing.
 Provides own-ship position / velocity / course and a 1 PPS pulse for
-precise time discipline — see the GPS / baro / time-discipline spec.
+precise time discipline.
 
 GOOUUU **GT-U8** module (AT6558 / ATGM336H GNSS core). Wide-range
 3.3–5 V supply via an on-board LDO; the GNSS core and its UART run at
