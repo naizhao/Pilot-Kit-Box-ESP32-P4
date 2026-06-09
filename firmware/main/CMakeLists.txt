@@ -8,6 +8,7 @@ idf_component_register(
         "gps_task.c"
         "own_ship.c"
         "geo.c"
+        "traffic_geom.c"
         "icao_country.c"
         "airline_codes.c"
         "aircraft_db.c"
