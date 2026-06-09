@@ -109,6 +109,8 @@ static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool     s_sub_traffic;
 static bool     s_sub_hb;
 static bool     s_sub_raw;
+static volatile bool s_advertising;   /* true while ble_gap_adv_start has been called
+                                        * and no connect/stop has occurred yet */
 
 static uint8_t       s_own_addr_type;
 static QueueHandle_t s_raw_queue;   /* char[BLE_RAW_LINE_MAX] entries */
@@ -382,6 +384,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
+            s_advertising = false;   /* NimBLE stops adv automatically on connect */
             ESP_LOGI(TAG, "peer connected (handle=%u)", s_conn_handle);
             /* Try to suck the wall-clock out of the peer's Current Time
              * Service. Silent no-op if the peer is Android / has no CTS. */
@@ -469,6 +472,7 @@ static void start_advertising(void)
         ESP_LOGE(TAG, "adv_start failed: %d", rc);
         return;
     }
+    s_advertising = true;
     ESP_LOGI(TAG, "advertising as \"%s\"", s_device_name);
 }
 
@@ -510,6 +514,7 @@ static void on_sync(void)
 static void on_reset(int reason)
 {
     ESP_LOGW(TAG, "stack reset: %d", reason);
+    s_advertising = false;
 }
 
 /* --- Host task (NimBLE event loop) ----------------------------------- */
@@ -662,6 +667,11 @@ static void emitter_task(void *arg)
 bool ble_gatt_is_connected(void)
 {
     return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
+
+bool ble_gatt_is_advertising(void)
+{
+    return s_advertising;
 }
 
 void ble_gatt_notify_raw_line(const char *line)

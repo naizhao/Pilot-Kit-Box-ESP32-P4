@@ -47,6 +47,7 @@
 #include "cpr_decode.h"
 #include "aircraft_state.h"
 #include "record_sink.h"
+#include "dsp_task.h"
 
 static const char *TAG      = "dsp";
 static const char *TAG_ADSB = "adsb";
@@ -80,6 +81,15 @@ static uint32_t s_msgs_df20_21   = 0;
 static uint32_t s_msgs_other     = 0;
 static uint32_t s_pos_decoded    = 0;
 
+/* --- Cumulative diagnostic counters (boot-lifetime, never reset) ------- *
+ * Written only from dsp_task; read by diag page via pk_dsp_get_stats().
+ * 32-bit aligned r/w is atomic on ESP32-P4 (RV32), so no lock needed;
+ * volatile prevents the compiler from caching stale values across tasks.
+ */
+static volatile uint32_t s_msgs_total_cum  = 0;   /* cumulative CRC-ok Mode-S frames */
+static volatile uint32_t s_pos_decoded_cum = 0;   /* cumulative CPR position decodes  */
+static volatile uint32_t s_iq_drop_total   = 0;   /* cumulative IQ bytes dropped       */
+
 /*
  * Tiny ICAO seen-set, kept solely so the dashboard can report unique
  * aircraft observed *since boot* without poking inside cpr_decode.c.
@@ -87,8 +97,8 @@ static uint32_t s_pos_decoded    = 0;
  * fine for a dashboard.
  */
 #define ICAO_SEEN_CAPACITY  1024
-static uint32_t s_icao_seen[ICAO_SEEN_CAPACITY];
-static uint32_t s_icao_unique = 0;
+static uint32_t          s_icao_seen[ICAO_SEEN_CAPACITY];
+static volatile uint32_t s_icao_unique = 0;
 
 static void icao_seen_insert(uint32_t icao24)
 {
@@ -376,6 +386,7 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
     double  secs = (double)elapsed_us / 1e6;
     double  mbps = (double)s_window_bytes / 1e6 / secs;
     uint32_t drops = pk_iq_dropped_bytes_swap();
+    s_iq_drop_total += drops;   /* accumulate into boot-lifetime counter */
 
     /* Stay quiet when there's no IQ to talk about. This happens whenever
      * the dongle is unplugged (sdr_task is parked in its NEW_DEV wait)
@@ -409,6 +420,12 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
     }
 
 reset:;
+
+    /* Flush 1-Hz window totals into boot-lifetime cumulative counters
+     * before zeroing the window. s_icao_unique is already cumulative
+     * (never reset) — exposed as-is by pk_dsp_get_stats(). */
+    s_msgs_total_cum  += s_msgs_total;
+    s_pos_decoded_cum += s_pos_decoded;
 
     s_window_bytes  = 0;
     s_msgs_total    = 0;
@@ -527,4 +544,19 @@ void dsp_task(void *arg)
             }
         }
     }
+}
+
+/* --- Diagnostic snapshot getter -------------------------------------- *
+ *
+ * Returns boot-lifetime cumulative counters as a single flat struct.
+ * Called from pfd_task (diag page) at display refresh cadence (~1 Hz).
+ * 32-bit aligned reads are atomic on ESP32-P4 (RV32); no locking needed.
+ */
+void pk_dsp_get_stats(pk_dsp_stats_t *out)
+{
+    if (out == NULL) return;
+    out->msgs_total   = s_msgs_total_cum;
+    out->pos_decoded  = s_pos_decoded_cum;
+    out->icao_unique  = s_icao_unique;
+    out->iq_drop_total = s_iq_drop_total;
 }

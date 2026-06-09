@@ -54,3 +54,13 @@ void ble_gatt_notify_raw_line(const char *line);
  * poll from dashboard tasks.
  */
 bool ble_gatt_is_connected(void);
+
+/*
+ * True while the device is actively BLE advertising (i.e. after a
+ * successful ble_gap_adv_start() and before the first peer connects or
+ * the stack resets). Returns false once a peer has connected (NimBLE
+ * stops advertising automatically on connect) or if advertising has
+ * not started yet. Use ble_gatt_is_connected() to check the connected
+ * state; the two flags are mutually exclusive in normal operation.
+ */
+bool ble_gatt_is_advertising(void);
