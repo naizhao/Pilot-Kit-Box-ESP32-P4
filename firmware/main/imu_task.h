@@ -154,9 +154,15 @@ bool pk_imu_sample_get(pk_imu_sample_t *out);
 /*
  * "Tare now" — capture the current attitude (post-sandwich, in
  * aircraft NED frame) and use its conjugate as a software offset
- * applied to every subsequent frame, so the PFD reads (0, 0, 0)
- * immediately and tracks differential rotation from this reference
- * onwards.
+ * applied to every subsequent frame, so the PFD horizon (roll/pitch)
+ * reads (0, 0) immediately and tracks differential tilt from this
+ * reference onwards.
+ *
+ * Heading (yaw / HSI / HDG) is deliberately NOT affected: the compass
+ * keeps reading the true magnetic heading across a tare. Only the
+ * artificial horizon is caged. (parse_rotation_vector() sources yaw
+ * from the raw pre-tare attitude — see the note at its euler-extraction
+ * call site.)
  *
  * Implemented purely in firmware (no BNO SH-2 Tare commands) so that
  * it composes cleanly with the world/body-frame sandwich applied by

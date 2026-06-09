@@ -397,7 +397,9 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
      * the tare-time aircraft attitude, s_tare · q_now decomposes the
      * differential rotation in the TARE-TIME aircraft body frame, so
      * Euler extraction yields roll-around-body-X, pitch-around-body-Y,
-     * yaw-around-body-Z — the aerospace convention. Right-mul instead
+     * yaw-around-body-Z — the aerospace convention. (We consume only
+     * roll/pitch from this tared quaternion; yaw is taken from the raw
+     * attitude below so the compass survives a tare.) Right-mul instead
      * expresses the differential in world NED, which produces correct
      * results only when the tare-time aircraft pose happens to be
      * level/facing-N (q_at_tare ≈ identity); for any tilted mounting
@@ -416,8 +418,21 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
              aqw, aqi, aqj, aqk,
              &dqw, &dqi, &dqj, &dqk);
 
+    /* roll/pitch come from the TARED quaternion — the software tare cages
+     * the artificial horizon to the tare-time reference. yaw (heading),
+     * however, is sourced from the RAW post-sandwich aircraft attitude,
+     * NOT the tared one: a TARE press must cage the horizon WITHOUT
+     * touching the compass. If yaw came from the tared quaternion it
+     * would collapse to 0 at the tare pose (conj(q)·q = identity) and the
+     * HSI/HDG would thereafter show only heading *relative* to the tare
+     * reference instead of the true magnetic heading. Decoupling yaw also
+     * makes the compass immune to any NVS-persisted tare offset restored
+     * at boot. The tared-quaternion yaw is intentionally discarded. */
     float roll, pitch, yaw;
-    quat_to_euler(dqi, dqj, dqk, dqw, &roll, &pitch, &yaw);
+    float discard_yaw, discard_roll, discard_pitch;
+    quat_to_euler(dqi, dqj, dqk, dqw, &roll, &pitch, &discard_yaw);
+    quat_to_euler(aqi, aqj, aqk, aqw, &discard_roll, &discard_pitch, &yaw);
+    (void)discard_yaw; (void)discard_roll; (void)discard_pitch;
 
     /* Mounting-orientation corrections — see imu_task.h for the
      * diagnostic recipe and the rationale for each knob. These
@@ -801,7 +816,8 @@ esp_err_t pk_imu_tare_now(void)
     xSemaphoreGive(s_sample_lock);
 
     ESP_LOGI(TAG, "software tare: captured (w,i,j,k) = "
-                  "%+0.4f %+0.4f %+0.4f %+0.4f (PFD now reads 0/0/0)",
+                  "%+0.4f %+0.4f %+0.4f %+0.4f (PFD horizon now reads "
+                  "roll/pitch 0/0; heading/HDG unchanged)",
              ow, oi, oj, ok);
     return ESP_OK;
 }
