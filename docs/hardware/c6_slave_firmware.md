@@ -203,6 +203,44 @@ with normal operation. Or pull them off; doesn't matter for BLE.
 > (keep your own bootloader + partition table). Verified bit-for-bit
 > functionally equivalent to our own build for ESP-Hosted purposes.
 
+### Troubleshooting — flash drops out mid-write ("chip stopped responding")
+
+If `write-flash` dies partway through, and **at a different
+percentage each run** (e.g. 0% one time, 21% the next):
+
+```text
+Writing at 0x0006c190 [=====>     ]  21.0% 147456/702923 bytes...
+A fatal error occurred: The chip stopped responding.
+```
+
+This is **not** a corrupt binary (the `Compressed N bytes` line
+matching the file size proves the upload started fine), and **not
+necessarily "baud too high."** Read the pattern instead:
+
+- **Dies at a different % each time** → bad contact / supply /
+  auto-reset glitch.
+- **Dies at the same % every time** → supply sags when flash erase +
+  write current spikes.
+
+Work it in this order (cheapest first):
+
+1. **Contact & power.** Reseat every dupont wire, plug the USB-UART
+   straight into the computer (no hub / extension cable), and unplug
+   other high-draw USB devices to free up current. A flaky jumper is
+   the single most common cause of *random* drop-outs.
+2. **Lower the baud.** Walk `-b` down `460800 → 230400 → 115200 →
+   57600`. The ROM handshake is always 115200; `-b` only sets the
+   post-stub transfer speed, so anything below 115200 actually slows
+   the whole transfer.
+3. **Manual download mode + reset fully disabled** (most reliable).
+   Put C6 + P4 into download mode by hand exactly as in §4 steps 1-7,
+   then run the §4 flash command with `--after hard-reset` changed to
+   `--after no-reset` (and `-b` dropped per step 2). H4 carries no
+   RESET line anyway, and on failure esptool otherwise tries to pulse
+   RTS (the `Hard resetting via RTS pin…` line right before the
+   traceback) — disabling the after-reset removes that noise.
+   Power-cycle the board yourself once the write completes.
+
 ## 5. Verify from the P4 side
 
 > ✅ **Bring-up status**: fully working as of 2026-05-14 with

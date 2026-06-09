@@ -104,6 +104,26 @@ ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
 - 确认 USB-UART 是 3.3 V TTL，不是 RS232 电平。
 - H4 没有 reset 线，必须用 `--before no-reset`。
 
+### 烧录中途随机断开（"The chip stopped responding"）
+
+症状：`write-flash` 跑到一半突然报错，而且**每次断在不同进度**（例如一次停在 0%、另一次停在 21%）：
+
+```text
+Writing at 0x0006c190 [=====>     ]  21.0% 147456/702923 bytes...
+A fatal error occurred: The chip stopped responding.
+```
+
+这不是固件文件损坏（日志里 `Compressed N bytes` 和文件大小对得上就说明上传已经开始），也**不一定是波特率太高**。先看断开规律判断方向：
+
+- **每次断在不同百分比** → 接触不良 / 供电 / 自动复位电路干扰。
+- **每次都断在同一百分比** → flash 擦写电流拉高时供电塌陷。
+
+按下面顺序排查（成本从低到高）：
+
+1. **接触与供电**：杜邦线全部重新插紧、USB-UART 直插电脑（不走 hub / 延长线）、拔掉其他大功率 USB 设备给烧录让电。随机断开最常见的就是这一类。
+2. **降波特率**：`-b` 从 460800 往下试 `230400 → 115200 → 57600`。ROM 握手固定在 115200，`-b` 只影响 stub 加载后的传输速度，低于 115200 反而会拖慢整个传输。
+3. **手动进 download mode + 全程禁用复位**（最可靠）：按上面《进入 C6 download mode》的步骤手动让 C6/P4 进下载模式，再把《烧录》那条命令里的 `--after hard-reset` 改成 `--after no-reset`（`-b` 按第 2 步降档）。H4 本来就没有 RESET 线，esptool 出错时会尝试用 RTS 复位（traceback 前那行 `Hard resetting via RTS pin…`），禁用 after-reset 把这个干扰去掉；写入完成后自己手动给板子断电重启即可。
+
 ### P4 固件启动后 BLE abort
 
 C6 还没烧 hosted slave，或者 IO9 短接没拔。先确认 C6 启动正常，再看 [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) 的 SDIO / reset 极性排障。
