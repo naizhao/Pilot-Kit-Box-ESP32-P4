@@ -31,6 +31,7 @@
 #include "boot_splash.h"
 #include "button_task.h"
 #include "config_qnh.h"
+#include "config_traffic.h"
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
@@ -298,6 +299,7 @@ void app_main(void)
         ESP_LOGI(TAG, "BNO085 IMU online");
     }
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
+    pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
 
     /* UI state lives in its own module so the button callback can flip
