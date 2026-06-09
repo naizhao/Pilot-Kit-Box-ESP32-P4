@@ -9,6 +9,7 @@ idf_component_register(
         "own_ship.c"
         "geo.c"
         "traffic_geom.c"
+        "mag_var.c"
         "icao_country.c"
         "airline_codes.c"
         "aircraft_db.c"
