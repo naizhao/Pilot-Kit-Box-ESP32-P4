@@ -41,6 +41,7 @@ idf_component_register(
         "pfd_font_aa.c"
         "pfd_hsi.c"
         "pfd_statusbar.c"
+        "pfd_speed_tape.c"
         "pfd_tape.c"
     INCLUDE_DIRS "."
     EMBED_FILES

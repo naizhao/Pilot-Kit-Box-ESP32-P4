@@ -38,6 +38,7 @@
 #include "pfd_font.h"
 #include "pfd_hsi.h"
 #include "pfd_statusbar.h"
+#include "pfd_speed_tape.h"
 #include "pfd_tape.h"
 #include "sdkconfig.h"
 #include "settings_page.h"
@@ -194,44 +195,18 @@ static void pfd_task(void *arg)
             };
 
             /* Attitude fills the full panel as the screen background.
-             * Statusbar / ALT tape / HSI / GS / VS draw on top as
-             * opaque overlays — no need to pre-clear the frame. */
+             * Statusbar / ALT tape / speed tape / HSI / VS draw on top
+             * as opaque overlays — no need to pre-clear the frame. */
             pk_pfd_attitude_render(fb, &imu);
             pk_pfd_statusbar_render(fb, &stat);
             pk_pfd_alt_tape_render(fb, &alt);
+            pk_pfd_speed_tape_t spd = {
+                .valid           = own_valid && own.have_velocity,
+                .ground_speed_kt = (own_valid && own.have_velocity)
+                                       ? own.ground_speed_kt : 0,
+            };
+            pk_pfd_speed_tape_render(fb, &spd);
             pk_pfd_hsi_render(fb, &hsi);
-
-            /* GS readout — bottom-left corner. Sits to the left of the
-             * HSI fill (which starts at x=80), so we have x=[0, 78)
-             * for an opaque pad + label/value. Mixed scales (label
-             * scale-1, value scale-2) match the G1000 convention of
-             * smaller unit text and larger digits. */
-            {
-                const uint16_t LBL   = pk_rgb565( 70, 220, 250);
-                const uint16_t VAL   = pk_rgb565(240, 240, 240);
-                const uint16_t STALE = pk_rgb565(100, 100, 100);
-                char buf[8];
-                bool gs_valid = own_valid && own.have_velocity;
-
-                pk_pfd_darken_rect(fb, 0, 210, 78, 232, 128);
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             4, 216, "GS", LBL, 1);
-                if (gs_valid) {
-                    int gs = own.ground_speed_kt;
-                    if (gs < 0)   gs = 0;
-                    if (gs > 999) gs = 999;
-                    snprintf(buf, sizeof(buf), "%3d", gs);
-                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         20, 212, buf, VAL);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 58, 216, "KT", LBL, 1);
-                } else {
-                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         20, 212, "---", STALE);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 58, 216, "KT", STALE, 1);
-                }
-            }
 
             /* VS readout — bottom-right corner. Sits to the right of
              * the HSI fill (which ends at x=240), so x=[240, 320) is
