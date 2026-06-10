@@ -144,8 +144,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                                  esp_err_to_name(err));
                     }
                 }
-            } else if (mode == PK_UI_MODE_ADSB_LIST) {
-                pk_ui_list_scroll(-1);
+            } else if (mode == PK_UI_MODE_ADSB_LIST || mode == PK_UI_MODE_TRAFFIC) {
+                pk_ui_list_scroll(-1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(-1);
             }
@@ -181,8 +181,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                                  esp_err_to_name(err));
                     }
                 }
-            } else if (mode == PK_UI_MODE_ADSB_LIST) {
-                pk_ui_list_scroll(+1);
+            } else if (mode == PK_UI_MODE_ADSB_LIST || mode == PK_UI_MODE_TRAFFIC) {
+                pk_ui_list_scroll(+1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(+1);
             }
