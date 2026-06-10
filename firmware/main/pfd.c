@@ -311,12 +311,11 @@ static void pfd_task(void *arg)
                 #undef BOX_VAL_RIGHT
             }
 
-            /* Own-ship source badge — bottom-left x[0,78] y[210,232].
-             * Three states:
-             *   BOUND_ADSB → callsign (cyan) or ICAO hex (cyan)
+            /* Own-ship source badge — bottom-left x[0,88] y[210,232].
+             *   BOUND_ADSB → callsign → squawk → ICAO hex (cyan)
              *   GPS        → "GPS" (white)
              *   NONE/stale → "--" (grey) */
-#define PFD_SRC_BADGE_X1  78
+#define PFD_SRC_BADGE_X1  88
 #define PFD_SRC_BADGE_Y0  210
 #define PFD_SRC_BADGE_Y1  232
             {
@@ -324,26 +323,31 @@ static void pfd_task(void *arg)
                 const uint16_t SRC_ADSB  = pk_rgb565( 70, 220, 250);
                 const uint16_t SRC_GPS   = pk_rgb565(240, 240, 240);
                 const uint16_t SRC_NONE  = pk_rgb565(100, 100, 100);
-                char src_buf[8];
+                char src_buf[12];
                 uint16_t src_col;
 
                 if (!own_valid || own_src == PK_OWN_SRC_NONE) {
                     src_buf[0] = '-'; src_buf[1] = '-'; src_buf[2] = '\0';
                     src_col = SRC_NONE;
                 } else if (own_src == PK_OWN_SRC_BOUND_ADSB) {
-                    bool used_callsign = false;
+                    bool used = false;
                     if (own.have_callsign) {
-                        /* Copy at most 6 chars (72 px max in 78-px badge)
-                         * then strip trailing spaces. */
+                        /* 呼号(最多 7 字, cockpit 12px 下 84px ≤ 88px 框) + 去尾空格 */
                         int i;
-                        for (i = 0; i < 6 && own.callsign[i]; i++)
+                        for (i = 0; i < 7 && own.callsign[i]; i++)
                             src_buf[i] = own.callsign[i];
                         src_buf[i] = '\0';
                         while (i > 0 && src_buf[i - 1] == ' ')
                             src_buf[--i] = '\0';
-                        if (src_buf[0] != '\0') used_callsign = true;
+                        if (src_buf[0] != '\0') used = true;
                     }
-                    if (!used_callsign) {
+                    if (!used && own.have_squawk) {
+                        /* fallback 1: squawk(应答机 4 位八进制码,比 ICAO hex 对飞行员有意义) */
+                        snprintf(src_buf, sizeof(src_buf), "%04d", own.squawk);
+                        used = true;
+                    }
+                    if (!used) {
+                        /* fallback 2: ICAO hex 兜底 */
                         snprintf(src_buf, sizeof(src_buf), "%06lX",
                                  (unsigned long)own.icao24);
                     }
@@ -357,13 +361,14 @@ static void pfd_task(void *arg)
 
                 pk_pfd_darken_rect(fb, 0, PFD_SRC_BADGE_Y0,
                                    PFD_SRC_BADGE_X1, PFD_SRC_BADGE_Y1, 128);
-                /* Cockpit font, scale-2: 12 px per glyph.
-                 * Left-pad within the 78-px box so text appears centred. */
+                /* cockpit 航空字形(12px/字,更好看);垂直居中于 22px 框
+                 * (cell 高 16px → y 偏移 3)。框加宽到 88px 容纳 7 字呼号(84px),
+                 * 比原 78px 框(6 字)多一位。 */
                 {
                     int txt_x = (PFD_SRC_BADGE_X1 - (int)strlen(src_buf) * 12) / 2;
                     if (txt_x < 2) txt_x = 2;
                     pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         txt_x, PFD_SRC_BADGE_Y0 + 2,
+                                         txt_x, PFD_SRC_BADGE_Y0 + 3,
                                          src_buf, src_col);
                 }
             }
