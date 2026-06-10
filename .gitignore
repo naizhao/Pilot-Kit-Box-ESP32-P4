@@ -1,4 +1,5 @@
 docs/internal/*
+docs/kickstarter/
 
 # Per-developer plan / spec working directory (superpowers workflow).
 # Each agent / developer accumulates plans + specs locally; these are
@@ -19,6 +20,8 @@ firmware/components/xtrsdr/
 
 # ESP-IDF build artifacts
 firmware/build/
+firmware/build_*/
+firmware/network_adapter_esp32c6.bin
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/sdkconfig.broken-backup-*
@@ -29,6 +32,12 @@ firmware/dependencies.lock
 
 IMPLEMENTATION_PLAN.md
 __pycache__
+
+# Object and compiler intermediate files
+*.o
+*.obj
+*.d
+*.a
 
 # EasyEDA raw-export backups (kept locally, not tracked)
 *.ori
