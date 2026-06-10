@@ -62,8 +62,13 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
 
     pk_baro_state_t baro;
     bool baro_ok = pk_baro_get(&baro);
-    int own_palt = (baro_ok && baro.valid)
-                       ? std_alt_ft_from_pa(baro.pressure_pa) : PK_ALT_UNAVAIL;
+    /* 相对高度的本机基准:绑定 own 时优先用其 ADS-B 气压高度(与目标 Mode-C 同
+     * 1013.25 基准),否则用 baro 标准气压高度兜底。照 traffic_page.c:273-280
+     * 同一逻辑——原来恒用 baro,绑定高空 own 时相对高度符号会全错。 */
+    int own_palt;
+    if (own.have_altitude)          own_palt = own.altitude_ft;
+    else if (baro_ok && baro.valid) own_palt = std_alt_ft_from_pa(baro.pressure_pa);
+    else                            own_palt = PK_ALT_UNAVAIL;
     float mag_var = pk_mag_var_lookup(own.lat, own.lon);
 
     size_t n = aircraft_state_snapshot(
