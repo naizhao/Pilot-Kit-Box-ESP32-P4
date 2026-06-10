@@ -247,8 +247,9 @@ void pk_diag_page_render(uint16_t *fb)
                 for (int i = 0; i < g.snr_count; ++i)
                     if (g.snr_con[i] == gi) cnt++;
                 if (cnt == 0) continue;
+                /* 标签顶部对齐(y)，与其它行的 label 同一基准。 */
                 pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                       DIAG_KEY_X, y + 8, con_name[gi], COL_KEY);
+                                       DIAG_KEY_X, y, con_name[gi], COL_KEY);
                 draw_snr_row(fb, DIAG_VAL_X, y + 24, g.snr, g.snr_con,
                              g.snr_count, gi);
                 y += 28;
