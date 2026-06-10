@@ -5,8 +5,8 @@
  *   • Tape band  x ∈ [0, 64),  y ∈ [18, 168)  — 64 px wide, 150 px tall
  *   • Metric pad x ∈ [0, 64),  y ∈ [170, 208) — km/h + mph conversions
  *   • Right-edge 1 px cyan divider  (x = 63)   — mirrors ALT left-edge cyan
- *   • Ticks grow rightward from x = 0 (toward tape interior)
- *   • Labels left-justified at x = 2
+ *   • Ticks grow LEFTward from the cyan edge (中心侧) — 镜像 ALT 刻度方向
+ *   • Labels left-justified at x = 2 (屏幕边),文字在左、刻度在右
  *   • Centre value box at y ∈ [STAPE_CY-10, STAPE_CY+10] — derived from tape centre
  *
  * Scale: 1 px = 2 kt.  Minor ticks every 5 kt (2.5 px → 1 px steps),
@@ -37,9 +37,9 @@
 #define METRIC_TOP  170
 #define METRIC_BOT  208
 
-/* Minor tick every 5 kt, major every 25 kt, label every 50 kt */
-#define MINOR_KT     5
-#define MAJOR_KT    25
+/* 对齐 ALT 刻度密度(ALT minor 4px/major 20px):minor 10kt=5px、major 50kt=25px */
+#define MINOR_KT    10
+#define MAJOR_KT    50
 #define LABEL_EVERY 50
 
 /* Pixels per knot (1 px = 2 kt → 0.5 px/kt; use integer: 2 kt = 1 px) */
@@ -88,10 +88,10 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
         bool major    = (kt % MAJOR_KT) == 0;
         int  tick_len = major ? 10 : 4;
 
-        /* Ticks grow rightward from x = 1 (inside tape, leaving cyan edge) */
+        /* 镜像 ALT:刻度贴 cyan 边(中心侧 x63)朝左伸,文字留在左(屏幕边) */
         pk_pfd_fill_rect(fb,
-                         STAPE_X0 + 1, y,
-                         STAPE_X0 + 1 + tick_len, y + 1,
+                         STAPE_X1 - 1 - tick_len, y,
+                         STAPE_X1 - 1, y + 1,
                          COL_TICK);
 
         if (s->valid && major && (kt % LABEL_EVERY) == 0 && kt > 0) {

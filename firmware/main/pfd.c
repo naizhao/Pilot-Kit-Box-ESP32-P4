@@ -241,7 +241,9 @@ static void pfd_task(void *arg)
                 const uint16_t COL_STALE      = pk_rgb565(100, 100, 100);
                 char buf[16];
 
-                /* ── Box 1: BARO altitude (ft) ─────────────────────── */
+                /* 三框值统一右对齐到屏幕边 x318,标签左对齐 x258 */
+                #define BOX_VAL_RIGHT 318
+                /* ── Box 1: BARO 气压高度(ft,参考) ─────────────────── */
                 pk_pfd_darken_rect(fb, 256, 170, PK_DISPLAY_W, 188, 160);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                              258, 173, "BARO", COL_BARO_LBL, 1);
@@ -249,33 +251,31 @@ static void pfd_task(void *arg)
                     int balt = baro.alt_ft;
                     if (balt <  -9999) balt = -9999;
                     if (balt > 99999)  balt = 99999;
-                    snprintf(buf, sizeof(buf), "%5d", balt);
+                    snprintf(buf, sizeof(buf), "%dft", balt);
                 } else {
-                    snprintf(buf, sizeof(buf), "   --");
+                    snprintf(buf, sizeof(buf), "--");
                 }
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             288, 173, buf, baro.valid ? COL_WHITE : COL_STALE, 1);
+                             BOX_VAL_RIGHT - (int)strlen(buf) * 6, 173,
+                             buf, baro.valid ? COL_WHITE : COL_STALE, 1);
 
-                /* ── Box 2: metric altitude (m) ─────────────────────── */
+                /* ── Box 2: 权威高度(ADS-B own-ship)的米值 ──────────────
+                 * 用 own.altitude_ft(右上 ALT 带同源,ADS-B 权威),非 baro:
+                 * baro 在增压舱内不准,这里只是把权威高度做 ft→m 换算。 */
                 pk_pfd_darken_rect(fb, 256, 190, PK_DISPLAY_W, 208, 160);
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             258, 193, "ALT", COL_BARO_LBL, 1);
-                if (baro.valid) {
-                    /* 修复4: 先钳 alt_ft(与 Box1 BARO 同范围),再换算 */
-                    int balt_clamped = baro.alt_ft;
-                    if (balt_clamped <  -9999) balt_clamped = -9999;
-                    if (balt_clamped >  99999) balt_clamped = 99999;
-                    /* 修复5: lroundf 四舍五入 */
-                    int alt_m = (int)lroundf((float)balt_clamped * 0.3048f);
+                             258, 193, "ALT", COL_CYAN, 1);
+                if (alt.valid) {
+                    int alt_m = (int)lroundf((float)alt.altitude_ft * 0.3048f);
                     if (alt_m < -9999) alt_m = -9999;
                     if (alt_m > 99999) alt_m = 99999;
-                    snprintf(buf, sizeof(buf), "%5d", alt_m);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 288, 193, buf, COL_BLUE, 1);
+                    snprintf(buf, sizeof(buf), "%dm", alt_m);
                 } else {
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 288, 193, "   --", COL_STALE, 1);
+                    snprintf(buf, sizeof(buf), "--");
                 }
+                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                             BOX_VAL_RIGHT - (int)strlen(buf) * 6, 193,
+                             buf, alt.valid ? COL_BLUE : COL_STALE, 1);
 
                 /* ── Box 3: VS (vertical speed, fpm) ────────────────── */
                 pk_pfd_darken_rect(fb, 256, 210, PK_DISPLAY_W, 228, 160);
@@ -283,28 +283,30 @@ static void pfd_task(void *arg)
                              258, 213, "VS", COL_CYAN, 1);
                 {
                     bool adsb_vs = own_valid && own.have_velocity && (own_src == PK_OWN_SRC_BOUND_ADSB);
+                    uint16_t vs_col;
                     if (adsb_vs) {
                         /* Priority 1: own-ship ADS-B vertical rate */
                         int vs = own.vert_rate_fpm;
                         if (vs >  9999) vs =  9999;
                         if (vs < -9999) vs = -9999;
-                        snprintf(buf, sizeof(buf), "%+5d", vs);
-                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                     276, 213, buf, COL_WHITE, 1);
+                        snprintf(buf, sizeof(buf), "%+d", vs);
+                        vs_col = COL_WHITE;
                     } else if (baro.valid) {
                         /* Priority 2: baro-derived VS (reference, amber) */
                         int vs = baro.vs_fpm;
                         if (vs >  9999) vs =  9999;
                         if (vs < -9999) vs = -9999;
-                        snprintf(buf, sizeof(buf), "%+5d", vs);
-                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                     276, 213, buf, COL_BARO_LBL, 1);
+                        snprintf(buf, sizeof(buf), "%+d", vs);
+                        vs_col = COL_BARO_LBL;
                     } else {
-                        /* Priority 3: no data */
-                        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                     276, 213, "   --", COL_STALE, 1);
+                        snprintf(buf, sizeof(buf), "--");
+                        vs_col = COL_STALE;
                     }
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 BOX_VAL_RIGHT - (int)strlen(buf) * 6, 213,
+                                 buf, vs_col, 1);
                 }
+                #undef BOX_VAL_RIGHT
             }
 
             /* Own-ship source badge — bottom-left x[0,78] y[210,232].
