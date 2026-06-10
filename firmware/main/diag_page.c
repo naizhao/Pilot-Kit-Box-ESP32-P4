@@ -253,6 +253,7 @@ void pk_diag_page_render(uint16_t *fb)
                              g.snr_count, gi);
                 y += 28;
             }
+            y += 8;   /* SNR 区(柱状图基线在 +24)与下一行 BARO 之间留间隙 */
         }
     }
 
