@@ -177,10 +177,12 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
 void pk_traffic_page_render(uint16_t *fb)
 {
     const uint16_t COL_BG    = pk_rgb565(  7,  10,  16);
-    const uint16_t COL_RING  = pk_rgb565( 34,  38,  46);
-    const uint16_t COL_RINGL = pk_rgb565( 90,  94, 102);
-    const uint16_t COL_CARD  = pk_rgb565(150, 150, 160);
-    const uint16_t COL_N     = pk_rgb565(207, 211, 220);
+    /* 半透屏(transflective)下低亮度像素会和背景蓝融合而看不见,故距离环/
+     * 刻度/罗盘标等灰色元素整体大幅提亮以保证可读性(真机实测)。 */
+    const uint16_t COL_RING  = pk_rgb565(120, 145, 175);  /* 距离环 + 刻度 */
+    const uint16_t COL_RINGL = pk_rgb565(170, 188, 210);  /* 环标数字 */
+    const uint16_t COL_CARD  = pk_rgb565(220, 228, 238);  /* E/S/W */
+    const uint16_t COL_N     = pk_rgb565(245, 250, 255);  /* N(最亮,突出北向) */
     const uint16_t COL_OWN   = pk_rgb565(255, 255, 255);
     const uint16_t COL_HDR   = pk_rgb565(235, 235, 235);
     const uint16_t COL_CYAN  = pk_rgb565(  0, 210, 235);
