@@ -34,6 +34,7 @@
 #include "dsp_task.h"        /* pk_dsp_get_stats, pk_dsp_stats_t */
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
 #include "baro.h"            /* pk_baro_get, pk_baro_state_t */
+#include "config_qnh.h"      /* pk_qnh_get — baro 高度的 QNH 基准 */
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
 #include "ui_state.h"        /* pk_ui_diag_scroll_y */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
@@ -260,6 +261,16 @@ void pk_diag_page_render(uint16_t *fb)
         } else {
             draw_diag_row(fb, y, "BARO", "--", COL_OFFLINE);
         }
+    }
+    y += DIAG_LINE_H;
+
+    /* ------------------------------------------------------------------
+     * QNH — baro 高度的海平面参考压(settings 可调,默认标准大气 1013.25)。
+     * 紧贴 BARO 下方亮出来:上面那个 alt ft 就是按这个基准算的。
+     * ------------------------------------------------------------------ */
+    {
+        snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
+        draw_diag_row(fb, y, "QNH", buf, COL_VAL);
     }
     y += DIAG_LINE_H;
 
