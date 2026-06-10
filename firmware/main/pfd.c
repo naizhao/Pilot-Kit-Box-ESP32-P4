@@ -135,33 +135,41 @@ static void pfd_task(void *arg)
             static int64_t own_log = 0;
             if(now_us - own_log > 1000000){
                 own_log = now_us;
-                /* TODO: 硬件验证后降级为 ESP_LOGD 或删除 */
-                ESP_LOGI("pfd", "own src=%d valid=%d lat=%.5f lon=%.5f",
+                ESP_LOGD("pfd", "own src=%d valid=%d lat=%.5f lon=%.5f",
                          own_src, own_valid, own.lat, own.lon);
             }
 
-            /* HDG source priority: bound own-ship's ADS-B ground track
-             * (DF17 metype 19) beats IMU magnetic yaw whenever both
-             * are available. The bound transponder reports the actual
-             * ground track of the aircraft we're flying in, which is
-             * what a pilot cares about — the IMU only reports where
-             * the kit happens to be pointing (could be the panel, a
-             * pocket, a yoke clamp, etc.). IMU is the fallback when no
-             * own-ship is bound or its velocity isn't fresh. The
-             * imu_valid field in pk_pfd_status_t / pk_pfd_hsi_t is now
-             * really "yaw_valid" — left renamed for the moment to
-             * avoid churning two more headers; the consumers in
-             * pfd_statusbar.c / pfd_hsi.c only use it as a "is the
-             * yaw_deg good" gate. */
+            /* HDG source priority: ONLY a bound own-ship's ADS-B ground
+             * track (DF17 metype 19) overrides IMU magnetic yaw — the
+             * bound transponder reports the actual ground track of the
+             * aircraft we're flying in, while the IMU reports where the
+             * kit happens to point (panel / pocket / yoke clamp). The
+             * GPS-fallback own-ship's "heading" is just GPS COG (ground
+             * course): meaningless at rest and never an aircraft heading,
+             * so it must NOT feed HDG — fall through to IMU yaw instead.
+             * IMU yaw is also the fallback when nothing is bound.
+             * The imu_valid field in pk_pfd_status_t / pk_pfd_hsi_t is
+             * really "yaw_valid" — left renamed to avoid churning two
+             * more headers; consumers only use it as a "yaw_deg good" gate. */
             float yaw_deg     = 0.0f;
             bool  yaw_valid   = false;
-            if (own_valid && own.have_velocity) {
+            if (own_valid && own.have_velocity &&
+                own_src == PK_OWN_SRC_BOUND_ADSB) {
+                /* 1. 绑定 ADS-B：用飞机自报地面航迹（飞机自己的数据最准）。 */
                 yaw_deg   = (float)own.heading_deg;
                 yaw_valid = true;
             } else if (have) {
+                /* 2. 未绑定/绑定失效：IMU 磁航向 yaw（机头朝向）。 */
                 yaw_deg   = s.yaw_deg;
                 yaw_valid = true;
+            } else if (own_valid && own.have_velocity &&
+                       own_src == PK_OWN_SRC_GPS && own.ground_speed_kt >= 2) {
+                /* 3. 兜底：IMU 也失效、但 GPS 在动(地速≥2kt 才有意义) → GPS track。
+                 *    静止时 GPS track 是噪声，故设速度门槛，宁可无航向也不显示乱值。 */
+                yaw_deg   = (float)own.heading_deg;
+                yaw_valid = true;
             }
+            /* 4. 以上都不满足 → yaw_valid 保持 false，HDG 显示 "---"。 */
 
             /* Bank source priority — mirrors the yaw logic above:
              *   1) Derive from the bound aircraft's smoothed turn rate
@@ -319,6 +327,24 @@ static void pfd_task(void *arg)
 #define PFD_SRC_BADGE_Y0  210
 #define PFD_SRC_BADGE_Y1  232
             {
+                /* ADS-B 降级提示：检测"绑定丢失"(BOUND_ADSB → 非绑定)的跳变，
+                 * 之后 5s 在徽标位置闪烁红字 ADS-B LOST。覆盖"飞机 ADS-B/PFD
+                 * 死机"场景——提醒飞行员主显数据没了、已切到盒子自主传感器。
+                 * 重新绑定即清除提示。 */
+                static pk_own_src_t s_prev_src     = PK_OWN_SRC_NONE;
+                static int64_t      s_adsb_lost_us = 0;
+                pk_own_src_t cur_src = own_valid ? own_src : PK_OWN_SRC_NONE;
+                if (s_prev_src == PK_OWN_SRC_BOUND_ADSB &&
+                    cur_src    != PK_OWN_SRC_BOUND_ADSB) {
+                    s_adsb_lost_us = now_us;          /* 刚丢失绑定 */
+                }
+                if (cur_src == PK_OWN_SRC_BOUND_ADSB) {
+                    s_adsb_lost_us = 0;               /* 重新绑定 → 清提示 */
+                }
+                s_prev_src = cur_src;
+                bool adsb_lost_alert = (s_adsb_lost_us != 0) &&
+                                       (now_us - s_adsb_lost_us < 5000000LL);
+
                 /* Cyan matches project-wide COL_LABEL (70,220,250). */
                 const uint16_t SRC_ADSB  = pk_rgb565( 70, 220, 250);
                 const uint16_t SRC_GPS   = pk_rgb565(240, 240, 240);
@@ -361,10 +387,17 @@ static void pfd_task(void *arg)
 
                 pk_pfd_darken_rect(fb, 0, PFD_SRC_BADGE_Y0,
                                    PFD_SRC_BADGE_X1, PFD_SRC_BADGE_Y1, 128);
-                /* cockpit 航空字形(12px/字,更好看);垂直居中于 22px 框
-                 * (cell 高 16px → y 偏移 3)。框加宽到 88px 容纳 7 字呼号(84px),
-                 * 比原 78px 框(6 字)多一位。 */
-                {
+                if (adsb_lost_alert) {
+                    /* 降级醒目提示：红字闪烁 "ADS-B LOST"(400ms 周期)。 */
+                    bool on = ((now_us / 400000) & 1);
+                    uint16_t c = on ? pk_rgb565(255, 40, 40)
+                                    : pk_rgb565(110, 20, 20);
+                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                 4, PFD_SRC_BADGE_Y0 + 5, "ADS-B LOST", c, 1);
+                } else {
+                    /* cockpit 航空字形(12px/字,更好看);垂直居中于 22px 框
+                     * (cell 高 16px → y 偏移 3)。框加宽到 88px 容纳 7 字呼号(84px),
+                     * 比原 78px 框(6 字)多一位。 */
                     int txt_x = (PFD_SRC_BADGE_X1 - (int)strlen(src_buf) * 12) / 2;
                     if (txt_x < 2) txt_x = 2;
                     pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
