@@ -82,6 +82,23 @@ static void rot_point(int px, int py, float deg, int *ox, int *oy)
     *oy = CY + (int)lroundf(dx * sinf(a) + dy * cosf(a));
 }
 
+/* 本机飞机符号(机身 + 主翼 + 平尾)，机头朝上；rot_deg 绕盘心旋转
+ * (NORTH-UP 时按磁航向标朝向)。和交互原型 / HSI 的飞机图标一致。 */
+static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
+{
+    static const int seg[3][4] = {
+        {  0, -9,  0,  8 },   /* 机身 */
+        { -9, -2,  9, -2 },   /* 主翼(靠前) */
+        { -4,  6,  4,  6 },   /* 平尾(靠后) */
+    };
+    for (int i = 0; i < 3; i++) {
+        int ax, ay, bx, by;
+        rot_point(CX + seg[i][0], CY + seg[i][1], rot_deg, &ax, &ay);
+        rot_point(CX + seg[i][2], CY + seg[i][3], rot_deg, &bx, &by);
+        pk_pfd_draw_line_aa(fb, (float)ax, (float)ay, (float)bx, (float)by, 2.2f, col);
+    }
+}
+
 /* 一个可显示目标：指向本帧 snapshot 的飞机 + 算好的相对几何。 */
 typedef struct {
     aircraft_t       *ac;
@@ -308,16 +325,8 @@ void pk_traffic_page_render(uint16_t *fb)
             draw_target(fb, &s_vis[sel_row], orient, range_nm, true);
     }
 
-    /* ── 本机三角：HEADING-UP 朝上；NORTH-UP 按机头磁航向旋转(标记朝向) ── */
-    if (orient == PK_MAP_NORTH_UP && have) {
-        int ax, ay, bx, by, cx2, cy2;
-        rot_point(CX,     CY - 7, yaw, &ax,  &ay);
-        rot_point(CX - 6, CY + 6, yaw, &bx,  &by);
-        rot_point(CX + 6, CY + 6, yaw, &cx2, &cy2);
-        pk_pfd_draw_triangle(fb, ax, ay, bx, by, cx2, cy2, COL_OWN);
-    } else {
-        pk_pfd_draw_triangle(fb, CX, CY - 7, CX - 6, CY + 6, CX + 6, CY + 6, COL_OWN);
-    }
+    /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按磁航向旋转标朝向 ── */
+    draw_own_aircraft(fb, (orient == PK_MAP_NORTH_UP && have) ? yaw : 0.0f, COL_OWN);
 
     /* ── 选中目标详情条(底部) ── */
     if (own_valid && nv > 0 && sel_row >= 0 && sel_row < nv)

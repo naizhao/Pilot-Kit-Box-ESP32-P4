@@ -245,8 +245,10 @@ static void pfd_task(void *arg)
                 #define BOX_VAL_RIGHT 318
                 /* ── Box 1: BARO 气压高度(ft,参考) ─────────────────── */
                 pk_pfd_darken_rect(fb, 256, 170, PK_DISPLAY_W, 188, 160);
+                /* 标签用单字母 B(amber 已表明 baro):腾空间给 5 位 ft 值
+                 * (BARO 4字符 + "12180ft" 7字符 = 66px > 64px 框宽会重叠) */
                 pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             258, 173, "BARO", COL_BARO_LBL, 1);
+                             258, 173, "B", COL_BARO_LBL, 1);
                 if (baro.valid) {
                     int balt = baro.alt_ft;
                     if (balt <  -9999) balt = -9999;
