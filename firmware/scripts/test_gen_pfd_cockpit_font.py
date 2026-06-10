@@ -58,6 +58,17 @@ class CockpitFontTest(unittest.TestCase):
         self.assertEqual("".join("#" if px else "." for px in glyph[6]), "#####.......")
         self.assertEqual("".join("#" if px else "." for px in glyph[13]), "##......##..")
 
+    def test_y_has_diagonal_arms_and_centered_stem(self) -> None:
+        glyph = fontgen.glyph_for(ord("Y"))
+
+        # 上半是两条斜臂，从两侧外缘开始向中心收拢
+        self.assertEqual("".join("#" if px else "." for px in glyph[0]), "##......##..")
+        # 顶部中部必须留空：旧版误用贯穿竖线段 "m"，导致此处多一道竖线
+        self.assertEqual(glyph[1][4], 0)
+        self.assertEqual(glyph[1][5], 0)
+        # 下半是一条居中竖线
+        self.assertEqual("".join("#" if px else "." for px in glyph[13]), "....##......")
+
 
 if __name__ == "__main__":
     unittest.main()
