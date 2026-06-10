@@ -1,0 +1,110 @@
+/*
+ * pfd_hsi_traffic.c — HSI 半圆外圈叠加前方 traffic。
+ *
+ * 复用 pfd_hsi.c 的半圆几何（虚拟圆心在屏下方 (160,240)，R=65，只见上半
+ * 弧）。交通目标画在 R+14 的外圈：相对方位 rel 投到 rose_deg = 90 - rel，
+ * 只画 |rel| ≤ 95（前方），后方计数显示在左下。几何用 pk_traffic_rel_calc
+ * （磁北系，含磁偏角），与雷达页一致。
+ */
+#include "pfd_hsi_traffic.h"
+
+#include <math.h>
+#include <stdio.h>
+
+#include "esp_attr.h"
+#include "esp_timer.h"
+#include "sdkconfig.h"
+
+#include "display.h"
+#include "pfd_draw.h"
+#include "pfd_font.h"
+
+#include "aircraft_state.h"
+#include "own_ship.h"
+#include "imu_task.h"
+#include "baro.h"
+#include "traffic_geom.h"
+#include "mag_var.h"
+
+/* 与 pfd_hsi.c 一致的半圆几何 */
+#define HSI_CX          160
+#define HSI_CY          240
+#define HSI_R            65
+#define HSI_TRAFFIC_R   (HSI_R + 14)   /* 79：交通目标外圈 */
+
+static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
+
+static int std_alt_ft_from_pa(float pa)
+{
+    float alt_m = 44330.0f * (1.0f - powf(pa / 101325.0f, 0.190295f));
+    return (int)lroundf(alt_m * 3.28084f);
+}
+
+static void fill_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
+{
+    pk_pfd_draw_triangle(fb, x, y - s, x - s, y, x + s, y, c);
+    pk_pfd_draw_triangle(fb, x - s, y, x + s, y, x, y + s, c);
+}
+
+void pk_pfd_hsi_traffic_render(uint16_t *fb)
+{
+    int64_t now_us = esp_timer_get_time();
+
+    pk_imu_sample_t s;
+    if (!pk_imu_sample_get(&s)) return;     /* 无航向无法定相对方位 */
+    float yaw = s.yaw_deg;
+
+    aircraft_t own = {0};
+    pk_own_src_t src;
+    if (!pk_own_ship_resolve(now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL,
+                             &own, &src))
+        return;                              /* 无本机位置 */
+
+    pk_baro_state_t baro;
+    bool baro_ok = pk_baro_get(&baro);
+    int own_palt = (baro_ok && baro.valid)
+                       ? std_alt_ft_from_pa(baro.pressure_pa) : PK_ALT_UNAVAIL;
+    float mag_var = pk_mag_var_lookup(own.lat, own.lon);
+
+    size_t n = aircraft_state_snapshot(
+        s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
+
+    const uint16_t COL_TGT    = pk_rgb565(  0, 210, 235);
+    const uint16_t COL_LBL    = pk_rgb565(207, 211, 220);
+    const uint16_t COL_BEHIND = pk_rgb565(150, 110,  70);
+
+    int behind = 0;
+    for (size_t i = 0; i < n; i++) {
+        aircraft_t *t = &s_scratch[i];
+        if (own.icao24 != 0 && t->icao24 == own.icao24) continue;
+
+        pk_traffic_rel_t rel = pk_traffic_rel_calc(
+            true, own.lat, own.lon, yaw, mag_var, own_palt,
+            t->have_position, t->lat, t->lon,
+            t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+        if (!rel.valid) continue;
+
+        float r = rel.rel_bearing;
+        if (r < -95.0f || r > 95.0f) { behind++; continue; }   /* 后方:仅计数 */
+
+        float rad = (90.0f - r) * (float)M_PI / 180.0f;
+        int tx = HSI_CX + (int)lroundf(HSI_TRAFFIC_R * cosf(rad));
+        int ty = HSI_CY - (int)lroundf(HSI_TRAFFIC_R * sinf(rad));
+        fill_diamond(fb, tx, ty, 4, COL_TGT);
+
+        if (rel.rel_alt_valid) {
+            int hh = rel.rel_alt_ft / 100;
+            if (hh >  99) hh =  99;
+            if (hh < -99) hh = -99;
+            char b[12];
+            snprintf(b, sizeof(b), "%+03d", hh);
+            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty - 3, b, COL_LBL, 1);
+        }
+    }
+
+    if (behind > 0) {
+        char b[16];
+        snprintf(b, sizeof(b), "%c%d", PK_FONT_ARROW_S, behind);  /* ▼N 后方 */
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 4, HSI_CY - 18, b, COL_BEHIND, 1);
+    }
+}

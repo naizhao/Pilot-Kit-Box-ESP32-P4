@@ -38,6 +38,7 @@
 #include "pfd_draw.h"
 #include "pfd_font.h"
 #include "pfd_hsi.h"
+#include "pfd_hsi_traffic.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -221,6 +222,7 @@ static void pfd_task(void *arg)
             };
             pk_pfd_speed_tape_render(fb, &spd);
             pk_pfd_hsi_render(fb, &hsi);
+            pk_pfd_hsi_traffic_render(fb);   /* HSI 半圆外圈叠加前方 traffic */
 
             /* Three right-column info boxes below the ALT tape (y=168).
              * Each box: x=[256,320) = 64 px wide, 18 px tall, 2 px gap.
