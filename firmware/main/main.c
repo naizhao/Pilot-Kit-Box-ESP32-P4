@@ -125,9 +125,17 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_mode_t mode = pk_ui_get_mode();
             if (mode == PK_UI_MODE_SETTINGS) {
-                if (pk_settings_cursor_row() == 1) {
+                int row = pk_settings_cursor_row();
+                if (row == 1) {
                     /* QNH 行:UP +0.25 hPa */
                     pk_qnh_set(pk_qnh_get() + 0.25f);
+                } else if (row == 2) {
+                    /* MAP 行:切换地图朝向 */
+                    pk_map_orient_set(pk_map_orient_get() == PK_MAP_NORTH_UP
+                                          ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
+                } else if (row == 3) {
+                    /* RANGE 行:UP 量程加一档 */
+                    pk_traffic_range_idx_set(pk_traffic_range_idx_get() + 1);
                 } else {
                     /* Language 行:切语言 */
                     esp_err_t err = pk_i18n_toggle_lang();
@@ -154,9 +162,17 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
         if (evt == PK_BTN_EVT_SHORT_PRESS) {
             pk_ui_mode_t mode = pk_ui_get_mode();
             if (mode == PK_UI_MODE_SETTINGS) {
-                if (pk_settings_cursor_row() == 1) {
+                int row = pk_settings_cursor_row();
+                if (row == 1) {
                     /* QNH 行:DOWN -0.25 hPa */
                     pk_qnh_set(pk_qnh_get() - 0.25f);
+                } else if (row == 2) {
+                    /* MAP 行:切换地图朝向 */
+                    pk_map_orient_set(pk_map_orient_get() == PK_MAP_NORTH_UP
+                                          ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
+                } else if (row == 3) {
+                    /* RANGE 行:DOWN 量程减一档 */
+                    pk_traffic_range_idx_set(pk_traffic_range_idx_get() - 1);
                 } else {
                     /* Language 行:切语言 */
                     esp_err_t err = pk_i18n_toggle_lang();

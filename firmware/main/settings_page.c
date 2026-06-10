@@ -19,6 +19,7 @@
 #include "pfd_draw.h"
 #include "text.h"
 #include "config_qnh.h"
+#include "config_traffic.h"
 
 #define COL_BG              pk_rgb565( 12,  12,  16)
 #define COL_HEADER          pk_rgb565(180, 235, 255)
@@ -37,14 +38,14 @@
 #define SETTINGS_ROW_H          38
 #define SETTINGS_ROW_GAP         4   /* 两行之间的间隔 */
 
-/* 当前选中行:0=Language, 1=QNH */
+/* 当前选中行:0=Language 1=QNH 2=MAP(朝向) 3=RANGE(量程) */
 static volatile int s_sel_row = 0;
 
 /* ── 光标控制 ── */
 
 void pk_settings_cursor_next(void)
 {
-    s_sel_row = (s_sel_row + 1) % 2;
+    s_sel_row = (s_sel_row + 1) % 4;
 }
 
 int pk_settings_cursor_row(void)
@@ -121,6 +122,17 @@ void pk_settings_page_render(uint16_t *fb)
     char qnh_buf[20];
     snprintf(qnh_buf, sizeof(qnh_buf), "%.2f hPa", pk_qnh_get());
     render_row(fb, 1, "QNH", qnh_buf, lang);
+
+    /* 行 2: MAP 地图朝向 */
+    render_row(fb, 2, "MAP",
+               pk_map_orient_get() == PK_MAP_NORTH_UP ? "NORTH UP" : "HDG UP",
+               lang);
+
+    /* 行 3: RANGE 雷达量程 */
+    char range_buf[16];
+    snprintf(range_buf, sizeof(range_buf), "%d NM",
+             pk_traffic_range_nm(pk_traffic_range_idx_get()));
+    render_row(fb, 3, "RANGE", range_buf, lang);
 
     /* 底部分隔线 + footer */
     pk_pfd_fill_rect(fb, 0, PK_DISPLAY_H - 18, PK_DISPLAY_W, PK_DISPLAY_H - 17,
