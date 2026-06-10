@@ -99,6 +99,30 @@ static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
     }
 }
 
+/* HSI 可见扇区：前方 ±95° 的半透明填充扇形(和交互原型一致,呼应 PFD 底部
+ * 半圆 HSI 的覆盖范围)。逐像素 blend,用"投影到正后方向量"判断是否落在后方
+ * ±85° 锥内来排除(免 atan2/sqrt)。 */
+static void draw_hsi_sector(uint16_t *fb, pk_map_orient_t orient,
+                            float own_heading, bool hdg_valid)
+{
+    if (orient != PK_MAP_HEADING_UP && !hdg_valid) return;
+    float center = (orient == PK_MAP_HEADING_UP) ? 0.0f : own_heading;
+    float back = (center + 180.0f) * (float)M_PI / 180.0f;
+    float bx = sinf(back), by = -cosf(back);       /* 正后方向量(screen→屏幕) */
+    const uint16_t fov = pk_rgb565(45, 75, 100);
+    const float R2 = (float)RMAX * (float)RMAX;
+    for (int y = CY - RMAX; y <= CY + RMAX; y++) {
+        for (int x = CX - RMAX; x <= CX + RMAX; x++) {
+            float dx = (float)(x - CX), dy = (float)(y - CY);
+            float r2 = dx * dx + dy * dy;
+            if (r2 > R2 || r2 < 1.0f) continue;
+            float s = dx * bx + dy * by;            /* 投影到正后方 */
+            if (s > 0.0f && s * s > 0.0076f * r2) continue;  /* 后方 ±85° 锥,排除 */
+            pk_pfd_blend_pixel(fb, x, y, fov, 75);  /* 前方 190° 扇区,半透明青 */
+        }
+    }
+}
+
 /* 一个可显示目标：指向本帧 snapshot 的飞机 + 算好的相对几何。 */
 typedef struct {
     aircraft_t       *ac;
@@ -254,6 +278,9 @@ void pk_traffic_page_render(uint16_t *fb)
     int range_idx = pk_traffic_range_idx_get();
     int range_nm  = pk_traffic_range_nm(range_idx);
 
+    /* HSI 可见扇区半透明填充 — 背景层,必须在距离环/罗盘/目标之前画。 */
+    draw_hsi_sector(fb, orient, own_heading, hdg_valid);
+
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
 
@@ -303,20 +330,6 @@ void pk_traffic_page_render(uint16_t *fb)
             polar(screen, RMAX - 16, &lx, &ly);
             pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                          lx - 2, ly - 3, cards[i], i == 0 ? COL_N : COL_CARD, 1);
-        }
-    }
-
-    /* ── HSI 可见扇区标示：前方 ±95° 外环加亮弧,呼应 PFD 底部半圆 HSI 罗盘
-     * 的覆盖范围(此扇区内的目标在 PFD 的 HSI 叠加上也能看到)。 ── */
-    if (orient == PK_MAP_HEADING_UP || hdg_valid) {
-        const uint16_t COL_FOV = pk_rgb565(110, 180, 205);
-        float center = (orient == PK_MAP_HEADING_UP) ? 0.0f : own_heading;
-        int px = -1, py = -1;
-        for (float a = -95.0f; a <= 95.0f; a += 5.0f) {
-            int qx, qy;
-            polar(center + a, RMAX, &qx, &qy);
-            if (px >= 0) pk_pfd_draw_line(fb, px, py, qx, qy, COL_FOV);
-            px = qx; py = qy;
         }
     }
 
