@@ -213,7 +213,6 @@ void pk_traffic_page_render(uint16_t *fb)
 
     pk_imu_sample_t s;
     bool have = pk_imu_sample_get(&s);
-    float yaw = have ? s.yaw_deg : 0.0f;     /* 本机机头磁航向 */
 
     aircraft_t own = {0};
     pk_own_src_t src;
@@ -222,10 +221,34 @@ void pk_traffic_page_render(uint16_t *fb)
 
     pk_baro_state_t baro;
     bool baro_ok = pk_baro_get(&baro);
-    int own_palt = (baro_ok && baro.valid)
-                       ? std_alt_ft_from_pa(baro.pressure_pa) : PK_ALT_UNAVAIL;
 
-    float mag_var = own_valid ? pk_mag_var_lookup(own.lat, own.lon) : 0.0f;
+    /* 本机航向 + 磁偏角：绑定 ADS-B own 且有速度时,优先用 own 的地速航向
+     * (真北参考,与 pfd.c 一致,不再减磁偏角);否则回退 IMU 磁航向(磁北系,
+     * 减查表磁偏角)。 */
+    float own_heading = 0.0f;
+    bool  hdg_valid   = false;
+    float mag_var     = 0.0f;
+    if (own_valid && own.have_velocity) {
+        own_heading = (float)own.heading_deg;
+        hdg_valid   = true;
+        mag_var     = 0.0f;
+    } else if (have) {
+        own_heading = s.yaw_deg;
+        hdg_valid   = true;
+        mag_var     = own_valid ? pk_mag_var_lookup(own.lat, own.lon) : 0.0f;
+    }
+
+    /* 相对高度的本机基准:绑定 own 用其 ADS-B 气压高度(与目标 Mode-C 同基准),
+     * 否则用 baro 标准气压高度。原来恒用 baro,绑定高空 own 时所有目标都会
+     * 算成大正数(全 +,钳到 +99)——这正是相对高度符号全错的根因。 */
+    int own_palt;
+    if (own_valid && own.have_altitude) {
+        own_palt = own.altitude_ft;
+    } else if (baro_ok && baro.valid) {
+        own_palt = std_alt_ft_from_pa(baro.pressure_pa);
+    } else {
+        own_palt = PK_ALT_UNAVAIL;
+    }
 
     pk_map_orient_t orient = pk_map_orient_get();
     int range_idx = pk_traffic_range_idx_get();
@@ -237,8 +260,8 @@ void pk_traffic_page_render(uint16_t *fb)
     /* ── 顶栏 ── */
     char buf[24];
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 4, 3, "TRAFFIC", COL_HDR, 1);
-    if (have) {
-        snprintf(buf, sizeof(buf), "HDG %03d", ((int)lroundf(yaw) + 360) % 360);
+    if (hdg_valid) {
+        snprintf(buf, sizeof(buf), "HDG %03d", ((int)lroundf(own_heading) + 360) % 360);
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 120, 3, buf, COL_CYAN, 1);
     } else {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 120, 3, "HDG ---", COL_AMBER, 1);
@@ -265,7 +288,7 @@ void pk_traffic_page_render(uint16_t *fb)
 
     /* ── 罗盘刻度 + 主向字母（磁北系）── */
     for (int d = 0; d < 360; d += 30) {
-        float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - yaw : (float)d;
+        float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
         int x1, y1, x2, y2;
         polar(screen, RMAX, &x1, &y1);
         polar(screen, RMAX - (d % 90 == 0 ? 8 : 5), &x2, &y2);
@@ -275,11 +298,25 @@ void pk_traffic_page_render(uint16_t *fb)
         const char *cards[4] = { "N", "E", "S", "W" };
         for (int i = 0; i < 4; i++) {
             int d = i * 90;
-            float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - yaw : (float)d;
+            float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
             int lx, ly;
             polar(screen, RMAX - 16, &lx, &ly);
             pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                          lx - 2, ly - 3, cards[i], i == 0 ? COL_N : COL_CARD, 1);
+        }
+    }
+
+    /* ── HSI 可见扇区标示：前方 ±95° 外环加亮弧,呼应 PFD 底部半圆 HSI 罗盘
+     * 的覆盖范围(此扇区内的目标在 PFD 的 HSI 叠加上也能看到)。 ── */
+    if (orient == PK_MAP_HEADING_UP || hdg_valid) {
+        const uint16_t COL_FOV = pk_rgb565(110, 180, 205);
+        float center = (orient == PK_MAP_HEADING_UP) ? 0.0f : own_heading;
+        int px = -1, py = -1;
+        for (float a = -95.0f; a <= 95.0f; a += 5.0f) {
+            int qx, qy;
+            polar(center + a, RMAX, &qx, &qy);
+            if (px >= 0) pk_pfd_draw_line(fb, px, py, qx, qy, COL_FOV);
+            px = qx; py = qy;
         }
     }
 
@@ -293,7 +330,7 @@ void pk_traffic_page_render(uint16_t *fb)
             aircraft_t *t = &s_scratch[i];
             if (own.icao24 != 0 && t->icao24 == own.icao24) continue;  /* 不画自己 */
             pk_traffic_rel_t rel = pk_traffic_rel_calc(
-                true, own.lat, own.lon, yaw, mag_var, own_palt,
+                true, own.lat, own.lon, own_heading, mag_var, own_palt,
                 t->have_position, t->lat, t->lon,
                 t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
             if (!rel.valid) continue;
@@ -325,8 +362,8 @@ void pk_traffic_page_render(uint16_t *fb)
             draw_target(fb, &s_vis[sel_row], orient, range_nm, true);
     }
 
-    /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按磁航向旋转标朝向 ── */
-    draw_own_aircraft(fb, (orient == PK_MAP_NORTH_UP && have) ? yaw : 0.0f, COL_OWN);
+    /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */
+    draw_own_aircraft(fb, (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f, COL_OWN);
 
     /* ── 选中目标详情条(底部) ── */
     if (own_valid && nv > 0 && sel_row >= 0 && sel_row < nv)
