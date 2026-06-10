@@ -45,6 +45,7 @@
 #include "gdl90.h"
 #include "gps.h"
 #include "own_ship.h"
+#include "pk_clock.h"
 
 static const char *TAG = "ble_gatt";
 
@@ -125,7 +126,6 @@ static int  chr_time_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 static void start_advertising(void);
 static void emitter_task(void *arg);
 static void time_sync_kickoff(uint16_t conn_handle);
-static void apply_epoch_ms(int64_t epoch_ms, const char *source);
 
 /* --- GATT service definition ----------------------------------------- */
 
@@ -184,11 +184,11 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
  *
  * Wire format for both directions: an 8-byte little-endian uint64_t
  * carrying Unix epoch milliseconds (UTC). READ returns the firmware's
- * current best-known epoch. WRITE seeds the firmware clock; we silently
- * reject anything older than 2024-01-01 UTC (1704067200000 ms) so an
- * accidental zero-init buffer can't roll the clock backwards.
+ * current best-known epoch. WRITE seeds the firmware clock via pk_clock,
+ * which rejects anything older than 2024-01-01 UTC (so an accidental
+ * zero-init buffer can't roll the clock backwards) and enforces GPS
+ * priority over BLE-sourced time.
  */
-#define TIME_SYNC_MIN_EPOCH_MS  1704067200000LL  /* 2024-01-01 UTC */
 
 static int chr_time_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -219,36 +219,14 @@ static int chr_time_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         for (int i = 0; i < 8; ++i) {
             epoch_ms |= (int64_t)le[i] << (8 * i);
         }
-        if (epoch_ms < TIME_SYNC_MIN_EPOCH_MS) {
-            ESP_LOGW(TAG, "rejecting Time Sync write: epoch_ms=%lld too old",
-                     (long long)epoch_ms);
+        if (!pk_clock_apply_epoch_ms(epoch_ms, "ble-write")) {
+            /* Rejected: too old, or GPS time is currently authoritative. */
             return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
         }
-        apply_epoch_ms(epoch_ms, "ble-write");
         return 0;
     }
 
     return BLE_ATT_ERR_UNLIKELY;
-}
-
-/* --- Apply an epoch_ms to the system clock --------------------------- */
-
-static volatile bool s_clock_synced;
-
-static void apply_epoch_ms(int64_t epoch_ms, const char *source)
-{
-    struct timeval before, target;
-    gettimeofday(&before, NULL);
-    int64_t before_ms = (int64_t)before.tv_sec * 1000LL + before.tv_usec / 1000LL;
-
-    target.tv_sec  = (time_t)(epoch_ms / 1000);
-    target.tv_usec = (suseconds_t)((epoch_ms % 1000) * 1000);
-    settimeofday(&target, NULL);
-
-    int64_t delta_ms = epoch_ms - before_ms;
-    ESP_LOGI(TAG, "clock set via %s: epoch_ms=%lld (delta vs prior=%+lld ms)",
-             source, (long long)epoch_ms, (long long)delta_ms);
-    s_clock_synced = true;
 }
 
 /* --- CTS GATT client (post-connect, iOS auto-sync) ------------------- *
@@ -265,20 +243,6 @@ static void apply_epoch_ms(int64_t epoch_ms, const char *source)
  * the Time Sync characteristic instead. */
 
 static uint16_t s_cts_chr_val_handle;
-
-static int64_t civil_utc_to_epoch_ms(int yr, int mo, int dy,
-                                     int hr, int mi, int se, int frac256)
-{
-    /* Howard Hinnant's days_from_civil — handles full Gregorian range. */
-    int y = yr - (mo <= 2);
-    int era = (y >= 0 ? y : y - 399) / 400;
-    unsigned yoe = (unsigned)(y - era * 400);
-    unsigned doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + dy - 1;
-    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    int64_t days_since_epoch = (int64_t)era * 146097 + (int)doe - 719468;
-    int64_t s = days_since_epoch * 86400 + hr * 3600 + mi * 60 + se;
-    return s * 1000 + (int64_t)frac256 * 1000 / 256;
-}
 
 static int cts_on_read(uint16_t conn_handle,
                        const struct ble_gatt_error *error,
@@ -311,9 +275,9 @@ static int cts_on_read(uint16_t conn_handle,
                  year, month, day, hour, minute, second);
         return 0;
     }
-    int64_t epoch_ms = civil_utc_to_epoch_ms(year, month, day,
-                                             hour, minute, second, frac256);
-    apply_epoch_ms(epoch_ms, "ios-cts");
+    int64_t epoch_ms = pk_clock_civil_utc_to_epoch_ms(year, month, day,
+                                                      hour, minute, second, frac256);
+    pk_clock_apply_epoch_ms(epoch_ms, "ios-cts");
     return 0;
 }
 
@@ -366,7 +330,7 @@ static int cts_on_svc_disc(uint16_t conn_handle,
 
 static void time_sync_kickoff(uint16_t conn_handle)
 {
-    if (s_clock_synced) return;  /* already synced; don't re-bother iOS */
+    if (pk_clock_is_synced()) return;  /* already synced; don't re-bother iOS */
     s_cts_chr_val_handle = 0;
     int rc = ble_gattc_disc_svc_by_uuid(conn_handle, &s_cts_svc_uuid.u,
                                         cts_on_svc_disc, NULL);

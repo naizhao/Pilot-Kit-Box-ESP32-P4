@@ -6,6 +6,7 @@ idf_component_register(
         "cpr_decode.c"
         "aircraft_state.c"
         "gps_task.c"
+        "pk_clock.c"
         "own_ship.c"
         "geo.c"
         "traffic_geom.c"
