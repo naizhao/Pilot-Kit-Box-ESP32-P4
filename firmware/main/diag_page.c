@@ -12,7 +12,7 @@
  *             │ BARO : P hPa / alt ft / vs fpm / temp C             │
  *             │ BLE  : connected / advertising / idle               │
  *             │ BATT : N/A (no sense HW)                            │
- *             │ uSD  : --                                           │
+ *             │ microSD : mounted X.X/XX.X GB used / no card        │
  *             │ TIME : --                                           │
  *   y = 240   └────────────────────────────────────────────────────┘
  *
@@ -38,6 +38,7 @@
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
 #include "ui_state.h"        /* pk_ui_diag_scroll_y */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
+#include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
@@ -247,9 +248,10 @@ void pk_diag_page_render(uint16_t *fb)
                 for (int i = 0; i < g.snr_count; ++i)
                     if (g.snr_con[i] == gi) cnt++;
                 if (cnt == 0) continue;
-                /* 标签顶部对齐(y)，与其它行的 label 同一基准。 */
+                /* 标签垂直居中于本行(行高 28、字高 7 → 顶部偏移约 10)，
+                 * 与右侧柱状图视觉对齐。 */
                 pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                       DIAG_KEY_X, y, con_name[gi], COL_KEY);
+                                       DIAG_KEY_X, y + 10, con_name[gi], COL_KEY);
                 draw_snr_row(fb, DIAG_VAL_X, y + 24, g.snr, g.snr_con,
                              g.snr_count, gi);
                 y += 28;
@@ -321,9 +323,37 @@ void pk_diag_page_render(uint16_t *fb)
     y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------
-     * uSD — placeholder
+     * microSD — 挂载状态 + 已用/总容量（pk_sdcard 探测任务缓存，零 I/O）
      * ------------------------------------------------------------------ */
-    draw_diag_row(fb, y, "uSD", "--", COL_PLACEHOLDER);
+    {
+        char        sd_buf[40];
+        const char *sd_val;
+        uint16_t    sd_col;
+        uint64_t    total = 0, free_b = 0;
+
+        switch (pk_sdcard_state()) {
+        case PK_SD_MOUNTED:
+            if (pk_sdcard_info(&total, &free_b)) {
+                snprintf(sd_buf, sizeof(sd_buf), "mounted %.1f/%.1f GB used",
+                         (double)(total - free_b) / (1024.0 * 1024.0 * 1024.0),
+                         (double)total / (1024.0 * 1024.0 * 1024.0));
+                sd_val = sd_buf;
+            } else {
+                sd_val = "mounted";
+            }
+            sd_col = COL_ONLINE;
+            break;
+        case PK_SD_FORMATTING:
+            sd_val = "formatting...";
+            sd_col = COL_PLACEHOLDER;
+            break;
+        default:
+            sd_val = "no card";
+            sd_col = COL_OFFLINE;
+            break;
+        }
+        draw_diag_row(fb, y, "microSD", sd_val, sd_col);
+    }
     y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------

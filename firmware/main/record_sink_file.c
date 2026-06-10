@@ -37,16 +37,28 @@
 #include "esp_log.h"
 #include "esp_littlefs.h"
 
+#include "config_storage.h"
+#include "pk_sdcard.h"
+
 #define FILE_MOUNT_POINT    "/storage"
 #define FILE_PARTITION      "storage"
 #define FILE_NAME_PREFIX    "pilot_kit_ts_"
 #define FILE_NAME_SUFFIX    ".txt"
 #define FILE_QUEUE_DEPTH    256
-#define FILE_ROTATE_BYTES   (1 * 1024 * 1024)   /* 1 MiB per file */
-#define FILE_KEEP_COUNT     12                  /* 12 × 1 MiB ≈ 12 MiB cap */
+#define FILE_ROTATE_BYTES   (1 * 1024 * 1024)   /* flash: 1 MiB per file */
+#define FILE_KEEP_COUNT     12                  /* flash: 12 × 1 MiB ≈ 12 MiB */
+#define SD_ROTATE_BYTES     (16 * 1024 * 1024)  /* SD: 16 MiB per file */
+#define SD_KEEP_COUNT       64                  /* SD: 64 × 16 MiB ≈ 1 GiB */
 #define FILE_WRITER_STACK   4096
 
 static const char *TAG = "rec_file";
+
+/* 后端在 record_sink_file_create() 时一次性选定（flash LittleFS 或
+ * microSD FATFS），之后不再变。SD 选中但缺卡时回退 flash。 */
+static const char *s_base_path    = FILE_MOUNT_POINT;
+static size_t      s_rotate_bytes = FILE_ROTATE_BYTES;
+static int         s_keep_count   = FILE_KEEP_COUNT;
+static bool        s_on_sdcard    = false;
 
 typedef struct {
     int64_t ts_ms;
@@ -80,7 +92,8 @@ static int parse_seq(const char *name)
 
 static void build_path(char *out, size_t cap, int seq)
 {
-    snprintf(out, cap, FILE_MOUNT_POINT "/" FILE_NAME_PREFIX "%d" FILE_NAME_SUFFIX, seq);
+    snprintf(out, cap, "%s/" FILE_NAME_PREFIX "%d" FILE_NAME_SUFFIX,
+             s_base_path, seq);
 }
 
 /* Scan /storage for existing pilot_kit_ts_*.txt files. *max_seq is the
@@ -91,9 +104,9 @@ static void scan_existing(int *max_seq, int *count)
     *max_seq = 0;
     *count = 0;
 
-    DIR *d = opendir(FILE_MOUNT_POINT);
+    DIR *d = opendir(s_base_path);
     if (d == NULL) {
-        ESP_LOGW(TAG, "opendir(%s) failed: %s", FILE_MOUNT_POINT, strerror(errno));
+        ESP_LOGW(TAG, "opendir(%s) failed: %s", s_base_path, strerror(errno));
         return;
     }
     struct dirent *ent;
@@ -116,7 +129,7 @@ static void prune_oldest(int keep)
         if (count <= keep) return;
 
         /* Find the smallest seq present and unlink it. */
-        DIR *d = opendir(FILE_MOUNT_POINT);
+        DIR *d = opendir(s_base_path);
         if (d == NULL) return;
         int min_seq = max_seq;
         struct dirent *ent;
@@ -182,8 +195,8 @@ static void file_writer_task(void *arg)
                  path, strerror(errno));
         vTaskDelete(NULL);
     }
-    ESP_LOGI(TAG, "logging ADS-B to %s (rotate every %d KiB, keep %d files)",
-             path, FILE_ROTATE_BYTES / 1024, FILE_KEEP_COUNT);
+    ESP_LOGI(TAG, "logging ADS-B to %s (rotate every %u KiB, keep %d files)",
+             path, (unsigned)(s_rotate_bytes / 1024), s_keep_count);
 
     char line[80];
 
@@ -209,7 +222,7 @@ static void file_writer_task(void *arg)
         bytes += (size_t)n;
         s_written++;
 
-        if (bytes >= FILE_ROTATE_BYTES) {
+        if (bytes >= s_rotate_bytes) {
             fclose(fp);
             seq++;
             build_path(path, sizeof(path), seq);
@@ -221,7 +234,7 @@ static void file_writer_task(void *arg)
                 vTaskDelete(NULL);
             }
             ESP_LOGI(TAG, "rotated to %s", path);
-            prune_oldest(FILE_KEEP_COUNT);
+            prune_oldest(s_keep_count);
         }
     }
 }
@@ -257,10 +270,30 @@ static record_sink_t s_file_sink = {
     .priv  = NULL,
 };
 
+bool record_sink_file_uses_sd(void)
+{
+    return s_on_sdcard;
+}
+
 record_sink_t *record_sink_file_create(void)
 {
-    if (!file_mount()) {
-        return NULL;
+    /* 后端选择：设置选 microSD 且卡已挂载（pk_sdcard_init 已先行）→
+     * 写 /sdcard，轮转上限放大；否则回退 flash LittleFS。 */
+    if (pk_log_store_get() == PK_LOG_STORE_SD && pk_sdcard_is_mounted()) {
+        s_base_path        = pk_sdcard_mount_point();
+        s_rotate_bytes     = SD_ROTATE_BYTES;
+        s_keep_count       = SD_KEEP_COUNT;
+        s_on_sdcard        = true;
+        s_file_sink.name   = "file_sdcard";
+        ESP_LOGI(TAG, "log store: microSD (%s)", s_base_path);
+    } else {
+        if (pk_log_store_get() == PK_LOG_STORE_SD) {
+            ESP_LOGW(TAG, "log store set to microSD but no card — "
+                          "falling back to flash LittleFS");
+        }
+        if (!file_mount()) {
+            return NULL;
+        }
     }
 
     s_queue = xQueueCreate(FILE_QUEUE_DEPTH, sizeof(file_record_t));
@@ -278,6 +311,6 @@ record_sink_t *record_sink_file_create(void)
         return NULL;
     }
 
-    s_file_sink.priv = (void *)FILE_MOUNT_POINT;
+    s_file_sink.priv = (void *)s_base_path;
     return &s_file_sink;
 }

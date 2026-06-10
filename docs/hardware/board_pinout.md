@@ -138,7 +138,13 @@ broken out to the user headers — they're internal traces.
 
 ### MicroSD card slot (TF1, SDMMC 4-bit)
 
-51 kΩ pull-ups to 3V3 on every data line and CMD; use slot 1.
+51 kΩ pull-ups to 3V3 on every data line and CMD; use **SDMMC Slot 0**
+(GPIO39-44 are the P4's dedicated Slot 0 pins — Slot 1 is taken by the
+ESP-Hosted SDIO link to the C6). On IDF ≥ 6.0 the SDMMC host controller
+can only be initialised once (IDF issue #16233): ESP-Hosted initialises
+it first, so the SD mount must stub out `host.init`/`host.deinit`
+(see `firmware/main/pk_sdcard.c` and the esp_hosted
+`examples/host_sdcard_with_hosted` workaround).
 
 | TF pin   | Function   | ESP32-P4 GPIO |
 |----------|------------|---------------|

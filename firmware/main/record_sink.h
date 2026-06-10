@@ -92,6 +92,13 @@ record_sink_t *record_sink_uart_create(void);
 record_sink_t *record_sink_file_create(void);
 
 /*
+ * True when the file sink picked the microSD backend at create time
+ * (log-store setting = microSD and a card was mounted). Used by the
+ * settings UI to refuse formatting the card that is actively logging.
+ */
+bool record_sink_file_uses_sd(void);
+
+/*
  * ble_sink forwards each ts-line to ble_gatt's Raw notify characteristic.
  * Requires ble_gatt_init() to have been called successfully; otherwise
  * the sink is silently inert (its writes return false but never block).

@@ -4,6 +4,10 @@
  * 行布局:
  *   行 0: Language  <EN/中文>
  *   行 1: QNH       <1013.25 hPa>
+ *   行 2: MAP       <HDG UP / NORTH UP>
+ *   行 3: RANGE     <2/5/10/20 NM>
+ *   行 4: LOG       <FLASH / MICROSD>      — ADS-B 日志存储位置(重启生效)
+ *   行 5: FORMAT SD <两步确认格式化>
  *
  * 选中行用高亮边条(COL_ROW_EDGE_SEL)区分未选中行(COL_ROW_EDGE)。
  * 光标状态由 s_sel_row 维护,pk_settings_cursor_next() 切换。
@@ -14,12 +18,20 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+
 #include "display.h"
 #include "i18n.h"
 #include "pfd_draw.h"
 #include "text.h"
 #include "config_qnh.h"
+#include "config_storage.h"
 #include "config_traffic.h"
+#include "pk_sdcard.h"
+#include "record_sink.h"
 
 #define COL_BG              pk_rgb565( 12,  12,  16)
 #define COL_HEADER          pk_rgb565(180, 235, 255)
@@ -29,23 +41,104 @@
 #define COL_ROW_EDGE_SEL    pk_rgb565( 80, 220, 240)   /* 选中边条(亮青) */
 #define COL_KEY             pk_rgb565(180, 235, 255)
 #define COL_VAL             pk_rgb565(255, 255, 255)
+#define COL_WARN            pk_rgb565(255, 180,  80)   /* 格式化确认/进行中 */
 #define COL_DIM             pk_rgb565(255, 255, 255)
 #define COL_DIVIDER         pk_rgb565( 60,  60,  70)
 
 #define SETTINGS_HEADER_TITLE_Y  4
 #define SETTINGS_HEADER_UI_Y     6
 #define SETTINGS_ROW_TOP        48
-#define SETTINGS_ROW_H          38
-#define SETTINGS_ROW_GAP         4   /* 两行之间的间隔 */
+/* 6 行布局: 24px 行高 + 4px 间隔 = 28px 步距,48 + 6×28 = 216,footer 不挤。
+ * (原 4 行时代是 38px 行高,6 行装不下 240px 高的屏。) */
+#define SETTINGS_ROW_H          24
+#define SETTINGS_ROW_GAP         4
+#define SETTINGS_ROW_COUNT       6
 
-/* 当前选中行:0=Language 1=QNH 2=MAP(朝向) 3=RANGE(量程) */
+static const char *TAG = "settings";
+
+/* 当前选中行:0=Language 1=QNH 2=MAP 3=RANGE 4=LOG 5=FORMAT SD */
 static volatile int s_sel_row = 0;
+
+/* ── FORMAT SD 两步确认状态机 ──
+ * IDLE -(按键,有卡)-> ARM -(5s 内再按)-> BUSY -> DONE/FAIL -(3s)-> IDLE
+ * ARM 超时 5s 自动回 IDLE;无卡/日志正占用 SD 时给短暂提示。 */
+typedef enum {
+    FMT_IDLE = 0,
+    FMT_ARM,
+    FMT_BUSY,
+    FMT_DONE,
+    FMT_FAIL,
+    FMT_INUSE,    /* 日志后端正写 SD,拒绝格式化 */
+} fmt_state_t;
+
+#define FMT_ARM_TIMEOUT_US   (5 * 1000 * 1000)
+#define FMT_MSG_HOLD_US      (3 * 1000 * 1000)
+
+static volatile fmt_state_t s_fmt_state = FMT_IDLE;
+static volatile int64_t     s_fmt_since;     /* 进入当前状态的时刻 */
+
+/* 状态超时衰减(渲染/按键路径都调,幂等) */
+static void fmt_decay(void)
+{
+    int64_t now = esp_timer_get_time();
+    fmt_state_t st = s_fmt_state;
+    if (st == FMT_ARM && now - s_fmt_since > FMT_ARM_TIMEOUT_US) {
+        s_fmt_state = FMT_IDLE;
+    } else if ((st == FMT_DONE || st == FMT_FAIL || st == FMT_INUSE) &&
+               now - s_fmt_since > FMT_MSG_HOLD_US) {
+        s_fmt_state = FMT_IDLE;
+    }
+}
+
+/* 一次性格式化任务 — pk_sdcard_format() 阻塞数秒,不能在按键回调里跑 */
+static void fmt_task(void *arg)
+{
+    (void)arg;
+    esp_err_t err = pk_sdcard_format();
+    s_fmt_state = (err == ESP_OK) ? FMT_DONE : FMT_FAIL;
+    s_fmt_since = esp_timer_get_time();
+    vTaskDelete(NULL);
+}
+
+void pk_settings_format_action(void)
+{
+    fmt_decay();
+    switch (s_fmt_state) {
+    case FMT_IDLE:
+        if (!pk_sdcard_is_mounted()) {
+            /* 无卡:状态机不进 ARM,渲染端直接显示 NO CARD,无需提示态 */
+            return;
+        }
+        if (record_sink_file_uses_sd()) {
+            /* 当前日志正写这张卡,格式化会毁掉打开中的文件 */
+            ESP_LOGW(TAG, "format refused: log sink is writing to microSD");
+            s_fmt_state = FMT_INUSE;
+            s_fmt_since = esp_timer_get_time();
+            return;
+        }
+        s_fmt_state = FMT_ARM;
+        s_fmt_since = esp_timer_get_time();
+        break;
+    case FMT_ARM:
+        s_fmt_state = FMT_BUSY;
+        s_fmt_since = esp_timer_get_time();
+        if (xTaskCreate(fmt_task, "sd_format", 4096, NULL, 3, NULL) != pdTRUE) {
+            ESP_LOGE(TAG, "xTaskCreate(sd_format) failed");
+            s_fmt_state = FMT_FAIL;
+            s_fmt_since = esp_timer_get_time();
+        }
+        break;
+    default:
+        /* BUSY/DONE/FAIL/INUSE — 忽略按键 */
+        break;
+    }
+}
 
 /* ── 光标控制 ── */
 
 void pk_settings_cursor_next(void)
 {
-    s_sel_row = (s_sel_row + 1) % 4;
+    s_sel_row = (s_sel_row + 1) % SETTINGS_ROW_COUNT;
 }
 
 int pk_settings_cursor_row(void)
@@ -55,14 +148,12 @@ int pk_settings_cursor_row(void)
 
 /* ── 渲染单行 ── */
 
-static void render_row(uint16_t *fb, int row_idx,
-                       const char *key_str, const char *val_str,
-                       pk_lang_t lang)
+static void render_row_col(uint16_t *fb, int row_idx,
+                           const char *key_str, const char *val_str,
+                           uint16_t val_col)
 {
     int row_y     = SETTINGS_ROW_TOP + row_idx * (SETTINGS_ROW_H + SETTINGS_ROW_GAP);
-    /* UI 字体高 12px，在 38px 行内真正垂直居中：顶 = row_y + (ROW_H-12)/2 = +13。
-     * 原来的 row_y + ROW_H/2 + 3 (=+22) 是给 page_title 16px 大字的旧基线,
-     * 套到 12px UI 字上会明显偏下(图实测)。 */
+    /* UI 字体高 12px,在 24px 行内垂直居中:顶 = row_y + (ROW_H-12)/2 = +6 */
     int text_y_ui = row_y + (SETTINGS_ROW_H - 12) / 2;
 
     bool selected = (row_idx == s_sel_row);
@@ -82,11 +173,18 @@ static void render_row(uint16_t *fb, int row_idx,
      * 原来中文界面走 page_title 时,ASCII(QNH/MAP/RANGE/HDG UP/NM…) 退化成
      * 5×7 点阵放大字,与平滑中文混排显得破糙;settings 是密集混排 UI 页,
      * 正是 pk_text_puts_ui 的设计场景。两种语言现在都走同一平滑路径。 */
-    (void)lang;
     pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                     22, text_y_ui, key_str, COL_KEY);
     pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                    182, text_y_ui, val_str, COL_VAL);
+                    182, text_y_ui, val_str, val_col);
+}
+
+static void render_row(uint16_t *fb, int row_idx,
+                       const char *key_str, const char *val_str,
+                       pk_lang_t lang)
+{
+    (void)lang;
+    render_row_col(fb, row_idx, key_str, val_str, COL_VAL);
 }
 
 /* ── 主渲染入口 ── */
@@ -132,6 +230,33 @@ void pk_settings_page_render(uint16_t *fb)
     snprintf(range_buf, sizeof(range_buf), "%d NM",
              pk_traffic_range_nm(pk_traffic_range_idx_get()));
     render_row(fb, 3, "RANGE", range_buf, lang);
+
+    /* 行 4: LOG 日志存储位置(NVS 即存,后端重启生效) */
+    {
+        bool want_sd  = (pk_log_store_get() == PK_LOG_STORE_SD);
+        bool on_sd    = record_sink_file_uses_sd();
+        const char *v = want_sd ? (on_sd ? "MICROSD" : "MICROSD (REBOOT)")
+                                : (on_sd ? "FLASH (REBOOT)"   : "FLASH");
+        render_row(fb, 4, "LOG", v, lang);
+    }
+
+    /* 行 5: FORMAT SD 两步确认 */
+    {
+        fmt_decay();
+        const char *v;
+        uint16_t    c = COL_VAL;
+        switch (s_fmt_state) {
+        case FMT_ARM:   v = "AGAIN TO CONFIRM"; c = COL_WARN; break;
+        case FMT_BUSY:  v = "FORMATTING...";    c = COL_WARN; break;
+        case FMT_DONE:  v = "DONE";                           break;
+        case FMT_FAIL:  v = "FAILED";           c = COL_WARN; break;
+        case FMT_INUSE: v = "IN USE BY LOG";    c = COL_WARN; break;
+        default:
+            v = pk_sdcard_is_mounted() ? "PRESS UP/DOWN" : "NO CARD";
+            break;
+        }
+        render_row_col(fb, 5, "FORMAT SD", v, c);
+    }
 
     /* 底部分隔线 + footer */
     pk_pfd_fill_rect(fb, 0, PK_DISPLAY_H - 18, PK_DISPLAY_W, PK_DISPLAY_H - 17,

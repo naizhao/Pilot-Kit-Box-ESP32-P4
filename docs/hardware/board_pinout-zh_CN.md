@@ -107,7 +107,12 @@
 | D2 | GPIO41 |
 | D3 / CD | GPIO42 |
 
-当前固件默认记录后端是 LittleFS；MicroSD 可作为后续 SDMMC 记录后端。
+卡槽走 **SDMMC Slot 0**（GPIO39-44 是 P4 Slot 0 专用脚；Slot 1 被 ESP-Hosted
+连 C6 的 SDIO 链路占用）。IDF ≥ 6.0 的 SDMMC 控制器只能 init 一次（IDF
+issue #16233）：ESP-Hosted 先 init，SD 挂载需把 `host.init`/`host.deinit`
+置为空函数复用控制器（见 `firmware/main/pk_sdcard.c`）。
+
+记录后端默认 LittleFS；设置页 LOG 行可切到 MicroSD（重启生效，缺卡自动回退）。
 
 ### ESP32-C6 协处理器
 

@@ -21,7 +21,9 @@ idf_component_register(
         "record_sink_file.c"
         "record_sink_ble.c"
         "config_qnh.c"
+        "config_storage.c"
         "config_traffic.c"
+        "pk_sdcard.c"
         "display.c"
         "imu_task.c"
         "baro_task.c"
@@ -83,4 +85,7 @@ idf_component_register(
         esp_app_format           # esp_app_get_description() for boot splash + about
         esp_hw_support           # esp_chip_info() for About page
         esp_driver_uart          # UART driver for GT-U8 GPS (UART1)
+        fatfs                    # microSD FAT mount/format (pk_sdcard.c)
+        esp_driver_sdmmc         # SDMMC host for the on-board TF1 slot
+        sdmmc                    # sdmmc_card_t protocol layer
 )

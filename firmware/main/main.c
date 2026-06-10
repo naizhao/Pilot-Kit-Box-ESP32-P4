@@ -31,7 +31,9 @@
 #include "boot_splash.h"
 #include "button_task.h"
 #include "config_qnh.h"
+#include "config_storage.h"
 #include "config_traffic.h"
+#include "pk_sdcard.h"
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
@@ -136,6 +138,13 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 } else if (row == 3) {
                     /* RANGE 行:UP 量程加一档 */
                     pk_traffic_range_idx_set(pk_traffic_range_idx_get() + 1);
+                } else if (row == 4) {
+                    /* LOG 行:切换日志存储位置(flash <-> microSD,重启生效) */
+                    pk_log_store_set(pk_log_store_get() == PK_LOG_STORE_SD
+                                         ? PK_LOG_STORE_FLASH : PK_LOG_STORE_SD);
+                } else if (row == 5) {
+                    /* FORMAT SD 行:两步确认格式化 */
+                    pk_settings_format_action();
                 } else {
                     /* Language 行:切语言 */
                     esp_err_t err = pk_i18n_toggle_lang();
@@ -175,6 +184,13 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 } else if (row == 3) {
                     /* RANGE 行:DOWN 量程减一档 */
                     pk_traffic_range_idx_set(pk_traffic_range_idx_get() - 1);
+                } else if (row == 4) {
+                    /* LOG 行:切换日志存储位置(flash <-> microSD,重启生效) */
+                    pk_log_store_set(pk_log_store_get() == PK_LOG_STORE_SD
+                                         ? PK_LOG_STORE_FLASH : PK_LOG_STORE_SD);
+                } else if (row == 5) {
+                    /* FORMAT SD 行:两步确认格式化 */
+                    pk_settings_format_action();
                 } else {
                     /* Language 行:切语言 */
                     esp_err_t err = pk_i18n_toggle_lang();
@@ -276,6 +292,11 @@ void app_main(void)
      * available; the BLE sink is a thin wrapper that null-guards
      * everything until ble_gatt_init() succeeds later — safe to
      * register even if BLE never comes up. */
+    /* microSD 探测 + 日志存储位置设置必须先于 file sink 创建：
+     * record_sink_file_create() 据此决定写 flash LittleFS 还是 /sdcard。 */
+    pk_config_storage_load();
+    pk_sdcard_init();
+
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {
         ESP_LOGI(TAG, "ADS-B sinks ready (UART + file at %s)", file_mount);
