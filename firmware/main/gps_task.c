@@ -174,7 +174,9 @@ static void parse_txt(char *f[], int n){
 
 static void handle_line(char *line){
     s_nmea_lines++;
-    ESP_LOGI(TAG, "NMEA: %s", line);   /* 诊断：原始行（split_csv 会就地改写，必须先打印） */
+    /* 原始 NMEA 行：默认不刷屏，需要时把 gps TAG 调到 DEBUG 即可调出。
+     * split_csv 会就地改写，必须在解析前打印。 */
+    ESP_LOGD(TAG, "NMEA: %s", line);
     char *body = (*line == '$') ? line + 1 : line;
     if(strlen(body) < 6) return;
     char *fields[24];
@@ -227,7 +229,8 @@ static void gps_task(void *arg){
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
             pk_gps_state_t g = {0}; pk_gps_get(&g);
-            /* TODO: 硬件验证后降级为 ESP_LOGD 或删除（含诊断字段） */
+            /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
+             * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
                           "alt=%dft gs=%dkt trk=%d hdop=%.1f rx=%u lines=%u",
                      g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
