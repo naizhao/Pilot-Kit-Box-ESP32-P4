@@ -186,12 +186,16 @@ static void baro_task(void *arg)
 
     /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
     /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
-    static const float VS_ALPHA = 0.2f;      /* EMA 平滑系数 */
+    /* VS 防抖:用浮点高度微分(整数 alt_ft 微分时单 ft 量化抖动 ÷0.1s = ±600fpm
+     * 噪声) + 强 EMA + deadband + 显示步进。气压 VSI 标准做法。 */
+    static const float VS_ALPHA    = 0.1f;   /* EMA 平滑(0.2→0.1,时间常数 ~1s) */
+    static const int   VS_DEADBAND = 50;     /* |VS|<50fpm 显 0(平飞不抖) */
+    static const int   VS_STEP     = 50;     /* 显示量化到 50fpm 步进 */
 
-    int     prev_alt_ft  = 0;
-    int64_t prev_time_us = 0;
-    float   vs_ema       = 0.0f;
-    bool    has_prev     = false;
+    float   prev_alt_ft_f = 0.0f;            /* 上一帧浮点高度(微分用) */
+    int64_t prev_time_us  = 0;
+    float   vs_ema        = 0.0f;
+    bool    has_prev      = false;
     int     log_tick     = 0;
 
     while (1) {
@@ -238,22 +242,26 @@ static void baro_task(void *arg)
         }
 
         /* 气压高度(国际民航标准大气公式);QNH 每轮读取,支持运行时调整 */
-        float qnh_pa = pk_qnh_get() * 100.0f;   /* hPa → Pa */
-        float alt_m  = 44330.0f * (1.0f - powf(press_pa / qnh_pa, 0.190295f));
-        int   alt_ft = (int)roundf(alt_m * 3.28084f);
+        float qnh_pa   = pk_qnh_get() * 100.0f;   /* hPa → Pa */
+        float alt_m    = 44330.0f * (1.0f - powf(press_pa / qnh_pa, 0.190295f));
+        float alt_ft_f = alt_m * 3.28084f;        /* 浮点高度:微分用,避免量化噪声 */
+        int   alt_ft   = (int)roundf(alt_ft_f);   /* 整数高度:显示用 */
 
-        /* VS: 高度对时间微分 + EMA 平滑 */
+        /* VS: 浮点高度微分(无整数量化噪声) + EMA,再 deadband + 步进量化 */
         int64_t now = esp_timer_get_time();
         int vs_fpm = 0;
         if (has_prev && (now - prev_time_us) > 0) {
-            float dt_min    = (float)(now - prev_time_us) / 60000000.0f;   /* µs → min */
-            float vs_inst   = (float)(alt_ft - prev_alt_ft) / dt_min;      /* ft/min   */
-            vs_ema          = VS_ALPHA * vs_inst + (1.0f - VS_ALPHA) * vs_ema;
-            vs_fpm          = (int)vs_ema;
+            float dt_min  = (float)(now - prev_time_us) / 60000000.0f;    /* µs → min */
+            float vs_inst = (alt_ft_f - prev_alt_ft_f) / dt_min;         /* ft/min   */
+            vs_ema        = VS_ALPHA * vs_inst + (1.0f - VS_ALPHA) * vs_ema;
+            int v = (int)vs_ema;
+            if (v > -VS_DEADBAND && v < VS_DEADBAND) v = 0;              /* 平飞 deadband */
+            else v = (v / VS_STEP) * VS_STEP;                           /* 50fpm 步进 */
+            vs_fpm = v;
         }
-        prev_alt_ft  = alt_ft;
-        prev_time_us = now;
-        has_prev     = true;
+        prev_alt_ft_f = alt_ft_f;
+        prev_time_us  = now;
+        has_prev      = true;
 
         /* 诊断 log:降频到每秒约一次(100ms * 10 = 1s) */
         log_tick++;
