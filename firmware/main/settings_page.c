@@ -60,8 +60,10 @@ static void render_row(uint16_t *fb, int row_idx,
                        pk_lang_t lang)
 {
     int row_y     = SETTINGS_ROW_TOP + row_idx * (SETTINGS_ROW_H + SETTINGS_ROW_GAP);
-    int text_y    = row_y + (SETTINGS_ROW_H / 2) + 3;   /* 垂直居中偏移 */
-    int text_y_ui = text_y + 1;
+    /* UI 字体高 12px，在 38px 行内真正垂直居中：顶 = row_y + (ROW_H-12)/2 = +13。
+     * 原来的 row_y + ROW_H/2 + 3 (=+22) 是给 page_title 16px 大字的旧基线,
+     * 套到 12px UI 字上会明显偏下(图实测)。 */
+    int text_y_ui = row_y + (SETTINGS_ROW_H - 12) / 2;
 
     bool selected = (row_idx == s_sel_row);
     uint16_t col_bg   = selected ? COL_ROW_SEL  : COL_ROW;
@@ -81,7 +83,6 @@ static void render_row(uint16_t *fb, int row_idx,
      * 5×7 点阵放大字,与平滑中文混排显得破糙;settings 是密集混排 UI 页,
      * 正是 pk_text_puts_ui 的设计场景。两种语言现在都走同一平滑路径。 */
     (void)lang;
-    (void)text_y;
     pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                     22, text_y_ui, key_str, COL_KEY);
     pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
