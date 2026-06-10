@@ -99,6 +99,13 @@ record_sink_t *record_sink_file_create(void);
 bool record_sink_file_uses_sd(void);
 
 /*
+ * File-sink counters for the diagnostics page: lines appended to the
+ * current backend since boot, and queue-full drops. Returns false when
+ * the file sink never came up (mount failed at boot).
+ */
+bool record_sink_file_stats(uint32_t *out_written, uint32_t *out_dropped);
+
+/*
  * ble_sink forwards each ts-line to ble_gatt's Raw notify characteristic.
  * Requires ble_gatt_init() to have been called successfully; otherwise
  * the sink is silently inert (its writes return false but never block).

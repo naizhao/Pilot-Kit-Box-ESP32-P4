@@ -13,6 +13,7 @@
  *             │ BLE  : connected / advertising / idle               │
  *             │ BATT : N/A (no sense HW)                            │
  *             │ microSD : mounted X.X/XX.X GB used / no card        │
+ *             │ LOG  : flash|microSD  w N  drop N                   │
  *             │ TIME : --                                           │
  *   y = 240   └────────────────────────────────────────────────────┘
  *
@@ -39,6 +40,7 @@
 #include "ui_state.h"        /* pk_ui_diag_scroll_y */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
+#include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
@@ -353,6 +355,23 @@ void pk_diag_page_render(uint16_t *fb)
             break;
         }
         draw_diag_row(fb, y, "microSD", sd_val, sd_col);
+    }
+    y += DIAG_LINE_H;
+
+    /* ------------------------------------------------------------------
+     * LOG — file sink 后端 + 本次开机已写/丢弃条数（计数器只读，零 I/O）
+     * ------------------------------------------------------------------ */
+    {
+        uint32_t written = 0, dropped = 0;
+        if (record_sink_file_stats(&written, &dropped)) {
+            snprintf(buf, sizeof(buf), "%s  w %lu  drop %lu",
+                     record_sink_file_uses_sd() ? "microSD" : "flash",
+                     (unsigned long)written, (unsigned long)dropped);
+            draw_diag_row(fb, y, "LOG", buf,
+                          written > 0 ? COL_ONLINE : COL_OFFLINE);
+        } else {
+            draw_diag_row(fb, y, "LOG", "sink down", COL_OFFLINE);
+        }
     }
     y += DIAG_LINE_H;
 

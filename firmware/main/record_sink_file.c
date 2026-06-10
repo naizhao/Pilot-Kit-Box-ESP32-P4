@@ -275,6 +275,14 @@ bool record_sink_file_uses_sd(void)
     return s_on_sdcard;
 }
 
+bool record_sink_file_stats(uint32_t *out_written, uint32_t *out_dropped)
+{
+    if (s_queue == NULL) return false;   /* sink 没起来(挂载失败) */
+    if (out_written) *out_written = s_written;
+    if (out_dropped) *out_dropped = s_dropped;
+    return true;
+}
+
 record_sink_t *record_sink_file_create(void)
 {
     /* 后端选择：设置选 microSD 且卡已挂载（pk_sdcard_init 已先行）→
