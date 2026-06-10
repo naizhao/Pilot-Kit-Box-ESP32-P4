@@ -32,3 +32,10 @@ __pycache__
 
 # EasyEDA raw-export backups (kept locally, not tracked)
 *.ori
+
+# Design mockups / interactive prototypes — local design references only,
+# never project deliverables. (traffic_radar_interactive.html slipped into
+# c28c071 the same way superpowers/ did; git rm --cached'd and ignored here.)
+/traffic_radar_interactive.html
+/traffic_radar_mockup.png
+/pfd_mockup_v6.png
