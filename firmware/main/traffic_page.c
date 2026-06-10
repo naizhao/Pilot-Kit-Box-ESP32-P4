@@ -73,6 +73,15 @@ static int std_alt_ft_from_pa(float pa)
     return (int)lroundf(alt_m * 3.28084f);
 }
 
+/* 把点绕盘心顺时针旋转 deg 度（屏幕 y 向下，正角=顺时针）。 */
+static void rot_point(int px, int py, float deg, int *ox, int *oy)
+{
+    float a  = deg * (float)M_PI / 180.0f;
+    float dx = (float)(px - CX), dy = (float)(py - CY);
+    *ox = CX + (int)lroundf(dx * cosf(a) - dy * sinf(a));
+    *oy = CY + (int)lroundf(dx * sinf(a) + dy * cosf(a));
+}
+
 /* 一个可显示目标：指向本帧 snapshot 的飞机 + 算好的相对几何。 */
 typedef struct {
     aircraft_t       *ac;
@@ -297,8 +306,16 @@ void pk_traffic_page_render(uint16_t *fb)
             draw_target(fb, &s_vis[sel_row], orient, range_nm, true);
     }
 
-    /* ── 本机三角（机头朝上；NORTH-UP 旋转留 Task8）── */
-    pk_pfd_draw_triangle(fb, CX, CY - 7, CX - 6, CY + 6, CX + 6, CY + 6, COL_OWN);
+    /* ── 本机三角：HEADING-UP 朝上；NORTH-UP 按机头磁航向旋转(标记朝向) ── */
+    if (orient == PK_MAP_NORTH_UP && have) {
+        int ax, ay, bx, by, cx2, cy2;
+        rot_point(CX,     CY - 7, yaw, &ax,  &ay);
+        rot_point(CX - 6, CY + 6, yaw, &bx,  &by);
+        rot_point(CX + 6, CY + 6, yaw, &cx2, &cy2);
+        pk_pfd_draw_triangle(fb, ax, ay, bx, by, cx2, cy2, COL_OWN);
+    } else {
+        pk_pfd_draw_triangle(fb, CX, CY - 7, CX - 6, CY + 6, CX + 6, CY + 6, COL_OWN);
+    }
 
     /* ── 选中目标详情条(底部) ── */
     if (own_valid && nv > 0 && sel_row >= 0 && sel_row < nv)
