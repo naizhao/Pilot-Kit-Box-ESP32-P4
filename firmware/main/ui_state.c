@@ -28,7 +28,7 @@ static const char *TAG = "ui";
 #define UI_ABOUT_SCROLL_STEP_PX     24
 #define UI_ABOUT_SCROLL_MAX_PX      40
 #define UI_DIAG_SCROLL_STEP_PX      24
-#define UI_DIAG_SCROLL_MAX_PX      220   /* 诊断页比 about 长(GPS 多行 + SNR 柱状图) */
+#define UI_DIAG_SCROLL_MAX_PX      300   /* 诊断页比 about 长(GPS 多行 + 每星座一行 SNR 柱状图) */
 
 /* Calibration-wizard auto-trigger thresholds. The 10 s enter window
  * is long enough that we don't bother the user with the wizard

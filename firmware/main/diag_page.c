@@ -99,45 +99,26 @@ static void draw_diag_row(uint16_t *fb, int y,
                            DIAG_VAL_X, y, value, color);
 }
 
-/* draw_snr_bars — 按星座分两组画 SNR 竖条：GPS 组 + 北斗组，组下方标 G/B。
- *   柱高=C/N0，组内颜色按强弱(绿≥35 / 黄25-34 / 红<25 dB)。基线在 y_base。
- *   con[] 与 snr[] 平行：0=GPS 1=北斗 2=其它(不画)。 */
-static void draw_snr_bars(uint16_t *fb, int x0, int y_base,
-                          const uint8_t *snr, const uint8_t *con, int n)
+/* draw_snr_row — 画单个星座(want)的 SNR 竖条一行：柱高=C/N0，颜色按强弱
+ *   (绿≥35 / 黄25-34 / 红<25 dB)。基线在 y_base，向上生长。
+ *   每星座独占一行，避免卫星多时一行挤不下;调用方在行首标完整星座名。 */
+static void draw_snr_row(uint16_t *fb, int x0, int y_base,
+                         const uint8_t *snr, const uint8_t *con, int n, int want)
 {
-    const int bar_w = 5, gap = 2, max_h = 30, snr_full = 50, grp_gap = 12;
-    if (n <= 0) {
-        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                               x0, y_base - 9, "(no sats)", COL_OFFLINE);
-        return;
-    }
-    /* 字母表与 pk_gnss_t 同序：GPS/北斗/GLONASS/Galileo/QZSS/其它。 */
-    static const char letter[PK_GNSS_COUNT] = { 'G', 'B', 'R', 'E', 'Q', '?' };
+    const int bar_w = 5, gap = 2, max_h = 22, snr_full = 50;
     int x = x0;
-    for (int grp = 0; grp < PK_GNSS_COUNT; ++grp) {   /* 动态分组：收到哪个星座画哪组 */
-        int grp_x0 = x, cnt = 0;
-        for (int i = 0; i < n; ++i) {
-            if (con[i] != grp) continue;
-            int s = snr[i];
-            if (s > snr_full) s = snr_full;
-            int h = s * max_h / snr_full;
-            if (h < 1 && s > 0) h = 1;
-            uint16_t col = (s >= 35) ? COL_ONLINE
-                         : (s >= 25) ? pk_rgb565(255, 200, 60)
-                         :             COL_ALERT;
-            fill_rect(fb, x, y_base - h, x + bar_w, y_base, col);
-            x += bar_w + gap;
-            ++cnt;
-            if (x + bar_w > PK_DISPLAY_W - 10) break;
-        }
-        if (cnt > 0) {                          /* 组标签居中画在组下方 */
-            char t[2] = { letter[grp], 0 };
-            int mid = grp_x0 + cnt * (bar_w + gap) / 2 - 3;
-            pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                   mid, y_base + 2, t, COL_KEY);
-            x += grp_gap;
-        }
-        if (x + bar_w > PK_DISPLAY_W - 10) break;
+    for (int i = 0; i < n; ++i) {
+        if (con[i] != want) continue;
+        int s = snr[i];
+        if (s > snr_full) s = snr_full;
+        int h = s * max_h / snr_full;
+        if (h < 1 && s > 0) h = 1;
+        uint16_t col = (s >= 35) ? COL_ONLINE
+                     : (s >= 25) ? pk_rgb565(255, 200, 60)
+                     :             COL_ALERT;
+        fill_rect(fb, x, y_base - h, x + bar_w, y_base, col);
+        x += bar_w + gap;
+        if (x + bar_w > PK_DISPLAY_W - 4) break;   /* 满屏宽截断 */
     }
 }
 
@@ -252,11 +233,27 @@ void pk_diag_page_render(uint16_t *fb)
         draw_diag_row(fb, y, "", buf, fresh ? COL_VAL : COL_OFFLINE);
         y += DIAG_LINE_H;
 
-        /* 行4：SNR 柱状图，按星座分两组(G/B)，柱下标注 */
-        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                               DIAG_KEY_X, y, "SNR", COL_KEY);
-        draw_snr_bars(fb, DIAG_VAL_X, y + 34, g.snr, g.snr_con, g.snr_count);
-        y += 52;
+        /* SNR 区：每个出现的星座单独一行 —— 行首完整星座名 + 该星座 SNR 柱状图。
+         * 卫星多时一行放不下,故分行;诊断页可滚动,行数不限。 */
+        if (g.snr_count <= 0) {
+            draw_diag_row(fb, y, "SNR", "(no sats)", COL_OFFLINE);
+            y += DIAG_LINE_H;
+        } else {
+            /* 名表与 pk_gnss_t 同序：GPS/北斗/GLONASS/Galileo/QZSS/其它。 */
+            static const char *const con_name[PK_GNSS_COUNT] =
+                { "GPS", "BDS", "GLO", "GAL", "QZS", "?" };
+            for (int gi = 0; gi < PK_GNSS_COUNT; ++gi) {
+                int cnt = 0;
+                for (int i = 0; i < g.snr_count; ++i)
+                    if (g.snr_con[i] == gi) cnt++;
+                if (cnt == 0) continue;
+                pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                       DIAG_KEY_X, y + 8, con_name[gi], COL_KEY);
+                draw_snr_row(fb, DIAG_VAL_X, y + 24, g.snr, g.snr_con,
+                             g.snr_count, gi);
+                y += 28;
+            }
+        }
     }
 
     /* ------------------------------------------------------------------
