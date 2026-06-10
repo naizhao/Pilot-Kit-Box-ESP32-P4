@@ -85,7 +85,10 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         if (!rel.valid) continue;
 
         float r = rel.rel_bearing;
-        if (r < -95.0f || r > 95.0f) { behind++; continue; }   /* 后方:仅计数 */
+        /* 外圈 R+14=79、半圆心在屏底 (160,240)：|rel| 越大目标越贴屏幕下边，
+         * |rel|>~86.4°(=arccos(5/79)) 时菱形(size 4)会落到 y≥240 被 clip 静默
+         * 消失。向内收到 85° 保证完整可见；85~95° 计入后方计数。 */
+        if (r < -85.0f || r > 85.0f) { behind++; continue; }
 
         float rad = (90.0f - r) * (float)M_PI / 180.0f;
         int tx = HSI_CX + (int)lroundf(HSI_TRAFFIC_R * cosf(rad));
@@ -105,6 +108,10 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
     if (behind > 0) {
         char b[16];
         snprintf(b, sizeof(b), "%c%d", PK_FONT_ARROW_S, behind);  /* ▼N 后方 */
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 4, HSI_CY - 18, b, COL_BEHIND, 1);
+        /* 放右下角 VS 框(y≤228)下方的空隙：避开左下 own-ship badge
+         * (x[0,78] y[210,232])，否则会被 pfd.c 后画的 badge darken+文字覆盖
+         * 导致永久不可见。 */
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                     PK_DISPLAY_W - 60, PK_DISPLAY_H - 9, b, COL_BEHIND, 1);
     }
 }
