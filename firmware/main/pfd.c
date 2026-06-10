@@ -44,6 +44,7 @@
 #include "baro.h"
 #include "sdkconfig.h"
 #include "settings_page.h"
+#include "traffic_page.h"
 #include "ui_state.h"
 
 #include <math.h>
@@ -99,6 +100,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_SETTINGS:
             pk_settings_page_render(fb);
+            break;
+
+        case PK_UI_MODE_TRAFFIC:
+            pk_traffic_page_render(fb);
             break;
 
         case PK_UI_MODE_PFD:

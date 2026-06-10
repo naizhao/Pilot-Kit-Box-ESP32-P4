@@ -87,6 +87,7 @@ static const char *mode_name(pk_ui_mode_t m)
 {
     switch (m) {
     case PK_UI_MODE_PFD:         return "PFD";
+    case PK_UI_MODE_TRAFFIC:     return "TRAFFIC";
     case PK_UI_MODE_ADSB_LIST:   return "ADSB_LIST";
     case PK_UI_MODE_SETTINGS:    return "SETTINGS";
     case PK_UI_MODE_ABOUT:       return "ABOUT";
@@ -105,7 +106,8 @@ void pk_ui_toggle_mode(void)
      * in it returns to PFD and dismisses the wizard (the auto-
      * trigger state machine will re-arm next time accuracy drops). */
     switch (s_mode) {
-    case PK_UI_MODE_PFD:         s_mode = PK_UI_MODE_ADSB_LIST; break;
+    case PK_UI_MODE_PFD:         s_mode = PK_UI_MODE_TRAFFIC;   break;
+    case PK_UI_MODE_TRAFFIC:     s_mode = PK_UI_MODE_ADSB_LIST; break;
     case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_SETTINGS;  break;
     case PK_UI_MODE_SETTINGS:    s_mode = PK_UI_MODE_ABOUT;
                                   s_about_scroll_y = 0;          break;

@@ -19,7 +19,7 @@
  * the next frame already shows the new view.
  *
  * MODE short-press cycles through the USER-visible modes:
- *     PFD → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
+ *     PFD → TRAFFIC → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
  * CAL_WIZARD is not in the cycle — it's auto-entered/auto-exited
  * based on IMU calibration state (see pk_ui_cal_wizard_tick below)
  * and the user can also dismiss it manually by pressing MODE.
@@ -41,6 +41,7 @@
 
 typedef enum {
     PK_UI_MODE_PFD = 0,
+    PK_UI_MODE_TRAFFIC,     /* 360° 交通雷达页(本机居中,目标按方位/距离) */
     PK_UI_MODE_ADSB_LIST,
     PK_UI_MODE_SETTINGS,
     PK_UI_MODE_ABOUT,
@@ -56,7 +57,7 @@ esp_err_t pk_ui_init(void);
 pk_ui_mode_t pk_ui_get_mode(void);
 
 /* Cycle the user-visible mode forward:
- *     PFD → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
+ *     PFD → TRAFFIC → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
  * Selection is preserved across toggles (re-entering list mode
  * lands on the same highlight). If the current mode is
  * CAL_WIZARD, the cycle returns to PFD and dismisses the wizard. */
