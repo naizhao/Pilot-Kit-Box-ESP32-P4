@@ -46,7 +46,7 @@
 #define FILE_NAME_SUFFIX    ".txt"
 #define FILE_QUEUE_DEPTH    256
 #define FILE_ROTATE_BYTES   (1 * 1024 * 1024)   /* flash: 1 MiB per file */
-#define FILE_KEEP_COUNT     12                  /* flash: 12 × 1 MiB ≈ 12 MiB */
+#define FILE_KEEP_COUNT     12                  /* count ceiling; 10 MiB partition is the practical limit */
 #define SD_ROTATE_BYTES     (16 * 1024 * 1024)  /* SD: 16 MiB per file */
 #define SD_KEEP_COUNT       64                  /* SD: 64 × 16 MiB ≈ 1 GiB */
 #define FILE_WRITER_STACK   4096

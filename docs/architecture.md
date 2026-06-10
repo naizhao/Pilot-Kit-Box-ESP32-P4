@@ -2,9 +2,9 @@
 
 Chinese version: [`architecture-zh_CN.md`](architecture-zh_CN.md)
 
-Snapshot of the current firmware runtime topology after the ADS-B,
-BLE, local UI, IMU, i18n, and soft-power work landed. Display and IMU
-are now active runtime paths rather than future sketches.
+Snapshot of the `v0.8.0` runtime topology, including ADS-B, BLE,
+GPS/PPS, barometer, dual storage backends, local traffic UI,
+diagnostics, IMU, i18n, and soft power.
 
 ## Big picture
 
@@ -16,8 +16,10 @@ flowchart LR
         USB["USB-OTG HS\nDM/DP pins 49/50"]
         C6["ESP32-C6-MINI-1\n(Wi-Fi 6 / BLE 5)"]
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
-        FLASH["32 MB Nor Flash\npartition: storage 16 MiB"]
+        FLASH["32 MB Nor Flash\npartition: storage 10 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
+        GPS["GT-U8 GPS/BeiDou\nUART1 32/33\nPPS=46"]
+        BARO["BMP388\nI²C0 addr 0x76"]
         BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\nINT=20 RST=21"]
         SCREEN["TK024F3036 / ST7789\n320×240 SPI\nCS=28 MOSI=29 SCK=30 DC=31 BL=50"]
         BUTTONS["4 buttons\nTARE=26 MODE=5\nUP=22 DOWN=23"]
@@ -57,7 +59,7 @@ flowchart LR
         end
 
         subgraph T_FILE["file_writer_task — CPU 0, prio 3"]
-            FW["LittleFS append\nrotate @ 1 MiB\nkeep 12 files"]
+            FW["file append\nFlash: 1 MiB rotation, target 12\nMicroSD: 16 MiB × 64"]
         end
 
         subgraph T_BLE["ble_emit_task — CPU 0, prio 3"]
@@ -81,6 +83,7 @@ flowchart LR
     SINK_UART -.serial.-> EXT_PY["Pilot Kit\nadsb_to_track.py\n→ GPX/KML"]
     SINK_FILE --> T_FILE
     FW -.write.-> FLASH
+    FW -.write.-> SD
     SINK_BLE -.queue.-> T_BLE
     STATE --> GDL
     GDL --> GATT
@@ -88,13 +91,13 @@ flowchart LR
     SDIO_C6 <-->C6
     C6 -- BLE 5 --> BLE_PEER
 
-    SD -.future SDMMC record sink.-> SINK_FILE
+    SD --> SINK_FILE
+    GPS --> P4
+    BARO --> P4
     BNO --> P4
     SCREEN --> P4
     BUTTONS --> P4
 
-    classDef pending stroke-dasharray:5 5,fill:#f7f7f7
-    class SD pending
 ```
 
 ## ASCII view (when the SVG render is unavailable)
@@ -144,11 +147,13 @@ flowchart LR
 | `usb_host_lib`    | 0   | 5    | 4 KiB | Pumps `usb_host_lib_handle_events()`; required by USB stack lifecycle. |
 | `sdr`             | 1   | 6    | 8 KiB | Owns the USB client, opens the RTL-SDR, drives `rtlsdr_read_async()`. The async URB callback runs *on this same task* (`rtlsdr_read_async`'s wait loop pumps client events itself), so the IQ producer is a single-task design with no cross-CPU contention. |
 | `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
-| `rec_file`        | 0   | 3    | 4 KiB | Per-sink writer for the LittleFS file backend; keeps the dsp task off slow flash writes. |
+| `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the DSP task off storage writes. |
+| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and disciplines time with RMC + PPS. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
+| `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
 | `buttons`         | 0   | 3    | 3 KiB | Polls TARE / MODE / UP / DOWN, debounces short/long/very-long presses, and detects the UP+DOWN combo. |
-| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, ADS-B LIST, SETTINGS, ABOUT, DIAG (real-time hardware diagnostics), and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
+| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, TRAFFIC, ADS-B LIST, SETTINGS, ABOUT, DIAG, and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
 | `nimble_host`     | 0   | 4    | 4 KiB | NimBLE host event loop, hosts the GATT server; events arrive from the C6 controller over the SDIO/VHCI transport. |
 | `ble_emit`        | 0   | 3    | 6 KiB | 1 Hz timer task: snapshots `aircraft_state` and emits GDL90 Heartbeat + one Traffic Report per fresh aircraft on the BLE notify pipes; also drains the raw-ts-line queue produced by the BLE sink. |
 
@@ -189,9 +194,10 @@ File queue full→ file sink xQueueSend returns pdFALSE → s_dropped++;
                  every 256 drops the writer task logs a WARN. The DSP
                  path never stalls.
 
-LittleFS write → if fwrite fails or rotation fopen fails, writer task
-  error          logs once and self-deletes (file recording stops, UART
-                 sink continues).
+Storage write → LittleFS/MicroSD fwrite or rotation failures are logged;
+  error          UART and BLE sinks continue. Card removal is detected
+                 and unmounted, but the file backend does not switch
+                 dynamically during the same boot.
 
 BLE peer drops → NimBLE handles GAP/connection state; ble_gatt_task
                  keeps draining its queue and discards notifies when no
@@ -200,23 +206,26 @@ BLE peer drops → NimBLE handles GAP/connection state; ble_gatt_task
 
 ## Time synchronisation
 
-The firmware boots with system time at Unix epoch 0 (no RTC, no
-battery-backed clock). Two independent paths can seed wall-clock
-time after the first BLE connection, whichever delivers first:
+The firmware boots with system time at Unix epoch 0 (no RTC or
+battery-backed clock). Three paths can seed wall-clock time, with
+source-quality protection preventing a lower-quality source from
+overwriting a better one:
 
-1. **iOS Current Time Service** (BLE SIG std., UUID 0x1805) —
+1. **GT-U8 RMC + PPS** — RMC supplies UTC date/time and GPIO46 PPS
+   aligns the UTC second edge. This is the preferred source.
+2. **iOS Current Time Service** (BLE SIG std., UUID 0x1805) —
    immediately after every `GAP CONNECT` the firmware acts as a
    GATT client toward the peer's CTS, reads the 10-byte UTC date-time
    payload, and calls `settimeofday()`. iOS exposes CTS by default,
    so this is zero-config on Apple platforms.
-2. **Custom Time Sync characteristic** (UUID `…0004`, R/W) — any
+3. **Custom Time Sync characteristic** (UUID `…0004`, R/W) — any
    client can `write` an 8-byte little-endian Unix-ms value; the
    firmware applies it via `settimeofday()`. Reads return the
    current firmware-perceived epoch_ms. Used by mobile clients on
    Android (no system CTS) and any other cross-platform clients.
 
-See [`docs/ble_protocol.md`](ble_protocol.md) for the full wire
-format; here's how the two interact with the rest of the system:
+See [`docs/ble_protocol.md`](ble_protocol.md) for the BLE wire
+format; the diagram below focuses on the two BLE-assisted paths.
 
 ```
 Mobile peer ── GAP_CONNECT ──► sdr_task              dsp_task
@@ -252,16 +261,15 @@ discard them — the reference Pilot Kit app does.
 
 The Pilot Kit Box carrier board wires up a GT-U8 GPS (UART + 1 PPS on
 GPIO46), a BMP388 barometer (I²C0, `0x76`), and routes recording to the
-on-board microSD slot. GPS and baro drivers are implemented; design
-notes in
+on-board microSD slot. All three paths are implemented; design notes in
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md).
 How each slots into the architecture:
 
 - **GPS time discipline** (`gps_task.c`) — GPS UTC + PPS seeds `settimeofday()`. GPS is
   **preferred (most accurate)**, BLE is the backup; overwrite protection
   keeps a lower-quality source from clobbering a good GPS fix. The clock
-  self-disciplines without a phone, and SETTINGS shows sync state (source
-  + age since last sync). PPS aligns the UTC second edge for
+  self-disciplines without a phone, and DIAG shows system time, fix,
+  constellation, and SNR state. PPS aligns the UTC second edge for
   higher-precision Mode-S timestamps.
 - **GPS own-ship** (`gps_task.c`) — only a **fallback** when no aircraft is manually
   bound in the ADS-B LIST; a manual binding always wins. Feeds the same
@@ -269,9 +277,11 @@ How each slots into the architecture:
 - **BMP388 baro** (`baro_task.c`) — altitude / vertical-speed shown as a **reference
   only** (unreliable in a pressurised cabin), never the authoritative
   altitude. QNH is user-adjustable from SETTINGS.
-- **microSD record sink** — preferred over LittleFS when a card is
-  inserted; Settings-selectable (auto / flash / microSD). Extends the
-  `record_dispatch` file-sink path already shown above.
+- **microSD record sink** — Settings selects Flash or MicroSD and stores
+  the choice in NVS for the next boot. A missing requested card falls
+  back to LittleFS. Flash rotates at 1 MiB with a 12-file count target
+  constrained by the 10 MiB partition; MicroSD rotates
+  16 MiB × 64 files (about 1 GiB) and supports guarded FAT32 formatting.
 
 ## What goes on the wire / on disk
 

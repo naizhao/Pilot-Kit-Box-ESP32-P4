@@ -37,11 +37,11 @@ Current `partitions.csv` layout:
 ```text
 nvs,       data, nvs,      0x9000,    0x6000
 phy_init,  data, phy,      0xf000,    0x1000
-factory,   app,  factory,  0x10000,   0x400000
-storage,   data, spiffs,   ,          0x1000000
+factory,   app,  factory,  0x10000,   0xa00000
+storage,   data, spiffs,   ,          0xa00000
 ```
 
-The `storage` partition is mounted through LittleFS and currently stores rotating ADS-B raw ts-line logs. Space remains for future OTA A/B partitions.
+The `storage` partition is mounted through LittleFS and currently stores rotating ADS-B raw ts-line logs. This layout uses about 20.5 MiB of the 32 MiB flash and reserves the remaining space for future expansion.
 
 ## USB Host And RTL-SDR
 
@@ -98,7 +98,9 @@ CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 
 ## Own-Ship Binding
 
-PFD ALT / GS / VS can be sourced from a known ADS-B transponder rather than only from the IMU.
+PFD and traffic geometry can use a known ADS-B transponder as the
+manual own-ship source. GPS is the automatic fallback when no manual
+binding is active.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -107,15 +109,23 @@ PFD ALT / GS / VS can be sourced from a known ADS-B transponder rather than only
 
 Runtime alternative: in ADS-B LIST, highlight an aircraft and short-press TARE. That RAM-only binding is cleared on reboot.
 
-## Storage / LittleFS
+## Storage / LittleFS / MicroSD
+
+At boot, the file sink reads its NVS setting. It writes `/sdcard` when
+MicroSD is selected and mounted; otherwise it writes the `/storage`
+LittleFS partition. A requested but absent card falls back to Flash.
+The SETTINGS `LOG` row takes effect after reboot. `FORMAT SD` requires
+a second press within five seconds and refuses while logging to the card.
 
 Defined in `firmware/main/record_sink_file.c`:
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `FILE_QUEUE_DEPTH` | `256` | Queue depth between DSP and file writer task. |
-| `FILE_ROTATE_BYTES` | `1 * 1024 * 1024` | Each log file rotates at 1 MiB. |
-| `FILE_KEEP_COUNT` | `12` | Keep 12 log files, about 12 MiB total. |
+| `FILE_ROTATE_BYTES` | `1 * 1024 * 1024` | Flash files rotate at 1 MiB. |
+| `FILE_KEEP_COUNT` | `12` | File-count ceiling; actual retention is capped by the 10 MiB partition. |
+| `SD_ROTATE_BYTES` | `16 * 1024 * 1024` | MicroSD files rotate at 16 MiB. |
+| `SD_KEEP_COUNT` | `64` | Keep about 1 GiB on MicroSD. |
 
 The file sink writes lines shaped as:
 
@@ -124,6 +134,17 @@ The file sink writes lines shaped as:
 ```
 
 This matches the raw ts-line format used by the BLE Raw characteristic and offline post-processing tools.
+
+MicroSD uses SDMMC Slot 0 in 4-bit mode:
+
+```text
+CLK=GPIO43  CMD=GPIO44  D0..D3=GPIO39..42
+```
+
+There is no card-detect GPIO. `sd_detect` retries an absent card every
+three seconds and checks a mounted card every two seconds. The writer
+does not migrate backends during one boot; after card removal, reinsert
+and reboot or select Flash and reboot.
 
 ## Display / ST7789
 
@@ -179,10 +200,10 @@ Button GPIOs:
 
 | Button | GPIO | Short press | Long press | Very-long press |
 |---|---:|---|---|---|
-| TARE | 26 | Context-sensitive: IMU tare, Settings language toggle, or ADS-B LIST own-ship binding | Persist current IMU tare to NVS | IMU factory reset |
-| MODE | 5 | Cycle PFD -> ADS-B LIST -> SETTINGS -> ABOUT | Enter ESP32-P4 deep sleep; next MODE press wakes | None |
-| UP | 22 | Scroll up in list/About | Suppressed for combo detection | None |
-| DOWN | 23 | Scroll down in list/About | Suppressed for combo detection | None |
+| TARE | 26 | Move SETTINGS row, bind ADS-B LIST own-ship, or perform IMU tare elsewhere | Persist current IMU tare to NVS | IMU factory reset |
+| MODE | 5 | Cycle PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG | Enter ESP32-P4 deep sleep; next MODE press wakes | None |
+| UP | 22 | Select target, adjust Settings, or scroll About/Diag up | Suppressed for combo detection | None |
+| DOWN | 23 | Select target, adjust Settings, or scroll About/Diag down | Suppressed for combo detection | None |
 
 Very-long TARE press (10 seconds) performs IMU factory reset: clears NVS tare, clears BNO persisted DCD / legacy reorientation state, and reinitialises the IMU.
 
@@ -198,7 +219,10 @@ Common ESP_LOG tags:
 | `sdr` | RTL-SDR USB control and re-init |
 | `dsp` | IQ decode and 1 Hz dashboard |
 | `adsb` | decoded ADS-B message logs |
-| `rec_file` | LittleFS writer |
+| `rec_file` | LittleFS / MicroSD writer |
+| `pk_sd` | MicroSD mount, removal, and format |
+| `gps` | GT-U8 NMEA, PPS, and satellite diagnostics |
+| `baro` | BMP388 pressure, altitude, and vertical speed |
 | `ble_gatt` | NimBLE host, GATT, GDL90 emitter |
 | `display` | ST7789 panel |
 | `imu` | BNO085 driver |
@@ -213,7 +237,10 @@ Common ESP_LOG tags:
 | `dsp` | 1 | 4 | 4 KiB | dump1090-derived decode |
 | `imu` | 0 | 5 | 4 KiB | BNO085 polling |
 | `pfd` | 0 | 4 | 6 KiB | LCD UI renderer |
-| `rec_file` | 0 | 3 | 4 KiB | LittleFS writer |
+| `rec_file` | 0 | 3 | 4 KiB | LittleFS / MicroSD writer |
+| `gps` | 0 | 4 | 4 KiB | GT-U8 NMEA + PPS |
+| `baro` | 0 | 4 | 4 KiB | BMP388 polling |
+| `sd_detect` | 0 | 2 | 4 KiB | MicroSD insertion/removal probe |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host |
 | `ble_emit` | 0 | 3 | 6 KiB | GDL90 / Raw BLE notifications |
 

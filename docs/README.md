@@ -36,10 +36,12 @@ All public docs should match this baseline:
 - Embedded identity databases include the ICAO24 aircraft database at `firmware/main/aircraft_db.bin`, the airline code table at `firmware/main/airline_codes.c`, and the ICAO24 country table at `firmware/main/icao_country.c`.
 - LCD: **2.4-inch TK024F3036 / ST7789 320x240 transflective SPI display**, wired on left-header GPIO 28/29/30/31 with backlight on GPIO50.
 - IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, INT on GPIO20, RST on GPIO21.
-- UI mode cycle: **PFD -> ADS-B LIST -> SETTINGS -> ABOUT -> PFD**.
+- UI mode cycle: **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**.
 - MODE short-press changes pages; MODE long-press enters deep sleep; pressing MODE again wakes the device.
-- TARE toggles language on Settings, binds own-ship on ADS-B LIST, and performs IMU tare on other pages; long-press persists tare, and a 10-second very-long press performs IMU factory reset.
-- Settings, About, and Compass Calibration have English/Chinese firmware UI strings persisted through NVS.
+- TARE moves the selected Settings row, binds own-ship on ADS-B LIST, and performs IMU tare on other pages; long-press persists tare, and a 10-second very-long press performs IMU factory reset.
+- GT-U8 GPS/BeiDou, GPIO46 PPS, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths.
+- Settings controls language, QNH, map orientation, radar range, and log backend; MicroSD supports insertion/removal detection, capacity status, and guarded formatting.
+- Settings, About, Diagnostics, and Compass Calibration have English/Chinese firmware UI strings with configuration persisted through NVS.
 
 ## Translation Policy
 

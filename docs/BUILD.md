@@ -153,7 +153,7 @@ Important defaults already live in `firmware/sdkconfig.defaults`:
 
 - `CONFIG_IDF_TARGET="esp32p4"`
 - `CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y`
-- custom `partitions.csv` with a 16 MiB LittleFS storage partition
+- custom `partitions.csv` with a 10 MiB LittleFS storage partition and optional MicroSD file backend
 - ESP32-P4 v1.x silicon support for current Waveshare boards
 - ESP-Hosted SDIO pins for the on-board C6
 - USB host hub support for RTL-SDR dongles
@@ -243,6 +243,7 @@ pilot_kit: Pilot Kit Box (ESP32-P4) boot
 pilot_kit: IQ ring buffer ready: 524288 B (BYTEBUF)
 pilot_kit: USB host stack online — spawning SDR + DSP tasks
 rec_file: LittleFS mounted at /storage
+pk_sd: no microSD card at boot (will keep probing)
 sdr: USB client registered, waiting for RTL-SDR enumeration
 display: TK024F3036 320x240 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
 pilot_kit: IMU init failed (...) — PFD will run without attitude
@@ -258,6 +259,9 @@ Optional hardware expectations:
 | Attach RTL-SDR to P1 USB HS OTG | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
 | Wire the ST7789 display | Boot splash appears for at least 3 seconds, then the PFD renders |
 | Wire the BNO085 IMU | `imu: rpy = ... (acc=N ...)` logs update and PFD horizon follows motion |
+| Fit the GT-U8 module | GPS/BeiDou fix, satellite/SNR, antenna, and system-time rows update on DIAG |
+| Fit the BMP388 | PFD and DIAG show pressure, QNH-adjusted altitude, and vertical speed |
+| Insert a FAT32 MicroSD card | DIAG shows mounted capacity; select `LOG = MICROSD`, reboot, and confirm logs under `/sdcard` |
 | Enable BLE with flashed C6 | BLE scanner sees `Pilot Kit Box-XXXXXX` |
 
 ## Troubleshooting
@@ -311,6 +315,13 @@ The partition table may not have been flashed. Run a full erase and flash:
 ./build.sh -p <PORT> erase-flash
 ./build.sh -p <PORT> flash
 ```
+
+### MicroSD is not used for logs
+
+MicroSD selection is persisted but takes effect only at boot. Insert a
+FAT32 card, set `SETTINGS -> LOG` to `MICROSD`, and reboot. If the card
+is absent or cannot mount at boot, the writer falls back to LittleFS.
+Use DIAG to check card capacity and the active `LOG` backend.
 
 ### RTL-SDR does not enumerate
 

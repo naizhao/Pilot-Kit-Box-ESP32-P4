@@ -4,7 +4,7 @@
 
 | 项目 | 值 |
 |---|---|
-| 文档版本 | 1.0 |
+| 文档版本 | 1.1 |
 | 状态 | 固件已实现，可供客户端集成 |
 | 读者 | Pilot Kit Box 移动端 / 桌面端客户端开发者 |
 | 固件参考 | `firmware/main/ble_gatt.c` |
@@ -18,7 +18,7 @@ Pilot Kit Box 是基于 ESP32-P4 的 ADS-B 接收器。它通过 RTL-SDR 接收 
 
 - 一个自定义 128-bit GATT service。
 - 四个 characteristic：Traffic Report、Heartbeat、Raw ts-line、Time Sync。
-- v1.0 当前不做 bonding、pairing 或加密；必须把它视为开放的近距离遥测链路。ADS-B 交通本身是公开广播，但不要把此 BLE 链路用于保密数据、飞机控制或安全关键命令。
+- v1.1 当前不做 bonding、pairing 或加密；必须把它视为开放的近距离遥测链路。ADS-B 交通本身是公开广播，但不要把此 BLE 链路用于保密数据、飞机控制或安全关键命令。
 - 交通帧使用 GDL90 标准格式。
 - iOS 可通过系统 Current Time Service 自动校时；Android 和跨平台客户端可写自定义 Time Sync characteristic。
 
@@ -125,10 +125,11 @@ await timeSyncCharacteristic.write(bytes.buffer.asUint8List(), withoutResponse: 
 
 ### 6.1 Traffic Report (`...0001`)
 
-每个 notification 是完整 GDL90 Traffic Report（msg ID `0x14`）：
+每个 notification 是完整 GDL90 Ownship Report（msg ID `0x0A`）或
+Traffic Report（msg ID `0x14`）：
 
 ```text
-0x7E | 0x14 | <27-byte payload> | <CRC-LSB> | <CRC-MSB> | 0x7E
+0x7E | <0x0A or 0x14> | <27-byte payload> | <CRC-LSB> | <CRC-MSB> | 0x7E
 ```
 
 GDL90 byte stuffing 规则：
@@ -138,7 +139,9 @@ GDL90 byte stuffing 规则：
 
 CRC 为 CCITT-16，多项式 `0x1021`，init `0x0000`，低字节先发。
 
-发送节奏：客户端订阅后，每秒对最近 60 秒内仍新鲜的每架飞机发送一条 Traffic Report。
+发送节奏：存在有效本机来源时，每秒先发送一条 Ownship Report；手动绑定
+ADS-B 本机目标优先，GT-U8 GPS 作兜底。随后对最近 60 秒内仍新鲜的每架
+飞机发送一条 Traffic Report。
 
 关键字段：
 
@@ -160,7 +163,9 @@ CRC 为 CCITT-16，多项式 `0x1021`，init `0x0000`，低字节先发。
 
 GDL90 Heartbeat（msg ID `0x00`），6 字节 payload，同样使用 GDL90 framing。连接且订阅后每秒发送一次。客户端可把超过 5 秒无 Heartbeat 视为链路失效。
 
-当前固件在校时前 `utc_ok = 0`，校时后 `utc_ok = 1`。当前没有 GPS / ownship 位置源，因此 `gps_valid = 0`。
+`gps_valid` 跟随 GT-U8 RMC 定位状态，`uat_initialised = 1`。当前
+`v0.8.0` 实现即使已经通过 GPS/BLE 校准系统时间，Heartbeat 的
+`utc_ok` 位仍保持 0；客户端应使用时间戳值，并把该标志视为尚未实现。
 
 ### 6.3 Raw ts-line (`...0003`)
 
@@ -172,7 +177,7 @@ ASCII 诊断格式，每个 notification 是一行，没有换行和 NUL：
    ts_ms       AVR-format raw Mode-S hex
 ```
 
-这与 LittleFS 文件和离线脚本使用的格式一致。典型密度取决于空域流量，可能为每秒数条到数十条。
+这与 LittleFS / MicroSD 文件和离线脚本使用的格式一致。典型密度取决于空域流量，可能为每秒数条到数十条。
 
 ### 6.4 Time Sync (`...0004`)
 
@@ -226,7 +231,6 @@ traffic.lastValueStream.listen(onGdl90TrafficFrame);
 
 当前未包含但在路线图中的项目：
 
-- GDL90 Ownship Report（需要 GPS 或其他可信 ownship 位置源）
 - Bluetooth Device Information Service (`0x180A`) 暴露固件版本
 - 配置写 characteristic：从 App 调整 RTL-SDR frequency / gain / sample rate
 - 在加入非公开、可识别用户、控制类或座舱敏感数据前，必须补 bonding + LESC encryption

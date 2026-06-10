@@ -2,7 +2,7 @@
 
 | Item | Value |
 |------|-------|
-| **Document version** | 1.0 |
+| **Document version** | 1.1 |
 | **Status** | Draft — implemented in firmware, ready for client integration |
 | **Audience** | Mobile / desktop client developers integrating with Pilot Kit Box |
 | **Firmware reference** | `firmware/main/ble_gatt.c` |
@@ -22,7 +22,7 @@ broadcast.
 The protocol is intentionally minimal:
 
 - **One primary GATT service** with **four characteristics**
-- **No bonding, no pairing, no encryption in protocol v1.0** — treat
+- **No bonding, no pairing, no encryption in protocol v1.1** — treat
   the link as open local telemetry. ADS-B traffic is publicly
   broadcast, but clients must not use this BLE link for confidential
   data, aircraft control, or safety-critical command paths.
@@ -213,13 +213,13 @@ mobile app discards them.
 
 ### 6.1. Traffic Report (`…0001`, NOTIFY)
 
-Each notification payload is one complete **GDL90 Traffic Report
-message** as defined by [FAA spec 560-1058-00 Rev A](https://www.faa.gov/sites/faa.gov/files/air_traffic/technology/adsb/archival/GDL90_Public_ICD_RevA.PDF),
-section 3.5.1, msg ID `0x14`:
+Each notification payload is one complete GDL90 **Ownship Report**
+(msg ID `0x0A`) or **Traffic Report** (msg ID `0x14`) as defined by
+[FAA spec 560-1058-00 Rev A](https://www.faa.gov/sites/faa.gov/files/air_traffic/technology/adsb/archival/GDL90_Public_ICD_RevA.PDF):
 
 ```
-0x7E | 0x14 | <27-byte payload> | <CRC-LSB> | <CRC-MSB> | 0x7E
-       └─ ID ┘                   └─── FCS ────┘
+0x7E | <0x0A or 0x14> | <27-byte payload> | <CRC-LSB> | <CRC-MSB> | 0x7E
+       └──── ID ────┘                     └─── FCS ────┘
 ```
 
 Byte stuffing (replace `0x7D`→`0x7D 0x5D`, `0x7E`→`0x7D 0x5E`)
@@ -230,10 +230,11 @@ no reflect, no xorout), LSB transmitted first, computed over
 
 #### Cadence
 
-The firmware emits one Traffic Report **per tracked aircraft per
-second** while the client is subscribed to this characteristic. A
-"tracked aircraft" is any 24-bit ICAO seen in a CRC-valid frame
-within the trailing 60 s window.
+When a valid own-ship source exists, the firmware first emits one
+Ownship Report per second. Manual ADS-B binding wins; GT-U8 GPS is the
+fallback. It then emits one Traffic Report per tracked aircraft per
+second. A tracked aircraft is any 24-bit ICAO seen in a CRC-valid frame
+within the trailing 60-second window.
 
 #### Decoding hints
 
@@ -269,16 +270,17 @@ clients **SHOULD** treat absence for > 5 s as a stale link.
 | 2..3 | UAT Time Stamp lower 16 bits (LSB first), seconds since 0000Z UTC |
 | 4..5 | Message counts (uplink + basic/long, see spec §3.1) |
 
-Currently the firmware emits `gps_valid = 0` (no GPS input yet),
-`uat_initialised = 1`, `utc_ok = 0` until time-sync happens, then
-`utc_ok = 1`. A future GPS / ownship source would be required before
-the firmware can mark `gps_valid`.
+`gps_valid` follows the current GT-U8 RMC fix state and
+`uat_initialised` is set to 1. In the current `v0.8.0` implementation,
+the Heartbeat `utc_ok` bit remains 0 even when GPS/BLE has disciplined
+the system clock; clients should use the timestamp value and treat the
+flag as not yet implemented.
 
 ### 6.3. Raw ts-line (`…0003`, NOTIFY)
 
 A plain ASCII alternative to GDL90, intended for clients that want
 to reuse the same parser they already run against the Pilot Kit
-disk dumps (`pilot_kit_ts_*.txt`). Each notification is **one
+Flash or MicroSD dumps (`pilot_kit_ts_*.txt`). Each notification is **one
 line, no trailing newline, no null terminator**:
 
 ```
@@ -394,8 +396,6 @@ The following items are **not** part of this protocol revision but
 are on the firmware roadmap; they will get their own sections once
 implemented:
 
-- **Ownship Report (GDL90 msg ID `0x0A`)** — requires a GPS or other
-  trustworthy ownship position source
 - **Device Info Service (0x180A)** for firmware version
 - **Configuration write characteristic** — set RTL-SDR sample
   rate / gain / centre frequency from the app

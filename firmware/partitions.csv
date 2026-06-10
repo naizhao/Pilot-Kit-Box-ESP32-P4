@@ -6,8 +6,8 @@
 #                       embedded ICAO24 → type/model/registration DB
 #                       (aircraft_db.bin ≈ 8 MB) alongside the ~1 MB app
 #   storage    10 MiB   LittleFS for on-board ADS-B ts-format dumps
-#                       (shrunk from 16 MiB; still holds the 12 × 1 MiB
-#                       rotation comfortably)
+#                       (shrunk from 16 MiB; practical retention is
+#                       constrained below the 12-file count ceiling)
 #
 # Total used: ~20.5 MiB of 32 MiB; remaining ~11.5 MiB reserved for future
 # OTA pair / aircraft-DB updates.

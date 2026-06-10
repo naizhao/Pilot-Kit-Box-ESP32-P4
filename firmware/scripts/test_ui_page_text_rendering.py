@@ -23,14 +23,19 @@ class UiPageTextRenderingTest(unittest.TestCase):
         self.assertIn("pk_text_puts_page_title", about)
         self.assertIn("pk_text_puts_page_body", about)
 
-    def test_settings_language_row_uses_larger_text_only_for_chinese(self) -> None:
+    def test_settings_rows_use_unified_ui_font_and_vertical_centering(self) -> None:
         text = (ROOT / "main" / "settings_page.c").read_text(encoding="utf-8")
-        self.assertIn("#define SETTINGS_ROW_TEXT_Y", text)
         self.assertIn("#define SETTINGS_HEADER_UI_Y", text)
-        self.assertIn("#define SETTINGS_ROW_UI_TEXT_Y", text)
+        self.assertIn("#define SETTINGS_ROW_TOP", text)
         self.assertIn("#define SETTINGS_ROW_H", text)
+        self.assertIn("#define SETTINGS_ROW_GAP", text)
+        self.assertIn("#define SETTINGS_ROW_COUNT       6", text)
         self.assertIn("pk_lang_t lang = pk_i18n_get_lang();", text)
         self.assertIn("if (lang == PK_LANG_ZH)", text)
+        self.assertIn(
+            "int text_y_ui = row_y + (SETTINGS_ROW_H - 12) / 2;",
+            text,
+        )
         self.assertRegex(
             text,
             r"pk_text_puts_page_title\([^;]+pk_i18n_text\(PK_TR_SETTINGS_TITLE\)",
@@ -40,27 +45,13 @@ class UiPageTextRenderingTest(unittest.TestCase):
             r"pk_text_puts_ui\([^;]+SETTINGS_HEADER_UI_Y,[^;]+"
             r"pk_i18n_text\(PK_TR_SETTINGS_TITLE\)",
         )
-        self.assertRegex(
+        self.assertIn("22, text_y_ui, key_str, COL_KEY", text)
+        self.assertIn("182, text_y_ui, val_str, val_col", text)
+        self.assertNotRegex(
             text,
-            r"pk_text_puts_page_title\([^;]+SETTINGS_ROW_TEXT_Y,[^;]+"
-            r"pk_i18n_text\(PK_TR_SETTINGS_LANGUAGE\)",
+            r"pk_text_puts_page_title\([^;]+PK_TR_SETTINGS_LANGUAGE",
         )
-        self.assertRegex(
-            text,
-            r"pk_text_puts_page_title\([^;]+SETTINGS_ROW_TEXT_Y,[^;]+"
-            r"pk_i18n_lang_name\(lang\)",
-        )
-        self.assertRegex(
-            text,
-            r"pk_text_puts_ui\([^;]+SETTINGS_ROW_UI_TEXT_Y,[^;]+"
-            r"pk_i18n_text\(PK_TR_SETTINGS_LANGUAGE\)",
-        )
-        self.assertRegex(
-            text,
-            r"pk_text_puts_ui\([^;]+SETTINGS_ROW_UI_TEXT_Y,[^;]+"
-            r"pk_i18n_lang_name\(lang\)",
-        )
-        self.assertGreaterEqual(text.count("pk_text_puts_page_title"), 3)
+        self.assertEqual(text.count("pk_text_puts_page_title"), 1)
         self.assertGreaterEqual(text.count("pk_text_puts_ui"), 3)
         self.assertIn("pk_i18n_text(PK_TR_SETTINGS_FOOTER)", text)
 

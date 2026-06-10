@@ -216,10 +216,10 @@ P1: VBUS / D- / D+ / GND
 
 | 按钮 | GPIO | 功能 |
 |---|---:|---|
-| TARE | 26 | IMU tare / 持久化 / 工厂重置；Settings 页切语言；ADS-B LIST 页绑定 own-ship |
-| MODE | 5 | 短按切页；长按 deep sleep；再次按下唤醒 |
-| UP | 22 | 列表 / About 上滚 |
-| DOWN | 23 | 列表 / About 下滚 |
+| TARE | 26 | IMU tare / 持久化 / 工厂重置；Settings 移动选中行；ADS-B LIST 绑定 own-ship |
+| MODE | 5 | 短按循环 PFD → TRAFFIC → LIST → SETTINGS → ABOUT → DIAG；长按 deep sleep |
+| UP | 22 | Traffic/List 选目标、Settings 调整、About/Diag 上滚 |
+| DOWN | 23 | Traffic/List 选目标、Settings 调整、About/Diag 下滚 |
 
 UP + DOWN 同时按住 5 秒保留给 BLE pairing window。
 

@@ -14,13 +14,15 @@ This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware r
 ## Maintainer Release Flow
 
 1. Confirm that `firmware/` builds locally.
-2. Before a formal release, update `firmware/version.txt` to the product version, for example `v0.5.0`.
-   Local builds embed this value into ESP-IDF `PROJECT_VER`; the boot splash and ABOUT page show the same value.
+2. Before a formal release, update `firmware/version.txt` to the product version, for example `v0.8.0`.
+   Normal local builds show `v0.8.0-<git-short-sha>`. Release CI passes
+   `PROJECT_VER=v0.8.0`, so the boot splash, ABOUT page, and release
+   assets use the exact formal version.
 3. Create and push the matching tag:
 
    ```bash
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.8.0
+   git push origin v0.8.0
    ```
 
 4. GitHub Actions runs `.github/workflows/release-esp32p4-firmware.yml`.
@@ -34,10 +36,10 @@ Before first use of GitHub Pages, confirm these repository settings:
 
 ## Version Source
 
-- The default product version lives in `firmware/version.txt`; the current value is `v0.5.0`.
-- ESP-IDF reads `firmware/version.txt` as `PROJECT_VER`, so local builds do not fall back to a commit id.
+- The default product version lives in `firmware/version.txt`; the current value is `v0.8.0`.
+- Normal local builds use `firmware/version.txt` as the base and append the current git short hash for traceability.
 - CI passes `-DPROJECT_VER="$RELEASE_VERSION"` so the embedded firmware version, manifest version, and asset names match.
-- If a board-prefixed tag is used, for example `esp32p4-v0.5.0`, the release script normalises it to product version `v0.5.0` so asset names do not repeat `esp32p4`.
+- If a board-prefixed tag is used, for example `esp32p4-v0.8.0`, the release script normalises it to product version `v0.8.0` so asset names do not repeat `esp32p4`.
 
 ## Release Assets
 

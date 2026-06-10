@@ -287,7 +287,7 @@ idf.py set-target esp32p4
 
 - `CONFIG_IDF_TARGET="esp32p4"` — 目标芯片
 - `CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y` — Waveshare 板有 32 MB Nor flash
-- `CONFIG_PARTITION_TABLE_CUSTOM=y` + `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"` — 用我们的自定义分区表（含 16 MiB LittleFS 区）
+- `CONFIG_PARTITION_TABLE_CUSTOM=y` + `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"` — 使用自定义分区表（含 10 MiB LittleFS 区；另支持可选 MicroSD 文件后端）
 - `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` + `CONFIG_ESP32P4_REV_MIN_100=y` — **针对 v1.x silicon 的 Waveshare 板**。IDF v6.0 默认编 v3.1+ 目标，而当前 Waveshare 出货的 P4 多是 v1.3 silicon，不打开这两个开关会出现：
   ```
   A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision
@@ -331,7 +331,7 @@ or
 or
  ...
 
-pilot_kit_box.bin binary size 0xf0xxx bytes. Smallest app partition is 0x400000 bytes. 0x3xxxxx bytes (77%) free.
+pilot_kit_box.bin binary size 0x989a40 bytes. Smallest app partition is 0xa00000 bytes. 0x765c0 bytes (5%) free.
 ```
 
 产物位于 `firmware/build/`：
@@ -461,7 +461,8 @@ I (1611) pilot_kit:   USB host stack installed
 I (1611) pilot_kit:   USB host stack online — spawning SDR + DSP tasks
 I (1612) record_sink: registered sink 'uart' (1 total)
 I (1615) record_sink: registered sink 'ble_raw' (2 total)
-I (3236) rec_file:    LittleFS mounted at /storage: 32/16384 KiB used   ← 第一次启动会自动格式化 LittleFS
+I (1620) pk_sd:       no microSD card at boot (will keep probing)      ← 没插卡时正常
+I (3236) rec_file:    LittleFS mounted at /storage: 32/10240 KiB used   ← 第一次启动会自动格式化 LittleFS
 I (3470) record_sink: registered sink 'file_littlefs' (3 total)
 I (3472) rec_file:    logging ADS-B to /storage/pilot_kit_ts_1.txt (rotate every 1024 KiB, keep 12 files)
 I (3474) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
@@ -508,6 +509,9 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 |------|------|
 | 通过 4-pin USB 转接器接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
 | 接 ST7789 SPI 屏到正确引脚 | 屏幕显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD 仪表 (蓝色天 + 棕色地 + 黄十字 + 黑色数字面板) |
+| 装 GT-U8 GPS | DIAG 更新 GPS/北斗卫星、SNR、天线状态和系统时间；定位后 TRAFFIC 获得本机位置 |
+| 装 BMP388 | PFD / DIAG 显示压力、QNH 修正高度和升降率 |
+| 插入 FAT32 MicroSD | DIAG 显示容量；Settings 把 LOG 改成 MICROSD 并重启后，日志写入 `/sdcard` |
 | 接 BNO085 模块到 I²C0 + INT/RST | 串口出现 `imu: rpy = +1.23 / -0.45 / 187.66 (acc=3 valid=98)` 周期更新，晃动板子时 PFD 的 horizon 跟着翻 |
 | C6 刷完 hosted slave 固件（见第 3 节） | 串口 `ble_gatt: advertising as "Pilot Kit Box-XXXXXX"`，手机 BLE 扫描器按 `Pilot Kit Box-` 前缀过滤能看到 |
 
@@ -661,6 +665,13 @@ idf.py menuconfig
 idf.py -p <PORT> erase-flash
 idf.py -p <PORT> flash
 ```
+
+### MicroSD 已插入但日志仍写 Flash
+
+日志后端只在启动时选择。确认卡是 FAT32，在 Settings 把 `LOG` 改为
+`MICROSD` 后重启。启动时卡未挂载成功会自动回退 LittleFS；可在 DIAG
+查看 MicroSD 容量和当前 `LOG` 后端。若要格式化卡，先把 LOG 切回 Flash
+并重启，再在 `FORMAT SD` 行 5 秒内按两次 UP 或 DOWN 确认。
 
 ### `USB device descriptor returned errors` / RTL-SDR 上电没识别
 

@@ -24,7 +24,7 @@
 3. [USB Host (RTL-SDR)](#3-usb-host-rtl-sdr)
 4. [蓝牙 / BLE / ESP-Hosted](#4-蓝牙--ble--esp-hosted)
 5. [Own-ship 绑定](#5-own-ship-绑定)
-6. [存储 / LittleFS](#6-存储--littlefs)
+6. [存储 / LittleFS / MicroSD](#6-存储--littlefs--microsd)
 7. [显示 / ST7789](#7-显示--st7789)
 8. [IMU / BNO085](#8-imu--bno085)
 9. [按键与电源](#9-按键与电源)
@@ -71,8 +71,8 @@ Chip type:          ESP32-P4 (revision v1.3)
 # Name,    Type, SubType,  Offset,    Size,    Flags
 nvs,       data, nvs,      0x9000,    0x6000,            ← 24 KiB Wi-Fi/BLE 配置
 phy_init,  data, phy,      0xf000,    0x1000,            ← 4 KiB RF 校准
-factory,   app,  factory,  0x10000,   0x400000,          ← 4 MiB 主固件
-storage,   data, spiffs,   ,          0x1000000,         ← 16 MiB LittleFS
+factory,   app,  factory,  0x10000,   0xa00000,          ← 10 MiB 主固件
+storage,   data, spiffs,   ,          0xa00000,          ← 10 MiB LittleFS
 ```
 
 总占用 ~20 MB / 32 MB，**剩余 12 MB 预留给未来 OTA pair**（A/B 分区双备份升级）。
@@ -218,14 +218,21 @@ PFD 的 ALT / GS / VS 可以来自某架已知本机 ADS-B transponder，而不�
 
 ---
 
-## 6. 存储 / LittleFS
+## 6. 存储 / LittleFS / MicroSD
+
+文件后端在启动时读取 NVS 配置。选择 MicroSD 且卡已挂载时写
+`/sdcard`，否则写 `/storage` LittleFS；选择了 MicroSD 但缺卡时会
+回退 Flash。设置页 `LOG` 行切换后端，**重启后生效**。`FORMAT SD`
+需要在 5 秒内再次按 UP 或 DOWN 确认，日志正在写卡时拒绝格式化。
 
 定义在 `firmware/main/record_sink_file.c`：
 
 ```c
 #define FILE_QUEUE_DEPTH    256                   /* 排队上限 */
 #define FILE_ROTATE_BYTES   (1 * 1024 * 1024)    /* 每个文件 1 MiB */
-#define FILE_KEEP_COUNT     12                   /* 保留 12 个文件 = 12 MiB */
+#define FILE_KEEP_COUNT     12                   /* 文件数上限；实际受 10 MiB 分区限制 */
+#define SD_ROTATE_BYTES     (16 * 1024 * 1024)   /* 每个文件 16 MiB */
+#define SD_KEEP_COUNT       64                    /* 保留约 1 GiB */
 ```
 
 调整后果：
@@ -234,8 +241,19 @@ PFD 的 ALT / GS / VS 可以来自某架已知本机 ADS-B transponder，而不�
 |------|------|
 | ↑ `FILE_QUEUE_DEPTH` | 短时高速写入时不丢数据，代价是 ~40B × N RAM |
 | ↑ `FILE_ROTATE_BYTES` | 文件个数减少，每个文件更大；flash 擦除单位也更大 |
-| ↑ `FILE_KEEP_COUNT` | 历史数据保留更久，总占用更大；超过 16 MiB 分区容量会丢老的 |
+| ↑ `FILE_KEEP_COUNT` | 历史数据保留更久，总占用更大；实际保留量受 10 MiB 分区容量限制 |
+| ↑ `SD_ROTATE_BYTES` / `SD_KEEP_COUNT` | MicroSD 单文件和总保留量增大；需要预留相应 FAT32 空间 |
 | 改文件命名前缀 `FILE_NAME_PREFIX` | 要同步改 `Pilot-Kit/scripts/adsb_to_track.py` 的 glob，否则 Python 端找不到 |
+
+MicroSD 使用 SDMMC Slot 0、4-bit 总线：
+
+```text
+CLK=GPIO43  CMD=GPIO44  D0..D3=GPIO39..42
+```
+
+板上没有独立 card-detect GPIO。`sd_detect` 任务在无卡时每 3 秒重试
+挂载，挂载后每 2 秒探活并刷新容量。文件后端在一次启动内不会动态迁移：
+日志写卡时拔卡后，需要重新插卡并重启，或把 LOG 改回 Flash 后重启。
 
 ---
 
@@ -327,10 +345,10 @@ esp_lcd_panel_swap_xy(s_panel, true);            /* rotate 90° */
 
 | 按键 | GPIO | 短按 | 长按 | 超长按 |
 |---|---:|---|---|---|
-| TARE | 26 | 按页面决定：IMU tare、Settings 切语言、ADS-B LIST 绑定 own-ship | 把当前 IMU tare 持久化到 NVS | IMU 工厂重置 |
-| MODE | 5 | 切换 PFD -> ADS-B LIST -> SETTINGS -> ABOUT | 进入 ESP32-P4 deep sleep；再次按 MODE 唤醒 | 无 |
-| UP | 22 | ADS-B LIST / ABOUT 向上滚动 | 抑制，用于组合手势检测 | 无 |
-| DOWN | 23 | ADS-B LIST / ABOUT 向下滚动 | 抑制，用于组合手势检测 | 无 |
+| TARE | 26 | Settings 移动选中行、ADS-B LIST 绑定 own-ship，其他页面执行 IMU tare | 把当前 IMU tare 持久化到 NVS | IMU 工厂重置 |
+| MODE | 5 | 切换 PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG | 进入 ESP32-P4 deep sleep；再次按 MODE 唤醒 | 无 |
+| UP | 22 | Traffic/List 选目标、Settings 调整、About/Diag 上滚 | 抑制，用于组合手势检测 | 无 |
+| DOWN | 23 | Traffic/List 选目标、Settings 调整、About/Diag 下滚 | 抑制，用于组合手势检测 | 无 |
 
 TARE 超长按 10 秒会执行 IMU 工厂重置：清除 NVS tare、清除 BNO 持久 DCD / 旧 reorientation 状态，并重新初始化 IMU。
 
@@ -366,7 +384,10 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 | `sdr` | sdr_task RTL-SDR 控制流 |
 | `dsp` | dsp_task DSP 解码 |
 | `adsb` | dsp_task 每帧解码结果 |
-| `rec_file` | LittleFS 文件 sink |
+| `rec_file` | LittleFS / MicroSD 文件 sink |
+| `pk_sd` | MicroSD 挂载、插拔与格式化 |
+| `gps` | GT-U8 NMEA、PPS 和卫星诊断 |
+| `baro` | BMP388 压力、高度和升降率 |
 | `record_sink` | sink 注册 |
 | `ble_gatt` | NimBLE host + GATT |
 | `rtlsdr_async` | librtlsdr 异步 IO |
@@ -393,6 +414,9 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 | `imu_task` | 0 | 5 | 4 KiB | imu_task.c |
 | `pfd_task` | 0 | 4 | 6 KiB | pfd.c |
 | `rec_file_writer` | 0 | 3 | 4 KiB | record_sink_file.c |
+| `gps` | 0 | 4 | 4 KiB | gps_task.c |
+| `baro` | 0 | 4 | 4 KiB | baro_task.c |
+| `sd_detect` | 0 | 2 | 4 KiB | pk_sdcard.c |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE 内部 |
 | `ble_emit` | 0 | 3 | 6 KiB | ble_gatt.c |
 

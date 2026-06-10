@@ -34,10 +34,12 @@
 - 内置识别数据库包括 `firmware/main/aircraft_db.bin` 的 ICAO24 飞机数据库、`firmware/main/airline_codes.c` 的航司代码表，以及 `firmware/main/icao_country.c` 的 ICAO24 国家地址段表。
 - LCD 是 **2.4 寸 TK024F3036 / ST7789 320x240 半透反射 SPI 屏**，当前接在左排 GPIO 28/29/30/31，背光 GPIO50。
 - IMU 是 **BNO085 / GY-BN008X**，I2C0 使用 GPIO7 / GPIO8，INT GPIO20，RST GPIO21。
-- UI 模式循环是 **PFD -> ADS-B LIST -> SETTINGS -> ABOUT -> PFD**。
+- UI 模式循环是 **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**。
 - MODE 短按切页，MODE 长按进入深睡眠，下一次 MODE 按下唤醒。
-- TARE 在 Settings 页切换语言，在 ADS-B LIST 页绑定 own-ship，在其他页面执行 IMU tare；长按持久化 tare，10 秒超长按执行 IMU 工厂重置。
-- Settings、About、Compass Calibration 页面已有中英文固件 UI 字符串，语言保存到 NVS。
+- TARE 在 Settings 页移动选中行，在 ADS-B LIST 页绑定 own-ship，在其他页面执行 IMU tare；长按持久化 tare，10 秒超长按执行 IMU 工厂重置。
+- GT-U8 GPS/北斗、GPIO46 PPS、BMP388 气压高度/升降率、交通雷达和 DIAG 实时诊断均已接入运行时。
+- Settings 可调整语言、QNH、地图朝向、雷达量程和日志后端；MicroSD 支持插拔探测、容量状态和受保护格式化。
+- Settings、About、Diagnostics、Compass Calibration 页面已有中英文固件 UI 字符串，配置保存到 NVS。
 
 ## 翻译维护规则
 

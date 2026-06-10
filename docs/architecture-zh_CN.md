@@ -2,7 +2,7 @@
 
 英文版：[`architecture.md`](architecture.md)
 
-本文描述当前 ESP32-P4 固件的运行拓扑。当前基线已经包含 RTL-SDR USB Host、Mode-S DSP 解码、LittleFS / UART / BLE 输出、BNO085 姿态融合、TK024F3036 / ST7789 PFD、本地 ADS-B 列表、Settings / About 中英文页面，以及 MODE 长按 deep sleep。
+本文描述 `v0.8.0` ESP32-P4 固件的运行拓扑。当前基线包含 RTL-SDR USB Host、Mode-S DSP 解码、LittleFS / MicroSD / UART / BLE 输出、GT-U8 GPS/PPS、BMP388 气压计、BNO085 姿态融合、PFD、交通雷达、ADS-B 列表、Settings / About / Diag 中英文页面，以及 MODE 长按 deep sleep。
 
 ## 总览
 
@@ -14,8 +14,10 @@ flowchart LR
         USB["USB-OTG HS\n专用 PHY"]
         C6["ESP32-C6-MINI-1\nWi-Fi 6 / BLE 5"]
         SDIO_C6["SDIO\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
-        FLASH["32 MB Nor Flash\nstorage 分区 16 MiB"]
-        SD["MicroSD slot\n后续 SDMMC 记录后端"]
+        FLASH["32 MB Nor Flash\nstorage 分区 10 MiB"]
+        SD["MicroSD slot\nSDMMC 4-bit\nCLK=43 CMD=44\nD0..3=39..42"]
+        GPS["GT-U8 GPS/BDS\nUART1 32/33\nPPS=46"]
+        BARO["BMP388\nI²C0 addr 0x76"]
         BNO["BNO085 IMU\nSDA=7 SCL=8\nINT=20 RST=21"]
         SCREEN["TK024F3036 / ST7789\n320×240 SPI\nCS=28 MOSI=29 SCK=30 DC=31 BL=50"]
         BUTTONS["4 个按钮\nTARE=26 MODE=5\nUP=22 DOWN=23"]
@@ -30,13 +32,13 @@ flowchart LR
         DSPTASK["dsp_task\nCPU1 prio 4\nmagnitude -> detect -> CPR"]
         DISPATCH["record_dispatch\n同步 fan-out"]
         UART["UART sink\nType-C CDC log"]
-        FILE["LittleFS file sink\nrotate 1 MiB keep 12"]
+        FILE["file sink\nFlash: 1 MiB 轮转，目标 12 文件\nMicroSD: 16 MiB × 64"]
         BLE["BLE raw sink\nqueue"]
         STATE["aircraft_state\n64 slots / 60 s fresh window"]
         GDL["GDL90 encoder\nHeartbeat + Traffic"]
         GATT["NimBLE GATT notify"]
         IMU["imu task\nBNO085 100 Hz"]
-        UI["pfd task\nPFD / LIST / SETTINGS / ABOUT"]
+        UI["pfd task\nPFD / TRAFFIC / LIST\nSETTINGS / ABOUT / DIAG"]
     end
 
     SDR --> USB --> SDRTASK --> RBUF --> DSPTASK
@@ -48,9 +50,12 @@ flowchart LR
     DISPATCH --> BLE
     STATE --> GDL --> GATT --> SDIO_C6 --> C6 --> BLE_PEER
     BNO --> IMU --> UI
+    GPS --> UI
+    BARO --> UI
     BUTTONS --> UI
     SCREEN --> UI
-    SD -.future.-> FILE
+    FLASH --> FILE
+    SD --> FILE
 ```
 
 ## 任务表
@@ -60,11 +65,13 @@ flowchart LR
 | `usb_host_lib` | 0 | 5 | 4 KiB | 调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。 |
 | `sdr` | 1 | 6 | 8 KiB | 拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`。USB URB 回调在同一任务上下文执行，只负责把 IQ 推入 ring buffer。 |
 | `dsp` | 1 | 4 | 4 KiB | 从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位，并输出 1 Hz dashboard。 |
-| `rec_file` | 0 | 3 | 4 KiB | LittleFS 文件写入任务，避免 DSP hot path 被 flash 写入阻塞。 |
+| `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
+| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并用 RMC + PPS 校准系统时间。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
+| `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
 | `buttons` | 0 | 3 | 3 KiB | 轮询 TARE / MODE / UP / DOWN，处理短按、长按、超长按和 UP+DOWN 组合。 |
-| `pfd` | 0 | 4 | 6 KiB | 把 PFD、ADS-B LIST、SETTINGS、ABOUT、DIAG（各硬件实时状态诊断）和校准向导渲染到 ST7789 framebuffer。 |
+| `pfd` | 0 | 4 | 6 KiB | 把 PFD、TRAFFIC、ADS-B LIST、SETTINGS、ABOUT、DIAG 和校准向导渲染到 ST7789 framebuffer。 |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host 事件循环，通过 C6 的 SDIO / VHCI controller 处理 BLE。 |
 | `ble_emit` | 0 | 3 | 6 KiB | 每秒快照 `aircraft_state`，发送 GDL90 Heartbeat 和 Traffic Report，同时发送 raw ts-line 队列。 |
 
@@ -99,8 +106,9 @@ Ring overflow  -> on_iq 中 xRingbufferSend 失败，只累计 drop counter；
 File queue full -> file sink xQueueSend 失败，记录 drop；
                    DSP path 不等待 flash。
 
-LittleFS write -> fwrite 或 rotation fopen 失败时 writer task 记录错误并退出；
-                  UART 和 BLE sink 继续工作。
+Storage write -> LittleFS / MicroSD 的 fwrite 或 rotation fopen 失败时记录错误；
+                 UART 和 BLE sink 继续工作。MicroSD 拔出后探测任务会卸载，
+                 但本次启动的文件后端不会动态切换，需重启后重新选择。
 
 BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
                   重新连接后自动继续。
@@ -108,30 +116,33 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 ## 时间同步
 
-固件没有 RTC，上电时系统时间从 Unix epoch 0 开始。BLE 连接后有两条校时路径：
+固件没有 RTC，上电时系统时间从 Unix epoch 0 开始。当前有三条校时路径，按质量保护避免低质量来源覆盖高质量来源：
 
-1. **iOS Current Time Service**：iOS 默认暴露 SIG 标准 CTS（UUID `0x1805`）。固件在 GAP CONNECT 后作为 GATT client 读取 `0x2A2B` 当前时间并调用 `settimeofday()`。
-2. **自定义 Time Sync characteristic**：UUID `...0004`，客户端写入 8 字节 little-endian Unix epoch milliseconds。Android 和跨平台客户端推荐使用这一条。
+1. **GT-U8 RMC + PPS**：RMC 提供 UTC 日期时间，GPIO46 PPS 对齐 UTC 整秒，是首选来源。
+2. **iOS Current Time Service**：iOS 默认暴露 SIG 标准 CTS（UUID `0x1805`）。固件在 GAP CONNECT 后作为 GATT client 读取 `0x2A2B` 当前时间并调用 `settimeofday()`。
+3. **自定义 Time Sync characteristic**：UUID `...0004`，客户端写入 8 字节 little-endian Unix epoch milliseconds。Android 和跨平台客户端推荐使用这一条。
 
 校时前输出的 Mode-S frame 仍会进入所有 sink，只是 `ts_ms` 很小（接近开机以来毫秒数）。客户端可以识别并丢弃这些 pre-sync frame。
 
 ### 载板传感器（GPS / 气压 / microSD）
 
 Pilot Kit Box 载板布线了 GT-U8 GPS（UART + GPIO46 上的 1 PPS）、BMP388
-气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。GPS 和气压驱动均已实现
-—— 设计见
+气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。三条路径均已实现
+—— 设计背景见
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md)。
 各能力如何接入上面的架构：
 
 - **GPS 授时**（`gps_task.c`）：GPS UTC + PPS 校正 `settimeofday()`。**GPS 优先（最准）**，
   BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可
-  自主校时，SETTINGS 显示同步状态（来源 + 距上次同步时长）。PPS 对齐 UTC 整秒沿，
+  自主校时，DIAG 显示系统时间、定位和卫星状态。PPS 对齐 UTC 整秒沿，
   提升 Mode-S 时间戳精度。
 - **GPS own-ship**（`gps_task.c`）：仅在 ADS-B LIST 未手动绑定飞机时作**兜底**；绑定优先。
   接入现有 `aircraft_state` own-ship 路径 + GDL90 ownship report。
 - **BMP388 气压**（`baro_task.c`）：高度/升降率仅作**参考**显示（增压座舱内失真），不作权威高度；QNH 可在 SETTINGS 中调整。
-- **microSD 记录后端**：插卡时优先于 LittleFS；Settings 可选（自动/flash/microSD）。
-  扩展上面 `record_dispatch` 的 file sink 路径。
+- **microSD 记录后端**：Settings 可选 Flash / MicroSD，设置写入 NVS 并在下次启动生效。
+  选择 MicroSD 但启动时未挂载会回退 LittleFS。Flash 按 1 MiB 轮转，文件数目标为 12，
+  实际保留量受 10 MiB 分区限制；
+  MicroSD 使用 16 MiB × 64 个文件（约 1 GiB），并支持受保护的 FAT32 格式化。
 
 ## 数据格式
 

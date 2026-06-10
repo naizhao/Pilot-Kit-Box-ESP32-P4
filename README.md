@@ -64,9 +64,9 @@ Pilot Kit Box focuses on:
 
 ## 技术概览 / Technical Overview
 
-当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构：ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR，实时接收 1090 MHz ADS-B / Mode-S 信号，在本机完成 dump1090 派生的 DSP 解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口和本地 LittleFS 文件输出给移动端或调试工具。
+当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构：ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR，实时接收 1090 MHz ADS-B / Mode-S 信号，在本机完成 dump1090 派生的 DSP 解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口以及 LittleFS / MicroSD 文件输出给移动端或调试工具。
 
-The ESP32-P4 edition removes the Linux SBC from the ADS-B path: the P4 drives an RTL-SDR receiver over native USB 2.0 HS, decodes 1090 MHz ADS-B / Mode-S frames on-device, fuses per-aircraft state, and publishes traffic over BLE GATT, serial output, and local LittleFS logs.
+The ESP32-P4 edition removes the Linux SBC from the ADS-B path: the P4 drives an RTL-SDR receiver over native USB 2.0 HS, decodes 1090 MHz ADS-B / Mode-S frames on-device, fuses per-aircraft state, and publishes traffic over BLE GATT, serial output, and LittleFS or MicroSD logs.
 
 ## 安全与适航边界 / Safety And Certification Boundary
 
@@ -76,9 +76,17 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 
 ## 当前状态 / Current Status
 
-截至 **2026-05-25**，主固件已经覆盖 ADS-B 接收、解码、BLE 分发、本地记录、LCD PFD、ADS-B 列表内置航空识别数据库、BNO085 姿态融合、四按钮交互、中英文 UI 和 MODE 长按深睡眠。
+截至 **2026-06-11**，`v0.8.0` 主固件已经覆盖 ADS-B 接收与解码、BLE GDL90 分发、GPS/PPS 定位授时、BMP388 气压高度、LittleFS/MicroSD 记录、LCD PFD、交通雷达、ADS-B 列表、实时诊断、内置航空识别数据库、BNO085 姿态融合、四按钮交互、中英文 UI 和 MODE 长按深睡眠。
 
-As of **2026-05-25**, the main firmware includes ADS-B reception and decode, BLE distribution, local recording, LCD PFD rendering, embedded aviation identity databases for the ADS-B list, BNO085 attitude fusion, four-button interaction, English/Chinese UI pages, and MODE long-press deep sleep.
+As of **2026-06-11**, the `v0.8.0` firmware includes ADS-B reception and decode, BLE GDL90 distribution, GPS/PPS positioning and time discipline, BMP388 barometric altitude, LittleFS/MicroSD recording, LCD PFD rendering, a traffic radar, ADS-B list, live diagnostics, embedded aviation identity databases, BNO085 attitude fusion, four-button interaction, English/Chinese UI pages, and MODE long-press deep sleep.
+
+### `v0.8.0` 发布重点 / Release Highlights
+
+- 新增 360° 交通雷达、PFD HSI 前方交通叠加和统一 own-ship 航向决策。<br>Adds the 360-degree traffic radar, forward-traffic HSI overlay, and unified own-ship heading selection.
+- 新增 BMP388 气压高度/升降率、可调 QNH，以及可滚动实时 DIAG 页面。<br>Adds BMP388 altitude/vertical speed, adjustable QNH, and the scrollable live DIAG page.
+- 增强 GT-U8 GPS/北斗诊断、RMC + PPS 授时，并通过 BLE 输出 GDL90 Ownship Report。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC + PPS time discipline, and BLE GDL90 Ownship Report output.
+- 新增 MicroSD 探测、Flash/MicroSD 日志切换、约 1 GiB 轮转保留和受保护格式化。<br>Adds MicroSD detection, Flash/MicroSD log selection, about 1 GiB rotation retention, and guarded formatting.
+- 完成 2.4 寸载板、板载 1090 MHz IFA 天线、3D 打印外壳和面板原型实物验证。<br>Documents the fabricated 2.4-inch carrier, on-board 1090 MHz IFA antenna, printed enclosure, and faceplate prototype.
 
 ## 核心特性 / Features
 
@@ -89,18 +97,22 @@ As of **2026-05-25**, the main firmware includes ADS-B reception and decode, BLE
 | 512 KiB IQ ring buffer、非阻塞 USB 回调、DSP 任务解码 | 512 KiB IQ ring buffer, non-blocking USB callback, DSP decode task | 已实现 / Implemented |
 | dump1090 派生 Mode-S 解码、CRC 过滤、CPR 全球定位 | dump1090-derived Mode-S decode, CRC filtering, CPR global position decode | 已实现 / Implemented |
 | 最多同时跟踪 64 个 ADS-B / Mode-S 目标，并聚合呼号、高度、位置、速度、垂直速度、应答机码和机型信息 | Tracks up to 64 ADS-B / Mode-S targets at once, aggregating callsign, altitude, position, velocity, vertical rate, squawk, and aircraft type | 已实现 / Implemented |
-| UART、LittleFS 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS files, and BLE raw ts-line output | 已实现 / Implemented |
-| BLE GATT：GDL90 Traffic、Heartbeat、Raw、Time Sync 特征 | BLE GATT: GDL90 Traffic, Heartbeat, Raw, and Time Sync characteristics | 已实现 / Implemented |
+| UART、LittleFS / MicroSD 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS/MicroSD files, and BLE raw ts-line output | 已实现 / Implemented |
+| BLE GATT：GDL90 Ownship、Traffic、Heartbeat、Raw、Time Sync | BLE GATT: GDL90 Ownship, Traffic, Heartbeat, Raw, and Time Sync | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
+| GT-U8 GPS / 北斗定位、PPS + RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, PPS + RMC time discipline, GPS own-ship fallback | 已实现 / Implemented |
+| BMP388 气压高度和升降率，QNH 可调 | BMP388 barometric altitude and vertical speed with adjustable QNH | 已实现 / Implemented |
 | TK024F3036 / ST7789 320x240 SPI 屏幕，PFD 约 30 FPS | TK024F3036 / ST7789 320x240 SPI display, PFD around 30 FPS | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |
+| 360° 交通雷达：航向朝上/北向上、2/5/10/20 NM、目标选择和相对高度 | 360° traffic radar: heading-up/north-up, 2/5/10/20 NM, target selection, relative altitude | 已实现 / Implemented |
+| PFD HSI 前方交通叠加和后方目标计数 | Forward-traffic overlay and aft-target count on the PFD HSI | 已实现 / Implemented |
 | ADS-B 列表页：ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE 和详情面板 | ADS-B list page: ICAO, callsign, country, ALT, SPD, HDG, VS, SQK, TYPE, and detail pane | 已实现 / Implemented |
 | 内置航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Embedded aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
 | TARE 在 ADS-B 列表中绑定 own-ship，PFD 可用本机 ADS-B 数据显示 ALT/GS/VS | TARE binds own-ship in ADS-B list; PFD can source ALT/GS/VS from bound ADS-B traffic | 已实现 / Implemented |
 | BNO085 100 Hz 姿态融合、校准向导、TARE 归零/持久化/工厂重置 | BNO085 100 Hz attitude fusion, calibration wizard, TARE zero/persist/factory reset | 已实现 / Implemented |
-| Settings / About / Compass Calibration 中英文 UI，语言写入 NVS | English/Chinese Settings, About, and Compass Calibration UI, persisted in NVS | 已实现 / Implemented |
+| Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
-| MODE 短按切换 PFD -> ADS-B LIST -> SETTINGS -> ABOUT；长按进入深睡眠，MODE 唤醒 | MODE short-press cycles PFD -> ADS-B LIST -> SETTINGS -> ABOUT; long-press sleeps, MODE wakes | 已实现 / Implemented |
+| MODE 短按切换 PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG；长按进入深睡眠 | MODE cycles PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG; long-press sleeps | 已实现 / Implemented |
 | RTL-SDR IQ stall 触发软重连，多次失败后才重启整机 | RTL-SDR IQ-stall soft re-init before full restart fallback | 已实现 / Implemented |
 
 ## 硬件清单 / Hardware Bill of Materials
@@ -110,6 +122,10 @@ As of **2026-05-25**, the main firmware includes ADS-B reception and decode, BLE
 | PFD / Primary Flight Display | ADS-B LIST / Aircraft List |
 |---|---|
 | <img src="images/PFD.jpg" alt="Pilot Kit Box PFD hardware preview" width="360"> | <img src="images/adsb-list.jpg" alt="Pilot Kit Box ADS-B list hardware preview" width="360"> |
+
+| 交通雷达 / Traffic Radar | 完整原型 / Finished Prototype |
+|---|---|
+| <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
 
 ### 载板与外壳 / Carrier Board & Enclosure
 
@@ -129,6 +145,16 @@ The 2.4-inch carrier board (120×80 mm) integrates the ESP32-P4 module, GPS (GT-
 |---|---|
 | <img src="images/panel.png" alt="Pilot Kit Box enclosure faceplate" width="360"> | <img src="images/3d-case-front.png" alt="Pilot Kit Box enclosure with carrier board" width="360"> |
 
+### 实物打样与装配 / Fabrication & Assembly
+
+| 载板实物 / Fabricated Carrier PCB | 载板装配 / Assembled Carrier |
+|---|---|
+| <img src="images/pcb-finish.jpg" alt="Fabricated Pilot Kit Box carrier PCB" width="360"> | <img src="images/assemble.jpg" alt="Assembled Pilot Kit Box carrier with display and modules" width="360"> |
+
+| 3D 打印外壳 / Printed Enclosure | 面板装配完成 / Finished Faceplate Assembly |
+|---|---|
+| <img src="images/3d-case-finish.jpg" alt="3D printed Pilot Kit Box enclosure" width="360"> | <img src="images/assemble-finish.jpg" alt="Completed Pilot Kit Box prototype" width="360"> |
+
 ### 必备硬件 / Required
 
 | 硬件 | Hardware | 说明 / Notes |
@@ -144,21 +170,27 @@ The 2.4-inch carrier board (120×80 mm) integrates the ESP32-P4 module, GPS (GT-
 
 ### BOM 成本参考 / BOM Cost Reference
 
-以下为当前原型的人民币成本参考，实际价格会随采购渠道、数量、运费和替代料变化。美元价格按粗略汇率 **¥1 ≈ $0.15** 估算；反向参考 **$1 ≈ ¥6.78**。
+以下为当前完整原型的人民币成本参考，实际价格会随采购渠道、数量、运费和替代料变化。美元价格按粗略汇率 **¥1 ≈ $0.15** 估算；反向参考 **$1 ≈ ¥6.78**。BMP388 和 GT-U8 已计入 `v0.8.0` 载板方案。
 
-The following RMB costs are reference prices for the current prototype and will vary with supplier, quantity, shipping, and substitutions. USD prices are rough estimates using **¥1 ≈ $0.15**; reverse reference is **$1 ≈ ¥6.78**.
+The following costs cover the complete current prototype and will vary with supplier, quantity, shipping, and substitutions. USD prices are rough estimates using **¥1 ≈ $0.15**; reverse reference is **$1 ≈ ¥6.78**. BMP388 and GT-U8 are included in the `v0.8.0` carrier-board baseline.
 
-| 物料 | Part | 人民币参考 / RMB Reference | 美元估算 / USD Estimate |
-|---|---|---:|---:|
-| 微雪 ESP32P4C6 | Waveshare ESP32P4C6 | ¥76 | ~$11.40 |
-| BNO085 | BNO085 | ¥76 | ~$11.40 |
-| RTL-SDR FC0013 | RTL-SDR FC0013 | ¥10 | ~$1.50 |
-| IPEX、MCX、SMA 线、座子等 | IPEX / MCX / SMA cables, sockets, and RF adapters | ¥2 | ~$0.30 |
-| 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | ¥4 | ~$0.60 |
-| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | ¥25 | ~$3.75 |
-| 2.4 寸半透反射屏 | 2.4-inch transflective display | ¥38 | ~$5.70 |
-| USB-A 母座 | USB-A female socket | ¥0.3 | ~$0.05 |
-| **合计** | **Total** | **约 ¥231.3** | **约 $34.70** |
+| 物料 | Part | 人民币参考 / RMB Reference | 美元估算 / USD Estimate | 备注 / Notes |
+|---|---|---:|---:|---|
+| 微雪 ESP32P4C6 | Waveshare ESP32P4C6 | ¥76 | ~$11.40 | ESP32-P4 + ESP32-C6 |
+| BNO085 IMU | BNO085 | ¥76 | ~$11.40 | 9 轴姿态融合 / 9-axis fusion |
+| 气压计 BMP388 | BMP388 barometer | ¥13 | ~$1.95 | `v0.8.0` 新增 / Added in `v0.8.0` |
+| GPS GT-U8（ATGM336H） | GT-U8 (ATGM336H) GNSS | ¥25 | ~$3.75 | GPS / 北斗；u-blox M9N 可替代但成本更高 / GPS + BeiDou |
+| RTL-SDR FC0013 | RTL-SDR FC0013 | ¥10 | ~$1.50 | 1090 MHz ADS-B |
+| IPEX、MCX、SMA 线座 | RF cables and adapters | ¥2 | ~$0.30 | 天线与 SDR 连接 / Antenna and SDR interconnect |
+| 5V 2A / 2.4A Type-C 充电模块 | 5V Type-C charging module | ¥4 | ~$0.60 | 电池供电 / Battery power |
+| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh Li-ion battery | ¥25 | ~$3.75 | |
+| 2.4 寸半透反射屏 | 2.4-inch transflective LCD | ¥38 | ~$5.70 | |
+| USB-A 母座 | USB-A socket | ¥0.3 | ~$0.05 | |
+| 嘉立创 PCB | JLCPCB carrier PCB | ¥7 | ~$1.05 | 裸板参考 / Bare PCB reference |
+| **电子件小计** | **Electronics subtotal** | **约 ¥276.3** | **约 $41.45** | |
+| 嘉立创 3D 打印外壳 | JLC 3D-printed enclosure | ¥50 | ~$7.50 |  |
+| 嘉立创面板打印 | JLC faceplate print | ¥10 | ~$1.50 |  |
+| **原型合计（全部）** | **Complete prototype total** | **约 ¥336.3** | **约 $50.45** | |
 
 ### 首次设置或选配 / Setup And Optional
 
@@ -174,12 +206,12 @@ The following RMB costs are reference prices for the current prototype and will 
 ### 板载资源 / On-board Resources
 
 - ESP32-C6-MINI-1 通过 SDIO 作为 Wi-Fi 6 / BLE 5 协处理器；当前固件使用 BLE。
-- MicroSD 卡座已在硬件上可用，当前记录后端默认使用 16 MiB LittleFS 分区。
+- MicroSD 卡座已启用；设置页可在 10 MiB LittleFS 与 MicroSD 记录之间切换，并支持卡状态诊断和二次确认格式化。
 - CH343P USB-UART 桥用于 P4 烧录和串口监视。
 - ES8311 音频 codec、麦克风、扬声器功放为板载资源，当前航电路径尚未使用。
 
 - The ESP32-C6-MINI-1 is connected over SDIO as the Wi-Fi 6 / BLE 5 co-processor; the current firmware uses BLE.
-- The MicroSD slot is present on the board; the current recording backend defaults to a 16 MiB LittleFS partition.
+- The MicroSD slot is active; Settings can select 10 MiB LittleFS or MicroSD recording, with card diagnostics and guarded formatting.
 - The CH343P USB-UART bridge handles P4 flashing and serial monitoring.
 - The ES8311 codec, microphone, and speaker amplifier are on-board resources, not currently used by the avionics path.
 
@@ -250,14 +282,16 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 
 - BLE pairing-window 手势已检测；移动端配对窗口 UI 尚未实现。
 - BLE Device Information Service 尚未暴露固件版本；版本目前显示在 boot splash 和 ABOUT 页。
-- Wi-Fi 分发、配置写特征、MicroSD 记录后端和 OTA A/B 分区仍是后续工作。
-- 当前 own-ship 数据来自配置或 ADS-B 列表中手动绑定的 ICAO；没有 GPS 输入时不会生成 GDL90 Ownship Report。
+- GDL90 Heartbeat 的 `utc_ok` 位尚未随 GPS/BLE 校时状态更新；客户端应以时间戳值为准。
+- Wi-Fi 分发、BLE 配置写特征和 OTA A/B 分区仍是后续工作。
+- GDL90 Ownship Report 需要有效 GPS fix 或手动绑定的本机目标；无有效位置时不会发送可信本机位置。
 - ESP32-P4 v1.x 深睡眠 GPIO hold 有 silicon 限制，MODE 长按可进入深睡眠并唤醒，但背光残余电流仍受硬件版本影响。
 
 - The BLE pairing-window gesture is detected; the mobile pairing-window UI is not implemented yet.
 - BLE Device Information Service does not yet expose firmware version; the version is shown on the boot splash and ABOUT page.
-- Wi-Fi distribution, configuration-write characteristics, MicroSD recording, and OTA A/B partitions are future work.
-- Own-ship data currently comes from a configured or list-bound ICAO; without GPS input the firmware does not emit a GDL90 Ownship Report.
+- The GDL90 Heartbeat `utc_ok` bit does not yet follow GPS/BLE clock discipline; clients should use the timestamp value.
+- Wi-Fi distribution, BLE configuration-write characteristics, and OTA A/B partitions remain future work.
+- GDL90 Ownship Report requires a valid GPS fix or a manually bound own-ship target; the firmware does not advertise a trustworthy own position without one.
 - ESP32-P4 v1.x has deep-sleep GPIO-hold limitations; MODE long-press sleep/wake works, but residual backlight current depends on hardware revision.
 
 ## 致谢 / Credits

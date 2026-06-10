@@ -33,10 +33,10 @@ an LP_IO pin (see `docs/hardware/board_pinout.md` §3.4 for the why):
 
 | Button | Short press (< 3 s) | Long press (≥ 3 s) | Very-long press (≥ 10 s) |
 |--------|---------------------|--------------------|---------------------------|
-| **TARE** | Context-sensitive: live IMU tare on PFD/ABOUT; toggle language on SETTINGS; bind highlighted aircraft as own-ship on ADS-B LIST | **Persist** the current IMU tare to NVS so it survives reboot | **Factory reset** — wipe NVS tare + BNO's persisted DCD + reinit the chip. Use this if heading is stuck wrong after a reboot. |
-| **MODE** | Cycle screen: **PFD → ADS-B LIST → SETTINGS → ABOUT → PFD** | **Soft power off** — backlight off + ESP32-P4 deep sleep; press MODE again to wake/cold-boot | — |
-| **UP**   | Scroll list selection up | *(suppressed — reserved for the combo)* | — |
-| **DOWN** | Scroll list selection down | *(suppressed — reserved for the combo)* | — |
+| **TARE** | Context-sensitive: move the selected SETTINGS row; bind the highlighted ADS-B LIST aircraft as own-ship; live IMU tare on other pages | **Persist** the current IMU tare to NVS so it survives reboot | **Factory reset** — wipe NVS tare + BNO's persisted DCD + reinit the chip. Use this if heading is stuck wrong after a reboot. |
+| **MODE** | Cycle screen: **PFD → TRAFFIC → ADS-B LIST → SETTINGS → ABOUT → DIAG → PFD** | **Soft power off** — backlight off + ESP32-P4 deep sleep; press MODE again to wake/cold-boot | — |
+| **UP**   | Previous target in TRAFFIC/LIST; adjust SETTINGS row; scroll ABOUT/DIAG up | *(suppressed — reserved for the combo)* | — |
+| **DOWN** | Next target in TRAFFIC/LIST; adjust SETTINGS row; scroll ABOUT/DIAG down | *(suppressed — reserved for the combo)* | — |
 
 ### Combo gestures
 
@@ -171,13 +171,16 @@ gets stuck.
 
 | Mode | What it shows |
 |------|---------------|
-| **PFD** *(default)* | Primary flight display: sky/ground horizon, pitch ladder, bank arc, heading tape, attitude readout, ADS-B aircraft count. |
+| **PFD** *(default)* | Primary flight display: horizon, pitch ladder, bank arc, heading/HSI, speed tape, barometric altitude/vertical speed, GPS status, and ADS-B count. The HSI overlays forward traffic. |
+| **TRAFFIC** | 360-degree traffic radar with heading-up/north-up orientation, 2/5/10/20 NM ranges, relative altitude, and trend arrows. UP/DOWN selects a target and exposes its detail bar. Requires GPS or a manually bound own-ship position. |
 | **ADS-B LIST** | Scrollable list of tracked aircraft. Top half: ICAO, callsign, country, altitude, speed, heading, vertical speed, squawk, and type. Bottom half: detail pane for the highlighted row. Short-press **TARE** here to bind the highlighted ICAO as own-ship for PFD ALT / GS / VS. |
-| **SETTINGS** | Language page. Short-press **TARE** to switch English / Chinese; the selection is saved to NVS and survives reboot. |
-| **ABOUT** | Project version, build time, hardware summary, calibration status. |
+| **SETTINGS** | TARE moves through Language, QNH, MAP, RANGE, LOG, and FORMAT SD. UP/DOWN changes the selected value. QNH moves in 0.25 hPa steps; MAP selects heading-up/north-up; RANGE selects 2/5/10/20 NM; LOG selects Flash/MicroSD and takes effect after reboot. FORMAT SD requires a second press within five seconds and refuses while logging to the card. |
+| **ABOUT** | Project version, build time, hardware summary, and calibration status. UP/DOWN scrolls. |
+| **DIAG** | Live SDR/DSP, BLE, GPS/BeiDou satellite and SNR, system time, BMP388/QNH, MicroSD, active log backend, written-count, and drop-count diagnostics. UP/DOWN scrolls. |
 | **COMPASS CAL** *(automatic overlay)* | Figure-8 calibration wizard. It appears automatically when BNO085 accuracy stays at 0 for long enough, exits after convergence, and can be dismissed with MODE. |
 
-Use **UP / DOWN** in `ADS-B LIST` mode to move the highlight. Use **UP / DOWN** in `ABOUT` mode to scroll the page.
+Settings values are persisted in NVS. If MicroSD is selected but absent
+at boot, the file sink falls back to LittleFS for that boot.
 
 ---
 
@@ -190,3 +193,6 @@ Use **UP / DOWN** in `ADS-B LIST` mode to move the highlight. Use **UP / DOWN** 
 | Screen shows uniform pale blue on first boot | LCD wiring fault: a signal line shorted to GND | See `docs/hardware/board_pinout.md` §3 wiring diagram |
 | `acc` never climbs past 1 even after lots of motion | Magnetic interference (laptop, phone, speakers, metal table) | Move to a clean environment, retry |
 | Heading drifts slowly over minutes | Normal — small DCD nudge from background fusion | Short-press TARE to re-zero |
+| TRAFFIC shows `NO OWN POS` | GPS has no fix and no usable manual own-ship binding exists | Move to open sky for a fix, or bind the own aircraft in ADS-B LIST |
+| LOG shows `MICROSD (REBOOT)` | File backend is selected only at boot | Keep the card inserted and reboot; a missing card falls back to Flash |
+| FORMAT SD shows `IN USE BY LOG` | The active writer is using the MicroSD card | Select Flash, reboot, then format the card |

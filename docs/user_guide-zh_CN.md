@@ -22,10 +22,10 @@ Pilot Kit Box 是态势感知和开发设备，不是经过适航认证的主飞
 
 | 按键 | 短按（< 3 s） | 长按（>= 3 s） | 超长按（>= 10 s） |
 |---|---|---|---|
-| **TARE** | 按页面决定：PFD / ABOUT 执行 IMU live tare；SETTINGS 切换语言；ADS-B LIST 把高亮飞机绑定为 own-ship | 把当前 IMU tare 保存到 NVS，重启后仍生效 | 工厂重置 IMU：清除 NVS tare、BNO085 持久 DCD 并重新初始化 |
-| **MODE** | 页面循环：**PFD -> ADS-B LIST -> SETTINGS -> ABOUT -> PFD** | 软关机：关闭背光并进入 ESP32-P4 deep sleep；再按 MODE 唤醒 / 冷启动 | 无 |
-| **UP** | ADS-B LIST / ABOUT 向上滚动 | 抑制，保留给组合手势 | 无 |
-| **DOWN** | ADS-B LIST / ABOUT 向下滚动 | 抑制，保留给组合手势 | 无 |
+| **TARE** | 按页面决定：SETTINGS 移动选中行；ADS-B LIST 把高亮飞机绑定为 own-ship；其他页面执行 IMU live tare | 把当前 IMU tare 保存到 NVS，重启后仍生效 | 工厂重置 IMU：清除 NVS tare、BNO085 持久 DCD 并重新初始化 |
+| **MODE** | 页面循环：**PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD** | 软关机：关闭背光并进入 ESP32-P4 deep sleep；再按 MODE 唤醒 / 冷启动 | 无 |
+| **UP** | TRAFFIC / ADS-B LIST 选择上一个目标；SETTINGS 调整当前行；ABOUT / DIAG 向上滚动 | 抑制，保留给组合手势 | 无 |
+| **DOWN** | TRAFFIC / ADS-B LIST 选择下一个目标；SETTINGS 调整当前行；ABOUT / DIAG 向下滚动 | 抑制，保留给组合手势 | 无 |
 
 组合手势：
 
@@ -111,10 +111,12 @@ MODE 短按循环以下用户可见页面：
 
 | 模式 | 内容 |
 |---|---|
-| **PFD**（默认） | 主飞行显示器：天空/地平线、pitch ladder、bank arc、heading / HSI、高度带、GS / VS、ADS-B 数量。 |
+| **PFD**（默认） | 主飞行显示器：天空/地平线、pitch ladder、bank arc、heading / HSI、速度带、气压高度/升降率、GPS 状态和 ADS-B 数量；HSI 会叠加前方交通。 |
+| **TRAFFIC** | 360° 交通雷达。支持航向朝上或北向上、2/5/10/20 NM 量程、相对高度与升降趋势；UP / DOWN 选择目标，底部显示详情。需要 GPS 或手动绑定目标提供本机位置。 |
 | **ADS-B LIST** | 最近 60 秒内追踪到的飞机列表。上半部分显示 ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE；下半部分显示高亮飞机详情。短按 TARE 把高亮飞机绑定为 own-ship，PFD 的 ALT / GS / VS 可来自该机 ADS-B 数据。 |
-| **SETTINGS** | 语言设置页。短按 TARE 在 English / 中文之间切换，选择保存到 NVS。 |
+| **SETTINGS** | TARE 在 Language、QNH、MAP、RANGE、LOG、FORMAT SD 六行之间移动；UP / DOWN 修改当前项。QNH 每次调整 0.25 hPa；MAP 切换 HDG UP / NORTH UP；RANGE 选择 2/5/10/20 NM；LOG 切换 Flash / MicroSD（重启生效）。FORMAT SD 需要 5 秒内再次按 UP 或 DOWN 确认，日志正在写卡时拒绝格式化。 |
 | **ABOUT** | 项目版本、构建时间、硬件摘要、校准状态。UP / DOWN 可滚动。 |
+| **DIAG** | 实时诊断：SDR/DSP、BLE、GPS/北斗卫星与 SNR、系统时间、BMP388/QNH、MicroSD、当前日志后端及写入/丢弃计数。UP / DOWN 可滚动。 |
 | **COMPASS CAL**（自动覆盖层） | BNO085 `acc=0` 持续过久时自动出现的画 8 字校准向导；收敛后自动退出，也可按 MODE 跳过。 |
 
 ## 6. 常见问题
@@ -127,3 +129,6 @@ MODE 短按循环以下用户可见页面：
 | `acc` 很久都不超过 1 | 磁干扰太强 | 换到远离金属和电子设备的位置 |
 | 航向几分钟内缓慢漂移 | 正常融合微调或安装方向变化 | 短按 TARE 重新归零 |
 | MODE 长按后立刻又开机 | 按键未释放就进入唤醒条件 | 固件已等待 MODE 释放；若仍复现，检查 MODE 接线是否被短到 GND |
+| TRAFFIC 显示 `NO OWN POS` | GPS 尚未定位，也没有可用的手动 own-ship 绑定 | 把设备移到可见天空的位置等待 GPS fix，或在 ADS-B LIST 绑定本机目标 |
+| LOG 选择 MicroSD 后仍显示 `MICROSD (REBOOT)` | 文件后端只在启动时选择 | 保持卡已插入并重启；缺卡会自动回退 Flash |
+| FORMAT SD 显示 `IN USE BY LOG` | 当前日志后端正在写 MicroSD | 先把 LOG 改为 Flash 并重启，再执行格式化 |

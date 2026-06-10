@@ -430,9 +430,9 @@ Pressed → GPIO reads `0`. Released → reads `1`. Polled at 50 Hz with
 | Button | GPIO | Header | Function                                |
 |--------|------|--------|-----------------------------------------|
 | **TARE** (BTN1) | 26 | right | tare / persist / factory reset (short / long / very-long) |
-| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → LIST → SETTINGS → ABOUT; long = power off (deep sleep, wake on next press) |
-| **UP**   (BTN3) | 22 | right | list scroll up / menu up               |
-| **DOWN** (BTN4) | 23 | right | list scroll down / menu down           |
+| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → TRAFFIC → LIST → SETTINGS → ABOUT → DIAG; long = power off |
+| **UP**   (BTN3) | 22 | right | target select / setting adjust / scroll up |
+| **DOWN** (BTN4) | 23 | right | target select / setting adjust / scroll down |
 
 TARE / UP / DOWN cluster on the **right header** so their wiring stays on
 one side of the breadboard. MODE sits on **GPIO5 on the left header**
@@ -447,7 +447,7 @@ other three buttons.
 
 | Press kind                          | TARE                 | MODE              | UP        | DOWN      |
 |-------------------------------------|----------------------|-------------------|-----------|-----------|
-| **Short** (released within < 3 s)   | context-sensitive: Settings toggles language, ADS-B LIST binds own-ship, other modes snapshot current pose as zero (RAM only) | cycle PFD → LIST → SETTINGS → ABOUT → PFD … | scroll up | scroll down |
+| **Short** (released within < 3 s)   | context-sensitive: Settings moves the cursor, ADS-B LIST binds own-ship, other modes snapshot current pose as zero (RAM only) | cycle PFD → TRAFFIC → LIST → SETTINGS → ABOUT → DIAG → PFD … | select/adjust/scroll up | select/adjust/scroll down |
 | **Long**  (held ≥ 3 s)              | persist current tare to NVS (survives reboot) | enter deep sleep; next MODE press wakes / cold-boots | *(suppressed)* | *(suppressed)* |
 | **Very-long** (held ≥ 10 s)         | **factory reset** — wipe NVS tare + BNO's persisted reorientation + DCD, reinit chip | — | — | — |
 | **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (firmware records request; mobile UI handling not implemented yet) | — |

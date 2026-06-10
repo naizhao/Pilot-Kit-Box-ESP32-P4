@@ -14,13 +14,14 @@
 ## 发布流程
 
 1. 确认 `firmware/` 可以本地构建通过。
-2. 发正式版本前，把 `firmware/version.txt` 更新为同一个产品版本号，例如 `v0.5.0`。
-   本地构建会把这个值写入 ESP-IDF 的 `PROJECT_VER`，启动页和 ABOUT 页都会显示它。
+2. 发正式版本前，把 `firmware/version.txt` 更新为同一个产品版本号，例如 `v0.8.0`。
+   普通本地构建会显示 `v0.8.0-<git短哈希>`；发布 CI 显式传入
+   `PROJECT_VER=v0.8.0`，启动页、ABOUT 页和发布产物统一显示正式版本号。
 3. 创建并推送同名 tag，例如：
 
    ```bash
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.8.0
+   git push origin v0.8.0
    ```
 
 4. GitHub Actions 会运行 `.github/workflows/release-esp32p4-firmware.yml`。
@@ -34,10 +35,10 @@
 
 ## 版本号来源
 
-- 默认产品版本写在 `firmware/version.txt`，当前为 `v0.5.0`。
-- ESP-IDF 会优先读取 `firmware/version.txt` 作为 `PROJECT_VER`，所以本地构建不再退回到 commit id。
+- 默认产品版本写在 `firmware/version.txt`，当前为 `v0.8.0`。
+- 普通本地构建以 `firmware/version.txt` 为基础并追加当前 git 短哈希，方便定位具体构建。
 - CI 打包时会显式传入 `-DPROJECT_VER="$RELEASE_VERSION"`，让固件内嵌版本、manifest 版本和产物文件名保持一致。
-- 如果使用板型前缀 tag（例如 `esp32p4-v0.5.0`），发布脚本会把它归一为产品版本 `v0.5.0`，避免产物名里重复出现 `esp32p4`。
+- 如果使用板型前缀 tag（例如 `esp32p4-v0.8.0`），发布脚本会把它归一为产品版本 `v0.8.0`，避免产物名里重复出现 `esp32p4`。
 
 ## 产物命名
 
