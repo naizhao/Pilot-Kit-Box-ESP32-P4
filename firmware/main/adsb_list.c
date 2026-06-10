@@ -27,6 +27,7 @@
 #include "aircraft_state.h"
 #include "geo.h"
 #include "own_ship.h"
+#include "imu_task.h"
 #include "airline_codes.h"
 #include "display.h"
 #include "icao_country.h"
@@ -432,7 +433,14 @@ static void render_detail(uint16_t *fb, int detail_top_y,
     aircraft_t own;
     pk_own_src_t own_src;
     bool have_own = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US, &own, &own_src);
-    (void)own_src;   /* src not consumed in detail pane */
+    /* 本机航向(箭头用)统一走 4 级优先级 ADS-B>IMU>GPS track。 */
+    pk_imu_sample_t imu_s;
+    bool imu_ok = pk_imu_sample_get(&imu_s);
+    float own_hdg_f; pk_hdg_src_t hsrc;
+    bool have_own_hdg = pk_own_heading_resolve(
+        have_own, own_src, &own, imu_ok && imu_s.valid,
+        imu_ok ? imu_s.yaw_deg : 0.0f, &own_hdg_f, &hsrc);
+    int own_hdg_deg = have_own_hdg ? (int)lroundf(own_hdg_f) : 0;
     (void)have_own;  /* used below for rel-alt / dist */
 
     /* --- ICAO + country + own-binding marker --- */
@@ -532,9 +540,8 @@ static void render_detail(uint16_t *fb, int detail_top_y,
             char vsicon  = vs_state_icon(a->vert_rate_fpm, true);
             int  vs_abs  = a->vert_rate_fpm < 0
                               ? -a->vert_rate_fpm : a->vert_rate_fpm;
-            bool have_own_vel = have_own && own.have_velocity;
-            char hdgicon = hdg_dir_icon(a, have_own_vel,
-                                        have_own_vel ? own.heading_deg : 0);
+            char hdgicon = hdg_dir_icon(a, have_own_hdg,
+                                        have_own_hdg ? own_hdg_deg : 0);
             /* "~" is the degree symbol per pk_font's mapping. */
             snprintf(buf, sizeof(buf), "%d kt @ %c%03d~  %c%d fpm",
                      a->ground_speed_kt, hdgicon, a->heading_deg,
@@ -680,9 +687,15 @@ void pk_adsb_list_render(uint16_t *fb)
     pk_own_src_t own_src_list;
     bool       have_own   = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US,
                                                 &own, &own_src_list);
-    (void)own_src_list;  /* src not consumed in list renderer */
-    bool have_own_velocity = have_own && own.have_velocity;
-    int  own_heading_deg   = have_own_velocity ? own.heading_deg : 0;
+    /* 本机航向(每行 HDG 箭头用)统一走 4 级优先级 ADS-B>IMU>GPS track。 */
+    pk_imu_sample_t imu_s;
+    bool imu_ok = pk_imu_sample_get(&imu_s);
+    pk_hdg_src_t hsrc_list;
+    float own_hdg_f;
+    bool have_own_velocity = pk_own_heading_resolve(
+        have_own, own_src_list, &own, imu_ok && imu_s.valid,
+        imu_ok ? imu_s.yaw_deg : 0.0f, &own_hdg_f, &hsrc_list);
+    int  own_heading_deg   = have_own_velocity ? (int)lroundf(own_hdg_f) : 0;
 
     /* ----- Adaptive layout ---------------------------------------------
      * Count how many lines the detail pane will draw for the selected

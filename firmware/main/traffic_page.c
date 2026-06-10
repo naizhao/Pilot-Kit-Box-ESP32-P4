@@ -257,14 +257,14 @@ void pk_traffic_page_render(uint16_t *fb)
     float own_heading = 0.0f;
     bool  hdg_valid   = false;
     float mag_var     = 0.0f;
-    if (own_valid && own.have_velocity) {
-        own_heading = (float)own.heading_deg;
-        hdg_valid   = true;
-        mag_var     = 0.0f;
-    } else if (have) {
-        own_heading = s.yaw_deg;
-        hdg_valid   = true;
-        mag_var     = own_valid ? pk_mag_var_lookup(own.lat, own.lon) : 0.0f;
+    {
+        pk_hdg_src_t hsrc;
+        hdg_valid = pk_own_heading_resolve(own_valid, src, &own,
+                                           have, have ? s.yaw_deg : 0.0f,
+                                           &own_heading, &hsrc);
+        /* IMU 是磁北系 → 减查表磁偏角转真北；ADS-B / GPS track 已是真北。 */
+        if (hsrc == PK_HDG_SRC_IMU && own_valid)
+            mag_var = pk_mag_var_lookup(own.lat, own.lon);
     }
 
     /* 相对高度的本机基准:绑定 own 用其 ADS-B 气压高度(与目标 Mode-C 同基准),

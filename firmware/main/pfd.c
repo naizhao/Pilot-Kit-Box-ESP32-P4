@@ -139,37 +139,13 @@ static void pfd_task(void *arg)
                          own_src, own_valid, own.lat, own.lon);
             }
 
-            /* HDG source priority: ONLY a bound own-ship's ADS-B ground
-             * track (DF17 metype 19) overrides IMU magnetic yaw — the
-             * bound transponder reports the actual ground track of the
-             * aircraft we're flying in, while the IMU reports where the
-             * kit happens to point (panel / pocket / yoke clamp). The
-             * GPS-fallback own-ship's "heading" is just GPS COG (ground
-             * course): meaningless at rest and never an aircraft heading,
-             * so it must NOT feed HDG — fall through to IMU yaw instead.
-             * IMU yaw is also the fallback when nothing is bound.
-             * The imu_valid field in pk_pfd_status_t / pk_pfd_hsi_t is
-             * really "yaw_valid" — left renamed to avoid churning two
-             * more headers; consumers only use it as a "yaw_deg good" gate. */
-            float yaw_deg     = 0.0f;
-            bool  yaw_valid   = false;
-            if (own_valid && own.have_velocity &&
-                own_src == PK_OWN_SRC_BOUND_ADSB) {
-                /* 1. 绑定 ADS-B：用飞机自报地面航迹（飞机自己的数据最准）。 */
-                yaw_deg   = (float)own.heading_deg;
-                yaw_valid = true;
-            } else if (have) {
-                /* 2. 未绑定/绑定失效：IMU 磁航向 yaw（机头朝向）。 */
-                yaw_deg   = s.yaw_deg;
-                yaw_valid = true;
-            } else if (own_valid && own.have_velocity &&
-                       own_src == PK_OWN_SRC_GPS && own.ground_speed_kt >= 2) {
-                /* 3. 兜底：IMU 也失效、但 GPS 在动(地速≥2kt 才有意义) → GPS track。
-                 *    静止时 GPS track 是噪声，故设速度门槛，宁可无航向也不显示乱值。 */
-                yaw_deg   = (float)own.heading_deg;
-                yaw_valid = true;
-            }
-            /* 4. 以上都不满足 → yaw_valid 保持 false，HDG 显示 "---"。 */
+            /* HDG 来源统一走 pk_own_heading_resolve（ADS-B>IMU>GPS track>无）——
+             * PFD / traffic / list 共用同一优先级，不再各处内联。pk_pfd_status_t /
+             * pk_pfd_hsi_t 的 imu_valid 字段其实是 "yaw_valid"(yaw_deg 是否可用)。 */
+            float yaw_deg = 0.0f;
+            bool  yaw_valid = pk_own_heading_resolve(
+                own_valid, own_src, &own, have, have ? s.yaw_deg : 0.0f,
+                &yaw_deg, NULL);
 
             /* Bank source priority — mirrors the yaw logic above:
              *   1) Derive from the bound aircraft's smoothed turn rate
