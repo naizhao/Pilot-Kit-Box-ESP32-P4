@@ -99,29 +99,45 @@ static void draw_diag_row(uint16_t *fb, int y,
                            DIAG_VAL_X, y, value, color);
 }
 
-/* draw_snr_bars — 一排竖条，每颗可见星一根，高=C/N0，颜色按强弱分档：
- *   绿 ≥35dB(良) / 黄 25-34(可用) / 红 <25(弱)。基线在 y_base，向上生长。 */
+/* draw_snr_bars — 按星座分两组画 SNR 竖条：GPS 组 + 北斗组，组下方标 G/B。
+ *   柱高=C/N0，组内颜色按强弱(绿≥35 / 黄25-34 / 红<25 dB)。基线在 y_base。
+ *   con[] 与 snr[] 平行：0=GPS 1=北斗 2=其它(不画)。 */
 static void draw_snr_bars(uint16_t *fb, int x0, int y_base,
-                          const uint8_t *snr, int n)
+                          const uint8_t *snr, const uint8_t *con, int n)
 {
-    const int bar_w = 5, gap = 2, max_h = 32, snr_full = 50;
+    const int bar_w = 5, gap = 2, max_h = 30, snr_full = 50, grp_gap = 12;
     if (n <= 0) {
         pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                                x0, y_base - 9, "(no sats)", COL_OFFLINE);
         return;
     }
+    /* 字母表与 pk_gnss_t 同序：GPS/北斗/GLONASS/Galileo/QZSS/其它。 */
+    static const char letter[PK_GNSS_COUNT] = { 'G', 'B', 'R', 'E', 'Q', '?' };
     int x = x0;
-    for (int i = 0; i < n; ++i) {
-        int s = snr[i];
-        if (s > snr_full) s = snr_full;
-        int h = s * max_h / snr_full;
-        if (h < 1 && s > 0) h = 1;
-        uint16_t col = (s >= 35) ? COL_ONLINE
-                     : (s >= 25) ? pk_rgb565(255, 200, 60)
-                     :             COL_ALERT;
-        fill_rect(fb, x, y_base - h, x + bar_w, y_base, col);
-        x += bar_w + gap;
-        if (x + bar_w > PK_DISPLAY_W - 4) break;   /* 满屏宽截断 */
+    for (int grp = 0; grp < PK_GNSS_COUNT; ++grp) {   /* 动态分组：收到哪个星座画哪组 */
+        int grp_x0 = x, cnt = 0;
+        for (int i = 0; i < n; ++i) {
+            if (con[i] != grp) continue;
+            int s = snr[i];
+            if (s > snr_full) s = snr_full;
+            int h = s * max_h / snr_full;
+            if (h < 1 && s > 0) h = 1;
+            uint16_t col = (s >= 35) ? COL_ONLINE
+                         : (s >= 25) ? pk_rgb565(255, 200, 60)
+                         :             COL_ALERT;
+            fill_rect(fb, x, y_base - h, x + bar_w, y_base, col);
+            x += bar_w + gap;
+            ++cnt;
+            if (x + bar_w > PK_DISPLAY_W - 10) break;
+        }
+        if (cnt > 0) {                          /* 组标签居中画在组下方 */
+            char t[2] = { letter[grp], 0 };
+            int mid = grp_x0 + cnt * (bar_w + gap) / 2 - 3;
+            pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                                   mid, y_base + 2, t, COL_KEY);
+            x += grp_gap;
+        }
+        if (x + bar_w > PK_DISPLAY_W - 10) break;
     }
 }
 
@@ -216,8 +232,9 @@ void pk_diag_page_render(uint16_t *fb)
         draw_diag_row(fb, y, "GPS", buf, fresh ? COL_ONLINE : COL_OFFLINE);
         y += DIAG_LINE_H;
 
-        /* 行2：可见星 + 最强 SNR + 天线自检（天线单独着色） */
-        snprintf(buf, sizeof(buf), "view %d   snr %d dB", g.sats_in_view, g.snr_max);
+        /* 行2：可见星(分 GPS/北斗) + 最强 SNR + 天线自检（天线单独着色） */
+        snprintf(buf, sizeof(buf), "GPS %d  BD %d  max %d",
+                 g.sats_in_view_gps, g.sats_in_view_bds, g.snr_max);
         draw_diag_row(fb, y, "", buf, COL_VAL);
         const char *ant = (g.ant_status == PK_GPS_ANT_OK)    ? "ANT OK"
                         : (g.ant_status == PK_GPS_ANT_OPEN)  ? "ANT OPEN"
@@ -235,11 +252,11 @@ void pk_diag_page_render(uint16_t *fb)
         draw_diag_row(fb, y, "", buf, fresh ? COL_VAL : COL_OFFLINE);
         y += DIAG_LINE_H;
 
-        /* 行4：每颗可见星的 SNR 柱状图 */
+        /* 行4：SNR 柱状图，按星座分两组(G/B)，柱下标注 */
         pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                                DIAG_KEY_X, y, "SNR", COL_KEY);
-        draw_snr_bars(fb, DIAG_VAL_X, y + 14, g.snr, g.snr_count);
-        y += 40;
+        draw_snr_bars(fb, DIAG_VAL_X, y + 34, g.snr, g.snr_con, g.snr_count);
+        y += 52;
     }
 
     /* ------------------------------------------------------------------

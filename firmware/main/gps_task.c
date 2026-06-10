@@ -123,20 +123,40 @@ static void parse_gga(char *f[], int n){
 }
 
 /* --- GSV 累积器：gps_task 单线程访问(无锁)，主循环 1 Hz 提交到 s_gps。 --- */
-static int     s_acc_view;            /* 本周期各星座可见星总数之和 */
+static int     s_acc_view, s_acc_view_gps, s_acc_view_bds;
 static uint8_t s_acc_snr[PK_GPS_SNR_MAX];
+static uint8_t s_acc_con[PK_GPS_SNR_MAX];   /* 与 s_acc_snr 平行：0=GPS 1=北斗 2=其它 */
 static int     s_acc_snr_n;
+
+/* NMEA talker 前缀 → 星座 ID（pk_gnss_t）。 */
+static uint8_t gsv_constellation(const char *t){
+    char a = t[0], b = t[1];
+    if(a == 'G' && b == 'P') return PK_GNSS_GPS;
+    if((a == 'B' && b == 'D') || (a == 'G' && b == 'B')) return PK_GNSS_BDS;
+    if(a == 'G' && b == 'L') return PK_GNSS_GLO;
+    if(a == 'G' && b == 'A') return PK_GNSS_GAL;
+    if(a == 'G' && b == 'Q') return PK_GNSS_QZSS;
+    return PK_GNSS_OTHER;
+}
 
 /* GSV: $xxGSV,numMsg,msgNum,totalInView, {prn,elev,az,snr}×N [,signalID] */
 static void parse_gsv(char *f[], int n){
     if(n < 4) return;
+    uint8_t con = gsv_constellation(f[0]);
     int msgNum = atoi(f[2]);
     int total  = atoi(f[3]);
-    if(msgNum == 1) s_acc_view += total;   /* 同星座多句 total 相同，只首句计入 */
+    if(msgNum == 1){                       /* 同星座多句 total 相同，只首句计入 */
+        s_acc_view += total;
+        if(con == PK_GNSS_GPS)      s_acc_view_gps += total;
+        else if(con == PK_GNSS_BDS) s_acc_view_bds += total;
+    }
     for(int i = 4; i + 3 < n; i += 4){     /* 每颗星 4 字段；尾随 signalID 自然落空 */
         const char *snr = f[i + 3];
-        if(snr && *snr && s_acc_snr_n < PK_GPS_SNR_MAX)
-            s_acc_snr[s_acc_snr_n++] = (uint8_t)atoi(snr);
+        if(snr && *snr && s_acc_snr_n < PK_GPS_SNR_MAX){
+            s_acc_snr[s_acc_snr_n] = (uint8_t)atoi(snr);
+            s_acc_con[s_acc_snr_n] = con;
+            s_acc_snr_n++;
+        }
     }
 }
 
@@ -192,22 +212,26 @@ static void gps_task(void *arg){
             last_log = now;
             /* 提交本周期 GSV 累积 → 快照后清零（累积器同线程，无锁）。 */
             take();
-            s_gps.sats_in_view = s_acc_view;
-            s_gps.snr_count    = s_acc_snr_n;
+            s_gps.sats_in_view     = s_acc_view;
+            s_gps.sats_in_view_gps = s_acc_view_gps;
+            s_gps.sats_in_view_bds = s_acc_view_bds;
+            s_gps.snr_count        = s_acc_snr_n;
             int mx = 0;
             for(int i = 0; i < s_acc_snr_n; i++){
-                s_gps.snr[i] = s_acc_snr[i];
+                s_gps.snr[i]     = s_acc_snr[i];
+                s_gps.snr_con[i] = s_acc_con[i];
                 if(s_acc_snr[i] > mx) mx = s_acc_snr[i];
             }
             s_gps.snr_max = mx;
             give();
-            s_acc_view = 0; s_acc_snr_n = 0;
+            s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
             pk_gps_state_t g = {0}; pk_gps_get(&g);
             /* TODO: 硬件验证后降级为 ESP_LOGD 或删除（含诊断字段） */
-            ESP_LOGI(TAG, "fix=%d sats=%d view=%d snr=%d ant=%d lat=%.6f lon=%.6f "
+            ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
                           "alt=%dft gs=%dkt trk=%d hdop=%.1f rx=%u lines=%u",
-                     g.have_fix, g.sats, g.sats_in_view, g.snr_max, (int)g.ant_status,
+                     g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
+                     g.sats_in_view_bds, g.snr_max, (int)g.ant_status,
                      g.lat, g.lon, g.altitude_ft, g.ground_speed_kt, g.track_deg,
                      (double)g.hdop, (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
         }
