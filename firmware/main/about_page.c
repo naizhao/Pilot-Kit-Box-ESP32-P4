@@ -7,7 +7,7 @@
  *             │ ABOUT                  (cyan)                       │  header
  *   y =  20   ├────────────────────────────────────────────────────┤
  *             │ Project : PILOT KIT BOX                             │
- *             │ Version : abb7989-dirty                             │
+ *             │ Version : v0.5.0-ce49d37 (version.txt + git sha)    │
  *             │ Build   : May 20 2026 14:30:00                      │
  *             │ ESP-IDF : v6.0.1                                    │
  *             │ Board   : Waveshare ESP32-P4-WIFI6                  │
