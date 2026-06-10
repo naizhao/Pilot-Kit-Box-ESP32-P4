@@ -115,6 +115,14 @@ int  pk_ui_about_scroll_y(void);
  */
 int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n);
 
+/*
+ * Traffic 雷达页专用的选中解析。与列表选中(s_list_selected_icao)完全独立,
+ * 只共用 pending 滚动量。返回选中行索引,或 **-1 表示"当前无选中"**(用户从
+ * 没滚动过,或之前选中的飞机已离开列表)——绝不像列表版那样 fallback 到 row 0,
+ * 因此本机被排除出目标列表也不会引起每帧乱跳。
+ */
+int pk_ui_traffic_resolve(const uint32_t *icaos, size_t n);
+
 /* The ICAO of the currently-highlighted aircraft, or 0 if none has
  * been committed yet (no aircraft seen since boot, or the user hasn't
  * scrolled). Used by the TARE handler to bind own-ship by ICAO

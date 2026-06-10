@@ -150,31 +150,36 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
     int tx, ty;
     polar(screen, rel->dist_nm / range_nm * RMAX, &tx, &ty);
 
-    uint16_t cyan  = pk_rgb565(  0, 210, 235);
-    uint16_t white = pk_rgb565(255, 255, 255);
-    uint16_t lbl   = pk_rgb565(207, 211, 220);
-    fill_diamond(fb, tx, ty, selected ? 5 : 4, selected ? white : cyan);
+    /* 选中用黄色高亮(区别于本机的白色,避免混淆);未选中青色。 */
+    uint16_t cyan   = pk_rgb565(  0, 210, 235);
+    uint16_t yellow = pk_rgb565(255, 210,  60);
+    uint16_t lbl    = pk_rgb565(207, 211, 220);
+    uint16_t col    = selected ? yellow : cyan;
+    uint16_t txtcol = selected ? yellow : lbl;
+    fill_diamond(fb, tx, ty, selected ? 6 : 4, col);
 
+    /* 相对高度(百ft,最多 3 位) + 上/下箭头。箭头基于"相对高度方向"
+     * (目标在本机上方=^ / 下方=v / 同高=-),不是升降率。 */
     char alt[12];
     if (rel->rel_alt_valid) {
         int hh = rel->rel_alt_ft / 100;
-        if (hh >  99) hh =  99;
-        if (hh < -99) hh = -99;
-        snprintf(alt, sizeof(alt), "%+03d", hh);
+        if (hh >  999) hh =  999;
+        if (hh < -999) hh = -999;
+        snprintf(alt, sizeof(alt), "%+d", hh);
     } else {
         snprintf(alt, sizeof(alt), "?");
     }
-    char arrow = (rel->vs_fpm > 50) ? '^' : (rel->vs_fpm < -50) ? 'v' : ' ';
+    char arrow = !rel->rel_alt_valid ? ' '
+               : rel->rel_alt_ft > 0 ? '^'
+               : rel->rel_alt_ft < 0 ? 'v' : '-';
     char lab[16];
     snprintf(lab, sizeof(lab), "%s%c", alt, arrow);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty - 3, lab,
-                 selected ? white : lbl, 1);
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty - 3, lab, txtcol, 1);
 
-    if (selected) {
-        char cs[10];
-        callsign_of(v->ac, cs, sizeof(cs));
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty + 6, cs, white, 1);
-    }
+    /* 每个目标都标呼号(与交互原型一致)。 */
+    char cs[10];
+    callsign_of(v->ac, cs, sizeof(cs));
+    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty + 6, cs, txtcol, 1);
 }
 
 /* 底部详情条：选中目标的机型/注册 + 高度/地速/距离/磁方位。 */
@@ -361,7 +366,8 @@ void pk_traffic_page_render(uint16_t *fb)
     }
 
     for (int k = 0; k < nv; k++) s_icaos[k] = s_vis[k].ac->icao24;
-    int sel_row = pk_ui_list_resolve_row(s_icaos, (size_t)nv);
+    /* 雷达页独立选中(返回 -1 = 无选中,不高亮/不显详情;绝不 fallback row 0)。 */
+    int sel_row = pk_ui_traffic_resolve(s_icaos, (size_t)nv);
 
     if (!own_valid) {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,

@@ -50,6 +50,12 @@ static uint32_t          s_list_selected_icao;
 static int               s_list_pending_delta;
 static int               s_about_scroll_y;
 
+/* Traffic 雷达页的独立选中(按 ICAO)。与列表选中分开,避免互相污染,更
+ * 关键是避免:本机被雷达页从目标列表排除后,列表版 resolve 永远找不到选中
+ * ICAO 而 fallback 到 row 0,导致白色高亮/详情每帧跳到"最近那架"。
+ * 0 = 当前无选中。 */
+static uint32_t          s_tfc_selected_icao;
+
 /* Runtime own-ship binding. s_own_icao_set distinguishes "user
  * explicitly bound something" (even if to 0) from "never set, use
  * Kconfig default". RAM-only — wiped on every reboot. */
@@ -241,6 +247,39 @@ int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n)
 
     xSemaphoreGive(s_lock);
     return new_row;
+}
+
+int pk_ui_traffic_resolve(const uint32_t *icaos, size_t n)
+{
+    if (s_lock == NULL) return -1;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+
+    /* 当前选中 ICAO 在列表中的行(本机已被调用方排除,可能找不到)。 */
+    int cur = -1;
+    if (s_tfc_selected_icao != 0 && icaos != NULL) {
+        for (size_t i = 0; i < n; ++i) {
+            if (icaos[i] == s_tfc_selected_icao) { cur = (int)i; break; }
+        }
+    }
+
+    int delta = s_list_pending_delta;
+    s_list_pending_delta = 0;
+
+    /* 关键:没选中 且 没滚动操作 → 维持"无选中",绝不 fallback 到 row 0
+     * (这正是列表版 resolve 在雷达页随机跳的根因)。 */
+    if ((cur < 0 && delta == 0) || n == 0) {
+        s_tfc_selected_icao = 0;
+        xSemaphoreGive(s_lock);
+        return -1;
+    }
+
+    int nr = (cur < 0) ? 0 : cur + delta;   /* 首次/旧选中已失 → 锚 row 0 */
+    if (nr < 0)        nr = 0;
+    if (nr >= (int)n)  nr = (int)n - 1;
+    s_tfc_selected_icao = icaos[nr];
+
+    xSemaphoreGive(s_lock);
+    return nr;
 }
 
 uint32_t pk_ui_list_get_selected_icao(void)
