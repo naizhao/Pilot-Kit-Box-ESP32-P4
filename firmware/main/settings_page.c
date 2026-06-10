@@ -76,18 +76,16 @@ static void render_row(uint16_t *fb, int row_idx,
                      13, row_y + SETTINGS_ROW_H,
                      col_edge);
 
-    /* 文字渲染:中文用 page_title 字体,英文用 ui 字体 */
-    if (lang == PK_LANG_ZH) {
-        pk_text_puts_page_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                22, text_y, key_str, COL_KEY);
-        pk_text_puts_page_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                182, text_y, val_str, COL_VAL);
-    } else {
-        pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                        22, text_y_ui, key_str, COL_KEY);
-        pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                        182, text_y_ui, val_str, COL_VAL);
-    }
+    /* 统一用平滑 UI 字体(含完整 ASCII + i18n 中文)。
+     * 原来中文界面走 page_title 时,ASCII(QNH/MAP/RANGE/HDG UP/NM…) 退化成
+     * 5×7 点阵放大字,与平滑中文混排显得破糙;settings 是密集混排 UI 页,
+     * 正是 pk_text_puts_ui 的设计场景。两种语言现在都走同一平滑路径。 */
+    (void)lang;
+    (void)text_y;
+    pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                    22, text_y_ui, key_str, COL_KEY);
+    pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                    182, text_y_ui, val_str, COL_VAL);
 }
 
 /* ── 主渲染入口 ── */
