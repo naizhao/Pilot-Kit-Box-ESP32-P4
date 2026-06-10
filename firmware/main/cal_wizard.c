@@ -30,12 +30,16 @@
 #define WZ_FIG8_CX           (PK_DISPLAY_W / 2)        /* 160 */
 #define WZ_FIG8_CY           90
 #define WZ_FIG8_R            50           /* horizontal half-extent (px) */
-#define WZ_FIG8_VSCALE       1.4f         /* vertical stretch — total y span
-                                             ±70 px around WZ_FIG8_CY */
+#define WZ_FIG8_VSCALE       1.4f         /* vertical stretch — lemniscate y
+                                             peaks at R·VSCALE·0.354 ≈ ±25 px
+                                             around WZ_FIG8_CY (sin·cos/(1+sin²)
+                                             tops out at ~0.354) */
 #define WZ_FIG8_OUTLINE_PTS  240          /* sample count for the dim outline */
 #define WZ_FIG8_PERIOD_US    3000000      /* one full pass every 3 s */
 
-#define WZ_INSTR_Y           170
+#define WZ_INSTR_Y           162          /* two 8px lines: 162 / 178 — keep
+                                             line2 bottom (186) clear of the
+                                             progress bar that starts at 190 */
 #define WZ_BAR_Y             190
 #define WZ_BAR_W             200
 #define WZ_BAR_H             14
