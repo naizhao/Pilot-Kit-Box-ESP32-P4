@@ -69,6 +69,17 @@ class CockpitFontTest(unittest.TestCase):
         # 下半是一条居中竖线
         self.assertEqual("".join("#" if px else "." for px in glyph[13]), "....##......")
 
+    def test_v_is_full_diagonal_converging_to_a_point(self) -> None:
+        glyph = fontgen.glyph_for(ord("V"))
+
+        # 顶部为两条外缘斜臂（旧版顶行为空，笔画从 row1 才开始）
+        self.assertEqual("".join("#" if px else "." for px in glyph[0]), "##......##..")
+        # 上半必须斜向内收，而非旧版的平行竖直"方肩"：第 3 行外缘应已让出
+        self.assertEqual(glyph[3][0], 0)
+        self.assertEqual(glyph[3][9], 0)
+        # 底部汇聚成居中竖尖（旧版底部仍是分开的两笔）
+        self.assertEqual("".join("#" if px else "." for px in glyph[13]), "....##......")
+
 
 if __name__ == "__main__":
     unittest.main()
