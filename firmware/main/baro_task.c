@@ -33,6 +33,7 @@ static const char *TAG = "baro";
 #define BMP388_REG_PWR     0x1B   /* PWR_CTRL */
 #define BMP388_REG_OSR     0x1C   /* OSR */
 #define BMP388_REG_ODR     0x1D   /* ODR */
+#define BMP388_REG_CONFIG  0x1F   /* CONFIG: IIR 滤波(默认 0 = bypass) */
 #define BMP388_REG_CALIB   0x31   /* 校准系数起始 (21 bytes) */
 
 /* BMP388 与 BNO085 共享 I²C0 总线,scl_speed_hz 必须与 IMU 一致。
@@ -102,6 +103,9 @@ static esp_err_t configure_and_calibrate(void)
     esp_err_t e;
     if ((e = reg_write(BMP388_REG_OSR, 0x02)) != ESP_OK) { ESP_LOGE(TAG, "OSR write: %s",  esp_err_to_name(e)); return e; }
     if ((e = reg_write(BMP388_REG_ODR, 0x04)) != ESP_OK) { ESP_LOGE(TAG, "ODR write: %s",  esp_err_to_name(e)); return e; }
+    /* IIR 滤波 coef 15(bits[3:1]=100 → 0x08):传感器硬件层抑制气压测量噪声,
+     * 这是高度/VS 抖动的根因修复——原来 CONFIG 未配置 = IIR bypass = 输出原始噪声。 */
+    if ((e = reg_write(BMP388_REG_CONFIG, 0x08)) != ESP_OK) { ESP_LOGE(TAG, "CONFIG(IIR) write: %s", esp_err_to_name(e)); return e; }
     if ((e = reg_write(BMP388_REG_PWR, 0x33)) != ESP_OK) { ESP_LOGE(TAG, "PWR write: %s",  esp_err_to_name(e)); return e; }
     vTaskDelay(pdMS_TO_TICKS(100));   /* 等首次转换 (>= 80ms ODR 周期) */
     return load_calibration();        /* 读 21 字节校准 */
@@ -186,13 +190,15 @@ static void baro_task(void *arg)
 
     /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
     /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
-    /* VS 防抖:用浮点高度微分(整数 alt_ft 微分时单 ft 量化抖动 ÷0.1s = ±600fpm
-     * 噪声) + 强 EMA + deadband + 显示步进。气压 VSI 标准做法。 */
-    static const float VS_ALPHA    = 0.1f;   /* EMA 平滑(0.2→0.1,时间常数 ~1s) */
+    /* 高度/VS 防抖(配合 BMP388 硬件 IIR):软件高度低通 + 显示滞回 + VS 基于平滑高度。 */
+    static const float ALT_ALPHA   = 0.2f;   /* 高度 EMA(软件低通,补充硬件 IIR) */
+    static const float VS_ALPHA    = 0.1f;   /* VS EMA */
     static const int   VS_DEADBAND = 50;     /* |VS|<50fpm 显 0(平飞不抖) */
-    static const int   VS_STEP     = 50;     /* 显示量化到 50fpm 步进 */
+    static const int   VS_STEP     = 50;     /* VS 显示量化到 50fpm 步进 */
 
-    float   prev_alt_ft_f = 0.0f;            /* 上一帧浮点高度(微分用) */
+    float   alt_filt      = 0.0f;            /* 高度 EMA 状态 */
+    int     disp_alt_ft   = 0;               /* 显示高度(滞回,防量化边界来回抖) */
+    float   prev_alt_filt = 0.0f;            /* 上一帧平滑高度(VS 微分用) */
     int64_t prev_time_us  = 0;
     float   vs_ema        = 0.0f;
     bool    has_prev      = false;
@@ -244,22 +250,30 @@ static void baro_task(void *arg)
         /* 气压高度(国际民航标准大气公式);QNH 每轮读取,支持运行时调整 */
         float qnh_pa   = pk_qnh_get() * 100.0f;   /* hPa → Pa */
         float alt_m    = 44330.0f * (1.0f - powf(press_pa / qnh_pa, 0.190295f));
-        float alt_ft_f = alt_m * 3.28084f;        /* 浮点高度:微分用,避免量化噪声 */
-        int   alt_ft   = (int)roundf(alt_ft_f);   /* 整数高度:显示用 */
+        float alt_ft_f = alt_m * 3.28084f;
 
-        /* VS: 浮点高度微分(无整数量化噪声) + EMA,再 deadband + 步进量化 */
+        /* 软件高度低通(补充 BMP388 硬件 IIR) */
+        if (!has_prev) alt_filt = alt_ft_f;
+        else           alt_filt = ALT_ALPHA * alt_ft_f + (1.0f - ALT_ALPHA) * alt_filt;
+        /* 显示滞回:偏离当前显示值 ≥1ft 才跳档,消除整数量化边界(如 363.5)来回抖 */
+        if (!has_prev || fabsf(alt_filt - (float)disp_alt_ft) >= 1.0f) {
+            disp_alt_ft = (int)roundf(alt_filt);
+        }
+        int alt_ft = disp_alt_ft;
+
+        /* VS: 平滑高度微分(无量化/测量噪声) + EMA + deadband + 步进 */
         int64_t now = esp_timer_get_time();
         int vs_fpm = 0;
         if (has_prev && (now - prev_time_us) > 0) {
             float dt_min  = (float)(now - prev_time_us) / 60000000.0f;    /* µs → min */
-            float vs_inst = (alt_ft_f - prev_alt_ft_f) / dt_min;         /* ft/min   */
+            float vs_inst = (alt_filt - prev_alt_filt) / dt_min;         /* ft/min   */
             vs_ema        = VS_ALPHA * vs_inst + (1.0f - VS_ALPHA) * vs_ema;
             int v = (int)vs_ema;
             if (v > -VS_DEADBAND && v < VS_DEADBAND) v = 0;              /* 平飞 deadband */
             else v = (v / VS_STEP) * VS_STEP;                           /* 50fpm 步进 */
             vs_fpm = v;
         }
-        prev_alt_ft_f = alt_ft_f;
+        prev_alt_filt = alt_filt;
         prev_time_us  = now;
         has_prev      = true;
 
