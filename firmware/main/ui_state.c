@@ -27,6 +27,8 @@ static const char *TAG = "ui";
                                             buffered presses */
 #define UI_ABOUT_SCROLL_STEP_PX     24
 #define UI_ABOUT_SCROLL_MAX_PX      40
+#define UI_DIAG_SCROLL_STEP_PX      24
+#define UI_DIAG_SCROLL_MAX_PX      220   /* 诊断页比 about 长(GPS 多行 + SNR 柱状图) */
 
 /* Calibration-wizard auto-trigger thresholds. The 10 s enter window
  * is long enough that we don't bother the user with the wizard
@@ -49,6 +51,7 @@ static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
 static uint32_t          s_list_selected_icao;
 static int               s_list_pending_delta;
 static int               s_about_scroll_y;
+static int               s_diag_scroll_y;
 
 /* Traffic 雷达页的独立选中(按 ICAO)。与列表选中分开,避免互相污染,更
  * 关键是避免:本机被雷达页从目标列表排除后,列表版 resolve 永远找不到选中
@@ -117,7 +120,8 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_SETTINGS;  break;
     case PK_UI_MODE_SETTINGS:    s_mode = PK_UI_MODE_ABOUT;
                                   s_about_scroll_y = 0;          break;
-    case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;      break;
+    case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;
+                                  s_diag_scroll_y = 0;          break;
     case PK_UI_MODE_DIAG:        s_mode = PK_UI_MODE_PFD;       break;
     case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;       break;
     default:                     s_mode = PK_UI_MODE_PFD;       break;
@@ -214,6 +218,26 @@ int pk_ui_about_scroll_y(void)
     if (s_lock == NULL) return 0;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     int v = s_about_scroll_y;
+    xSemaphoreGive(s_lock);
+    return v;
+}
+
+void pk_ui_diag_scroll(int delta)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int v = s_diag_scroll_y + delta * UI_DIAG_SCROLL_STEP_PX;
+    if (v < 0) v = 0;
+    if (v > UI_DIAG_SCROLL_MAX_PX) v = UI_DIAG_SCROLL_MAX_PX;
+    s_diag_scroll_y = v;
+    xSemaphoreGive(s_lock);
+}
+
+int pk_ui_diag_scroll_y(void)
+{
+    if (s_lock == NULL) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int v = s_diag_scroll_y;
     xSemaphoreGive(s_lock);
     return v;
 }

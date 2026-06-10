@@ -148,6 +148,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 pk_ui_list_scroll(-1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(-1);
+            } else if (mode == PK_UI_MODE_DIAG) {
+                pk_ui_diag_scroll(-1);
             }
         } else if (evt == PK_BTN_EVT_COMBO_BLE_PAIR) {
             /* BLE pairing request gesture is verified in firmware.
@@ -185,6 +187,8 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 pk_ui_list_scroll(+1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
             } else if (mode == PK_UI_MODE_ABOUT) {
                 pk_ui_about_scroll(+1);
+            } else if (mode == PK_UI_MODE_DIAG) {
+                pk_ui_diag_scroll(+1);
             }
         }
         break;

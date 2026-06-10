@@ -35,6 +35,11 @@
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
 #include "baro.h"            /* pk_baro_get, pk_baro_state_t */
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
+#include "ui_state.h"        /* pk_ui_diag_scroll_y */
+#include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
+#include <string.h>
+#include <sys/time.h>
+#include <time.h>
 
 /* Layout */
 #define DIAG_LEFT_PAD        6
@@ -52,6 +57,8 @@
 #define COL_OFFLINE          pk_rgb565(140, 145, 155)   /* grey   — no data / offline */
 #define COL_PLACEHOLDER      pk_rgb565( 70,  72,  80)   /* dark   — N/A placeholder */
 #define COL_DIVIDER          pk_rgb565( 90, 100, 120)
+#define COL_VAL              pk_rgb565(220, 225, 235)   /* bright — detail value text */
+#define COL_ALERT            pk_rgb565(255,  90,  40)   /* red    — antenna OPEN/SHORT */
 
 /* GPS stale threshold: 5 s in microseconds */
 #define GPS_FRESH_US         5000000LL
@@ -91,6 +98,52 @@ static void draw_diag_row(uint16_t *fb, int y,
                            DIAG_VAL_X, y, value, color);
 }
 
+/* draw_snr_bars — 一排竖条，每颗可见星一根，高=C/N0，颜色按强弱分档：
+ *   绿 ≥35dB(良) / 黄 25-34(可用) / 红 <25(弱)。基线在 y_base，向上生长。 */
+static void draw_snr_bars(uint16_t *fb, int x0, int y_base,
+                          const uint8_t *snr, int n)
+{
+    const int bar_w = 5, gap = 2, max_h = 32, snr_full = 50;
+    if (n <= 0) {
+        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                               x0, y_base - 9, "(no sats)", COL_OFFLINE);
+        return;
+    }
+    int x = x0;
+    for (int i = 0; i < n; ++i) {
+        int s = snr[i];
+        if (s > snr_full) s = snr_full;
+        int h = s * max_h / snr_full;
+        if (h < 1 && s > 0) h = 1;
+        uint16_t col = (s >= 35) ? COL_ONLINE
+                     : (s >= 25) ? pk_rgb565(255, 200, 60)
+                     :             COL_ALERT;
+        fill_rect(fb, x, y_base - h, x + bar_w, y_base, col);
+        x += bar_w + gap;
+        if (x + bar_w > PK_DISPLAY_W - 4) break;   /* 满屏宽截断 */
+    }
+}
+
+/* fmt_clock — 系统墙钟(被 GPS/BLE 校准) → "HH:MM:SSZ HH:MM L (src)"。
+ * 未校时显示 "--"。 */
+static void fmt_clock(char *buf, size_t bufsz)
+{
+    if (!pk_clock_is_synced()) { snprintf(buf, bufsz, "--"); return; }
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    time_t utc = tv.tv_sec, loc = tv.tv_sec + 8 * 3600;   /* 本地 = UTC+8 */
+    struct tm u, l;
+    gmtime_r(&utc, &u);
+    gmtime_r(&loc, &l);
+    const char *src = pk_clock_source();
+    const char *tag = !strcmp(src, "gps")        ? "GPS"
+                    : !strcmp(src, "gps-coarse") ? "GPS~"
+                    : !strcmp(src, "ble-write")  ? "BLE"
+                    : !strcmp(src, "ios-cts")    ? "iOS" : src;
+    snprintf(buf, bufsz, "%02d:%02d:%02dZ  %02d:%02d L (%s)",
+             u.tm_hour, u.tm_min, u.tm_sec, l.tm_hour, l.tm_min, tag);
+}
+
 /* --------------------------------------------------------------------------
  * Main render entry point
  * -------------------------------------------------------------------------- */
@@ -100,15 +153,9 @@ void pk_diag_page_render(uint16_t *fb)
     /* Clear background — may be coming from any other view. */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
-    /* Header title */
-    pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                    DIAG_LEFT_PAD, DIAG_HEADER_UI_Y,
-                    "DIAGNOSTICS", COL_HEADER);
-
-    /* Divider line under header */
-    fill_rect(fb, 0, 22, PK_DISPLAY_W, 24, COL_DIVIDER);
-
-    int y = DIAG_BODY_Y;
+    /* Scrollable body — UP/DOWN pans it; header is re-drawn on top at the
+     * end so scrolled rows slide under it (mirrors about_page). */
+    int y = DIAG_BODY_Y - pk_ui_diag_scroll_y();
     char buf[64];
 
     /* ------------------------------------------------------------------
@@ -152,37 +199,47 @@ void pk_diag_page_render(uint16_t *fb)
     y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------
-     * GPS
-     * Online: have_fix AND updated_us within GPS_FRESH_US of now
-     * Shows: "fix sats N lat,lon alt N ft" or "no fix"
+     * GPS — 排查多行：状态/HDOP、可见星+SNR+天线、位置，外加 SNR 柱状图
      * ------------------------------------------------------------------ */
     {
-        pk_gps_state_t g;
+        pk_gps_state_t g = {0};
         pk_gps_get(&g);
         int64_t now = esp_timer_get_time();
-        bool gps_fresh = g.have_fix && (now - g.updated_us) < GPS_FRESH_US;
-        if (gps_fresh) {
-            /* Compact: "fix s4 +37.6,-122.4 alt 52ft" */
-            snprintf(buf, sizeof(buf), "fix s%d %+.1f,%+.1f %dft",
-                     g.sats,
-                     g.lat,
-                     g.lon,
-                     g.have_altitude ? g.altitude_ft : 0);
-            draw_diag_row(fb, y, "GPS", buf, COL_ONLINE);
-        } else if (g.have_fix) {
-            /* 曾有 fix 但 >5s 未更新 —— 与"从未定位"区分 */
-            snprintf(buf, sizeof(buf), "stale  sats %d", g.sats);
-            draw_diag_row(fb, y, "GPS", buf, COL_OFFLINE);
-        } else if (g.updated_us != 0) {
-            /* 收到过 NMEA 但无 fix */
-            snprintf(buf, sizeof(buf), "no fix  sats %d", g.sats);
-            draw_diag_row(fb, y, "GPS", buf, COL_OFFLINE);
-        } else {
-            /* 从未收到数据 */
-            draw_diag_row(fb, y, "GPS", "no fix", COL_OFFLINE);
-        }
+        bool fresh = g.have_fix && (now - g.updated_us) < GPS_FRESH_US;
+
+        /* 行1：fix 状态 + HDOP */
+        if (fresh) snprintf(buf, sizeof(buf), "fix  sats %d     HDOP %.1f",
+                            g.sats, (double)g.hdop);
+        else       snprintf(buf, sizeof(buf), "no fix         HDOP %.1f",
+                            (double)g.hdop);
+        draw_diag_row(fb, y, "GPS", buf, fresh ? COL_ONLINE : COL_OFFLINE);
+        y += DIAG_LINE_H;
+
+        /* 行2：可见星 + 最强 SNR + 天线自检（天线单独着色） */
+        snprintf(buf, sizeof(buf), "view %d   snr %d dB", g.sats_in_view, g.snr_max);
+        draw_diag_row(fb, y, "", buf, COL_VAL);
+        const char *ant = (g.ant_status == PK_GPS_ANT_OK)    ? "ANT OK"
+                        : (g.ant_status == PK_GPS_ANT_OPEN)  ? "ANT OPEN"
+                        : (g.ant_status == PK_GPS_ANT_SHORT) ? "ANT SHORT" : "ANT ?";
+        uint16_t ant_col = (g.ant_status == PK_GPS_ANT_OK)      ? COL_ONLINE
+                         : (g.ant_status == PK_GPS_ANT_UNKNOWN) ? COL_OFFLINE
+                         :                                        COL_ALERT;
+        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H, 206, y, ant, ant_col);
+        y += DIAG_LINE_H;
+
+        /* 行3：位置（定位后才有意义） */
+        if (fresh) snprintf(buf, sizeof(buf), "%+.5f,%+.5f  %dft",
+                            g.lat, g.lon, g.have_altitude ? g.altitude_ft : 0);
+        else       snprintf(buf, sizeof(buf), "--");
+        draw_diag_row(fb, y, "", buf, fresh ? COL_VAL : COL_OFFLINE);
+        y += DIAG_LINE_H;
+
+        /* 行4：每颗可见星的 SNR 柱状图 */
+        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                               DIAG_KEY_X, y, "SNR", COL_KEY);
+        draw_snr_bars(fb, DIAG_VAL_X, y + 14, g.snr, g.snr_count);
+        y += 40;
     }
-    y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------
      * BARO — BMP388
@@ -243,7 +300,19 @@ void pk_diag_page_render(uint16_t *fb)
     y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------
-     * TIME — placeholder
+     * TIME — 系统墙钟(被 GPS/BLE 校准)：UTC(Zulu) + 本地(UTC+8) + 来源
      * ------------------------------------------------------------------ */
-    draw_diag_row(fb, y, "TIME", "--", COL_PLACEHOLDER);
+    {
+        char tbuf[48];
+        fmt_clock(tbuf, sizeof(tbuf));
+        draw_diag_row(fb, y, "TIME", tbuf,
+                      pk_clock_is_synced() ? COL_ONLINE : COL_PLACEHOLDER);
+    }
+    y += DIAG_LINE_H;
+
+    /* Header overlay — fixed, drawn last so the scrolled body slides under it. */
+    fill_rect(fb, 0, 0, PK_DISPLAY_W, 22, COL_BG);
+    pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                    DIAG_LEFT_PAD, DIAG_HEADER_UI_Y, "DIAGNOSTICS", COL_HEADER);
+    fill_rect(fb, 0, 22, PK_DISPLAY_W, 24, COL_DIVIDER);
 }

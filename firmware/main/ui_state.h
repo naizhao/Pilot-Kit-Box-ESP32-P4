@@ -94,6 +94,12 @@ void pk_ui_list_scroll(int delta);
 void pk_ui_about_scroll(int delta);
 int  pk_ui_about_scroll_y(void);
 
+/* Scroll the Diagnostics page by one coarse page step (mirrors the
+ * About-page scroll; renderer reads the pixel offset via
+ * pk_ui_diag_scroll_y()). */
+void pk_ui_diag_scroll(int delta);
+int  pk_ui_diag_scroll_y(void);
+
 /*
  * Resolve the highlighted row against the current aircraft snapshot.
  *
