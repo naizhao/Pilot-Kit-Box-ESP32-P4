@@ -28,6 +28,10 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_CAL_LINE2] = "rotating in all directions",
         [PK_TR_CAL_QUALITY] = "Quality",
         [PK_TR_CAL_FOOTER] = "Press MODE to skip",
+        [PK_TR_TOAST_TARE_SAVED] = "Saved",
+        [PK_TR_TOAST_TARE_SAVE_FAIL] = "Save failed",
+        [PK_TR_TOAST_OWN_BOUND] = "Own set",
+        [PK_TR_TOAST_OWN_CLEARED] = "Own cleared",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -55,6 +59,10 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_CAL_LINE2] = "各方向旋转",
         [PK_TR_CAL_QUALITY] = "质量",
         [PK_TR_CAL_FOOTER] = "按 MODE 跳过",
+        [PK_TR_TOAST_TARE_SAVED] = "已保存",
+        [PK_TR_TOAST_TARE_SAVE_FAIL] = "保存失败",
+        [PK_TR_TOAST_OWN_BOUND] = "已绑定本机",
+        [PK_TR_TOAST_OWN_CLEARED] = "已取消本机",
     },
 };
 

@@ -73,9 +73,11 @@ RingbufHandle_t g_iq_ringbuf = NULL;
  * cleanly undoes it.
  *
  * Exception: in the ADS-B aircraft-list view, TARE short-press is
- * repurposed to "bind the highlighted aircraft as own-ship" — that's
- * the runtime override for the PFD's ALT/VS/GS data source. Long
- * and very-long TARE still do their IMU actions in any mode.
+ * repurposed to "bind the highlighted aircraft as own-ship" (the
+ * runtime override for the PFD's ALT/VS/GS data source). Pressing it
+ * again on the same bound aircraft de-selects it; binding a new one
+ * jumps back to the PFD. Long and very-long TARE still do their IMU
+ * actions in any mode.
  */
 static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
 {
@@ -87,26 +89,40 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
                 /* TARE 短按:切换选中行(Language <-> QNH) */
                 pk_settings_cursor_next();
             } else if (mode == PK_UI_MODE_ADSB_LIST) {
-                /* Bind the currently-highlighted aircraft as own-ship.
-                 * ui_state tracks the highlight by ICAO, so we don't
-                 * need to re-snapshot the aircraft table here — just
-                 * read whichever ICAO the list renderer last committed
-                 * as the selection. Returns 0 when the user hasn't
-                 * scrolled yet OR the previously-highlighted aircraft
-                 * has dropped out of the 60s window without being
-                 * replaced (snapshot was empty on the last frame). */
+                /* Bind / de-select the highlighted aircraft as own-ship.
+                 * ui_state tracks the highlight by ICAO, so we just read
+                 * whichever ICAO the list renderer last committed —
+                 * sel_icao == 0 means the user hasn't scrolled yet OR
+                 * the previously-highlighted aircraft dropped out of the
+                 * 60s window without being replaced.
+                 *   - Pressing TARE on the already-bound aircraft TOGGLES
+                 *     the binding off (de-select) and stays in the list.
+                 *   - Binding a different aircraft sets it and jumps back
+                 *     to PFD so the pilot immediately sees the caged
+                 *     horizon sourced from the fresh transponder.
+                 * Both actions raise a toast for visual confirmation. */
                 uint32_t sel_icao = pk_ui_list_get_selected_icao();
-                if (sel_icao != 0) {
-                    pk_ui_set_own_icao(sel_icao);
-                } else {
+                if (sel_icao == 0) {
                     ESP_LOGW(TAG, "TARE in ADSB list: no aircraft "
                                   "highlighted yet — binding skipped");
+                } else if (pk_ui_get_own_icao() == sel_icao) {
+                    pk_ui_clear_own_icao();
+                    pk_ui_toast_show(PK_TR_TOAST_OWN_CLEARED, false);
+                } else {
+                    pk_ui_set_own_icao(sel_icao);
+                    pk_ui_toast_show(PK_TR_TOAST_OWN_BOUND, false);
+                    pk_ui_set_mode(PK_UI_MODE_PFD);
                 }
             } else {
                 (void)pk_imu_tare_now();
             }
         } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            (void)pk_imu_tare_persist();
+            /* 长按保存:把当前 tare 偏移写入 NVS。弹 toast 反馈成功/失败,
+             * 否则用户无从知道这一次按压到底有没有落盘。 */
+            esp_err_t e = pk_imu_tare_persist();
+            pk_ui_toast_show(e == ESP_OK ? PK_TR_TOAST_TARE_SAVED
+                                         : PK_TR_TOAST_TARE_SAVE_FAIL,
+                             e != ESP_OK);
         } else if (evt == PK_BTN_EVT_VERY_LONG_PRESS) {
             (void)pk_imu_factory_reset();
         }

@@ -38,6 +38,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "i18n_catalog.h"   /* pk_tr_id_t — toast 提示按翻译条目 id 记录 */
 
 typedef enum {
     PK_UI_MODE_PFD = 0,
@@ -62,6 +63,12 @@ pk_ui_mode_t pk_ui_get_mode(void);
  * lands on the same highlight). If the current mode is
  * CAL_WIZARD, the cycle returns to PFD and dismisses the wizard. */
 void pk_ui_toggle_mode(void);
+
+/* Jump directly to a specific view (bypasses the cycle). Used when an
+ * action implies a destination — e.g. binding own-ship in the ADS-B
+ * list returns to PFD so the pilot immediately sees the caged horizon
+ * sourced from the freshly-bound transponder. Safe from any task. */
+void pk_ui_set_mode(pk_ui_mode_t mode);
 
 /*
  * Drive the calibration-wizard auto-trigger state machine. Called
@@ -149,3 +156,20 @@ uint32_t pk_ui_list_get_selected_icao(void);
  */
 void     pk_ui_set_own_icao(uint32_t icao24);
 uint32_t pk_ui_get_own_icao(void);
+
+/* Clear the runtime own-ship binding (de-select). Equivalent to binding
+ * 0 — pk_ui_get_own_icao() returns 0 and the PFD's ALT/VS/GS revert to
+ * "--". Symmetric with pk_ui_set_own_icao(); the gesture is re-pressing
+ * TARE on the already-bound aircraft in the ADS-B list. */
+void     pk_ui_clear_own_icao(void);
+
+/*
+ * Transient on-screen toast. The button handler calls pk_ui_toast_show()
+ * with the translation id to display (localised at render time, so it
+ * follows the active language) and an error flag (true → red banner,
+ * false → green). The PFD render loop polls pk_ui_toast_get() once per
+ * frame and overlays the banner on top of whichever page is showing
+ * until the ~1.5 s window elapses.
+ */
+void pk_ui_toast_show(pk_tr_id_t id, bool is_error);
+bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error);

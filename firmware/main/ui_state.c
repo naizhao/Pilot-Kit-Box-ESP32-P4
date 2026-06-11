@@ -39,6 +39,8 @@ static const char *TAG = "ui";
 #define UI_CAL_WIZARD_EXIT_MS          3000
 #define UI_CAL_WIZARD_EXIT_ACCURACY    2
 
+#define UI_TOAST_DURATION_US      (1500 * 1000)  /* toast 在屏幕上停留 1.5s */
+
 static SemaphoreHandle_t s_lock;
 static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
 
@@ -71,6 +73,11 @@ static bool              s_own_icao_set;
 static int64_t           s_cal_acc_first_low_us;
 static int64_t           s_cal_acc_first_high_us;
 static uint8_t           s_cal_last_accuracy;
+
+/* Transient toast. s_toast_until_us == 0 (or now past it) → no toast. */
+static pk_tr_id_t        s_toast_id;
+static bool              s_toast_is_error;
+static int64_t           s_toast_until_us;
 
 esp_err_t pk_ui_init(void)
 {
@@ -129,6 +136,18 @@ void pk_ui_toggle_mode(void)
     pk_ui_mode_t new_mode = s_mode;
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "mode → %s", mode_name(new_mode));
+}
+
+void pk_ui_set_mode(pk_ui_mode_t mode)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_mode = mode;
+    /* 进入 About/Diag 时复位各自滚动位置 —— 与 toggle 路径行为一致。 */
+    if (mode == PK_UI_MODE_ABOUT) s_about_scroll_y = 0;
+    if (mode == PK_UI_MODE_DIAG)  s_diag_scroll_y  = 0;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "mode → %s (direct)", mode_name(mode));
 }
 
 void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy)
@@ -334,4 +353,38 @@ uint32_t pk_ui_get_own_icao(void)
                                 : (uint32_t)CONFIG_PK_OWN_ICAO;
     xSemaphoreGive(s_lock);
     return v;
+}
+
+void pk_ui_clear_own_icao(void)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_own_icao_runtime = 0;
+    s_own_icao_set     = true;   /* 显式置位 → getter 返回 0 而非 Kconfig 默认 */
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "own ICAO cleared at runtime");
+}
+
+void pk_ui_toast_show(pk_tr_id_t id, bool is_error)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_toast_id       = id;
+    s_toast_is_error = is_error;
+    s_toast_until_us = esp_timer_get_time() + UI_TOAST_DURATION_US;
+    xSemaphoreGive(s_lock);
+}
+
+bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error)
+{
+    if (s_lock == NULL) return false;
+    int64_t now = esp_timer_get_time();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool active = (s_toast_until_us != 0 && now < s_toast_until_us);
+    if (active) {
+        if (out_id)    *out_id    = s_toast_id;
+        if (out_error) *out_error = s_toast_is_error;
+    }
+    xSemaphoreGive(s_lock);
+    return active;
 }

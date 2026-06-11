@@ -33,6 +33,10 @@ typedef enum {
     PK_TR_CAL_LINE2 = 22,
     PK_TR_CAL_QUALITY = 23,
     PK_TR_CAL_FOOTER = 24,
+    PK_TR_TOAST_TARE_SAVED = 25,
+    PK_TR_TOAST_TARE_SAVE_FAIL = 26,
+    PK_TR_TOAST_OWN_BOUND = 27,
+    PK_TR_TOAST_OWN_CLEARED = 28,
     PK_TR_COUNT,
 } pk_tr_id_t;
 

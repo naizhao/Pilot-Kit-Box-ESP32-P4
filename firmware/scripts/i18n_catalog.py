@@ -186,4 +186,33 @@ STRINGS = [
             "zh": "按 MODE 跳过",
         },
     ),
+    # --- 瞬时屏幕提示(toast) — TARE 保存 / own 绑定反馈 ---
+    (
+        "TOAST_TARE_SAVED",
+        {
+            "en": "Saved",
+            "zh": "已保存",
+        },
+    ),
+    (
+        "TOAST_TARE_SAVE_FAIL",
+        {
+            "en": "Save failed",
+            "zh": "保存失败",
+        },
+    ),
+    (
+        "TOAST_OWN_BOUND",
+        {
+            "en": "Own set",
+            "zh": "已绑定本机",
+        },
+    ),
+    (
+        "TOAST_OWN_CLEARED",
+        {
+            "en": "Own cleared",
+            "zh": "已取消本机",
+        },
+    ),
 ]
