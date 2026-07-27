@@ -53,6 +53,8 @@ __pycache__
 .playwright-mcp/
 
 # PC 模拟器构建产物
-sim/build/
+# 用 build*/ 通配：按分辨率会开多个构建目录（build = 320，build800 = 4.3″），
+# 只写死 build/ 会把新开的那个漏进版本库。
+sim/build*/
 sim/*.bmp
 sim/frame_*.bmp
