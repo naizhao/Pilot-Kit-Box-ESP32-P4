@@ -26,6 +26,19 @@ void pk_pfd_draw_triangle(uint16_t *fb,
                           int ax, int ay, int bx, int by, int cx, int cy,
                           uint16_t c);
 
+/*
+ * 飞机俯视剪影，朝向 rot_deg（0° = 屏幕正上方，顺时针为正，与航向同向）。
+ * size 为机身半长；后掠翼外形，小尺寸下也能一眼看出机头指哪。
+ *
+ * 交通目标此前一律画成菱形——菱形是各向同性的，看不出目标在往哪飞，而
+ * 「它朝我来还是背我去」恰恰是防撞时最要紧的一条信息。
+ *
+ * 放在通用绘制层是因为 PFD 的 HSI 外圈与雷达页要用同一个符号；两处各画
+ * 一份迟早走偏。
+ */
+void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
+                          float rot_deg, int size, uint16_t c);
+
 uint16_t pk_pfd_rgb565_dither(uint8_t r, uint8_t g, uint8_t b, int x, int y);
 
 /*

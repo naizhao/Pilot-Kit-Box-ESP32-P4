@@ -267,3 +267,32 @@ void pk_pfd_draw_triangle(uint16_t *fb,
         }
     }
 }
+
+void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
+                          float rot_deg, int size, uint16_t c)
+{
+    /* 机体坐标：y 轴向上为负（与屏幕一致），机头在 (0, -size)。
+     * 后掠翼 + 收窄的尾部，四个点就够表达朝向，再多在 10 px 尺度上也糊。 */
+    const float pts[4][2] = {
+        {  0.00f, -1.00f },   /* 机头   */
+        {  0.85f,  0.45f },   /* 右翼尖 */
+        {  0.00f,  0.15f },   /* 尾部凹口 */
+        { -0.85f,  0.45f },   /* 左翼尖 */
+    };
+
+    const float rad = rot_deg * (float)M_PI / 180.0f;
+    const float cs = cosf(rad), sn = sinf(rad);
+
+    int px[4], py[4];
+    for (int i = 0; i < 4; ++i) {
+        float x = pts[i][0] * (float)size;
+        float y = pts[i][1] * (float)size;
+        /* 屏幕 y 向下，故顺时针旋转就是标准旋转矩阵。 */
+        px[i] = cx + (int)lroundf(x * cs - y * sn);
+        py[i] = cy + (int)lroundf(x * sn + y * cs);
+    }
+
+    /* 拆成两个三角形填充——箭头是凹多边形，一次三角形填不出那个尾部凹口。 */
+    pk_pfd_draw_triangle(fb, px[0], py[0], px[1], py[1], px[2], py[2], c);
+    pk_pfd_draw_triangle(fb, px[0], py[0], px[2], py[2], px[3], py[3], c);
+}

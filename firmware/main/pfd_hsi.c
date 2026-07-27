@@ -158,18 +158,19 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         }
     }
 
-    /* Magenta course line — a vertical bar running through the
-     * aircraft icon. Tip sits 6 px below the HDG box bottom so the
-     * arrow has clearance and doesn't poke into the framed digits;
-     * line extends down to within 4 px of the panel edge. Garmin
-     * uses this to indicate the current selected course; we draw
-     * it fixed (always pointing "up" relative to the rotating rose)
-     * until a real course source exists. */
-    const int arrow_tip_y  = HDGBOX_Y1 + 6;             /* y = 168 */
+    /* 洋红航道指针（Garmin 的 selected course）。
+     *
+     * ⚠️ 目前没有真实的 course 数据源，画的是固定朝上的占位符。而罗盘是
+     * heading-up 旋转的，"固定朝上" 就等于永远指着机头——与航向完全重合，
+     * 不携带任何信息。真正接上选定航道或 GPS 航迹后它才有意义。
+     *
+     * 因此把它收进罗盘内、长度只比本机符号略大：既保留 Garmin 的视觉语汇，
+     * 又不让一个没有信息量的元素占据从罗盘顶贯到屏幕底的一整条。 */
+    const int arrow_tip_y  = AIRCRAFT_Y - ROSE_SC(30);
     const int arrow_base_y = arrow_tip_y + ROSE_SC(8);
     pk_pfd_fill_rect(fb,
                      HSI_CX - ROSE_SC(1), arrow_base_y - 2,
-                     HSI_CX + ROSE_SC(1) + 1, HSI_BOT - 4,
+                     HSI_CX + ROSE_SC(1) + 1, AIRCRAFT_Y - ROSE_SC(8),
                      COL_HDG_BUG);
     pk_pfd_draw_triangle(fb,
                          HSI_CX,     arrow_tip_y,

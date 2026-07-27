@@ -216,9 +216,6 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
     for (size_t i = 0; i < sizeof(pitch_marks) / sizeof(pitch_marks[0]); ++i) {
         int p = pitch_marks[i];
         int abs_p = p < 0 ? -p : p;
-        /* Mark half-widths sized to sit inside the bank-arc footprint
-         * (~170 px wide) without crowding the reticle: ±10° → 70 px
-         * wide, ±20° → 48 px, ±30° → 32 px. */
         /* 三级视觉层次：离地平线越远，越短、越细、越淡。
          *
          * 中心附近是最常用的读数区，该最实；±30° 只是余光里的方位感，压下去
@@ -237,6 +234,20 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
          * 标签越界却会露出半个字。留半个 cell 高，字完整才画。 */
         if (mark_y - LADDER_LBL_H / 2 < PFD_ATTITUDE_TOP || mark_y > LADDER_BOT) {
             continue;
+        }
+        /* 圆形裁剪：把梯度线约束在坡度弧**内侧**。
+         *
+         * 加大弧半径只是拉开了当前这几档的间距，pitch 变化时更远的线照样会
+         * 穿出去。真机 G1000 是把整个俯仰梯度裁在弧内的，这里用同样的办法：
+         * 线到弧心的垂直距离为 dy 时，弧内可用的最大半宽是 √(lim² - dy²)；
+         * dy 已经超出 lim 的整条不画。 */
+        {
+            const int lim = BANK_ARC_R - 8;      /* 留出弧本身的粗细 */
+            int dy = mark_y - BANK_ARC_CY;
+            if (dy < 0) dy = -dy;
+            if (dy >= lim) continue;
+            int max_hw = (int)sqrtf((float)(lim * lim - dy * dy));
+            if (half_w > max_hw) half_w = max_hw;
         }
         int lx, ly, rx, ry;
         rotate_about_center(cs, sn, PFD_CX - half_w, mark_y, &lx, &ly);

@@ -17,6 +17,8 @@
 #include "sdkconfig.h"
 
 #include "display.h"
+#include <stdbool.h>
+
 #include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_aa_text.h"
@@ -74,6 +76,44 @@ static void fill_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
     pk_pfd_draw_triangle(fb, x - s, y, x + s, y, x, y + s, c);
 }
 
+/* ── 标签避让 ──────────────────────────────────────────────────
+ *
+ * 此前标签一律沿半径向外推固定距离。方位接近的两个目标，标签就会叠在一起；
+ * 正前方那个还会顶到航向框上。改成候选位置逐个试：优先仍是径向外（读起来
+ * 最自然），撞了就沿切向挪、再撞就往外推一档。
+ *
+ * 占位表每帧重置，只记录本帧已落位的标签与航向框。规模是十几个矩形，
+ * O(n²) 的朴素比对完全够用，不值得上空间索引。 */
+typedef struct { int16_t x0, y0, x1, y1; } lbl_rect_t;
+
+static lbl_rect_t s_used[AIRCRAFT_TABLE_CAPACITY + 1];
+static int        s_n_used;
+
+static bool rect_hit(const lbl_rect_t *a, const lbl_rect_t *b)
+{
+    return !(a->x1 <= b->x0 || b->x1 <= a->x0 ||
+             a->y1 <= b->y0 || b->y1 <= a->y0);
+}
+
+static bool place_ok(const lbl_rect_t *r)
+{
+    if (r->x0 < 0 || r->x1 > PK_DISPLAY_W || r->y1 > PK_DISPLAY_H) return false;
+    /* 不许压到罗盘上——那里是刻度和方位数字的地盘。 */
+    int mx = (r->x0 + r->x1) / 2, my = (r->y0 + r->y1) / 2;
+    int dx = mx - HSI_CX, dy = my - HSI_CY;
+    if (dx * dx + dy * dy < (HSI_R + 4) * (HSI_R + 4)) return false;
+
+    for (int i = 0; i < s_n_used; ++i)
+        if (rect_hit(r, &s_used[i])) return false;
+    return true;
+}
+
+static void mark_used(const lbl_rect_t *r)
+{
+    if (s_n_used < (int)(sizeof(s_used) / sizeof(s_used[0])))
+        s_used[s_n_used++] = *r;
+}
+
 void pk_pfd_hsi_traffic_render(uint16_t *fb)
 {
     int64_t now_us = esp_timer_get_time();
@@ -108,6 +148,14 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
      * 琥珀，保证在天与地两种背景上都能认出来。 */
     const uint16_t COL_BEHIND = pk_rgb565(240, 180,  90);
 
+    /* 每帧重置占位表，并先把航向框占上：它是固定元素，标签必须绕开它。 */
+    s_n_used = 0;
+    {
+        lbl_rect_t hdg = { PFD_HDGBOX_X0, PFD_HDGBOX_Y0,
+                           PFD_HDGBOX_X1, PFD_HDGBOX_Y1 };
+        mark_used(&hdg);
+    }
+
     int behind = 0;
     for (size_t i = 0; i < n; i++) {
         aircraft_t *t = &s_scratch[i];
@@ -128,7 +176,19 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         float rad = (90.0f - r) * (float)M_PI / 180.0f;
         int tx = HSI_CX + (int)lroundf(HSI_TRAFFIC_R * cosf(rad));
         int ty = HSI_CY - (int)lroundf(HSI_TRAFFIC_R * sinf(rad));
-        fill_diamond(fb, tx, ty, ROSE_SC(4), COL_TGT);
+        /* 有航迹就画带朝向的剪影，没有才退回菱形。
+         *
+         * 不能一律画飞机：没有 track 的目标画成箭头等于凭空编出一个朝向，
+         * 而「它朝我来还是背我去」正是飞行员据此决策的信息，编不得。
+         *
+         * 罗盘是 heading-up 的，所以屏幕上的朝向 = 目标航迹 - 本机航向。
+         * 目标 track 是真北参考、IMU yaw 是磁北参考，先把 track 降到磁系。 */
+        if (t->have_velocity) {
+            float rot = ((float)t->heading_deg - mag_var) - yaw;
+            pk_pfd_draw_aircraft(fb, tx, ty, rot, ROSE_SC(7), COL_TGT);
+        } else {
+            fill_diamond(fb, tx, ty, ROSE_SC(4), COL_TGT);
+        }
 
         if (rel.rel_alt_valid) {
             int hh = rel.rel_alt_ft / 100;
@@ -136,16 +196,31 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
             if (hh < -99) hh = -99;
             char b[12];
             snprintf(b, sizeof(b), "%+03d", hh);
-            /* 标签沿**径向朝外**放，而不是固定贴在菱形右侧。
-             *
-             * 外圈半径 139、罗盘数字在半径 89 处，固定右偏移对左半圆的目标
-             * 来说恰好是朝内的方向，标签就压到罗盘数字上去了（"+00" 盖住
-             * "3"）。沿半径向外推则永远落在罗盘之外，与谁都不打架。 */
+            /* 候选位置：先试径向外（读起来最自然，且必定落在罗盘之外），
+             * 撞了就沿切向左右挪，再撞就往外推一档。全都不成才硬放第一个
+             * ——宁可叠一次，也不能让某个目标的高度差凭空消失。 */
+            static const struct { int r_step; float tan_deg; } CAND[] = {
+                { 0,   0.0f }, { 0, +14.0f }, { 0, -14.0f },
+                { 1,   0.0f }, { 1, +18.0f }, { 1, -18.0f },
+                { 2,   0.0f }, { 2, +24.0f }, { 2, -24.0f },
+            };
             int lw = (int)strlen(b) * TGT_LBL_W;
-            int ox = (int)lroundf(cosf(rad) * (float)ROSE_SC(16));
-            int oy = (int)lroundf(-sinf(rad) * (float)ROSE_SC(16));
-            int lx = tx + ox - lw / 2;
-            int ly = ty + oy - TGT_LBL_H / 2;
+            int lx = 0, ly = 0;
+            for (size_t ci = 0; ci < sizeof(CAND) / sizeof(CAND[0]); ++ci) {
+                float a  = (90.0f - r + CAND[ci].tan_deg) * (float)M_PI / 180.0f;
+                int   rr = HSI_TRAFFIC_R + ROSE_SC(16) + CAND[ci].r_step * ROSE_SC(13);
+                int   px = HSI_CX + (int)lroundf(rr * cosf(a));
+                int   py = HSI_CY - (int)lroundf(rr * sinf(a));
+                lx = px - lw / 2;
+                ly = py - TGT_LBL_H / 2;
+                lbl_rect_t cand = { (int16_t)(lx - 2), (int16_t)(ly + 3),
+                                    (int16_t)(lx + lw + 2),
+                                    (int16_t)(ly + TGT_LBL_H - 3) };
+                if (place_ok(&cand) || ci + 1 == sizeof(CAND) / sizeof(CAND[0])) {
+                    mark_used(&cand);
+                    break;
+                }
+            }
             if (TGT_LBL_BG) {
                 /* cell 上下各有约 4 px 空白，底框相应内收，免得看着虚胖。 */
                 pk_pfd_darken_rect(fb, lx - 2, ly + 3,
