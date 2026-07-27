@@ -48,3 +48,6 @@ __pycache__
 /traffic_radar_interactive.html
 /traffic_radar_mockup.png
 /pfd_mockup_v6.png
+
+# Playwright MCP 会话产物（浏览器快照/日志），非项目资产
+.playwright-mcp/
