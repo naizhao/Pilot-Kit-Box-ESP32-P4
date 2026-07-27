@@ -51,3 +51,8 @@ __pycache__
 
 # Playwright MCP 会话产物（浏览器快照/日志），非项目资产
 .playwright-mcp/
+
+# PC 模拟器构建产物
+sim/build/
+sim/*.bmp
+sim/frame_*.bmp

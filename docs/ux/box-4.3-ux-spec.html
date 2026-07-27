@@ -7,7 +7,7 @@
    1 px = 0.1171 mm   ·   8.54 px/mm   ·   217 PPI
    ══════════════════════════════════════════════════════════════ */
 :root{
-  --sky-t:#4a90e2; --sky-b:#2f68b5; --gnd-t:#40406e; --gnd-b:#2a2a4a;
+  --sky-t:#2391eb; --sky-b:#0f468c; --gnd-t:#aa7d50; --gnd-b:#5f4123;
   --plane:#ffe14d; --bg:#05070d; --bar:#0a0f1c; --line:#1c2740;
   --cyan:#5ee0e8; --txt:#e2ecf8; --dim:#93a8c4;
   --alert:#ff5555; --normal:#ffd23f; --up:#3fe08a; --down:#ff9b5a;
@@ -695,8 +695,8 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
 
 <h2>12 · 设计 token</h2>
 <table class="t">
-<tr><td>天空渐变</td><td><span class="sw" style="background:#4a90e2"></span>#4a90e2 → <span class="sw" style="background:#2f68b5"></span>#2f68b5</td></tr>
-<tr><td>地面渐变</td><td><span class="sw" style="background:#40406e"></span>#40406e → <span class="sw" style="background:#2a2a4a"></span>#2a2a4a</td></tr>
+<tr><td>天空渐变（近→远）</td><td><span class="sw" style="background:#2391eb"></span>rgb(35,145,235) → <span class="sw" style="background:#0f468c"></span>rgb(15,70,140)<br><small style="color:#7d90ad">经 pk_pfd_rgb565_dither() 4×4 抖动消色阶</small></td></tr>
+<tr><td>地面渐变（近→远）</td><td><span class="sw" style="background:#aa7d50"></span>rgb(170,125,80) → <span class="sw" style="background:#5f4123"></span>rgb(95,65,35)<br><small style="color:#7d90ad">褐色。早期依据实物照片推测为蓝紫有误，已按 pfd_attitude.c 源码校正</small></td></tr>
 <tr><td>本机符号</td><td><span class="sw" style="background:#ffe14d"></span>#ffe14d</td></tr>
 <tr><td>青（标签/分隔/方位）</td><td><span class="sw" style="background:#5ee0e8"></span>#5ee0e8</td></tr>
 <tr><td>威胁 / 一般目标</td><td><span class="sw" style="background:#ff5555"></span>#ff5555 · <span class="sw" style="background:#ffd23f"></span>#ffd23f</td></tr>
