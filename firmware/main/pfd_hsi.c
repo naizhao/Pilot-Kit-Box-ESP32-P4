@@ -15,6 +15,7 @@
 
 #include "display.h"
 #include "pfd_layout.h"
+#include "pfd_aa_text.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -46,6 +47,36 @@
 #define HDGBOX_X1      PFD_HDGBOX_X1
 #define HDGBOX_Y1      PFD_HDGBOX_Y1
 #define HDGBOX_BG_ALPHA 150
+
+/* ── 字号分档 ──────────────────────────────────────────────────
+ *
+ * 罗盘刻度数字与航向框数字原本都是 5×7 位图 scale-1（6 px 宽），换算到
+ * 4.3″ 屏只有 0.7 mm，远低于 spec §2 的 18 px 硬下限，实际是读不出来的。
+ *
+ * 航向框取 M 而不是 XL：顶栏已有一份 HDG 读数，这里是重复信息，让它压过
+ * 高度/空速会打乱主次。原框 120×40 是照 M 档尺寸开的，但里面填的还是
+ * 48 px 宽的 cockpit 字，于是空出 72 px —— 框看着大得没道理，正是这个原因。 */
+#if PK_DISPLAY_W >= 800
+#  define ROSE_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
+#  define ROSE_LBL_W      PK_AA_S_W
+#  define ROSE_LBL_H      PK_AA_S_H
+#  define ROSE_LBL_INSET  26
+#  define HDG_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define HDGBOX_PAD_X    5
+#  define HDGBOX_PAD_Y    3
+#else
+#  define ROSE_PUTS(fb, x, y, s, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define ROSE_LBL_W      6
+#  define ROSE_LBL_H      6
+#  define ROSE_LBL_INSET  15
+#  define HDG_PUTS(fb, x, y, s, col) \
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
+#  define HDGBOX_PAD_X    3
+#  define HDGBOX_PAD_Y    2
+#endif
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly
  * above the panel's bottom edge — the Garmin convention is to put it
@@ -107,13 +138,16 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
                     lbl = numbuf;
                     break;
             }
-            int len   = (int)strlen(lbl);
+            /* 标签沿半径向内退 ROSE_LBL_INSET，再按自身尺寸回退半个宽高，
+             * 使字形中心落在那一点上。 */
+            int len = (int)strlen(lbl);
             int lx = (int)((float)HSI_CX +
-                           (float)(HSI_R - 15) * cosf(rad)) - len * 3;
+                           (float)(HSI_R - ROSE_LBL_INSET) * cosf(rad))
+                     - len * ROSE_LBL_W / 2;
             int ly = (int)((float)HSI_CY -
-                           (float)(HSI_R - 15) * sinf(rad)) - 3;
-            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         lx, ly, lbl, COL_LABEL, 1);
+                           (float)(HSI_R - ROSE_LBL_INSET) * sinf(rad))
+                     - ROSE_LBL_H / 2;
+            ROSE_PUTS(fb, lx, ly, lbl, COL_LABEL);
         }
     }
 
@@ -174,10 +208,10 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         snprintf(buf, sizeof(buf), "%03d~", hdg);
         /* 4 glyphs scale 2 = 48 × 14; box interior 52 × 16; center
          * with 3 px left padding + 2 px top padding. */
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             HDGBOX_X0 + 3, HDGBOX_Y0 + 2, buf, COL_LABEL);
+        HDG_PUTS(fb, HDGBOX_X0 + HDGBOX_PAD_X, HDGBOX_Y0 + HDGBOX_PAD_Y,
+                 buf, COL_LABEL);
     } else {
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             HDGBOX_X0 + 3, HDGBOX_Y0 + 2, "---~", COL_STALE);
+        HDG_PUTS(fb, HDGBOX_X0 + HDGBOX_PAD_X, HDGBOX_Y0 + HDGBOX_PAD_Y,
+                 "---~", COL_STALE);
     }
 }

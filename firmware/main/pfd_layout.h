@@ -51,8 +51,11 @@
 #define PFD_BANK_ARC_CY    250      /* 坡度刻度弧圆心 y                */
 #define PFD_BANK_ARC_R     215      /* 坡度刻度弧半径                  */
 #define PFD_PIXELS_PER_DEG   7      /* 俯仰 1° 对应像素（320 屏为 3）  */
-#define PFD_HDGBOX_W       120      /* 航向数字框                      */
-#define PFD_HDGBOX_H        40
+/* 航向框按 M 档（cell 24×40）实测尺寸开：4 字符「018°」= 96 px，
+ * 加左右 5 px 内边距与 1 px 边框。原本的 120×40 是照 M 档预估的，但里面
+ * 填的还是 48 px 宽的 cockpit 字，白白空出 72 px。 */
+#define PFD_HDGBOX_W       108      /* 航向数字框                      */
+#define PFD_HDGBOX_H        48
 
 #else
 

@@ -24,11 +24,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_attr.h"
 
 #include "display.h"
 #include "pfd_layout.h"
+#include "pfd_aa_text.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -70,6 +72,39 @@
 #define COL_BANK_POINTER        pk_rgb565(255, 255,   0)   /* pure yellow */
 #define COL_SKY_POINTER         pk_rgb565(255, 255, 255)
 #define COL_BANK_ARC            pk_rgb565(255, 255, 255)
+
+/* ── 俯仰梯度尺寸 ──────────────────────────────────────────────
+ *
+ * 半宽原值 35/24/16 是照 320 屏姿态区（约 170 px 宽）定的。800 屏姿态区
+ * 有 600 px，照搬会让梯度线短得像三道划痕，与 G1000 上「±10° 线约占姿态
+ * 区三分之一」的观感差得远，故按区宽等比放大。
+ *
+ * 标签同样从 5×7 位图 scale-1（6 px）换成 S 档 —— 6 px 在 4.3″ 屏上只有
+ * 0.7 mm，低于 spec §2 的 18 px 硬下限。 */
+#if PK_DISPLAY_W >= 800
+#  define LADDER_W10        90
+#  define LADDER_W20        62
+#  define LADDER_W30        42
+#  define LADDER_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
+#  define LADDER_LBL_W      PK_AA_S_W
+#  define LADDER_LBL_H      PK_AA_S_H
+#  define LADDER_LBL_GAP    8
+/* 梯度线不伸进 HSI 罗盘区：那里盖着半透明罗盘，两套刻度叠在一起谁也
+ * 读不出来。留 30 px 余量，够坡度旋转时线端的上下摆动。 */
+#  define LADDER_BOT        (PFD_HSI_TOP - 30)
+#else
+#  define LADDER_W10        35
+#  define LADDER_W20        24
+#  define LADDER_W30        16
+#  define LADDER_PUTS(fb, x, y, s, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define LADDER_LBL_W      6
+#  define LADDER_LBL_H      6
+#  define LADDER_LBL_GAP    2
+#  define LADDER_BOT        (PFD_ATTITUDE_BOT + 20)
+#endif
+
 
 /* --- Gradient LUTs (sky/ground), built once on first render -------- */
 
@@ -161,10 +196,11 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
         /* Mark half-widths sized to sit inside the bank-arc footprint
          * (~170 px wide) without crowding the reticle: ±10° → 70 px
          * wide, ±20° → 48 px, ±30° → 32 px. */
-        int half_w = (abs_p == 10) ? 35 : (abs_p == 20 ? 24 : 16);
+        int half_w = (abs_p == 10) ? LADDER_W10
+                   : (abs_p == 20 ? LADDER_W20 : LADDER_W30);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
-        if (mark_y < PFD_ATTITUDE_TOP - 20 || mark_y > PFD_ATTITUDE_BOT + 20) {
+        if (mark_y < PFD_ATTITUDE_TOP - 20 || mark_y > LADDER_BOT) {
             continue;
         }
         int lx, ly, rx, ry;
@@ -181,12 +217,14 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
             pk_pfd_draw_line_aa(fb, (float)lx, (float)ly, (float)mx, (float)my,
                                 1.4f, COL_PITCH_LINE);
         }
+        /* 数字贴在梯度线两端外侧，垂直中心与线对齐。 */
         char label[4];
         snprintf(label, sizeof(label), "%d", abs_p);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     lx - 14, ly - 3, label, COL_PITCH_LINE, 1);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     rx + 2, ry - 3, label, COL_PITCH_LINE, 1);
+        int lw = (int)strlen(label) * LADDER_LBL_W;
+        LADDER_PUTS(fb, lx - lw - LADDER_LBL_GAP, ly - LADDER_LBL_H / 2,
+                    label, COL_PITCH_LINE);
+        LADDER_PUTS(fb, rx + LADDER_LBL_GAP, ry - LADDER_LBL_H / 2,
+                    label, COL_PITCH_LINE);
     }
 }
 
