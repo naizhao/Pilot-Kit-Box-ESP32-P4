@@ -22,6 +22,7 @@
 
 #include "display.h"
 #include "pfd_layout.h"
+#include "pfd_aa_text.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -34,18 +35,70 @@
                                to 93 automatically. */
 #define TAPE_CY   ((TAPE_TOP + TAPE_BOT) / 2)   /* 93 */
 
-#define MINOR_FT      20
-#define MAJOR_FT     100
-#define LABEL_EVERY  200
+/* ── 刻度密度 ──────────────────────────────────────────────────
+ *
+ * 标注间距必须大于标签字形的 cell 高，否则相邻标签直接叠在一起。
+ * 800 屏用 S 档（cell 30 px），沿用 320 的「200 ft / 40 px」就贴死了。
+ *
+ * 800：带高 250 px，取 2 ft/px → 视窗 ±250 ft，与真机 G1000 高度带
+ *      相当；标签每 100 ft = 50 px 间距，容得下 30 px 的 cell。
+ * 320：历史值，1 px = 5 ft。 */
+#if PK_DISPLAY_W >= 800
+#  define FT_PER_PX      2
+#  define MINOR_FT      20
+#  define MAJOR_FT     100
+#  define LABEL_EVERY  100
+#else
+#  define FT_PER_PX      5
+#  define MINOR_FT      20
+#  define MAJOR_FT     100
+#  define LABEL_EVERY  200
+#endif
 
-/* Center value box — scale-2 digits (12 px wide × 14 tall), 5 chars
- * for altitudes up to 99999 ft. Interior 60 px wide + 1 px border each
- * side + 2 px horizontal padding → 64 wide. Aligned flush with the
- * tape band (no bleed into the attitude indicator). */
-#define BOX_X0   PFD_ALT_X0
+#define FT_TO_PX(dft)  ((dft) / FT_PER_PX)
+/* 视窗半高换算成 ft，决定要遍历哪一段刻度。 */
+#define TAPE_HALF_FT   (((TAPE_BOT - TAPE_TOP) / 2) * FT_PER_PX)
+
+/* ── 当前值框 ──────────────────────────────────────────────────
+ *
+ * 大屏用 XL 档（43 px cap ≈ 5.0 mm，spec §2 规定「PFD 当前值」用它）。
+ *
+ * 5 位数 × 37 px advance = 185 px，而高度带只有 100 px 宽，所以值框
+ * **向左突出压在姿态仪上**。这不是妥协，正是 G1000 的原样 —— 当前高度
+ * 是主仪表最该一眼看到的数，让它占满该占的宽度；姿态仪被遮的是靠边
+ * 的一小条，那里本来也没有信息。
+ *
+ * 刻度标签用 S 档：4 位数 × 17 px = 68 px，塞得进 100 px 的带宽。 */
+#define VAL_PAD_X   4
+#define VAL_PAD_Y   3
+
+#if PK_DISPLAY_W >= 800
+#  define VAL_DIGITS  5
+#  define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
+#  define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
+#  define VAL_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
+#  define LBL_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
+#  define LBL_W       PK_AA_S_W
+#  define LBL_CELL_H  PK_AA_S_H
+#else
+/* 320 档：cockpit 12×16 字形，框与带同宽（历史值，见文件头）。 */
+#  define BOX_W       (PFD_ALT_X1 - PFD_ALT_X0)
+#  define BOX_H       20
+#  define VAL_PUTS(fb, x, y, s, col) \
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
+#  define LBL_PUTS(fb, x, y, s, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define LBL_W       6
+#  define LBL_CELL_H  8
+#endif
+
+/* 右对齐贴住面板右缘；框高居中于带中线。 */
 #define BOX_X1   PFD_ALT_X1
-#define BOX_Y0   (TAPE_CY - 10)   /* 103 */
-#define BOX_Y1   (TAPE_CY + 10)   /* 123 */
+#define BOX_X0   (BOX_X1 - BOX_W)
+#define BOX_Y0   (TAPE_CY - BOX_H / 2)
+#define BOX_Y1   (BOX_Y0 + BOX_H)
 
 #define COL_BG         pk_rgb565(  8,   8,  12)
 #define COL_BORDER_L   pk_rgb565( 70, 220, 250)   /* cyan left edge */
@@ -68,11 +121,10 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
      * (TAPE_BOT - TAPE_TOP) px at 5 ft/px = 950 ft, so ±475 ft around
      * center. Round up to 500 for clean tick layout. */
     int center_ft = a->valid ? a->altitude_ft : 5000;
-    int low  = ((center_ft - 500) / MINOR_FT) * MINOR_FT;
-    int high = ((center_ft + 500) / MINOR_FT) * MINOR_FT;
+    int low  = ((center_ft - TAPE_HALF_FT) / MINOR_FT) * MINOR_FT;
+    int high = ((center_ft + TAPE_HALF_FT) / MINOR_FT) * MINOR_FT;
     for (int ft = low; ft <= high; ft += MINOR_FT) {
-        /* 1 px = 5 ft → multiply ft-delta by 0.2 to get pixel offset. */
-        int y = TAPE_CY - ((ft - center_ft) / 5);
+        int y = TAPE_CY - FT_TO_PX(ft - center_ft);
         if (y < TAPE_TOP || y >= TAPE_BOT) continue;
         bool major = (ft % MAJOR_FT) == 0;
         int tick_len = major ? 10 : 4;
@@ -85,9 +137,8 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
             snprintf(buf, sizeof(buf), "%d", ft);
             /* Right-justify the label inside the tape band, with the
              * digits sitting just left of the right panel edge. */
-            int w = (int)strlen(buf) * 6;
-            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         TAPE_X1 - w - 2, y - 3, buf, COL_LABEL, 1);
+            int w = (int)strlen(buf) * LBL_W;
+            LBL_PUTS(fb, TAPE_X1 - w - 2, y - LBL_CELL_H / 2, buf, COL_LABEL);
         }
     }
 
@@ -100,20 +151,16 @@ void pk_pfd_alt_tape_render(uint16_t *fb, const pk_pfd_alt_tape_t *a)
     pk_pfd_fill_rect(fb, BOX_X0,     BOX_Y0,     BOX_X0 + 1, BOX_Y1,     COL_BOX_BRDR);
     pk_pfd_fill_rect(fb, BOX_X1 - 1, BOX_Y0,     BOX_X1,     BOX_Y1,     COL_BOX_BRDR);
 
+    /* 定宽字体下 "%5d" 的前导空格即右对齐，高度位数变化时个位不会左右
+     * 游走 —— 这正是选 B612 Mono 的理由。 */
     if (a->valid) {
         char buf[8];
         int alt = a->altitude_ft;
         if (alt < 0)     alt = 0;
         if (alt > 99999) alt = 99999;
         snprintf(buf, sizeof(buf), "%5d", alt);
-        /* 5 glyphs scale 2 = 60 px wide; box interior 60 px; 2 px
-         * horizontal padding (1 border + 1 visual breathing room);
-         * 3 px top padding centers the 14-px digit cells in the 20-
-         * px box interior. */
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_X0 + 2, BOX_Y0 + 3, buf, COL_VALUE);
+        VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, buf, COL_VALUE);
     } else {
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_X0 + 2, BOX_Y0 + 3, "-----", COL_STALE);
+        VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, "-----", COL_STALE);
     }
 }

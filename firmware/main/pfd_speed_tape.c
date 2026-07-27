@@ -25,6 +25,7 @@
 #include "display.h"
 #include "pfd_layout.h"
 #include "pfd_draw.h"
+#include "pfd_aa_text.h"
 #include "pfd_font.h"
 
 /* ── geometry ─────────────────────────────────────────────────────────── */
@@ -38,19 +39,59 @@
 #define METRIC_TOP  PFD_METRIC_TOP
 #define METRIC_BOT  PFD_METRIC_BOT
 
-/* 对齐 ALT 刻度密度(ALT minor 4px/major 20px):minor 10kt=5px、major 50kt=25px */
-#define MINOR_KT    10
-#define MAJOR_KT    50
-#define LABEL_EVERY 50
+/* ── 刻度密度 ──────────────────────────────────────────────────
+ *
+ * 与 pfd_tape.c 同理：标注间距必须大于标签的 cell 高，否则相邻标签叠在
+ * 一起。沿用 320 的「50 kt / 25 px」在 800 屏上会直接把 S 档（cell 30 px）
+ * 的两个标签压成一团。
+ *
+ * 800：带高 250 px，取 2 px/kt → 视窗 ±62 kt，与真机 G1000 速度带相当；
+ *      标签每 20 kt = 40 px 间距。注意这里是**每节 2 像素**，与 320 的
+ *      「每像素 2 节」正好互为倒数，故用宏封装换算方向。
+ * 320：历史值，1 px = 2 kt。 */
+#if PK_DISPLAY_W >= 800
+#  define KT_TO_PX(dkt)  ((dkt) * 2)
+#  define TAPE_HALF_KT   ((STAPE_BOT - STAPE_TOP) / 2 / 2)
+#  define MINOR_KT     5
+#  define MAJOR_KT    10
+#  define LABEL_EVERY 20
+#else
+#  define KT_TO_PX(dkt)  ((dkt) / 2)
+#  define TAPE_HALF_KT   ((STAPE_BOT - STAPE_TOP) / 2 * 2)
+#  define MINOR_KT    10
+#  define MAJOR_KT    50
+#  define LABEL_EVERY 50
+#endif
 
-/* Pixels per knot (1 px = 2 kt → 0.5 px/kt; use integer: 2 kt = 1 px) */
-#define KT_PER_PX   2
+/* ── 当前值框 ──────────────────────────────────────────────────
+ * 与 pfd_tape.c 镜像对称：那边贴右缘向左突出，这边贴左缘向右突出。
+ * 3 位数 × 37 px = 111 px，只比 100 px 的带宽多出一点点。 */
+#define VAL_PAD_X   4
+#define VAL_PAD_Y   3
 
-/* Centre value box — derived from tape geometry centre (mirrors pfd_tape.c) */
+#if PK_DISPLAY_W >= 800
+#  define VAL_DIGITS  3
+#  define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
+#  define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
+#  define VAL_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
+#  define LBL_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
+#  define LBL_CELL_H  PK_AA_S_H
+#else
+#  define BOX_W       (PFD_SPD_X1 - PFD_SPD_X0)
+#  define BOX_H       20
+#  define VAL_PUTS(fb, x, y, s, col) \
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
+#  define LBL_PUTS(fb, x, y, s, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define LBL_CELL_H  8
+#endif
+
 #define BOX_X0   STAPE_X0
-#define BOX_X1   STAPE_X1
-#define BOX_Y0   (STAPE_CY - 10)   /* 83 */
-#define BOX_Y1   (STAPE_CY + 10)   /* 103 */
+#define BOX_X1   (BOX_X0 + BOX_W)
+#define BOX_Y0   (STAPE_CY - BOX_H / 2)
+#define BOX_Y1   (BOX_Y0 + BOX_H)
 
 /* ── colours ────────────────────────────────────────────────────────── */
 #define COL_BG         pk_rgb565(  8,   8,  12)
@@ -77,13 +118,12 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
      * Show ±150 kt around centre; clamp minimum to 0. */
     int center_kt = s->valid ? s->ground_speed_kt : 60;
     if (center_kt < 0) center_kt = 0;
-    int low  = ((center_kt - 150) / MINOR_KT) * MINOR_KT;
-    int high = ((center_kt + 150) / MINOR_KT) * MINOR_KT;
+    int low  = ((center_kt - TAPE_HALF_KT) / MINOR_KT) * MINOR_KT;
+    int high = ((center_kt + TAPE_HALF_KT) / MINOR_KT) * MINOR_KT;
     if (low < 0) low = 0;
 
     for (int kt = low; kt <= high; kt += MINOR_KT) {
-        /* 1 px = 2 kt → pixel offset = (kt_delta) / KT_PER_PX */
-        int y = STAPE_CY - ((kt - center_kt) / KT_PER_PX);
+        int y = STAPE_CY - KT_TO_PX(kt - center_kt);
         if (y < STAPE_TOP || y >= STAPE_BOT) continue;
 
         bool major    = (kt % MAJOR_KT) == 0;
@@ -99,8 +139,7 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
             char buf[16];
             snprintf(buf, sizeof(buf), "%d", kt);
             /* Left-justify label: start at x=2, clear of the tick */
-            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         STAPE_X0 + 2, y - 3, buf, COL_LABEL, 1);
+            LBL_PUTS(fb, STAPE_X0 + 2, y - LBL_CELL_H / 2, buf, COL_LABEL);
         }
     }
 
@@ -118,13 +157,9 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
         if (gs < 0)   gs = 0;
         if (gs > 999) gs = 999;
         snprintf(buf, sizeof(buf), "%3d", gs);
-        /* 3 glyphs × 12 px = 36 px; box is 64 px wide → 2 px border each
-         * side leaves 60 px interior; centre at x = 1 + (60-36)/2 = 13 */
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_X0 + 13, BOX_Y0 + 3, buf, COL_VALUE);
+        VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, buf, COL_VALUE);
     } else {
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_X0 + 13, BOX_Y0 + 3, "---", COL_STALE);
+        VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, "---", COL_STALE);
     }
 
     /* ── Metric conversion pad ────────────────────────────────────── */
