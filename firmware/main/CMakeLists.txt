@@ -48,6 +48,8 @@ idf_component_register(
         "pfd_draw.c"
         "pfd_font.c"
         "pfd_font_aa.c"
+        "pfd_aa_font.c"
+        "pfd_aa_text.c"
         "pfd_hsi.c"
         "pfd_hsi_traffic.c"
         "pfd_statusbar.c"

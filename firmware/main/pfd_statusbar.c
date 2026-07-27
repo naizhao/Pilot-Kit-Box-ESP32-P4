@@ -15,6 +15,7 @@
 
 #include "display.h"
 #include "pfd_layout.h"
+#include "pfd_aa_text.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -27,35 +28,61 @@
 #define COL_STALE  pk_rgb565(100, 100, 100)
 #define COL_RED    pk_rgb565(255,  80,  60)
 
-/* Centre of the unused mid-span x[90,232). */
+/* 状态栏水平中线（GPS 段以此居中）。 */
 #define MID_CENTRE_X (PFD_CX + 1)
+
+/* 文字渲染器按分辨率取舍：
+ *
+ *   320×240 —— 沿用 cockpit 字形。它是为航电读数生成的 12×16 子集，
+ *              无灰阶毛边、无 TTF hinting 伪影，小屏上比缩放位图清晰
+ *              得多；代价是渲染器写死 scale-2（见 pfd_font.h 注释）。
+ *
+ *   800×480 —— cockpit 的 scale-2 换算下来只有 1.64 mm，低于规格
+ *              §2 规定的 2.1 mm 硬下限，故改用可缩放位图取 scale 3
+ *              （2.46 mm ≈ S 级）。大字号下位图本就不需要抗锯齿修饰。
+ *
+ * 两者的每字形步进不同（cockpit 固定 12 px，位图为 6×scale），布局
+ * 计算一律走 BAR_GLYPH_W，不再出现魔数。 */
+#if PK_DISPLAY_W >= 800
+/* 大屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
+ * 位图字体整数倍放大会变成方块像素，在 217 PPI 上无法接受。 */
+#  define BAR_GLYPH_W   PK_AA_S_W
+#  define BAR_PUTS(fb, x, y, str, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
+#else
+#  define BAR_GLYPH_W   12
+#  define BAR_PUTS(fb, x, y, str, col) \
+        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col))
+#endif
+
+/* 定宽字体下字符串的像素宽度。 */
+#define BAR_TEXT_W(n)   ((n) * BAR_GLYPH_W)
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 {
     pk_pfd_fill_rect(fb, 0, STATUSBAR_TOP, PK_DISPLAY_W, STATUSBAR_BOT, COL_BG);
 
-    char buf[12];
+    char      buf[12];
+    const int ty = PFD_BAR_TEXT_Y;
 
-    /* Left: "HDG" (cyan, scale 2 = 36 px) + " NNN°" (4 glyphs scale 2
-     * = 48 px → ends at x≈90). */
-    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         6, 1, "HDG", COL_LABEL);
-    if (s->imu_valid) {
-        int hdg = ((int)s->yaw_deg + 360) % 360;
-        snprintf(buf, sizeof(buf), "%03d~", hdg);
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             46, 1, buf, COL_GREEN);
-    } else {
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             46, 1, "---~", COL_STALE);
+    /* ── 左段：HDG + 航向，左对齐 ───────────────────────────── */
+    {
+        int x = PFD_BAR_MARGIN_L;
+        BAR_PUTS(fb, x, ty, "HDG", COL_LABEL);
+        x += BAR_TEXT_W(3) + PFD_BAR_GAP_LABEL;
+
+        if (s->imu_valid) {
+            int hdg = ((int)s->yaw_deg + 360) % 360;
+            snprintf(buf, sizeof(buf), "%03d~", hdg);
+            BAR_PUTS(fb, x, ty, buf, COL_GREEN);
+        } else {
+            BAR_PUTS(fb, x, ty, "---~", COL_STALE);
+        }
     }
 
-    /* Centre x[90,232): GPS reception status.
-     * Each cockpit glyph is 12 px wide (scale-2 fixed advance).
-     * We build the string, compute its pixel width, then start it
-     * so it is horizontally centred in the 142-px gap. */
+    /* ── 中段：GPS 接收状态，以屏幕中线居中 ─────────────────── */
     {
-        uint16_t  gps_col;
+        uint16_t gps_col;
         if (s->gps_have_fix) {
             snprintf(buf, sizeof(buf), "GPS (%u)", (unsigned)s->gps_sats);
             gps_col = COL_GREEN;
@@ -63,21 +90,20 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
             snprintf(buf, sizeof(buf), "NO GPS");
             gps_col = COL_RED;
         }
-        /* strlen * 12 px per cockpit glyph, centred on x=161 */
-        {
-            int len = (int)strlen(buf);
-            int gps_x = MID_CENTRE_X - (len * 12) / 2;
-            pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 gps_x, 1, buf, gps_col);
-        }
+        int gps_x = MID_CENTRE_X - BAR_TEXT_W((int)strlen(buf)) / 2;
+        BAR_PUTS(fb, gps_x, ty, buf, gps_col);
     }
 
-    /* Right: "ADSB NN" — right-justified-ish. "ADSB" = 4 glyphs × 12 =
-     * 48 px at scale 2; we place it so the trailing NN sits flush
-     * with x=312 leaving a 2-px right margin on the 320-wide panel. */
-    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         232, 1, "ADSB", COL_LABEL);
-    snprintf(buf, sizeof(buf), "%2u", (unsigned)s->aircraft_count);
-    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                         288, 1, buf, COL_GREEN);
+    /* ── 右段：ADSB + 目标计数，右对齐 ──────────────────────
+     * 先按计数宽度反推其起点，再据此反推标签起点。原实现把两者的 x
+     * 写死为 232 / 288，那是 320 宽面板算出来的，换屏即失效。 */
+    {
+        snprintf(buf, sizeof(buf), "%2u", (unsigned)s->aircraft_count);
+        int cnt_w   = BAR_TEXT_W((int)strlen(buf));
+        int cnt_x   = PK_DISPLAY_W - PFD_BAR_MARGIN_R - cnt_w;
+        int label_x = cnt_x - PFD_BAR_GAP_WORD - BAR_TEXT_W(4);   /* "ADSB" */
+
+        BAR_PUTS(fb, label_x, ty, "ADSB", COL_LABEL);
+        BAR_PUTS(fb, cnt_x,   ty, buf,    COL_GREEN);
+    }
 }

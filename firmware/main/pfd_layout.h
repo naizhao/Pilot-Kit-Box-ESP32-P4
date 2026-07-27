@@ -77,6 +77,35 @@
 #endif
 
 /* ══════════════════════════════════════════════════════════════
+ * 字号档位
+ *
+ * 位图字体：scale N → 视觉 5N×7N px，cell 6N×8N px。
+ * 依据 docs/ux/box-4.3-ux-spec.md §2 的字号阶梯换算（4.3" 屏 8.54 px/mm）：
+ *
+ *   scale 2 → 视觉 14 px = 1.64 mm   小屏够用，新屏偏小
+ *   scale 3 → 视觉 21 px = 2.46 mm   ≈ 规格 S 级 2.5 mm
+ *   scale 4 → 视觉 28 px = 3.28 mm   ≈ 规格 M 级 3.0 mm
+ *   scale 6 → 视觉 42 px = 4.92 mm   ≈ 规格 XL 级 5.0 mm
+ *
+ * 规格中"低于 2.1 mm 一律禁止"，故新屏最小档为 scale 3。
+ * ══════════════════════════════════════════════════════════════ */
+#if PK_DISPLAY_W >= 800
+#define PFD_FS_BAR          3       /* 状态栏                        */
+#define PFD_BAR_TEXT_Y      9       /* 30 px cell 在 48 px 状态栏内垂直居中 */
+#define PFD_BAR_MARGIN_L   12
+#define PFD_BAR_MARGIN_R   16
+#define PFD_BAR_GAP_LABEL   8       /* 标签与其数值之间              */
+#define PFD_BAR_GAP_WORD   16       /* 独立词组之间                  */
+#else
+#define PFD_FS_BAR          2
+#define PFD_BAR_TEXT_Y      1
+#define PFD_BAR_MARGIN_L    6
+#define PFD_BAR_MARGIN_R    8
+#define PFD_BAR_GAP_LABEL   4
+#define PFD_BAR_GAP_WORD    8
+#endif
+
+/* ══════════════════════════════════════════════════════════════
  * 共用派生量（两套分辨率同构，无需分档）
  * ══════════════════════════════════════════════════════════════ */
 
