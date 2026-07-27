@@ -21,13 +21,14 @@
 #include <string.h>
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
-#define TAPE_X0   256       /* tape band: 64 px wide (was 72) */
-#define TAPE_X1   320
-#define TAPE_TOP   18
-#define TAPE_BOT  168       /* shortened to y=168 to make room for the
+#define TAPE_X0   PFD_ALT_X0       /* tape band: 64 px wide (was 72) */
+#define TAPE_X1   PFD_ALT_X1
+#define TAPE_TOP   PFD_TAPE_TOP
+#define TAPE_BOT  PFD_TAPE_BOT       /* shortened to y=168 to make room for the
                                three info boxes (BARO / metric / VS)
                                below the tape. TAPE_CY shifts from 113
                                to 93 automatically. */
@@ -41,8 +42,8 @@
  * for altitudes up to 99999 ft. Interior 60 px wide + 1 px border each
  * side + 2 px horizontal padding → 64 wide. Aligned flush with the
  * tape band (no bleed into the attitude indicator). */
-#define BOX_X0   256
-#define BOX_X1   320
+#define BOX_X0   PFD_ALT_X0
+#define BOX_X1   PFD_ALT_X1
 #define BOX_Y0   (TAPE_CY - 10)   /* 103 */
 #define BOX_Y1   (TAPE_CY + 10)   /* 123 */
 

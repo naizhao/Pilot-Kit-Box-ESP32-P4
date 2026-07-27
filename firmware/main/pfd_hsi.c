@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -25,14 +26,14 @@
  * unobstructed so the pilot still has a horizon reference around the
  * compass rose.
  */
-#define HSI_TOP        138
-#define HSI_BOT        240
+#define HSI_TOP        PFD_HSI_TOP
+#define HSI_BOT        PFD_HSI_BOT
 
 /* Virtual center is *below* the panel so we only see the top half of
  * the rose — same G1000 trick we use for the bank arc. */
-#define HSI_CX         160
-#define HSI_CY         240
-#define HSI_R           65
+#define HSI_CX         PFD_HSI_CX
+#define HSI_CY         PFD_HSI_CY
+#define HSI_R          PFD_HSI_R
 
 /* HDG numeric box — scale-2 digits (4 chars × 12 = 48 px wide × 14 tall).
  * Box interior 48×14 + 1 px border + small padding → 54×18.
@@ -40,10 +41,10 @@
  * Y position: bottom stays at y=162 (same as the old scale-3 box's
  * bottom), top moves down to y=144. Keeps the gap from box-bottom to
  * the visible top of the rose (~y=175) consistent across the resize. */
-#define HDGBOX_X0      133
-#define HDGBOX_Y0      144
-#define HDGBOX_X1      187
-#define HDGBOX_Y1      162
+#define HDGBOX_X0      PFD_HDGBOX_X0
+#define HDGBOX_Y0      PFD_HDGBOX_Y0
+#define HDGBOX_X1      PFD_HDGBOX_X1
+#define HDGBOX_Y1      PFD_HDGBOX_Y1
 #define HDGBOX_BG_ALPHA 150
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly

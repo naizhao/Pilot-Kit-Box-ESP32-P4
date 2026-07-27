@@ -28,6 +28,7 @@
 #include "esp_attr.h"
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -38,13 +39,13 @@
  * sub-region. Other widgets (statusbar / ALT tape / HSI / GS / VS)
  * draw OVER the attitude as opaque overlays.
  */
-#define PFD_ATTITUDE_LEFT       0
+#define PFD_ATTITUDE_LEFT       PFD_ATT_LEFT
 #define PFD_ATTITUDE_RIGHT      PK_DISPLAY_W                   /* 320 */
 #define PFD_ATTITUDE_TOP        18                              /* just below statusbar */
 #define PFD_ATTITUDE_BOT        PK_DISPLAY_H                   /* 240 */
 #define PFD_CX                  (PK_DISPLAY_W / 2)             /* 160 */
 #define PFD_CY                  ((PFD_ATTITUDE_TOP + PFD_ATTITUDE_BOT) / 2)  /* 129 */
-#define PFD_PIXELS_PER_DEG      3
+/* PFD_PIXELS_PER_DEG 由 pfd_layout.h 按分辨率给出 */
 
 /* Bank arc: virtual center placed below the visible region so the
  * arc curves cleanly across the top of the attitude indicator. With
@@ -52,14 +53,14 @@
  * statusbar) and ±60° ticks land at x=160±87 → arc spans ~174 px
  * wide ≈ 54% of the 320-px panel (Garmin G1000 keeps the bank
  * indicator inside the middle 1/3..3/5 of screen width). */
-#define BANK_ARC_CX             160
-#define BANK_ARC_CY             130
-#define BANK_ARC_R              100
+#define BANK_ARC_CX             PFD_BANK_ARC_CX
+#define BANK_ARC_CY             PFD_BANK_ARC_CY
+#define BANK_ARC_R              PFD_BANK_ARC_R
 
 /* Gradient LUT size: max perpendicular distance from horizon we map
  * to distinct colors. Beyond this the gradient saturates at the "far"
  * end. 160 keeps the gradient ramp visible across the full screen. */
-#define ATTITUDE_HEIGHT         160
+#define ATTITUDE_HEIGHT         PFD_ATT_H
 
 /* --- Palette (spec §4, RGB565, panel byte order) ------------------- */
 #define COL_HORIZON_LINE        pk_rgb565(255, 255, 255)

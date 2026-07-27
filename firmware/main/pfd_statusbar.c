@@ -14,11 +14,12 @@
 #include <string.h>
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
 #define STATUSBAR_TOP   0
-#define STATUSBAR_BOT  18
+#define STATUSBAR_BOT  PFD_BAR_BOT
 
 #define COL_BG     pk_rgb565(  8,   8,  12)
 #define COL_LABEL  pk_rgb565( 70, 220, 250)
@@ -27,7 +28,7 @@
 #define COL_RED    pk_rgb565(255,  80,  60)
 
 /* Centre of the unused mid-span x[90,232). */
-#define MID_CENTRE_X 161
+#define MID_CENTRE_X (PFD_CX + 1)
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 {

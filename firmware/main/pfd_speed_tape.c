@@ -23,19 +23,20 @@
 #include <string.h>
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
 /* ── geometry ─────────────────────────────────────────────────────────── */
-#define STAPE_X0     0
-#define STAPE_X1    64
-#define STAPE_TOP   18
-#define STAPE_BOT  168      /* tape band bottom */
+#define STAPE_X0     PFD_SPD_X0
+#define STAPE_X1    PFD_SPD_X1
+#define STAPE_TOP   PFD_TAPE_TOP
+#define STAPE_BOT  PFD_TAPE_BOT      /* tape band bottom */
 #define STAPE_CY   ((STAPE_TOP + STAPE_BOT) / 2)   /* 93 */
 
 /* Metric pad sits immediately below the tape band */
-#define METRIC_TOP  170
-#define METRIC_BOT  208
+#define METRIC_TOP  PFD_METRIC_TOP
+#define METRIC_BOT  PFD_METRIC_BOT
 
 /* 对齐 ALT 刻度密度(ALT minor 4px/major 20px):minor 10kt=5px、major 50kt=25px */
 #define MINOR_KT    10

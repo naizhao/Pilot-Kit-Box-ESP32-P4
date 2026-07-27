@@ -24,8 +24,21 @@
 
 #include "esp_err.h"
 
+/* 面板分辨率。
+ *
+ * 用 #ifndef 包裹是为了让 PC 模拟器（sim/）能在编译期覆盖成 800×480，
+ * 从而在没有硬件的情况下预览 4.3"/5" 屏的布局。固件自身不覆盖，
+ * 仍取下面的默认值。
+ *
+ * 注意：绘制模块里还散落着大量基于 320×240 推导出来的布局常量
+ * （见 pfd_*.c 顶部的 #define），仅改这里不足以正确适配新分辨率 ——
+ * 那是分辨率参数化的后续工作。 */
+#ifndef PK_DISPLAY_W
 #define PK_DISPLAY_W           320
+#endif
+#ifndef PK_DISPLAY_H
 #define PK_DISPLAY_H           240
+#endif
 #define PK_DISPLAY_BPP         2          /* RGB565 */
 #define PK_DISPLAY_FB_BYTES    (PK_DISPLAY_W * PK_DISPLAY_H * PK_DISPLAY_BPP)
 

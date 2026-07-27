@@ -58,7 +58,21 @@ set(FW_DRAW_SRC
     ${FW}/pfd_hsi.c
 )
 
+# 目标分辨率。默认沿用现役 2.4" 屏，便于验证移植正确性；
+# 传 -DPANEL=800x480 即可预览 4.3"/5" 新屏布局。
+#     cmake -B build -DPANEL=800x480
+set(PANEL "320x240" CACHE STRING "面板分辨率 WxH")
+string(REPLACE "x" ";" PANEL_WH ${PANEL})
+list(GET PANEL_WH 0 PANEL_W)
+list(GET PANEL_WH 1 PANEL_H)
+message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
+
 add_executable(pkbox_sim main.c ${FW_DRAW_SRC})
+
+target_compile_definitions(pkbox_sim PRIVATE
+    PK_DISPLAY_W=${PANEL_W}
+    PK_DISPLAY_H=${PANEL_H}
+)
 
 target_include_directories(pkbox_sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/compat   # 必须排在 FW 前面，桩头优先
