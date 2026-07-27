@@ -78,6 +78,10 @@
 #  define LBL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
 #  define LBL_CELL_H  PK_AA_S_H
+#  define MET_PUTS(fb, x, y, str, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
+#  define MET_ROW_H   PK_AA_S_H
+#  define MET_PAD     2
 #else
 #  define BOX_W       (PFD_SPD_X1 - PFD_SPD_X0)
 #  define BOX_H       20
@@ -86,6 +90,10 @@
 #  define LBL_PUTS(fb, x, y, s, col) \
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
 #  define LBL_CELL_H  8
+#  define MET_PUTS(fb, x, y, str, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), 1)
+#  define MET_ROW_H   10
+#  define MET_PAD     3
 #endif
 
 #define BOX_X0   STAPE_X0
@@ -163,26 +171,23 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
     }
 
     /* ── Metric conversion pad ────────────────────────────────────── */
-    pk_pfd_darken_rect(fb, STAPE_X0, METRIC_TOP, STAPE_X1, METRIC_BOT, 128);
+    pk_pfd_darken_rect(fb, STAPE_X0, METRIC_TOP, PFD_METRIC_X1, METRIC_BOT, 128);
 
-    if (s->valid) {
-        int kmh = (int)(s->ground_speed_kt * 1.852f + 0.5f);
-        int mph = (int)(s->ground_speed_kt * 1.15078f + 0.5f);
-        char buf[16];
-
-        /* Line 1: km/h */
-        snprintf(buf, sizeof(buf), "%d km/h", kmh);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     STAPE_X0 + 2, METRIC_TOP + 3, buf, COL_METRIC, 1);
-
-        /* Line 2: mph */
-        snprintf(buf, sizeof(buf), "%d mph", mph);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     STAPE_X0 + 2, METRIC_TOP + 13, buf, COL_METRIC, 1);
-    } else {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     STAPE_X0 + 2, METRIC_TOP + 3,  "-- km/h", COL_METRIC_ST, 1);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     STAPE_X0 + 2, METRIC_TOP + 13, "-- mph",  COL_METRIC_ST, 1);
+    {
+        char l1[16], l2[16];
+        uint16_t col;
+        if (s->valid) {
+            int kmh = (int)(s->ground_speed_kt * 1.852f + 0.5f);
+            int mph = (int)(s->ground_speed_kt * 1.15078f + 0.5f);
+            snprintf(l1, sizeof(l1), "%d km/h", kmh);
+            snprintf(l2, sizeof(l2), "%d mph",  mph);
+            col = COL_METRIC;
+        } else {
+            snprintf(l1, sizeof(l1), "-- km/h");
+            snprintf(l2, sizeof(l2), "-- mph");
+            col = COL_METRIC_ST;
+        }
+        MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD, l1, col);
+        MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD + MET_ROW_H, l2, col);
     }
 }

@@ -42,12 +42,13 @@
  * draw OVER the attitude as opaque overlays.
  */
 #define PFD_ATTITUDE_LEFT       PFD_ATT_LEFT
-#define PFD_ATTITUDE_RIGHT      PK_DISPLAY_W                   /* 320 */
-#define PFD_ATTITUDE_TOP        18                              /* just below statusbar */
-#define PFD_ATTITUDE_BOT        PK_DISPLAY_H                   /* 240 */
-#define PFD_CX                  (PK_DISPLAY_W / 2)             /* 160 */
-#define PFD_CY                  ((PFD_ATTITUDE_TOP + PFD_ATTITUDE_BOT) / 2)  /* 129 */
-/* PFD_PIXELS_PER_DEG 由 pfd_layout.h 按分辨率给出 */
+#define PFD_ATTITUDE_RIGHT      PK_DISPLAY_W
+/* 天地背景一直填到屏幕底，而不是止于姿态区下沿：下面的 HSI 罗盘是半透明的，
+ * 底下没有天地就是一片未初始化的 framebuffer。
+ * 注意这**不等于**几何中心的取法 —— PFD_CX/CY 来自 pfd_layout.h，按姿态区
+ * 算；此前这里用 (18 + PK_DISPLAY_H)/2 把两件事混为一谈，导致地平线下沉。 */
+#define PFD_ATTITUDE_TOP        PFD_ATT_TOP
+#define PFD_ATTITUDE_BOT        PK_DISPLAY_H
 
 /* Bank arc: virtual center placed below the visible region so the
  * arc curves cleanly across the top of the attitude indicator. With
@@ -82,17 +83,28 @@
  * 标签同样从 5×7 位图 scale-1（6 px）换成 S 档 —— 6 px 在 4.3″ 屏上只有
  * 0.7 mm，低于 spec §2 的 18 px 硬下限。 */
 #if PK_DISPLAY_W >= 800
-#  define LADDER_W10        90
-#  define LADDER_W20        62
-#  define LADDER_W30        42
+/* ±10° 线全宽约占姿态区宽度的 22%（与 320 上 70/320 的观感一致）：
+ * 800 姿态区宽 600 → 132 px 全宽 → 半宽 66，其余两档按 35:24:16 同比。 */
+#  define LADDER_W10        66
+#  define LADDER_W20        45
+#  define LADDER_W30        30
 #  define LADDER_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
 #  define LADDER_LBL_W      PK_AA_S_W
 #  define LADDER_LBL_H      PK_AA_S_H
 #  define LADDER_LBL_GAP    8
-/* 梯度线不伸进 HSI 罗盘区：那里盖着半透明罗盘，两套刻度叠在一起谁也
- * 读不出来。留 30 px 余量，够坡度旋转时线端的上下摆动。 */
-#  define LADDER_BOT        (PFD_HSI_TOP - 30)
+/* 梯度线的下界是**航向框顶**，不是罗盘顶：框坐在罗盘正上方、姿态区下沿，
+ * 是这一侧最先挡路的东西。画到框上只会两层叠字。 */
+#  define LADDER_BOT        (PFD_HDGBOX_Y0 - 10)
+/* 坡度刻度长度 / 天空指针 / chevron 同样按物理尺寸对齐 320（×1.3），
+ * 而不是按面板像素等比（×2.5）—— 后者会让这些符号在新屏上大得突兀。 */
+#  define BANK_TICK_S        5
+#  define BANK_TICK_M        8
+#  define BANK_TICK_L       13
+#  define SKYPTR_H          16
+#  define SKYPTR_HW          8
+#  define CHEVRON_LEN       16
+#  define CHEVRON_HW         8
 #else
 #  define LADDER_W10        35
 #  define LADDER_W20        24
@@ -103,6 +115,13 @@
 #  define LADDER_LBL_H      6
 #  define LADDER_LBL_GAP    2
 #  define LADDER_BOT        (PFD_ATTITUDE_BOT + 20)
+#  define BANK_TICK_S        4
+#  define BANK_TICK_M        6
+#  define BANK_TICK_L       10
+#  define SKYPTR_H          12
+#  define SKYPTR_HW          6
+#  define CHEVRON_LEN       12
+#  define CHEVRON_HW         6
 #endif
 
 
@@ -200,7 +219,9 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
                    : (abs_p == 20 ? LADDER_W20 : LADDER_W30);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
-        if (mark_y < PFD_ATTITUDE_TOP - 20 || mark_y > LADDER_BOT) {
+        /* 上界按**标签**而不是线来判：状态栏是不透明的，线越界只是被盖住，
+         * 标签越界却会露出半个字。留半个 cell 高，字完整才画。 */
+        if (mark_y - LADDER_LBL_H / 2 < PFD_ATTITUDE_TOP || mark_y > LADDER_BOT) {
             continue;
         }
         int lx, ly, rx, ry;
@@ -253,9 +274,9 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
         int abs_a = angle < 0 ? -angle : angle;
         int tick_len;
         switch (abs_a) {
-            case 10:           tick_len =  4; break;
-            case 20:           tick_len =  6; break;
-            default:           tick_len = 10; break;   /* 30, 45, 60 */
+            case 10:           tick_len = BANK_TICK_S; break;
+            case 20:           tick_len = BANK_TICK_M; break;
+            default:           tick_len = BANK_TICK_L; break;   /* 30, 45, 60 */
         }
         int x0, y0;
         place_on_arc((float)angle, &x0, &y0);
@@ -272,9 +293,9 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
      * at the top center of the attitude region. Marks the 0° bank
      * reference; the chevron below indicates current bank against it. */
     pk_pfd_draw_triangle(fb,
-                         PFD_CX,     PFD_ATTITUDE_TOP + 14,
-                         PFD_CX - 6, PFD_ATTITUDE_TOP +  2,
-                         PFD_CX + 6, PFD_ATTITUDE_TOP +  2,
+                         PFD_CX,             PFD_ATTITUDE_TOP + 2 + SKYPTR_H,
+                         PFD_CX - SKYPTR_HW, PFD_ATTITUDE_TOP + 2,
+                         PFD_CX + SKYPTR_HW, PFD_ATTITUDE_TOP + 2,
                          COL_SKY_POINTER);
 
     /* Bank chevron — yellow filled triangle hanging *below* the arc
@@ -287,16 +308,16 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
      * that's the direction the chevron base sits. */
     float in_x = -sinf(rad);
     float in_y =  cosf(rad);
-    int base_cx = (int)((float)tip_x + in_x * 12.0f + 0.5f);
-    int base_cy = (int)((float)tip_y + in_y * 12.0f + 0.5f);
+    int base_cx = (int)((float)tip_x + in_x * (float)CHEVRON_LEN + 0.5f);
+    int base_cy = (int)((float)tip_y + in_y * (float)CHEVRON_LEN + 0.5f);
     /* Perpendicular to (in_x, in_y) gives the chevron base width
      * direction; 6 px half-width. */
     float perp_x = -in_y;
     float perp_y =  in_x;
-    int b1x = (int)((float)base_cx + perp_x * 6.0f + 0.5f);
-    int b1y = (int)((float)base_cy + perp_y * 6.0f + 0.5f);
-    int b2x = (int)((float)base_cx - perp_x * 6.0f + 0.5f);
-    int b2y = (int)((float)base_cy - perp_y * 6.0f + 0.5f);
+    int b1x = (int)((float)base_cx + perp_x * (float)CHEVRON_HW + 0.5f);
+    int b1y = (int)((float)base_cy + perp_y * (float)CHEVRON_HW + 0.5f);
+    int b2x = (int)((float)base_cx - perp_x * (float)CHEVRON_HW + 0.5f);
+    int b2y = (int)((float)base_cy - perp_y * (float)CHEVRON_HW + 0.5f);
     pk_pfd_draw_triangle(fb, tip_x, tip_y, b1x, b1y, b2x, b2y, COL_BANK_POINTER);
 }
 

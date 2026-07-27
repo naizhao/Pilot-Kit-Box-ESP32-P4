@@ -46,7 +46,9 @@
 #define HDGBOX_Y0      PFD_HDGBOX_Y0
 #define HDGBOX_X1      PFD_HDGBOX_X1
 #define HDGBOX_Y1      PFD_HDGBOX_Y1
-#define HDGBOX_BG_ALPHA 150
+/* 背景压暗程度。数值越大越不透明；取 100 让底下的天地色透上来，
+ * 框不至于像贴了块黑胶布。 */
+#define HDGBOX_BG_ALPHA 100
 
 /* ── 字号分档 ──────────────────────────────────────────────────
  *
@@ -61,7 +63,7 @@
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
 #  define ROSE_LBL_W      PK_AA_S_W
 #  define ROSE_LBL_H      PK_AA_S_H
-#  define ROSE_LBL_INSET  26
+#  define ROSE_LBL_INSET  ROSE_SC(15)
 #  define HDG_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
 #  define HDGBOX_PAD_X    5
@@ -71,7 +73,7 @@
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
 #  define ROSE_LBL_W      6
 #  define ROSE_LBL_H      6
-#  define ROSE_LBL_INSET  15
+#  define ROSE_LBL_INSET  ROSE_SC(15)
 #  define HDG_PUTS(fb, x, y, s, col) \
         pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
 #  define HDGBOX_PAD_X    3
@@ -82,7 +84,7 @@
  * above the panel's bottom edge — the Garmin convention is to put it
  * at the lower-middle of the half-rose, not the rose's mathematical
  * center (which is off-screen below). */
-#define AIRCRAFT_Y     (HSI_BOT - 22)   /* y = 218 */
+#define AIRCRAFT_Y     (HSI_BOT - ROSE_SC(22))
 
 /* --- Palette ------------------------------------------------------- */
 #define COL_TICK       pk_rgb565(220, 220, 220)
@@ -91,6 +93,11 @@
 #define COL_AIRCRAFT   pk_rgb565(255, 255, 255)
 #define COL_HDG_BUG    pk_rgb565(255,   0, 255)   /* magenta — Garmin course / heading bug */
 #define COL_STALE      pk_rgb565(100, 100, 100)
+
+/* 罗盘内所有装饰件（刻度、本机符号、标签内缩、航向指针）原本都是照
+ * R=65 手算的绝对像素。与其逐个分档，不如让它们跟着半径等比走：320 档
+ * R 恰为 65，比例为 1，历史值原样保留；换屏时自动同步，不会漏掉某一个。 */
+#define ROSE_SC(v)     ((v) * HSI_R / 65)
 
 void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 {
@@ -117,7 +124,7 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         float cy = (float)HSI_CY - (float)HSI_R * sinf(rad);
 
         bool major30 = (hdg % 30) == 0;
-        int tick_len = major30 ? 10 : 5;
+        int tick_len = major30 ? ROSE_SC(10) : ROSE_SC(5);
         float tx = (float)HSI_CX + (float)(HSI_R - tick_len) * cosf(rad);
         float ty = (float)HSI_CY - (float)(HSI_R - tick_len) * sinf(rad);
 
@@ -159,15 +166,15 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
      * it fixed (always pointing "up" relative to the rotating rose)
      * until a real course source exists. */
     const int arrow_tip_y  = HDGBOX_Y1 + 6;             /* y = 168 */
-    const int arrow_base_y = arrow_tip_y + 8;           /* y = 176, 8-px arrow */
+    const int arrow_base_y = arrow_tip_y + ROSE_SC(8);
     pk_pfd_fill_rect(fb,
-                     HSI_CX - 1, arrow_base_y - 2,
-                     HSI_CX + 2, HSI_BOT      - 4,
+                     HSI_CX - ROSE_SC(1), arrow_base_y - 2,
+                     HSI_CX + ROSE_SC(1) + 1, HSI_BOT - 4,
                      COL_HDG_BUG);
     pk_pfd_draw_triangle(fb,
                          HSI_CX,     arrow_tip_y,
-                         HSI_CX - 5, arrow_base_y,
-                         HSI_CX + 5, arrow_base_y,
+                         HSI_CX - ROSE_SC(5), arrow_base_y,
+                         HSI_CX + ROSE_SC(5), arrow_base_y,
                          COL_HDG_BUG);
 
     /* Aircraft silhouette — small fuselage + wings + tail, centered
@@ -176,19 +183,29 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
     {
         int cx = HSI_CX;
         int cy = AIRCRAFT_Y;
-        /* Fuselage — 2 px wide vertical bar, 10 px tall, with a small
-         * point at the nose. */
-        pk_pfd_fill_rect(fb, cx - 1, cy - 5, cx + 2, cy + 5, COL_AIRCRAFT);
+        const int fus_h = ROSE_SC(5);    /* 机身半长 */
+        const int nose  = ROSE_SC(7);    /* 机头尖端 */
+        const int fus_w = ROSE_SC(1);    /* 机身半宽 */
+        const int wing  = ROSE_SC(8);    /* 翼展半宽 */
+        const int wing_t= ROSE_SC(1);    /* 机翼半厚 */
+        const int tail  = ROSE_SC(4);    /* 尾翼半宽 */
+        const int tail_y= ROSE_SC(4);
+
+        /* 机身 */
+        pk_pfd_fill_rect(fb, cx - fus_w, cy - fus_h, cx + fus_w + 1, cy + fus_h,
+                         COL_AIRCRAFT);
+        /* 机头 */
         pk_pfd_draw_triangle(fb,
-                             cx,     cy - 7,
-                             cx - 1, cy - 5,
-                             cx + 2, cy - 5,
+                             cx,             cy - nose,
+                             cx - fus_w,     cy - fus_h,
+                             cx + fus_w + 1, cy - fus_h,
                              COL_AIRCRAFT);
-        /* Wings — horizontal bar, 16 px wide, 2 px tall, slightly
-         * forward of center. */
-        pk_pfd_fill_rect(fb, cx - 8, cy - 1, cx + 9, cy + 1, COL_AIRCRAFT);
-        /* Tail — short horizontal at the back. */
-        pk_pfd_fill_rect(fb, cx - 4, cy + 4, cx + 5, cy + 6, COL_AIRCRAFT);
+        /* 机翼 */
+        pk_pfd_fill_rect(fb, cx - wing, cy - wing_t, cx + wing + 1, cy + wing_t,
+                         COL_AIRCRAFT);
+        /* 尾翼 */
+        pk_pfd_fill_rect(fb, cx - tail, cy + tail_y, cx + tail + 1,
+                         cy + tail_y + ROSE_SC(2), COL_AIRCRAFT);
     }
 
     /* HDG box: dimmed translucent interior + 1 px white border +

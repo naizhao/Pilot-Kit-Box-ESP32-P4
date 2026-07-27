@@ -18,6 +18,7 @@
 #include "display.h"
 #include "pfd_layout.h"
 #include "pfd_draw.h"
+#include "pfd_aa_text.h"
 #include "pfd_font.h"
 
 #include "aircraft_state.h"
@@ -32,9 +33,20 @@
 #define HSI_CX          PFD_HSI_CX
 #define HSI_CY          PFD_HSI_CY
 #define HSI_R           PFD_HSI_R
-/* 交通目标画在罗盘外圈。偏移取半径的 ~21%（320 上即原来的 R+14），
- * 这样换屏时外圈与罗盘的相对关系不变。 */
-#define HSI_TRAFFIC_R   (HSI_R + HSI_R * 14 / 65)
+#define HSI_TRAFFIC_R   PFD_HSI_TRAFFIC_R
+
+/* 与 pfd_hsi.c 同一套等比缩放：菱形与标签跟着罗盘半径走，320 档比例为 1。 */
+#define ROSE_SC(v)      ((v) * HSI_R / 65)
+
+#if PK_DISPLAY_W >= 800
+#  define TGT_PUTS(fb, x, y, s, col) \
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
+#  define TGT_LBL_H     PK_AA_S_H
+#else
+#  define TGT_PUTS(fb, x, y, s, col) \
+        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define TGT_LBL_H     6
+#endif
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
 
@@ -80,7 +92,9 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
 
     const uint16_t COL_TGT    = pk_rgb565(  0, 210, 235);
     const uint16_t COL_LBL    = pk_rgb565(207, 211, 220);
-    const uint16_t COL_BEHIND = pk_rgb565(150, 110,  70);
+    /* 后方计数落在褐色地面上，原来的暗褐色几乎与背景同色——提高亮度并偏
+     * 琥珀，保证在天与地两种背景上都能认出来。 */
+    const uint16_t COL_BEHIND = pk_rgb565(240, 180,  90);
 
     int behind = 0;
     for (size_t i = 0; i < n; i++) {
@@ -102,7 +116,7 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         float rad = (90.0f - r) * (float)M_PI / 180.0f;
         int tx = HSI_CX + (int)lroundf(HSI_TRAFFIC_R * cosf(rad));
         int ty = HSI_CY - (int)lroundf(HSI_TRAFFIC_R * sinf(rad));
-        fill_diamond(fb, tx, ty, 4, COL_TGT);
+        fill_diamond(fb, tx, ty, ROSE_SC(4), COL_TGT);
 
         if (rel.rel_alt_valid) {
             int hh = rel.rel_alt_ft / 100;
@@ -110,7 +124,7 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
             if (hh < -99) hh = -99;
             char b[12];
             snprintf(b, sizeof(b), "%+03d", hh);
-            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty - 3, b, COL_LBL, 1);
+            TGT_PUTS(fb, tx + ROSE_SC(6), ty - TGT_LBL_H / 2, b, COL_LBL);
         }
     }
 
@@ -120,7 +134,9 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         /* 放右下角 VS 框(y≤228)下方的空隙：避开左下 own-ship badge
          * (x[0,78] y[210,232])，否则会被 pfd.c 后画的 badge darken+文字覆盖
          * 导致永久不可见。 */
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     PK_DISPLAY_W - 60, PK_DISPLAY_H - 9, b, COL_BEHIND, 1);
+        /* 落在左下角、本机来源徽标的右侧。原先放右下，那里现在是三行信息框，
+         * 会被后画的它们整个盖掉——不可见的告警等于没有。 */
+        TGT_PUTS(fb, PFD_BADGE_W + 10, PK_DISPLAY_H - TGT_LBL_H - 4,
+                 b, COL_BEHIND);
     }
 }
