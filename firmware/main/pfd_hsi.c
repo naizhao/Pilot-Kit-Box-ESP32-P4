@@ -166,11 +166,14 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
      *
      * 因此把它收进罗盘内、长度只比本机符号略大：既保留 Garmin 的视觉语汇，
      * 又不让一个没有信息量的元素占据从罗盘顶贯到屏幕底的一整条。 */
-    const int arrow_tip_y  = AIRCRAFT_Y - ROSE_SC(30);
+    /* 指针**穿过**本机符号，不是停在机头前面：飞机随后绘制，白色机体压在
+     * 洋红杆上，两者是叠合关系——这正是 Garmin 的画法，指针代表航道、飞机
+     * 骑在航道上。停在机头前会读成「前方有个箭头」，语义就变了。 */
+    const int arrow_tip_y  = AIRCRAFT_Y - ROSE_SC(20);
     const int arrow_base_y = arrow_tip_y + ROSE_SC(8);
     pk_pfd_fill_rect(fb,
                      HSI_CX - ROSE_SC(1), arrow_base_y - 2,
-                     HSI_CX + ROSE_SC(1) + 1, AIRCRAFT_Y - ROSE_SC(8),
+                     HSI_CX + ROSE_SC(1) + 1, AIRCRAFT_Y + ROSE_SC(12),
                      COL_HDG_BUG);
     pk_pfd_draw_triangle(fb,
                          HSI_CX,     arrow_tip_y,

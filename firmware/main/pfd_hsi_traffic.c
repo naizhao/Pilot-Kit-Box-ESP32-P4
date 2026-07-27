@@ -142,8 +142,18 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
 
-    const uint16_t COL_TGT    = pk_rgb565(  0, 210, 235);
-    const uint16_t COL_LBL    = pk_rgb565(207, 211, 220);
+    /* 目标按**相对高度**分三档着色。
+     *
+     * 此前一律青色，只能靠旁边的 ±NN 文字读高差——而扫视时先看到的是符号，
+     * 不是数字。分档阈值取 ±1000 ft，接近 TCAS 判定「同高度」的 ±1200 ft。
+     *
+     * 三档的**亮度**也是递减的（琥珀 > 青 > 暗青）。spec §附录 要求半反半透
+     * 屏上威胁等级改用「形状 + 亮度」编码，因为反射态色域只有 16.5%、红黄难
+     * 分；亮度本就分开，那套备份配色可以直接沿用这一层，不必推倒重来。 */
+    const uint16_t COL_TGT_LEVEL = pk_rgb565(255, 176,   0);  /* ±1000 ft 内 */
+    const uint16_t COL_TGT_ABOVE = pk_rgb565(  0, 210, 235);  /* 高于本机     */
+    const uint16_t COL_TGT_BELOW = pk_rgb565( 95, 150, 190);  /* 低于本机     */
+    const uint16_t COL_TGT_NOALT = pk_rgb565(150, 155, 165);  /* 无高度数据   */
     /* 后方计数落在褐色地面上，原来的暗褐色几乎与背景同色——提高亮度并偏
      * 琥珀，保证在天与地两种背景上都能认出来。 */
     const uint16_t COL_BEHIND = pk_rgb565(240, 180,  90);
@@ -183,11 +193,15 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
          *
          * 罗盘是 heading-up 的，所以屏幕上的朝向 = 目标航迹 - 本机航向。
          * 目标 track 是真北参考、IMU yaw 是磁北参考，先把 track 降到磁系。 */
+        uint16_t tcol = !rel.rel_alt_valid            ? COL_TGT_NOALT
+                      : (rel.rel_alt_ft >  1000)         ? COL_TGT_ABOVE
+                      : (rel.rel_alt_ft < -1000)         ? COL_TGT_BELOW
+                                                         : COL_TGT_LEVEL;
         if (t->have_velocity) {
             float rot = ((float)t->heading_deg - mag_var) - yaw;
-            pk_pfd_draw_aircraft(fb, tx, ty, rot, ROSE_SC(7), COL_TGT);
+            pk_pfd_draw_aircraft(fb, tx, ty, rot, ROSE_SC(7), tcol);
         } else {
-            fill_diamond(fb, tx, ty, ROSE_SC(4), COL_TGT);
+            fill_diamond(fb, tx, ty, ROSE_SC(4), tcol);
         }
 
         if (rel.rel_alt_valid) {
@@ -226,7 +240,7 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
                 pk_pfd_darken_rect(fb, lx - 2, ly + 3,
                                    lx + lw + 2, ly + TGT_LBL_H - 3, TGT_LBL_BG);
             }
-            TGT_PUTS(fb, lx, ly, b, COL_LBL);
+            TGT_PUTS(fb, lx, ly, b, tcol);   /* 标签与符号同色，读作一体 */
         }
     }
 

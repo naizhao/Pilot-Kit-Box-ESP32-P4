@@ -85,15 +85,18 @@ bool pk_baro_get(pk_baro_state_t *out)
 
 /* ── 目标表 ───────────────────────────────────────────────────────── */
 /*
- * 绕本机撒一圈目标，方位刻意覆盖三种情形：
- *   - 前方 ±85° 内：正常画在罗盘外圈，带相对高度标签
- *   - 前方但无高度：只画菱形，不画标签
- *   - 后方（|rel| > 85°）：不画，计入右下角的后方计数
- * 相对方位 = 目标真方位 - 本机航向，所以这里按「相对本机机头的角度」布点，
- * 再换算回经纬度，随 yaw 转动时目标会绕着罗盘转 —— 正是要验证的行为。
+ * 目标集刻意做成「乱」的，因为真实空域就是乱的：航向各指各的、高度层交错、
+ * 方位上有扎堆也有孤点。整齐排布的假数据只会让布局问题藏起来。
+ *
+ * 三件事必须与真实情况一致，否则验证的是假象：
+ *   - **航向与方位无关**。此前把 heading 设成了目标相对本机的方位角，等于
+ *     所有飞机都在背离本机飞——迎头接近的那一类根本没被画出来过，而那恰是
+ *     防撞最该看清的。
+ *   - **高度跨越三个着色档**（±1000 ft 内 / 高于 / 低于），还要有无高度数据的。
+ *   - **方位上要有拥挤处**，用来验证标签避让；否则永远撞不上，等于没测。
  */
 static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
-                  bool have_alt, int alt_ft)
+                  bool have_alt, int alt_ft, bool have_vel, int track_deg)
 {
     memset(a, 0, sizeof(*a));
     a->icao24        = icao;
@@ -109,8 +112,8 @@ static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
 
     a->have_altitude = have_alt;
     a->altitude_ft   = alt_ft;
-    a->have_velocity = true;
-    a->heading_deg   = (int)brg_true;
+    a->have_velocity = have_vel;
+    a->heading_deg   = track_deg;      /* 与方位角无关，各飞各的 */
     a->vert_rate_fpm = 0;
 }
 
@@ -120,24 +123,43 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     (void)now_us; (void)max_age_us;
     if (!out || cap == 0 || !s_traffic_ok) return 0;
 
-    /* rel_deg, dist_nm, have_alt, alt_ft —— 相对高度取 ±(几百~几千) ft，
-     * 好让标签把 +05 / -12 这类两位数与三位数的宽度都覆盖到。 */
-    static const struct { float rel, dist; bool have_alt; int alt; } SET[] = {
-        {  -70.0f,  8.0f, true,  23000 + 1500 },
-        {  -35.0f,  5.0f, true,  23000 -  700 },
-        {   -8.0f, 12.0f, true,  23000 + 9900 },   /* 相对高度会被夹到 +99 */
-        {   20.0f,  6.0f, false, 0            },   /* 无高度 → 只画菱形 */
-        {   58.0f,  9.0f, true,  23000 -  300 },
-        {   84.0f,  7.0f, true,  23000 + 200  },   /* 贴近 85° 边界 */
-        {  120.0f, 10.0f, true,  23000 + 100  },   /* 后方 */
-        { -150.0f, 11.0f, true,  23000 - 400  },   /* 后方 */
+    /* 高度一栏是**相对本机**的差值，不是绝对高度：本机高度由模拟器动画驱动
+     * （每帧都在变），写死绝对值会让相对高度整体漂移，三档配色也就试不准。 */
+    /* rel（相对机头方位）, 距离, 有无高度, 相对高度, 有无航迹, 真航迹 */
+    static const struct {
+        float rel, dist; bool have_alt; int alt; bool have_vel; int track;
+    } SET[] = {
+        /* ── 迎头 / 交叉：航迹指向本机附近，这类此前完全没出现过 ── */
+        {  -6.0f, 11.0f, true,    200, true,  180 },  /* 正前迎头，同高度 */
+        {   9.0f,  7.5f, true,   -150, true,  200 },  /* 右前迎头偏斜 */
+        { -28.0f,  9.0f, true,   2600, true,   95 },  /* 左前横穿，高 */
+
+        /* ── 方位扎堆：三个挤在 40°~52°，专门压标签避让 ── */
+        {  40.0f,  6.0f, true,   -600, true,  355 },
+        {  46.0f,  8.5f, true,   3400, true,   20 },
+        {  52.0f,  5.0f, true,  -4200, true,  140 },
+
+        /* ── 同向尾随 / 被超越 ── */
+        { -55.0f, 10.0f, true,    900, true,   10 },
+        {  70.0f,  9.5f, true,  -1800, true,   15 },
+
+        /* ── 边界与降级 ── */
+        {  84.0f,  7.0f, true,   9900, true,  270 },  /* 贴 85° 边界，高差夹到 +99 */
+        { -80.0f,  6.5f, false, 0,            true,   60 },  /* 无高度 → 灰色菱形 */
+        {  25.0f, 12.0f, true,   -300, false,   0 },  /* 无航迹 → 菱形 */
+
+        /* ── 后方：只计数，不画 ── */
+        { 118.0f, 10.0f, true,    100, true,   30 },
+        {-150.0f, 11.0f, true,   -400, true,  210 },
+        { 165.0f,  9.0f, true,   1500, true,  300 },
     };
 
     size_t n = sizeof(SET) / sizeof(SET[0]);
     if (n > cap) n = cap;
     for (size_t i = 0; i < n; ++i) {
         place(&out[i], 0x3C0000 + (uint32_t)i, SET[i].rel, SET[i].dist,
-              SET[i].have_alt, SET[i].alt);
+              SET[i].have_alt, s_own_alt + SET[i].alt,
+              SET[i].have_vel, SET[i].track);
     }
     return n;
 }

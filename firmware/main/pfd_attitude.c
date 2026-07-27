@@ -319,10 +319,13 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
     /* Sky pointer — fixed downward-pointing inverted white triangle
      * at the top center of the attitude region. Marks the 0° bank
      * reference; the chevron below indicates current bank against it. */
+    /* 天空指针挂在弧顶**内侧**，而不是钉在状态栏下方：弧半径变大后弧顶会
+     * 从它身上穿过去，看着像被切了一刀。贴着弧走则始终是「三角对三角」。 */
+    const int skyptr_base_y = BANK_ARC_CY - BANK_ARC_R + 2;
     pk_pfd_draw_triangle(fb,
-                         PFD_CX,             PFD_ATTITUDE_TOP + 2 + SKYPTR_H,
-                         PFD_CX - SKYPTR_HW, PFD_ATTITUDE_TOP + 2,
-                         PFD_CX + SKYPTR_HW, PFD_ATTITUDE_TOP + 2,
+                         PFD_CX,             skyptr_base_y + SKYPTR_H,
+                         PFD_CX - SKYPTR_HW, skyptr_base_y,
+                         PFD_CX + SKYPTR_HW, skyptr_base_y,
                          COL_SKY_POINTER);
 
     /* Bank chevron — yellow filled triangle hanging *below* the arc
