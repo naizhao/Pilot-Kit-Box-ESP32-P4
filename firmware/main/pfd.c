@@ -40,6 +40,7 @@
 #include "pfd_font.h"
 #include "pfd_hsi.h"
 #include "pfd_hsi_traffic.h"
+#include "pfd_infobox.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -264,104 +265,31 @@ static void pfd_task(void *arg)
             pk_pfd_hsi_render(fb, &hsi);
             pk_pfd_hsi_traffic_render(fb);   /* HSI 半圆外圈叠加前方 traffic */
 
-            /* Three right-column info boxes below the ALT tape (y=168).
-             * Each box: x=[256,320) = 64 px wide, 18 px tall, 2 px gap.
-             *   Box 1 y[170,188]: BARO  — barometric altitude ft
-             *   Box 2 y[190,208]: metric alt (ft × 0.3048) in metres
-             *   Box 3 y[210,228]: VS    — vertical speed fpm
-             * Source: BMP388 gas baro snapshot + own-ship ADS-B (VS). */
+            /* 右下三个数值框 + 左下本机来源徽标。绘制在 pfd_infobox.c，
+             * 这里只负责把运行时状态整理成它要的数据。 */
             {
                 pk_baro_state_t baro;
                 pk_baro_get(&baro);
 
-                const uint16_t COL_BARO_LBL  = pk_rgb565(230, 200,  74); /* amber */
-                const uint16_t COL_WHITE      = pk_rgb565(255, 255, 255);
-                const uint16_t COL_BLUE       = pk_rgb565(150, 200, 255); /* light blue */
-                const uint16_t COL_CYAN       = pk_rgb565( 70, 220, 250);
-                const uint16_t COL_STALE      = pk_rgb565(100, 100, 100);
-                char buf[16];
-
-                /* 三框值统一右对齐到屏幕边 x318,标签左对齐 x258 */
-                #define BOX_VAL_RIGHT 318
-                /* ── Box 1: BARO 气压高度(ft,参考) ─────────────────── */
-                pk_pfd_darken_rect(fb, 256, 170, PK_DISPLAY_W, 188, 160);
-                /* 标签用单字母 B(amber 已表明 baro):腾空间给 5 位 ft 值
-                 * (BARO 4字符 + "12180ft" 7字符 = 66px > 64px 框宽会重叠) */
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             258, 173, "B", COL_BARO_LBL, 1);
-                if (baro.valid) {
-                    int balt = baro.alt_ft;
-                    if (balt <  -9999) balt = -9999;
-                    if (balt > 99999)  balt = 99999;
-                    snprintf(buf, sizeof(buf), "%dft", balt);
-                } else {
-                    snprintf(buf, sizeof(buf), "--");
-                }
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_VAL_RIGHT - (int)strlen(buf) * 6, 173,
-                             buf, baro.valid ? COL_WHITE : COL_STALE, 1);
-
-                /* ── Box 2: 权威高度(ADS-B own-ship)的米值 ──────────────
-                 * 用 own.altitude_ft(右上 ALT 带同源,ADS-B 权威),非 baro:
-                 * baro 在增压舱内不准,这里只是把权威高度做 ft→m 换算。 */
-                pk_pfd_darken_rect(fb, 256, 190, PK_DISPLAY_W, 208, 160);
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             258, 193, "ALT", COL_CYAN, 1);
-                if (alt.valid) {
-                    int alt_m = (int)lroundf((float)alt.altitude_ft * 0.3048f);
-                    if (alt_m < -9999) alt_m = -9999;
-                    if (alt_m > 99999) alt_m = 99999;
-                    snprintf(buf, sizeof(buf), "%dm", alt_m);
-                } else {
-                    snprintf(buf, sizeof(buf), "--");
-                }
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             BOX_VAL_RIGHT - (int)strlen(buf) * 6, 193,
-                             buf, alt.valid ? COL_BLUE : COL_STALE, 1);
-
-                /* ── Box 3: VS (vertical speed, fpm) ────────────────── */
-                pk_pfd_darken_rect(fb, 256, 210, PK_DISPLAY_W, 228, 160);
-                pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                             258, 213, "VS", COL_CYAN, 1);
-                {
-                    bool adsb_vs = own_valid && own.have_velocity && (own_src == PK_OWN_SRC_BOUND_ADSB);
-                    uint16_t vs_col;
-                    if (adsb_vs) {
-                        /* Priority 1: own-ship ADS-B vertical rate */
-                        int vs = own.vert_rate_fpm;
-                        if (vs >  9999) vs =  9999;
-                        if (vs < -9999) vs = -9999;
-                        snprintf(buf, sizeof(buf), "%+d", vs);
-                        vs_col = COL_WHITE;
-                    } else if (baro.valid) {
-                        /* Priority 2: baro-derived VS (reference, amber) */
-                        int vs = baro.vs_fpm;
-                        if (vs >  9999) vs =  9999;
-                        if (vs < -9999) vs = -9999;
-                        snprintf(buf, sizeof(buf), "%+d", vs);
-                        vs_col = COL_BARO_LBL;
-                    } else {
-                        snprintf(buf, sizeof(buf), "--");
-                        vs_col = COL_STALE;
-                    }
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 BOX_VAL_RIGHT - (int)strlen(buf) * 6, 213,
-                                 buf, vs_col, 1);
-                }
-                #undef BOX_VAL_RIGHT
+                bool adsb_vs = own_valid && own.have_velocity &&
+                               (own_src == PK_OWN_SRC_BOUND_ADSB);
+                pk_pfd_infobox_t ib = {
+                    .baro_valid   = baro.valid,
+                    .baro_alt_ft  = baro.alt_ft,
+                    .alt_valid    = alt.valid,
+                    .alt_ft       = alt.altitude_ft,
+                    /* VS 优先取 ADS-B 自报（权威），否则退到 baro 微分（参考）。 */
+                    .vs_valid     = adsb_vs || baro.valid,
+                    .vs_fpm       = adsb_vs ? own.vert_rate_fpm : baro.vs_fpm,
+                    .vs_from_adsb = adsb_vs,
+                };
+                pk_pfd_infobox_render(fb, &ib);
             }
 
-            /* Own-ship source badge — bottom-left x[0,88] y[210,232].
-             *   BOUND_ADSB → callsign → squawk → ICAO hex (cyan)
-             *   GPS        → "GPS" (white)
-             *   NONE/stale → "--" (grey) */
-#define PFD_SRC_BADGE_X1  88
-#define PFD_SRC_BADGE_Y0  210
-#define PFD_SRC_BADGE_Y1  232
             {
                 /* ADS-B 降级提示：检测"绑定丢失"(BOUND_ADSB → 非绑定)的跳变，
-                 * 之后 5s 在徽标位置闪烁红字 ADS-B LOST。覆盖"飞机 ADS-B/PFD
-                 * 死机"场景——提醒飞行员主显数据没了、已切到盒子自主传感器。
+                 * 之后 5s 闪烁红字 ADS-B LOST。覆盖"飞机 ADS-B/PFD 死机"场景
+                 * ——提醒飞行员主显数据没了、已切到盒子自主传感器。
                  * 重新绑定即清除提示。 */
                 static pk_own_src_t s_prev_src     = PK_OWN_SRC_NONE;
                 static int64_t      s_adsb_lost_us = 0;
@@ -374,69 +302,46 @@ static void pfd_task(void *arg)
                     s_adsb_lost_us = 0;               /* 重新绑定 → 清提示 */
                 }
                 s_prev_src = cur_src;
-                bool adsb_lost_alert = (s_adsb_lost_us != 0) &&
-                                       (now_us - s_adsb_lost_us < 5000000LL);
 
-                /* Cyan matches project-wide COL_LABEL (70,220,250). */
-                const uint16_t SRC_ADSB  = pk_rgb565( 70, 220, 250);
-                const uint16_t SRC_GPS   = pk_rgb565(240, 240, 240);
-                const uint16_t SRC_NONE  = pk_rgb565(100, 100, 100);
-                char src_buf[12];
-                uint16_t src_col;
+                pk_pfd_srcbadge_t badge = {
+                    .adsb_lost_alert = (s_adsb_lost_us != 0) &&
+                                       (now_us - s_adsb_lost_us < 5000000LL),
+                    .alert_blink_on  = ((now_us / 400000) & 1) != 0,
+                };
 
+                /* 标签的降级链：呼号 → squawk → ICAO hex。依赖 aircraft_t，
+                 * 故留在这里，pfd_infobox 只吃最终字符串。 */
                 if (!own_valid || own_src == PK_OWN_SRC_NONE) {
-                    src_buf[0] = '-'; src_buf[1] = '-'; src_buf[2] = '\0';
-                    src_col = SRC_NONE;
+                    badge.src = PK_PFD_SRC_NONE;
+                    snprintf(badge.label, sizeof(badge.label), "--");
                 } else if (own_src == PK_OWN_SRC_BOUND_ADSB) {
+                    badge.src = PK_PFD_SRC_ADSB;
                     bool used = false;
                     if (own.have_callsign) {
-                        /* 呼号(最多 7 字, cockpit 12px 下 84px ≤ 88px 框) + 去尾空格 */
                         int i;
                         for (i = 0; i < 7 && own.callsign[i]; i++)
-                            src_buf[i] = own.callsign[i];
-                        src_buf[i] = '\0';
-                        while (i > 0 && src_buf[i - 1] == ' ')
-                            src_buf[--i] = '\0';
-                        if (src_buf[0] != '\0') used = true;
+                            badge.label[i] = own.callsign[i];
+                        badge.label[i] = '\0';
+                        while (i > 0 && badge.label[i - 1] == ' ')
+                            badge.label[--i] = '\0';
+                        if (badge.label[0] != '\0') used = true;
                     }
                     if (!used && own.have_squawk) {
-                        /* fallback 1: squawk(应答机 4 位八进制码,比 ICAO hex 对飞行员有意义) */
-                        snprintf(src_buf, sizeof(src_buf), "%04d", own.squawk);
+                        /* squawk 比 ICAO hex 对飞行员更有意义 */
+                        snprintf(badge.label, sizeof(badge.label), "%04d", own.squawk);
                         used = true;
                     }
                     if (!used) {
-                        /* fallback 2: ICAO hex 兜底 */
-                        snprintf(src_buf, sizeof(src_buf), "%06lX",
+                        snprintf(badge.label, sizeof(badge.label), "%06lX",
                                  (unsigned long)own.icao24);
                     }
-                    src_col = SRC_ADSB;
                 } else {
-                    /* PK_OWN_SRC_GPS */
-                    src_buf[0] = 'G'; src_buf[1] = 'P'; src_buf[2] = 'S';
-                    src_buf[3] = '\0';
-                    src_col = SRC_GPS;
+                    badge.src = PK_PFD_SRC_GPS;
+                    snprintf(badge.label, sizeof(badge.label), "GPS");
                 }
-
-                pk_pfd_darken_rect(fb, 0, PFD_SRC_BADGE_Y0,
-                                   PFD_SRC_BADGE_X1, PFD_SRC_BADGE_Y1, 128);
-                if (adsb_lost_alert) {
-                    /* 降级醒目提示：红字闪烁 "ADS-B LOST"(400ms 周期)。 */
-                    bool on = ((now_us / 400000) & 1);
-                    uint16_t c = on ? pk_rgb565(255, 40, 40)
-                                    : pk_rgb565(110, 20, 20);
-                    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                 4, PFD_SRC_BADGE_Y0 + 5, "ADS-B LOST", c, 1);
-                } else {
-                    /* cockpit 航空字形(12px/字,更好看);垂直居中于 22px 框
-                     * (cell 高 16px → y 偏移 3)。框加宽到 88px 容纳 7 字呼号(84px),
-                     * 比原 78px 框(6 字)多一位。 */
-                    int txt_x = (PFD_SRC_BADGE_X1 - (int)strlen(src_buf) * 12) / 2;
-                    if (txt_x < 2) txt_x = 2;
-                    pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                         txt_x, PFD_SRC_BADGE_Y0 + 3,
-                                         src_buf, src_col);
-                }
+                pk_pfd_srcbadge_render(fb, &badge);
             }
+
             break;
         }
         }

@@ -140,3 +140,34 @@
 #define PFD_HDGBOX_X1       (PFD_HDGBOX_X0 + PFD_HDGBOX_W)
 #define PFD_HDGBOX_Y0       (PFD_HSI_TOP + 6)
 #define PFD_HDGBOX_Y1       (PFD_HDGBOX_Y0 + PFD_HDGBOX_H)
+
+/* ── 右下三行信息框 / 左下本机来源徽标（见 pfd_infobox.c）────────
+ *
+ * 320 的历史值是 x[256,320) y 170/190/210、行高 18、徽标 x[0,88] y[210,232]。
+ *
+ * 800 这一档目前**放不下**：spec §5.1 给高度带下方只留了 300…340 共 40 px，
+ * 而三行 S 档（cell 30 px）+ 行距需要 96 px。这里先按元素齐全的实际需求给
+ * 值（向上占用 tape 尾段），把冲突显性化 —— 垂直空间怎么分配是阶段 4a 第二
+ * 步要整体定的事，不在这里偷偷压字号糊弄过去。 */
+#if PK_DISPLAY_W >= 800
+#define PFD_IB_X0           PFD_ALT_X0
+#define PFD_IB_TOP          244
+#define PFD_IB_ROW_H         30
+#define PFD_IB_ROW_GAP        2
+#define PFD_IB_PAD            4
+#define PFD_BADGE_W         160
+#define PFD_BADGE_H          34
+#define PFD_BADGE_Y0        (PK_DISPLAY_H - PFD_BADGE_H - 4)
+#define PFD_BADGE_PAD         4
+#else
+#define PFD_IB_X0           256
+#define PFD_IB_TOP          170
+#define PFD_IB_ROW_H         18
+#define PFD_IB_ROW_GAP        2
+#define PFD_IB_PAD            2
+#define PFD_BADGE_W          88
+#define PFD_BADGE_H          22
+#define PFD_BADGE_Y0        210
+#define PFD_BADGE_PAD         2
+#endif
+#define PFD_BADGE_Y1        (PFD_BADGE_Y0 + PFD_BADGE_H)

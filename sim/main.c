@@ -37,7 +37,10 @@
 
 #include "display.h"
 #include "pfd_attitude.h"
+#include "mock_runtime.h"
 #include "pfd_hsi.h"
+#include "pfd_hsi_traffic.h"
+#include "pfd_infobox.h"
 #include "pfd_speed_tape.h"
 #include "pfd_statusbar.h"
 #include "pfd_tape.h"
@@ -96,6 +99,9 @@ static void mock_fill(const sim_state_t *st,
     stat->batt_pct       = batt_env ? (uint8_t)atoi(batt_env) : 100;
     stat->batt_charging  = getenv("PK_SIM_CHARGING") != NULL;
     stat->uptime_ms      = (uint32_t)(t * 1000.0f);
+
+    /* 把本帧姿态推给运行时桩，交通目标才会随航向绕罗盘转。 */
+    pk_mock_update(hsi->yaw_deg, alt->altitude_ft);
     stat->temp_warn      = true;
     stat->temp_c         = 78;
 }
@@ -167,6 +173,19 @@ static int run_headless(float at_sec, const char *out)
     pk_pfd_alt_tape_render(fb, &alt);
     pk_pfd_speed_tape_render(fb, &spd);
     pk_pfd_hsi_render(fb, &hsi);
+    pk_pfd_hsi_traffic_render(fb);   /* 罗盘外圈的交通目标，顺序同 pfd.c */
+    {
+        pk_pfd_infobox_t ib = {
+            .baro_valid = true,  .baro_alt_ft  = alt.altitude_ft - 120,
+            .alt_valid  = true,  .alt_ft       = alt.altitude_ft,
+            .vs_valid   = true,  .vs_fpm       = -640,
+            .vs_from_adsb = true,
+        };
+        pk_pfd_infobox_render(fb, &ib);
+        pk_pfd_srcbadge_t badge = { .src = PK_PFD_SRC_ADSB };
+        snprintf(badge.label, sizeof(badge.label), "CES2158");
+        pk_pfd_srcbadge_render(fb, &badge);
+    }
 
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(
         0, PK_DISPLAY_W, PK_DISPLAY_H, 16, SDL_PIXELFORMAT_RGB565);
@@ -276,6 +295,19 @@ int main(int argc, char **argv)
         pk_pfd_alt_tape_render(fb, &alt);
         pk_pfd_speed_tape_render(fb, &spd);
         pk_pfd_hsi_render(fb, &hsi);
+    pk_pfd_hsi_traffic_render(fb);   /* 罗盘外圈的交通目标，顺序同 pfd.c */
+    {
+        pk_pfd_infobox_t ib = {
+            .baro_valid = true,  .baro_alt_ft  = alt.altitude_ft - 120,
+            .alt_valid  = true,  .alt_ft       = alt.altitude_ft,
+            .vs_valid   = true,  .vs_fpm       = -640,
+            .vs_from_adsb = true,
+        };
+        pk_pfd_infobox_render(fb, &ib);
+        pk_pfd_srcbadge_t badge = { .src = PK_PFD_SRC_ADSB };
+        snprintf(badge.label, sizeof(badge.label), "CES2158");
+        pk_pfd_srcbadge_render(fb, &badge);
+    }
 
         fb_to_texture(fb, tex);
         SDL_RenderClear(ren);

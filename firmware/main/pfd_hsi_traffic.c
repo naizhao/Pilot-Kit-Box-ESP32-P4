@@ -16,6 +16,7 @@
 #include "sdkconfig.h"
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -26,11 +27,14 @@
 #include "traffic_geom.h"
 #include "mag_var.h"
 
-/* 与 pfd_hsi.c 一致的半圆几何 */
-#define HSI_CX          160
-#define HSI_CY          240
-#define HSI_R            65
-#define HSI_TRAFFIC_R   (HSI_R + 14)   /* 79：交通目标外圈 */
+/* 与 pfd_hsi.c 共用同一套半圆几何。此前这里自带一份 160/240/65 的硬编码
+ * 副本（320 的值），换屏后与罗盘对不上——几何只能有一个来源。 */
+#define HSI_CX          PFD_HSI_CX
+#define HSI_CY          PFD_HSI_CY
+#define HSI_R           PFD_HSI_R
+/* 交通目标画在罗盘外圈。偏移取半径的 ~21%（320 上即原来的 R+14），
+ * 这样换屏时外圈与罗盘的相对关系不变。 */
+#define HSI_TRAFFIC_R   (HSI_R + HSI_R * 14 / 65)
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
 
