@@ -62,8 +62,12 @@ CJK_PT_RATIO = 0.92
 # 字符集按档裁剪：XL 只服务 PFD 当前值（高度 / 速度），显示的是纯数字，
 # 存整套字母纯属浪费——app 分区只剩 5% 余量，这 150 KB 省得值。
 # 取 0x20..0x3F 一段（空格、+ - . / 数字 : 等），索引仍连续。
+#
+# XS 同样只存 0x20..0x3F：它服务的是交通目标的相对高度标签（"+92" 这类），
+# 纯数字带正负号，存整套字母同样是浪费。裁剪后双字重仅 12 KB。
 #   pt      cap高   cell（宽×高）    末位码    用途
 SIZES = {
+    "xs": dict(pt=22, cell=(15, 26), last=0x3F),  # 18 px  硬下限，仅极次要信息
     "s":  dict(pt=26, cell=(18, 30), last=0x7F),  # 21 px  状态栏 / 标签 / 单位
     "m":  dict(pt=35, cell=(24, 40), last=0x7F),  # 28 px  正文主力
     "xl": dict(pt=56, cell=(37, 64), last=0x3F),  # 43 px  PFD 当前值（仅数字与符号）
@@ -156,7 +160,7 @@ def main() -> int:
                     help="Noto Sans SC 可变字重 TTF")
     ap.add_argument("--out-c", type=Path, required=True)
     ap.add_argument("--out-h", type=Path, required=True)
-    ap.add_argument("--sizes", default="s,m,xl")
+    ap.add_argument("--sizes", default="xs,s,m,xl")
     args = ap.parse_args()
 
     want = [s.strip() for s in args.sizes.split(",") if s.strip()]

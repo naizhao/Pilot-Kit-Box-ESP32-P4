@@ -23,10 +23,12 @@ typedef struct {
     unsigned       last_code;   /* 该档实际覆盖到的末位码 */
 } aa_face_t;
 
-/* XL 档只覆盖到 0x3F —— 它服务 PFD 当前值（高度 / 速度），显示纯数字，
- * 存整套字母会白白吃掉 150 KB，而 app 分区余量只剩 5%。落在覆盖范围
- * 外的字符按空格处理（见 aa_putchar）。 */
+/* XS 与 XL 两档只覆盖到 0x3F：前者服务交通目标的相对高度标签、后者服务
+ * PFD 当前值，显示的都是纯数字（带正负号），存整套字母纯属浪费——app 分区
+ * 实测只剩 471 KB。落在覆盖范围外的字符按空格处理（见 aa_putchar）。 */
 static const aa_face_t s_faces[PK_AA_SIZE_COUNT] = {
+    [PK_AA_XS] = { { pk_aa_xs_regular, pk_aa_xs_bold },
+                   PK_AA_XS_W, PK_AA_XS_H, PK_AA_XS_LAST },
     [PK_AA_S]  = { { pk_aa_s_regular,  pk_aa_s_bold  },
                    PK_AA_S_W,  PK_AA_S_H,  PK_AA_S_LAST  },
     [PK_AA_M]  = { { pk_aa_m_regular,  pk_aa_m_bold  },

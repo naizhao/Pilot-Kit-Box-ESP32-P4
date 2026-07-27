@@ -186,9 +186,10 @@
  * 原来锚在 PFD_HSI_TOP + 6，那是 HSI 分区的上沿，而罗盘是个圆心在屏幕
  * 底边外的半圆，实际顶沿在 HSI_CY - HSI_R —— 两者不是一回事，于是框落进
  * 了罗盘内部，把刻度和数字压在身下。 */
-/* 再让出半个标签高：交通目标的相对高度标签以菱形为中心，正前方（rel≈0）
- * 的那个会向上伸到外圈之上，只避开外圈本身还是会被框压住。 */
-#define PFD_HDGBOX_Y1       (PFD_HSI_CY - PFD_HSI_TRAFFIC_R - 6 - 15)
+/* 再让出标签的整个外推距离：相对高度标签沿径向朝外放，正前方（rel≈0）
+ * 的那个会顶到外圈之上约「外推 16 + 半个 cell」的位置，只避开外圈本身
+ * 还是会被框压住。 */
+#define PFD_HDGBOX_Y1       (PFD_HSI_CY - PFD_HSI_TRAFFIC_R - 6 - 16 - 13)
 #define PFD_HDGBOX_Y0       (PFD_HDGBOX_Y1 - PFD_HDGBOX_H)
 
 /* ── 右下三行信息框 / 左下本机来源徽标（见 pfd_infobox.c）────────

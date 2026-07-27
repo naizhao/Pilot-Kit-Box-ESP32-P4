@@ -25,7 +25,10 @@
 #include "pfd_aa_font.h"
 
 typedef enum {
-    PK_AA_S = 0,    /* 21 px ≈ 2.5 mm — 状态栏 / 标签 / 单位 */
+    /* XS 是 spec §2 的硬下限，只给「极次要」信息用（当前：交通目标的相对
+     * 高度标签）。它与 XL 一样只覆盖 0x20..0x3F，落在外面的字符按空格处理。 */
+    PK_AA_XS = 0,   /* 18 px ≈ 2.1 mm — 硬下限，仅极次要 */
+    PK_AA_S,        /* 21 px ≈ 2.5 mm — 状态栏 / 标签 / 单位 */
     PK_AA_M,        /* 28 px ≈ 3.0 mm — 正文主力            */
     PK_AA_XL,       /* 43 px ≈ 5.0 mm — PFD 当前值大数字     */
     PK_AA_SIZE_COUNT

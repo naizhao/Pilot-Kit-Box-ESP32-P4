@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_attr.h"
 #include "esp_timer.h"
@@ -38,14 +39,25 @@
 /* 与 pfd_hsi.c 同一套等比缩放：菱形与标签跟着罗盘半径走，320 档比例为 1。 */
 #define ROSE_SC(v)      ((v) * HSI_R / 65)
 
+/* 相对高度标签用 XS 档（18 px，spec §2 硬下限）。
+ *
+ * 它和罗盘的刻度数字都挤在同一圈上，同为 S 档时角度接近的两者会读成一团。
+ * 拉开一档是最直接的区分——而且这类标签本就属于 spec 说的「极次要」：
+ * 飞行员先看菱形在哪个方位，才会去读它高多少。 */
 #if PK_DISPLAY_W >= 800
 #  define TGT_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define TGT_LBL_H     PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XS)
+#  define TGT_LBL_W     PK_AA_XS_W
+#  define TGT_LBL_H     PK_AA_XS_H
+/* 标签底的压暗强度。目标常落在天地交界或罗盘刻度上，纯文字会糊进背景。
+ * 只压暗、不描边：十几个目标各带一个方框，外圈立刻显得杂乱。 */
+#  define TGT_LBL_BG    90
 #else
 #  define TGT_PUTS(fb, x, y, s, col) \
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
+#  define TGT_LBL_W     6
 #  define TGT_LBL_H     6
+#  define TGT_LBL_BG    0
 #endif
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -124,7 +136,22 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
             if (hh < -99) hh = -99;
             char b[12];
             snprintf(b, sizeof(b), "%+03d", hh);
-            TGT_PUTS(fb, tx + ROSE_SC(6), ty - TGT_LBL_H / 2, b, COL_LBL);
+            /* 标签沿**径向朝外**放，而不是固定贴在菱形右侧。
+             *
+             * 外圈半径 139、罗盘数字在半径 89 处，固定右偏移对左半圆的目标
+             * 来说恰好是朝内的方向，标签就压到罗盘数字上去了（"+00" 盖住
+             * "3"）。沿半径向外推则永远落在罗盘之外，与谁都不打架。 */
+            int lw = (int)strlen(b) * TGT_LBL_W;
+            int ox = (int)lroundf(cosf(rad) * (float)ROSE_SC(16));
+            int oy = (int)lroundf(-sinf(rad) * (float)ROSE_SC(16));
+            int lx = tx + ox - lw / 2;
+            int ly = ty + oy - TGT_LBL_H / 2;
+            if (TGT_LBL_BG) {
+                /* cell 上下各有约 4 px 空白，底框相应内收，免得看着虚胖。 */
+                pk_pfd_darken_rect(fb, lx - 2, ly + 3,
+                                   lx + lw + 2, ly + TGT_LBL_H - 3, TGT_LBL_BG);
+            }
+            TGT_PUTS(fb, lx, ly, b, COL_LBL);
         }
     }
 

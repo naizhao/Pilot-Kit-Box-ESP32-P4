@@ -105,6 +105,9 @@
 #  define SKYPTR_HW          8
 #  define CHEVRON_LEN       16
 #  define CHEVRON_HW         8
+/* 坡度弧比俯仰梯度更粗：它是姿态的**参考框架**，梯度是框架内的刻度，
+ * 主次要一眼分得出。 */
+#  define BANK_ARC_TH      2.8f
 #else
 #  define LADDER_W10        35
 #  define LADDER_W20        24
@@ -122,6 +125,7 @@
 #  define SKYPTR_HW          6
 #  define CHEVRON_LEN       12
 #  define CHEVRON_HW         6
+#  define BANK_ARC_TH      2.0f
 #endif
 
 
@@ -215,8 +219,18 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
         /* Mark half-widths sized to sit inside the bank-arc footprint
          * (~170 px wide) without crowding the reticle: ±10° → 70 px
          * wide, ±20° → 48 px, ±30° → 32 px. */
-        int half_w = (abs_p == 10) ? LADDER_W10
-                   : (abs_p == 20 ? LADDER_W20 : LADDER_W30);
+        /* 三级视觉层次：离地平线越远，越短、越细、越淡。
+         *
+         * 中心附近是最常用的读数区，该最实；±30° 只是余光里的方位感，压下去
+         * 反而让整个姿态区不那么吵。这也是与坡度弧拉开差别的手段——两者本来
+         * 同为纯白 1.4 px，在弧与梯度交叠处根本分不出谁是谁。 */
+        int   half_w = (abs_p == 10) ? LADDER_W10
+                     : (abs_p == 20 ? LADDER_W20 : LADDER_W30);
+        float line_th = (abs_p == 10) ? 1.7f : (abs_p == 20 ? 1.4f : 1.1f);
+        /* 没有 alpha 通道，用明度模拟不透明度：深色天地背景上，压暗即变淡。 */
+        uint16_t lcol = (abs_p == 10) ? pk_rgb565(255, 255, 255)
+                      : (abs_p == 20) ? pk_rgb565(215, 218, 225)
+                                      : pk_rgb565(175, 180, 190);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
         /* 上界按**标签**而不是线来判：状态栏是不透明的，线越界只是被盖住，
@@ -228,7 +242,7 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
         rotate_about_center(cs, sn, PFD_CX - half_w, mark_y, &lx, &ly);
         rotate_about_center(cs, sn, PFD_CX + half_w, mark_y, &rx, &ry);
         pk_pfd_draw_line_aa(fb, (float)lx, (float)ly, (float)rx, (float)ry,
-                            1.4f, COL_PITCH_LINE);
+                            line_th, lcol);
         if (p < 0) {
             /* "Below the horizon" marks rendered with an extra half-
              * length overlay — closest we get to a dashed line without
@@ -236,16 +250,16 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
             int mx = (lx + rx) / 2;
             int my = (ly + ry) / 2;
             pk_pfd_draw_line_aa(fb, (float)lx, (float)ly, (float)mx, (float)my,
-                                1.4f, COL_PITCH_LINE);
+                                line_th, lcol);
         }
         /* 数字贴在梯度线两端外侧，垂直中心与线对齐。 */
         char label[4];
         snprintf(label, sizeof(label), "%d", abs_p);
         int lw = (int)strlen(label) * LADDER_LBL_W;
         LADDER_PUTS(fb, lx - lw - LADDER_LBL_GAP, ly - LADDER_LBL_H / 2,
-                    label, COL_PITCH_LINE);
+                    label, lcol);
         LADDER_PUTS(fb, rx + LADDER_LBL_GAP, ry - LADDER_LBL_H / 2,
-                    label, COL_PITCH_LINE);
+                    label, lcol);
     }
 }
 
@@ -264,7 +278,7 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
 {
     pk_pfd_draw_arc_aa(fb, (float)BANK_ARC_CX, (float)BANK_ARC_CY,
                        (float)BANK_ARC_R - 0.5f,
-                       -60.0f, 60.0f, 2.0f, COL_BANK_ARC);
+                       -60.0f, 60.0f, BANK_ARC_TH, COL_BANK_ARC);
 
     /* Tick marks: three-tier lengths so the visual hierarchy reads
      * cleanly — ±10° smallest, ±20° medium, ±30°/±45°/±60° longest.
@@ -272,11 +286,13 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
     for (size_t i = 0; i < sizeof(bank_ticks) / sizeof(bank_ticks[0]); ++i) {
         int angle = bank_ticks[i];
         int abs_a = angle < 0 ? -angle : angle;
-        int tick_len;
+        /* 长度与粗细同向变化，读起来才是一个层级而不是两套信息。 */
+        int   tick_len;
+        float tick_th;
         switch (abs_a) {
-            case 10:           tick_len = BANK_TICK_S; break;
-            case 20:           tick_len = BANK_TICK_M; break;
-            default:           tick_len = BANK_TICK_L; break;   /* 30, 45, 60 */
+            case 10:  tick_len = BANK_TICK_S; tick_th = 1.4f; break;
+            case 20:  tick_len = BANK_TICK_M; tick_th = 1.7f; break;
+            default:  tick_len = BANK_TICK_L; tick_th = 2.1f; break;  /* 30/45/60 */
         }
         int x0, y0;
         place_on_arc((float)angle, &x0, &y0);
@@ -286,7 +302,7 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
         int y1 = (int)((float)BANK_ARC_CY -
                        (float)(BANK_ARC_R + tick_len) * cosf(rad) + 0.5f);
         pk_pfd_draw_line_aa(fb, (float)x0, (float)y0, (float)x1, (float)y1,
-                            1.4f, COL_BANK_TICK);
+                            tick_th, COL_BANK_TICK);
     }
 
     /* Sky pointer — fixed downward-pointing inverted white triangle
