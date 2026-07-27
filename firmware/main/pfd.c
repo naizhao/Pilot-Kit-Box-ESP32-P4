@@ -303,7 +303,10 @@ static void pfd_task(void *arg)
                 }
                 s_prev_src = cur_src;
 
-                pk_pfd_srcbadge_t badge = {
+                pk_pfd_leftbox_t lb = {
+                    .speed_valid = spd.valid,
+                    .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
+                    .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
                     .adsb_lost_alert = (s_adsb_lost_us != 0) &&
                                        (now_us - s_adsb_lost_us < 5000000LL),
                     .alert_blink_on  = ((now_us / 400000) & 1) != 0,
@@ -312,34 +315,34 @@ static void pfd_task(void *arg)
                 /* 标签的降级链：呼号 → squawk → ICAO hex。依赖 aircraft_t，
                  * 故留在这里，pfd_infobox 只吃最终字符串。 */
                 if (!own_valid || own_src == PK_OWN_SRC_NONE) {
-                    badge.src = PK_PFD_SRC_NONE;
-                    snprintf(badge.label, sizeof(badge.label), "--");
+                    lb.src = PK_PFD_SRC_NONE;
+                    snprintf(lb.label, sizeof(lb.label), "--");
                 } else if (own_src == PK_OWN_SRC_BOUND_ADSB) {
-                    badge.src = PK_PFD_SRC_ADSB;
+                    lb.src = PK_PFD_SRC_ADSB;
                     bool used = false;
                     if (own.have_callsign) {
                         int i;
                         for (i = 0; i < 7 && own.callsign[i]; i++)
-                            badge.label[i] = own.callsign[i];
-                        badge.label[i] = '\0';
-                        while (i > 0 && badge.label[i - 1] == ' ')
-                            badge.label[--i] = '\0';
-                        if (badge.label[0] != '\0') used = true;
+                            lb.label[i] = own.callsign[i];
+                        lb.label[i] = '\0';
+                        while (i > 0 && lb.label[i - 1] == ' ')
+                            lb.label[--i] = '\0';
+                        if (lb.label[0] != '\0') used = true;
                     }
                     if (!used && own.have_squawk) {
                         /* squawk 比 ICAO hex 对飞行员更有意义 */
-                        snprintf(badge.label, sizeof(badge.label), "%04d", own.squawk);
+                        snprintf(lb.label, sizeof(lb.label), "%04d", own.squawk);
                         used = true;
                     }
                     if (!used) {
-                        snprintf(badge.label, sizeof(badge.label), "%06lX",
+                        snprintf(lb.label, sizeof(lb.label), "%06lX",
                                  (unsigned long)own.icao24);
                     }
                 } else {
-                    badge.src = PK_PFD_SRC_GPS;
-                    snprintf(badge.label, sizeof(badge.label), "GPS");
+                    lb.src = PK_PFD_SRC_GPS;
+                    snprintf(lb.label, sizeof(lb.label), "GPS");
                 }
-                pk_pfd_srcbadge_render(fb, &badge);
+                pk_pfd_leftbox_render(fb, &lb);
             }
 
             break;

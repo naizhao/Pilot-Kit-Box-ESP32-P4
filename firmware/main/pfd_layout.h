@@ -215,30 +215,33 @@
  * 值（向上占用 tape 尾段），把冲突显性化 —— 垂直空间怎么分配是阶段 4a 第二
  * 步要整体定的事，不在这里偷偷压字号糊弄过去。 */
 #if PK_DISPLAY_W >= 800
-/* 三行信息框挪到罗盘**右侧**的空当里：罗盘是半圆，圆心在屏幕底边中点，
- * 半径 115，所以 x > 515 那片是空的。此前放在高度带正下方，直接压在 tape
- * 的刻度标签上（"23493ft" 叠着 "23500"），而且 100 px 带宽也装不下 119 px
- * 的数值串。放到这里两个问题一起解决，还不必去动 tape 的垂直空间。 */
-#define PFD_IB_X0           600
-/* 底边与左下角的来源徽标**对齐**：两块都贴着屏幕下沿，底不齐会在右下留出
- * 一条空档，看着像没画完。368 是当初随手给的，差 14 px。 */
-#define PFD_IB_TOP          382
+/* 左右两块三行信息框，对称地坐在罗盘两侧。
+ *
+ * 罗盘是半圆、圆心在屏幕底边中点、半径 115，所以 x < 285 与 x > 515 两片
+ * 都是空的，正好各放一块。两块同宽同高同底边，读起来是一对。
+ *
+ *   左：km/h · mph · 本机来源      右：气压高度 · 米制高度 · 升降率
+ *
+ * 右块此前放在高度带正下方，压在 tape 刻度标签上（"23493ft" 叠着 "23500"），
+ * 且 100 px 带宽装不下 119 px 的数值串；左侧的换算区则挤在速度带下方 40 px
+ * 里，只能用 6 px 位图。移到这里两个问题一起消失，也不必去动 tape 的垂直
+ * 空间。 */
 #define PFD_IB_ROW_H         30
 #define PFD_IB_ROW_GAP        2
 #define PFD_IB_PAD            4
-#define PFD_BADGE_W         160
-#define PFD_BADGE_H          34
-#define PFD_BADGE_Y0        (PK_DISPLAY_H - PFD_BADGE_H - 4)
-#define PFD_BADGE_PAD         4
+#define PFD_IB_W            200
+#define PFD_IB_LEFT_X0        0
+#define PFD_IB_RIGHT_X0     (PK_DISPLAY_W - PFD_IB_W)
+/* 底边贴屏幕下沿，三行往上排。 */
+#define PFD_IB_TOP          (PK_DISPLAY_H - 4 \
+                             - 3 * PFD_IB_ROW_H - 2 * PFD_IB_ROW_GAP)
 #else
-#define PFD_IB_X0           256
-#define PFD_IB_TOP          170
 #define PFD_IB_ROW_H         18
 #define PFD_IB_ROW_GAP        2
 #define PFD_IB_PAD            2
-#define PFD_BADGE_W          88
-#define PFD_BADGE_H          22
-#define PFD_BADGE_Y0        210
-#define PFD_BADGE_PAD         2
+#define PFD_IB_W             64
+#define PFD_IB_LEFT_X0        0
+#define PFD_IB_RIGHT_X0     256
+#define PFD_IB_TOP          170
 #endif
-#define PFD_BADGE_Y1        (PFD_BADGE_Y0 + PFD_BADGE_H)
+#define PFD_IB_BOT          (PFD_IB_TOP + 3 * PFD_IB_ROW_H + 2 * PFD_IB_ROW_GAP)

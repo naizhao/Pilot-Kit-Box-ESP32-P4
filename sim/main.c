@@ -182,9 +182,14 @@ static int run_headless(float at_sec, const char *out)
             .vs_from_adsb = true,
         };
         pk_pfd_infobox_render(fb, &ib);
-        pk_pfd_srcbadge_t badge = { .src = PK_PFD_SRC_ADSB };
-        snprintf(badge.label, sizeof(badge.label), "CES2158");
-        pk_pfd_srcbadge_render(fb, &badge);
+        pk_pfd_leftbox_t lb = {
+            .speed_valid = true,
+            .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
+            .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
+            .src = PK_PFD_SRC_ADSB,
+        };
+        snprintf(lb.label, sizeof(lb.label), "CES2158");
+        pk_pfd_leftbox_render(fb, &lb);
     }
 
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(
@@ -304,9 +309,14 @@ int main(int argc, char **argv)
             .vs_from_adsb = true,
         };
         pk_pfd_infobox_render(fb, &ib);
-        pk_pfd_srcbadge_t badge = { .src = PK_PFD_SRC_ADSB };
-        snprintf(badge.label, sizeof(badge.label), "CES2158");
-        pk_pfd_srcbadge_render(fb, &badge);
+        pk_pfd_leftbox_t lb = {
+            .speed_valid = true,
+            .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
+            .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
+            .src = PK_PFD_SRC_ADSB,
+        };
+        snprintf(lb.label, sizeof(lb.label), "CES2158");
+        pk_pfd_leftbox_render(fb, &lb);
     }
 
         fb_to_texture(fb, tex);

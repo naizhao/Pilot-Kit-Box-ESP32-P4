@@ -250,9 +250,9 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         /* 放右下角 VS 框(y≤228)下方的空隙：避开左下 own-ship badge
          * (x[0,78] y[210,232])，否则会被 pfd.c 后画的 badge darken+文字覆盖
          * 导致永久不可见。 */
-        /* 落在左下角、本机来源徽标的右侧。原先放右下，那里现在是三行信息框，
-         * 会被后画的它们整个盖掉——不可见的告警等于没有。 */
-        TGT_PUTS(fb, PFD_BADGE_W + 10, PK_DISPLAY_H - TGT_LBL_H - 4,
-                 b, COL_BEHIND);
+        /* 落在左右两块信息框之间的空当（罗盘左侧）。左右下角现在各是一块三行
+         * 信息框，压在任何一块上都会被后画的它们盖掉——不可见的告警等于没有。 */
+        TGT_PUTS(fb, PFD_IB_LEFT_X0 + PFD_IB_W + 8,
+                 PK_DISPLAY_H - TGT_LBL_H - 4, b, COL_BEHIND);
     }
 }

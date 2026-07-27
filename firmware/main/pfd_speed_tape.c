@@ -170,7 +170,11 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
         VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, "---", COL_STALE);
     }
 
-    /* ── Metric conversion pad ────────────────────────────────────── */
+#if PK_DISPLAY_W < 800
+    /* ── Metric conversion pad ──────────────────────────────────────
+     * 仅 320 档保留。800 档的 km/h + mph 已并入左下角三行信息框
+     * （pfd_infobox.c），与右下角三行对称；挤在带宽 100 px 里只能用 6 px
+     * 位图，低于 spec §2 的 18 px 硬下限。 */
     pk_pfd_darken_rect(fb, STAPE_X0, METRIC_TOP, PFD_METRIC_X1, METRIC_BOT, 128);
 
     {
@@ -190,4 +194,5 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
         MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD, l1, col);
         MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD + MET_ROW_H, l2, col);
     }
+#endif
 }
