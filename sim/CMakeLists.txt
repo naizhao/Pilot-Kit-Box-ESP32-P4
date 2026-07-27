@@ -38,6 +38,28 @@ else()
     message(STATUS "SDL2 via pkg-config")
 endif()
 
+# ── LVGL ────────────────────────────────────────────────────────────
+#
+# 固定到 v9.5.0 而不是跟 master：布局评审要能复现，LVGL 的绘制细节在小版本
+# 之间也会变。固件侧将来经 IDF 组件管理器引入同一版本。
+#
+# 关键配置在 sim/lv_conf.h，其中最要紧的一条是
+# LV_DRAW_SW_SUPPORT_RGB565_SWAPPED —— 本项目的 pk_rgb565() 在源头就把颜色
+# 转成了大端（ST7789 的 SPI 线序），而 LVGL 默认按主机序解释 RGB565。v9.5
+# 原生支持 swapped 格式并带专门的混合路径，因此不必去动 pk_rgb565 的约定，
+# 也就避免了一次会波及现役固件的字节序改动。
+include(FetchContent)
+set(LV_CONF_PATH ${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h CACHE FILEPATH "" FORCE)
+# 不编 examples / demos：既省编译时间，也免掉它们找不到 lv_conf.h 的一堆警告。
+set(LV_CONF_BUILD_DISABLE_EXAMPLES 1 CACHE BOOL "" FORCE)
+set(LV_CONF_BUILD_DISABLE_DEMOS    1 CACHE BOOL "" FORCE)
+FetchContent_Declare(lvgl
+    GIT_REPOSITORY https://github.com/lvgl/lvgl.git
+    GIT_TAG        v9.5.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(lvgl)
+
 set(FW ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/main)
 
 # 可移植的绘制模块。判定标准：只依赖标准库 + 项目内部头文件，
@@ -80,7 +102,7 @@ list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)
 message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
-add_executable(pkbox_sim main.c compat/mock_runtime.c ${FW_DRAW_SRC})
+add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}
@@ -98,4 +120,4 @@ target_compile_options(pkbox_sim PRIVATE
     -Wno-unused-parameter
 )
 
-target_link_libraries(pkbox_sim PRIVATE ${SDL2_LIBS_LIST} m)
+target_link_libraries(pkbox_sim PRIVATE lvgl ${SDL2_LIBS_LIST} m)

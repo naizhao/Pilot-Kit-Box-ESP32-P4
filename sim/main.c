@@ -35,6 +35,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lv_backend.h"
+
 #include "display.h"
 #include "pfd_attitude.h"
 #include "mock_runtime.h"
@@ -161,7 +163,9 @@ static void save_bmp(const uint16_t *fb, int seq)
  */
 static int run_headless(float at_sec, const char *out)
 {
-    static uint16_t fb[PK_DISPLAY_W * PK_DISPLAY_H];
+    /* 经 LVGL 走一遍，而不是直接看 PFD 写的那块缓冲：截图要反映的是**合成
+     * 之后**的画面，将来叠上 FAB / dock 才不会漏掉图层间的相互影响。 */
+    uint16_t *fb = pk_sim_lv_init();
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
     pk_pfd_imu_t imu; pk_pfd_hsi_t hsi; pk_pfd_alt_tape_t alt;
@@ -192,6 +196,10 @@ static int run_headless(float at_sec, const char *out)
         pk_pfd_leftbox_render(fb, &lb);
     }
 
+    /* 合成两帧：LVGL 首帧只画屏幕底色，canvas 要到第二帧才落到 s_screen。 */
+    pk_sim_lv_render(33);
+    const uint16_t *shot = pk_sim_lv_render(33);
+
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(
         0, PK_DISPLAY_W, PK_DISPLAY_H, 16, SDL_PIXELFORMAT_RGB565);
     if (!s) { fprintf(stderr, "surface: %s\n", SDL_GetError()); return 1; }
@@ -200,7 +208,7 @@ static int run_headless(float at_sec, const char *out)
     const int stride = s->pitch / (int)sizeof(uint16_t);
     for (int y = 0; y < PK_DISPLAY_H; ++y)
         for (int x = 0; x < PK_DISPLAY_W; ++x) {
-            const uint16_t v = fb[(size_t)y * PK_DISPLAY_W + x];
+            const uint16_t v = shot[(size_t)y * PK_DISPLAY_W + x];
             dst[(size_t)y * stride + x] = (uint16_t)((v >> 8) | (v << 8));
         }
 
@@ -253,8 +261,10 @@ int main(int argc, char **argv)
         PK_DISPLAY_W, PK_DISPLAY_H);
     if (!tex) { fprintf(stderr, "CreateTexture: %s\n", SDL_GetError()); return 1; }
 
-    /* 和真机一样的单缓冲：绘制模块直接往这块写 */
-    static uint16_t fb[PK_DISPLAY_W * PK_DISPLAY_H];
+    /* PFD 写入的是 LVGL canvas 的缓冲；窗口上显示的是 LVGL 合成之后的结果。
+     * 两者分开，将来叠上 FAB / dock 才看得出图层间的相互影响。 */
+    uint16_t *fb = pk_sim_lv_init();
+    const uint16_t *screen = fb;
 
     sim_state_t st = { .t = 0.0f, .roll_bias = 0.0f, .paused = false };
     int  shot_seq  = 0;
@@ -274,7 +284,7 @@ int main(int argc, char **argv)
                 case SDLK_ESCAPE:
                 case SDLK_q:     running = false;              break;
                 case SDLK_SPACE: st.paused = !st.paused;       break;
-                case SDLK_s:     save_bmp(fb, shot_seq++);     break;
+                case SDLK_s:     save_bmp(screen, shot_seq++);  break;
                 case SDLK_LEFT:  st.roll_bias -= 5.0f;         break;
                 case SDLK_RIGHT: st.roll_bias += 5.0f;         break;
                 default: break;
@@ -319,7 +329,9 @@ int main(int argc, char **argv)
         pk_pfd_leftbox_render(fb, &lb);
     }
 
-        fb_to_texture(fb, tex);
+        /* 让 LVGL 把 canvas（以及将来的控件）合成到最终画面。 */
+        screen = pk_sim_lv_render((uint32_t)(dt * 1000.0f));
+        fb_to_texture(screen, tex);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
