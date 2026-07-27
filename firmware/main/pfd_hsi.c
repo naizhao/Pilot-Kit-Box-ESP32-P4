@@ -15,7 +15,10 @@
 
 #include "display.h"
 #include "pfd_layout.h"
+#include <stddef.h>
+
 #include "pfd_aa_text.h"
+#include "pfd_icon_font.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -187,29 +190,43 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
     {
         int cx = HSI_CX;
         int cy = AIRCRAFT_Y;
-        const int fus_h = ROSE_SC(5);    /* 机身半长 */
-        const int nose  = ROSE_SC(7);    /* 机头尖端 */
-        const int fus_w = ROSE_SC(1);    /* 机身半宽 */
-        const int wing  = ROSE_SC(8);    /* 翼展半宽 */
-        const int wing_t= ROSE_SC(1);    /* 机翼半厚 */
-        const int tail  = ROSE_SC(4);    /* 尾翼半宽 */
+#if PK_DISPLAY_W >= 800
+        /* 用 Material Symbols 的 flight 字形，不再手拼矩形加三角。
+         *
+         * 手绘版是「机身条 + 机翼条 + 尾翼条」三个矩形拼的，在 30 px 尺度上
+         * 各段的粗细比例全靠试，怎么调都像个十字架。字体图形是专业设计过的
+         * 轮廓，同样尺寸下形态干净得多。
+         *
+         * 这里能直接用图标、而交通目标不能，差别在于**旋转**：罗盘恒
+         * heading-up，本机符号永远机头朝上；交通目标却要按各自航迹转任意角度，
+         * 而字形表是预渲染的，转不了。 */
+        const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
+                          + (size_t)PK_ICON_OWNSHIP * ((PK_ICON_W * PK_ICON_H) / 2);
+        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                        cx - PK_ICON_W / 2, cy - PK_ICON_H / 2,
+                        ac, PK_ICON_W, PK_ICON_H, COL_AIRCRAFT);
+#else
+        /* 320 档罗盘只有 R=65，30 px 的图标 cell 塞不进去，保留手绘。 */
+        const int fus_h = ROSE_SC(5);
+        const int nose  = ROSE_SC(7);
+        const int fus_w = ROSE_SC(1);
+        const int wing  = ROSE_SC(8);
+        const int wing_t= ROSE_SC(1);
+        const int tail  = ROSE_SC(4);
         const int tail_y= ROSE_SC(4);
 
-        /* 机身 */
         pk_pfd_fill_rect(fb, cx - fus_w, cy - fus_h, cx + fus_w + 1, cy + fus_h,
                          COL_AIRCRAFT);
-        /* 机头 */
         pk_pfd_draw_triangle(fb,
                              cx,             cy - nose,
                              cx - fus_w,     cy - fus_h,
                              cx + fus_w + 1, cy - fus_h,
                              COL_AIRCRAFT);
-        /* 机翼 */
         pk_pfd_fill_rect(fb, cx - wing, cy - wing_t, cx + wing + 1, cy + wing_t,
                          COL_AIRCRAFT);
-        /* 尾翼 */
         pk_pfd_fill_rect(fb, cx - tail, cy + tail_y, cx + tail + 1,
                          cy + tail_y + ROSE_SC(2), COL_AIRCRAFT);
+#endif
     }
 
     /* HDG box: dimmed translucent interior + 1 px white border +

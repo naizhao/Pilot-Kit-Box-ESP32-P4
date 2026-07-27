@@ -55,6 +55,9 @@ ICONS = [
     # plane_contrails（单机 + 尾迹）：后面跟着的是目标计数，"周围有 N 架"要
     # 的是复数语义，尾迹说的是航迹，对不上。
     ("ADSB",      "connecting_airports", 0xE7C9, 1),
+    # HSI 罗盘中心的本机符号。flight 本身就是机头朝上的俯视剪影，不必旋转
+    # ——而罗盘恒 heading-up，本机符号也从不旋转，正好对上。
+    ("OWNSHIP",   "flight",              0xE539, 1),
     # 电量刻度：alert → _0…_6 → full 共九档，必须**连号**（batt_icon_for()
     # 直接按 BATT_ALERT+step 取，没有特判分支）。
     #
