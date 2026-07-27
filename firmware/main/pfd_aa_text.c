@@ -87,26 +87,17 @@ static inline uint16_t blend565(uint16_t dst_be, uint16_t src_be, uint8_t a4)
 
 /* ── 绘制 ─────────────────────────────────────────────────── */
 
-static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
-                       int x, int y, unsigned code,
-                       uint16_t color, const aa_face_t *face)
+void pk_aa_blit_4bpp(uint16_t *fb, int fb_w, int fb_h, int x, int y,
+                     const uint8_t *bitmap, int w, int h, uint16_t color)
 {
-    if (code < PK_AA_FIRST_CODE || code > face->last_code) code = 0x20;
-    if (code == 0x20) return;               /* 空格无墨，只推进 */
-
-    const int cw = face->cell_w, ch = face->cell_h;
-    const int bytes_per_glyph = (cw * ch) / 2;
-    const uint8_t *glyph = face->bitmap[s_weight]
-                         + (size_t)(code - PK_AA_FIRST_CODE) * bytes_per_glyph;
-
-    for (int row = 0; row < ch; ++row) {
+    for (int row = 0; row < h; ++row) {
         int yy = y + row;
         if (yy < 0 || yy >= fb_h) continue;
         uint16_t *line = fb + (size_t)yy * fb_w;
 
-        for (int col = 0; col < cw; ++col) {
-            int idx = row * cw + col;
-            uint8_t packed = glyph[idx >> 1];
+        for (int col = 0; col < w; ++col) {
+            int idx = row * w + col;
+            uint8_t packed = bitmap[idx >> 1];
             uint8_t a4 = (idx & 1) ? (packed & 0x0F) : (uint8_t)(packed >> 4);
             if (!a4) continue;
 
@@ -115,6 +106,20 @@ static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
             line[xx] = blend565(line[xx], color, a4);
         }
     }
+}
+
+static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
+                       int x, int y, unsigned code,
+                       uint16_t color, const aa_face_t *face)
+{
+    if (code < PK_AA_FIRST_CODE || code > face->last_code) code = 0x20;
+    if (code == 0x20) return;               /* 空格无墨，只推进 */
+
+    const int cw = face->cell_w, ch = face->cell_h;
+    const uint8_t *glyph = face->bitmap[s_weight]
+                         + (size_t)(code - PK_AA_FIRST_CODE) * ((cw * ch) / 2);
+
+    pk_aa_blit_4bpp(fb, fb_w, fb_h, x, y, glyph, cw, ch, color);
 }
 
 int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,

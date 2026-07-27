@@ -52,9 +52,11 @@ set(FW_DRAW_SRC
     ${FW}/pfd_font.c
     ${FW}/pfd_font_aa.c
     ${FW}/pfd_aa_font.c
+    ${FW}/pfd_icon_font.c
     ${FW}/pfd_aa_text.c
     ${FW}/pfd_attitude.c
     ${FW}/pfd_statusbar.c
+    ${FW}/pfd_statusbar_icons.c
     ${FW}/pfd_tape.c
     ${FW}/pfd_speed_tape.c
     ${FW}/pfd_hsi.c

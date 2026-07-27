@@ -16,6 +16,8 @@
 #include "display.h"
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
+#include "pfd_statusbar_icons.h"
+#include "pfd_icon_font.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -25,7 +27,9 @@
 #define COL_BG     pk_rgb565(  8,   8,  12)
 #define COL_LABEL  pk_rgb565( 70, 220, 250)
 #define COL_GREEN  pk_rgb565(  0, 220,  60)
+#define COL_WHITE  pk_rgb565(255, 255, 255)
 #define COL_STALE  pk_rgb565(100, 100, 100)
+#define COL_WARN   pk_rgb565(255, 180,  63)
 #define COL_RED    pk_rgb565(255,  80,  60)
 
 /* 状态栏水平中线（GPS 段以此居中）。 */
@@ -47,16 +51,34 @@
 /* 大屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
  * 位图字体整数倍放大会变成方块像素，在 217 PPI 上无法接受。 */
 #  define BAR_GLYPH_W   PK_AA_S_W
+#  define BAR_CELL_H    PK_AA_S_H
 #  define BAR_PUTS(fb, x, y, str, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
 #else
+/* ⚠️ 320 档的顶栏**已经失效**，不要以为它还能用：状态位图标的 cell 固定
+ * 30 px（字形表按 4.3″ 屏预渲染，不能缩放），而小屏顶栏只有 18 px 高，
+ * 图标会溢出压到姿态仪上。本分支专做 4.3″，不为小屏另生成一套图标；
+ * 待阶段 1 换板、display.h 改成 800×480 后，整个分档连同 pfd_layout.h
+ * 里的 320 档一并删除（见 IMPLEMENTATION_PLAN.md 阶段 1）。 */
 #  define BAR_GLYPH_W   12
+#  define BAR_CELL_H    16
 #  define BAR_PUTS(fb, x, y, str, col) \
         pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col))
 #endif
 
 /* 定宽字体下字符串的像素宽度。 */
 #define BAR_TEXT_W(n)   ((n) * BAR_GLYPH_W)
+
+/* 图标 cell 与文字 cell 顶对齐后的居中偏移（大屏两者同为 30 px，偏移 0）。 */
+#define BAR_ICON_Y      (PFD_BAR_TEXT_Y + (BAR_CELL_H - PK_ICON_H) / 2)
+
+/* 右段（蓝牙 + 电量）按**最坏宽度**预留，不随内容增减而伸缩。
+ *
+ * 若按实际内容算，蓝牙一断开中段就会整排平移 —— 顶栏元素的位置必须稳定，
+ * 否则每次扫视都要重新找目标在哪。最坏情况是两个图标 + "100%" 四字符。 */
+#define BAR_RIGHT_W     (pk_bar_icon_width(PK_BAR_ICON_BLE) \
+                       + pk_bar_icon_width(PK_BAR_ICON_BATT) \
+                       + BAR_TEXT_W(4) + PFD_BAR_GAP_LABEL)
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 {
@@ -80,30 +102,143 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
         }
     }
 
-    /* ── 中段：GPS 接收状态，以屏幕中线居中 ─────────────────── */
+    /* ── 中段：状态位，按优先级填充可用宽度 ──────────────────
+     *
+     * 中段能放多少完全取决于面板宽度：320 屏中段仅剩约 130 px（放得下
+     * 一项），800 屏有 500 px 上下（放得下四五项）。与其为每种屏手算
+     * 一套坐标，不如声明优先级后让代码自己裁 —— 以后新增状态位也不必
+     * 重新推导布局。
+     *
+     * 优先级依据「不知道会出事」的程度：
+     *   0  GPS   定位丢失直接影响本机位置与授时
+     *   1  ADSB  周围有几架飞机是本机的核心输出，紧跟 GPS
+     *   2  REC   以为在录、实际没录，是本产品最难受的失败
+     *   3  TEMP  仅在超温时出现；产品定位就是"Garmin 热死时的备份"，
+     *            自身温度异常必须让用户看见
+     *
+     * BLE 与电量不在此列 —— 它们是「设备自身」的状态而非「飞行」的状态，
+     * 固定在右端，与左端的航向一样常驻不参与降级。
+     */
     {
-        uint16_t gps_col;
+        typedef struct {
+            char          text[16];
+            uint16_t      col;
+            pk_bar_icon_t icon;     /* 图标提供语义：孤立的「100%」看不出是电量 */
+        } bar_item_t;
+
+        bar_item_t items[4] = {0};
+        int n = 0;
+
         if (s->gps_have_fix) {
-            snprintf(buf, sizeof(buf), "GPS (%u)", (unsigned)s->gps_sats);
-            gps_col = COL_GREEN;
+            snprintf(items[n].text, sizeof(items[n].text), "%u", (unsigned)s->gps_sats);
+            items[n].col = COL_GREEN;
         } else {
-            snprintf(buf, sizeof(buf), "NO GPS");
-            gps_col = COL_RED;
+            snprintf(items[n].text, sizeof(items[n].text), "NO FIX");
+            items[n].col = COL_RED;
         }
-        int gps_x = MID_CENTRE_X - BAR_TEXT_W((int)strlen(buf)) / 2;
-        BAR_PUTS(fb, gps_x, ty, buf, gps_col);
+        items[n].icon = PK_BAR_ICON_SAT;
+        n++;
+
+        /* 目标计数用 "%u" 而不是 "%2u"：等宽字体下前导空格就是一个整字宽
+         * 的空档，个位数时图标会被推得离数字老远。宽度稳定靠等宽字体本身，
+         * 不需要靠补空格。 */
+        snprintf(items[n].text, sizeof(items[n].text), "%u",
+                 (unsigned)s->aircraft_count);
+        items[n].col  = COL_GREEN;
+        items[n].icon = PK_BAR_ICON_ADSB;
+        n++;
+
+        if (s->rec_active) {
+            snprintf(items[n].text, sizeof(items[n].text), "REC");
+            items[n].col  = COL_RED;
+            items[n].icon = PK_BAR_ICON_REC;
+            n++;
+        }
+        if (s->temp_warn) {
+            snprintf(items[n].text, sizeof(items[n].text), "%d~C", s->temp_c);
+            items[n].col  = COL_WARN;
+            items[n].icon = PK_BAR_ICON_TEMP;   /* 温度计+感叹号，比通用三角更准确 */
+            n++;
+        }
+
+        /* 中段可用区间：左端 HDG 之后、右端设备状态之前，各留一个词距。 */
+        int left_end   = PFD_BAR_MARGIN_L + BAR_TEXT_W(3 + 4) + PFD_BAR_GAP_LABEL;
+        int right_start= PK_DISPLAY_W - PFD_BAR_MARGIN_R - BAR_RIGHT_W
+                         - PFD_BAR_GAP_WORD;
+        int avail      = right_start - left_end - 2 * PFD_BAR_GAP_WORD;
+
+        /* 从低优先级端逐个丢弃，直到装得下。items 已按优先级升序排列。 */
+        int used;
+        for (;;) {
+            used = 0;
+            for (int i = 0; i < n; ++i) {
+                used += pk_bar_icon_width(items[i].icon);
+                used += BAR_TEXT_W((int)strlen(items[i].text));
+            }
+            if (n > 1) used += (n - 1) * PFD_BAR_GAP_WORD;
+            if (used <= avail || n <= 1) break;
+            --n;                       /* 丢掉当前最低优先级的一项 */
+        }
+
+        int x = left_end + PFD_BAR_GAP_WORD + (avail - used) / 2;   /* 中段内居中 */
+        for (int i = 0; i < n; ++i) {
+            x += pk_bar_icon_draw(fb, x, BAR_ICON_Y, items[i].icon,
+                                  NULL, items[i].col);
+            if (items[i].text[0]) {
+                BAR_PUTS(fb, x, ty, items[i].text, items[i].col);
+                x += BAR_TEXT_W((int)strlen(items[i].text));
+            }
+            x += PFD_BAR_GAP_WORD;
+        }
     }
 
-    /* ── 右段：ADSB + 目标计数，右对齐 ──────────────────────
-     * 先按计数宽度反推其起点，再据此反推标签起点。原实现把两者的 x
-     * 写死为 232 / 288，那是 320 宽面板算出来的，换屏即失效。 */
+    /* ── 右段：设备自身状态（蓝牙 + 电量），右对齐 ──────────
+     *
+     * 从右边界往左依次落位。图标与其数值**紧贴**，整组一起右对齐，而不是
+     * 图标钉死、数值补前导空格右对齐 —— 后者在 100%→99% 时会让图标和数字
+     * 之间凭空多出一个字宽的缝。电量位数一次飞行里最多跨位两次，整组平移
+     * 那点位移远比缝隙忽宽忽窄自然。 */
     {
-        snprintf(buf, sizeof(buf), "%2u", (unsigned)s->aircraft_count);
-        int cnt_w   = BAR_TEXT_W((int)strlen(buf));
-        int cnt_x   = PK_DISPLAY_W - PFD_BAR_MARGIN_R - cnt_w;
-        int label_x = cnt_x - PFD_BAR_GAP_WORD - BAR_TEXT_W(4);   /* "ADSB" */
+        int rx = PK_DISPLAY_W - PFD_BAR_MARGIN_R;
 
-        BAR_PUTS(fb, label_x, ty, "ADSB", COL_LABEL);
-        BAR_PUTS(fb, cnt_x,   ty, buf,    COL_GREEN);
+        if (s->batt_valid) {
+            snprintf(buf, sizeof(buf), "%u%%", (unsigned)s->batt_pct);
+            /* 电量色阶。灰色是本项目里"数据失效"的专用色（见 tape/HSI 的
+             * "---"），有效读数绝不能用灰，否则用户会以为电量读数不可信。
+             *
+             * 常态取白：航电惯例里白 = 正常/仅供参考，绿留给需要**主动确认
+             * 有效**的读数（航向、星数、目标数）。电量满本就不是新闻，涂绿
+             * 只会和它们争注意力。
+             *
+             * ≤6% 正是九档刻度里 alert 那一档的覆盖范围（见 batt_icon_for），
+             * 让变红与换成告警图标同时发生，而不是各走各的阈值。
+             *
+             * 充电时一律取白：正在回升的低电量不是需要处置的异常，涂红只会
+             * 制造假警报。 */
+            uint16_t col = s->batt_charging      ? COL_WHITE
+                         : (s->batt_pct <= 6)    ? COL_RED
+                         : (s->batt_pct < 25)    ? COL_WARN
+                                                 : COL_WHITE;
+            const pk_bar_batt_t batt = {
+                .pct       = s->batt_pct,
+                .charging  = s->batt_charging,
+                .uptime_ms = s->uptime_ms,
+            };
+            int tw = BAR_TEXT_W((int)strlen(buf));
+            rx -= pk_bar_icon_width(PK_BAR_ICON_BATT) + tw;
+
+            int x = rx;
+            x += pk_bar_icon_draw(fb, x, BAR_ICON_Y, PK_BAR_ICON_BATT, &batt, col);
+            BAR_PUTS(fb, x, ty, buf, col);
+
+            /* 蓝牙与电量同属"设备自身状态"这一组，用近距而不是词距 ——
+             * 词距是留给语义无关的相邻项的，用在组内会把它们拆成两摊。 */
+            rx -= PFD_BAR_GAP_LABEL;
+        }
+
+        if (s->ble_connected) {       /* 蓝牙符号本身即可表意，无需文字 */
+            rx -= pk_bar_icon_width(PK_BAR_ICON_BLE);
+            pk_bar_icon_draw(fb, rx, BAR_ICON_Y, PK_BAR_ICON_BLE, NULL, COL_LABEL);
+        }
     }
 }

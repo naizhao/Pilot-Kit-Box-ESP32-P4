@@ -85,6 +85,19 @@ static void mock_fill(const sim_state_t *st,
     stat->aircraft_count = 6;
     stat->gps_have_fix   = true;
     stat->gps_sats       = 17;
+    /* 满载：所有状态位同时点亮并取最坏宽度，用于验证顶栏是否溢出。 */
+    stat->rec_active     = true;
+    stat->ble_connected  = true;
+    stat->batt_valid     = true;
+    /* 电量图标有七档刻度 + 低电告警 + 充电动画，逐档验证需要能改电量而
+     * 不重编。走环境变量而非命令行参数：--shot 已占用位置参数，且这类
+     * "临时拨一个值看看"的旋钮以后还会有别的。 */
+    const char *batt_env = getenv("PK_SIM_BATT");
+    stat->batt_pct       = batt_env ? (uint8_t)atoi(batt_env) : 100;
+    stat->batt_charging  = getenv("PK_SIM_CHARGING") != NULL;
+    stat->uptime_ms      = (uint32_t)(t * 1000.0f);
+    stat->temp_warn      = true;
+    stat->temp_c         = 78;
 }
 
 /* ------------------------------------------------------------------ */

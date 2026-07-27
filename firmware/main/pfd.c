@@ -29,6 +29,7 @@
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "aircraft_state.h"
+#include "ble_gatt.h"
 #include "gps.h"
 #include "own_ship.h"
 #include "cal_wizard.h"
@@ -221,12 +222,22 @@ static void pfd_task(void *arg)
             pk_gps_state_t gps;
             pk_gps_get(&gps);
 
+            /* 顶栏状态位。rec / batt / temp 三项尚无数据源，留默认 false，
+             * 顶栏的降级逻辑会自动不显示它们 —— 详见 IMPLEMENTATION_PLAN.md
+             * 的「P2 · 顶栏状态位数据源接入」：
+             *   TODO(P2-1): rec_active   ← record_sink_file_stats() 加时间窗
+             *   TODO(P2-2): batt_*       ← 需要 ADC 分压 + 充电检测脚，硬件未定
+             *   TODO(P2-3): temp_warn/_c ← 需接 ESP-IDF temperature_sensor 驱动
+             *                              （baro 的温度是环境温度，不是芯片温度）*/
             pk_pfd_status_t stat = {
                 .imu_valid      = yaw_valid,
                 .yaw_deg        = yaw_deg,
                 .aircraft_count = n_aircraft,
                 .gps_have_fix   = gps.have_fix,
                 .gps_sats       = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats)),
+                .ble_connected  = ble_gatt_is_connected(),
+                /* 顶栏动效（充电动画）的相位基准，必须是单调时钟而非帧计数。 */
+                .uptime_ms      = (uint32_t)(now_us / 1000),
             };
             pk_pfd_hsi_t hsi = {
                 .imu_valid = yaw_valid,

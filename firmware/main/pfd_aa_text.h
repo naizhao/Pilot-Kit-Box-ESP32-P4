@@ -52,3 +52,10 @@ int pk_aa_cell_h(pk_aa_size_t size);
 int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
                int x, int y, const char *s,
                uint16_t color, pk_aa_size_t size);
+
+/*
+ * 通用 4bpp 灰度位图混合绘制。文字与状态栏图标共用同一条路径，
+ * 保证二者的边缘处理完全一致（同样的 alpha 曲线、同样的大端换序）。
+ */
+void pk_aa_blit_4bpp(uint16_t *fb, int fb_w, int fb_h, int x, int y,
+                     const uint8_t *bitmap, int w, int h, uint16_t color);
