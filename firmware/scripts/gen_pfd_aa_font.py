@@ -48,6 +48,57 @@ DEGREE_SOURCE = 0xB0          # 渲染时用真正的 '°'，存储位置在 0x7
 # ── CJK 相对拉丁的 pointsize 补偿（见文件头说明）──
 CJK_PT_RATIO = 0.92
 
+# ── CJK 字符集 ──
+#
+# 从 i18n catalog 收集，与屏上真正出现的文案严格同源：多存一个字就是白占
+# flash，少存一个字就是屏上一个豆腐块。加新文案的流程因此是「先改 catalog，
+# 再重跑本脚本」——见 gen_i18n_assets.py 的同类说明。
+#
+# 只给 S 与 M 两档配中文：XS 服务交通目标的相对高度标签、XL 服务 PFD 当前值，
+# 两者都是纯数字带正负号，配中文纯属浪费。
+CJK_SIZES = ("s", "m")
+
+
+def collect_cjk_codes() -> list[int]:
+    import i18n_catalog
+    codes: set[int] = set()
+
+    def walk(o) -> None:
+        if isinstance(o, str):
+            codes.update(ord(ch) for ch in o if ord(ch) > 0x7F)
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                walk(v)
+
+    walk(i18n_catalog.STRINGS)
+    return sorted(codes)
+
+
+def cjk_cell(size: str) -> tuple[int, int]:
+    """CJK 的 cell：宽取字面（全角方块），高与同档拉丁一致。
+
+    高度对齐是关键——两者同高，混排时基线天然对上，渲染端不必再做垂直补偿。
+    在此之前中文走的是另一套位图，cell 高度与拉丁不同，每个调用点都得自己
+    算偏移，错一处就是一行字浮起来。
+    """
+    lat_w, lat_h = SIZES[size]["cell"]
+    cap = round(SIZES[size]["pt"] * 0.81)     # 该档的字面高度
+    return (cap, lat_h)
+
+
+def render_cjk_face(magick: str, fonts, size: str, codes: list[int]) -> bytes:
+    """渲染整段 CJK，返回拼接好的 4bpp 数据（顺序同 codes）。"""
+    w, h = cjk_cell(size)
+    pt = round(SIZES[size]["pt"] * CJK_PT_RATIO)
+    blob = bytearray()
+    for cp in codes:
+        gray = render_glyph_with_fallback(magick, fonts, pt, w, h, cp)
+        blob += pack_4bpp(gray)
+    return bytes(blob)
+
 # ── 字号档位 ──
 #
 # 规格 §2 的阶梯给的是**字高**（大写字母墨迹高度），不是 pointsize。
@@ -100,7 +151,9 @@ def render_face(magick: str, fonts: list[Path], pt: int,
     return bytes(blob)
 
 
-def emit_c(path: Path, faces: dict[tuple[str, str], bytes]) -> None:
+def emit_c(path: Path, faces: dict[tuple[str, str], bytes],
+           cjk_faces: dict[tuple[str, str], bytes],
+           cjk_codes: list[int]) -> None:
     lines = [
         "/* 由 firmware/scripts/gen_pfd_aa_font.py 生成，请勿手改。",
         " *",
@@ -122,10 +175,28 @@ def emit_c(path: Path, faces: dict[tuple[str, str], bytes]) -> None:
             lines.append(f"    {chunk},")
         lines.append("};")
         lines.append("")
+    for (size, weight), blob in cjk_faces.items():
+        w, h = cjk_cell(size)
+        lines.append(f"/* {size}/{weight} CJK: cell {w}x{h}, "
+                     f"{len(cjk_codes)} glyphs, {len(blob)} bytes */")
+        lines.append(f"const uint8_t pk_aa_{size}_cjk_{weight}[] = {{")
+        for i in range(0, len(blob), 16):
+            chunk = ", ".join(f"0x{b:02X}" for b in blob[i:i + 16])
+            lines.append(f"    {chunk},")
+        lines.append("};")
+        lines.append("")
+    if cjk_codes:
+        lines.append(f"/* CJK 码位表，升序，供二分查找（{len(cjk_codes)} 项）。 */")
+        lines.append("const uint16_t pk_aa_cjk_codes[] = {")
+        for i in range(0, len(cjk_codes), 12):
+            chunk = ", ".join(f"0x{c:04X}" for c in cjk_codes[i:i + 12])
+            lines.append(f"    {chunk},")
+        lines.append("};")
+        lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def emit_h(path: Path) -> None:
+def emit_h(path: Path, n_cjk: int) -> None:
     lines = [
         "/* 由 firmware/scripts/gen_pfd_aa_font.py 生成，请勿手改。 */",
         "#pragma once",
@@ -148,6 +219,18 @@ def emit_h(path: Path) -> None:
         for weight in WEIGHTS:
             lines.append(f"extern const uint8_t pk_aa_{size}_{weight}[];")
     lines.append("")
+    lines.append(f"#define PK_AA_CJK_COUNT  {n_cjk}")
+    for size in CJK_SIZES:
+        w, h = cjk_cell(size)
+        up = size.upper()
+        lines += [f"#define PK_AA_{up}_CJK_W  {w}",
+                  f"#define PK_AA_{up}_CJK_H  {h}"]
+    lines.append("")
+    lines.append("extern const uint16_t pk_aa_cjk_codes[];")
+    for size in CJK_SIZES:
+        for weight in WEIGHTS:
+            lines.append(f"extern const uint8_t pk_aa_{size}_cjk_{weight}[];")
+    lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -165,6 +248,8 @@ def main() -> int:
 
     want = [s.strip() for s in args.sizes.split(",") if s.strip()]
     faces: dict[tuple[str, str], bytes] = {}
+    cjk_faces: dict[tuple[str, str], bytes] = {}
+    cjk_codes: list[int] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -184,8 +269,20 @@ def main() -> int:
                 print(f"  {size}/{weight}: {len(blob)} bytes "
                       f"(cell {spec['cell'][0]}x{spec['cell'][1]}, pt {spec['pt']})")
 
-    emit_c(args.out_c, faces)
-    emit_h(args.out_h)
+        cjk_codes = collect_cjk_codes()
+        for size in want:
+            if size not in CJK_SIZES:
+                continue
+            for weight in WEIGHTS:
+                chain = [cjk_by_weight[weight], latin_by_weight[weight]]
+                blob = render_cjk_face(args.magick, chain, size, cjk_codes)
+                cjk_faces[(size, weight)] = blob
+                cw, ch = cjk_cell(size)
+                print(f"  {size}/{weight} CJK: {len(blob)} bytes "
+                      f"(cell {cw}x{ch}, {len(cjk_codes)} 字)")
+
+    emit_c(args.out_c, faces, cjk_faces, cjk_codes)
+    emit_h(args.out_h, len(cjk_codes))
     total = sum(len(b) for b in faces.values())
     print(f"共 {len(faces)} 套字形，{total} bytes → {args.out_c.name}")
     return 0

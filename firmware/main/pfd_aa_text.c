@@ -37,7 +37,62 @@ static const aa_face_t s_faces[PK_AA_SIZE_COUNT] = {
                    PK_AA_XL_W, PK_AA_XL_H, PK_AA_XL_LAST },
 };
 
+/* CJK 段。与拉丁**同一份字体资源**（gen_pfd_aa_font.py 一次生成），关键是
+ * cell 高度与同档拉丁一致——混排时基线天然对上，调用方不必再算垂直补偿。
+ *
+ * 只有 S 与 M 两档带中文：XS 服务交通目标的高度标签、XL 服务 PFD 当前值，
+ * 两者都是纯数字带正负号。 */
+typedef struct {
+    const uint8_t *bitmap[2];
+    int            cell_w;
+    int            cell_h;
+} aa_cjk_face_t;
+
+static const aa_cjk_face_t s_cjk_faces[PK_AA_SIZE_COUNT] = {
+    [PK_AA_S] = { { pk_aa_s_cjk_regular, pk_aa_s_cjk_bold },
+                  PK_AA_S_CJK_W, PK_AA_S_CJK_H },
+    [PK_AA_M] = { { pk_aa_m_cjk_regular, pk_aa_m_cjk_bold },
+                  PK_AA_M_CJK_W, PK_AA_M_CJK_H },
+};
+
 static pk_aa_weight_t s_weight = PK_AA_REGULAR;
+
+/* 码位表升序，二分查。返回字形序号，没有则 -1。 */
+static int cjk_index(uint32_t cp)
+{
+    int lo = 0, hi = PK_AA_CJK_COUNT - 1;
+    while (lo <= hi) {
+        const int mid = (lo + hi) / 2;
+        const uint32_t v = pk_aa_cjk_codes[mid];
+        if (v == cp) return mid;
+        if (v < cp) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
+}
+
+/* 解一个 UTF-8 码点，推进指针。非法字节按 U+FFFD 处理并前进一字节。 */
+static uint32_t utf8_next(const unsigned char **ps)
+{
+    const unsigned char *p = *ps;
+    const unsigned char c = *p;
+    if (c < 0x80)        { *ps = p + 1; return c; }
+    if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+        *ps = p + 2; return ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        *ps = p + 3;
+        return ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6)
+             | (p[2] & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80
+        && (p[3] & 0xC0) == 0x80) {
+        *ps = p + 4;
+        return ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+             | ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+    }
+    *ps = p + 1;
+    return 0xFFFD;
+}
 
 void pk_aa_set_weight(pk_aa_weight_t w)
 {
@@ -132,14 +187,36 @@ int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
     if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_S;
 
     const aa_face_t *face = &s_faces[size];
+    const aa_cjk_face_t *cjk = &s_cjk_faces[size];
     int advance = 0;
 
-    for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
-        unsigned c = *p;
-        /* 沿用 pfd_font.h 的约定：'~' 与 "\xb0" 均映射到度数符号槽位。 */
-        if (c == '~' || c == 0xB0) c = 0x7F;
-        aa_putchar(fb, fb_w, fb_h, x + advance, y, c, color, face);
-        advance += face->cell_w;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        uint32_t cp = utf8_next(&p);
+
+        /* 沿用 pfd_font.h 的约定：'~' 与 U+00B0 均映射到度数符号槽位。 */
+        if (cp == '~' || cp == 0x00B0) cp = 0x7F;
+
+        if (cp <= 0x7F) {
+            aa_putchar(fb, fb_w, fb_h, x + advance, y,
+                       (unsigned)cp, color, face);
+            advance += face->cell_w;
+            continue;
+        }
+
+        /* 非拉丁：查 CJK 段。该档没有中文（XS/XL）或字库里没这个字时，
+         * 退回一个空位——宁可留白，也不要画出错位的字形。加字的正确做法是
+         * 改 i18n catalog 后重跑 gen_pfd_aa_font.py。 */
+        const int gi = (cjk->bitmap[0] != NULL) ? cjk_index(cp) : -1;
+        if (gi < 0) {
+            advance += face->cell_w;
+            continue;
+        }
+        const int cw = cjk->cell_w, ch = cjk->cell_h;
+        const uint8_t *glyph = cjk->bitmap[s_weight]
+                             + (size_t)gi * ((size_t)(cw * ch) / 2);
+        pk_aa_blit_4bpp(fb, fb_w, fb_h, x + advance, y, glyph, cw, ch, color);
+        advance += cw;
     }
     return advance;
 }

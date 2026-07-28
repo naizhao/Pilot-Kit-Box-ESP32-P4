@@ -27,6 +27,7 @@
 
 #include "about_page.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,7 +42,6 @@
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
-#include "text.h"
 #include "ui_state.h"
 
 /* 模拟器不链接 LVGL 的版本头，给一份与 idf_component.yml 锁定值一致的兜底。 */
@@ -107,15 +107,14 @@ static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
 /*
  * 一行「标签 数值」。
  *
- * 标签走 CJK 位图的 M 档，数值走 PFD 那套抗锯齿拉丁的 S 档——数值几乎全是
- * ASCII（版本号、日期、型号），用等宽的 B612 Mono 排比汉字字库里的半角形好读，
- * 也与 PFD 上的数字保持同一副面孔。
+ * 标签与数值走**同一份字体的同一档**（S）——中西文都由 gen_pfd_aa_font.py
+ * 一次生成，CJK 的 cell 高度与拉丁一致，所以这里不需要任何垂直补偿。
  */
 static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
     const int y = AB_ROW0_Y + row * AB_ROW_H;
-    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, 1);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_AA_S);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_VALUE_X, y, val, COL_VAL, PK_AA_S);
 }
@@ -129,6 +128,23 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
  * 那点平滑抵不上它在 PSRAM 上多读三次的代价。
  */
 #define AB_LOGO_SRC_CROP 24
+
+/* 圆角半径取边长的 22%，是 iOS / Android 自适应图标的视觉惯例。直角贴图看着
+ * 像「一张图片被贴上来」，圆角才读作「一枚图标」——这一页的主角是产品身份，
+ * 该有图标的样子。开机画面同理，那边是白色圆角卡片（CARD_RADIUS）。 */
+#define AB_LOGO_RADIUS  (AB_LOGO_SIZE * 22 / 100)
+
+/* 该像素是否落在圆角矩形内。只在四个角上做圆检测，其余直接通过。 */
+static bool in_rounded_rect(int col, int row, int size, int r)
+{
+    int dx = 0, dy = 0;
+    if (col < r)                 dx = r - col;
+    else if (col >= size - r)    dx = col - (size - r - 1);
+    if (row < r)                 dy = r - row;
+    else if (row >= size - r)    dy = row - (size - r - 1);
+    if (dx == 0 || dy == 0) return true;
+    return dx * dx + dy * dy <= r * r;
+}
 
 static void draw_logo(uint16_t *fb, int x, int y, int size)
 {
@@ -147,6 +163,7 @@ static void draw_logo(uint16_t *fb, int x, int y, int size)
         for (int col = 0; col < size; ++col) {
             const int xx = x + col;
             if (xx < 0 || xx >= PK_DISPLAY_W) continue;
+            if (!in_rounded_rect(col, row, size, AB_LOGO_RADIUS)) continue;
             const int sx = AB_LOGO_SRC_CROP + col * used_w / size;
             /* blob 里是标准（小端）RGB565，而 framebuffer 走 pk_rgb565() 的
              * 大端约定（见 display.h：它在最后把两个字节对调）。直接搬会让
@@ -190,9 +207,9 @@ void pk_about_page_render(uint16_t *fb)
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
     /* ── 顶栏 ───────────────────────────────────────────────── */
-    pk_text_puts_page_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                            AB_HEADER_PAD_X, AB_HEADER_PAD_Y,
-                            pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               AB_HEADER_PAD_X, AB_HEADER_PAD_Y - 6,
+               pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER, PK_AA_M);
     fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
 
     /* ── 左栏：身份 ─────────────────────────────────────────── */
