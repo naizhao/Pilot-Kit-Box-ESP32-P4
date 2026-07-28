@@ -23,6 +23,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
 #include "display.h"
@@ -43,10 +44,24 @@ static uint16_t     *s_canvas_px;
  * 应答 LVGL。将来换成异步分块推送时，flush_ready 必须挪到传输完成回调里，
  * 否则 LVGL 会在 DMA 还在读的缓冲上继续画。
  */
+/* 诊断计数器：flush（PPA 旋转 + 等 VSYNC）累计耗时与次数。 */
+static int64_t s_flush_us;
+static uint32_t s_flush_cnt;
+
+void pk_lv_port_flush_stats(int64_t *us, uint32_t *cnt)
+{
+    if (us) *us = s_flush_us;
+    if (cnt) *cnt = s_flush_cnt;
+    s_flush_us = 0; s_flush_cnt = 0;
+}
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     (void)area; (void)px_map;
+    int64_t t0 = esp_timer_get_time();
     pk_display_flush_full();
+    s_flush_us += esp_timer_get_time() - t0;
+    s_flush_cnt++;
     lv_display_flush_ready(disp);
 }
 

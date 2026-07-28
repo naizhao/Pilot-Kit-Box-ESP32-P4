@@ -117,9 +117,12 @@ static void pfd_task(void *arg)
     static EXT_RAM_BSS_ATTR aircraft_t scratch[AIRCRAFT_TABLE_CAPACITY];
     int64_t  fps_window_start_us = esp_timer_get_time();
     uint32_t frames_in_window = 0;
+    int64_t  acc_draw_us = 0, acc_lvgl_us = 0;   /* 诊断：分段耗时 */
+    int64_t  acc_att_us = 0, acc_bar_us = 0, acc_tape_us = 0, acc_hsi_us = 0;
 
     while (1) {
         TickType_t frame_start = xTaskGetTickCount();
+        int64_t t_frame0 = esp_timer_get_time();
 
         pk_imu_sample_t s;
         bool have = pk_imu_sample_get(&s);
@@ -254,8 +257,11 @@ static void pfd_task(void *arg)
             /* Attitude fills the full panel as the screen background.
              * Statusbar / ALT tape / speed tape / HSI / VS draw on top
              * as opaque overlays — no need to pre-clear the frame. */
+            int64_t tm0 = esp_timer_get_time();
             pk_pfd_attitude_render(fb, &imu);
+            int64_t tm1 = esp_timer_get_time();
             pk_pfd_statusbar_render(fb, &stat);
+            int64_t tm2 = esp_timer_get_time();
             pk_pfd_alt_tape_render(fb, &alt);
             pk_pfd_speed_tape_t spd = {
                 .valid           = own_valid && own.have_velocity,
@@ -263,8 +269,14 @@ static void pfd_task(void *arg)
                                        ? own.ground_speed_kt : 0,
             };
             pk_pfd_speed_tape_render(fb, &spd);
+            int64_t tm3 = esp_timer_get_time();
             pk_pfd_hsi_render(fb, &hsi);
             pk_pfd_hsi_traffic_render(fb);   /* HSI 半圆外圈叠加前方 traffic */
+            int64_t tm4 = esp_timer_get_time();
+            acc_att_us   += tm1 - tm0;
+            acc_bar_us   += tm2 - tm1;
+            acc_tape_us  += tm3 - tm2;
+            acc_hsi_us   += tm4 - tm3;
 
             /* 右下三个数值框 + 左下本机来源徽标。绘制在 pfd_infobox.c，
              * 这里只负责把运行时状态整理成它要的数据。 */
@@ -356,8 +368,12 @@ static void pfd_task(void *arg)
         /* 交给 LVGL 合成并推屏：它会把 canvas 与其上的控件混合到 display
          * 缓冲，再经 lv_port 的 flush_cb 调 pk_display_flush_full()。
          * 直接调 flush_full 会跳过控件层，只推 PFD。 */
+        int64_t t_draw_end = esp_timer_get_time();
         pk_lv_port_invalidate();
         pk_lv_port_tick(33);
+        int64_t t_lvgl_end = esp_timer_get_time();
+        acc_draw_us += t_draw_end - t_frame0;
+        acc_lvgl_us += t_lvgl_end - t_draw_end;
         frames_in_window++;
 
         int64_t now = esp_timer_get_time();
@@ -368,6 +384,21 @@ static void pfd_task(void *arg)
                                    : (mode == PK_UI_MODE_DIAG)       ? "DIAG"
                                    : (mode == PK_UI_MODE_CAL_WIZARD) ? "CAL"
                                    :                                   "PFD";
+            {
+                int64_t flush_us = 0; uint32_t flush_cnt = 0;
+                uint32_t n = frames_in_window ? frames_in_window : 1;
+                pk_lv_port_flush_stats(&flush_us, &flush_cnt);
+                ESP_LOGD(TAG, "PERF2: att=%lld bar=%lld tape=%lld hsi=%lld us/frame",
+                         (long long)(acc_att_us / n), (long long)(acc_bar_us / n),
+                         (long long)(acc_tape_us / n), (long long)(acc_hsi_us / n));
+                acc_att_us = acc_bar_us = acc_tape_us = acc_hsi_us = 0;
+                ESP_LOGD(TAG, "PERF: draw=%lldus lvgl=%lldus (flush=%lldus x%lu) per frame",
+                         (long long)(acc_draw_us / n),
+                         (long long)(acc_lvgl_us / n),
+                         (long long)(flush_cnt ? flush_us / flush_cnt : 0),
+                         (unsigned long)flush_cnt);
+                acc_draw_us = 0; acc_lvgl_us = 0;
+            }
             ESP_LOGI(TAG, "%s %lu FPS  | roll=%+6.2f pitch=%+6.2f yaw=%6.2f"
                           "  imu_valid=%d",
                      mode_label,

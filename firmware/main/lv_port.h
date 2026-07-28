@@ -29,3 +29,6 @@ void pk_lv_port_invalidate(void);
 
 /* 推进 LVGL 的时间基准并跑一次任务处理。由 UI 任务每帧调用。 */
 void pk_lv_port_tick(uint32_t elapsed_ms);
+
+/* 诊断：取出并清零 flush（PPA 旋转 + 等 VSYNC）的累计耗时与次数。 */
+void pk_lv_port_flush_stats(int64_t *us, uint32_t *cnt);

@@ -132,6 +132,16 @@
 
 /* --- Gradient LUTs (sky/ground), built once on first render -------- */
 
+/* 梯度查找表留在 PSRAM。
+ *
+ * 试过搬进内部 RAM——它每像素被查一次，直觉上该放快介质。结果是开机即挂：
+ *
+ *     assert failed: vApplicationGetIdleTaskMemory port_common.c:53
+ *     (pxStackBufferTemp != NULL)
+ *
+ * 这两张表 18.7 KB，而内部 RAM 在 PSRAM/USB/DSI/BLE 都起来之后已经紧到
+ * 连 FreeRTOS idle task 的栈都分不出。放 PSRAM 的实际代价没有想象中大：
+ * idx 沿 x 是缓慢单调变化的，命中的都是同一段 cache line。 */
 static EXT_RAM_BSS_ATTR uint16_t s_sky_grad[16][ATTITUDE_HEIGHT];
 static EXT_RAM_BSS_ATTR uint16_t s_ground_grad[16][ATTITUDE_HEIGHT];
 static bool s_grad_built = false;
@@ -171,25 +181,56 @@ static void draw_horizon(uint16_t *fb, float roll_deg, float pitch_deg)
     const float cos_roll = fabsf(cosf(rad));
     const float pitch_px = pitch_deg * PFD_PIXELS_PER_DEG;
 
+    /* 内层循环直接递推「到地平线的垂直距离」perp，每像素只剩一次加法。
+     *
+     * 原来每像素要算 6 次浮点：求 hy 的乘加、求 dy 的减、乘 cos 得 perp、
+     * 取整得 idx、再算 coverage。800×480 就是每帧 230 万次浮点运算。
+     *
+     * 但这些量沿 x 全是线性的。设 perp = (y - hy)·cos，x 每加 1 时
+     * hy 加 slope = -tan(roll)，于是
+     *
+     *     Δperp = -slope·cos = tan(roll)·cos(roll) = sin(roll)
+     *
+     * 步长是个常数，而且连乘法都不需要——行首算一次，之后一路加过去。
+     *
+     * 递推 perp 而不是 dy，还顺手修掉了一个边界错误：clamp 必须在乘 cos
+     * **之后**判断。对 dy 判断的话，大坡度时 |dy| 很大但 perp 仍在表内，
+     * 会被误当成远处而 clamp 到表尾——差异图上就是左下与右上两块。
+     *
+     * Q12（1/4096 px）精度：单步截断误差 1/4096，一行 800 像素累积 0.2 px，
+     * 落到整数 idx 上就消失了。perp 有界（屏内到地平线的垂直距离），
+     * 933·4096 ≈ 3.8e6，稳稳在 int32 内。 */
+    const int32_t step_fp  = (int32_t)(sinf(rad) * 4096.0f);
+    const int     idx_max  = ATTITUDE_HEIGHT - 1;
+    const int32_t cov_full = 6144;         /* 1.5 px in Q12 */
+
     for (int y = PFD_ATTITUDE_TOP; y < PFD_ATTITUDE_BOT; ++y) {
         uint16_t *row = fb + y * PK_DISPLAY_W;
-        for (int x = PFD_ATTITUDE_LEFT; x < PFD_ATTITUDE_RIGHT; ++x) {
-            float hy   = (float)PFD_CY + pitch_px +
-                         slope * ((float)x - (float)PFD_CX);
-            float dy   = (float)y - hy;
-            float perp = fabsf(dy) * cos_roll;
-            int idx = (int)perp;
-            if (idx >= ATTITUDE_HEIGHT) idx = ATTITUDE_HEIGHT - 1;
-            int cell = ((y & 3) << 2) | (x & 3);
-            row[x] = (dy < 0.0f) ? s_sky_grad[cell][idx] : s_ground_grad[cell][idx];
 
-            float coverage = 1.5f - perp;  /* 2 px horizon line + 1 px AA fringe. */
-            if (coverage > 0.0f) {
-                uint8_t alpha = coverage >= 1.0f
-                                    ? 255
-                                    : (uint8_t)(coverage * 255.0f + 0.5f);
+        /* 行首那一个像素仍用浮点算准，之后全靠递推。 */
+        const float hy_left = (float)PFD_CY + pitch_px +
+                              slope * ((float)PFD_ATTITUDE_LEFT - (float)PFD_CX);
+        int32_t perp_fp = (int32_t)(((float)y - hy_left) * cos_roll * 4096.0f);
+
+        for (int x = PFD_ATTITUDE_LEFT; x < PFD_ATTITUDE_RIGHT; ++x) {
+            const int32_t ap = perp_fp < 0 ? -perp_fp : perp_fp;
+            int idx = (int)(ap >> 12);
+            if (idx > idx_max) idx = idx_max;
+
+            const int cell = ((y & 3) << 2) | (x & 3);
+            /* perp 与 dy 同号（cos_roll ≥ 0），可以直接用它判天地。 */
+            row[x] = (perp_fp < 0) ? s_sky_grad[cell][idx]
+                                   : s_ground_grad[cell][idx];
+
+            /* 2 px 地平线 + 1 px 抗锯齿边。绝大多数像素离地平线很远，
+             * 这个整数比较直接把它们挡在外面。 */
+            if (ap < cov_full) {
+                const int32_t cov = cov_full - ap;           /* Q12 */
+                const uint8_t alpha = cov >= 4096 ? 255
+                                                  : (uint8_t)((cov * 255) >> 12);
                 pk_pfd_blend_pixel(fb, x, y, COL_HORIZON_LINE, alpha);
             }
+            perp_fp += step_fp;
         }
     }
 }
