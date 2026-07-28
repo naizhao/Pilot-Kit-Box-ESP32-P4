@@ -17,6 +17,9 @@ void pk_ui_nav_init(void);
 
 /* 展开 / 收起 dock。 */
 void pk_ui_nav_set_dock_open(bool open);
+
+/* 设定 FAB 吸附在哪一侧。宿主开机时用它恢复 NVS 里的 fab_side。 */
+void pk_ui_nav_set_fab_side(bool left);
 bool pk_ui_nav_dock_open(void);
 
 /* FAB 是否处于按下态（供模拟器核对命中区）。 */
@@ -29,3 +32,7 @@ bool pk_ui_nav_fab_pressed(void);
  * pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
 void pk_ui_nav_on_tab(int tr_id);
 void pk_ui_nav_on_level(void);
+
+/* FAB 被拖到新位置后回调，供宿主持久化（固件写 NVS 的 fab_side / fab_y）。
+ * y_pct 是 0~100 的相对位置——换屏或旋转后像素值会失效，比例不会。 */
+void pk_ui_nav_on_fab_moved(bool left, int y_pct);

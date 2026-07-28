@@ -169,6 +169,11 @@ static int run_headless(float at_sec, const char *out)
     uint16_t *fb = pk_sim_lv_init();
     pk_ui_nav_init();
     /* 截图时展开 dock：它默认收起，否则评审看不到这一屏最占地方的状态。 */
+    /* PK_SIM_FAB=left 把 FAB 吸到左缘，用来核对 dock 是否跟着反向铺开。 */
+    {
+        const char *side = getenv("PK_SIM_FAB");
+        if (side && side[0] == 'l') pk_ui_nav_set_fab_side(true);
+    }
     if (getenv("PK_SIM_DOCK")) pk_ui_nav_set_dock_open(true);
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
@@ -274,6 +279,7 @@ int main(int argc, char **argv)
     /* PFD 写入的是 LVGL canvas 的缓冲；窗口上显示的是 LVGL 合成之后的结果。
      * 两者分开，将来叠上 FAB / dock 才看得出图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
+    pk_sim_lv_attach_mouse(ZOOM);   /* 鼠标当触摸用，验证 FAB / dock 的交互 */
     pk_ui_nav_init();
     const uint16_t *screen = fb;
 

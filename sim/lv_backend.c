@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include <SDL.h>
+
 #include "lvgl.h"
 
 #include "display.h"
@@ -70,4 +72,32 @@ uint16_t *pk_sim_lv_render(uint32_t dt_ms)
     lv_timer_handler();
 
     return s_screen;
+}
+
+/* ── 鼠标 → LVGL 指针输入 ─────────────────────────────────────── */
+
+static int s_zoom = 1;
+
+static void mouse_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    int mx = 0, my = 0;
+    const uint32_t buttons = SDL_GetMouseState(&mx, &my);
+
+    /* 窗口是放大显示的，除回去才是面板坐标。真机上 GT911 直接给面板坐标，
+     * 没有这一步——这是模拟器独有的换算。 */
+    data->point.x = mx / s_zoom;
+    data->point.y = my / s_zoom;
+    data->state = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT))
+                ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+void pk_sim_lv_attach_mouse(int zoom)
+{
+    s_zoom = zoom > 0 ? zoom : 1;
+
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, mouse_read_cb);
+    lv_indev_set_display(indev, lv_display_get_default());
 }

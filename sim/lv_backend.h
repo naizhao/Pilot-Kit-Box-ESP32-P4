@@ -33,3 +33,12 @@ uint16_t *pk_sim_lv_init(void);
  * dt_ms 推进 LVGL 的时间基准（动画与定时器据此走）。
  */
 uint16_t *pk_sim_lv_render(uint32_t dt_ms);
+
+/*
+ * 把鼠标接成 LVGL 的指针输入设备，用来在 PC 上验证触摸交互——点 FAB、拖动、
+ * 点页签，全都走与真机相同的事件通路（GT911 那边也是 POINTER 型 indev）。
+ *
+ * 只在开窗口时调用：headless 截图没有 SDL 视频子系统，读鼠标没有意义。
+ * 窗口按 ZOOM 放大过，坐标要除回去才对得上面板像素。
+ */
+void pk_sim_lv_attach_mouse(int zoom);

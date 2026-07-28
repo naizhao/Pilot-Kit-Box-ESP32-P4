@@ -44,6 +44,13 @@
 static lv_obj_t *s_fab;
 static lv_obj_t *s_dock;
 static size_t    s_active_tab;   /* 当前高亮的页签，索引进 DOCK_TABS */
+
+/* FAB 的落点。spec §3.2：水平只吸附左/右边缘，垂直自由。
+ * 存边缘 + 垂直坐标而不是存 x/y，是因为换屏或旋转后 x 会失效而「哪一侧」
+ * 不会——持久化到 NVS 的也是这两个量。 */
+static bool s_fab_left;                 /* true = 吸在左缘 */
+static int  s_fab_y = FAB_DEFAULT_Y;
+static bool s_dragging;
 static bool      s_pressed;
 static bool      s_dock_open;
 
@@ -154,16 +161,41 @@ static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
 
 static lv_timer_t *s_idle_timer;
 
-static int32_t dock_hidden_x(void)
+static int dock_width(void)
 {
-    /* 收起时整条藏到屏幕右缘之外（FAB 那一侧），只差一点就完全不可见。 */
-    return PK_DISPLAY_W;
+    return (int)DOCK_TAB_CNT * DOCK_TAB_W + DOCK_SEP_W + 1 + DOCK_TAB_W;
 }
 
+/* 收起时藏到 FAB 那一侧的屏外。藏错边的话，滑出方向就反了。 */
+static int32_t dock_hidden_x(void)
+{
+    return s_fab_left ? -dock_width() : PK_DISPLAY_W;
+}
+
+/* spec §3.2：dock 展开方向随 FAB 边缘翻转——FAB 在左则向右铺开。
+ * 否则 dock 会从屏外某处冒出来，与手指刚点的位置对不上。 */
 static int32_t dock_shown_x(void)
 {
-    const int w = (int)DOCK_TAB_CNT * DOCK_TAB_W + DOCK_SEP_W + 1 + DOCK_TAB_W;
-    return PK_DISPLAY_W - (FAB_MARGIN + FAB_D + DOCK_GAP) - w;
+    return s_fab_left ? (FAB_MARGIN + FAB_D + DOCK_GAP)
+                      : PK_DISPLAY_W - (FAB_MARGIN + FAB_D + DOCK_GAP) - dock_width();
+}
+
+/* FAB 自身的落点，同样随边缘。 */
+static int32_t fab_x(void)
+{
+    return s_fab_left ? FAB_MARGIN : PK_DISPLAY_W - FAB_MARGIN - FAB_D;
+}
+
+static void fab_apply_pos(void)
+{
+    if (s_fab) {
+        lv_obj_set_pos(s_fab, fab_x(), s_fab_y);
+    }
+    if (s_dock && !s_dock_open) {
+        /* 收起态也要跟着挪到正确的屏外侧，否则下次展开会从反方向滑出。 */
+        lv_obj_set_x(s_dock, dock_hidden_x());
+        lv_obj_set_y(s_dock, s_fab_y + (FAB_D - DOCK_H) / 2);
+    }
 }
 
 static void dock_anim_x_cb(void *obj, int32_t v)
@@ -247,12 +279,72 @@ static void dock_build(lv_obj_t *scr)
     lv_obj_add_event_cb(s_dock, dock_touch_cb, LV_EVENT_PRESSED, NULL);
 }
 
+/* ── FAB 拖动 ──────────────────────────────────────────────────
+ *
+ * spec §3.2：长按 200 ms 进入拖动态（与点击区分开），拖动实时跟手，松手后
+ * 水平吸附到最近的左/右边缘——不允许悬在中间挡住内容。
+ *
+ * 用 LVGL 的 LONG_PRESSED 而不是自己计时：它的阈值就是给这个用的，且与点击
+ * 判定共用一套状态机，不会出现「既算点击又算长按」。
+ */
 static void fab_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_PRESSED)  s_pressed = true;
-    if (code == LV_EVENT_RELEASED) s_pressed = false;
-    if (code == LV_EVENT_CLICKED) pk_ui_nav_set_dock_open(!s_dock_open);
+
+    switch (code) {
+    case LV_EVENT_PRESSED:
+        s_pressed = true;
+        break;
+
+    case LV_EVENT_LONG_PRESSED:
+        /* 进入拖动态：微放大 + 半透明，让人看出「它现在跟手了」。 */
+        s_dragging = true;
+        lv_obj_set_style_transform_scale(s_fab, 280, 0);   /* 256 = 1.0×，即 1.09× */
+        lv_obj_set_style_bg_opa(s_fab, LV_OPA_60, 0);
+        /* 拖动期间 dock 必须收起：它锚在 FAB 上，跟着乱跑没有意义。 */
+        pk_ui_nav_set_dock_open(false);
+        break;
+
+    case LV_EVENT_PRESSING: {
+        if (!s_dragging) break;
+        lv_indev_t *indev = lv_indev_active();
+        if (!indev) break;
+        lv_point_t v;
+        lv_indev_get_vect(indev, &v);
+
+        /* 只跟垂直分量；水平方向松手才吸附，拖动中也让它跟手，否则手感发滞。 */
+        int nx = lv_obj_get_x(s_fab) + v.x;
+        int ny = lv_obj_get_y(s_fab) + v.y;
+        /* 夹在屏内：顶栏之下、屏底之上，别拖到看不见的地方。 */
+        if (ny < PFD_BAR_BOT) ny = PFD_BAR_BOT;
+        if (ny > PK_DISPLAY_H - FAB_D) ny = PK_DISPLAY_H - FAB_D;
+        lv_obj_set_pos(s_fab, nx, ny);
+        break;
+    }
+
+    case LV_EVENT_RELEASED:
+        s_pressed = false;
+        if (!s_dragging) break;
+        s_dragging = false;
+        lv_obj_set_style_transform_scale(s_fab, 256, 0);
+        lv_obj_set_style_bg_opa(s_fab, LV_OPA_80, 0);
+
+        /* 吸附到更近的一侧，按 FAB 中心判定。 */
+        s_fab_left = (lv_obj_get_x(s_fab) + FAB_D / 2) < (PK_DISPLAY_W / 2);
+        s_fab_y    = lv_obj_get_y(s_fab);
+        fab_apply_pos();
+        pk_ui_nav_on_fab_moved(s_fab_left,
+                               s_fab_y * 100 / (PK_DISPLAY_H - FAB_D));
+        break;
+
+    case LV_EVENT_CLICKED:
+        /* 拖动结束时 LVGL 不会再补一个 CLICKED，这里只处理真正的点击。 */
+        pk_ui_nav_set_dock_open(!s_dock_open);
+        break;
+
+    default:
+        break;
+    }
 }
 
 void pk_ui_nav_init(void)
@@ -275,7 +367,7 @@ void pk_ui_nav_init(void)
      * tape、下不碰信息框、左不碰罗盘(顶沿 365)。
      *
      * 用户仍可拖动改位置，届时由 NVS 记住（阶段 3）。 */
-    lv_obj_align(s_fab, LV_ALIGN_TOP_RIGHT, -FAB_MARGIN, FAB_DEFAULT_Y);
+    lv_obj_set_pos(s_fab, fab_x(), s_fab_y);
 
     /* 刻意留一点透明度：FAB 悬在 PFD 之上，全不透明会把底下的姿态挡死。
      * 这同时是图层混合的试金石——半透明必须走 alpha 混合路径，若颜色格式
@@ -310,6 +402,12 @@ void pk_ui_nav_init(void)
 }
 
 bool pk_ui_nav_fab_pressed(void) { return s_pressed; }
+
+void pk_ui_nav_set_fab_side(bool left)
+{
+    s_fab_left = left;
+    fab_apply_pos();
+}
 
 void pk_ui_nav_set_dock_open(bool open)
 {
@@ -350,4 +448,10 @@ __attribute__((weak)) void pk_ui_nav_on_tab(int tr_id)
 
 __attribute__((weak)) void pk_ui_nav_on_level(void)
 {
+}
+
+__attribute__((weak)) void pk_ui_nav_on_fab_moved(bool left, int y_pct)
+{
+    LV_UNUSED(left);
+    LV_UNUSED(y_pct);
 }
