@@ -142,8 +142,15 @@
  * 这两张表 18.7 KB，而内部 RAM 在 PSRAM/USB/DSI/BLE 都起来之后已经紧到
  * 连 FreeRTOS idle task 的栈都分不出。放 PSRAM 的实际代价没有想象中大：
  * idx 沿 x 是缓慢单调变化的，命中的都是同一段 cache line。 */
-static EXT_RAM_BSS_ATTR uint16_t s_sky_grad[16][ATTITUDE_HEIGHT];
-static EXT_RAM_BSS_ATTR uint16_t s_ground_grad[16][ATTITUDE_HEIGHT];
+/* 维度是 [idx][cell]，不是 [cell][idx]——顺序反了会慢一截。
+ *
+ * 内层循环沿 x 走时，idx（到地平线的距离）变化很慢，而 cell 每个像素都在
+ * 0..3 之间轮转（cell = (y&3)<<2 | (x&3)）。按 [cell][idx] 存的话，相邻两个
+ * 像素要读的两项相隔 ATTITUDE_HEIGHT×2 = 584 字节，每 4 个像素就踩 4 条不同
+ * 的 cache line。调换之后同一 idx 的 16 个 cell 连续排布，只占 32 字节，
+ * 一条 64 字节的 line 就全装下了。 */
+static EXT_RAM_BSS_ATTR uint16_t s_sky_grad[ATTITUDE_HEIGHT][16];
+static EXT_RAM_BSS_ATTR uint16_t s_ground_grad[ATTITUDE_HEIGHT][16];
 static bool s_grad_built = false;
 
 static uint8_t blend_u8(uint8_t a, uint8_t b, int t)
@@ -165,11 +172,46 @@ static void build_gradient_luts(void)
             uint8_t gnd_r = blend_u8(170,  95, t);
             uint8_t gnd_g = blend_u8(125,  65, t);
             uint8_t gnd_b = blend_u8( 80,  35, t);
-            s_sky_grad[cell][i] = pk_pfd_rgb565_dither(sky_r, sky_g, sky_b, dx, dy);
-            s_ground_grad[cell][i] = pk_pfd_rgb565_dither(gnd_r, gnd_g, gnd_b, dx, dy);
+            s_sky_grad[i][cell] = pk_pfd_rgb565_dither(sky_r, sky_g, sky_b, dx, dy);
+            s_ground_grad[i][cell] = pk_pfd_rgb565_dither(gnd_r, gnd_g, gnd_b, dx, dy);
         }
     }
     s_grad_built = true;
+}
+
+/* 一整行的暂存，放内部 RAM（1.6 KB）。
+ *
+ * 为什么值得多一次搬运：往 PSRAM 写一个 cache line 之前，硬件要先把它读进来
+ * （write-allocate），于是 768 KB 的逐像素写实际变成 768 KB 读 + 768 KB 写。
+ * 先在内部 RAM 把整行画完、再一次 memcpy 过去，写就变成连续的整行块传输。
+ *
+ * 地平线抗锯齿那几个像素也在行缓冲里混合——原来的 pk_pfd_blend_pixel() 会
+ * 读改写 PSRAM，正好破坏纯写的访问模式。 */
+static uint16_t s_line[PK_DISPLAY_W];
+
+/* 面板是大端 RGB565，混合要在主机序下做。与 pfd_draw.c 里那对同名静态函数
+ * 一致（都是字节交换），不值得为两行代码开一个跨模块接口。 */
+static inline uint16_t swap565(uint16_t c)
+{
+    return (uint16_t)((c >> 8) | (c << 8));
+}
+
+/* pk_pfd_blend_pixel() 的行内版本，逻辑逐字照搬，只是目标换成行缓冲。 */
+static inline void blend_in_line(uint16_t *line, int x, uint16_t c, uint8_t alpha)
+{
+    if (alpha == 0) return;
+    if (alpha == 255) { line[x] = c; return; }
+
+    uint16_t dst = swap565(line[x]);
+    uint16_t src = swap565(c);
+
+    int sr = (src >> 11) & 0x1F, sg = (src >> 5) & 0x3F, sb = src & 0x1F;
+    int dr = (dst >> 11) & 0x1F, dg = (dst >> 5) & 0x3F, db = dst & 0x1F;
+    int a = alpha, ia = 255 - a;
+    int r = (sr * a + dr * ia + 127) / 255;
+    int g = (sg * a + dg * ia + 127) / 255;
+    int b = (sb * a + db * ia + 127) / 255;
+    line[x] = swap565((uint16_t)((r << 11) | (g << 5) | b));
 }
 
 /* --- Sky / ground horizon with gradient ----------------------------- */
@@ -212,15 +254,16 @@ static void draw_horizon(uint16_t *fb, float roll_deg, float pitch_deg)
                               slope * ((float)PFD_ATTITUDE_LEFT - (float)PFD_CX);
         int32_t perp_fp = (int32_t)(((float)y - hy_left) * cos_roll * 4096.0f);
 
+        const int cell_row = (y & 3) << 2;
         for (int x = PFD_ATTITUDE_LEFT; x < PFD_ATTITUDE_RIGHT; ++x) {
             const int32_t ap = perp_fp < 0 ? -perp_fp : perp_fp;
             int idx = (int)(ap >> 12);
             if (idx > idx_max) idx = idx_max;
 
-            const int cell = ((y & 3) << 2) | (x & 3);
+            const int cell = cell_row | (x & 3);
             /* perp 与 dy 同号（cos_roll ≥ 0），可以直接用它判天地。 */
-            row[x] = (perp_fp < 0) ? s_sky_grad[cell][idx]
-                                   : s_ground_grad[cell][idx];
+            s_line[x] = (perp_fp < 0) ? s_sky_grad[idx][cell]
+                                      : s_ground_grad[idx][cell];
 
             /* 2 px 地平线 + 1 px 抗锯齿边。绝大多数像素离地平线很远，
              * 这个整数比较直接把它们挡在外面。 */
@@ -228,10 +271,13 @@ static void draw_horizon(uint16_t *fb, float roll_deg, float pitch_deg)
                 const int32_t cov = cov_full - ap;           /* Q12 */
                 const uint8_t alpha = cov >= 4096 ? 255
                                                   : (uint8_t)((cov * 255) >> 12);
-                pk_pfd_blend_pixel(fb, x, y, COL_HORIZON_LINE, alpha);
+                blend_in_line(s_line, x, COL_HORIZON_LINE, alpha);
             }
             perp_fp += step_fp;
         }
+        /* 整行一次搬过去：连续块写，避开 write-allocate 的读回。 */
+        memcpy(row + PFD_ATTITUDE_LEFT, s_line + PFD_ATTITUDE_LEFT,
+               (size_t)(PFD_ATTITUDE_RIGHT - PFD_ATTITUDE_LEFT) * sizeof(uint16_t));
     }
 }
 

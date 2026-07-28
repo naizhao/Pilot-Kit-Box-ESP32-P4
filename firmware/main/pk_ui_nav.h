@@ -29,6 +29,9 @@ bool pk_ui_nav_dock_open(void);
 /* FAB 是否处于按下态（供模拟器核对命中区）。 */
 bool pk_ui_nav_fab_pressed(void);
 
+/* 把控件标脏，供每帧全屏重画 PFD 的宿主调用。只标控件，不标整屏。 */
+void pk_ui_nav_refresh(void);
+
 /*
  * 显示 / 收起居中的瞬时提示。msg 为 NULL 或空串即收起。
  *
