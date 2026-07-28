@@ -25,6 +25,7 @@
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
+#include "pfd_icon_font.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -70,8 +71,11 @@
 #define SIDE_W        (PK_DISPLAY_W - SIDE_X)
 #define SIDE_PAD      12
 #define CARD_N        4
-#define CARD_GAP      8
-#define CARD_H        (((PK_DISPLAY_H - TFC_TOP - SIDE_PAD) / CARD_N) - CARD_GAP)
+#define CARD_GAP      10
+/* 卡片高度按内容定，不去铺满整栏：一行呼号（18）+ 两行次要（12×2）+ 上下
+ * 内边距，76 就够。之前用「栏高÷4」算，每张 97 px 里有近三成是空的，四张
+ * 叠起来视觉重量压过了雷达本身——而雷达才是这一页的主角。 */
+#define CARD_H        76
 
 /* 目标快照缓冲——放 PSRAM，避免吃任务栈（照 pfd.c 的 scratch）。 */
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -116,24 +120,42 @@ static void rot_point(int px, int py, float deg, int *ox, int *oy)
 
 /* 本机飞机符号(机身 + 主翼 + 平尾)，机头朝上；rot_deg 绕盘心旋转
  * (NORTH-UP 时按磁航向标朝向)。和交互原型 / HSI 的飞机图标一致。 */
+/*
+ * 本机符号。
+ *
+ * heading-up 时机头恒指屏幕上方，直接用 PFD 罗盘那枚 Material Symbols 的
+ * flight 字形——两处是同一架飞机，形态该一致；字形是专业设计过的轮廓，比
+ * 手拼矩形干净得多（pfd_hsi.c 里有同样的说明）。
+ *
+ * north-up 时符号要按航向转任意角度，而字形表是预渲染的、转不了，只能退回
+ * 手绘。这也是 PFD 罗盘能一直用图标的原因：那里恒 heading-up。
+ */
 static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
 {
-    static const int seg[3][4] = {
-        {  0, -9,  0,  8 },   /* 机身 */
-        { -9, -2,  9, -2 },   /* 主翼(靠前) */
-        { -4,  6,  4,  6 },   /* 平尾(靠后) */
-    };
-    for (int i = 0; i < 3; i++) {
-        int ax, ay, bx, by;
-        rot_point(CX + seg[i][0], CY + seg[i][1], rot_deg, &ax, &ay);
-        rot_point(CX + seg[i][2], CY + seg[i][3], rot_deg, &bx, &by);
-        pk_pfd_draw_line_aa(fb, (float)ax, (float)ay, (float)bx, (float)by, 2.2f, col);
+    if (fabsf(rot_deg) < 0.5f) {
+        const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
+                          + (size_t)PK_ICON_OWNSHIP
+                            * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                        CX - PK_ICON_W / 2, CY - PK_ICON_H / 2,
+                        ac, PK_ICON_W, PK_ICON_H, col);
+        return;
     }
+
+    /* 需要旋转：手绘机身 + 机翼 + 尾翼。 */
+    const int nose = 18, tail = 12, wing = 15, tailw = 7;
+    int x1, y1, x2, y2;
+    rot_point(0, -nose, rot_deg, &x1, &y1);
+    rot_point(0,  tail, rot_deg, &x2, &y2);
+    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 3.0f, col);
+    rot_point(-wing, 0, rot_deg, &x1, &y1);
+    rot_point( wing, 0, rot_deg, &x2, &y2);
+    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 3.0f, col);
+    rot_point(-tailw, tail - 3, rot_deg, &x1, &y1);
+    rot_point( tailw, tail - 3, rot_deg, &x2, &y2);
+    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 2.5f, col);
 }
 
-/* HSI 可见扇区：前方 ±95° 的半透明填充扇形(和交互原型一致,呼应 PFD 底部
- * 半圆 HSI 的覆盖范围)。逐像素 blend,用"投影到正后方向量"判断是否落在后方
- * ±85° 锥内来排除(免 atan2/sqrt)。 */
 static void draw_hsi_sector(uint16_t *fb, pk_map_orient_t orient,
                             float own_heading, bool hdg_valid)
 {
@@ -406,6 +428,13 @@ void pk_traffic_page_render(uint16_t *fb)
     }
     snprintf(buf, sizeof(buf), "TFC %d", (int)n);
     TFC_PUTS(fb, 400, TFC_HDR_TY, buf, COL_GREY);
+
+    /* 朝向图例。两种投影下同一幅画面含义完全不同——机头上时罗盘随本机转、
+     * 目标方位是相对的；正北上时罗盘固定、本机符号才转。不标出来，读者无从
+     * 判断自己看到的是哪一种。 */
+    TFC_PUTS(fb, 540, TFC_HDR_TY,
+             (orient == PK_MAP_HEADING_UP) ? "HDG UP" : "NORTH UP",
+             COL_CARD);
     snprintf(buf, sizeof(buf), "%dNM", range_nm);
     {
         int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
