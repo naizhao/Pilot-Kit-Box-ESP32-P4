@@ -94,6 +94,7 @@ set(FW_DRAW_SRC
     ${FW}/pfd_hsi.c
     ${FW}/pfd_infobox.c
     ${FW}/lv_font_zh.c
+    ${FW}/i18n_catalog.c
     ${FW}/pfd_hsi_traffic.c
     ${FW}/traffic_geom.c
     ${FW}/mag_var.c

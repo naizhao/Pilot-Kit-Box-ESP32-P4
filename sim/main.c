@@ -168,6 +168,8 @@ static int run_headless(float at_sec, const char *out)
      * 之后**的画面，将来叠上 FAB / dock 才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
     pk_sim_ui_init();
+    /* 截图时展开 dock：它默认收起，否则评审看不到这一屏最占地方的状态。 */
+    if (getenv("PK_SIM_DOCK")) pk_sim_ui_set_dock_open(true);
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
     pk_pfd_imu_t imu; pk_pfd_hsi_t hsi; pk_pfd_alt_tape_t alt;

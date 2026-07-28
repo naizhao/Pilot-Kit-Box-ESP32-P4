@@ -215,4 +215,107 @@ STRINGS = [
             "zh": "已取消本机",
         },
     ),
+
+    # ── 4.3″ 触摸导航（spec §3.2 / §5）──────────────────────────
+    #
+    # dock 的六个一级页签。这里只放**页签短名**，与各页面自身的标题分开：
+    # 页签宽约 94 px，塞不下「罗盘校准」这类完整标题，而标题在页内还要用。
+    (
+        "NAV_PFD",
+        {
+            "en": "PFD",
+            "zh": "PFD",
+        },
+    ),
+    (
+        "NAV_TRAFFIC",
+        {
+            "en": "Traffic",
+            "zh": "交通",
+        },
+    ),
+    (
+        "NAV_LIST",
+        {
+            "en": "List",
+            "zh": "列表",
+        },
+    ),
+    (
+        "NAV_SETTINGS",
+        {
+            "en": "Settings",
+            "zh": "设置",
+        },
+    ),
+    (
+        "NAV_ABOUT",
+        {
+            "en": "About",
+            "zh": "关于",
+        },
+    ),
+    (
+        "NAV_DIAG",
+        {
+            "en": "Diag",
+            "zh": "诊断",
+        },
+    ),
+
+    # dock 右侧的动作区。「调平」是把当前姿态归零，与 TARE 是同一件事，
+    # 但对飞行员说「调平」比说「TARE」直白。
+    (
+        "ACT_LEVEL",
+        {
+            "en": "Level",
+            "zh": "调平",
+        },
+    ),
+    (
+        "ACT_LEVEL_HINT",
+        {
+            "en": "Hold 1 s to level the horizon",
+            "zh": "长按 1 秒调平地平仪",
+        },
+    ),
+
+    # 校准向导的「稍后再说」——没有物理按键后，跳过必须有可点的出口。
+    (
+        "CAL_LATER",
+        {
+            "en": "Later",
+            "zh": "稍后再说",
+        },
+    ),
+
+    # 设置页新增项（为半反半透屏铺路，spec §5 表）。
+    (
+        "SETTINGS_BRIGHTNESS",
+        {
+            "en": "Brightness",
+            "zh": "屏幕亮度",
+        },
+    ),
+    (
+        "SETTINGS_THEME",
+        {
+            "en": "Theme",
+            "zh": "配色",
+        },
+    ),
+    (
+        "THEME_DAY",
+        {
+            "en": "Day",
+            "zh": "日间",
+        },
+    ),
+    (
+        "THEME_NIGHT",
+        {
+            "en": "Night",
+            "zh": "夜间",
+        },
+    ),
 ]
