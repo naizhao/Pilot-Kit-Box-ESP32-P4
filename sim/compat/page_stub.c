@@ -104,7 +104,7 @@ const char *pk_aircraft_registration(uint32_t icao24)
 }
 
 pk_map_orient_t pk_map_orient_get(void)   { return PK_MAP_HEADING_UP; }
-int  pk_traffic_range_idx_get(void)       { return 1; }   /* 5 NM */
+int  pk_traffic_range_idx_get(void)       { return 3; }   /* 20 NM，同真机默认 */
 
 /* 航向解析：模拟器固定给一个朝向，够验证版面与旋转方向。 */
 bool pk_own_heading_resolve(bool own_valid, pk_own_src_t own_src,

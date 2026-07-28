@@ -18,7 +18,11 @@ static const char *TAG = "cfg_tfc";
 #define TFC_NVS_NAMESPACE   "pk_tfc"
 #define TFC_NVS_KEY_ORIENT  "orient"
 #define TFC_NVS_KEY_RANGE   "range"
-#define RANGE_IDX_DEFAULT   1          /* 5 NM */
+/* 默认 20 NM（spec §5.2 的距离环就是按这一档画的）。
+ *
+ * 原默认 5 NM 太小：ADS-B 的接收半径通常上百海里，5 NM 圈里多数时候空无一物，
+ * 开机第一眼看到一张空雷达，会让人以为没收到信号。 */
+#define RANGE_IDX_DEFAULT   3          /* 20 NM */
 
 static const int RANGE_NM[4] = { 2, 5, 10, 20 };
 
