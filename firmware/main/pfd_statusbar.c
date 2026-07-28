@@ -37,10 +37,10 @@
 
 /* 4.3 寸屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
  * 位图字体整数倍放大会变成方块像素，在 217 PPI 上无法接受。 */
-#  define BAR_GLYPH_W   PK_AA_S_W
-#  define BAR_CELL_H    PK_AA_S_H
+#  define BAR_GLYPH_W   PK_AA_M_W
+#  define BAR_CELL_H    PK_AA_M_H
 #  define BAR_PUTS(fb, x, y, str, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_M)
 
 /* 定宽字体下字符串的像素宽度。 */
 #define BAR_TEXT_W(n)   ((n) * BAR_GLYPH_W)

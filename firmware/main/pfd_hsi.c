@@ -63,12 +63,12 @@
  * 48 px 宽的 cockpit 字，于是空出 72 px —— 框看着大得没道理，正是这个原因。 */
 #if PK_DISPLAY_W >= 800
 #  define ROSE_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define ROSE_LBL_W      PK_AA_S_W
-#  define ROSE_LBL_H      PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define ROSE_LBL_W      PK_AA_M_W
+#  define ROSE_LBL_H      PK_AA_M_H
 #  define ROSE_LBL_INSET  ROSE_SC(15)
 #  define HDG_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_L)
 #  define HDGBOX_PAD_X    5
 #  define HDGBOX_PAD_Y    3
 #else

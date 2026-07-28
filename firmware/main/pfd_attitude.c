@@ -89,9 +89,9 @@
 #  define LADDER_W20        45
 #  define LADDER_W30        30
 #  define LADDER_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define LADDER_LBL_W      PK_AA_S_W
-#  define LADDER_LBL_H      PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define LADDER_LBL_W      PK_AA_M_W
+#  define LADDER_LBL_H      PK_AA_M_H
 #  define LADDER_LBL_GAP    8
 /* 梯度线的下界是**航向框顶**，不是罗盘顶：框坐在罗盘正上方、姿态区下沿，
  * 是这一侧最先挡路的东西。画到框上只会两层叠字。 */

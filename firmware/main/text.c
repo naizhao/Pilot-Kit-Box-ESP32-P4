@@ -140,7 +140,7 @@ static void put_cjk(uint16_t *fb, int fb_w, int fb_h,
  * 所以两边不是同一个数，得按「字形高度接近」来配。 */
 static pk_aa_size_t aa_size_for_cjk(int cjk_cell_h)
 {
-    return (cjk_cell_h >= PK_TEXT_CJK_CELL_H) ? PK_AA_M : PK_AA_S;
+    return (cjk_cell_h >= PK_TEXT_CJK_CELL_H) ? PK_AA_L : PK_AA_M;
 }
 
 /* CJK 位图相对拉丁 cell 的垂直补偿，让同一行的基线对齐。 */
@@ -200,7 +200,7 @@ int pk_text_title_width(const char *s)
         uint32_t cp = utf8_next(&s);
         if (cp == 0) break;
         w += (cp > 0x7F && cp != 0x00B0) ? PK_TEXT_CJK_CELL_W
-                                          : pk_aa_cell_w(PK_AA_M);
+                                          : pk_aa_cell_w(PK_AA_L);
     }
     return w;
 }
@@ -215,7 +215,7 @@ int pk_text_ui_width(const char *s)
         if (pk_text_cjk_ui_glyph(cp, &cw) != NULL && cw > 0) {
             w += cw;
         } else {
-            w += pk_aa_cell_w(PK_AA_S);
+            w += pk_aa_cell_w(PK_AA_M);
         }
     }
     return w;
@@ -261,18 +261,18 @@ int pk_text_puts_title(uint16_t *fb, int fb_w, int fb_h,
         if (cp == 0) break;
 
         if (cp <= 0x7F || cp == 0x00B0) {
-            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_L);
             continue;
         }
 
         const uint8_t *glyph = pk_text_cjk_glyph(cp);
         if (glyph != NULL) {
             put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_CELL_H), glyph,
+                    y + cjk_dy(PK_AA_L, PK_TEXT_CJK_CELL_H), glyph,
                     PK_TEXT_CJK_CELL_W, PK_TEXT_CJK_CELL_H, color, false);
             x += PK_TEXT_CJK_CELL_W;
         } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_L);
         }
     }
     return x - x0;
@@ -291,11 +291,11 @@ int pk_text_puts_ui(uint16_t *fb, int fb_w, int fb_h,
         const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
         if (glyph != NULL) {
             put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_S, PK_TEXT_CJK_UI_CELL_H), glyph,
+                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_UI_CELL_H), glyph,
                     cw, PK_TEXT_CJK_UI_CELL_H, color, false);
             x += cw;
         } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_S);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
         }
     }
     return x - x0;
@@ -311,18 +311,18 @@ int pk_text_puts_page_title(uint16_t *fb, int fb_w, int fb_h,
         if (cp == 0) break;
 
         if (cp <= 0x7F || cp == 0x00B0) {
-            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_L);
             continue;
         }
 
         const uint8_t *glyph = pk_text_cjk_glyph(cp);
         if (glyph != NULL) {
             put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_CELL_H), glyph,
+                    y + cjk_dy(PK_AA_L, PK_TEXT_CJK_CELL_H), glyph,
                     PK_TEXT_CJK_CELL_W, PK_TEXT_CJK_CELL_H, color, false);
             x += PK_TEXT_CJK_CELL_W;
         } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_L);
         }
     }
     return x - x0;
@@ -338,7 +338,7 @@ int pk_text_puts_page_body(uint16_t *fb, int fb_w, int fb_h,
         if (cp == 0) break;
 
         if (cp <= 0x7F || cp == 0x00B0) {
-            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_S);
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
             continue;
         }
 
@@ -346,11 +346,11 @@ int pk_text_puts_page_body(uint16_t *fb, int fb_w, int fb_h,
         const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
         if (glyph != NULL && cw > 0) {
             put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_S, PK_TEXT_CJK_UI_CELL_H), glyph,
+                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_UI_CELL_H), glyph,
                     cw, PK_TEXT_CJK_UI_CELL_H, color, false);
             x += cw;
         } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_S);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
         }
     }
     return x - x0;

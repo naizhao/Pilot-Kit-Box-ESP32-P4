@@ -48,9 +48,9 @@
  * 飞行员先看菱形在哪个方位，才会去读它高多少。 */
 #if PK_DISPLAY_W >= 800
 #  define TGT_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XS)
-#  define TGT_LBL_W     PK_AA_XS_W
-#  define TGT_LBL_H     PK_AA_XS_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define TGT_LBL_W     PK_AA_M_W
+#  define TGT_LBL_H     PK_AA_M_H
 /* 标签底的压暗强度。目标常落在天地交界或罗盘刻度上，纯文字会糊进背景。
  * 只压暗、不描边：十几个目标各带一个方框，外圈立刻显得杂乱。 */
 #  define TGT_LBL_BG    90

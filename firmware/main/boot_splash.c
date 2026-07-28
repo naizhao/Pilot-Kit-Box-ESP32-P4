@@ -89,7 +89,7 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
  * 而这三行全是 "Booting"、"Built"、"ESP-IDF" 这样的词。 */
 #define INFO_GAP            20                        /* 标题 → 信息行 */
 #define INFO_LINE_GAP       2
-#define INFO_Y              (TITLE_Y + PK_AA_M_H + INFO_GAP)
+#define INFO_Y              (TITLE_Y + PK_AA_L_H + INFO_GAP)
 
 /* ── 配色 ─────────────────────────────────────────────────────── */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
@@ -216,10 +216,10 @@ void pk_boot_splash_render(uint16_t *fb)
     /* 产品名。用 M 档——它是这一屏唯一的主角，S 档在 93 mm 宽的屏上撑不住。 */
     {
         static const char kTitle[] = "PILOT KIT BOX";
-        const int w = (int)(sizeof(kTitle) - 1) * pk_aa_cell_w(PK_AA_M);
+        const int w = (int)(sizeof(kTitle) - 1) * pk_aa_cell_w(PK_AA_L);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    (PK_DISPLAY_W - w) / 2, TITLE_Y, kTitle, TITLE_COLOR,
-                   PK_AA_M);
+                   PK_AA_L);
     }
 
     /*
@@ -233,26 +233,26 @@ void pk_boot_splash_render(uint16_t *fb)
     if (app) snprintf(line, sizeof(line), "Booting %.32s ...", app->version);
     else     snprintf(line, sizeof(line), "Booting ...");
     {
-        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
-        y += PK_AA_S_H + INFO_LINE_GAP;
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_M);
+        y += PK_AA_M_H + INFO_LINE_GAP;
     }
 
     if (app) snprintf(line, sizeof(line), "Built %.16s %.8s", app->date, app->time);
     else     snprintf(line, sizeof(line), "Built %s %s", __DATE__, __TIME__);
     {
-        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
-        y += PK_AA_S_H + INFO_LINE_GAP;
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_M);
+        y += PK_AA_M_H + INFO_LINE_GAP;
     }
 
     snprintf(line, sizeof(line), "ESP-IDF v%d.%d.%d",
              ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
     {
-        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_M);
     }
 }

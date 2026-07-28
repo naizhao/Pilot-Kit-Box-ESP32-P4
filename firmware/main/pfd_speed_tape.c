@@ -76,11 +76,11 @@
 #  define VAL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
 #  define LBL_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define LBL_CELL_H  PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define LBL_CELL_H  PK_AA_M_H
 #  define MET_PUTS(fb, x, y, str, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
-#  define MET_ROW_H   PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_M)
+#  define MET_ROW_H   PK_AA_M_H
 #  define MET_PAD     2
 #else
 #  define BOX_W       (PFD_SPD_X1 - PFD_SPD_X0)

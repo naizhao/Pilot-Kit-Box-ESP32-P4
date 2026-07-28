@@ -25,9 +25,9 @@
 
 #if PK_DISPLAY_W >= 800
 #  define IB_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define IB_GLYPH_W   PK_AA_S_W
-#  define IB_TEXT_DY   ((PFD_IB_ROW_H - PK_AA_S_H) / 2)
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define IB_GLYPH_W   PK_AA_M_W
+#  define IB_TEXT_DY   ((PFD_IB_ROW_H - PK_AA_M_H) / 2)
 #else
 #  define IB_PUTS(fb, x, y, s, col) \
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)

@@ -33,6 +33,8 @@ static const aa_face_t s_faces[PK_AA_SIZE_COUNT] = {
                    PK_AA_S_W,  PK_AA_S_H,  PK_AA_S_LAST  },
     [PK_AA_M]  = { { pk_aa_m_regular,  pk_aa_m_bold  },
                    PK_AA_M_W,  PK_AA_M_H,  PK_AA_M_LAST  },
+    [PK_AA_L]  = { { pk_aa_l_regular,  pk_aa_l_bold  },
+                   PK_AA_L_W,  PK_AA_L_H,  PK_AA_L_LAST  },
     [PK_AA_XL] = { { pk_aa_xl_regular, pk_aa_xl_bold },
                    PK_AA_XL_W, PK_AA_XL_H, PK_AA_XL_LAST },
 };
@@ -49,10 +51,10 @@ typedef struct {
 } aa_cjk_face_t;
 
 static const aa_cjk_face_t s_cjk_faces[PK_AA_SIZE_COUNT] = {
-    [PK_AA_S] = { { pk_aa_s_cjk_regular, pk_aa_s_cjk_bold },
-                  PK_AA_S_CJK_W, PK_AA_S_CJK_H },
     [PK_AA_M] = { { pk_aa_m_cjk_regular, pk_aa_m_cjk_bold },
                   PK_AA_M_CJK_W, PK_AA_M_CJK_H },
+    [PK_AA_L] = { { pk_aa_l_cjk_regular, pk_aa_l_cjk_bold },
+                  PK_AA_L_CJK_W, PK_AA_L_CJK_H },
 };
 
 static pk_aa_weight_t s_weight = PK_AA_REGULAR;
@@ -103,13 +105,13 @@ pk_aa_weight_t pk_aa_get_weight(void) { return s_weight; }
 
 int pk_aa_cell_w(pk_aa_size_t size)
 {
-    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_S;
+    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_M;   /* 兜底取 normal */
     return s_faces[size].cell_w;
 }
 
 int pk_aa_cell_h(pk_aa_size_t size)
 {
-    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_S;
+    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_M;   /* 兜底取 normal */
     return s_faces[size].cell_h;
 }
 
@@ -173,8 +175,16 @@ static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
     if (code == 0x20) return;               /* 空格无墨，只推进 */
 
     const int cw = face->cell_w, ch = face->cell_h;
+    /* 字节跨距要向上取整：4bpp 下一个 cell 占 ceil(w*h/2) 字节，生成脚本
+     * （glyph_bytes_4bpp）就是这么算的。写成 (cw*ch)/2 在**像素数为奇数**的
+     * cell 上会每字形少 1 字节，偏移一路累积，字形取到相邻字的一半——屏上
+     * 表现为字符挤在一起、笔画糊成一团。
+     *
+     * 这个错误藏了很久：早先四档的 cell 分别是 390/540/960/2368 像素，恰好
+     * 全是偶数，取整与否没区别。新加的 L 档 21×37=777 才把它暴露出来。 */
     const uint8_t *glyph = face->bitmap[s_weight]
-                         + (size_t)(code - PK_AA_FIRST_CODE) * ((cw * ch) / 2);
+                         + (size_t)(code - PK_AA_FIRST_CODE)
+                           * (((size_t)cw * ch + 1) / 2);
 
     pk_aa_blit_4bpp(fb, fb_w, fb_h, x, y, glyph, cw, ch, color);
 }
@@ -184,7 +194,7 @@ int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
                uint16_t color, pk_aa_size_t size)
 {
     if (!fb || !s) return 0;
-    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_S;
+    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_M;   /* 兜底取 normal */
 
     const aa_face_t *face = &s_faces[size];
     const aa_cjk_face_t *cjk = &s_cjk_faces[size];
@@ -214,7 +224,7 @@ int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
         }
         const int cw = cjk->cell_w, ch = cjk->cell_h;
         const uint8_t *glyph = cjk->bitmap[s_weight]
-                             + (size_t)gi * ((size_t)(cw * ch) / 2);
+                             + (size_t)gi * (((size_t)cw * ch + 1) / 2);
         pk_aa_blit_4bpp(fb, fb_w, fb_h, x + advance, y, glyph, cw, ch, color);
         advance += cw;
     }

@@ -114,9 +114,9 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
     const int y = AB_ROW0_Y + row * AB_ROW_H;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_AA_S);
+               AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_AA_M);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_VALUE_X, y, val, COL_VAL, PK_AA_S);
+               AB_VALUE_X, y, val, COL_VAL, PK_AA_M);
 }
 
 /*
@@ -214,7 +214,7 @@ void pk_about_page_render(uint16_t *fb)
     /* ── 顶栏 ───────────────────────────────────────────────── */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_HEADER_PAD_X, AB_HEADER_PAD_Y - 6,
-               pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER, PK_AA_M);
+               pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER, PK_AA_L);
     fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
 
     /* ── 左栏：身份 ─────────────────────────────────────────── */
@@ -222,10 +222,10 @@ void pk_about_page_render(uint16_t *fb)
               AB_LOGO_SIZE);
     {
         static const char kName[] = "PILOT KIT BOX";
-        const int w = (int)(sizeof(kName) - 1) * pk_aa_cell_w(PK_AA_S);
+        const int w = (int)(sizeof(kName) - 1) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_NAME_Y,
-                   kName, COL_NAME, PK_AA_S);
+                   kName, COL_NAME, PK_AA_M);
     }
 
     /* 分栏线 */

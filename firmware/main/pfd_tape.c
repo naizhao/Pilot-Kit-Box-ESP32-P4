@@ -79,9 +79,9 @@
 #  define VAL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
 #  define LBL_PUTS(fb, x, y, s, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_S)
-#  define LBL_W       PK_AA_S_W
-#  define LBL_CELL_H  PK_AA_S_H
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#  define LBL_W       PK_AA_M_W
+#  define LBL_CELL_H  PK_AA_M_H
 #else
 /* 320 档：cockpit 12×16 字形，框与带同宽（历史值，见文件头）。 */
 #  define BOX_W       (PFD_ALT_X1 - PFD_ALT_X0)
