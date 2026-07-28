@@ -102,7 +102,7 @@ list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)
 message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
-add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c ${FW_DRAW_SRC})
+add_executable(pkbox_sim main.c lv_backend.c lv_ui.c compat/mock_runtime.c ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}
