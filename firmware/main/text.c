@@ -27,10 +27,6 @@
 
 #define CJK_SOLID_ALPHA4_THRESHOLD 3
 
-static const uint8_t CJK_AA_LCD_ALPHA4[16] = {
-    0, 0, 0, 6, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-};
-
 static uint16_t rgb565_to_native(uint16_t c)
 {
     return (uint16_t)((c >> 8) | (c << 8));
@@ -102,9 +98,16 @@ static void put_cjk(uint16_t *fb, int fb_w, int fb_h,
                 continue;
             }
 
-            alpha4 = CJK_AA_LCD_ALPHA4[alpha4];
-            if (alpha4 == 0) continue;
-
+            /* 直接用字库里的灰度，不做重映射。
+             *
+             * 这里原有一张查表 CJK_AA_LCD_ALPHA4[16]，把 alpha 5 以上一律拉满
+             * 成 15（完全不透明），只给 3、4 留了 6 和 12 两级。那是 320 屏的
+             * 补偿——167 PPI 上汉字细笔画本就只有一两个像素宽，边缘再按真实
+             * 灰度混合会糊成一团，索性压实。
+             *
+             * 但这块屏是 217 PPI 且字号已按 spec 提到 21..30 px，笔画有足够
+             * 像素支撑。再压实就等于扔掉抗锯齿，边缘全变成硬阶梯——观感上就是
+             * 汉字「发破」，与旁边走真灰度的拉丁字形成明显反差。 */
             uint8_t alpha = (uint8_t)(alpha4 * 17);
             if (alpha == 255) {
                 fb[yy * fb_w + xx] = color;

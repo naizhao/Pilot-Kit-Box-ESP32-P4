@@ -181,7 +181,14 @@ static void blit_logo(uint16_t *fb, int dst_x, int dst_y)
         const uint16_t *row_src = src + src_y * PK_LOGO_W;
         for (int dx = 0; dx < LOGO_DISP_W; ++dx) {
             int src_x = LOGO_SRC_CROP + (dx * LOGO_SRC_USED_W) / LOGO_DISP_W;
-            row_dst[dx] = row_src[src_x];
+            /* blob 是标准（小端）RGB565，framebuffer 走 pk_rgb565() 的大端
+             * 约定——display.h 里它最后把两个字节对调过。少这一步，红蓝换位、
+             * 绿分量断成两截，屏上是一片紫绿噪点。
+             *
+             * 2.4″ 那版没有这个问题：当时 pk_rgb565() 不做对调，blob 与
+             * framebuffer 恰好同序。迁到 4.3″ 换成大端线序后，这里漏改了。 */
+            uint16_t v = row_src[src_x];
+            row_dst[dx] = (uint16_t)((v >> 8) | (v << 8));
         }
     }
 }

@@ -61,6 +61,7 @@ idf_component_register(
         "touch_gt911.c"
         "soc_temp.c"
         "config_fab.c"
+        "logo_blob.c"
         "pfd_hsi_traffic.c"
         "pfd_statusbar.c"
         "pfd_speed_tape.c"

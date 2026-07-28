@@ -37,6 +37,7 @@
 
 #include "display.h"
 #include "i18n.h"
+#include "logo_blob.h"
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
@@ -66,8 +67,8 @@
 
 #define AB_RIGHT_X      304               /* 右栏标签起点 */
 #define AB_VALUE_X      452               /* 数值起点：容得下最长的标签 */
-#define AB_ROW0_Y        72
-#define AB_ROW_H         44               /* M 档 26 px + 18 行距 */
+#define AB_ROW0_Y        64
+#define AB_ROW_H         40               /* M 档 26 px + 14 行距，九行铺满 */
 
 /* 二维码放左栏（身份区）下方，不放右下角：右下既会压住最后一行键值，也正好
  * 是 FAB 的位置。左栏 logo 与产品名之下本来就有空档，语义上也更贴——它同属
@@ -120,26 +121,40 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 }
 
 /*
- * Logo 占位。
+ * 画 logo。
  *
- * 真机上这里应贴 .rodata 里那张 128×128 RGB565 boot logo（CMakeLists 的
- * EMBED_FILES，符号 _binary_pk_logo_rgb565_start）。模拟器没有 IDF 的嵌入
- * 机制，而版面评审只关心这块面积怎么占，所以先画同尺寸的色板 + 记号。
- * 接真图时只替换本函数，布局不必动。
+ * 源图 160×160，但 SVG 导出时四周带了大片空白——开机画面为此裁掉每边 24 px
+ * （boot_splash.c 的 LOGO_SRC_CROP），这里沿用同一个数，两处显示的取景一致。
+ * 有效区 112×112 采样到 128×128，最近邻即可：放大倍率才 1.14×，双线性带来的
+ * 那点平滑抵不上它在 PSRAM 上多读三次的代价。
  */
+#define AB_LOGO_SRC_CROP 24
+
 static void draw_logo(uint16_t *fb, int x, int y, int size)
 {
-    fill_rect(fb, x, y, x + size, y + size, COL_LOGO_PLATE);
+    int sw = 0, sh = 0;
+    const uint16_t *src = pk_logo_rgb565(&sw, &sh);
+    if (src == NULL || sw <= 2 * AB_LOGO_SRC_CROP) return;
 
-    const int cx = x + size / 2;
-    const int cy = y + size / 2;
-    for (int dy = -size / 3; dy <= size / 3; ++dy) {
-        const int ady = dy < 0 ? -dy : dy;
-        const int half = (size / 3 - ady) * 3 / 4;
-        fill_rect(fb, cx - half, cy + dy, cx + half, cy + dy + 1, COL_LOGO_MARK);
+    const int used_w = sw - 2 * AB_LOGO_SRC_CROP;
+    const int used_h = sh - 2 * AB_LOGO_SRC_CROP;
+
+    for (int row = 0; row < size; ++row) {
+        const int yy = y + row;
+        if (yy < 0 || yy >= PK_DISPLAY_H) continue;
+        const int sy = AB_LOGO_SRC_CROP + row * used_h / size;
+        uint16_t *dst = fb + yy * PK_DISPLAY_W;
+        for (int col = 0; col < size; ++col) {
+            const int xx = x + col;
+            if (xx < 0 || xx >= PK_DISPLAY_W) continue;
+            const int sx = AB_LOGO_SRC_CROP + col * used_w / size;
+            /* blob 里是标准（小端）RGB565，而 framebuffer 走 pk_rgb565() 的
+             * 大端约定（见 display.h：它在最后把两个字节对调）。直接搬会让
+             * 红蓝换位、绿分量断成两截——屏上就是一片紫绿噪点。 */
+            const uint16_t v = src[sy * sw + sx];
+            dst[xx] = (uint16_t)((v >> 8) | (v << 8));
+        }
     }
-    fill_rect(fb, cx - size / 2 + 12, cy - 2, cx + size / 2 - 12, cy + 2,
-              COL_LOGO_MARK);
 }
 
 /*
@@ -230,6 +245,11 @@ void pk_about_page_render(uint16_t *fb)
     }
 
     draw_row(fb, row++, PK_TR_ABOUT_DISPLAY, "ST7701 800x480");
+
+    /* 姿态与接收机也是「硬件型号」，spec §5.6 归类里有它们；字段本身沿用
+     * 既有实现，不按 spec 的示意图删改。 */
+    draw_row(fb, row++, PK_TR_ABOUT_IMU, "BNO085 I2C0 0x4A");
+    draw_row(fb, row++, PK_TR_ABOUT_DONGLE, "RTL-SDR 2MS/s");
 
     /* ── 二维码 ─────────────────────────────────────────────── */
     draw_qr_placeholder(fb, AB_QR_X, AB_QR_Y, AB_QR_SIZE);
