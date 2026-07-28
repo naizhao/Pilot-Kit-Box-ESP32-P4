@@ -1,5 +1,5 @@
 /*
- * lv_ui.c — 见 lv_ui.h。
+ * pk_ui_nav.c — 见 pk_ui_nav.h。
  *
  * 尺寸取自视觉稿 docs/ux/box-4.3-ux-spec.html 的 .fb 规则（毫米），按
  * 4.3″ 屏的 8.54 px/mm 换算：
@@ -10,14 +10,12 @@
  * 56 px 远超 44 px 的触摸下限，戴薄手套也点得中。
  */
 
-#include "lv_ui.h"
-
-#include <stdlib.h>
+#include "pk_ui_nav.h"
 
 #include "lvgl.h"
 
 #include "display.h"
-#include "i18n_catalog.h"
+#include "i18n.h"
 #include "lv_font_zh.h"
 #include "pfd_layout.h"
 
@@ -50,7 +48,7 @@ static bool      s_dock_open;
  * 每个字号只是一个 lv_font_t 句柄，不再各存一份 CJK 位图。 */
 static const lv_font_t *s_font_zh_m;
 
-const lv_font_t *pk_sim_ui_font_zh(void) { return s_font_zh_m; }
+bool pk_ui_nav_dock_open(void) { return s_dock_open; }
 
 /* ── dock ─────────────────────────────────────────────────────────
  *
@@ -68,18 +66,14 @@ static const pk_tr_id_t DOCK_TABS[] = {
 };
 #define DOCK_TAB_CNT (sizeof(DOCK_TABS) / sizeof(DOCK_TABS[0]))
 
-/* 模拟器用 PK_SIM_LANG 选语言（默认中文）。
+/* 文案一律经 i18n 取，随运行时语言走。
  *
- * 两种语言必须都看：中文是等宽的，「交通」「列表」一律两字 52 px，排版最
- * 规整；英文却是变宽的，"Settings" 八个字母能撑到中文的两倍——页签宽度得
- * 按英文这一侧定，否则切到英文就溢出或被截断。
- *
- * 语言切换本身是运行时状态，属于固件侧 i18n.c（依赖 NVS），不进模拟器。 */
+ * 两种语言都得盯：中文等宽，每个页签恒两字 52 px，排版规整得看不出问题；
+ * 英文变宽，"Settings" 能撑到中文的两倍——页签宽度必须按英文这侧定，只看
+ * 中文会漏。模拟器可用 PK_SIM_LANG 切换核对（见 sim/compat/i18n_stub.c）。 */
 static const char *tr(pk_tr_id_t id)
 {
-    const char *lang = getenv("PK_SIM_LANG");
-    bool en = lang && (lang[0] == 'e' || lang[0] == 'E');
-    return pk_i18n_catalog_text(en ? PK_LANG_EN : PK_LANG_ZH, id);
+    return pk_i18n_text(id);
 }
 
 static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
@@ -157,10 +151,10 @@ static void fab_event_cb(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED)  s_pressed = true;
     if (code == LV_EVENT_RELEASED) s_pressed = false;
-    if (code == LV_EVENT_CLICKED) pk_sim_ui_set_dock_open(!s_dock_open);
+    if (code == LV_EVENT_CLICKED) pk_ui_nav_set_dock_open(!s_dock_open);
 }
 
-void pk_sim_ui_init(void)
+void pk_ui_nav_init(void)
 {
     lv_obj_t *scr = lv_screen_active();
 
@@ -214,9 +208,9 @@ void pk_sim_ui_init(void)
     lv_obj_add_event_cb(s_fab, fab_event_cb, LV_EVENT_ALL, NULL);
 }
 
-bool pk_sim_ui_fab_pressed(void) { return s_pressed; }
+bool pk_ui_nav_fab_pressed(void) { return s_pressed; }
 
-void pk_sim_ui_set_dock_open(bool open)
+void pk_ui_nav_set_dock_open(bool open)
 {
     s_dock_open = open;
     if (open) lv_obj_remove_flag(s_dock, LV_OBJ_FLAG_HIDDEN);

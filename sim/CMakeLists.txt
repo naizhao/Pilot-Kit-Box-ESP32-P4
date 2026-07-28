@@ -95,6 +95,7 @@ set(FW_DRAW_SRC
     ${FW}/pfd_infobox.c
     ${FW}/lv_font_zh.c
     ${FW}/i18n_catalog.c
+    ${FW}/pk_ui_nav.c
     ${FW}/pfd_hsi_traffic.c
     ${FW}/traffic_geom.c
     ${FW}/mag_var.c
@@ -110,7 +111,7 @@ list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)
 message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
-add_executable(pkbox_sim main.c lv_backend.c lv_ui.c compat/mock_runtime.c ${FW_DRAW_SRC})
+add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}

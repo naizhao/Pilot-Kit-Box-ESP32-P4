@@ -22,6 +22,7 @@
 
 #include "lv_port.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
@@ -34,6 +35,7 @@ static const char *TAG = "lv_port";
 
 static lv_display_t *s_disp;
 static lv_obj_t     *s_canvas;
+static uint16_t     *s_canvas_px;
 
 /*
  * DIRECT 模式下 LVGL 已经把结果画进了 framebuffer，这里只需把整帧推给面板。
@@ -76,20 +78,36 @@ esp_err_t pk_lv_port_init(void)
     return ESP_OK;
 }
 
-lv_obj_t *pk_lv_port_canvas(uint16_t *px)
+uint16_t *pk_lv_port_canvas_px(void)
 {
-    if (s_canvas != NULL) return s_canvas;
+    if (s_canvas_px != NULL) return s_canvas_px;
+
+    /* 单独一块，不复用 display 的 framebuffer：合成时 LVGL 要把 canvas 混到
+     * display 缓冲上，同一块内存会源目重叠。放 PSRAM——800×480×2 = 768 KB，
+     * 内部 RAM 放不下，而这块每帧顺序写、不参与 DMA，PSRAM 带宽足够。 */
+    s_canvas_px = heap_caps_malloc(PK_DISPLAY_FB_BYTES, MALLOC_CAP_SPIRAM);
+    if (s_canvas_px == NULL) {
+        ESP_LOGE(TAG, "canvas buffer alloc failed (%d bytes)", PK_DISPLAY_FB_BYTES);
+        return NULL;
+    }
 
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
     s_canvas = lv_canvas_create(scr);
-    lv_canvas_set_buffer(s_canvas, px, PK_DISPLAY_W, PK_DISPLAY_H, PK_LV_CF);
+    lv_canvas_set_buffer(s_canvas, s_canvas_px, PK_DISPLAY_W, PK_DISPLAY_H, PK_LV_CF);
     lv_obj_set_pos(s_canvas, 0, 0);
     /* canvas 是最底层：FAB / dock / Toast 都叠在它上面。 */
     lv_obj_move_background(s_canvas);
-    return s_canvas;
+    return s_canvas_px;
+}
+
+void pk_lv_port_invalidate(void)
+{
+    /* canvas 的像素是绕过 LVGL 直接写的，必须显式告知已变脏，否则 LVGL
+     * 认为无需重绘，屏幕停在上一帧。 */
+    if (s_canvas) lv_obj_invalidate(s_canvas);
 }
 
 void pk_lv_port_tick(uint32_t elapsed_ms)

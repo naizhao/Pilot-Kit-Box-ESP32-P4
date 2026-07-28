@@ -36,7 +36,7 @@
 #include <string.h>
 
 #include "lv_backend.h"
-#include "lv_ui.h"
+#include "pk_ui_nav.h"
 
 #include "display.h"
 #include "pfd_attitude.h"
@@ -167,9 +167,9 @@ static int run_headless(float at_sec, const char *out)
     /* 经 LVGL 走一遍，而不是直接看 PFD 写的那块缓冲：截图要反映的是**合成
      * 之后**的画面，将来叠上 FAB / dock 才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
-    pk_sim_ui_init();
+    pk_ui_nav_init();
     /* 截图时展开 dock：它默认收起，否则评审看不到这一屏最占地方的状态。 */
-    if (getenv("PK_SIM_DOCK")) pk_sim_ui_set_dock_open(true);
+    if (getenv("PK_SIM_DOCK")) pk_ui_nav_set_dock_open(true);
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
     pk_pfd_imu_t imu; pk_pfd_hsi_t hsi; pk_pfd_alt_tape_t alt;
@@ -268,7 +268,7 @@ int main(int argc, char **argv)
     /* PFD 写入的是 LVGL canvas 的缓冲；窗口上显示的是 LVGL 合成之后的结果。
      * 两者分开，将来叠上 FAB / dock 才看得出图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
-    pk_sim_ui_init();
+    pk_ui_nav_init();
     const uint16_t *screen = fb;
 
     sim_state_t st = { .t = 0.0f, .roll_bias = 0.0f, .paused = false };

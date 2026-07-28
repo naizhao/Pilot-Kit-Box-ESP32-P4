@@ -40,7 +40,9 @@
 #include "pfd_font.h"
 #include "pfd_hsi.h"
 #include "pfd_hsi_traffic.h"
+#include "lv_port.h"
 #include "pfd_infobox.h"
+#include "pk_ui_nav.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -106,11 +108,22 @@ static void pfd_task(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "pfd_task running (G1000 landscape)");
 
-    uint16_t *fb = pk_display_framebuffer();
-    if (fb == NULL) {
-        ESP_LOGE(TAG, "no framebuffer — exiting");
+    /* 渲染目标从裸 framebuffer 换成 LVGL 的背景 canvas。
+     *
+     * 各 pk_pfd_*_render() 的签名与实现完全不变——它们照旧往一块
+     * PK_DISPLAY_W×H 的 RGB565 缓冲里写，只是这块缓冲现在归 LVGL 管，
+     * 于是触摸控件（FAB / dock / Toast）能叠在 PFD 之上并与之混合。
+     * 模拟器早已跑在这条路径上，两边至此一致。 */
+    if (pk_lv_port_init() != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL init failed — exiting");
         vTaskDelete(NULL);
     }
+    uint16_t *fb = pk_lv_port_canvas_px();
+    if (fb == NULL) {
+        ESP_LOGE(TAG, "no canvas buffer — exiting");
+        vTaskDelete(NULL);
+    }
+    pk_ui_nav_init();
 
     /* Big stack-eaters live here as file-static so they don't blow the
      * task stack. Pinned to PSRAM (.ext_ram.bss) so they don't compete
@@ -352,7 +365,11 @@ static void pfd_task(void *arg)
         /* 瞬时提示叠加在任意页面之上(TARE 保存 / own 绑定·取消反馈)。 */
         render_toast(fb);
 
-        pk_display_flush_full();
+        /* 交给 LVGL 合成并推屏：它会把 canvas 与其上的控件混合到 display
+         * 缓冲，再经 lv_port 的 flush_cb 调 pk_display_flush_full()。
+         * 直接调 flush_full 会跳过控件层，只推 PFD。 */
+        pk_lv_port_invalidate();
+        pk_lv_port_tick(33);
         frames_in_window++;
 
         int64_t now = esp_timer_get_time();
