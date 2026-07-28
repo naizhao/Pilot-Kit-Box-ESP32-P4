@@ -1,5 +1,5 @@
 /*
- * pfd_layout.h — PFD 各区块的布局基准，按面板分辨率分档。
+ * pfd_layout.h — 800×480 PFD 各区块的布局基准。
  *
  * 为什么需要它
  * ------------
@@ -8,32 +8,11 @@
  * 迁移到 800×480 时这些值一个都不能用 —— 高度带会落在画面中间、HSI
  * 圆心偏左、俯仰刻度挤在左上角。
  *
- * 这里把它们收拢成单一来源：两套分辨率各自给出明确基准，再派生出
- * 各模块要用的坐标。模块只引用本文件的宏，不再自己算。
- *
- * 为什么不用统一公式推导两套布局
- * ------------------------------
- * 因为两者的构图模型不同，硬套公式反而模糊：
- *
- *   320×240（现役）—— 重叠式：HSI 是个半圆，圆心压在屏幕底边之外
- *     (CY = H)，只露出上半部分，并且在 y 方向与两侧 tape 重叠
- *     （tape 到 y=168，HSI 从 y=138 起），靠 x 不冲突来共存。
- *     小屏上这是必要的妥协。
- *
- *   800×480（新屏）—— 分区式：底部 140 px 完整划给 HSI/雷达区，
- *     与 tape 在 y 上不再重叠。依据 docs/ux/box-4.3-ux-spec.md §5.1。
- *
- * 所以两套各自列明，只把真正同构的部分（水平中线、tape 左右位置、
- * HSI 圆心 x/y）做成共用派生。
+ * 这里把 4.3 寸板的坐标收拢成单一来源；模块只引用本文件的宏。
  */
 #pragma once
 
 #include "display.h"
-
-/* ══════════════════════════════════════════════════════════════
- * 分档基准
- * ══════════════════════════════════════════════════════════════ */
-#if PK_DISPLAY_W >= 800
 
 /* ---- 4.3" / 5" 800×480（分区式）---------------------------------
  * 依据 docs/ux/box-4.3-ux-spec.md §5.1：
@@ -77,7 +56,16 @@
  *
  * G1000 把坡度指示放在屏幕中间 1/3…3/5 宽度内，40% 正在其中。弧不随 roll
  * 旋转（只有 chevron 沿弧走），所以圆心偏离地平线中心不影响读数正确性。 */
-#define PFD_BANK_ARC_CY    (PFD_CY + 46)
+/* 弧心比地平线中心低 70 px —— 这个数是从**顶部的垂直分配**倒推的，不是
+ * 试出来的：
+ *
+ *     状态栏下沿 48 │ 空气 16 │ 白三角 14 │ 间隙 2 │ 弧顶 80
+ *     弧心 = 弧顶 + 半径 = 80 + 184 = 264 = PFD_CY + 70
+ *
+ * 顶部那 16 px 空气是刻意留的。天空指针是 0° 坡度的固定基准，紧贴状态栏会
+ * 让人分不清它属于顶栏还是姿态区；留出间距才读得出「它是姿态仪的一部分」。
+ * 飞行中是扫视而不是端详，这点余量决定了能否一眼认出。 */
+#define PFD_BANK_ARC_CY    (PFD_CY + 70)
 #define PFD_BANK_ARC_R     184      /* 坡度刻度弧半径                  */
 /* 俯仰 1° 对应像素（320 屏为 3）。
  *
@@ -96,29 +84,6 @@
 #define PFD_HDGBOX_W        96      /* 航向数字框                      */
 #define PFD_HDGBOX_H        48
 
-#else
-
-/* ---- 2.4" 320×240（现役，重叠式）------------------------------
- * 保持与迁移前逐像素一致，这些值是历史上手工调出来的，勿动。
- */
-#define PFD_BAR_BOT         18
-#define PFD_TAPE_W          64
-#define PFD_TAPE_TOP        18
-#define PFD_TAPE_BOT       168
-#define PFD_METRIC_TOP     170
-#define PFD_METRIC_BOT     208
-#define PFD_METRIC_X1      PFD_TAPE_W
-#define PFD_HSI_TOP        138
-#define PFD_HSI_R           65
-#define PFD_ATT_H          160
-#define PFD_BANK_ARC_CY    130
-#define PFD_BANK_ARC_R     100
-#define PFD_PIXELS_PER_DEG   3
-#define PFD_HDGBOX_W        54
-#define PFD_HDGBOX_H        18
-
-#endif
-
 /* ══════════════════════════════════════════════════════════════
  * 字号档位
  *
@@ -132,21 +97,12 @@
  *
  * 规格中"低于 2.1 mm 一律禁止"，故新屏最小档为 scale 3。
  * ══════════════════════════════════════════════════════════════ */
-#if PK_DISPLAY_W >= 800
 #define PFD_FS_BAR          3       /* 状态栏                        */
 #define PFD_BAR_TEXT_Y      9       /* 30 px cell 在 48 px 状态栏内垂直居中 */
 #define PFD_BAR_MARGIN_L   12
 #define PFD_BAR_MARGIN_R   16
 #define PFD_BAR_GAP_LABEL   8       /* 标签与其数值之间              */
 #define PFD_BAR_GAP_WORD   16       /* 独立词组之间                  */
-#else
-#define PFD_FS_BAR          2
-#define PFD_BAR_TEXT_Y      1
-#define PFD_BAR_MARGIN_L    6
-#define PFD_BAR_MARGIN_R    8
-#define PFD_BAR_GAP_LABEL   4
-#define PFD_BAR_GAP_WORD    8
-#endif
 
 /* ══════════════════════════════════════════════════════════════
  * 共用派生量（两套分辨率同构，无需分档）
@@ -157,15 +113,10 @@
 
 /* 地平线 / 姿态仪的几何中心。
  *
- * 800：取**姿态区**中心（48 + 292/2 = 194）。此前 pfd_attitude.c 里写的是
+ * 取**姿态区**中心（48 + 292/2 = 194）。此前 pfd_attitude.c 里写的是
  *      (18 + PK_DISPLAY_H)/2 = 249 —— 18 是 320 的顶栏高度，PK_DISPLAY_H 是
- *      整屏高，两个数都不属于 800，于是地平线整体下沉了 55 px。
- * 320：重叠式布局，姿态仪就是整屏背景，沿用历史值 129。 */
-#if PK_DISPLAY_W >= 800
+ *      整屏高，两个数都不属于当前布局，于是地平线整体下沉了 55 px。 */
 #define PFD_CY              (PFD_ATT_TOP + PFD_ATT_H / 2)
-#else
-#define PFD_CY              ((18 + PK_DISPLAY_H) / 2)
-#endif
 
 /* 左侧速度带 */
 #define PFD_SPD_X0          0
@@ -214,7 +165,6 @@
  * 而三行 S 档（cell 30 px）+ 行距需要 96 px。这里先按元素齐全的实际需求给
  * 值（向上占用 tape 尾段），把冲突显性化 —— 垂直空间怎么分配是阶段 4a 第二
  * 步要整体定的事，不在这里偷偷压字号糊弄过去。 */
-#if PK_DISPLAY_W >= 800
 /* 左右两块三行信息框，对称地坐在罗盘两侧。
  *
  * 罗盘是半圆、圆心在屏幕底边中点、半径 115，所以 x < 285 与 x > 515 两片
@@ -235,13 +185,4 @@
 /* 底边贴屏幕下沿，三行往上排。 */
 #define PFD_IB_TOP          (PK_DISPLAY_H - 4 \
                              - 3 * PFD_IB_ROW_H - 2 * PFD_IB_ROW_GAP)
-#else
-#define PFD_IB_ROW_H         18
-#define PFD_IB_ROW_GAP        2
-#define PFD_IB_PAD            2
-#define PFD_IB_W             64
-#define PFD_IB_LEFT_X0        0
-#define PFD_IB_RIGHT_X0     256
-#define PFD_IB_TOP          170
-#endif
 #define PFD_IB_BOT          (PFD_IB_TOP + 3 * PFD_IB_ROW_H + 2 * PFD_IB_ROW_GAP)

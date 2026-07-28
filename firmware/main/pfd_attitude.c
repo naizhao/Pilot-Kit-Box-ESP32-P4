@@ -95,14 +95,15 @@
 #  define LADDER_LBL_GAP    8
 /* 梯度线的下界是**航向框顶**，不是罗盘顶：框坐在罗盘正上方、姿态区下沿，
  * 是这一侧最先挡路的东西。画到框上只会两层叠字。 */
+#  define LADDER_TOP        (BANK_ARC_CY - BANK_ARC_R + 4)
 #  define LADDER_BOT        (PFD_HDGBOX_Y0 - 10)
 /* 坡度刻度长度 / 天空指针 / chevron 同样按物理尺寸对齐 320（×1.3），
  * 而不是按面板像素等比（×2.5）—— 后者会让这些符号在新屏上大得突兀。 */
 #  define BANK_TICK_S        5
 #  define BANK_TICK_M        8
 #  define BANK_TICK_L       13
-#  define SKYPTR_H          16
-#  define SKYPTR_HW          8
+#  define SKYPTR_H          14
+#  define SKYPTR_HW         10
 #  define CHEVRON_LEN       16
 #  define CHEVRON_HW         8
 /* 坡度弧比俯仰梯度更粗：它是姿态的**参考框架**，梯度是框架内的刻度，
@@ -230,9 +231,14 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
                                       : pk_rgb565(175, 180, 190);
         int mark_y = PFD_CY + (int)((pitch_deg - (float)p) *
                                     PFD_PIXELS_PER_DEG + 0.5f);
-        /* 上界按**标签**而不是线来判：状态栏是不透明的，线越界只是被盖住，
-         * 标签越界却会露出半个字。留半个 cell 高，字完整才画。 */
-        if (mark_y - LADDER_LBL_H / 2 < PFD_ATTITUDE_TOP || mark_y > LADDER_BOT) {
+        /* 上界取**弧顶**而不是姿态区顶：俯仰梯度是坡度弧「框」内的刻度，跑到
+         * 弧上方就会横穿天空指针，读起来两层信息糊在一起。这样一来 pitch=0
+         * 时 ±20° 线不显示——本就不该显示，大仰角的刻度要等姿态转过去才该
+         * 进入视野，这正是梯度随姿态滚动的正常行为。
+         *
+         * 判定按**标签**而非线：越界的线只是被弧盖住，越界的标签却会露出半
+         * 个字。 */
+        if (mark_y - LADDER_LBL_H / 2 < LADDER_TOP || mark_y > LADDER_BOT) {
             continue;
         }
         /* 圆形裁剪：把梯度线约束在坡度弧**内侧**。
@@ -245,9 +251,17 @@ static void draw_pitch_ladder(uint16_t *fb, float roll_deg, float pitch_deg)
             const int lim = BANK_ARC_R - 8;      /* 留出弧本身的粗细 */
             int dy = mark_y - BANK_ARC_CY;
             if (dy < 0) dy = -dy;
-            if (dy >= lim) continue;
-            int max_hw = (int)sqrtf((float)(lim * lim - dy * dy));
-            if (half_w > max_hw) half_w = max_hw;
+
+            /* 只有**这一行确实有弧**时才需要收窄。
+             *
+             * 初版写的是 `if (dy >= lim) continue;`，把 dy 超出的整条丢掉——
+             * 那是错的：dy 超出意味着该 y 上压根没有弧（比如弧顶之上的
+             * +20° 线），两者不可能交叠，却被整条抹掉了。这个错误还进一步
+             * 误导了布局决策，让人以为弧不能下移，否则上方刻度就会消失。 */
+            if (dy < lim) {
+                int max_hw = (int)sqrtf((float)(lim * lim - dy * dy));
+                if (half_w > max_hw) half_w = max_hw;
+            }
         }
         int lx, ly, rx, ry;
         rotate_about_center(cs, sn, PFD_CX - half_w, mark_y, &lx, &ly);
@@ -319,9 +333,15 @@ static void draw_bank_arc(uint16_t *fb, float roll_deg)
     /* Sky pointer — fixed downward-pointing inverted white triangle
      * at the top center of the attitude region. Marks the 0° bank
      * reference; the chevron below indicates current bank against it. */
-    /* 天空指针挂在弧顶**内侧**，而不是钉在状态栏下方：弧半径变大后弧顶会
-     * 从它身上穿过去，看着像被切了一刀。贴着弧走则始终是「三角对三角」。 */
-    const int skyptr_base_y = BANK_ARC_CY - BANK_ARC_R + 2;
+    /* 天空指针放在弧的**外侧**，于是从外到内读作：白三角 → 弧 → 黄 chevron。
+     * 白三角是 0° 坡度的固定基准，黄 chevron 是当前坡度——基准在外、读数在内，
+     * 两者不会互相遮挡，扫一眼就知道偏了多少。
+     *
+     * 尺寸不迁就残余空间：弧心已按「状态栏 → 空气 → 白三角 → 弧顶」的顺序
+     * 整体下移（见 pfd_layout.h 的 PFD_BANK_ARC_CY），三角有完整的 14 px，
+     * 上方还留着 16 px 空气。硬塞进一道 8 px 的缝只会得到一个谁也看不清的
+     * 扁片——飞行中是扫视，读不出来的元素等于没有。 */
+    const int skyptr_base_y = BANK_ARC_CY - BANK_ARC_R - SKYPTR_H - 1;
     pk_pfd_draw_triangle(fb,
                          PFD_CX,             skyptr_base_y + SKYPTR_H,
                          PFD_CX - SKYPTR_HW, skyptr_base_y,
