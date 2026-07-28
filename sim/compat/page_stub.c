@@ -72,3 +72,63 @@ const uint16_t *pk_logo_bitmap(int *w, int *h)
     loaded = -1;
     return NULL;
 }
+
+/* ── 交通页要的那几样 ────────────────────────────────────────────
+ * 飞行数据本身由 mock_runtime.c 提供（与 PFD 的交通叠加同源），这里补的是
+ * 机型数据库与用户设置——前者固件里是 8 MB 的离线库，后者存在 NVS。 */
+#include "aircraft_db.h"
+#include "config_traffic.h"
+#include "own_ship.h"
+
+const char *pk_aircraft_type_code(uint32_t icao24)
+{
+    /* 给几种常见机型轮换，好让列表看起来像真的。 */
+    static const char *kTypes[] = { "A320", "B738", "A359", "B77W", "E190" };
+    return kTypes[icao24 % (sizeof(kTypes) / sizeof(kTypes[0]))];
+}
+
+const char *pk_aircraft_type_desc(uint32_t icao24)
+{
+    static const char *kDesc[] = {
+        "Airbus A320", "Boeing 737-800", "Airbus A350-900",
+        "Boeing 777-300ER", "Embraer E190",
+    };
+    return kDesc[icao24 % (sizeof(kDesc) / sizeof(kDesc[0]))];
+}
+
+const char *pk_aircraft_registration(uint32_t icao24)
+{
+    static char reg[12];
+    snprintf(reg, sizeof(reg), "B-%04X", (unsigned)(icao24 & 0xFFFF));
+    return reg;
+}
+
+pk_map_orient_t pk_map_orient_get(void)   { return PK_MAP_HEADING_UP; }
+int  pk_traffic_range_idx_get(void)       { return 1; }   /* 5 NM */
+
+/* 航向解析：模拟器固定给一个朝向，够验证版面与旋转方向。 */
+bool pk_own_heading_resolve(bool own_valid, pk_own_src_t own_src,
+                            const aircraft_t *own,
+                            bool imu_valid, float imu_yaw_deg,
+                            float *out_deg, pk_hdg_src_t *out_src)
+{
+    (void)own_valid; (void)own_src; (void)own; (void)imu_valid;
+    if (out_deg) *out_deg = imu_yaw_deg;
+    if (out_src) *out_src = PK_HDG_SRC_IMU;
+    return true;
+}
+
+int pk_traffic_range_nm(int idx)
+{
+    static const int kNm[4] = { 2, 5, 10, 20 };
+    if (idx < 0) idx = 0;
+    if (idx > 3) idx = 3;
+    return kNm[idx];
+}
+
+/* 选中第一架，好让详情卡片有内容可画；-1 表示无选中。 */
+int pk_ui_traffic_resolve(const uint32_t *icaos, size_t n)
+{
+    (void)icaos;
+    return n > 0 ? 0 : -1;
+}

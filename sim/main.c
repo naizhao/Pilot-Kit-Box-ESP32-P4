@@ -41,6 +41,7 @@
 #include "pk_ui_nav.h"
 #include "about_page.h"
 #include "boot_splash.h"
+#include "traffic_page.h"
 
 #include "display.h"
 #include "pfd_attitude.h"
@@ -196,6 +197,8 @@ static int run_headless(float at_sec, const char *out)
             pk_about_page_render(fb);
         } else if (strcmp(page, "splash") == 0) {
             pk_boot_splash_render(fb);
+        } else if (strcmp(page, "traffic") == 0) {
+            pk_traffic_page_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
             return 2;

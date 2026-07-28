@@ -104,6 +104,7 @@ set(FW_DRAW_SRC
     # 由 compat/page_stub.c 桩掉，排版逻辑原样编译。
     ${FW}/about_page.c
     ${FW}/boot_splash.c
+    ${FW}/traffic_page.c
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c

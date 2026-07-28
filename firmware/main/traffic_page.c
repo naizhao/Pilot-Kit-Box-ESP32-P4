@@ -22,6 +22,7 @@
 #include "sdkconfig.h"
 
 #include "display.h"
+#include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -36,10 +37,23 @@
 #include "aircraft_db.h"
 #include "ui_state.h"
 
-/* ── 布局（320×240）─────────────────────────────────────────── */
-#define CX     160
-#define CY     126
-#define RMAX    94
+/* ── 布局（800×480，spec §5.2）───────────────────────────────
+ *
+ *   0            520                800
+ *   ├─────────────┼──────────────────┤
+ *   │   雷达区     │  右栏 4 张卡片    │
+ *   │  本机居中     │  方位/呼号/距离   │
+ *   │             │  /高度/速度       │
+ *
+ * 半径受**高度**限制而不是宽度：顶栏之下只剩 432 px，而左栏有 520 px 宽。
+ * 取 RMAX 200，上下各留 16 px 呼吸；水平仍居中在 520 的中线上。 */
+#define TFC_RADAR_W   520
+#define TFC_SIDE_X    TFC_RADAR_W          /* 右栏左边界 */
+#define TFC_TOP       PFD_BAR_BOT          /* 顶栏与 PFD 等高 */
+
+#define CX     (TFC_RADAR_W / 2)
+#define CY     (TFC_TOP + (PK_DISPLAY_H - TFC_TOP) / 2)
+#define RMAX   200
 
 /* 目标快照缓冲——放 PSRAM，避免吃任务栈（照 pfd.c 的 scratch）。 */
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
