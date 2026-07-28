@@ -121,14 +121,20 @@ H4 header wiring:
 Fast path using the prebuilt ESPHome image:
 
 ```bash
-curl -L -o /tmp/network_adapter_esp32c6.bin \
+curl -L -o firmware/network_adapter_esp32c6.bin \
     https://esphome.github.io/esp-hosted-firmware/v2.12.7/network_adapter_esp32c6.bin
 
-esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
-    --before no-reset --after hard-reset write-flash \
-    --flash-mode dio --flash-freq 80m --flash-size 4MB \
-    0x10000 /tmp/network_adapter_esp32c6.bin
+# Polls /dev/cu.usbserial-* once per second, validates the image,
+# and flashes one board without repeatedly reopening the UART.
+firmware/tools/flash_c6_hosted.sh
+
+# For multiple boards; unplug the USB-UART after each successful write.
+firmware/tools/flash_c6_hosted.sh --batch
 ```
+
+The script uses the tested 115200-baud, no-reset sequence and keeps
+`ESP_IDF_VERSION=6.0`. Use `--check-only` to validate the environment
+and image without touching hardware.
 
 After flashing, remove the IO9-to-GND short and power-cycle the board. A working C6 path logs:
 

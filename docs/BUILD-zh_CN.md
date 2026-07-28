@@ -187,7 +187,7 @@ H4-1 (IO9) **不接** 转接器 —— 它只需要在烧录期间被板内短�
 **(A) 最快路径 ——用 esphome 预编译好的二进制**（推荐，省 ~10 分钟，跟我们自己编译的功能完全等价）：
 
 ```bash
-curl -L -o /tmp/network_adapter_esp32c6.bin \
+curl -L -o firmware/network_adapter_esp32c6.bin \
     https://esphome.github.io/esp-hosted-firmware/v2.12.7/network_adapter_esp32c6.bin
 # sha256: ee7c546eb726ba92aa583448969c05f378a0deae5b3556699122761b7a595f51
 ```
@@ -232,14 +232,20 @@ idf.py build
 
 7. **松开 BOOT 按钮**（已经上电完成、strap 已锁存，松开没影响）。
 
-8. **跑 esptool 烧录命令**。H4 没有 RESET 信号能给 esptool 自动复位，所以用 `--before no-reset`：
+8. **运行项目烧录脚本**。它会每 1 秒自动探测串口、校验镜像，并用已经
+   真机验证过的 115200 baud / no-reset 序列写入。串口出现后只启动一次
+   esptool，避免 USB-UART 被反复打开时出现 macOS `termios EINVAL`：
 
    ```bash
-   esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
-       --before no-reset --after hard-reset write-flash \
-       --flash-mode dio --flash-freq 80m --flash-size 4MB \
-       0x10000 /tmp/network_adapter_esp32c6.bin
+   firmware/tools/flash_c6_hosted.sh --port /dev/cu.usbserial-XXXX
+
+   # 连续烧多块：每块成功后拔出 USB-UART，脚本会自动等待下一块
+   firmware/tools/flash_c6_hosted.sh --batch
    ```
+
+   脚本等待期间不要求按 Enter；不接硬件时可先用 `--check-only` 校验
+   ESP-IDF 环境与镜像。它会强制设置 `ESP_IDF_VERSION=6.0`，避免
+   ESP-Hosted Kconfig 回退到 H2/SPI。
 
    （路径 A 只烧 app 一个 bin；路径 B 还要加上 bootloader + partition table，详见
    [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) §4。）
