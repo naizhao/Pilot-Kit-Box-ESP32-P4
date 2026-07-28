@@ -12,6 +12,8 @@
 
 #include "lv_ui.h"
 
+#include <stdlib.h>
+
 #include "lvgl.h"
 
 #include "display.h"
@@ -59,16 +61,25 @@ const lv_font_t *pk_sim_ui_font_zh(void) { return s_font_zh_m; }
  * 来源，绕过它的字根本不会被生成进字库，最终显示为豆腐块。
  */
 static const pk_tr_id_t DOCK_TABS[] = {
+    /* 顺序按「飞行中会看的 → 偶尔查的 → 几乎不动的」排：
+     * 前三个是飞行相关，诊断在出问题时查，设置与关于基本是一次性配置。 */
     PK_TR_NAV_PFD, PK_TR_NAV_TRAFFIC, PK_TR_NAV_LIST,
-    PK_TR_NAV_SETTINGS, PK_TR_NAV_ABOUT, PK_TR_NAV_DIAG,
+    PK_TR_NAV_DIAG, PK_TR_NAV_SETTINGS, PK_TR_NAV_ABOUT,
 };
 #define DOCK_TAB_CNT (sizeof(DOCK_TABS) / sizeof(DOCK_TABS[0]))
 
-/* 模拟器固定用中文，先把最费空间的一版看清楚；语言切换是运行时状态，
- * 属于固件侧 i18n.c（依赖 NVS），不进模拟器。 */
+/* 模拟器用 PK_SIM_LANG 选语言（默认中文）。
+ *
+ * 两种语言必须都看：中文是等宽的，「交通」「列表」一律两字 52 px，排版最
+ * 规整；英文却是变宽的，"Settings" 八个字母能撑到中文的两倍——页签宽度得
+ * 按英文这一侧定，否则切到英文就溢出或被截断。
+ *
+ * 语言切换本身是运行时状态，属于固件侧 i18n.c（依赖 NVS），不进模拟器。 */
 static const char *tr(pk_tr_id_t id)
 {
-    return pk_i18n_catalog_text(PK_LANG_ZH, id);
+    const char *lang = getenv("PK_SIM_LANG");
+    bool en = lang && (lang[0] == 'e' || lang[0] == 'E');
+    return pk_i18n_catalog_text(en ? PK_LANG_EN : PK_LANG_ZH, id);
 }
 
 static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)

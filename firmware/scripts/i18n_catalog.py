@@ -244,7 +244,10 @@ STRINGS = [
     (
         "NAV_SETTINGS",
         {
-            "en": "Settings",
+            # 页签用 Setup 而非 Settings：后者在 26 px 下墨迹正好 94 px，与
+            # 页签同宽、左右零余量，和相邻页签糊成一片。Setup 是 Garmin 等
+            # 航电惯用的短写，语义无损。页内标题仍用完整的 SETTINGS。
+            "en": "Setup",
             "zh": "设置",
         },
     ),
