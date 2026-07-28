@@ -87,7 +87,7 @@
 #define COL_VAL          pk_rgb565(255, 255, 255)
 #define COL_DIVIDER      pk_rgb565( 60,  70,  86)
 #define COL_NAME         pk_rgb565(240, 245, 255)
-#define COL_LOGO_PLATE   pk_rgb565( 28,  34,  46)
+#define COL_LOGO_PLATE   pk_rgb565(255, 255, 255)  /* 与图案白底同色 */
 #define COL_LOGO_MARK    pk_rgb565( 64, 156, 255)
 #define COL_QR_PLATE     pk_rgb565(238, 240, 245)
 #define COL_QR_INK       pk_rgb565( 12,  12,  16)
@@ -120,18 +120,16 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 }
 
 /*
- * 画 logo。
+ * 画 logo：白色圆角底板 + 居中的完整图案。
  *
- * 源图 160×160，但 SVG 导出时四周带了大片空白——开机画面为此裁掉每边 24 px
- * （boot_splash.c 的 LOGO_SRC_CROP），这里沿用同一个数，两处显示的取景一致。
- * 有效区 112×112 采样到 128×128，最近邻即可：放大倍率才 1.14×，双线性带来的
- * 那点平滑抵不上它在 PSRAM 上多读三次的代价。
+ * 关键是**留内边距**。上一版沿用了开机画面的 LOGO_SRC_CROP=24 去裁源图——
+ * 那个值是为 80×80 的小尺寸调的（裁掉 SVG 导出的空白好让图案占满），放到
+ * 128×128 上就把六边形外框整个切掉了。
+ *
+ * 图标该有的样子是：图案完整，四周留一圈内边距，再套圆角。所以这里不裁源图，
+ * 而是把它整体缩进 AB_LOGO_PAD，空出来的部分由白色底板填充。
  */
-#define AB_LOGO_SRC_CROP 24
-
-/* 圆角半径取边长的 22%，是 iOS / Android 自适应图标的视觉惯例。直角贴图看着
- * 像「一张图片被贴上来」，圆角才读作「一枚图标」——这一页的主角是产品身份，
- * 该有图标的样子。开机画面同理，那边是白色圆角卡片（CARD_RADIUS）。 */
+#define AB_LOGO_PAD     12
 #define AB_LOGO_RADIUS  (AB_LOGO_SIZE * 22 / 100)
 
 /* 该像素是否落在圆角矩形内。只在四个角上做圆检测，其余直接通过。 */
@@ -149,26 +147,30 @@ static bool in_rounded_rect(int col, int row, int size, int r)
 static void draw_logo(uint16_t *fb, int x, int y, int size)
 {
     int sw = 0, sh = 0;
-    const uint16_t *src = pk_logo_rgb565(&sw, &sh);
-    if (src == NULL || sw <= 2 * AB_LOGO_SRC_CROP) return;
+    const uint16_t *src = pk_logo_bitmap(&sw, &sh);
+    if (src == NULL || sw <= 0 || sh <= 0) return;
 
-    const int used_w = sw - 2 * AB_LOGO_SRC_CROP;
-    const int used_h = sh - 2 * AB_LOGO_SRC_CROP;
+    const int inner = size - 2 * AB_LOGO_PAD;
 
     for (int row = 0; row < size; ++row) {
         const int yy = y + row;
         if (yy < 0 || yy >= PK_DISPLAY_H) continue;
-        const int sy = AB_LOGO_SRC_CROP + row * used_h / size;
         uint16_t *dst = fb + yy * PK_DISPLAY_W;
+
         for (int col = 0; col < size; ++col) {
             const int xx = x + col;
             if (xx < 0 || xx >= PK_DISPLAY_W) continue;
             if (!in_rounded_rect(col, row, size, AB_LOGO_RADIUS)) continue;
-            const int sx = AB_LOGO_SRC_CROP + col * used_w / size;
-            /* blob 里是标准（小端）RGB565，而 framebuffer 走 pk_rgb565() 的
-             * 大端约定（见 display.h：它在最后把两个字节对调）。直接搬会让
-             * 红蓝换位、绿分量断成两截——屏上就是一片紫绿噪点。 */
-            const uint16_t v = src[sy * sw + sx];
+
+            const int ix = col - AB_LOGO_PAD;
+            const int iy = row - AB_LOGO_PAD;
+            if (ix < 0 || iy < 0 || ix >= inner || iy >= inner) {
+                dst[xx] = COL_LOGO_PLATE;      /* 内边距：底板本色 */
+                continue;
+            }
+            /* 整图缩放，不裁——外框也是图案的一部分。 */
+            const uint16_t v = src[(iy * sh / inner) * sw + (ix * sw / inner)];
+            /* blob 与 framebuffer 的字节序约定不同，见 display.h 的 pk_rgb565()。 */
             dst[xx] = (uint16_t)((v >> 8) | (v << 8));
         }
     }

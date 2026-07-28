@@ -103,6 +103,7 @@ set(FW_DRAW_SRC
     # 整页视图（关于/设置/诊断…）。它们只把运行时状态排版成像素，数据来源
     # 由 compat/page_stub.c 桩掉，排版逻辑原样编译。
     ${FW}/about_page.c
+    ${FW}/boot_splash.c
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c

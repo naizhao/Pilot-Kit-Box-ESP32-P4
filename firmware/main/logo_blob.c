@@ -9,7 +9,7 @@ extern const uint8_t pk_logo_blob_end[]   asm("_binary_pk_logo_rgb565_end");
 #define PK_LOGO_SRC_W 160
 #define PK_LOGO_SRC_H 160
 
-const uint16_t *pk_logo_rgb565(int *w, int *h)
+const uint16_t *pk_logo_bitmap(int *w, int *h)
 {
     if (w) *w = PK_LOGO_SRC_W;
     if (h) *h = PK_LOGO_SRC_H;

@@ -40,6 +40,7 @@
 
 #include "boot_splash.h"
 
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -47,63 +48,38 @@
 #include "esp_idf_version.h"
 
 #include "display.h"
-#include "pfd_font.h"
+#include "logo_blob.h"
+#include "pfd_aa_text.h"
+#include "pfd_aa_font.h"
 
 extern const uint8_t pk_logo_start[] asm("_binary_pk_logo_rgb565_start");
 extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
 
-#define PK_LOGO_W           160                /* source blob in flash */
-#define PK_LOGO_H           160
-#define LOGO_DISP_W         (PK_LOGO_W / 2)    /* 80 — displayed size */
-#define LOGO_DISP_H         (PK_LOGO_H / 2)
+#define PK_LOGO_SRC_W       160                /* flash 里的源图尺寸 */
+#define PK_LOGO_SRC_H       160
 
-/* The SVG that produced pk_logo.rgb565 bakes in whitespace around the
- * actual mark — without compensation, the displayed logo sits well
- * inside the card with too much margin. We crop LOGO_SRC_CROP source
- * pixels off each side so only the central content area gets sampled
- * into the 80×80 display window. With crop=24, effective source area
- * is 112×112 → effective zoom = 160/112 ≈ 1.43× vs straight 2:1
- * decimation, i.e. the logo content appears ~43% bigger on the card.
- * Bump if even more zoom is needed (cap at ~36 before the content
- * itself starts getting clipped). */
-#define LOGO_SRC_CROP       24
-#define LOGO_SRC_USED_W     (PK_LOGO_W - 2 * LOGO_SRC_CROP)
-#define LOGO_SRC_USED_H     (PK_LOGO_H - 2 * LOGO_SRC_CROP)
+/* ── 布局（800×480）────────────────────────────────────────────
+ *
+ * 整块内容垂直居中。图标比 2.4″ 那版大一倍有余（80 → 176）——屏幕物理尺寸
+ * 只有信用卡大小，但像素多了 5 倍，沿用旧尺寸会让开机画面显得空旷而寒酸。
+ *
+ * 图标画法与「关于」页一致：完整图案 + 内边距 + 圆角，不裁源图。旧版用
+ * LOGO_SRC_CROP=24 裁掉 SVG 空白好让图案占满 80×80 的小卡片，在这个尺寸上
+ * 会把六边形外框整个切掉。
+ */
+#define CARD_SIZE           176
+#define CARD_RADIUS         (CARD_SIZE * 22 / 100)   /* app icon 惯例 */
+#define CARD_PAD            16                        /* 图案与卡片边的留白 */
+#define CARD_X              ((PK_DISPLAY_W - CARD_SIZE) / 2)
+#define CARD_Y              96
 
-/* Layout — keep card and logo concentric so the white margin around
- * the logo is even on all sides. Card sized to enclose the 80×80
- * displayed logo with a 10 px white margin on each side; the whole
- * content block (card + title + version) is vertically centered in
- * the 240-tall panel. CARD_TITLE_GAP gives the breathing room between
- * the white card and the title text — the shrunk card freed up
- * vertical space, so we hand it back to this gap instead of leaving
- * it as dead air below the version line. */
-#define CARD_W              100
-#define CARD_H              100
-#define CARD_RADIUS         8
-#define CARD_X              ((PK_DISPLAY_W - CARD_W) / 2)        /* 110 */
-#define CARD_Y              38
-#define LOGO_X              (CARD_X + (CARD_W - LOGO_DISP_W) / 2)/* 120 */
-#define LOGO_Y              (CARD_Y + (CARD_H - LOGO_DISP_H) / 2)/* 48  */
+#define TITLE_GAP           36                        /* 卡片 → 标题 */
+#define TITLE_Y             (CARD_Y + CARD_SIZE + TITLE_GAP)
+#define INFO_GAP            18                        /* 标题 → 信息行 */
+#define INFO_LINE_GAP       6
+#define INFO_Y              (TITLE_Y + PK_AA_M_H + INFO_GAP)
 
-#define CARD_TITLE_GAP      24                                    /* card→title */
-#define TITLE_VERSION_GAP   8                                     /* title→ver  */
-#define INFO_LINE_GAP       4                                     /* between ver/build/idf */
-
-#define TITLE_Y             (CARD_Y + CARD_H + CARD_TITLE_GAP)    /* 162 */
-#define VERSION_Y           (TITLE_Y + PK_FONT_CELL_H(2) + TITLE_VERSION_GAP)
-                                                                  /* 186 */
-#define BUILD_Y             (VERSION_Y + PK_FONT_CELL_H(1) + INFO_LINE_GAP)
-                                                                  /* 198 */
-#define IDF_Y               (BUILD_Y   + PK_FONT_CELL_H(1) + INFO_LINE_GAP)
-                                                                  /* 210 */
-/* Copyright footer pinned to the bottom edge with a small 4 px margin,
- * not stacked at INFO_LINE_GAP — visually separates it from the build
- * info above. */
-#define COPYRIGHT_Y         (PK_DISPLAY_H - PK_FONT_CELL_H(1) - 4)
-                                                                  /* 228 */
-
-/* Palette */
+/* ── 配色 ─────────────────────────────────────────────────────── */
 #define BG_COLOR             pk_rgb565( 12,  12,  16)
 #define CARD_COLOR           pk_rgb565(255, 255, 255)
 #define TITLE_COLOR          pk_rgb565(240, 240, 240)
@@ -131,137 +107,98 @@ static inline void put_pixel(uint16_t *fb, int x, int y, uint16_t c)
  * body, right strip) for the straight portion + 4 quarter-circle
  * arcs at the corners. r should be < min(w,h)/2; we don't bother
  * validating since callers are file-local. */
-static void fill_rounded_rect(uint16_t *fb,
-                              int x0, int y0, int x1, int y1,
-                              int r, uint16_t c)
-{
-    /* Body: full-width strip in the vertical centre. */
-    fill_rect(fb, x0,     y0 + r, x1,     y1 - r, c);
-    /* Top edge strip (between the two top corners). */
-    fill_rect(fb, x0 + r, y0,     x1 - r, y0 + r, c);
-    /* Bottom edge strip. */
-    fill_rect(fb, x0 + r, y1 - r, x1 - r, y1,     c);
 
-    /* Four corners — quarter-circles via simple distance test. r is
-     * small (≤16 in practice), so the 4·r² inner-loop iteration count
-     * is trivial. */
-    const int r2 = r * r;
-    for (int dy = 0; dy < r; ++dy) {
-        for (int dx = 0; dx < r; ++dx) {
-            int d = dx * dx + dy * dy;
-            if (d <= r2) {
-                /* top-left: pivot at (x0+r, y0+r), corner is r×r region
-                 * at (x0..x0+r-1, y0..y0+r-1); the in-arc point is
-                 * (x0+r-1-dx, y0+r-1-dy). */
-                put_pixel(fb, x0 + r - 1 - dx, y0 + r - 1 - dy, c);
-                put_pixel(fb, x1 - r + dx,     y0 + r - 1 - dy, c);
-                put_pixel(fb, x0 + r - 1 - dx, y1 - r + dy,     c);
-                put_pixel(fb, x1 - r + dx,     y1 - r + dy,     c);
-            }
-        }
-    }
+/* 该像素是否落在圆角矩形内。只在四个角上做圆检测。 */
+static bool in_rounded(int col, int row, int size, int r)
+{
+    int dx = 0, dy = 0;
+    if (col < r)              dx = r - col;
+    else if (col >= size - r) dx = col - (size - r - 1);
+    if (row < r)              dy = r - row;
+    else if (row >= size - r) dy = row - (size - r - 1);
+    if (dx == 0 || dy == 0) return true;
+    return dx * dx + dy * dy <= r * r;
 }
 
-static void blit_logo(uint16_t *fb, int dst_x, int dst_y)
+/*
+ * 画图标：白色圆角底 + 居中的完整图案。与 about_page.c 的 draw_logo() 同构，
+ * 两处显示的是同一张图、同一种取景，改一处要记得改另一处。
+ */
+static void draw_icon(uint16_t *fb, int x, int y, int size)
 {
-    const uint16_t *src = (const uint16_t *)pk_logo_start;
-    /* The embedded blob is PK_LOGO_W × PK_LOGO_H × 2 bytes, pre-packed
-     * in the same little-endian RGB565 format the panel uses on the
-     * wire. We sample the central LOGO_SRC_USED_{W,H} pixels (skipping
-     * LOGO_SRC_CROP px of SVG whitespace on each side) and resample to
-     * LOGO_DISP_W × LOGO_DISP_H via nearest-neighbour — gives a tighter
-     * zoom into the actual logo content than a straight 2:1 decimation.
-     * Step ratio is LOGO_SRC_USED_W / LOGO_DISP_W, kept in integer
-     * fixed-point (×LOGO_DISP_W) to avoid floats in the hot path. */
-    for (int dy = 0; dy < LOGO_DISP_H; ++dy) {
-        int fy = dst_y + dy;
-        if (fy < 0 || fy >= PK_DISPLAY_H) continue;
-        int src_y = LOGO_SRC_CROP + (dy * LOGO_SRC_USED_H) / LOGO_DISP_H;
-        uint16_t       *row_dst = fb + fy * PK_DISPLAY_W + dst_x;
-        const uint16_t *row_src = src + src_y * PK_LOGO_W;
-        for (int dx = 0; dx < LOGO_DISP_W; ++dx) {
-            int src_x = LOGO_SRC_CROP + (dx * LOGO_SRC_USED_W) / LOGO_DISP_W;
-            /* blob 是标准（小端）RGB565，framebuffer 走 pk_rgb565() 的大端
-             * 约定——display.h 里它最后把两个字节对调过。少这一步，红蓝换位、
-             * 绿分量断成两截，屏上是一片紫绿噪点。
-             *
-             * 2.4″ 那版没有这个问题：当时 pk_rgb565() 不做对调，blob 与
-             * framebuffer 恰好同序。迁到 4.3″ 换成大端线序后，这里漏改了。 */
-            uint16_t v = row_src[src_x];
-            row_dst[dx] = (uint16_t)((v >> 8) | (v << 8));
+    int sw = 0, sh = 0;
+    const uint16_t *src = pk_logo_bitmap(&sw, &sh);
+    const int inner = size - 2 * CARD_PAD;
+
+    for (int row = 0; row < size; ++row) {
+        const int yy = y + row;
+        if (yy < 0 || yy >= PK_DISPLAY_H) continue;
+        uint16_t *dst = fb + yy * PK_DISPLAY_W;
+
+        for (int col = 0; col < size; ++col) {
+            const int xx = x + col;
+            if (xx < 0 || xx >= PK_DISPLAY_W) continue;
+            if (!in_rounded(col, row, size, CARD_RADIUS)) continue;
+
+            const int ix = col - CARD_PAD;
+            const int iy = row - CARD_PAD;
+            if (src == NULL || ix < 0 || iy < 0 || ix >= inner || iy >= inner) {
+                dst[xx] = CARD_COLOR;
+                continue;
+            }
+            const uint16_t v = src[(iy * sh / inner) * sw + (ix * sw / inner)];
+            /* blob 与 framebuffer 的字节序约定不同，见 display.h 的 pk_rgb565()。 */
+            dst[xx] = (uint16_t)((v >> 8) | (v << 8));
         }
     }
 }
 
 void pk_boot_splash_render(uint16_t *fb)
 {
-    /* Solid background */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, BG_COLOR);
 
-    /* Rounded white card behind the logo. The logo PNG is white-
-     * background and pre-cropped to its content bbox, so the card
-     * just adds visual breathing room and rounded edges so it doesn't
-     * look like a hard rectangle pasted on the dark background. */
-    fill_rounded_rect(fb, CARD_X, CARD_Y, CARD_X + CARD_W, CARD_Y + CARD_H,
-                      CARD_RADIUS, CARD_COLOR);
+    draw_icon(fb, CARD_X, CARD_Y, CARD_SIZE);
 
-    /* Logo centred on the card. */
-    blit_logo(fb, LOGO_X, LOGO_Y);
+    /* 产品名。用 M 档——它是这一屏唯一的主角，S 档在 93 mm 宽的屏上撑不住。 */
+    {
+        static const char kTitle[] = "PILOT KIT BOX";
+        const int w = (int)(sizeof(kTitle) - 1) * pk_aa_cell_w(PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, TITLE_Y, kTitle, TITLE_COLOR,
+                   PK_AA_M);
+    }
 
-    /* Title (scale-2) under the card. */
-    const char *title = "PILOT KIT BOX";
-    int title_w = (int)strlen(title) * PK_FONT_CELL_W(2);
-    int title_x = (PK_DISPLAY_W - title_w) / 2;
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 title_x, TITLE_Y, title, TITLE_COLOR, 2);
-
-    /* Version info — three centred scale-1 lines below the title.
-     * All pulled from the app descriptor / IDF compile-time macros
-     * so the splash matches the binary exactly with no manual sync.
-     * esp_app_desc_t.version / .date / .time are fixed-length fields,
-     * the %.32s / %.16s caps keep gcc -Wformat-truncation happy. */
+    /*
+     * 三行信息，全部取自 app descriptor 与 IDF 编译期宏——开机画面与二进制
+     * 天然一致，不需要人工同步。
+     */
     const esp_app_desc_t *app = esp_app_get_description();
     char line[64];
+    int y = INFO_Y;
 
-    /* Line 1 — "Booting <product-version> ...". */
-    if (app) {
-        snprintf(line, sizeof(line), "Booting %.32s ...", app->version);
-    } else {
-        snprintf(line, sizeof(line), "Booting ...");
+    if (app) snprintf(line, sizeof(line), "Booting %.32s ...", app->version);
+    else     snprintf(line, sizeof(line), "Booting ...");
+    {
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
+        y += PK_AA_S_H + INFO_LINE_GAP;
     }
-    int w = (int)strlen(line) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - w) / 2, VERSION_Y, line, VERSION_COLOR, 1);
 
-    /* Line 2 — "Built <date> <time>" baked at link time. */
-    if (app) {
-        snprintf(line, sizeof(line), "Built %.16s %.8s",
-                 app->date, app->time);
-    } else {
-        snprintf(line, sizeof(line), "Built %s %s", __DATE__, __TIME__);
+    if (app) snprintf(line, sizeof(line), "Built %.16s %.8s", app->date, app->time);
+    else     snprintf(line, sizeof(line), "Built %s %s", __DATE__, __TIME__);
+    {
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
+        y += PK_AA_S_H + INFO_LINE_GAP;
     }
-    w = (int)strlen(line) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - w) / 2, BUILD_Y, line, VERSION_COLOR, 1);
 
-    /* Line 3 — ESP-IDF version that built the firmware. */
     snprintf(line, sizeof(line), "ESP-IDF v%d.%d.%d",
-             ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR,
-             ESP_IDF_VERSION_PATCH);
-    w = (int)strlen(line) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - w) / 2, IDF_Y, line, VERSION_COLOR, 1);
-
-    /* Copyright footer pinned to the bottom edge. The pfd_font 5×7
-     * bitmap can't render the U+00A9 © glyph (the inner C inside the
-     * outer circle needs ≥7 px wide to be legible), so we use the
-     * widely-accepted ASCII '(C)' form here. */
-    const char *cr = "(C) 2026 Pilot Kit";
-    w = (int)strlen(cr) * PK_FONT_CELL_W(1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 (PK_DISPLAY_W - w) / 2, COPYRIGHT_Y, cr, VERSION_COLOR, 1);
-
-    /* Suppress unused-symbol warning for pk_logo_end — keeps it in
-     * scope so future code can compute the blob size if needed. */
-    (void)pk_logo_end;
+             ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
+    {
+        const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_S);
+    }
 }

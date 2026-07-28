@@ -46,7 +46,7 @@ uint8_t pk_ui_cal_wizard_last_accuracy(void){ return 3; }   /* 3 = 已校准 */
 #define LOGO_W 160
 #define LOGO_H 160
 
-const uint16_t *pk_logo_rgb565(int *w, int *h)
+const uint16_t *pk_logo_bitmap(int *w, int *h)
 {
     static uint16_t px[LOGO_W * LOGO_H];
     static int loaded;          /* 0 未试过，1 成功，-1 失败 */

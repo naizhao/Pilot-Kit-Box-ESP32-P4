@@ -9,6 +9,10 @@
 
 #include <stdint.h>
 
-/* 返回像素数据（RGB565，与 framebuffer 同字节序）。取不到时返回 NULL。
+/* 返回像素数据（RGB565）。取不到时返回 NULL。
+ *
+ * 名字不叫 pk_logo_rgb565：ESP-IDF 的 EMBED_FILES 会按文件名
+ * （pk_logo.rgb565）自动生成一个同名符号，撞名会在链接期报 multiple
+ * definition。
  * w/h 非空时写入源图尺寸。 */
-const uint16_t *pk_logo_rgb565(int *w, int *h);
+const uint16_t *pk_logo_bitmap(int *w, int *h);

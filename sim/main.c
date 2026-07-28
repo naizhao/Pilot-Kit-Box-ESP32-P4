@@ -40,6 +40,7 @@
 #include "lv_backend.h"
 #include "pk_ui_nav.h"
 #include "about_page.h"
+#include "boot_splash.h"
 
 #include "display.h"
 #include "pfd_attitude.h"
@@ -193,6 +194,8 @@ static int run_headless(float at_sec, const char *out)
     if (page != NULL && page[0] != '\0') {
         if (strcmp(page, "about") == 0) {
             pk_about_page_render(fb);
+        } else if (strcmp(page, "splash") == 0) {
+            pk_boot_splash_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
             return 2;
