@@ -1032,7 +1032,9 @@
 #endif
 
 /** Built-in TTF decoder */
-#define LV_USE_TINY_TTF 0
+/* 中文经 TinyTTF 在运行时渲染：一份子集 TTF（约 25 KB）服务所有字号，
+ * 比每档预渲染一份 CJK 位图省得多。见 firmware/scripts/gen_lv_font.py。 */
+#define LV_USE_TINY_TTF 1
 #if LV_USE_TINY_TTF
     /* Enable loading TTF data from files */
     #define LV_TINY_TTF_FILE_SUPPORT 0

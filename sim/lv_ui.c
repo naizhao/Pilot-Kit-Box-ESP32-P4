@@ -15,6 +15,7 @@
 #include "lvgl.h"
 
 #include "display.h"
+#include "lv_font_zh.h"
 #include "pfd_layout.h"
 
 /* spec 视觉稿的 --sel（选中/主操作色）。 */
@@ -30,6 +31,12 @@
 static lv_obj_t *s_fab;
 static bool      s_pressed;
 
+/* 中文字体。TinyTTF 在运行时从子集 TTF 渲染字形，一份轮廓服务所有字号——
+ * 每个字号只是一个 lv_font_t 句柄，不再各存一份 CJK 位图。 */
+static const lv_font_t *s_font_zh_m;
+
+const lv_font_t *pk_sim_ui_font_zh(void) { return s_font_zh_m; }
+
 static void fab_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -44,6 +51,10 @@ static void fab_event_cb(lv_event_t *e)
 void pk_sim_ui_init(void)
 {
     lv_obj_t *scr = lv_screen_active();
+
+    /* M 档 26 px ≈ spec §2 的 3.0 mm「正文主力」。 */
+    s_font_zh_m = lv_tiny_ttf_create_data(pk_lv_font_zh_ttf,
+                                          pk_lv_font_zh_ttf_size, 26);
 
     s_fab = lv_button_create(scr);
     lv_obj_set_size(s_fab, FAB_D, FAB_D);
@@ -86,6 +97,18 @@ void pk_sim_ui_init(void)
     lv_obj_center(lbl);
 
     lv_obj_add_event_cb(s_fab, fab_event_cb, LV_EVENT_ALL, NULL);
+
+    /* 临时探针：验证 TinyTTF 能把 catalog 里的中文渲染出来。
+     * dock 搭起来之后由真正的页签取代（阶段 3）。 */
+    lv_obj_t *probe = lv_label_create(scr);
+    lv_label_set_text(probe, "设置 · 语言 · 校准 · 版本");
+    lv_obj_set_style_text_font(probe, s_font_zh_m, 0);
+    lv_obj_set_style_text_color(probe, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(probe, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(probe, LV_OPA_60, 0);
+    lv_obj_set_style_pad_all(probe, 6, 0);
+    lv_obj_set_style_radius(probe, 6, 0);
+    lv_obj_align(probe, LV_ALIGN_TOP_MID, 0, PFD_BAR_BOT + 12);
 }
 
 bool pk_sim_ui_fab_pressed(void) { return s_pressed; }

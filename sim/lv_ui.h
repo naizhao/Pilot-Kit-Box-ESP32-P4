@@ -19,3 +19,7 @@ void pk_sim_ui_init(void);
 
 /* FAB 是否处于按下态 —— 供模拟器打印状态，验证点击命中区。 */
 bool pk_sim_ui_fab_pressed(void);
+
+/* M 档中文字体（26 px ≈ spec §2 的 3.0 mm）。dock 与各页面共用。 */
+struct _lv_font_t;
+const struct _lv_font_t *pk_sim_ui_font_zh(void);
