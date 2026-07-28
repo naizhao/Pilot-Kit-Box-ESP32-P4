@@ -51,6 +51,13 @@ static size_t    s_active_tab;   /* 当前高亮的页签，索引进 DOCK_TABS 
 static bool s_fab_left;                 /* true = 吸在左缘 */
 static int  s_fab_y = FAB_DEFAULT_Y;
 static bool s_dragging;
+
+/* 当前层级。spec §4.3：**最多两层、不做返回栈**——二级页面只能从诊断进入，
+ * 返回目标唯一确定，所以一个 bool 就够，不需要压栈。
+ *
+ * 这个约束不是偷懒：无物理按键的设备上，返回栈越深越容易让人迷路，而飞行中
+ * 没有余裕去数「我在第几层」。 */
+static bool s_in_subpage;
 static bool      s_pressed;
 static bool      s_dock_open;
 
@@ -222,6 +229,97 @@ static void dock_touch_cb(lv_event_t *e)
     if (s_idle_timer) lv_timer_reset(s_idle_timer);
 }
 
+/* ── 二级页面 ──────────────────────────────────────────────────
+ *
+ * spec §4.2 开宗明义：**无物理按键 = 没有系统级返回**，二级页面若不设计返回，
+ * 用户进去即出不来。因此三条退路必须同时可用：
+ *
+ *   ① 顶栏「← 诊断」按钮   ② FAB（此时变 ←）   ③ 右滑手势
+ *
+ * 三条都实现在这里，任何一条失效都还剩两条。二级页面**不提供 dock**——那是
+ * 一级页面之间的横向切换，在子页里给出来只会让人以为能直接跳走。
+ */
+#define BACKBAR_H   44
+
+static lv_obj_t *s_backbar;
+static lv_obj_t *s_backbar_label;
+
+static void back_event_cb(lv_event_t *e)
+{
+    (void)e;
+    pk_ui_nav_set_subpage(false, NULL);
+    pk_ui_nav_on_back();
+}
+
+/* 右滑返回：只认从**左缘起手**的横向滑动，且横向位移要明显大于纵向。
+ * 否则列表纵向滚动时稍微带点横向分量就会误触发返回——子页里全是可滚动的
+ * 诊断详情，这个误触会很频繁。 */
+static void backbar_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!s_in_subpage) return;
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) return;
+    if (lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
+        pk_ui_nav_set_subpage(false, NULL);
+        pk_ui_nav_on_back();
+    }
+}
+
+static void backbar_ensure(void)
+{
+    if (s_backbar) return;
+
+    s_backbar = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(s_backbar, LV_SIZE_CONTENT, BACKBAR_H);
+    lv_obj_align(s_backbar, LV_ALIGN_TOP_LEFT, 8, PFD_BAR_BOT + 6);
+    lv_obj_set_style_bg_color(s_backbar, COL_DOCK_BG, 0);
+    lv_obj_set_style_bg_opa(s_backbar, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(s_backbar, 0, 0);
+    lv_obj_set_style_radius(s_backbar, 8, 0);
+    lv_obj_set_style_pad_hor(s_backbar, 14, 0);
+    lv_obj_set_style_pad_ver(s_backbar, 0, 0);
+    lv_obj_remove_flag(s_backbar, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_backbar_label = lv_label_create(s_backbar);
+    lv_obj_set_style_text_font(s_backbar_label, s_font_zh_m, 0);
+    lv_obj_set_style_text_color(s_backbar_label, COL_TAB_ON, 0);
+    lv_obj_center(s_backbar_label);
+
+    lv_obj_add_event_cb(s_backbar, back_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_backbar, LV_OBJ_FLAG_HIDDEN);
+}
+
+void pk_ui_nav_set_subpage(bool on, const char *parent_title)
+{
+    backbar_ensure();
+    s_in_subpage = on;
+
+    if (on) {
+        /* 进子页先收 dock：它是一级页之间的切换入口，子页里给出来会误导。 */
+        pk_ui_nav_set_dock_open(false);
+
+        char buf[32];
+        lv_snprintf(buf, sizeof(buf), LV_SYMBOL_LEFT " %s",
+                    parent_title ? parent_title : "");
+        lv_label_set_text(s_backbar_label, buf);
+        lv_obj_remove_flag(s_backbar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_backbar);
+    } else {
+        lv_obj_add_flag(s_backbar, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* FAB 一键两用：一级页是 ☰（展开 dock），二级页是 ←（返回）。
+     * spec §4.3 要求它的**位置固定不变**——用户只需记住一个位置，含义由
+     * 图标区分。 */
+    if (s_fab) {
+        lv_obj_t *icon = lv_obj_get_child(s_fab, 0);
+        if (icon) lv_label_set_text(icon, on ? LV_SYMBOL_LEFT : LV_SYMBOL_LIST);
+    }
+}
+
+bool pk_ui_nav_in_subpage(void) { return s_in_subpage; }
+
 static void dock_build(lv_obj_t *scr)
 {
     /* 宽度要把分隔线**自身的 1 px** 也算进去：漏了它，flex 会把最后一项
@@ -338,8 +436,14 @@ static void fab_event_cb(lv_event_t *e)
         break;
 
     case LV_EVENT_CLICKED:
-        /* 拖动结束时 LVGL 不会再补一个 CLICKED，这里只处理真正的点击。 */
-        pk_ui_nav_set_dock_open(!s_dock_open);
+        /* 拖动结束时 LVGL 不会再补一个 CLICKED，这里只处理真正的点击。
+         * 二级页面里 FAB 是返回键，不是 dock 开关。 */
+        if (s_in_subpage) {
+            pk_ui_nav_set_subpage(false, NULL);
+            pk_ui_nav_on_back();
+        } else {
+            pk_ui_nav_set_dock_open(!s_dock_open);
+        }
         break;
 
     default:
@@ -354,9 +458,20 @@ void pk_ui_nav_init(void)
     /* M 档 26 px ≈ spec §2 的 3.0 mm「正文主力」。 */
     s_font_zh_m = lv_tiny_ttf_create_data(pk_lv_font_zh_ttf,
                                           pk_lv_font_zh_ttf_size, 26);
+    /* 回退到内置 Montserrat：LV_SYMBOL_* 是 FontAwesome 私用区码位，不在中文
+     * 子集里，直接混排会显示成豆腐块（返回栏的「← 诊断」就是这么露馅的）。
+     *
+     * 设 fallback 比"符号和文字各用一个 label"干净得多——后者每处混排都要拆
+     * 成两个对象，还得自己算间距。 */
+    if (s_font_zh_m) {
+        /* v9.5 没有 setter，fallback 是 lv_font_t 的公开字段，直接接上即可。 */
+        ((lv_font_t *)s_font_zh_m)->fallback = &lv_font_montserrat_28;
+    }
 
     /* 先建 dock 再建 FAB：同层内后建的在上，FAB 必须压在 dock 之上。 */
     dock_build(scr);
+    /* 右滑返回挂在屏幕根对象上：子页内容各式各样，逐个挂手势必漏。 */
+    lv_obj_add_event_cb(scr, backbar_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     s_fab = lv_button_create(scr);
     lv_obj_set_size(s_fab, FAB_D, FAB_D);
@@ -519,4 +634,8 @@ void pk_ui_nav_toast(const char *msg, bool is_error)
     lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_toast);
     lv_obj_center(s_toast);
+}
+
+__attribute__((weak)) void pk_ui_nav_on_back(void)
+{
 }

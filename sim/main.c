@@ -23,6 +23,7 @@
  *     空格      暂停 / 继续动画（方便盯住某一帧看细节）
  *     S         把当前帧存成 BMP，用于和设计稿逐像素比对
  *     T         切换一条 toast 提示（验证它压在 dock / FAB 之上）
+ *     B         进出二级页面（验证返回栏与 FAB 变 ←）
  *     ← →      手动步进 roll，观察极限姿态
  */
 /* 用 <SDL.h> 而非 <SDL2/SDL.h>：sdl2-config --cflags 给出的是
@@ -177,6 +178,8 @@ static int run_headless(float at_sec, const char *out)
     }
     if (getenv("PK_SIM_DOCK")) pk_ui_nav_set_dock_open(true);
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
+    /* PK_SIM_SUB=1 进入二级页，核对返回栏与 FAB 图标是否都切到「←」。 */
+    if (getenv("PK_SIM_SUB")) pk_ui_nav_set_subpage(true, "诊断");
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
     pk_pfd_imu_t imu; pk_pfd_hsi_t hsi; pk_pfd_alt_tape_t alt;
@@ -288,6 +291,7 @@ int main(int argc, char **argv)
     sim_state_t st = { .t = 0.0f, .roll_bias = 0.0f, .paused = false };
     int  shot_seq  = 0;
     bool toast_on  = false;
+    bool sub_on    = false;
     bool running   = true;
 
     const uint32_t frame_ms = 1000 / TARGET_FPS;
@@ -307,6 +311,11 @@ int main(int argc, char **argv)
                 case SDLK_s:     save_bmp(screen, shot_seq++);  break;
                 /* T 键弹一次 toast：验证它压在 dock / FAB 之上。真机上由
                  * 调平、绑定本机等动作触发。 */
+                /* B 键进出二级页：核对三条退路都能返回。 */
+                case SDLK_b:
+                    sub_on = !sub_on;
+                    pk_ui_nav_set_subpage(sub_on, "诊断");
+                    break;
                 case SDLK_t:
                     toast_on = !toast_on;
                     pk_ui_nav_toast(toast_on ? "已保存" : NULL, false);

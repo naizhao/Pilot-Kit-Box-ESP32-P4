@@ -45,3 +45,17 @@ void pk_ui_nav_on_level(void);
 /* FAB 被拖到新位置后回调，供宿主持久化（固件写 NVS 的 fab_side / fab_y）。
  * y_pct 是 0~100 的相对位置——换屏或旋转后像素值会失效，比例不会。 */
 void pk_ui_nav_on_fab_moved(bool left, int y_pct);
+
+/* ── 二级页面（spec §4.2）───────────────────────────────────────
+ *
+ * 进入 / 退出全屏子页。on=true 时：顶栏出现「← <parent_title>」、FAB 图标
+ * 变 ←、dock 收起且不再可展开。三条退路（顶栏按钮 / FAB / 右滑）同时可用——
+ * 无物理按键的设备上，任何一条失效都不能让用户困在里面。
+ *
+ * 层级最多两层、不做返回栈：子页只能从诊断进入，返回目标唯一确定。
+ */
+void pk_ui_nav_set_subpage(bool on, const char *parent_title);
+bool pk_ui_nav_in_subpage(void);
+
+/* 用户请求返回上一级时回调（三条退路共用）。 */
+void pk_ui_nav_on_back(void);
