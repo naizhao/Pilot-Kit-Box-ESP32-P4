@@ -6,10 +6,11 @@
 CONFIG_IDF_TARGET="esp32p4"
 
 # --- Pilot Kit Box features -------------------------------------------------
-# BLE is on by default — flashing the C6 esp_hosted slave firmware is a
-# one-time per-board setup step (see docs/BUILD.md §3). If you haven't
-# done that step yet (or you're a CI runner without C6 access), set
-# this to n via `idf.py menuconfig` before building.
+# BLE 默认开。C6 需要一次性烧 esp_hosted slave 固件（见
+# docs/hardware/c6_slave_firmware-zh_CN.md），CI 或还没烧的板子可以设 n。
+#
+# 注意：main.c 里 ble_gatt_init() 必须排在 pk_display_init() **之前**，否则
+# DSI PHY 抢 LDO 会让 C6 起不来，表现为整机 26 秒一重启。详见那里的注释。
 CONFIG_PK_BLE_ENABLED=y
 
 # --- ESP32-P4 silicon revision ---------------------------------------------

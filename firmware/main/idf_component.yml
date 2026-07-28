@@ -12,7 +12,16 @@ dependencies:
   # co-processor stacks"），把蓝牙协议栈桥接从主组件拆成了 example component，
   # 现有 ble_gatt.c 按 2.x 的 API 写，升上去链接期会缺 ble_transport_* 强符号。
   # 原先写 '*' 是隐患：任何一次新增依赖都会触发全量重解析，把它悄悄升级。
-  espressif/esp_hosted: '~2.12.7'
+  # 精确锁死，不用 '~'：主机与 C6 从机是**配套协议**，patch 位错开就可能出现
+  # 「SDIO 建链成功、随后 read registers 失败 → Host is resetting itself」的
+  # 24 秒重启循环（真机实测）。C6 那侧烧的是 2.12.7
+  # （见 firmware/tools/flash_c6_hosted.sh 的镜像校验与
+  # docs/hardware/c6_slave_firmware-zh_CN.md），主机就必须是同一个数。
+  #
+  # 这个坑踩过两次，一次比一次隐蔽：'*' 曾把它推到 3.0.5（BT 架构重构、链接
+  # 期缺符号），换成 '~2.12.7' 后仍漂到了 2.12.11。版本约束要卡到从机固件
+  # 能对上的那一位，才算真的锁住。
+  espressif/esp_hosted: '==2.12.7'
   espressif/esp_wifi_remote: '*'
   # LVGL v9 —— 4.3″ 触摸 UI 的控件层。锁小版本而不用 '*'：布局评审要能复现，
   # 绘制细节在小版本之间也会变（模拟器侧同样固定在 v9.5.0）。

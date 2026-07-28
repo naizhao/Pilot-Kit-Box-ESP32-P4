@@ -101,6 +101,51 @@ so the split is still mandatory — even without the UUID the longer
 name + flags alone is now 25 B, which still fits in the 31 B adv
 once UUID is out of the way.)
 
+### 6. 4.3-inch regression: DSI PHY grabs the LDO, C6 never boots (2026-07-28)
+
+After the move to the 4.3-inch MIPI-DSI panel this link broke again, with a
+signature unlike any of the above:
+
+```text
+I (11863) H_SDIO_DRV: Card init success, TRANSPORT_RX_ACTIVE
+I (11865) transport: Waiting for esp_hosted slave to be ready
+I (24926) transport: Not able to connect with ESP-Hosted slave device
+I (26442) H_SDIO_DRV: Host is resetting itself, to avoid any sdio race condition
+```
+
+The SDIO **physical layer is entirely healthy** — CMD5, CIS, Function 1 ready
+bit `IOR: 0x06`, 512-byte blocks, 4-bit negotiation `BUS_WIDTH: 0x42`. What
+never arrives is the slave's INIT event, so the host times out after 13 s,
+resets the slave, hits `failed to read registers` on the retry, and finally
+reboots the whole P4 — a 26-second loop.
+
+Elimination, all measured on hardware:
+
+| Experiment | Result |
+|---|---|
+| esp_hosted 2.12.11 → 2.12.7 (match the C6 image) | still fails |
+| BLE init moved ahead of the PFD render task | still fails |
+| `SDIO_RESET_DELAY_MS` 1500 → 200 | still fails |
+| SDIO clock 40 → 20 MHz | still fails |
+| **Skip the PFD render task** (no LVGL/PPA/GT911/temp sensor) | still fails |
+| **Skip `pk_display_init()`** | **handshake completes in 72 ms** |
+
+The 2.4-inch board, running a line-for-line identical hosted config, receives
+`ESP_PRIV_IF` → `Identified slave [esp32c6]` **32 ms** after
+`Open data path at slave`. That board drives an SPI panel and never touches
+the DSI PHY.
+
+**Root cause**: the DSI PHY claims LDO channel 3 and drives it to 2.5 V
+(`PK_LCD_DSI_PHY_LDO_CHANNEL` / `_MV` in `display.h`). That disturbance is
+enough to keep the freshly-reset C6 from booting. Its SDIO peripheral still
+answers card-layer commands, which makes the failure deeply misleading — it
+looks like the slave is alive when only the peripheral is.
+
+**Fix**: call `ble_gatt_init()` *before* `pk_display_init()` in `main.c`.
+Handshake first, panel second; the extra second lands inside the splash
+window. This ordering is a hard constraint — any future init step that
+touches an LDO or perturbs power must come after the hosted handshake.
+
 ## Verified end-to-end steady-state log
 
 ```

@@ -80,6 +80,63 @@ BLE controller 起来后，`ble_gap_adv_set_fields` 曾返回 `BLE_HS_EINVAL`。
 
 当前做法是：advertisement 放设备名 `Pilot Kit Box-XXXXXX`，scan response 放 128-bit service UUID。
 
+## 6. 4.3″ 板回归：DSI PHY 抢 LDO 让 C6 起不来（2026-07-28）
+
+迁到 4.3″ MIPI-DSI 屏之后这条链路再次断掉，症状与前面几条都不一样：
+
+```text
+I (11863) H_SDIO_DRV: Card init success, TRANSPORT_RX_ACTIVE
+I (11865) transport: Waiting for esp_hosted slave to be ready
+D (11916) H_SDIO_DRV: --- Wait for SDIO intr ---
+I (24926) transport: Not able to connect with ESP-Hosted slave device
+I (26442) H_SDIO_DRV: Host is resetting itself, to avoid any sdio race condition
+```
+
+SDIO **物理层全部正常**——CMD5、CIS、Function 1 就绪位 `IOR: 0x06`、
+块大小 512、4-bit 总线协商 `BUS_WIDTH: 0x42` 一个不缺。卡住的是应用层：
+主机永远等不到 C6 的 INIT event，13 秒超时后复位重试，重试撞上
+`failed to read registers`，最终 hosted 自己把整机重启，26 秒一个循环。
+
+### 定位
+
+排除法，每一步都实测：
+
+| 实验 | 结果 |
+|---|---|
+| esp_hosted 2.12.11 → 2.12.7（与 C6 镜像同版本） | 仍失败 |
+| BLE init 提到 PFD 渲染任务之前 | 仍失败 |
+| `SDIO_RESET_DELAY_MS` 1500 → 200 | 仍失败 |
+| SDIO 时钟 40 → 20 MHz | 仍失败 |
+| **跳过 PFD 渲染任务**（LVGL/PPA/GT911/温度全不跑） | 仍失败 |
+| **跳过 `pk_display_init()`** | **72 ms 内握手成功** |
+
+同时用 2.4″ 板做对照：同一套 hosted 配置（引脚、slot、复位极性、队列大小
+逐行相同），`Open data path at slave` 之后 **32 ms** 就收到
+`Received ESP_PRIV_IF type message` → `Identified slave [esp32c6]`。
+那块板走 SPI 屏，根本不碰 DSI。
+
+### 根因
+
+DSI PHY 要独占 **LDO channel 3 并把它拉到 2.5 V**
+（`display.h` 的 `PK_LCD_DSI_PHY_LDO_CHANNEL` / `_MV`）。这一下扰动足以让
+刚被 GPIO54 复位、正在启动的 C6 起不来：它的 SDIO 外设仍能应答卡层命令
+（那部分早就绪），但上层固件跑不到发 INIT event 那一步。
+
+于是现象极具误导性——看起来「C6 在响应」，实际上响应的只是外设。排查时
+一度怀疑 C6 没烧 slave 固件，其实固件好好的。
+
+### 修复
+
+`main.c` 里把 `ble_gatt_init()` 排到 `pk_display_init()` **之前**。先握手、
+BLE 起来，再点屏。开机多花的那一秒落在 splash 显示窗口内，用户看不出差别。
+
+改完实测：`Identified slave [esp32c6]` → `advertising as "Pilot Kit Box-XXXXXX"`
+→ `ST7701 DSI ready` → `PFD render task running`，BLE 与显示同时正常，
+连续运行不再重启。
+
+**注意**：这个顺序是硬约束，不是风格偏好。以后往 app_main 里加初始化步骤时，
+任何会动 LDO 或造成电源扰动的操作都得排在 hosted 握手之后。
+
 ## 当前正确配置
 
 关键配置应包含：

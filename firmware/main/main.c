@@ -326,6 +326,48 @@ void app_main(void)
     ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
     assert(ok == pdTRUE);
 
+    /* ESP-Hosted 握手必须排在 MIPI-DSI 之前——顺序反了整机会 26 秒一重启。
+     *
+     * 症状：SDIO 物理层一切正常（CMD5、CIS、Function 1 就绪位、4-bit 协商
+     * 全部成功），但主机在 "Waiting for esp_hosted slave to be ready" 上死等，
+     * 13 秒超时后复位从机重试，重试撞上 "failed to read registers"，最后
+     * hosted 自己 "Host is resetting itself" 把整机重启。
+     *
+     * 定位过程：跳过 pk_display_init() 后握手在 72 ms 内完成；只跳过 PFD
+     * 渲染任务（LVGL / PPA / GT911 / 温度传感器全不跑）则照旧失败——所以问题
+     * 不在渲染负载，就在点屏本身。同一套 hosted 配置在 2.4″ 板上一直是好的，
+     * 而那块板走 SPI 屏、根本不碰 DSI。
+     *
+     * 机理：DSI PHY 要独占 LDO channel 3 并把它拉到 2.5 V
+     * （display.h 的 PK_LCD_DSI_PHY_LDO_CHANNEL / _MV）。这一下扰动足以让
+     * 刚被 GPIO54 复位、正在启动的 C6 起不来——它的 SDIO 外设仍能应答卡层
+     * 命令，但上层固件跑不到发 INIT event 那一步，于是主机永远等不到。
+     *
+     * 所以先让 hosted 握完手、BLE 起来，再点屏。开机多花的这一秒正好落在
+     * splash 显示窗口里，用户看不出差别。
+     */
+    /* BLE init. Requires the on-board ESP32-C6 to have been
+     * pre-flashed with the matching esp_hosted slave firmware (one-time
+     * board setup, see docs/BUILD.md §3). The hosted vhci_drv.c uses
+     * ESP_ERROR_CHECK() internally so if C6 doesn't respond, the whole
+     * P4 firmware aborts — there's no graceful path. Default is on
+     * (CONFIG_PK_BLE_ENABLED=y); turn off via menuconfig if you haven't
+     * flashed C6 yet or are running CI without it. */
+#if CONFIG_PK_BLE_ENABLED
+    esp_err_t ble_err = ble_gatt_init();
+    if (ble_err != ESP_OK) {
+        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
+                 esp_err_to_name(ble_err));
+    } else {
+        ESP_LOGI(TAG, "BLE GATT service up — advertised name landed in"
+                      " on_sync (see 'ble_gatt: advertising as ...')");
+    }
+#else
+    ESP_LOGI(TAG, "BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — "
+                  "UART + file sinks only. Flash C6 esp_hosted slave + "
+                  "re-enable in menuconfig once you're ready.");
+#endif
+
     /* Bring up the LCD and paint the boot splash (logo +
      * "Booting ..." text). The splash stays on screen until the PFD
      * render task starts — we time-stamp here and enforce a minimum
@@ -422,25 +464,4 @@ void app_main(void)
         }
     }
 
-    /* BLE init. Requires the on-board ESP32-C6 to have been
-     * pre-flashed with the matching esp_hosted slave firmware (one-time
-     * board setup, see docs/BUILD.md §3). The hosted vhci_drv.c uses
-     * ESP_ERROR_CHECK() internally so if C6 doesn't respond, the whole
-     * P4 firmware aborts — there's no graceful path. Default is on
-     * (CONFIG_PK_BLE_ENABLED=y); turn off via menuconfig if you haven't
-     * flashed C6 yet or are running CI without it. */
-#if CONFIG_PK_BLE_ENABLED
-    esp_err_t ble_err = ble_gatt_init();
-    if (ble_err != ESP_OK) {
-        ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
-                 esp_err_to_name(ble_err));
-    } else {
-        ESP_LOGI(TAG, "BLE GATT service up — advertised name landed in"
-                      " on_sync (see 'ble_gatt: advertising as ...')");
-    }
-#else
-    ESP_LOGI(TAG, "BLE disabled at build time (CONFIG_PK_BLE_ENABLED=n) — "
-                  "UART + file sinks only. Flash C6 esp_hosted slave + "
-                  "re-enable in menuconfig once you're ready.");
-#endif
 }
