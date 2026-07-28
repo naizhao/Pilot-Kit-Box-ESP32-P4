@@ -21,3 +21,11 @@ bool pk_ui_nav_dock_open(void);
 
 /* FAB 是否处于按下态（供模拟器核对命中区）。 */
 bool pk_ui_nav_fab_pressed(void);
+
+/* ── 由导航层回调出去的动作 ──────────────────────────────────────
+ *
+ * 导航层只管「点了哪个」，不管「切页要做什么」——后者在固件里是
+ * pk_ui_set_mode()，在模拟器里只是打印一行。弱符号默认实现放在
+ * pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
+void pk_ui_nav_on_tab(int tr_id);
+void pk_ui_nav_on_level(void);

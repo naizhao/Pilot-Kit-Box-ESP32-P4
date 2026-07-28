@@ -200,9 +200,15 @@ static int run_headless(float at_sec, const char *out)
         pk_pfd_leftbox_render(fb, &lb);
     }
 
-    /* 合成两帧：LVGL 首帧只画屏幕底色，canvas 要到第二帧才落到 s_screen。 */
-    pk_sim_lv_render(33);
-    const uint16_t *shot = pk_sim_lv_render(33);
+    /* 多合成几帧：首帧 LVGL 只画屏幕底色，canvas 要到第二帧才落到 s_screen；
+     * 而 dock 的滑出动画有 180 ms，两帧远不够，截出来会是它还在屏外的样子。
+     * 12 帧 ≈ 400 ms，动画收敛且离 5 s 自动收起还远。 */
+    const uint16_t *shot = NULL;
+    /* PK_SIM_FRAMES 可加长合成帧数，用来验证「5 s 无操作自动收起」这类
+     * 靠定时器触发的行为——默认 12 帧只够动画收敛。 */
+    const char *nf = getenv("PK_SIM_FRAMES");
+    const int frames = nf ? atoi(nf) : 12;
+    for (int i = 0; i < frames; ++i) shot = pk_sim_lv_render(33);
 
     SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(
         0, PK_DISPLAY_W, PK_DISPLAY_H, 16, SDL_PIXELFORMAT_RGB565);

@@ -12,6 +12,8 @@
 
 #include "pk_ui_nav.h"
 
+#include <stdint.h>
+
 #include "lvgl.h"
 
 #include "display.h"
@@ -41,6 +43,7 @@
 
 static lv_obj_t *s_fab;
 static lv_obj_t *s_dock;
+static size_t    s_active_tab;   /* 当前高亮的页签，索引进 DOCK_TABS */
 static bool      s_pressed;
 static bool      s_dock_open;
 
@@ -76,6 +79,48 @@ static const char *tr(pk_tr_id_t id)
     return pk_i18n_text(id);
 }
 
+/* 选中态跟随当前页：只有被选中的页签用亮色，其余压暗。
+ *
+ * 页签本身不持有「哪一页」的状态——真值在 ui_state 里（pk_ui_get_mode），
+ * 这里只是把它映射成颜色。否则切页路径一多（dock 点击、跨层跳转、开机
+ * 恢复），两处状态迟早对不上。 */
+static lv_obj_t *s_tabs[DOCK_TAB_CNT];
+
+static void tab_refresh(void)
+{
+    for (size_t i = 0; i < DOCK_TAB_CNT; ++i) {
+        if (!s_tabs[i]) continue;
+        lv_obj_t *lbl = lv_obj_get_child(s_tabs[i], 0);
+        if (lbl) lv_obj_set_style_text_color(
+            lbl, i == s_active_tab ? COL_TAB_ON : COL_TAB_TXT, 0);
+    }
+}
+
+static void tab_event_cb(lv_event_t *e)
+{
+    size_t idx = (size_t)(uintptr_t)lv_event_get_user_data(e);
+    if (idx >= DOCK_TAB_CNT) return;
+
+    s_active_tab = idx;
+    tab_refresh();
+    pk_ui_nav_on_tab(DOCK_TABS[idx]);
+
+    /* 切完页就收起：dock 是导航入口不是常驻栏，留着只会挡住刚切过去的内容。 */
+    pk_ui_nav_set_dock_open(false);
+}
+
+/* 「调平」不是切页，是改变机器状态的动作：把当前姿态设为水平基准。
+ *
+ * spec §3.2 要求长按 1 s 才触发（ACT_LEVEL_HINT 就是那句提示），短按只弹
+ * 提示——误触把地平线归零，飞行中是要命的。这里先接短按提示这一半，长按
+ * 判定等触摸驱动上真机后一并调（LVGL 的 LONG_PRESSED 阈值要按实际手感定）。 */
+static void act_event_cb(lv_event_t *e)
+{
+    (void)e;
+    pk_ui_nav_on_level();
+    pk_ui_nav_set_dock_open(false);
+}
+
 static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
 {
     lv_obj_t *b = lv_button_create(parent);
@@ -94,6 +139,55 @@ static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
     lv_obj_set_style_text_color(l, col, 0);
     lv_obj_center(l);
     return b;
+}
+
+/* ── 展开动画与自动收起 ────────────────────────────────────────
+ *
+ * dock 从 FAB 那侧滑出，而不是凭空出现：飞行员的余光需要一个「它从哪来」
+ * 的线索，硬切会让人以为画面闪了一下。180 ms 是「看得出是滑出、又不至于
+ * 等」的区间；收起同样走动画，否则一半有动效一半没有会更怪。
+ *
+ * spec §3.2 的收起条件有两个：再点 FAB，或 5 s 无操作。后者靠 LVGL 定时器，
+ * 每次与 dock 发生交互就重排——飞行中忘记收起是常态，不能让它一直盖着 PFD。 */
+#define DOCK_ANIM_MS      180
+#define DOCK_IDLE_MS     5000
+
+static lv_timer_t *s_idle_timer;
+
+static int32_t dock_hidden_x(void)
+{
+    /* 收起时整条藏到屏幕右缘之外（FAB 那一侧），只差一点就完全不可见。 */
+    return PK_DISPLAY_W;
+}
+
+static int32_t dock_shown_x(void)
+{
+    const int w = (int)DOCK_TAB_CNT * DOCK_TAB_W + DOCK_SEP_W + 1 + DOCK_TAB_W;
+    return PK_DISPLAY_W - (FAB_MARGIN + FAB_D + DOCK_GAP) - w;
+}
+
+static void dock_anim_x_cb(void *obj, int32_t v)
+{
+    lv_obj_set_x((lv_obj_t *)obj, v);
+}
+
+static void dock_anim_done_cb(lv_anim_t *a)
+{
+    /* 收起动画结束后才真正隐藏：动画过程中必须可见，否则一开始就没得看。 */
+    if (!s_dock_open) lv_obj_add_flag((lv_obj_t *)a->var, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void idle_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    pk_ui_nav_set_dock_open(false);
+}
+
+/* 每次与 dock 交互都把 5 s 倒计时归零。 */
+static void dock_touch_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_idle_timer) lv_timer_reset(s_idle_timer);
 }
 
 static void dock_build(lv_obj_t *scr)
@@ -122,8 +216,10 @@ static void dock_build(lv_obj_t *scr)
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     for (size_t i = 0; i < DOCK_TAB_CNT; ++i) {
-        /* 首项按「当前在 PFD 页」高亮。 */
-        make_tab(s_dock, tr(DOCK_TABS[i]), i == 0 ? COL_TAB_ON : COL_TAB_TXT);
+        s_tabs[i] = make_tab(s_dock, tr(DOCK_TABS[i]),
+                             i == s_active_tab ? COL_TAB_ON : COL_TAB_TXT);
+        lv_obj_add_event_cb(s_tabs[i], tab_event_cb, LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)i);
     }
 
     /* 分隔线把导航与动作分开。「调平」会重设姿态基准，是改变机器状态的
@@ -137,13 +233,18 @@ static void dock_build(lv_obj_t *scr)
     lv_obj_set_style_margin_left(sep, DOCK_SEP_W / 2, 0);
     lv_obj_set_style_margin_right(sep, DOCK_SEP_W / 2, 0);
 
-    make_tab(s_dock, tr(PK_TR_ACT_LEVEL), COL_ACT);
+    lv_obj_t *act = make_tab(s_dock, tr(PK_TR_ACT_LEVEL), COL_ACT);
+    lv_obj_add_event_cb(act, act_event_cb, LV_EVENT_CLICKED, NULL);
 
-    /* dock 右端贴着 FAB 左侧，垂直与 FAB 同心——展开时像是从钮里推出来的。 */
-    lv_obj_align(s_dock, LV_ALIGN_TOP_RIGHT,
-                 -(FAB_MARGIN + FAB_D + DOCK_GAP),
-                 FAB_DEFAULT_Y + (FAB_D - DOCK_H) / 2);
+    /* 垂直与 FAB 同心；水平初始落在屏外，由动画推进来。 */
+    lv_obj_set_y(s_dock, FAB_DEFAULT_Y + (FAB_D - DOCK_H) / 2);
+    lv_obj_set_x(s_dock, dock_hidden_x());
     lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+
+    /* 5 s 无操作自动收起。先建后停——LVGL 的定时器创建即运行。 */
+    s_idle_timer = lv_timer_create(idle_timer_cb, DOCK_IDLE_MS, NULL);
+    lv_timer_pause(s_idle_timer);
+    lv_obj_add_event_cb(s_dock, dock_touch_cb, LV_EVENT_PRESSED, NULL);
 }
 
 static void fab_event_cb(lv_event_t *e)
@@ -212,7 +313,41 @@ bool pk_ui_nav_fab_pressed(void) { return s_pressed; }
 
 void pk_ui_nav_set_dock_open(bool open)
 {
+    if (s_dock == NULL) return;
     s_dock_open = open;
-    if (open) lv_obj_remove_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
-    else      lv_obj_add_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+
+    if (open) {
+        lv_obj_remove_flag(s_dock, LV_OBJ_FLAG_HIDDEN);
+        if (s_idle_timer) lv_timer_resume(s_idle_timer), lv_timer_reset(s_idle_timer);
+    } else if (s_idle_timer) {
+        /* 收起后不必再倒计时，否则定时器空转还会在下次展开时立刻触发。 */
+        lv_timer_pause(s_idle_timer);
+    }
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_dock);
+    lv_anim_set_exec_cb(&a, dock_anim_x_cb);
+    lv_anim_set_completed_cb(&a, dock_anim_done_cb);
+    lv_anim_set_time(&a, DOCK_ANIM_MS);
+    /* ease-out：起步快、收尾慢，观感像被「推」出来而不是匀速平移。 */
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_values(&a, lv_obj_get_x(s_dock),
+                       open ? dock_shown_x() : dock_hidden_x());
+    lv_anim_start(&a);
+}
+
+/* ── 默认动作实现（弱符号）────────────────────────────────────────
+ *
+ * 导航层不该知道宿主是固件还是模拟器：切页在固件里要调 pk_ui_set_mode()，
+ * 在模拟器里只需打印一行。做成弱符号，宿主想接管就自己定义一个同名强符号，
+ * 不接管也能链接通过——比在这里 #ifdef 分平台干净。
+ */
+__attribute__((weak)) void pk_ui_nav_on_tab(int tr_id)
+{
+    LV_UNUSED(tr_id);
+}
+
+__attribute__((weak)) void pk_ui_nav_on_level(void)
+{
 }
