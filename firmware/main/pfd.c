@@ -119,6 +119,7 @@ static void pfd_task(void *arg)
     uint32_t frames_in_window = 0;
     int64_t  acc_draw_us = 0, acc_lvgl_us = 0;   /* 诊断：分段耗时 */
     int64_t  acc_att_us = 0, acc_bar_us = 0, acc_tape_us = 0, acc_hsi_us = 0;
+    int64_t  last_tick_us = 0;      /* 上一次喂给 LVGL 的时间戳 */
 
     while (1) {
         TickType_t frame_start = xTaskGetTickCount();
@@ -370,7 +371,19 @@ static void pfd_task(void *arg)
          * 直接调 flush_full 会跳过控件层，只推 PFD。 */
         int64_t t_draw_end = esp_timer_get_time();
         pk_lv_port_invalidate();
-        pk_lv_port_tick(33);
+        /* 必须喂**真实**帧间隔。此前硬编码 33 ms，而真机一帧要 100 ms，于是
+         * LVGL 眼中的时间只有真实的三分之一：180 ms 的 dock 动画实际跑满
+         * 550 ms，调平长按 1 s 要按满 3 s，dock 的 5 s 自动收起变成 15 s。
+         * 这类「感觉有点慢」的问题全是同一个根因。 */
+        uint32_t elapsed_ms = 33;
+        if (last_tick_us != 0) {
+            int64_t d = (t_draw_end - last_tick_us) / 1000;
+            /* 夹一下：首帧与调试断点会给出离谱的间隔，直接喂给 LVGL 会让
+             * 动画一步跳到终点、定时器成批到期。 */
+            elapsed_ms = (d < 1) ? 1 : (d > 500 ? 500 : (uint32_t)d);
+        }
+        last_tick_us = t_draw_end;
+        pk_lv_port_tick(elapsed_ms);
         int64_t t_lvgl_end = esp_timer_get_time();
         acc_draw_us += t_draw_end - t_frame0;
         acc_lvgl_us += t_lvgl_end - t_draw_end;
