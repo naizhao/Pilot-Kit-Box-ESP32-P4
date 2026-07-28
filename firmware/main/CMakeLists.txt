@@ -59,6 +59,7 @@ idf_component_register(
         "pk_ui_nav.c"
         "pk_ui_nav_host.c"
         "touch_gt911.c"
+        "soc_temp.c"
         "config_fab.c"
         "pfd_hsi_traffic.c"
         "pfd_statusbar.c"
@@ -91,6 +92,7 @@ idf_component_register(
         esp_driver_ledc          # 板载 AP3032 FB 注入式反相 PWM
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
         esp_driver_gpio          # BNO085 RST pin
+        esp_driver_tsens         # 片内结温 → 顶栏过热告警（soc_temp.c）
         nvs_flash                # software-tare persistence (imu_task.c)
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about

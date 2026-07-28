@@ -36,4 +36,23 @@ menu "Pilot Kit Box"
             displaying its altitude / VS / GS. Typical transponders
             broadcast position/velocity at 1-2 Hz, so 5 s is generous.
 
+    config PK_SOC_TEMP_WARN_C
+        int "SoC over-temperature warning threshold (C)"
+        default 85
+        range 40 98
+        help
+            Top-bar TEMP indicator lights up above this SoC die temperature
+            and clears 7 C below it (hysteresis, so it does not flicker).
+
+            Capped at 98 C because the sensor runs in the [20, 100] hardware
+            range (P4 offers only fixed ranges; see soc_temp.c). A threshold
+            at or above the range ceiling could never be reached.
+
+            This is a PROXY for overall thermal state, not the panel
+            temperature. The panel is rated 70 C (see box-4.3-ux-spec.md
+            §335) but the die always runs hotter than the glass, by an
+            amount that depends on the enclosure and the load. Calibrate
+            against a real soak test and set this to whatever die reading
+            corresponds to the panel approaching its own limit.
+
 endmenu

@@ -45,6 +45,7 @@
 #include "pk_ui_nav.h"
 #include "pk_ui_nav_host.h"
 #include "touch_gt911.h"
+#include "soc_temp.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -104,6 +105,7 @@ static void pfd_task(void *arg)
     /* 先有输入设备再建控件：nav 层那些 lv_indev_active() 取的是「当前正在
      * 上报的设备」，一个都没注册的话 dock 与 FAB 全是死的。 */
     (void)pk_touch_init();
+    (void)pk_soc_temp_init();
     pk_ui_nav_init();
     /* 建完 FAB 才能把它摆回上次的落点。 */
     pk_ui_nav_host_init();
@@ -224,8 +226,10 @@ static void pfd_task(void *arg)
              * 的「P2 · 顶栏状态位数据源接入」：
              *   TODO(P2-1): rec_active   ← record_sink_file_stats() 加时间窗
              *   TODO(P2-2): batt_*       ← 需要 ADC 分压 + 充电检测脚，硬件未定
-             *   TODO(P2-3): temp_warn/_c ← 需接 ESP-IDF temperature_sensor 驱动
-             *                              （baro 的温度是环境温度，不是芯片温度）*/
+             *
+             * temp（P2-3）已接：soc_temp.c 读片内结温，1 Hz 采样 + 滞回。
+             * 注意不能改用 baro 的温度——那是 BMP388 测的座舱环境温度，与
+             * 「设备自己在过热」是两回事，暴晒时能差二三十度。*/
             pk_pfd_status_t stat = {
                 .imu_valid      = yaw_valid,
                 .yaw_deg        = yaw_deg,
@@ -236,6 +240,7 @@ static void pfd_task(void *arg)
                 /* 顶栏动效（充电动画）的相位基准，必须是单调时钟而非帧计数。 */
                 .uptime_ms      = (uint32_t)(now_us / 1000),
             };
+            stat.temp_warn = pk_soc_temp_get(&stat.temp_c);
             pk_pfd_hsi_t hsi = {
                 .imu_valid = yaw_valid,
                 .yaw_deg   = yaw_deg,
