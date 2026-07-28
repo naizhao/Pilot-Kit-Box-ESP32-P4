@@ -1,0 +1,99 @@
+/*
+ * pk_ui_nav_host.c — 把导航层的动作接到固件上。
+ *
+ * pk_ui_nav.c 是平台无关的（固件与模拟器编同一份），它只报告「用户点了哪个
+ * 页签」「长按了调平」，不知道这些在固件里意味着什么。那些弱符号回调的强符号
+ * 实现就落在这里。
+ *
+ * 单独一个文件而不是塞进 pfd.c：pfd.c 的职责是画 PFD 那一页，让它顺带管全局
+ * 页面切换与 NVS，下次找「点了设置为什么没反应」时不会有人想到去翻它。
+ *
+ * 模拟器不编译本文件，于是那边继续用弱符号的空实现——正是这套机制存在的理由。
+ */
+#include "pk_ui_nav.h"
+
+#include "esp_log.h"
+
+#include "config_fab.h"
+#include "i18n_catalog.h"
+#include "imu_task.h"
+#include "ui_state.h"
+
+static const char *TAG = "nav_host";
+
+/* 页签 → 页面。
+ *
+ * 导航层回出来的是 i18n 词条 id 而不是数组下标：下标会随 DOCK_TABS 的排序
+ * 变化而变（这一版就刚调过顺序），词条 id 不会。用 id 做键，改排版不会悄悄
+ * 把「关于」接到「诊断」上去。
+ */
+static pk_ui_mode_t mode_for_tab(int tr_id)
+{
+    switch (tr_id) {
+    case PK_TR_NAV_PFD:      return PK_UI_MODE_PFD;
+    case PK_TR_NAV_TRAFFIC:  return PK_UI_MODE_TRAFFIC;
+    case PK_TR_NAV_LIST:     return PK_UI_MODE_ADSB_LIST;
+    case PK_TR_NAV_DIAG:     return PK_UI_MODE_DIAG;
+    case PK_TR_NAV_SETTINGS: return PK_UI_MODE_SETTINGS;
+    case PK_TR_NAV_ABOUT:    return PK_UI_MODE_ABOUT;
+    default:                 return PK_UI_MODE_PFD;
+    }
+}
+
+void pk_ui_nav_on_tab(int tr_id)
+{
+    pk_ui_mode_t m = mode_for_tab(tr_id);
+    ESP_LOGI(TAG, "tab -> mode %d", (int)m);
+    pk_ui_set_mode(m);
+}
+
+/*
+ * 调平：把当前姿态设为水平基准并落盘。
+ *
+ * 语义与 TARE 键长按完全一致（见 main.c 的按键分发），照抄那一段——同一个
+ * 动作在两个入口上行为必须一样，否则「我按键调过了，怎么屏上又要调一次」。
+ *
+ * 用 persist 而不是 tare_now：这个入口在 dock 里，用户要按满 1 s 才会走到
+ * 这儿，那是明确的「就按现在这个姿态定下来」，理应活过重启。
+ */
+void pk_ui_nav_on_level(void)
+{
+    esp_err_t e = pk_imu_tare_persist();
+    pk_ui_toast_show(e == ESP_OK ? PK_TR_TOAST_TARE_SAVED
+                                 : PK_TR_TOAST_TARE_SAVE_FAIL,
+                     e != ESP_OK);
+    ESP_LOGI(TAG, "level (tare persist) -> %s", esp_err_to_name(e));
+}
+
+/* 短按：多数人会以为点一下就行，得告诉他要按住。不是错误，用 false。 */
+void pk_ui_nav_on_level_hint(void)
+{
+    pk_ui_toast_show(PK_TR_ACT_LEVEL_HINT, false);
+}
+
+void pk_ui_nav_on_fab_moved(bool left, int y_pct)
+{
+    pk_fab_pos_set(left, y_pct);
+}
+
+/*
+ * 二级页面返回。
+ *
+ * 目标写死成诊断页而不是记一个「来时的页面」：spec §4.3 定的是最多两层、
+ * 且子页只能从诊断进入，所以返回目标唯一确定。真要留返回栈，得先有第二个
+ * 能进子页的入口——那时再加，现在加只是替一个不存在的场景做准备。
+ */
+void pk_ui_nav_on_back(void)
+{
+    pk_ui_set_mode(PK_UI_MODE_DIAG);
+}
+
+void pk_ui_nav_host_init(void)
+{
+    pk_config_fab_load();
+    pk_ui_nav_set_fab_side(pk_fab_left());
+
+    /* 没存过就不设，让导航层保持它自己算的 FAB_DEFAULT_Y。 */
+    int y = pk_fab_y_pct();
+    if (y >= 0) pk_ui_nav_set_fab_y_pct(y);
+}

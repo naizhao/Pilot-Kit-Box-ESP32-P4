@@ -43,6 +43,7 @@
 #include "lv_port.h"
 #include "pfd_infobox.h"
 #include "pk_ui_nav.h"
+#include "pk_ui_nav_host.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -100,6 +101,8 @@ static void pfd_task(void *arg)
         vTaskDelete(NULL);
     }
     pk_ui_nav_init();
+    /* 建完 FAB 才能把它摆回上次的落点。 */
+    pk_ui_nav_host_init();
 
     /* Big stack-eaters live here as file-static so they don't blow the
      * task stack. Pinned to PSRAM (.ext_ram.bss) so they don't compete

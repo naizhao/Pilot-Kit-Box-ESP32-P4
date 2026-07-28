@@ -20,6 +20,10 @@ void pk_ui_nav_set_dock_open(bool open);
 
 /* 设定 FAB 吸附在哪一侧。宿主开机时用它恢复 NVS 里的 fab_side。 */
 void pk_ui_nav_set_fab_side(bool left);
+
+/* 设定 FAB 的垂直位置，与 pk_ui_nav_on_fab_moved() 回出去的 y_pct 同一单位。
+ * 侧与高度是两个正交的量，分开设——只想换边时不必先把高度读出来再写回去。 */
+void pk_ui_nav_set_fab_y_pct(int y_pct);
 bool pk_ui_nav_dock_open(void);
 
 /* FAB 是否处于按下态（供模拟器核对命中区）。 */
@@ -40,7 +44,15 @@ void pk_ui_nav_toast(const char *msg, bool is_error);
  * pk_ui_set_mode()，在模拟器里只是打印一行。弱符号默认实现放在
  * pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
 void pk_ui_nav_on_tab(int tr_id);
+
+/* 「调平」长按满 1 s，真正执行（固件里是 pk_imu_tare_persist()）。 */
 void pk_ui_nav_on_level(void);
+
+/* 「调平」被短按——用户多半以为点一下就行。宿主应提示「需长按 1 秒」
+ * （固件走 pk_ui_toast_show(PK_TR_ACT_LEVEL_HINT)）。
+ *
+ * 提示不由导航层自己弹：toast 的唯一来源是 ui_state，而它不参与模拟器编译。 */
+void pk_ui_nav_on_level_hint(void);
 
 /* FAB 被拖到新位置后回调，供宿主持久化（固件写 NVS 的 fab_side / fab_y）。
  * y_pct 是 0~100 的相对位置——换屏或旋转后像素值会失效，比例不会。 */

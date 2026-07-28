@@ -57,6 +57,8 @@ idf_component_register(
         "lv_font_zh.c"
         "lv_port.c"
         "pk_ui_nav.c"
+        "pk_ui_nav_host.c"
+        "config_fab.c"
         "pfd_hsi_traffic.c"
         "pfd_statusbar.c"
         "pfd_speed_tape.c"

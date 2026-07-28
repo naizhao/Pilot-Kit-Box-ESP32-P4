@@ -125,14 +125,70 @@ static void tab_event_cb(lv_event_t *e)
 
 /* 「调平」不是切页，是改变机器状态的动作：把当前姿态设为水平基准。
  *
- * spec §3.2 要求长按 1 s 才触发（ACT_LEVEL_HINT 就是那句提示），短按只弹
- * 提示——误触把地平线归零，飞行中是要命的。这里先接短按提示这一半，长按
- * 判定等触摸驱动上真机后一并调（LVGL 的 LONG_PRESSED 阈值要按实际手感定）。 */
-static void act_event_cb(lv_event_t *e)
+ * spec §3.2 要求长按 1 s 才触发，短按只弹提示——误触把地平线归零，飞行中是
+ * 要命的。四个状态各有归属：
+ *
+ *     按下       起 1 s 单次定时器
+ *     满 1 s     on_level()，真正执行
+ *     提前松手   撤销定时器 + on_level_hint()，告诉用户「要长按」
+ *     滑出按钮   同上（PRESS_LOST）
+ *
+ * 不用 LVGL 的 LV_EVENT_LONG_PRESSED：它的阈值 lv_indev_set_long_press_time()
+ * 是 **indev 全局**的，改了会一并影响 FAB 的起拖判定（那里要的是 200 ms）。
+ * 一个按钮的手感不该绑架整个输入设备，所以这里自己计时。
+ *
+ * 提示为什么走回调而不在这里弹：toast 的唯一来源是 ui_state 的
+ * pk_ui_toast_show()（带时间戳、可在中断里调），而 ui_state.c 不参与模拟器
+ * 编译。导航层只报告「用户短按了调平」，怎么提示由宿主决定。 */
+#define ACT_LEVEL_HOLD_MS 1000
+
+static lv_timer_t *s_level_timer;
+/* dock 的 5 s 自动收起（DOCK_IDLE_MS）。与上面那个互相牵制：按住调平期间
+ * 要顶住它，否则按钮会在手指底下消失。 */
+static lv_timer_t *s_idle_timer;
+
+static void level_fire_cb(lv_timer_t *t)
 {
-    (void)e;
+    LV_UNUSED(t);
+    /* 单次定时器，回调返回后 LVGL 自行删除，这里只能置空不能再 delete。 */
+    s_level_timer = NULL;
     pk_ui_nav_on_level();
     pk_ui_nav_set_dock_open(false);
+}
+
+static void level_timer_cancel(void)
+{
+    if (s_level_timer == NULL) return;
+    lv_timer_delete(s_level_timer);
+    s_level_timer = NULL;
+}
+
+static void act_event_cb(lv_event_t *e)
+{
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_PRESSED:
+        level_timer_cancel();          /* 上一次的残留，正常不该有 */
+        s_level_timer = lv_timer_create(level_fire_cb, ACT_LEVEL_HOLD_MS, NULL);
+        if (s_level_timer) lv_timer_set_repeat_count(s_level_timer, 1);
+        /* 按住不算「操作」，5 s 自动收起会照常走完。dock 一收，按钮连同
+         * 手指下的命中区一起消失——运气好收到 PRESS_LOST 是取消，运气不好
+         * 就是「我什么都没干，地平线自己归零了」。按住期间把它顶回去。 */
+        if (s_idle_timer) lv_timer_reset(s_idle_timer);
+        break;
+
+    case LV_EVENT_RELEASED:
+    case LV_EVENT_PRESS_LOST:
+        /* 定时器还在 = 没满 1 s，属于短按。已触发的话 fire_cb 早已置空，
+         * 于是这里天然不会在触发后再补一条「要长按」的提示。 */
+        if (s_level_timer) {
+            level_timer_cancel();
+            pk_ui_nav_on_level_hint();
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
@@ -165,8 +221,6 @@ static lv_obj_t *make_tab(lv_obj_t *parent, const char *text, lv_color_t col)
  * 每次与 dock 发生交互就重排——飞行中忘记收起是常态，不能让它一直盖着 PFD。 */
 #define DOCK_ANIM_MS      180
 #define DOCK_IDLE_MS     5000
-
-static lv_timer_t *s_idle_timer;
 
 static int dock_width(void)
 {
@@ -364,7 +418,8 @@ static void dock_build(lv_obj_t *scr)
     lv_obj_set_style_margin_right(sep, DOCK_SEP_W / 2, 0);
 
     lv_obj_t *act = make_tab(s_dock, tr(PK_TR_ACT_LEVEL), COL_ACT);
-    lv_obj_add_event_cb(act, act_event_cb, LV_EVENT_CLICKED, NULL);
+    /* 要 PRESSED/RELEASED/PRESS_LOST 三种，CLICKED 给不了按压时长。 */
+    lv_obj_add_event_cb(act, act_event_cb, LV_EVENT_ALL, NULL);
 
     /* 垂直与 FAB 同心；水平初始落在屏外，由动画推进来。 */
     lv_obj_set_y(s_dock, FAB_DEFAULT_Y + (FAB_D - DOCK_H) / 2);
@@ -524,6 +579,16 @@ void pk_ui_nav_set_fab_side(bool left)
     fab_apply_pos();
 }
 
+void pk_ui_nav_set_fab_y_pct(int y_pct)
+{
+    if (y_pct < 0)   y_pct = 0;
+    if (y_pct > 100) y_pct = 100;
+    /* on_fab_moved 那侧除以同一个量，两边必须对称，否则每存取一轮就漂一点。 */
+    s_fab_y = y_pct * (PK_DISPLAY_H - FAB_D) / 100;
+    if (s_fab_y < PFD_BAR_BOT) s_fab_y = PFD_BAR_BOT;
+    fab_apply_pos();
+}
+
 void pk_ui_nav_set_dock_open(bool open)
 {
     if (s_dock == NULL) return;
@@ -562,6 +627,10 @@ __attribute__((weak)) void pk_ui_nav_on_tab(int tr_id)
 }
 
 __attribute__((weak)) void pk_ui_nav_on_level(void)
+{
+}
+
+__attribute__((weak)) void pk_ui_nav_on_level_hint(void)
 {
 }
 
