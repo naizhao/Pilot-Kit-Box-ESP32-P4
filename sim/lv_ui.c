@@ -74,9 +74,14 @@ void pk_sim_ui_init(void)
     lv_obj_set_style_shadow_opa(s_fab, LV_OPA_50, 0);
 
     /* 图标用 LVGL 内置符号，先把布局跑通；spec 要的 ☰ 与二级页的 ← 等
-     * 中文字体管线接上后再换（阶段 2 后半程）。 */
+     * 中文字体管线接上后再换（阶段 2 后半程）。
+     *
+     * 字号必须显式给：LVGL 默认是 Montserrat 14，在 56 px 的钮里只占四分之一，
+     * 看着像颗小痣。视觉稿 .fb 定的图标是 3.2 mm，按 8.54 px/mm 算得 27 px，
+     * 内置字号里 28 最接近。 */
     lv_obj_t *lbl = lv_label_create(s_fab);
     lv_label_set_text(lbl, LV_SYMBOL_LIST);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_center(lbl);
 
