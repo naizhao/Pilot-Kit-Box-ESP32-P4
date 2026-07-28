@@ -1,27 +1,28 @@
 /*
- * about_page.c — "About" screen renderer.
+ * about_page.c — 「关于」页。
  *
- * Layout (320 × 240 landscape):
+ * 定位（spec §5.6）：**纯静态身份**。logo / 版本 / 构建时间 / 依赖版本 /
+ * 硬件型号 + 二维码，仅此而已。
  *
- *   y =   0   ┌────────────────────────────────────────────────────┐
- *             │ ABOUT                  (cyan)                       │  header
- *   y =  20   ├────────────────────────────────────────────────────┤
- *             │ Project : PILOT KIT BOX                             │
- *             │ Version : v0.8.0-ce49d37 (version.txt + git sha)    │
- *             │ Build   : May 20 2026 14:30:00                      │
- *             │ ESP-IDF : v6.0.1                                    │
- *             │ Board   : Waveshare ESP32-P4-WIFI6                  │
- *             │ Chip rev: v1.3                                      │
- *             │ Display : TK024F3036 320×240 SPI 40MHz              │
- *             │ IMU     : BNO085 (I²C0 @ 0x4A)                      │
- *             │ Dongle  : RTL-SDR @ 2 MS/s                          │
- *   y = 170   │ IMU cal : ●●○ (acc 2/3)                             │
- *   y = 190   │ (Fusion converged.)                                 │
- *   y = 226   ├────────────────────────────────────────────────────┤
- *             │ MODE to cycle    UP/DOWN scroll                     │
- *   y = 240   └────────────────────────────────────────────────────┘
+ * 所有 ✓ 状态灯、校准精度、实时数值一律归诊断页，**两页零重复**。旧版把
+ * IMU 校准指示器放在这里，是错的——那是运行时状态，不是身份。
  *
- * Pure pixel pushing — no I/O.
+ * 布局（800×480）
+ * ---------------
+ *   y=0    ┌──────────────┬───────────────────────────────────────┐
+ *          │ 关于          │                                       │ 顶栏 48
+ *   y=48   ├──────────────┼───────────────────────────────────────┤
+ *          │              │ 版本    v0.9.3-4.3in                   │
+ *          │   [ logo ]   │ 构建    Jul 28 2026 21:40:00           │
+ *          │   128×128    │ ESP-IDF v6.0.1                         │
+ *          │              │ LVGL    v9.5.0                         │
+ *          │ PILOT KIT    │ 开发板  Waveshare P4 4.3               │
+ *          │ BOX          │ 芯片    ESP32-P4 v1.3                  │
+ *          │              │ 屏幕    ST7701 800x480        [ QR ]   │
+ *   y=480  └──────────────┴───────────────────────────────────────┘
+ *
+ * 字号按 spec §2 的硬阶梯：标题 L(30) / 标签 M(26) / 数值 S(21)。低于 18 px
+ * 一律禁止——旧版那套 8×8 汉字在这块屏上只有 1.0 mm，已永久废弃。
  */
 
 #include "about_page.h"
@@ -36,32 +37,59 @@
 
 #include "display.h"
 #include "i18n.h"
+#include "pfd_layout.h"
+#include "pfd_aa_text.h"
+#include "pfd_aa_font.h"
 #include "text.h"
 #include "ui_state.h"
 
-/* Layout */
-#define ABOUT_LEFT_PAD       6
-#define ABOUT_HEADER_TITLE_Y 4
-#define ABOUT_HEADER_UI_Y    6
-#define ABOUT_BODY_Y         32
-#define ABOUT_LINE_H         16
-#define ABOUT_CAL_GAP        6
-#define ABOUT_HINT_GAP       16
-#define ABOUT_FOOTER_Y       224
-#define ABOUT_COLON_X        84
-#define ABOUT_VALUE_X        100
+/* 模拟器不链接 LVGL 的版本头，给一份与 idf_component.yml 锁定值一致的兜底。 */
+#ifndef LVGL_VERSION_MAJOR
+#  define LVGL_VERSION_MAJOR 9
+#  define LVGL_VERSION_MINOR 5
+#  define LVGL_VERSION_PATCH 0
+#endif
 
-/* Palette */
-#define COL_BG               pk_rgb565( 12,  12,  16)
-#define COL_HEADER           pk_rgb565(180, 235, 255)
-#define COL_KEY              pk_rgb565(180, 235, 255)
-#define COL_VAL              pk_rgb565(255, 255, 255)
-#define COL_DIM              pk_rgb565(255, 255, 255)
-#define COL_DIVIDER          pk_rgb565( 90, 100, 120)
-#define COL_CAL_DOT_OFF      pk_rgb565(105, 110, 115)
-#define COL_CAL_LOW          pk_rgb565(255,  80,  40)   /* red    — acc 0 */
-#define COL_CAL_MID          pk_rgb565(255, 200,  60)   /* yellow — acc 1 */
-#define COL_CAL_HIGH         pk_rgb565( 80, 220,  80)   /* green  — acc 2..3 */
+/* ── 布局 ────────────────────────────────────────────────────────
+ * 左栏放身份（logo + 产品名），右栏放事实（键值）。分栏而不是一列到底，
+ * 是因为这一页的主角是「这台设备是什么」，logo 该有它的分量；而 800 px 宽
+ * 用单列排版会让每行右侧空掉一大片。 */
+#define AB_HEADER_H      PFD_BAR_BOT      /* 与 PFD 状态栏等高，切页时不跳 */
+#define AB_HEADER_PAD_X  24
+#define AB_HEADER_PAD_Y   9
+
+#define AB_LEFT_X        24
+#define AB_LEFT_W       248
+#define AB_LOGO_SIZE    128
+#define AB_LOGO_Y        84
+#define AB_NAME_Y       (AB_LOGO_Y + AB_LOGO_SIZE + 24)
+
+#define AB_RIGHT_X      304               /* 右栏标签起点 */
+#define AB_VALUE_X      452               /* 数值起点：容得下最长的标签 */
+#define AB_ROW0_Y        72
+#define AB_ROW_H         44               /* M 档 26 px + 18 行距 */
+
+/* 二维码放左栏（身份区）下方，不放右下角：右下既会压住最后一行键值，也正好
+ * 是 FAB 的位置。左栏 logo 与产品名之下本来就有空档，语义上也更贴——它同属
+ * 「这台设备是什么」。 */
+#define AB_QR_SIZE      104
+#define AB_QR_X         (AB_LEFT_X + (AB_LEFT_W - AB_QR_SIZE) / 2)
+#define AB_QR_Y         308
+
+/* 混排的垂直对齐已经在 text.c 内部处理（CJK 相对拉丁 cell 下移半个差值），
+ * 这里不要再叠加一次。 */
+
+/* ── 配色 ──────────────────────────────────────────────────────── */
+#define COL_BG           pk_rgb565( 12,  12,  16)
+#define COL_HEADER       pk_rgb565(180, 235, 255)
+#define COL_KEY          pk_rgb565(150, 170, 195)   /* 标签退一档，让数值出挑 */
+#define COL_VAL          pk_rgb565(255, 255, 255)
+#define COL_DIVIDER      pk_rgb565( 60,  70,  86)
+#define COL_NAME         pk_rgb565(240, 245, 255)
+#define COL_LOGO_PLATE   pk_rgb565( 28,  34,  46)
+#define COL_LOGO_MARK    pk_rgb565( 64, 156, 255)
+#define COL_QR_PLATE     pk_rgb565(238, 240, 245)
+#define COL_QR_INK       pk_rgb565( 12,  12,  16)
 
 static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
 {
@@ -75,134 +103,134 @@ static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
     }
 }
 
-static void draw_kv(uint16_t *fb, int y, pk_tr_id_t key_id, const char *val)
+/*
+ * 一行「标签 数值」。
+ *
+ * 标签走 CJK 位图的 M 档，数值走 PFD 那套抗锯齿拉丁的 S 档——数值几乎全是
+ * ASCII（版本号、日期、型号），用等宽的 B612 Mono 排比汉字字库里的半角形好读，
+ * 也与 PFD 上的数字保持同一副面孔。
+ */
+static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_LEFT_PAD, y, pk_i18n_text(key_id), COL_KEY);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_COLON_X, y, ":", COL_KEY);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_VALUE_X, y, val, COL_VAL);
+    const int y = AB_ROW0_Y + row * AB_ROW_H;
+    pk_text_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                 AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, 1);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               AB_VALUE_X, y, val, COL_VAL, PK_AA_S);
 }
 
-static void draw_cal_indicator(uint16_t *fb, int y, uint8_t accuracy)
+/*
+ * Logo 占位。
+ *
+ * 真机上这里应贴 .rodata 里那张 128×128 RGB565 boot logo（CMakeLists 的
+ * EMBED_FILES，符号 _binary_pk_logo_rgb565_start）。模拟器没有 IDF 的嵌入
+ * 机制，而版面评审只关心这块面积怎么占，所以先画同尺寸的色板 + 记号。
+ * 接真图时只替换本函数，布局不必动。
+ */
+static void draw_logo(uint16_t *fb, int x, int y, int size)
 {
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_LEFT_PAD, y, pk_i18n_text(PK_TR_ABOUT_CAL),
-                           COL_KEY);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_COLON_X, y, ":", COL_KEY);
+    fill_rect(fb, x, y, x + size, y + size, COL_LOGO_PLATE);
 
-    /* Three small filled circles representing accuracy 1, 2, 3.
-     * We approximate a circle with a small filled square (cheap). */
-    int dot_size = 10;
-    int dot_gap  = 4;
-    int dot_x    = ABOUT_VALUE_X;
-    int dot_y    = y;
+    const int cx = x + size / 2;
+    const int cy = y + size / 2;
+    for (int dy = -size / 3; dy <= size / 3; ++dy) {
+        const int ady = dy < 0 ? -dy : dy;
+        const int half = (size / 3 - ady) * 3 / 4;
+        fill_rect(fb, cx - half, cy + dy, cx + half, cy + dy + 1, COL_LOGO_MARK);
+    }
+    fill_rect(fb, cx - size / 2 + 12, cy - 2, cx + size / 2 - 12, cy + 2,
+              COL_LOGO_MARK);
+}
 
+/*
+ * 二维码占位。
+ *
+ * spec §5.6 要求本页带二维码（指向产品页 / 说明书）。目标 URL 尚未确定，
+ * 先按最终尺寸画出静区与三个定位角，把版面占住——URL 定了用生成器产出真码
+ * 替换即可，周围留白与位置都已按最终形态摆好。
+ */
+static void draw_qr_placeholder(uint16_t *fb, int x, int y, int size)
+{
+    fill_rect(fb, x, y, x + size, y + size, COL_QR_PLATE);
+
+    const int m = 10;                  /* 静区 */
+    const int e = (size - 2 * m) / 4;  /* 定位角边长 */
+    const int corners[3][2] = {
+        { x + m,            y + m },
+        { x + size - m - e, y + m },
+        { x + m,            y + size - m - e },
+    };
     for (int i = 0; i < 3; ++i) {
-        uint16_t col;
-        if (accuracy > (uint8_t)i) {
-            col = (accuracy >= 3) ? COL_CAL_HIGH
-                : (accuracy >= 2) ? COL_CAL_HIGH
-                : (accuracy >= 1) ? COL_CAL_MID
-                :                   COL_CAL_LOW;
-        } else {
-            col = COL_CAL_DOT_OFF;
-        }
-        int x0 = dot_x + i * (dot_size + dot_gap);
-        fill_rect(fb, x0, dot_y, x0 + dot_size, dot_y + dot_size, col);
+        const int cx0 = corners[i][0], cy0 = corners[i][1];
+        fill_rect(fb, cx0, cy0, cx0 + e, cy0 + e, COL_QR_INK);
+        fill_rect(fb, cx0 + e / 4, cy0 + e / 4,
+                  cx0 + e - e / 4, cy0 + e - e / 4, COL_QR_PLATE);
+        fill_rect(fb, cx0 + e * 3 / 8, cy0 + e * 3 / 8,
+                  cx0 + e * 5 / 8, cy0 + e * 5 / 8, COL_QR_INK);
     }
-
-    /* Numeric "(acc N/3)" suffix */
-    char buf[16];
-    snprintf(buf, sizeof(buf), "(acc %u/3)", accuracy);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           dot_x + 3 * (dot_size + dot_gap) + 8, y,
-                           buf, COL_VAL);
-
-    /* Hint line below */
-    const char *hint;
-    if (accuracy >= 2) {
-        hint = pk_i18n_text(PK_TR_ABOUT_HINT_CONVERGED);
-    } else if (accuracy >= 1) {
-        hint = pk_i18n_text(PK_TR_ABOUT_HINT_CONVERGING);
-    } else {
-        hint = pk_i18n_text(PK_TR_ABOUT_HINT_FIG8);
-    }
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_LEFT_PAD, y + ABOUT_HINT_GAP, hint, COL_DIM);
 }
 
 void pk_about_page_render(uint16_t *fb)
 {
-    pk_lang_t lang = pk_i18n_get_lang();
-
-    /* Clear background — may be coming from any other view. */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
-    /* Body — key/value rows */
-    int y = ABOUT_BODY_Y - pk_ui_about_scroll_y();
+    /* ── 顶栏 ───────────────────────────────────────────────── */
+    pk_text_puts_page_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                            AB_HEADER_PAD_X, AB_HEADER_PAD_Y,
+                            pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER);
+    fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
 
+    /* ── 左栏：身份 ─────────────────────────────────────────── */
+    draw_logo(fb, AB_LEFT_X + (AB_LEFT_W - AB_LOGO_SIZE) / 2, AB_LOGO_Y,
+              AB_LOGO_SIZE);
+    {
+        static const char kName[] = "PILOT KIT BOX";
+        const int w = (int)(sizeof(kName) - 1) * pk_aa_cell_w(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_NAME_Y,
+                   kName, COL_NAME, PK_AA_S);
+    }
+
+    /* 分栏线 */
+    fill_rect(fb, AB_RIGHT_X - 32, AB_HEADER_H + 16,
+              AB_RIGHT_X - 31, PK_DISPLAY_H - 24, COL_DIVIDER);
+
+    /* ── 右栏：事实 ─────────────────────────────────────────── */
     const esp_app_desc_t *app = esp_app_get_description();
-    draw_kv(fb, y, PK_TR_ABOUT_PROJECT, app ? app->project_name : "pilot_kit_box");
-    y += ABOUT_LINE_H;
-    draw_kv(fb, y, PK_TR_ABOUT_VERSION, app ? app->version : "?");
-    y += ABOUT_LINE_H;
+    char tmp[48];
+    int row = 0;
 
-    char tmp[40];
-    snprintf(tmp, sizeof(tmp), "%s %s",
-             app ? app->date : __DATE__,
-             app ? app->time : __TIME__);
-    draw_kv(fb, y, PK_TR_ABOUT_BUILD, tmp);
-    y += ABOUT_LINE_H;
+    draw_row(fb, row++, PK_TR_ABOUT_VERSION, app ? app->version : "?");
+
+    {
+        /* 构建时间只取到分。秒对「这台设备是什么」没有信息量，却要多占三个
+         * 字宽——而右栏宽度是有限的（452 起到 776 止，约 18 个 S 档字符）。 */
+        const char *t = app ? app->time : __TIME__;
+        snprintf(tmp, sizeof(tmp), "%s %.5s", app ? app->date : __DATE__, t);
+        draw_row(fb, row++, PK_TR_ABOUT_BUILD, tmp);
+    }
 
     snprintf(tmp, sizeof(tmp), "v%d.%d.%d",
              ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
-    draw_kv(fb, y, PK_TR_ABOUT_IDF, tmp);
-    y += ABOUT_LINE_H;
+    draw_row(fb, row++, PK_TR_ABOUT_IDF, tmp);
 
-    draw_kv(fb, y, PK_TR_ABOUT_BOARD, "Waveshare P4 Touch LCD 4.3");
-    y += ABOUT_LINE_H;
+    /* LVGL 版本也属「依赖版本」，spec §5.6 点名要求。 */
+    snprintf(tmp, sizeof(tmp), "v%d.%d.%d",
+             LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+    draw_row(fb, row++, PK_TR_ABOUT_LVGL, tmp);
 
-    esp_chip_info_t chip;
-    esp_chip_info(&chip);
-    snprintf(tmp, sizeof(tmp), "v%d.%d",
-             chip.revision / 100, chip.revision % 100);
-    draw_kv(fb, y, PK_TR_ABOUT_CHIP, tmp);
-    y += ABOUT_LINE_H;
+    draw_row(fb, row++, PK_TR_ABOUT_BOARD, "Waveshare P4 4.3");
 
-    draw_kv(fb, y, PK_TR_ABOUT_DISPLAY, "ST7701 800x480 DSI");
-    y += ABOUT_LINE_H;
-
-    draw_kv(fb, y, PK_TR_ABOUT_IMU, "BNO085 (I2C0 0x4A)");
-    y += ABOUT_LINE_H;
-
-    draw_kv(fb, y, PK_TR_ABOUT_DONGLE, "RTL-SDR 2 MS/s @ 1090MHz");
-    y += ABOUT_LINE_H;
-
-    /* IMU calibration indicator */
-    uint8_t acc = pk_ui_cal_wizard_last_accuracy();
-    draw_cal_indicator(fb, y + ABOUT_CAL_GAP, acc);
-
-    /* Header and footer are fixed overlays over the scrollable body. */
-    fill_rect(fb, 0, 0, PK_DISPLAY_W, 26, COL_BG);
-    if (lang == PK_LANG_ZH) {
-        pk_text_puts_page_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                ABOUT_LEFT_PAD, ABOUT_HEADER_TITLE_Y,
-                                pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER);
-    } else {
-        pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                        ABOUT_LEFT_PAD, ABOUT_HEADER_UI_Y,
-                        pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER);
+    {
+        esp_chip_info_t chip;
+        esp_chip_info(&chip);
+        snprintf(tmp, sizeof(tmp), "ESP32-P4 v%d.%d",
+                 chip.revision / 100, chip.revision % 100);
+        draw_row(fb, row++, PK_TR_ABOUT_CHIP, tmp);
     }
-    fill_rect(fb, 0, 22, PK_DISPLAY_W, 24, COL_DIVIDER);
 
-    fill_rect(fb, 0, ABOUT_FOOTER_Y - 3, PK_DISPLAY_W, PK_DISPLAY_H,
-              COL_BG);
-    fill_rect(fb, 0, ABOUT_FOOTER_Y - 2, PK_DISPLAY_W, ABOUT_FOOTER_Y - 1,
-              COL_DIVIDER);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           ABOUT_LEFT_PAD, ABOUT_FOOTER_Y,
-                           pk_i18n_text(PK_TR_ABOUT_FOOTER), COL_DIM);
+    draw_row(fb, row++, PK_TR_ABOUT_DISPLAY, "ST7701 800x480");
+
+    /* ── 二维码 ─────────────────────────────────────────────── */
+    draw_qr_placeholder(fb, AB_QR_X, AB_QR_Y, AB_QR_SIZE);
 }

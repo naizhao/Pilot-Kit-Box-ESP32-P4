@@ -82,6 +82,13 @@ STRINGS = [
         },
     ),
     (
+        "ABOUT_LVGL",
+        {
+            "en": "LVGL",
+            "zh": "LVGL",
+        },
+    ),
+    (
         "ABOUT_BOARD",
         {
             "en": "Board",

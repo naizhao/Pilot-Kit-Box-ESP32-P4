@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define PK_TEXT_CJK_UI_CELL_H 12
+#define PK_TEXT_CJK_UI_CELL_H 21
 #define PK_TEXT_CJK_UI_MAX_W 12
 
 const uint8_t *pk_text_cjk_ui_glyph(uint32_t code, uint8_t *width);

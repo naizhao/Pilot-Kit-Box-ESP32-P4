@@ -39,6 +39,7 @@
 
 #include "lv_backend.h"
 #include "pk_ui_nav.h"
+#include "about_page.h"
 
 #include "display.h"
 #include "pfd_attitude.h"
@@ -186,6 +187,19 @@ static int run_headless(float at_sec, const char *out)
     pk_pfd_speed_tape_t spd; pk_pfd_status_t stat;
     mock_fill(&st, &imu, &hsi, &alt, &spd, &stat);
 
+    /* PK_SIM_PAGE=<name> 渲染整页视图而不是 PFD——那几页正在从 2.4″ 迁到
+     * 800×480，需要能截图比对。名字与 dock 页签一一对应。 */
+    const char *page = getenv("PK_SIM_PAGE");
+    if (page != NULL && page[0] != '\0') {
+        if (strcmp(page, "about") == 0) {
+            pk_about_page_render(fb);
+        } else {
+            fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
+            return 2;
+        }
+        goto page_done;
+    }
+
     pk_pfd_attitude_render(fb, &imu);
     pk_pfd_statusbar_render(fb, &stat);
     pk_pfd_alt_tape_render(fb, &alt);
@@ -210,6 +224,7 @@ static int run_headless(float at_sec, const char *out)
         pk_pfd_leftbox_render(fb, &lb);
     }
 
+page_done:
     /* 多合成几帧：首帧 LVGL 只画屏幕底色，canvas 要到第二帧才落到 s_screen；
      * 而 dock 的滑出动画有 180 ms，两帧远不够，截出来会是它还在屏外的样子。
      * 12 帧 ≈ 400 ms，动画收敛且离 5 s 自动收起还远。 */

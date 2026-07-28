@@ -26,3 +26,9 @@ const char *pk_i18n_lang_name(pk_lang_t lang)
 {
     return pk_i18n_catalog_text(lang, PK_TR_LANG_ENGLISH);
 }
+
+pk_lang_t pk_i18n_get_lang(void)
+{
+    const char *lang = getenv("PK_SIM_LANG");
+    return (lang && (lang[0] == 'e' || lang[0] == 'E')) ? PK_LANG_EN : PK_LANG_ZH;
+}

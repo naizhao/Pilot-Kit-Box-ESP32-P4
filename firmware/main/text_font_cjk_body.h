@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define PK_TEXT_CJK_BODY_CELL_W 8
-#define PK_TEXT_CJK_BODY_CELL_H 8
-#define PK_TEXT_CJK_BODY_GLYPH_BYTES 32
+#define PK_TEXT_CJK_BODY_CELL_W 26
+#define PK_TEXT_CJK_BODY_CELL_H 26
+#define PK_TEXT_CJK_BODY_GLYPH_BYTES 338
 
 const uint8_t *pk_text_cjk_body_glyph(uint32_t code);

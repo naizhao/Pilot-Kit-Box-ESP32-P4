@@ -100,6 +100,13 @@ set(FW_DRAW_SRC
     ${FW}/traffic_geom.c
     ${FW}/mag_var.c
     ${FW}/geo.c
+    # 整页视图（关于/设置/诊断…）。它们只把运行时状态排版成像素，数据来源
+    # 由 compat/page_stub.c 桩掉，排版逻辑原样编译。
+    ${FW}/about_page.c
+    ${FW}/text.c
+    ${FW}/text_font_cjk.c
+    ${FW}/text_font_cjk_body.c
+    ${FW}/text_font_cjk_ui.c
 )
 
 # 当前 4.3" 一体板的逻辑横屏分辨率；仍可用 -DPANEL=WxH 做兼容性预览。
@@ -109,7 +116,7 @@ list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)
 message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
-add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c ${FW_DRAW_SRC})
+add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c compat/page_stub.c ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}

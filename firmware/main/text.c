@@ -4,6 +4,19 @@
 
 #include "text.h"
 
+/*
+ * ASCII 走 PFD 那套抗锯齿字体（B612 Mono），不再用 5×7 位图整数缩放。
+ *
+ * 位图字体是 320×240 时代的产物：在 167 PPI 上原始尺寸锐利，但这块 4.3″ 是
+ * 217 PPI，同样像素数物理上更小，放大又变成方块像素。spec §2 把 18 px
+ * （2.1 mm）定为硬下限，位图那档根本够不着。
+ *
+ * CJK 仍走生成的位图子集，但尺寸已按 spec 阶梯重新生成（L30 / M26 / S21）。
+ * 两套字的 cell 高度不同，混排时把 CJK 下移半个差值，行内基线才对得上。
+ */
+#include "pfd_aa_text.h"
+#include "pfd_aa_font.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -120,6 +133,29 @@ static void put_cjk(uint16_t *fb, int fb_w, int fb_h,
     }
 }
 
+/* 与某一档 CJK 搭配的拉丁档位。CJK 是方块字、cell 即字号，拉丁 cell 含行距，
+ * 所以两边不是同一个数，得按「字形高度接近」来配。 */
+static pk_aa_size_t aa_size_for_cjk(int cjk_cell_h)
+{
+    return (cjk_cell_h >= PK_TEXT_CJK_CELL_H) ? PK_AA_M : PK_AA_S;
+}
+
+/* CJK 位图相对拉丁 cell 的垂直补偿，让同一行的基线对齐。 */
+static int cjk_dy(pk_aa_size_t aa, int cjk_cell_h)
+{
+    const int d = (pk_aa_cell_h(aa) - cjk_cell_h) / 2;
+    return d > 0 ? d : 0;
+}
+
+/* 单个 ASCII 字符（含 0x00B0 度数符号）走抗锯齿字体；返回推进宽度。 */
+static int aa_putc(uint16_t *fb, int fb_w, int fb_h, int x, int y,
+                   uint32_t cp, uint16_t color, pk_aa_size_t size)
+{
+    const char tmp[2] = { (cp == 0x00B0) ? (char)0x7F : (char)cp, '\0' };
+    pk_aa_puts(fb, fb_w, fb_h, x, y, tmp, color, size);
+    return pk_aa_cell_w(size);
+}
+
 static int cjk_cell_w_for_scale(int ascii_scale)
 {
     return (ascii_scale <= 1) ? PK_TEXT_CJK_BODY_CELL_W : PK_TEXT_CJK_CELL_W;
@@ -140,7 +176,7 @@ static int codepoint_advance(uint32_t cp, int ascii_scale)
 {
     if (ascii_scale < 1) ascii_scale = 1;
     if (cp > 0x7F && cp != 0x00B0) return cjk_cell_w_for_scale(ascii_scale);
-    return PK_FONT_CELL_W(ascii_scale);
+    return pk_aa_cell_w(aa_size_for_cjk(cjk_cell_h_for_scale(ascii_scale)));
 }
 
 int pk_text_width(const char *s, int ascii_scale)
@@ -161,7 +197,7 @@ int pk_text_title_width(const char *s)
         uint32_t cp = utf8_next(&s);
         if (cp == 0) break;
         w += (cp > 0x7F && cp != 0x00B0) ? PK_TEXT_CJK_CELL_W
-                                          : PK_FONT_CELL_W(2);
+                                          : pk_aa_cell_w(PK_AA_M);
     }
     return w;
 }
@@ -176,7 +212,7 @@ int pk_text_ui_width(const char *s)
         if (pk_text_cjk_ui_glyph(cp, &cw) != NULL && cw > 0) {
             w += cw;
         } else {
-            w += PK_FONT_CELL_W(1);
+            w += pk_aa_cell_w(PK_AA_S);
         }
     }
     return w;
@@ -187,33 +223,26 @@ int pk_text_puts(uint16_t *fb, int fb_w, int fb_h,
                  uint16_t color, int ascii_scale)
 {
     if (ascii_scale < 1) ascii_scale = 1;
+    const int ch = cjk_cell_h_for_scale(ascii_scale);
+    const pk_aa_size_t aa = aa_size_for_cjk(ch);
+    const int dy = cjk_dy(aa, ch);
     int x0 = x;
     while (s && *s) {
         uint32_t cp = utf8_next(&s);
         if (cp == 0) break;
 
-        if (cp == 0x00B0) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y,
-                            (char)PK_FONT_DEGREE, color, ascii_scale);
-            x += PK_FONT_CELL_W(ascii_scale);
-            continue;
-        }
-
-        if (cp <= 0x7F) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, (char)cp, color, ascii_scale);
-            x += PK_FONT_CELL_W(ascii_scale);
+        if (cp <= 0x7F || cp == 0x00B0) {
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, aa);
             continue;
         }
 
         const uint8_t *glyph = cjk_glyph_for_scale(cp, ascii_scale);
         if (glyph != NULL) {
             int cw = cjk_cell_w_for_scale(ascii_scale);
-            int ch = cjk_cell_h_for_scale(ascii_scale);
-            put_cjk(fb, fb_w, fb_h, x, y, glyph, cw, ch, color, true);
+            put_cjk(fb, fb_w, fb_h, x, y + dy, glyph, cw, ch, color, true);
             x += cw;
         } else {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, '?', color, ascii_scale);
-            x += PK_FONT_CELL_W(ascii_scale);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, aa);
         }
     }
     return x - x0;
@@ -229,23 +258,18 @@ int pk_text_puts_title(uint16_t *fb, int fb_w, int fb_h,
         if (cp == 0) break;
 
         if (cp <= 0x7F || cp == 0x00B0) {
-            char tmp[2] = {
-                (cp == 0x00B0) ? (char)PK_FONT_DEGREE : (char)cp,
-                '\0',
-            };
-            pk_font_puts_cockpit(fb, fb_w, fb_h, x, y, tmp, color);
-            x += PK_FONT_CELL_W(2);
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
             continue;
         }
 
         const uint8_t *glyph = pk_text_cjk_glyph(cp);
         if (glyph != NULL) {
-            put_cjk(fb, fb_w, fb_h, x, y, glyph,
+            put_cjk(fb, fb_w, fb_h, x,
+                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_CELL_H), glyph,
                     PK_TEXT_CJK_CELL_W, PK_TEXT_CJK_CELL_H, color, false);
             x += PK_TEXT_CJK_CELL_W;
         } else {
-            pk_font_puts_cockpit(fb, fb_w, fb_h, x, y, "?", color);
-            x += PK_FONT_CELL_W(2);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
         }
     }
     return x - x0;
@@ -263,12 +287,12 @@ int pk_text_puts_ui(uint16_t *fb, int fb_w, int fb_h,
         uint8_t cw = 0;
         const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
         if (glyph != NULL) {
-            put_cjk(fb, fb_w, fb_h, x, y, glyph,
+            put_cjk(fb, fb_w, fb_h, x,
+                    y + cjk_dy(PK_AA_S, PK_TEXT_CJK_UI_CELL_H), glyph,
                     cw, PK_TEXT_CJK_UI_CELL_H, color, false);
             x += cw;
         } else {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, '?', color, 1);
-            x += PK_FONT_CELL_W(1);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_S);
         }
     }
     return x - x0;
@@ -283,27 +307,19 @@ int pk_text_puts_page_title(uint16_t *fb, int fb_w, int fb_h,
         uint32_t cp = utf8_next(&s);
         if (cp == 0) break;
 
-        if (cp == 0x00B0) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y,
-                            (char)PK_FONT_DEGREE, color, 2);
-            x += PK_FONT_CELL_W(2);
-            continue;
-        }
-
-        if (cp <= 0x7F) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, (char)cp, color, 2);
-            x += PK_FONT_CELL_W(2);
+        if (cp <= 0x7F || cp == 0x00B0) {
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
             continue;
         }
 
         const uint8_t *glyph = pk_text_cjk_glyph(cp);
         if (glyph != NULL) {
-            put_cjk(fb, fb_w, fb_h, x, y, glyph,
+            put_cjk(fb, fb_w, fb_h, x,
+                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_CELL_H), glyph,
                     PK_TEXT_CJK_CELL_W, PK_TEXT_CJK_CELL_H, color, false);
             x += PK_TEXT_CJK_CELL_W;
         } else {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, '?', color, 2);
-            x += PK_FONT_CELL_W(2);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
         }
     }
     return x - x0;
@@ -318,28 +334,20 @@ int pk_text_puts_page_body(uint16_t *fb, int fb_w, int fb_h,
         uint32_t cp = utf8_next(&s);
         if (cp == 0) break;
 
-        if (cp == 0x00B0) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y,
-                            (char)PK_FONT_DEGREE, color, 1);
-            x += PK_FONT_CELL_W(1);
-            continue;
-        }
-
-        if (cp <= 0x7F) {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, (char)cp, color, 1);
-            x += PK_FONT_CELL_W(1);
+        if (cp <= 0x7F || cp == 0x00B0) {
+            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_S);
             continue;
         }
 
         uint8_t cw = 0;
         const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
         if (glyph != NULL && cw > 0) {
-            put_cjk(fb, fb_w, fb_h, x, y, glyph,
+            put_cjk(fb, fb_w, fb_h, x,
+                    y + cjk_dy(PK_AA_S, PK_TEXT_CJK_UI_CELL_H), glyph,
                     cw, PK_TEXT_CJK_UI_CELL_H, color, false);
             x += cw;
         } else {
-            pk_font_putchar(fb, fb_w, fb_h, x, y, '?', color, 1);
-            x += PK_FONT_CELL_W(1);
+            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_S);
         }
     }
     return x - x0;
