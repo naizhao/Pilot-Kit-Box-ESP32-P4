@@ -40,6 +40,12 @@ ESP32-P4 本身没有无线能力；当前固件通过 ESP-Hosted SDIO 使用板
 | [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) | C6 bring-up 中文排障记录 |
 | `ESP32-P4-WIFI6-details-inter.jpg` | Waveshare 板子接口和丝印照片 |
 | `ESP32-P4-WIFI6-details-size.jpg` | Waveshare 尺寸参考图 |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **4.3″ 触摸板原理图** —— LCD / 触摸 / 背光引脚的权威依据 |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf) | 4.3″ 外形图：114.4 × 66.8 mm，VA 94.4 × 56.96 mm，4 × M2.5 孔距 92 × 50 mm |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | 厂商 wiki 正文 + 从官方 BSP 读出的面板时序实值 |
+| [`ST7701-datasheet.pdf`](ST7701-datasheet.pdf) | LCD 驱动 IC —— 含 MIPI-DSI 章节与 MIPISET1-4 (D0h–D3h) 寄存器 |
+| [`GT911-datasheet.pdf`](GT911-datasheet.pdf) | 触摸控制器电气特性与 I²C 寻址 |
+| [`GT911-programming-guide.pdf`](GT911-programming-guide.pdf) | 触摸**坐标上报格式** —— datasheet 里没有，只在这份里 |
 
 ## 快速链接
 

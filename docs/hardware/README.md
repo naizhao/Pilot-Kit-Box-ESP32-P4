@@ -40,6 +40,12 @@ ESP32-P4 has no native wireless radio; the current firmware uses the on-board C6
 | [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) | Simplified Chinese version of the bring-up record |
 | `ESP32-P4-WIFI6-details-inter.jpg` | Waveshare board interface and silkscreen photo |
 | `ESP32-P4-WIFI6-details-size.jpg` | Waveshare mechanical size reference |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **4.3″ touch board schematic** — the authoritative source for LCD / touch / backlight pin assignments |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf) | 4.3″ board outline: 114.4 × 66.8 mm, VA 94.4 × 56.96 mm, 4 × M2.5 on 92 × 50 mm |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | Vendor wiki text + panel timings read out of the official BSP |
+| [`ST7701-datasheet.pdf`](ST7701-datasheet.pdf) | LCD driver IC — MIPI-DSI chapter and MIPISET1-4 (D0h–D3h) registers |
+| [`GT911-datasheet.pdf`](GT911-datasheet.pdf) | Touch controller electricals and I²C addressing |
+| [`GT911-programming-guide.pdf`](GT911-programming-guide.pdf) | Touch **coordinate report format** — not in the datasheet, only here |
 
 ## Quick Links
 
