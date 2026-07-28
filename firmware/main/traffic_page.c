@@ -70,12 +70,15 @@
 #define SIDE_X        TFC_SIDE_X
 #define SIDE_W        (PK_DISPLAY_W - SIDE_X)
 #define SIDE_PAD      12
-#define CARD_N        4
-#define CARD_GAP      10
-/* 卡片高度按内容定，不去铺满整栏：一行呼号（18）+ 两行次要（12×2）+ 上下
- * 内边距，76 就够。之前用「栏高÷4」算，每张 97 px 里有近三成是空的，四张
- * 叠起来视觉重量压过了雷达本身——而雷达才是这一页的主角。 */
-#define CARD_H        76
+/* 行高与内边距直接取 PFD 信息框的值（PFD_IB_ROW_H/_GAP/_PAD）。
+ *
+ * 一开始自己造了「卡片」：一张 76~97 px、三行内容、带边框。做出来又大又
+ * 看不懂。PFD 右下角那三行（B / ALT / VS）早就把这类信息排明白了——一行一
+ * 条、半透明底、左标签右数值，没有边框。同一台设备上不该有两套列表语言。 */
+#define ROW_H         PFD_IB_ROW_H
+#define ROW_GAP       PFD_IB_ROW_GAP
+#define ROW_PAD       PFD_IB_PAD
+#define ROW_N         8            /* 280 px 宽 × 30 px 行，装得下 8 条 */
 
 /* 目标快照缓冲——放 PSRAM，避免吃任务栈（照 pfd.c 的 scratch）。 */
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -275,75 +278,47 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
 }
 
 /*
- * 右栏卡片（spec §5.2）。
+ * 右栏目标列表。
  *
- * 每张给一个目标：方位八向箭头 + 呼号 + 距离 + 高度（带升降率）+ 速度。
- * 按距离由近到远取前 4 个——最近的才是最要紧的。
+ * 视觉语言照搬 PFD 的信息框（pfd_infobox.c）：一行一条、半透明底、左边呼号
+ * 右边数值，不画边框。相对高度也沿用 PFD 交通标签的写法——百英尺为单位、
+ * 带符号、后缀升降箭头（"+26^"），飞行员在 PFD 上已经读惯了这个格式。
  *
- * 方位用八向箭头而不是数字度数：余光扫一眼就要知道「它在我哪边」，
- * 读三位数再在脑子里换算成方向，飞行中没有这个余裕。
+ * 按距离由近到远排，最近的在最上面。
  */
-static const char *bearing_arrow(float rel_deg)
+static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
 {
-    /* 相对机头的方位 → 八个扇区。用 ASCII 记号而不是箭头字形：
-     * 抗锯齿字库只到 0x7F，没有箭头码位。 */
-    static const char *kArrow[8] = { "^", "/", ">", "\\", "v", "/", "<", "\\" };
-    float d = rel_deg;
-    while (d < 0.0f)      d += 360.0f;
-    while (d >= 360.0f)   d -= 360.0f;
-    return kArrow[((int)(d + 22.5f) / 45) & 7];
-}
-
-static void draw_side_cards(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
-{
-    /* 配色与雷达区一致，但在这里本地声明——渲染主函数里那组是局部量。 */
-    const uint16_t COL_RING = pk_rgb565(120, 145, 175);
-    const uint16_t COL_SEL  = pk_rgb565(255, 200,  60);
+    const uint16_t COL_SEL  = pk_rgb565(255, 210,  60);
     const uint16_t COL_TXT  = pk_rgb565(235, 240, 248);
-    const uint16_t COL_CYAN = pk_rgb565(  0, 210, 235);
-    const uint16_t COL_GREY = pk_rgb565(155, 170, 190);
+    const uint16_t COL_DIM  = pk_rgb565(155, 170, 190);
 
-    for (int i = 0; i < CARD_N; ++i) {
-        const int y0 = TFC_TOP + SIDE_PAD / 2 + i * (CARD_H + CARD_GAP);
-        const int x0 = SIDE_X + SIDE_PAD / 2;
-        const int x1 = PK_DISPLAY_W - SIDE_PAD / 2;
+    const int x0 = SIDE_X + 8;
+    const int x1 = PK_DISPLAY_W - 8;
 
-        /* 空槽也画出边框：4 张卡片的位置恒定，内容多寡不该让版面跳动。 */
-        pk_pfd_darken_rect(fb, x0, y0, x1, y0 + CARD_H, 90);
-        const uint16_t border = (i == sel_row) ? COL_SEL : COL_RING;
-        pk_pfd_fill_rect(fb, x0, y0, x1, y0 + 1, border);
-        pk_pfd_fill_rect(fb, x0, y0 + CARD_H - 1, x1, y0 + CARD_H, border);
-        pk_pfd_fill_rect(fb, x0, y0, x0 + 1, y0 + CARD_H, border);
-        pk_pfd_fill_rect(fb, x1 - 1, y0, x1, y0 + CARD_H, border);
-
-        if (i >= nv) continue;
-
+    for (int i = 0; i < ROW_N && i < nv; ++i) {
+        const int y0 = TFC_TOP + 6 + i * (ROW_H + ROW_GAP);
         const vis_t *v = &vis[i];
-        char cs[12];
+        const bool sel = (i == sel_row);
+
+        pk_pfd_darken_rect(fb, x0, y0, x1, y0 + ROW_H, sel ? 120 : 170);
+
+        const int ty = y0 + (ROW_H - PK_AA_M_H) / 2;
+        char cs[10];
         callsign_of(v->ac, cs, sizeof(cs));
+        TFC_PUTS(fb, x0 + ROW_PAD, ty, cs, sel ? COL_SEL : COL_TXT);
 
-        /* 第一行：方位箭头 + 呼号 */
-        TFC_PUTS(fb, x0 + 10, y0 + 8, bearing_arrow(v->rel.rel_bearing), COL_CYAN);
-        TFC_PUTS(fb, x0 + 34, y0 + 8, cs, COL_TXT);
-
-        /* 第二行：距离 + 高度差（带升降箭头） */
-        char line[24];
+        /* 右侧：距离 + 相对高度，格式与 PFD 交通标签一致。 */
+        char val[20];
         if (v->rel.rel_alt_valid) {
-            const int rel100 = (int)lroundf(v->rel.rel_alt_ft / 100.0f);
-            const char *vs = (v->rel.vs_fpm >  200) ? "^"
-                           : (v->rel.vs_fpm < -200) ? "v" : " ";
-            snprintf(line, sizeof(line), "%.1fNM %+d%s", v->rel.dist_nm, rel100, vs);
+            const int h100 = v->rel.rel_alt_ft / 100;
+            const char vs = (v->rel.vs_fpm >  200) ? '^'
+                          : (v->rel.vs_fpm < -200) ? 'v' : ' ';
+            snprintf(val, sizeof(val), "%.0fNM %+d%c", v->rel.dist_nm, h100, vs);
         } else {
-            snprintf(line, sizeof(line), "%.1fNM  ---", v->rel.dist_nm);
+            snprintf(val, sizeof(val), "%.0fNM  ---", v->rel.dist_nm);
         }
-        TFC_PUTS_XS(fb, x0 + 10, y0 + 8 + PK_AA_M_H + 2, line, COL_GREY);
-
-        /* 第三行：地速。没有速度就留空，不要写 0 —— 0 是个真值。 */
-        if (v->ac->have_velocity) {
-            snprintf(line, sizeof(line), "%dkt", (int)lroundf(v->ac->ground_speed_kt));
-            TFC_PUTS_XS(fb, x0 + 10, y0 + 8 + PK_AA_M_H + 2 + PK_AA_XS_H + 2,
-                        line, COL_GREY);
-        }
+        const int vw = (int)strlen(val) * pk_aa_cell_w(PK_AA_M);
+        TFC_PUTS(fb, x1 - ROW_PAD - vw, ty, val, sel ? COL_SEL : COL_DIM);
     }
 }
 
@@ -503,7 +478,7 @@ void pk_traffic_page_render(uint16_t *fb)
     /* 雷达页独立选中(返回 -1 = 无选中,不高亮/不显详情;绝不 fallback row 0)。 */
     int sel_row = pk_ui_traffic_resolve(s_icaos, (size_t)nv);
 
-    draw_side_cards(fb, s_vis, nv, sel_row);
+    draw_side_list(fb, s_vis, nv, sel_row);
 
     if (!own_valid) {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
