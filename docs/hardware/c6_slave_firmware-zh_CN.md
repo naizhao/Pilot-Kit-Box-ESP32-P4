@@ -41,11 +41,40 @@ IO9 不接 USB-UART 信号，只在烧录期间短到 GND。
 推荐使用 ESPHome 预编译好的 ESP-Hosted slave binary：
 
 ```bash
-curl -L -o /tmp/network_adapter_esp32c6.bin \
+curl -L -o firmware/network_adapter_esp32c6.bin \
     https://esphome.github.io/esp-hosted-firmware/v2.12.7/network_adapter_esp32c6.bin
 ```
 
 如果你要自己改 slave 配置，也可以从 `firmware/managed_components/espressif__esp_hosted/slave` 复制工程到仓库外编译，避免和 P4 工程分区表冲突。
+
+## 推荐：使用项目脚本
+
+项目内置了单板和批量烧录脚本：
+
+```bash
+firmware/tools/flash_c6_hosted.sh
+```
+
+脚本会先校验镜像必须是 ESP32-C6 的 `network_adapter` 2.12.7、4 MB /
+DIO / 80 MHz，并验证镜像哈希。随后它每 1 秒自动探测一次
+`/dev/cu.usbserial-*`；串口出现后只启动一次 esptool 连接，避免 macOS
+USB-UART 被反复打开时出现 `termios.error: (22, 'Invalid argument')`。
+
+常用模式：
+
+```bash
+# 只校验 ESP-IDF 环境和镜像，不接触硬件
+firmware/tools/flash_c6_hosted.sh --check-only
+
+# 指定串口烧录一块
+firmware/tools/flash_c6_hosted.sh --port /dev/cu.usbserial-0001
+
+# 连续烧录多块；每块完成后拔出 USB-UART，脚本会自动等待下一块
+firmware/tools/flash_c6_hosted.sh --batch
+```
+
+整个等待过程不要求按 Enter。批量模式会每秒检测当前串口是否已拔出，确认
+移除后再进入下一块板的探测循环。
 
 ## 进入 C6 download mode
 
@@ -66,13 +95,14 @@ curl -L -o /tmp/network_adapter_esp32c6.bin \
 
 ## 烧录
 
-H4 没有 C6 RESET 线，因此 esptool 要用 `--before no-reset`：
+优先使用上面的项目脚本。下面是等价的手动命令，适合排障。H4 没有 C6
+RESET 线，因此前后都不要让 esptool 自动复位：
 
 ```bash
-esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 460800 \
-    --before no-reset --after hard-reset write-flash \
+python -m esptool --chip esp32c6 -p /dev/cu.usbserial-XXXX -b 115200 \
+    --before no-reset --after no-reset --connect-attempts 0 write-flash \
     --flash-mode dio --flash-freq 80m --flash-size 4MB \
-    0x10000 /tmp/network_adapter_esp32c6.bin
+    0x10000 firmware/network_adapter_esp32c6.bin
 ```
 
 看到以下输出表示写入成功：

@@ -16,13 +16,13 @@ flowchart LR
         USB["USB-OTG HS\nDM/DP pins 49/50"]
         C6["ESP32-C6-MINI-1\n(Wi-Fi 6 / BLE 5)"]
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
-        FLASH["32 MB Nor Flash\npartition: storage 10 MiB"]
+        FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BeiDou\nUART1 32/33\nPPS=46"]
+        GPS["GT-U8 GPS/BeiDou\nUART1 TX=32 RX=51\nPPS=46"]
         BARO["BMP388\nI²C0 addr 0x76"]
         BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\nINT=20 RST=21"]
-        SCREEN["TK024F3036 / ST7789\n320×240 SPI\nCS=28 MOSI=29 SCK=30 DC=31 BL=50"]
-        BUTTONS["4 buttons\nTARE=26 MODE=5\nUP=22 DOWN=23"]
+        SCREEN["ST7701 MIPI-DSI\nnative 480×800\nPPA → 800×480\nRST=27 BL=26"]
+        TOUCH["GT911 touch\nI²C0 7/8\nRST=23"]
         BLE_PEER["iPad / iPhone\nPilot Kit app"]
     end
 
@@ -152,8 +152,8 @@ flowchart LR
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
-| `buttons`         | 0   | 3    | 3 KiB | Polls TARE / MODE / UP / DOWN, debounces short/long/very-long presses, and detects the UP+DOWN combo. |
-| `pfd`             | 0   | 4    | 6 KiB | Renders PFD, TRAFFIC, ADS-B LIST, SETTINGS, ABOUT, DIAG, and calibration wizard views into the ST7789 framebuffer at ~30 FPS. |
+| `buttons`         | —   | —    | — | Legacy source retained but not started on the 4.3-inch touch board. |
+| `pfd`             | 0   | 4    | 6 KiB | Renders PFD and UI views into the 800×480 logical framebuffer at ~30 FPS. |
 | `nimble_host`     | 0   | 4    | 4 KiB | NimBLE host event loop, hosts the GATT server; events arrive from the C6 controller over the SDIO/VHCI transport. |
 | `ble_emit`        | 0   | 3    | 6 KiB | 1 Hz timer task: snapshots `aircraft_state` and emits GDL90 Heartbeat + one Traffic Report per fresh aircraft on the BLE notify pipes; also drains the raw-ts-line queue produced by the BLE sink. |
 
@@ -166,7 +166,8 @@ flowchart LR
 | DSP working set| ~12 KiB | 8 KiB IQ buf + 4 KiB magnitude buf |
 | CPR table      | ~5 KiB  | 64 aircraft slots in `cpr_decode.c` |
 | aircraft_state | ~7 KiB  | 64 slots in `aircraft_state.c` (callsign + alt + position + velocity) |
-| PFD framebuffer | 150 KiB | 320×240×16 bpp framebuffer in PSRAM |
+| Application framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped in PSRAM |
+| DPI framebuffers | 1.5 MiB | Two 480×800×16 bpp scanout buffers in PSRAM |
 | file_sink queue| ~10 KiB | 256 × 40 B `file_record_t` items |
 | ble_raw queue  | ~5 KiB  | 64 × 80 B ts-line strings for the BLE Raw characteristic |
 | NimBLE host    | ~30 KiB | event loop, GATT DB, peer connection state (typical IDF v6 footprint) |

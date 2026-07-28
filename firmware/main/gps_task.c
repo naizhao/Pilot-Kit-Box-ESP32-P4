@@ -18,7 +18,7 @@ static const char *TAG = "gps";
 
 #define GPS_UART    UART_NUM_1
 #define GPS_TX_PIN  32   /* P4 TX → GPS RXD */
-#define GPS_RX_PIN  33   /* GPS TXD → P4 RX */
+#define GPS_RX_PIN  51   /* GPS TXD → P4 RX；GPIO33 为板载 LCD BL_EN */
 #define GPS_BAUD    9600
 #define GPS_BUF_SZ  512
 

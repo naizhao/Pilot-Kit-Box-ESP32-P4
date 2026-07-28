@@ -25,7 +25,7 @@
 4. [蓝牙 / BLE / ESP-Hosted](#4-蓝牙--ble--esp-hosted)
 5. [Own-ship 绑定](#5-own-ship-绑定)
 6. [存储 / LittleFS / MicroSD](#6-存储--littlefs--microsd)
-7. [显示 / ST7789](#7-显示--st7789)
+7. [显示 / ST7701 MIPI-DSI](#7-显示--st7701-mipi-dsi)
 8. [IMU / BNO085](#8-imu--bno085)
 9. [按键与电源](#9-按键与电源)
 10. [日志输出](#10-日志输出)
@@ -257,53 +257,25 @@ CLK=GPIO43  CMD=GPIO44  D0..D3=GPIO39..42
 
 ---
 
-## 7. 显示 / ST7789
-
-### 引脚
+## 7. 显示 / ST7701 MIPI-DSI
 
 写死在 `firmware/main/display.h`：
 
 ```c
-#define PK_LCD_SPI_HOST       SPI2_HOST
-#define PK_LCD_PIN_SCLK       30    /* SPI2_CK_PAD，左排 IO_MUX direct */
-#define PK_LCD_PIN_MOSI       29    /* SPI2_D_PAD，左排 IO_MUX direct */
-#define PK_LCD_PIN_MISO       -1    /* 运行时不读屏 */
-#define PK_LCD_PIN_CS         28    /* SPI2_CS_PAD，左排 IO_MUX direct */
-#define PK_LCD_PIN_DC         31    /* 普通 GPIO，命令/数据选择 */
-#define PK_LCD_PIN_RST        -1    /* TK024F304189-SPI 转接板有 RC reset */
-#define PK_LCD_PIN_BL         50    /* LEDC PWM 背光 */
+#define PK_DISPLAY_W                     800
+#define PK_DISPLAY_H                     480
+#define PK_LCD_PIN_RST                    27
+#define PK_LCD_PIN_BL                     26
+#define PK_LCD_PIN_BL_EN                  33
+#define PK_LCD_DSI_LANE_COUNT             2
+#define PK_LCD_DSI_LANE_BIT_RATE_MBPS     500
+#define PK_LCD_DPI_CLOCK_MHZ              30
 ```
 
-> ✅ 当前接线已从旧右排 GPIO 33/46/47/48 移到左排 GPIO 28/29/30/31。原因是 28/29/30 是 SPI2 的 IO_MUX direct 引脚，且左排信号之间没有夹 GND，杜邦排线不容易误短路。旧右排方案已经废弃，详见 [`docs/hardware/board_pinout.md`](hardware/board_pinout.md) 第 3 节。
-
-### SPI 时钟
-
-```c
-#define PK_LCD_SPI_HZ          (40 * 1000 * 1000)  /* 40 MHz */
-```
-
-ST7789 datasheet 最大约 80 MHz。当前固件默认 40 MHz；左排 IO_MUX direct 接线为后续短线/PCB 上尝试 60-80 MHz 留出了空间。
-
-### 背光 PWM 频率
-
-```c
-#define PK_LCD_BL_PWM_FREQ_HZ  20000  /* 20 kHz，超出听觉范围 */
-```
-
-LED 调光可闻啸叫一般在 <16 kHz。20 kHz 安全且不耗 LEDC 太多分辨率。
-
-### 屏幕方向
-
-`firmware/main/display.c::pk_display_init` 里调用：
-```c
-ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
-```
-
-如果你的屏显示颜色反了（红/青对调），改成 `false`。如果上下颠倒：
-```c
-esp_lcd_panel_mirror(s_panel, false, true);     /* mirror Y */
-esp_lcd_panel_swap_xy(s_panel, true);            /* rotate 90° */
-```
+面板持续扫描原生 480×800 framebuffer。PPA 把应用侧 800×480
+RGB565-swapped framebuffer 逆时针旋转 90°、执行字节交换，并在 VSYNC
+切换两个 DPI framebuffer。GPIO26 经反相 LEDC 注入 AP3032 FB 节点，
+不能按普通正相背光处理。
 
 ---
 
@@ -391,7 +363,7 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 | `record_sink` | sink 注册 |
 | `ble_gatt` | NimBLE host + GATT |
 | `rtlsdr_async` | librtlsdr 异步 IO |
-| `display` | ST7789 驱动 |
+| `display` | ST7701 MIPI-DSI + PPA 旋转 |
 | `imu` | BNO085 驱动 |
 | `pfd` | PFD 渲染 |
 

@@ -102,10 +102,8 @@ set(FW_DRAW_SRC
     ${FW}/geo.c
 )
 
-# 目标分辨率。默认沿用现役 2.4" 屏，便于验证移植正确性；
-# 传 -DPANEL=800x480 即可预览 4.3"/5" 新屏布局。
-#     cmake -B build -DPANEL=800x480
-set(PANEL "320x240" CACHE STRING "面板分辨率 WxH")
+# 当前 4.3" 一体板的逻辑横屏分辨率；仍可用 -DPANEL=WxH 做兼容性预览。
+set(PANEL "800x480" CACHE STRING "面板分辨率 WxH")
 string(REPLACE "x" ";" PANEL_WH ${PANEL})
 list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)

@@ -20,7 +20,7 @@
 
 | 必备 | 描述 |
 |------|------|
-| **Waveshare ESP32-P4-WIFI6** 开发板 | 32 MB Nor Flash + 32 MB PSRAM，板载 ESP32-C6（Wi-Fi 6 + BLE 5）。其他 P4 板（如 Espressif Function EV Board）也可以用，但引脚映射在 [`docs/hardware/board_pinout.md`](hardware/board_pinout.md) 里以 Waveshare 为准。 |
+| **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** | P4NRW32 + C6 一体板，板载 4.3 寸 ST7701 DSI 屏、GT911 触摸、32 MB Flash 与 32 MB PSRAM。 |
 | **USB-C 数据线** | 用于供电、烧录、串口监视。注意是数据线，不是只能充电的线。 |
 | **macOS / Linux / Windows 主机** | 任何能装 ESP-IDF 的开发机。本文以 **macOS** 为主要示例，Linux 步骤几乎一样，Windows 下用 PowerShell + 安装包路径会略有差异，在每一步会标注。 |
 
@@ -30,7 +30,6 @@
 |----------|------|-------------|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收；当前推荐 FC0013，主要因为成本低 | ADS-B 数据链路 |
 | USB Type-A 公座 → MX1.25 4-pin 转接线 | 把 P4 板上的 4-pin USB OTG 接口转成标准 A 母座插 RTL-SDR | ADS-B USB 数据链路 |
-| TK024F3036 / ST7789 320×240 SPI 屏 + `TK024F304189-SPI` 驱动板 | PFD 显示 | 本机显示 |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |
 
@@ -468,8 +467,7 @@ I (3472) rec_file:    logging ADS-B to /storage/pilot_kit_ts_1.txt (rotate every
 I (3474) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
 I (3480) sdr:         USB client registered, waiting for RTL-SDR enumeration
 I (3486) dsp:         dsp_task running (dump1090-derived edge decode)
-I (3610) display:     ST7789 240x320 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
-I (3617) display:     TK024F3036 320x240 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
+I (3617) display:     ST7701 DSI ready: logical 800x480 -> PPA 90 CCW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 E (4401) imu:         enable_rotation_vector: ESP_ERR_INVALID_RESPONSE         ← 预期（没接 BNO085）
 W (4402) pilot_kit:   IMU init failed (ESP_ERR_INVALID_RESPONSE) — PFD will run without attitude
 I (4405) pfd:         pfd_task running (G1000 landscape)
@@ -508,7 +506,7 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 | 操作 | 预期 |
 |------|------|
 | 通过 4-pin USB 转接器接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
-| 接 ST7789 SPI 屏到正确引脚 | 屏幕显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD 仪表 (蓝色天 + 棕色地 + 黄十字 + 黑色数字面板) |
+| 给 4.3 寸一体板上电 | 800×480 全屏显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD |
 | 装 GT-U8 GPS | DIAG 更新 GPS/北斗卫星、SNR、天线状态和系统时间；定位后 TRAFFIC 获得本机位置 |
 | 装 BMP388 | PFD / DIAG 显示压力、QNH 修正高度和升降率 |
 | 插入 FAT32 MicroSD | DIAG 显示容量；Settings 把 LOG 改成 MICROSD 并重启后，日志写入 `/sdcard` |

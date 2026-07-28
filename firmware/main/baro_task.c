@@ -27,6 +27,7 @@ static const char *TAG = "baro";
 #define BMP388_ADDR        0x76
 #define BMP388_REG_CHIPID  0x00
 #define BMP388_CHIPID      0x50
+#define BARO_INT_PIN       31   /* 可选 data-ready；GPIO27 为板载 LCD RST */
 
 /* BMP388 寄存器地址 */
 #define BMP388_REG_DATA    0x04   /* PRESS_XLSB..TEMP_MSB (6 bytes) */
@@ -336,6 +337,8 @@ void pk_baro_start(void)
         vSemaphoreDelete(s_mutex); s_mutex = NULL;
         return;
     }
+    ESP_LOGI(TAG, "BMP388 polling task started (optional INT GPIO%d)",
+             BARO_INT_PIN);
 }
 
 bool pk_baro_get(pk_baro_state_t *out)

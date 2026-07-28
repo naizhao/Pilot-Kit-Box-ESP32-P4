@@ -127,6 +127,45 @@ host pins are configured separately in our `sdkconfig.defaults`.
 
 ## 4. Flash the C6
 
+### Recommended: use the project script
+
+Download the pinned image to the default location:
+
+```bash
+curl -L -o firmware/network_adapter_esp32c6.bin \
+    https://esphome.github.io/esp-hosted-firmware/v2.12.7/network_adapter_esp32c6.bin
+```
+
+Then run:
+
+```bash
+firmware/tools/flash_c6_hosted.sh
+```
+
+The script validates that the image is an ESP32-C6 `network_adapter`
+2.12.7 image configured for 4 MB / DIO / 80 MHz, including its image
+hashes. It polls `/dev/cu.usbserial-*` once per second and starts only
+one esptool connection after the port appears. This avoids repeatedly
+opening a macOS USB-UART device, which can produce
+`termios.error: (22, 'Invalid argument')`.
+
+Useful modes:
+
+```bash
+# Validate the ESP-IDF environment and image without touching hardware
+firmware/tools/flash_c6_hosted.sh --check-only
+
+# Flash one board through an explicit port
+firmware/tools/flash_c6_hosted.sh --port /dev/cu.usbserial-0001
+
+# Flash multiple boards; unplug the UART after each successful board
+firmware/tools/flash_c6_hosted.sh --batch
+```
+
+No Enter key is required while waiting. Batch mode detects removal of
+the current serial port once per second before waiting for the next
+board.
+
 **Power-on sequence matters here**. H4 has no RESET line, so esptool
 can't auto-toggle reset; you have to manually arrange for both chips
 to power up with the right strap pin held low:

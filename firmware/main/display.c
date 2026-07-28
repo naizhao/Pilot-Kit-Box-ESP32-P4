@@ -1,431 +1,371 @@
 /*
- * display.c — TK024F3036 (ST7789 + transflective TFT) LCD bring-up.
+ * display.c — ESP32-P4-WIFI6-Touch-LCD-4.3 显示 bring-up。
  *
- * The panel is the Holocene Technology TK024F3036 240x320 2.4-inch
- * transflective IPS module. Its driver IC is ST7789 BUT the panel needs
- * a vendor-specific init sequence (porch control, VGH/VGL, VCOM, gamma
- * curves) that the upstream esp_lcd_new_panel_st7789 driver doesn't
- * emit — without them the chip accepts SPI commands but never drives
- * the TFT properly and you get "backlight on, no content." So we use
- * the supplier's reference panel driver in components/lcd_tk024f3036
- * (Apache 2.0, copied from the vendor's ESP32-S3 LVGL demo and matched
- * against the panel datasheet).
- *
- * Otherwise the rest of the stack is standard:
- *   esp_lcd_new_panel_io_spi   → DC/CS framing on top of spi_master
- *   esp_lcd_new_panel_TK024F3036 → init sequence + draw_bitmap/etc.
- *
- * The single framebuffer sits in PSRAM (~150 KiB) — internal SRAM is
- * tight once the IQ ring buffer, URB pool and BLE stack are all live.
- * Drawing happens directly into it; pk_display_flush_full() chunks
- * the buffer to the panel via esp_lcd_panel_draw_bitmap() which in
- * turn uses GDMA for the SPI transfer.
- *
- * The backlight is driven by an LEDC PWM channel rather than a fixed
- * GPIO so UI code can dim or blank the display without rewiring pins.
+ * ST7701 以 2-lane MIPI-DSI 接入，DPI 按原生 480×800 连续扫描。上层仍
+ * 在 800×480 RGB565-swapped framebuffer 中绘制；每帧由 PPA 顺时针旋转
+ * 90°并同时 byte-swap 到非活动 DPI framebuffer，再于 VSYNC 切换。
  */
 
 #include "display.h"
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 
+#include "driver/ledc.h"
+#include "driver/ppa.h"
 #include "esp_attr.h"
-#include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_st7701.h"
+#include "esp_ldo_regulator.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "driver/gpio.h"
-#include "esp_rom_sys.h"             /* esp_rom_delay_us */
-#include "LCD_TK024F3036.h"
-#include "driver/spi_master.h"
-#include "driver/ledc.h"
 
 static const char *TAG = "display";
 
-static esp_lcd_panel_io_handle_t s_io;
-static esp_lcd_panel_handle_t    s_panel;
-static uint16_t                 *s_fb;
-static SemaphoreHandle_t         s_flush_done;
+#define BL_LEDC_TIMER          LEDC_TIMER_0
+#define BL_LEDC_MODE           LEDC_LOW_SPEED_MODE
+#define BL_LEDC_CHANNEL        LEDC_CHANNEL_0
+#define BL_LEDC_DUTY_BITS      LEDC_TIMER_10_BIT
+#define BL_LEDC_MAX_DUTY       ((1U << 10) - 1U)
+#define LCD_REFRESH_TIMEOUT_MS 100
+#define LCD_FB_ALIGN           128
 
-#define BL_LEDC_TIMER     LEDC_TIMER_0
-#define BL_LEDC_MODE      LEDC_LOW_SPEED_MODE
-#define BL_LEDC_CHANNEL   LEDC_CHANNEL_0
-#define BL_LEDC_DUTY_BITS LEDC_TIMER_8_BIT       /* 0..255 maps directly */
-#define LCD_FLUSH_TIMEOUT_MS 250
+static esp_ldo_channel_handle_t s_dsi_phy_ldo;
+static esp_lcd_dsi_bus_handle_t s_dsi_bus;
+static esp_lcd_panel_io_handle_t s_panel_io;
+static esp_lcd_panel_handle_t s_panel;
+static ppa_client_handle_t s_ppa;
+static SemaphoreHandle_t s_refresh_done;
+static uint16_t *s_fb;
+static uint16_t *s_dpi_fb[2];
+static unsigned s_front_fb;
+static volatile uint32_t s_refresh_count;
 
-static bool IRAM_ATTR lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t io,
-                                              esp_lcd_panel_io_event_data_t *edata,
-                                              void *user_ctx)
+/* 微雪 4.3 寸板官方 BSP 的 ST7701 模组专用初始化序列。 */
+static const st7701_lcd_init_cmd_t s_st7701_init[] = {
+    {0xFF, (uint8_t[]){0x77, 0x01, 0x00, 0x00, 0x13}, 5, 0},
+    {0xEF, (uint8_t[]){0x08}, 1, 0},
+    {0xFF, (uint8_t[]){0x77, 0x01, 0x00, 0x00, 0x10}, 5, 0},
+    {0xC0, (uint8_t[]){0x63, 0x00}, 2, 0},
+    {0xC1, (uint8_t[]){0x0D, 0x02}, 2, 0},
+    {0xC2, (uint8_t[]){0x17, 0x08}, 2, 0},
+    {0xCC, (uint8_t[]){0x10}, 1, 0},
+    {0xB0, (uint8_t[]){0x40, 0xC9, 0x94, 0x0E, 0x10, 0x05, 0x0B, 0x09,
+                       0x08, 0x26, 0x04, 0x52, 0x10, 0x69, 0x6B, 0x69}, 16, 0},
+    {0xB1, (uint8_t[]){0x40, 0xD2, 0x98, 0x0C, 0x92, 0x07, 0x09, 0x08,
+                       0x07, 0x25, 0x02, 0x0E, 0x0C, 0x6E, 0x78, 0x55}, 16, 0},
+    {0xFF, (uint8_t[]){0x77, 0x01, 0x00, 0x00, 0x11}, 5, 0},
+    {0xB0, (uint8_t[]){0x5D}, 1, 0},
+    {0xB1, (uint8_t[]){0x4E}, 1, 0},
+    {0xB2, (uint8_t[]){0x87}, 1, 0},
+    {0xB3, (uint8_t[]){0x80}, 1, 0},
+    {0xB5, (uint8_t[]){0x4E}, 1, 0},
+    {0xB7, (uint8_t[]){0x85}, 1, 0},
+    {0xB8, (uint8_t[]){0x21}, 1, 0},
+    {0xB9, (uint8_t[]){0x10, 0x1F}, 2, 0},
+    {0xBB, (uint8_t[]){0x03}, 1, 0},
+    {0xBC, (uint8_t[]){0x00}, 1, 0},
+    {0xC1, (uint8_t[]){0x78}, 1, 0},
+    {0xC2, (uint8_t[]){0x78}, 1, 0},
+    {0xD0, (uint8_t[]){0x88}, 1, 0},
+    {0xE0, (uint8_t[]){0x00, 0x3A, 0x02}, 3, 0},
+    {0xE1, (uint8_t[]){0x04, 0xA0, 0x00, 0xA0, 0x05, 0xA0, 0x00, 0xA0,
+                       0x00, 0x40, 0x40}, 11, 0},
+    {0xE2, (uint8_t[]){0x30, 0x00, 0x40, 0x40, 0x32, 0xA0, 0x00, 0xA0,
+                       0x00, 0xA0, 0x00, 0xA0, 0x00}, 13, 0},
+    {0xE3, (uint8_t[]){0x00, 0x00, 0x33, 0x33}, 4, 0},
+    {0xE4, (uint8_t[]){0x44, 0x44}, 2, 0},
+    {0xE5, (uint8_t[]){0x09, 0x2E, 0xA0, 0xA0, 0x0B, 0x30, 0xA0, 0xA0,
+                       0x05, 0x2A, 0xA0, 0xA0, 0x07, 0x2C, 0xA0, 0xA0}, 16, 0},
+    {0xE6, (uint8_t[]){0x00, 0x00, 0x33, 0x33}, 4, 0},
+    {0xE7, (uint8_t[]){0x44, 0x44}, 2, 0},
+    {0xE8, (uint8_t[]){0x08, 0x2D, 0xA0, 0xA0, 0x0A, 0x2F, 0xA0, 0xA0,
+                       0x04, 0x29, 0xA0, 0xA0, 0x06, 0x2B, 0xA0, 0xA0}, 16, 0},
+    {0xEB, (uint8_t[]){0x00, 0x00, 0x4E, 0x4E, 0x00, 0x00, 0x00}, 7, 0},
+    {0xEC, (uint8_t[]){0x08, 0x01}, 2, 0},
+    {0xED, (uint8_t[]){0xB0, 0x2B, 0x98, 0xA4, 0x56, 0x7F, 0xFF, 0xFF,
+                       0xFF, 0xFF, 0xF7, 0x65, 0x4A, 0x89, 0xB2, 0x0B}, 16, 0},
+    {0xEF, (uint8_t[]){0x08, 0x08, 0x08, 0x45, 0x3F, 0x54}, 6, 0},
+    {0xFF, (uint8_t[]){0x77, 0x01, 0x00, 0x00, 0x00}, 5, 0},
+    {0x11, NULL, 0, 120},
+    {0x29, NULL, 0, 0},
+};
+
+static bool IRAM_ATTR lcd_refresh_done_cb(
+    esp_lcd_panel_handle_t panel,
+    esp_lcd_dpi_panel_event_data_t *event_data,
+    void *user_ctx)
 {
-    (void)io;
-    (void)edata;
+    (void)panel;
+    (void)event_data;
 
     BaseType_t high_task_woken = pdFALSE;
-    SemaphoreHandle_t sem = (SemaphoreHandle_t)user_ctx;
-    if (sem != NULL) {
-        xSemaphoreGiveFromISR(sem, &high_task_woken);
-    }
+    ++s_refresh_count;
+    xSemaphoreGiveFromISR((SemaphoreHandle_t)user_ctx, &high_task_woken);
     return high_task_woken == pdTRUE;
 }
 
-/* --- Backlight ------------------------------------------------------- */
-
 static esp_err_t backlight_init(void)
 {
-    const ledc_timer_config_t t = {
-        .speed_mode      = BL_LEDC_MODE,
-        .timer_num       = BL_LEDC_TIMER,
-        .duty_resolution = BL_LEDC_DUTY_BITS,
-        .freq_hz         = PK_LCD_BL_PWM_FREQ_HZ,
-        .clk_cfg         = LEDC_AUTO_CLK,
-    };
-    esp_err_t err = ledc_timer_config(&t);
-    if (err != ESP_OK) return err;
-
-    const ledc_channel_config_t ch = {
-        .gpio_num   = PK_LCD_PIN_BL,
+    const ledc_timer_config_t timer_config = {
         .speed_mode = BL_LEDC_MODE,
-        .channel    = BL_LEDC_CHANNEL,
-        .timer_sel  = BL_LEDC_TIMER,
-        .duty       = 0,           /* off until first frame is ready */
-        .hpoint     = 0,
+        .duty_resolution = BL_LEDC_DUTY_BITS,
+        .timer_num = BL_LEDC_TIMER,
+        .freq_hz = PK_LCD_BL_PWM_FREQ_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
     };
-    return ledc_channel_config(&ch);
+    esp_err_t err = ledc_timer_config(&timer_config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const ledc_channel_config_t channel_config = {
+        .gpio_num = PK_LCD_PIN_BL,
+        .speed_mode = BL_LEDC_MODE,
+        .channel = BL_LEDC_CHANNEL,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = BL_LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+        .flags.output_invert = 1,
+    };
+    return ledc_channel_config(&channel_config);
 }
 
 void pk_display_set_brightness(uint8_t level)
 {
-    ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, level);
-    ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
+    const uint32_t duty = ((uint32_t)level * BL_LEDC_MAX_DUTY) / UINT8_MAX;
+    if (ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, duty) == ESP_OK) {
+        (void)ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
+    }
 }
 
 void pk_display_panel_off(void)
 {
-    if (s_panel == NULL) return;
-    /* DISPOFF (0x28). Liquid-crystal segments go fully dark; framebuffer
-     * data is ignored until the next disp_on_off(true). Safe no-op if
-     * the panel isn't initialised yet. */
-    esp_lcd_panel_disp_on_off(s_panel, false);
+    if (s_panel != NULL) {
+        (void)esp_lcd_panel_disp_on_off(s_panel, false);
+    }
 }
 
-/* --- Panel ----------------------------------------------------------- */
-
-#if 0  /* Bring-up diagnostics — kept here in case we ever return to debug
-        * the LCD again. Re-enable by removing the #if 0 / #endif. */
-
-static void lcd_gpio_selftest(const char *name, int gpio)
+static esp_err_t rotate_and_present(void)
 {
-    if (gpio < 0) {
-        ESP_LOGI(TAG, "  %s = -1 (not assigned), skipping", name);
-        return;
-    }
-    gpio_config_t cfg = {
-        .pin_bit_mask = 1ULL << gpio,
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
+    const unsigned back_fb = s_front_fb ^ 1U;
+    const ppa_srm_oper_config_t operation = {
+        .in = {
+            .buffer = s_fb,
+            .pic_w = PK_DISPLAY_W,
+            .pic_h = PK_DISPLAY_H,
+            .block_w = PK_DISPLAY_W,
+            .block_h = PK_DISPLAY_H,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        .out = {
+            .buffer = s_dpi_fb[back_fb],
+            .buffer_size = PK_LCD_NATIVE_FB_BYTES,
+            .pic_w = PK_LCD_NATIVE_W,
+            .pic_h = PK_LCD_NATIVE_H,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        /* PPA 角度按逆时针定义；270° CCW 等价于实物所需的 90° CW。 */
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_270,
+        .scale_x = 1.0f,
+        .scale_y = 1.0f,
+        .mirror_x = false,
+        .mirror_y = false,
+        .rgb_swap = false,
+        .byte_swap = true,
+        .mode = PPA_TRANS_MODE_BLOCKING,
     };
-    gpio_config(&cfg);
-    vTaskDelay(pdMS_TO_TICKS(5));   /* settle */
-    int with_pu = gpio_get_level(gpio);
 
-    cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
-    cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
-    gpio_config(&cfg);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    int with_pd = gpio_get_level(gpio);
-
-    const char *verdict;
-    if (with_pu == 1 && with_pd == 0) {
-        verdict = "OK (responds to PU/PD — wire free or panel high-Z)";
-    } else if (with_pu == 0 && with_pd == 0) {
-        verdict = "STUCK LOW (shorted to GND or panel driving low)";
-    } else if (with_pu == 1 && with_pd == 1) {
-        verdict = "STUCK HIGH (shorted to 3V3 or panel driving high)";
-    } else {
-        verdict = "WEIRD";
-    }
-    ESP_LOGI(TAG, "  %s (GPIO%d): PU=%d PD=%d → %s",
-             name, gpio, with_pu, with_pd, verdict);
-
-    /* leave the pin floating; SPI bus init will reclaim it */
-    gpio_reset_pin(gpio);
-}
-
-/* Compact bridge test — 5 cycles, no inter-test prompts. */
-static void lcd_bridge_test_short(const char *name, int drv, int rcv)
-{
-    gpio_config_t drv_out = {
-        .pin_bit_mask = 1ULL << drv,
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&drv_out);
-    gpio_config_t rcv_in = {
-        .pin_bit_mask = 1ULL << rcv,
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&rcv_in);
-    int hi = 0;
-    for (int i = 0; i < 5; ++i) {
-        gpio_set_level(drv, 1);
-        vTaskDelay(pdMS_TO_TICKS(200));
-        if (gpio_get_level(rcv) == 1) ++hi;
-        gpio_set_level(drv, 0);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
-    if (hi >= 4) {
-        ESP_LOGI(TAG, "  ✓ %s wire CONTINUOUS (%d/5 highs)", name, hi);
-    } else if (hi == 0) {
-        ESP_LOGW(TAG, "  ✗ %s wire BROKEN (%d/5 highs — bridge not closed)", name, hi);
-    } else {
-        ESP_LOGW(TAG, "  ? %s wire INTERMITTENT (%d/5 highs — hold bridge steady)", name, hi);
-    }
-    gpio_reset_pin(drv);
-    gpio_reset_pin(rcv);
-}
-
-/* Bridge test: drive `drv` HIGH/LOW for 5 cycles, sample `rcv`.
- * Caller bridges drv↔rcv at the LCD-side header before/during the
- * test. If 4+ of 5 HIGH samples come back HIGH, the wires conduct. */
-static void lcd_bridge_test(const char *name, int drv, int rcv)
-{
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "  ============================================");
-    ESP_LOGI(TAG, "  Bridge test: %s ↔ MISO  (you have 5s to switch)", name);
-    ESP_LOGI(TAG, "  ============================================");
-    ESP_LOGI(TAG, "  → at the LCD-side header, hold a short between %s and MISO pins", name);
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
-    gpio_config_t drv_out = {
-        .pin_bit_mask = 1ULL << drv,
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&drv_out);
-    gpio_config_t rcv_in = {
-        .pin_bit_mask = 1ULL << rcv,
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&rcv_in);
-
-    int hi_match = 0, lo_match = 0;
-    for (int i = 0; i < 5; ++i) {
-        gpio_set_level(drv, 1);
-        vTaskDelay(pdMS_TO_TICKS(300));
-        int hi = gpio_get_level(rcv);
-        gpio_set_level(drv, 0);
-        vTaskDelay(pdMS_TO_TICKS(300));
-        int lo = gpio_get_level(rcv);
-        ESP_LOGI(TAG, "    cycle %d: %s=H→MISO=%d, %s=L→MISO=%d", i, name, hi, name, lo);
-        if (hi == 1) ++hi_match;
-        if (lo == 0) ++lo_match;
-    }
-    if (hi_match >= 4 && lo_match >= 4) {
-        ESP_LOGI(TAG, "  ✓ %s wire CONTINUOUS (host pad ↔ LCD pad)", name);
-    } else if (hi_match == 0) {
-        ESP_LOGW(TAG, "  ✗ %s wire BROKEN (MISO never went HIGH)", name);
-    } else {
-        ESP_LOGW(TAG, "  ? %s wire INTERMITTENT (%d/5 highs) — keep bridge steady",
-                 name, hi_match);
-    }
-    gpio_reset_pin(drv);
-    gpio_reset_pin(rcv);
-}
-
-/* Software bit-bang SPI panel ID read. Bypasses ESP-IDF SPI entirely
- * — configures CS/SCK/MOSI/DC as plain GPIO outputs and MISO as
- * input, then manually clocks out 0x04 RDDID and clocks in 4 bytes.
- * Mode 0 (CPOL=0 CPHA=0): host changes MOSI on falling edge of SCK,
- * panel samples MOSI on rising edge; panel changes MISO on falling
- * edge, host samples MISO on rising edge. */
-static void bitbang_panel_id(void)
-{
-    ESP_LOGI(TAG, "Bit-bang panel ID readback (bypassing ESP-IDF SPI):");
-    const int CS  = PK_LCD_PIN_CS;
-    const int SCK = PK_LCD_PIN_SCLK;
-    const int MOSI = PK_LCD_PIN_MOSI;
-    const int MISO = PK_LCD_PIN_MISO;
-    const int DC  = PK_LCD_PIN_DC;
-
-    gpio_set_direction(CS,   GPIO_MODE_OUTPUT);
-    gpio_set_direction(SCK,  GPIO_MODE_OUTPUT);
-    gpio_set_direction(MOSI, GPIO_MODE_OUTPUT);
-    gpio_set_direction(DC,   GPIO_MODE_OUTPUT);
-    gpio_set_direction(MISO, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(MISO, GPIO_PULLDOWN_ONLY);   /* read 0 if floating */
-
-    gpio_set_level(CS,  1);
-    gpio_set_level(SCK, 0);
-    gpio_set_level(DC,  1);
-    esp_rom_delay_us(100);
-
-    /* Pull CS low, DC low (command), send 0x04 MSB-first */
-    gpio_set_level(CS, 0);
-    gpio_set_level(DC, 0);
-    esp_rom_delay_us(10);
-
-    uint8_t cmd = 0x04;
-    for (int b = 7; b >= 0; --b) {
-        gpio_set_level(MOSI, (cmd >> b) & 1);
-        esp_rom_delay_us(5);
-        gpio_set_level(SCK, 1);   /* rising edge — panel samples MOSI */
-        esp_rom_delay_us(5);
-        gpio_set_level(SCK, 0);
+    esp_err_t err = ppa_do_scale_rotate_mirror(s_ppa, &operation);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "PPA rotate failed: %s", esp_err_to_name(err));
+        return err;
     }
 
-    /* DC high (data), read 4 bytes MSB-first */
-    gpio_set_level(DC, 1);
-    gpio_set_level(MOSI, 0);   /* idle MOSI low during read */
-    esp_rom_delay_us(10);
+    err = esp_lcd_panel_draw_bitmap(s_panel, 0, 0,
+                                    PK_LCD_NATIVE_W, PK_LCD_NATIVE_H,
+                                    s_dpi_fb[back_fb]);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DPI framebuffer switch failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
-    uint8_t rx[4] = { 0 };
-    for (int i = 0; i < 4; ++i) {
-        uint8_t v = 0;
-        for (int b = 7; b >= 0; --b) {
-            gpio_set_level(SCK, 1);   /* rising edge — host samples MISO */
-            esp_rom_delay_us(5);
-            v |= (uint8_t)(gpio_get_level(MISO) << b);
-            gpio_set_level(SCK, 0);
-            esp_rom_delay_us(5);
+    /*
+     * draw_bitmap() 只更新下一帧要扫描的 framebuffer 指针。单纯等待 binary
+     * semaphore 有一个竞态：提交前留下的 VSYNC token 会让函数过早返回，
+     * 下一次 PPA 就可能覆盖仍在扫描的 buffer。提交后采样计数，再等它变化；
+     * 若采样前已发生 VSYNC，最多多等一帧，但绝不会少等一帧。
+     */
+    const uint32_t refresh_after_submit = s_refresh_count;
+    while (xSemaphoreTake(s_refresh_done, 0) == pdTRUE) {
+        /* 清掉与当前计数对应的旧 token。 */
+    }
+    while (s_refresh_count == refresh_after_submit) {
+        if (xSemaphoreTake(s_refresh_done,
+                           pdMS_TO_TICKS(LCD_REFRESH_TIMEOUT_MS)) != pdTRUE) {
+            ESP_LOGE(TAG, "waiting for LCD VSYNC timed out after %u ms",
+                     LCD_REFRESH_TIMEOUT_MS);
+            return ESP_ERR_TIMEOUT;
         }
-        rx[i] = v;
     }
-
-    gpio_set_level(CS, 1);
-    esp_rom_delay_us(10);
-
-    ESP_LOGI(TAG, "  bit-bang RDDID: %02x %02x %02x %02x",
-             rx[0], rx[1], rx[2], rx[3]);
-    if (rx[0] == 0xff && rx[1] == 0xff && rx[2] == 0xff && rx[3] == 0xff) {
-        ESP_LOGW(TAG, "  → all 0xFF: panel not driving MISO at all");
-    } else if (rx[0] == 0 && rx[1] == 0 && rx[2] == 0 && rx[3] == 0) {
-        ESP_LOGW(TAG, "  → all 0x00: panel not driving MISO at all (PD wins)");
-    } else {
-        ESP_LOGI(TAG, "  ✓ panel responding! Got non-trivial bytes.");
-    }
-
-    /* hand the pins back so the SPI bus init can claim them */
-    gpio_reset_pin(CS);
-    gpio_reset_pin(SCK);
-    gpio_reset_pin(MOSI);
-    gpio_reset_pin(MISO);
-    gpio_reset_pin(DC);
+    s_front_fb = back_fb;
+    return ESP_OK;
 }
-
-#endif  /* bring-up diagnostics */
 
 esp_err_t pk_display_init(void)
 {
-    /* 1. Backlight off; we'll fade it on after the first frame. */
     esp_err_t err = backlight_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "backlight_init: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "backlight init failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    /* 2. SPI bus.
-     *    max_transfer_sz covers a whole 240×320×2 = 153,600 B frame so
-     *    a full flush is one DMA descriptor chain. */
-    const spi_bus_config_t bus = {
-        .sclk_io_num     = PK_LCD_PIN_SCLK,
-        .mosi_io_num     = PK_LCD_PIN_MOSI,
-        .miso_io_num     = PK_LCD_PIN_MISO,  /* used by the panel ID readback */
-        .quadwp_io_num   = -1,
-        .quadhd_io_num   = -1,
-        .max_transfer_sz = PK_DISPLAY_FB_BYTES,
+    const esp_ldo_channel_config_t ldo_config = {
+        .chan_id = PK_LCD_DSI_PHY_LDO_CHANNEL,
+        .voltage_mv = PK_LCD_DSI_PHY_LDO_MV,
     };
-    err = spi_bus_initialize(PK_LCD_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "spi_bus_initialize: %s", esp_err_to_name(err));
+    err = esp_ldo_acquire_channel(&ldo_config, &s_dsi_phy_ldo);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DSI PHY LDO acquire failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    s_flush_done = xSemaphoreCreateBinary();
-    if (s_flush_done == NULL) {
-        ESP_LOGE(TAG, "LCD flush semaphore alloc failed");
+    const esp_lcd_dsi_bus_config_t bus_config = {
+        .bus_id = 0,
+        .num_data_lanes = PK_LCD_DSI_LANE_COUNT,
+        .phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
+        .lane_bit_rate_mbps = PK_LCD_DSI_LANE_BIT_RATE_MBPS,
+    };
+    err = esp_lcd_new_dsi_bus(&bus_config, &s_dsi_bus);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DSI bus init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const esp_lcd_dbi_io_config_t dbi_config = {
+        .virtual_channel = 0,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+    };
+    err = esp_lcd_new_panel_io_dbi(s_dsi_bus, &dbi_config, &s_panel_io);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DSI DBI control IO init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const esp_lcd_dpi_panel_config_t dpi_config = {
+        .virtual_channel = 0,
+        .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
+        .dpi_clock_freq_mhz = PK_LCD_DPI_CLOCK_MHZ,
+        .in_color_format = LCD_COLOR_FMT_RGB565,
+        .out_color_format = LCD_COLOR_FMT_RGB565,
+        .num_fbs = 2,
+        .video_timing = {
+            .h_size = PK_LCD_NATIVE_W,
+            .v_size = PK_LCD_NATIVE_H,
+            .hsync_back_porch = 42,
+            .hsync_pulse_width = 12,
+            .hsync_front_porch = 42,
+            .vsync_back_porch = 2,
+            .vsync_pulse_width = 8,
+            .vsync_front_porch = 60,
+        },
+    };
+    st7701_vendor_config_t vendor_config = {
+        .init_cmds = s_st7701_init,
+        .init_cmds_size = sizeof(s_st7701_init) / sizeof(s_st7701_init[0]),
+        .mipi_config = {
+            .dsi_bus = s_dsi_bus,
+            .dpi_config = &dpi_config,
+        },
+        .flags.use_mipi_interface = 1,
+    };
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = PK_LCD_PIN_RST,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 16,
+        .vendor_config = &vendor_config,
+    };
+    err = esp_lcd_new_panel_st7701(s_panel_io, &panel_config, &s_panel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ST7701 panel create failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_lcd_panel_reset(s_panel);
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_init(s_panel);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_disp_on_off(s_panel, true);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ST7701 panel init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_lcd_dpi_panel_get_frame_buffer(
+        s_panel, 2, (void **)&s_dpi_fb[0], (void **)&s_dpi_fb[1]);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DPI framebuffer lookup failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    memset(s_dpi_fb[0], 0, PK_LCD_NATIVE_FB_BYTES);
+    memset(s_dpi_fb[1], 0, PK_LCD_NATIVE_FB_BYTES);
+
+    s_refresh_done = xSemaphoreCreateBinary();
+    if (s_refresh_done == NULL) {
+        ESP_LOGE(TAG, "LCD VSYNC semaphore allocation failed");
         return ESP_ERR_NO_MEM;
     }
-
-    /* 3. Panel IO layer (DC framing, CS automatic). */
-    const esp_lcd_panel_io_spi_config_t io_cfg = {
-        .cs_gpio_num         = PK_LCD_PIN_CS,
-        .dc_gpio_num         = PK_LCD_PIN_DC,
-        .spi_mode            = 0,
-        .pclk_hz             = PK_LCD_SPI_HZ,
-        .trans_queue_depth   = 10,
-        .on_color_trans_done = lcd_color_trans_done_cb,
-        .user_ctx            = s_flush_done,
-        .lcd_cmd_bits        = 8,
-        .lcd_param_bits      = 8,
+    const esp_lcd_dpi_panel_event_callbacks_t callbacks = {
+        .on_refresh_done = lcd_refresh_done_cb,
     };
-    err = esp_lcd_new_panel_io_spi(
-        (esp_lcd_spi_bus_handle_t)PK_LCD_SPI_HOST, &io_cfg, &s_io);
+    err = esp_lcd_dpi_panel_register_event_callbacks(
+        s_panel, &callbacks, s_refresh_done);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "new_panel_io_spi: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "LCD VSYNC callback registration failed: %s",
+                 esp_err_to_name(err));
         return err;
     }
 
-    /* 4. TK024F3036 vendor driver (see file header).
-     *
-     * Vendor init writes MADCTL=0xA0 (MV=1, MY=1) to the panel but
-     * does NOT update its software-tracked madctl_val (it stays 0 from
-     * calloc). swap_xy() and mirror() update individual bits in
-     * madctl_val and re-emit the whole byte, so to land at a known
-     * MADCTL we must call BOTH after init (otherwise mirror() alone
-     * would clear MV in software and re-emit a portrait-mode MADCTL,
-     * causing 320×240 pixels to wrap into 240-wide RAM → garble).
-     *
-     * Target: 180°-rotated landscape, MADCTL=0x60 (MV|MX).
-     *   swap_xy(true)         → sets MV  (intermediate MADCTL=0x20)
-     *   mirror(true, false)   → sets MX, clears MY → final MADCTL=0x60
-     *
-     * invert_color(false) leaves the vendor's INVON (0x21) in effect. */
-    const esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = PK_LCD_PIN_RST,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 16,
+    const ppa_client_config_t ppa_config = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 1,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
     };
-    err = esp_lcd_new_panel_TK024F3036(s_io, &panel_cfg, &s_panel);
+    err = ppa_register_client(&ppa_config, &s_ppa);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "new_panel_TK024F3036: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "PPA client registration failed: %s",
+                 esp_err_to_name(err));
         return err;
     }
 
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(s_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
-
-    /* 5. Framebuffer in PSRAM. */
-    s_fb = heap_caps_aligned_alloc(64, PK_DISPLAY_FB_BYTES,
-                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_fb = heap_caps_aligned_alloc(
+        LCD_FB_ALIGN, PK_DISPLAY_FB_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_fb == NULL) {
-        ESP_LOGE(TAG, "PSRAM framebuffer alloc (%u B) failed",
+        ESP_LOGE(TAG, "logical framebuffer allocation failed (%u bytes)",
                  (unsigned)PK_DISPLAY_FB_BYTES);
         return ESP_ERR_NO_MEM;
     }
     memset(s_fb, 0, PK_DISPLAY_FB_BYTES);
+    s_front_fb = 0;
 
-    ESP_LOGI(TAG, "TK024F3036 %dx%d ready, framebuffer @ %p (%u KiB PSRAM)",
-             PK_DISPLAY_W, PK_DISPLAY_H, (void *)s_fb,
+    ESP_LOGI(TAG,
+             "ST7701 DSI ready: logical %dx%d -> PPA 90 CW -> native %dx%d, "
+             "2 DPI buffers, app framebuffer %u KiB PSRAM",
+             PK_DISPLAY_W, PK_DISPLAY_H, PK_LCD_NATIVE_W, PK_LCD_NATIVE_H,
              (unsigned)(PK_DISPLAY_FB_BYTES / 1024));
     return ESP_OK;
 }
@@ -439,29 +379,34 @@ esp_err_t pk_display_draw(uint16_t x0, uint16_t y0,
                           uint16_t x1, uint16_t y1,
                           const uint16_t *pixels)
 {
-    if (s_panel == NULL || s_flush_done == NULL || pixels == NULL) {
+    if (s_panel == NULL || s_ppa == NULL || s_refresh_done == NULL ||
+        s_fb == NULL || pixels == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (x0 >= PK_DISPLAY_W) x0 = PK_DISPLAY_W - 1;
-    if (y0 >= PK_DISPLAY_H) y0 = PK_DISPLAY_H - 1;
-    if (x1 >  PK_DISPLAY_W) x1 = PK_DISPLAY_W;
-    if (y1 >  PK_DISPLAY_H) y1 = PK_DISPLAY_H;
-    if (x1 <= x0 || y1 <= y0) return ESP_ERR_INVALID_ARG;
-
-    while (xSemaphoreTake(s_flush_done, 0) == pdTRUE) {
-        /* Drop stale completion tokens before submitting a new frame. */
+    if (x0 >= PK_DISPLAY_W || y0 >= PK_DISPLAY_H) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (x1 > PK_DISPLAY_W) {
+        x1 = PK_DISPLAY_W;
+    }
+    if (y1 > PK_DISPLAY_H) {
+        y1 = PK_DISPLAY_H;
+    }
+    if (x1 <= x0 || y1 <= y0) {
+        return ESP_ERR_INVALID_ARG;
     }
 
-    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, pixels);
-    if (err != ESP_OK) return err;
-
-    if (xSemaphoreTake(s_flush_done,
-                       pdMS_TO_TICKS(LCD_FLUSH_TIMEOUT_MS)) != pdTRUE) {
-        ESP_LOGE(TAG, "LCD flush timeout after %u ms",
-                 (unsigned)LCD_FLUSH_TIMEOUT_MS);
-        return ESP_ERR_TIMEOUT;
+    const size_t width = (size_t)(x1 - x0);
+    const size_t height = (size_t)(y1 - y0);
+    if (!(pixels == s_fb && x0 == 0 && y0 == 0 &&
+          x1 == PK_DISPLAY_W && y1 == PK_DISPLAY_H)) {
+        for (size_t row = 0; row < height; ++row) {
+            memcpy(s_fb + ((size_t)y0 + row) * PK_DISPLAY_W + x0,
+                   pixels + row * width,
+                   width * sizeof(uint16_t));
+        }
     }
-    return ESP_OK;
+    return rotate_and_present();
 }
 
 esp_err_t pk_display_flush_full(void)
@@ -471,25 +416,29 @@ esp_err_t pk_display_flush_full(void)
 
 void pk_display_test_pattern(void)
 {
-    if (s_fb == NULL) return;
-    /* Vertical sweep: top → red, middle → green, bottom → blue.
-     * Cheap visual proof that orientation + MADCTL byte order +
-     * backlight all work. PFD overwrites this within a second. */
+    if (s_fb == NULL) {
+        return;
+    }
     for (int y = 0; y < PK_DISPLAY_H; ++y) {
-        uint8_t r = 0, g = 0, b = 0;
+        uint8_t r = 0;
+        uint8_t g = 0;
+        uint8_t b = 0;
         if (y < PK_DISPLAY_H / 3) {
             r = (uint8_t)(255 * y / (PK_DISPLAY_H / 3));
-        } else if (y < (2 * PK_DISPLAY_H) / 3) {
-            g = (uint8_t)(255 * (y - PK_DISPLAY_H / 3) / (PK_DISPLAY_H / 3));
+        } else if (y < 2 * PK_DISPLAY_H / 3) {
+            g = (uint8_t)(255 * (y - PK_DISPLAY_H / 3) /
+                          (PK_DISPLAY_H / 3));
         } else {
-            b = (uint8_t)(255 * (y - (2 * PK_DISPLAY_H) / 3) / (PK_DISPLAY_H / 3));
+            b = (uint8_t)(255 * (y - 2 * PK_DISPLAY_H / 3) /
+                          (PK_DISPLAY_H / 3));
         }
-        uint16_t c = pk_rgb565(r, g, b);
+        const uint16_t color = pk_rgb565(r, g, b);
         for (int x = 0; x < PK_DISPLAY_W; ++x) {
-            s_fb[y * PK_DISPLAY_W + x] = c;
+            s_fb[(size_t)y * PK_DISPLAY_W + x] = color;
         }
     }
-    pk_display_flush_full();
-    pk_display_set_brightness(180);
-    ESP_LOGI(TAG, "test pattern flushed; backlight @ 70%%");
+    if (pk_display_flush_full() == ESP_OK) {
+        pk_display_set_brightness(180);
+        ESP_LOGI(TAG, "test pattern presented; backlight at 70%%");
+    }
 }

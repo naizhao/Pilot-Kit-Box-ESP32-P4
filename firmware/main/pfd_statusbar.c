@@ -35,36 +35,12 @@
 /* 状态栏水平中线（GPS 段以此居中）。 */
 #define MID_CENTRE_X (PFD_CX + 1)
 
-/* 文字渲染器按分辨率取舍：
- *
- *   320×240 —— 沿用 cockpit 字形。它是为航电读数生成的 12×16 子集，
- *              无灰阶毛边、无 TTF hinting 伪影，小屏上比缩放位图清晰
- *              得多；代价是渲染器写死 scale-2（见 pfd_font.h 注释）。
- *
- *   800×480 —— cockpit 的 scale-2 换算下来只有 1.64 mm，低于规格
- *              §2 规定的 2.1 mm 硬下限，故改用可缩放位图取 scale 3
- *              （2.46 mm ≈ S 级）。大字号下位图本就不需要抗锯齿修饰。
- *
- * 两者的每字形步进不同（cockpit 固定 12 px，位图为 6×scale），布局
- * 计算一律走 BAR_GLYPH_W，不再出现魔数。 */
-#if PK_DISPLAY_W >= 800
-/* 大屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
+/* 4.3 寸屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
  * 位图字体整数倍放大会变成方块像素，在 217 PPI 上无法接受。 */
 #  define BAR_GLYPH_W   PK_AA_S_W
 #  define BAR_CELL_H    PK_AA_S_H
 #  define BAR_PUTS(fb, x, y, str, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_S)
-#else
-/* ⚠️ 320 档的顶栏**已经失效**，不要以为它还能用：状态位图标的 cell 固定
- * 30 px（字形表按 4.3″ 屏预渲染，不能缩放），而小屏顶栏只有 18 px 高，
- * 图标会溢出压到姿态仪上。本分支专做 4.3″，不为小屏另生成一套图标；
- * 待阶段 1 换板、display.h 改成 800×480 后，整个分档连同 pfd_layout.h
- * 里的 320 档一并删除（见 IMPLEMENTATION_PLAN.md 阶段 1）。 */
-#  define BAR_GLYPH_W   12
-#  define BAR_CELL_H    16
-#  define BAR_PUTS(fb, x, y, str, col) \
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col))
-#endif
 
 /* 定宽字体下字符串的像素宽度。 */
 #define BAR_TEXT_W(n)   ((n) * BAR_GLYPH_W)

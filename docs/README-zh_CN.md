@@ -28,15 +28,15 @@
 所有公开文档应与以下事实保持一致：
 
 - 安全边界：Pilot Kit Box 不是经过适航认证的航电设备，文档不得把它写成主飞行仪表、备用仪表、导航源或防撞系统。
-- 目标开发板是 **Waveshare ESP32-P4-WIFI6**。P4 负责 USB、DSP、UI 和存储；C6 负责 BLE。
+- 目标开发板是 **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**。P4 负责 USB、DSP、UI 和存储；C6 负责 BLE。
 - RTL-SDR 通过 P1 USB 2.0 HS OTG 口接入，默认 1090 MHz、2 MSPS。
 - 当前推荐的 SDR dongle tuner 是 **FC0013**，主要原因是 BOM 成本低。
 - 内置识别数据库包括 `firmware/main/aircraft_db.bin` 的 ICAO24 飞机数据库、`firmware/main/airline_codes.c` 的航司代码表，以及 `firmware/main/icao_country.c` 的 ICAO24 国家地址段表。
-- LCD 是 **2.4 寸 TK024F3036 / ST7789 320x240 半透反射 SPI 屏**，当前接在左排 GPIO 28/29/30/31，背光 GPIO50。
+- LCD 是 **4.3 寸 ST7701 480×800 MIPI-DSI 屏**，通过 PPA 作为 800×480 横屏使用；背光 GPIO26、复位 GPIO27、BL_EN GPIO33。
+- GT911 触摸与其他设备共用 GPIO7/8 的 I²C0，复位 GPIO23；旧四实体键任务不再启动。
 - IMU 是 **BNO085 / GY-BN008X**，I2C0 使用 GPIO7 / GPIO8，INT GPIO20，RST GPIO21。
 - UI 模式循环是 **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**。
-- MODE 短按切页，MODE 长按进入深睡眠，下一次 MODE 按下唤醒。
-- TARE 在 Settings 页移动选中行，在 ADS-B LIST 页绑定 own-ship，在其他页面执行 IMU tare；长按持久化 tare，10 秒超长按执行 IMU 工厂重置。
+- 页面导航与调平动作由 4.3 寸触摸 UI 提供；MODE/TARE 实体键说明仅属于旧 2.4 寸载板。
 - GT-U8 GPS/北斗、GPIO46 PPS、BMP388 气压高度/升降率、交通雷达和 DIAG 实时诊断均已接入运行时。
 - Settings 可调整语言、QNH、地图朝向、雷达量程和日志后端；MicroSD 支持插拔探测、容量状态和受保护格式化。
 - Settings、About、Diagnostics、Compass Calibration 页面已有中英文固件 UI 字符串，配置保存到 NVS。

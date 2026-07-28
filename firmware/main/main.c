@@ -6,7 +6,7 @@
  *   3. Wait until the USB host library is installed.
  *   4. Spawn sdr_task on CPU 1 (RTL-SDR control + async IQ producer).
  *   5. Spawn dsp_task on CPU 1 (consumer + decoder + 1 Hz meter).
- *   6. Bring up storage sinks, LCD, IMU, UI state, buttons, PFD, and BLE.
+ *   6. Bring up storage sinks, LCD, IMU, UI state, PFD, and BLE.
  *
  * app_main returns; the three tasks own the rest of the runtime.
  */
@@ -374,13 +374,21 @@ void app_main(void)
                  esp_err_to_name(i18n_err));
     }
 
-    /* Tact buttons: TARE/MODE/UP/DOWN on GPIO 26/5/22/23. Spawned
-     * even when IMU init failed — only the TARE button does anything
-     * without an IMU (no-ops out, harmless), and MODE/UP/DOWN still
-     * drive the UI. */
-    esp_err_t btn_err = pk_button_init(on_button_event);
-    if (btn_err != ESP_OK) {
-        ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
+    /*
+     * 4.3 寸一体板以触摸为唯一 UI 输入。旧按键任务保留源码便于参考，但绝不
+     * 初始化：GPIO23/26 已分别固定给 TP_RST/LCD_BL_PWM。
+     *
+     * 常量分支仍引用回调，避免在迁移后半程删除大段已验证的动作路由；待触摸
+     * 手势全部覆盖后再按独立阶段退役旧模块。
+     */
+    const bool legacy_buttons_enabled = false;
+    if (legacy_buttons_enabled) {
+        esp_err_t btn_err = pk_button_init(on_button_event);
+        if (btn_err != ESP_OK) {
+            ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
+        }
+    } else {
+        ESP_LOGI(TAG, "legacy tact buttons disabled on 4.3-inch touch board");
     }
 
     /* PFD render task. Starts after the display + IMU init

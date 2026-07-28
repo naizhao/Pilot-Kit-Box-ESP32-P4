@@ -14,13 +14,13 @@ flowchart LR
         USB["USB-OTG HS\n专用 PHY"]
         C6["ESP32-C6-MINI-1\nWi-Fi 6 / BLE 5"]
         SDIO_C6["SDIO\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
-        FLASH["32 MB Nor Flash\nstorage 分区 10 MiB"]
+        FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDMMC 4-bit\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BDS\nUART1 32/33\nPPS=46"]
+        GPS["GT-U8 GPS/BDS\nUART1 TX=32 RX=51\nPPS=46"]
         BARO["BMP388\nI²C0 addr 0x76"]
         BNO["BNO085 IMU\nSDA=7 SCL=8\nINT=20 RST=21"]
-        SCREEN["TK024F3036 / ST7789\n320×240 SPI\nCS=28 MOSI=29 SCK=30 DC=31 BL=50"]
-        BUTTONS["4 个按钮\nTARE=26 MODE=5\nUP=22 DOWN=23"]
+        SCREEN["ST7701 MIPI-DSI\n原生 480×800\nPPA → 800×480\nRST=27 BL=26"]
+        TOUCH["GT911 触摸\nI²C0 7/8\nRST=23"]
         BLE_PEER["iPad / iPhone\nPilot Kit app"]
     end
 
@@ -70,8 +70,8 @@ flowchart LR
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
-| `buttons` | 0 | 3 | 3 KiB | 轮询 TARE / MODE / UP / DOWN，处理短按、长按、超长按和 UP+DOWN 组合。 |
-| `pfd` | 0 | 4 | 6 KiB | 把 PFD、TRAFFIC、ADS-B LIST、SETTINGS、ABOUT、DIAG 和校准向导渲染到 ST7789 framebuffer。 |
+| `buttons` | — | — | — | 保留旧源码但 4.3 寸触摸板不启动该任务。 |
+| `pfd` | 0 | 4 | 6 KiB | 把 PFD 与 UI 页面渲染到 800×480 逻辑 framebuffer。 |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host 事件循环，通过 C6 的 SDIO / VHCI controller 处理 BLE。 |
 | `ble_emit` | 0 | 3 | 6 KiB | 每秒快照 `aircraft_state`，发送 GDL90 Heartbeat 和 Traffic Report，同时发送 raw ts-line 队列。 |
 
@@ -84,7 +84,8 @@ flowchart LR
 | DSP 工作集 | 约 12 KiB | 8 KiB IQ buffer + 4 KiB magnitude buffer |
 | CPR table | 约 5 KiB | `cpr_decode.c` 中 64 架飞机的 CPR pairing 状态 |
 | aircraft_state | 约 7 KiB | `aircraft_state.c` 中 64 slots，保存呼号、高度、位置、速度等 |
-| PFD framebuffer | 150 KiB | 320×240×16 bpp framebuffer，位于 PSRAM |
+| 应用 framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped，位于 PSRAM |
+| DPI framebuffer | 1.5 MiB | 两块 480×800×16 bpp 扫描缓冲，位于 PSRAM |
 | file sink queue | 约 10 KiB | 256 × `file_record_t` |
 | BLE raw queue | 约 5 KiB | 64 × 80 B raw ts-line |
 | NimBLE host | 约 30 KiB | GATT DB、连接状态、事件循环等 |

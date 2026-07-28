@@ -1,13 +1,13 @@
-# Waveshare ESP32-P4-WIFI6 — pin & GPIO map
+# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 — pin & GPIO map
 
 Chinese version: [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md)
 
 All assignments below are cross-checked against three sources:
 
-1. `ESP32-P4-WIFI6-datasheet.pdf` — Waveshare schematic (board-level wiring).
-2. `ESP32-P4-WIFI6-details-inter.jpg` — Waveshare silkscreen reference
-   (the labelled board photo). This is the visual ground truth when
-   wiring on a breadboard.
+1. `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` — Waveshare Rev1.2
+   schematic (board-level wiring).
+2. `ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md` — offline resource index and
+   the exact timings used by the official Waveshare BSP.
 3. `ESP32-P4 Series Datasheet v1.1` (Espressif) — chip-level pin
    functions, strapping rules, and reserved pins.
 
@@ -65,16 +65,16 @@ Both headers count from the **top** (USB-C side) downward.
 | Silkscreen | Net      | Current allocation             | Notes                                          |
 |------------|----------|--------------------------------|------------------------------------------------|
 | 52         | GPIO52   | free                           |                                                |
-| 51         | GPIO51   | free                           |                                                |
+| **51**     | GPIO51   | **GPS TXD → P4 UART RX**      | remapped from GPIO33 because BL_EN owns 33     |
 | GND        | GND      | —                              | recommended LCD GND return                     |
-| **31**     | GPIO31   | **LCD DC**                     | plain GPIO output (software-toggled)           |
-| **30**     | GPIO30   | **LCD SCK**                    | SPI2_CK_PAD — IO_MUX direct                    |
-| **29**     | GPIO29   | **LCD MOSI**                   | SPI2_D_PAD  — IO_MUX direct                    |
-| **28**     | GPIO28   | **LCD CS**                     | SPI2_CS_PAD — IO_MUX direct                    |
+| **31**     | GPIO31   | **BARO_INT**                   | remapped from GPIO27; optional BMP388 IRQ      |
+| 30         | GPIO30   | free                           | released by the MIPI-DSI migration             |
+| 29         | GPIO29   | free                           | released by the MIPI-DSI migration             |
+| 28         | GPIO28   | free                           | released by the MIPI-DSI migration             |
 | GND        | GND      | —                              |                                                |
-| **50**     | GPIO50   | **LCD BL (LEDC PWM)**          | Backlight on TK024F304189-SPI.                 |
-| 49         | GPIO49   | free (was LCD RST in an earlier bring-up build) | TK024F304189-SPI has on-board RC reset.        |
-| **5**      | GPIO5    | **BTN2 — MODE** (LP_IO, deep-sleep wake) | LP_IO required so MODE long-press can sleep and a press can wake — see §3.4 and the power-button plan. JTAG MTDO default is moot: project doesn't use JTAG. |
+| 50         | GPIO50   | free                           | released with the old SPI display              |
+| 49         | GPIO49   | free                           |                                                |
+| 5          | GPIO5    | free / legacy MODE wiring      | no external buttons on the 4.3-inch target     |
 | 4          | GPIO4    | free                           | ⚠ JTAG MTMS default — using disables JTAG.     |
 | GND        | GND      | —                              |                                                |
 | 3          | GPIO3    | free                           | ⚠ JTAG MTDI default — using disables JTAG.     |
@@ -97,14 +97,14 @@ Both headers count from the **top** (USB-C side) downward.
 | **20**     | GPIO20   | **IMU INT** (BNO085, polled — not IRQ yet)  |                              |
 | **21**     | GPIO21   | **IMU RST** (BNO085 active-low reset)       |                              |
 | GND        | GND      | —                         |                                                |
-| **22**     | GPIO22   | **BTN3 — UP** (list scroll / menu up)       |                                  |
-| **23**     | GPIO23   | **BTN4 — DOWN** (list scroll / menu down)   |                                  |
+| 22         | GPIO22   | free                                           |                                  |
+| **23**     | GPIO23   | **GT911 TP_RST**                               | board-fixed                       |
 | RUN        | RUN      | —                         | System reset button net.                       |
-| **26**     | GPIO26   | **BTN1 — IMU Tare / cage**| Short = live software tare; long ≥ 3 s = persist software tare to NVS; very-long ≥ 10 s = IMU factory reset |
+| **26**     | GPIO26   | **LCD_BL_PWM**             | inverted LEDC PWM injected into AP3032 FB node |
 | GND        | GND      | —                         |                                                |
-| **27**     | GPIO27   | **BARO_INT** (BMP388, carrier board) | data-ready IRQ; driver implemented (`baro_task.c`, polling ~10 Hz) |
+| **27**     | GPIO27   | **LCD RESET**              | board-fixed ST7701 reset, 10 kΩ pull-down       |
 | **32**     | GPIO32   | **GPS RX** (carrier board) | P4 UART **TX** → GPS RXD; driver implemented (`gps_task.c`, UART1 NMEA) |
-| **33**     | GPIO33   | **GPS TX** (carrier board) | GPS TXD → P4 UART **RX**; (was LCD MOSI in an earlier build) |
+| **33**     | GPIO33   | **LCD BL_EN**              | AP3032 enable, 100 kΩ pull-up to Core_5V        |
 | **46**     | GPIO46   | **GPS PPS** (carrier board) | 1 Hz pulse for time discipline; (was LCD CS earlier) |
 | GND        | GND      | —                         | ⚠ Between GPIO46 and GPIO47 — easy to misplace |
 | 47         | GPIO47   | free                      | (was LCD SCK in an earlier bring-up build)     |
@@ -250,84 +250,47 @@ on v1.x silicon. Bound to chip-package pins, not muxed to any GPIO.
 
 ---
 
-## 3. Current add-on peripherals (user-wired)
+## 3. Display, touch, and external peripherals
 
-### ST7789 LCD via SPI2 — TK024F3036 module on `TK024F304189-SPI` breakout
+### ST7701 display via 2-lane MIPI-DSI
 
-**Status**: Verified working (2026-05-16). PFD renders over SPI2
-IO_MUX direct on the left header at 40 MHz; `display: TK024F3036
-320x240 ready` followed by `pfd: PFD 30 FPS` in the serial log.
+The display is board-integrated, not user-wired. The panel is physically
+480×800 portrait and the firmware exposes an 800×480 landscape framebuffer.
+PPA rotates the complete RGB565 frame 90° clockwise into a native
+DPI framebuffer. Two native framebuffers are alternated at VSYNC so PPA
+never writes into the buffer currently being scanned.
 
-The bare TK024F3036 FPC is **parallel-default** (39-pin). The
-`TK024F304189-SPI` breakout (silkscreen "TK024F304189-SPI" on the back
-edge) hard-straps `IM1_2 = 3.3V` to force the panel into 4-wire SPI
-mode, adds an RC reset network on `RST`, and exposes the SPI signals
-on a `P3` 13-pin header (and on two 1×4 PH2.0 sockets, electrically
-identical to the 13-pin header — pick whichever connector is convenient).
+| Parameter | Value |
+|---|---:|
+| Native resolution | 480×800 |
+| Logical resolution | 800×480 |
+| DSI data lanes | 2 |
+| Lane bit rate | 500 Mbps |
+| DPI pixel clock | 30 MHz |
+| H sync back / pulse / front | 42 / 12 / 42 |
+| V sync back / pulse / front | 2 / 8 / 60 |
+| Pixel format | RGB565 |
+| D-PHY supply | LDO_VO3, channel 3, 2500 mV |
+| Reset | GPIO27, active low |
+| Backlight PWM | GPIO26, LEDC output inverted |
+| Backlight enable | GPIO33, pulled up and normally left enabled |
 
-The `P3` silkscreen reads, top-to-bottom on the breakout:
+The renderer keeps its historical byte-swapped RGB565 convention for LVGL
+and the existing PFD code. PPA performs the byte swap while rotating to the
+native DPI framebuffer, so upper layers do not change color representation.
 
-```
-GND  3V3  BL  D/C  CS  SCK  MISO  MOSI    ← LCD signals
-T_CS  T_SCK  T_MISO  T_MOSI  T_INT       ← XPT2046 touch IC (not used)
-```
+### GT911 capacitive touch
 
-Wire as follows (all signals on the **left** header):
+| Signal | GPIO | Notes |
+|---|---:|---|
+| SDA | 7 | shared I²C0 |
+| SCL | 8 | shared I²C0 |
+| RESET | 23 | board-fixed |
+| INT | NC by default | R35 is not fitted; poll unless R35 is populated |
 
-| Breakout label | ESP32-P4 pin | Header position           | Notes                                       |
-|----------------|--------------|---------------------------|---------------------------------------------|
-| GND            | any GND      | left (right under GPIO 28) | several to choose from                     |
-| 3V3            | 3V3          | right header              | 3.3 V from on-board LDO                     |
-| BL             | **GPIO50**   | left header               | LEDC PWM, 20 kHz, 8-bit duty                |
-| D/C            | **GPIO31**   | left header               | plain GPIO output (software-toggled)        |
-| CS             | **GPIO28**   | left header               | **SPI2_CS_PAD — IO_MUX direct**             |
-| SCK            | **GPIO30**   | left header               | **SPI2_CK_PAD — IO_MUX direct**             |
-| MISO           | not wired    | —                         | `PK_LCD_PIN_MISO = -1`                      |
-| MOSI           | **GPIO29**   | left header               | **SPI2_D_PAD — IO_MUX direct**              |
-
-The five `T_*` pins on `P3` are the resistive-touch lines into the
-on-breakout XPT2046 IC. Leave unconnected — the current firmware does
-not drive touch input.
-
-Physical layout (left header, top → bottom around the LCD signals):
-
-```
-   GND        ← (optional LCD GND return)
-   GPIO 31    ← LCD D/C
-   GPIO 30    ← LCD SCK
-   GPIO 29    ← LCD MOSI
-   GPIO 28    ← LCD CS
-   GND        ← (good LCD GND return, short trace back to host)
-   GPIO 50    ← LCD BL
-   GPIO 49    ← (free)
-```
-
-The four SPI signals occupy four contiguous header pins with **no GND
-in the middle**, so a 4-pin Dupont housing across GPIO 28–31 is safe
-to use as long as the housing pin order matches the table above.
-
-> ⚠️ **Why this layout?** ESP32-P4 SPI2's IO_MUX direct pins are
-> **GPIO 28–31** (datasheet v1.1, Table 2-3: `SPI2_CS_PAD`,
-> `SPI2_D_PAD`, `SPI2_CK_PAD`, `SPI2_Q_PAD` on the F2 alternate of
-> these GPIOs). All four are on the Waveshare left header, so SPI2
-> can bypass the GPIO matrix and stay valid up to ST7789's 80 MHz
-> ceiling. The earlier assignment (GPIO 33/46/47/48 on the right
-> header) routed through the GPIO matrix instead, and worse, sat
-> across a header GND pad that turned multi-pin Dupont housings into
-> guaranteed shorts. That assignment is deprecated.
-
-> ⚠️ **Right-header GND gotcha (legacy note)**: `GPIO46 → GND → GPIO47`
-> are three adjacent pins on the right header. A multi-pin Dupont
-> housing planted across this region will short one signal to ground.
-> Verified failure mode: SPI host writes look OK in logs, but the
-> panel shows the unmodulated transflective backlight tint (uniform
-> pale blue) because CS/SCK/MOSI/DC is shorted to GND. The left-header
-> layout above avoids this entirely.
-
-SPI bus is configured at `PK_LCD_SPI_HZ = 40 MHz` in
-`firmware/main/display.h`. The ST7789 data sheet allows higher clocks
-in suitable layouts, but any move toward 60-80 MHz should be verified
-on the actual cable or PCB rather than documented as assumed margin.
+Probe address `0x5D` first and fall back to `0x14`. Coordinate report
+registers and packet format are documented in
+`GT911-programming-guide.pdf`, not the shorter electrical datasheet.
 
 ### BNO085 IMU via I²C0 — GY-BN008X 10-pin breakout
 
@@ -408,11 +371,13 @@ The current firmware includes a fixed mounting quaternion in
 constant in agreement; changing one without the other produces
 misleading roll, pitch, and heading.
 
-#### Tare / cage button (BTN1, GPIO 26)
+#### Legacy tare / cage button (not fitted on the 4.3-inch board)
 
-Driven by `button_task.c`. See §3.4 below.
+The following section documents the retired 2.4-inch carrier controls
+only. The integrated 4.3-inch target uses touch; firmware does not start
+`button_task.c` because GPIO23 is `TP_RST` and GPIO26 is `LCD_BL_PWM`.
 
-### Tact buttons
+### Legacy tact buttons — reference only
 
 Four active-low momentary tact switches, each between the named GPIO
 and any GND pad. `button_task.c` enables the internal pull-up on all
@@ -543,7 +508,7 @@ Shares the on-board I²C0 bus with the ES8311 codec and BNO085 IMU
 | SDA        | I²C0 SDA | GPIO7        | shared bus                         |
 | SDO        | GND      | GND          | I²C address strap → `0x76`         |
 | CSB        | +3V3     | 3V3          | tie high to select I²C mode        |
-| INT        | BARO_INT | **GPIO27**   | data-ready IRQ (optional)          |
+| INT        | BARO_INT | **GPIO31**   | data-ready IRQ (optional; current driver polls) |
 
 ### GPS receiver (GT-U8 / ATGM336H) via UART + PPS (carrier board)
 
@@ -560,7 +525,7 @@ level shifting.
 |---------|----------|--------------|------------------------------------------------------|
 | V (VCC) | +3V3     | 3V3          | silkscreen reads "5v", but 3.3 V is fine on this wide-range module — do **not** assume 5 V is required |
 | G (GND) | GND      | GND          |                                                      |
-| T (TXD) | GPS_TX   | **GPIO33**   | GPS → **P4 UART RX** (crossed)                        |
+| T (TXD) | GPS_TX   | **GPIO51**   | GPS → **P4 UART RX**; GPIO33 is LCD BL_EN             |
 | R (RXD) | GPS_RX   | **GPIO32**   | **P4 UART TX** → GPS (crossed)                        |
 | P (PPS) | GPS_PPS  | **GPIO46**   | 1 Hz pulse-per-second; rising edge marks the UTC second |
 
@@ -576,20 +541,12 @@ After accounting for everything above, the following P4 GPIOs are
 free for new application use:
 
 ```
-GPIO47  GPIO48                                    (right header, lower half)
-GPIO49  GPIO51  GPIO52                            (left header)
+GPIO5 GPIO22 GPIO28 GPIO29 GPIO30 GPIO47 GPIO48 GPIO49 GPIO50 GPIO52
 ```
 
-That's **5** GPIOs with no caveats. The carrier board consumed four of
-the former free pool: GPIO27 → BMP388 INT, GPIO32/33 → GPS UART,
-GPIO46 → GPS PPS (see §3). Before the carrier board there were 9.
-
-> Note: `GPIO33 / GPIO46 / GPIO47 / GPIO48` were used by the LCD in
-> an earlier bring-up build, then freed when the LCD moved to the SPI2
-> IO_MUX direct pins on the left header (GPIO 28–31, see §3). On the
-> carrier board GPIO33 (GPS TX) and GPIO46 (GPS PPS) are used again;
-> only GPIO47/48 remain free here. GPIO46 and GPIO47 still bracket a
-> header GND, so prefer individual jumpers over multi-pin housings.
+GPIO31 is reserved for optional `BARO_INT`; GPIO32/51 are GPS UART and
+GPIO46 is GPS PPS. GPIO26/27/33 and GPIO23 are fixed LCD/touch signals.
+GPIO28/29/30/50 were released by retiring the SPI LCD.
 
 **Available but with caveats** — usable if you accept the trade-off:
 
@@ -601,7 +558,7 @@ GPIO46 → GPS PPS (see §3). Before the carrier board there were 9.
 | GPIO24  | left "DM"  | USB Serial/JTAG D− default (USB1P1_N0) — using disables on-chip USB JTAG |
 | GPIO25  | left "DP"  | USB Serial/JTAG D+ default (USB1P1_P0) — same                         |
 
-(GPIO5 was previously in this table as JTAG MTDO; it now hosts BTN2 — MODE, see §3.4.)
+GPIO5 is free now that the legacy MODE button is not fitted.
 
 In practice JTAG-via-USB-Serial isn't used by this project (we have
 the CH343P UART console and SWD via the C6 debug header), so
@@ -610,9 +567,8 @@ contributor ever wants USB JTAG, they'd have to free these up first.
 
 **Not in the free pool**:
 - `GPIO0` (BOOT strap; not broken out anyway)
-- `GPIO22 / GPIO23 / GPIO26 / GPIO5` (BTN3 / BTN4 / BTN1 / BTN2 —
-  see "Tact buttons" above; BTN2 = MODE on GPIO5 because deep-sleep
-  wake needs an LP_IO pin)
+- `GPIO23` (TP_RST), `GPIO26` (LCD_BL_PWM), `GPIO27` (LCD_RESET),
+  `GPIO33` (LCD_BL_EN)
 - All on-board-only GPIOs (`6`, `9–19`, `34–45`, `53`, `54`) — not on
   user headers.
 

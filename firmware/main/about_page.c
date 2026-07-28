@@ -162,7 +162,7 @@ void pk_about_page_render(uint16_t *fb)
     draw_kv(fb, y, PK_TR_ABOUT_IDF, tmp);
     y += ABOUT_LINE_H;
 
-    draw_kv(fb, y, PK_TR_ABOUT_BOARD, "Waveshare ESP32-P4-WIFI6");
+    draw_kv(fb, y, PK_TR_ABOUT_BOARD, "Waveshare P4 Touch LCD 4.3");
     y += ABOUT_LINE_H;
 
     esp_chip_info_t chip;
@@ -172,7 +172,7 @@ void pk_about_page_render(uint16_t *fb)
     draw_kv(fb, y, PK_TR_ABOUT_CHIP, tmp);
     y += ABOUT_LINE_H;
 
-    draw_kv(fb, y, PK_TR_ABOUT_DISPLAY, "TK024F3036 320x240 SPI");
+    draw_kv(fb, y, PK_TR_ABOUT_DISPLAY, "ST7701 800x480 DSI");
     y += ABOUT_LINE_H;
 
     draw_kv(fb, y, PK_TR_ABOUT_IMU, "BNO085 (I2C0 0x4A)");

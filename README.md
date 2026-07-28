@@ -6,6 +6,12 @@
   网页刷机 / Web flasher: <a href="https://updater.pilotkit.app">updater.pilotkit.app</a>
 </p>
 
+> 当前 `feat/lcd-4.3-touch` 硬件目标是
+> **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** 一体板：ST7701
+> 480×800 MIPI-DSI 面板以 PPA 旋转成 800×480 横屏，GT911 触摸，
+> P4NRW32 + ESP32-C6。`docs/jlc/lcd-2.4in-8pin/` 与下文 2.4 寸载板内容
+> 保留为 v0.8.0 历史 PCB 参考，不再代表本分支的当前固件接线。
+
 ## 项目概览 / Overview
 
 **Pilot Kit Box** 是一个开源、低成本、便携式的飞行数据盒子和航空态势感知设备，可与 [Pilot Kit](https://air.club) 深度结合使用，也可以作为独立设备运行。

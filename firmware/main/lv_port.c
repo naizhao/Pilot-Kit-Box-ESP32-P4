@@ -13,11 +13,10 @@
  * RGB565。v9.5 原生支持 LV_COLOR_FORMAT_RGB565_SWAPPED 并带专门的混合实现，
  * 因此显式声明该格式即可，不必去动 pk_rgb565 的既有约定。
  *
- * 当前状态
+ * 显示路径
  * --------
- * 新板（4.3″ MIPI-DSI）尚未到手，display.c 仍是 2.4″ SPI 面板。本文件先把
- * 集成打通到「能编译、能链接、体积可测」，渲染路径接上 pfd_task 要等阶段 4。
- * 之所以现在就补，是因为模拟器已经跑在 LVGL 上，固件侧拖得越久两边差得越远。
+ * display.c 已提供 800×480 逻辑 framebuffer，并在提交时用 PPA 旋转到
+ * ST7701 的 480×800 DPI 双缓冲。这里继续使用 DIRECT 模式，不做第二次旋转。
  */
 
 #include "lv_port.h"
@@ -40,7 +39,7 @@ static uint16_t     *s_canvas_px;
 /*
  * DIRECT 模式下 LVGL 已经把结果画进了 framebuffer，这里只需把整帧推给面板。
  *
- * 注意 pk_display_flush_full() 是同步的：它返回时 DMA 已完成，所以可以直接
+ * 注意 pk_display_flush_full() 是同步的：它返回时 VSYNC 已切换，所以可以直接
  * 应答 LVGL。将来换成异步分块推送时，flush_ready 必须挪到传输完成回调里，
  * 否则 LVGL 会在 DMA 还在读的缓冲上继续画。
  */

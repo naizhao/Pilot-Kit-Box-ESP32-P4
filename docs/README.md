@@ -30,15 +30,15 @@ All public docs should match this baseline:
 - Safety boundary: Pilot Kit Box is not certified avionics and must
   not be documented as a primary instrument, backup instrument,
   navigation source, or collision-avoidance system.
-- Target board: **Waveshare ESP32-P4-WIFI6**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
+- Target board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
 - RTL-SDR attaches to the P1 USB 2.0 HS OTG port. The firmware defaults to 1090 MHz at 2 MSPS.
 - Current recommended SDR dongle tuner: **FC0013**, mainly because the BOM cost is low.
 - Embedded identity databases include the ICAO24 aircraft database at `firmware/main/aircraft_db.bin`, the airline code table at `firmware/main/airline_codes.c`, and the ICAO24 country table at `firmware/main/icao_country.c`.
-- LCD: **2.4-inch TK024F3036 / ST7789 320x240 transflective SPI display**, wired on left-header GPIO 28/29/30/31 with backlight on GPIO50.
+- LCD: **4.3-inch ST7701 480x800 MIPI-DSI**, presented as 800x480 landscape through PPA rotation; backlight PWM GPIO26, reset GPIO27, BL_EN GPIO33.
+- GT911 touch shares I2C0 on GPIO7/8 and uses GPIO23 reset. The legacy four-button task is disabled.
 - IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, INT on GPIO20, RST on GPIO21.
 - UI mode cycle: **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**.
-- MODE short-press changes pages; MODE long-press enters deep sleep; pressing MODE again wakes the device.
-- TARE moves the selected Settings row, binds own-ship on ADS-B LIST, and performs IMU tare on other pages; long-press persists tare, and a 10-second very-long press performs IMU factory reset.
+- Navigation and tare actions are exposed through the 4.3-inch touch UI; references to MODE/TARE tact buttons describe the legacy 2.4-inch carrier only.
 - GT-U8 GPS/BeiDou, GPIO46 PPS, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths.
 - Settings controls language, QNH, map orientation, radar range, and log backend; MicroSD supports insertion/removal detection, capacity status, and guarded formatting.
 - Settings, About, Diagnostics, and Compass Calibration have English/Chinese firmware UI strings with configuration persisted through NVS.

@@ -1,7 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
   idf:
-    version: '>=5.2.0'
+    version: '>=6.0.0'
   espressif/usb: '*'
   # LittleFS — log-structured filesystem for the on-board ADS-B ts-format
   # dump partition. Picked over SPIFFS for better wear levelling on the
@@ -17,3 +17,13 @@ dependencies:
   # LVGL v9 —— 4.3″ 触摸 UI 的控件层。锁小版本而不用 '*'：布局评审要能复现，
   # 绘制细节在小版本之间也会变（模拟器侧同样固定在 v9.5.0）。
   lvgl/lvgl: '~9.5.0'
+  # 微雪 4.3 寸板使用 ST7701 MIPI-DSI；锁定同一 2.0 小版本，避免面板
+  # wrapper API 随依赖重解析而漂移。
+  # GT911 电容触摸（I²C0 与 BNO085/BMP388 共用 GPIO7/8）。锁小版本的理由同
+  # 上：坐标上报与复位时序在版本间调整过，评审要能复现。
+  espressif/esp_lcd_touch_gt911: '~1.1.0'
+  espressif/esp_lcd_st7701:
+    version: '~2.0.2'
+    # 2.0.2 的 RGB 兼容源在 free() 后记录指针，GCC 15 会正确拒绝构建。
+    # 本地镜像只把日志移到 free() 前；DSI 实现与官方 2.0.2 保持一致。
+    override_path: '../components/esp_lcd_st7701'

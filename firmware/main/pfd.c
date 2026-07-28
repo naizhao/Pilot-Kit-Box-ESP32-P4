@@ -44,6 +44,7 @@
 #include "pfd_infobox.h"
 #include "pk_ui_nav.h"
 #include "pk_ui_nav_host.h"
+#include "touch_gt911.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -100,6 +101,9 @@ static void pfd_task(void *arg)
         ESP_LOGE(TAG, "no canvas buffer — exiting");
         vTaskDelete(NULL);
     }
+    /* 先有输入设备再建控件：nav 层那些 lv_indev_active() 取的是「当前正在
+     * 上报的设备」，一个都没注册的话 dock 与 FAB 全是死的。 */
+    (void)pk_touch_init();
     pk_ui_nav_init();
     /* 建完 FAB 才能把它摆回上次的落点。 */
     pk_ui_nav_host_init();

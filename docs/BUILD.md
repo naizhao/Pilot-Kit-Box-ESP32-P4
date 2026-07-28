@@ -12,7 +12,7 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 
 | Item | Notes |
 |---|---|
-| **Waveshare ESP32-P4-WIFI6** development board | 32 MB Nor Flash, 32 MB PSRAM, on-board ESP32-C6 for Wi-Fi 6 / BLE 5. Pin mappings in this repository target this board. |
+| **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** | Integrated P4NRW32 + C6, 4.3-inch ST7701 DSI display, GT911 touch, 32 MB flash and 32 MB PSRAM. |
 | **USB-C data cable** | Used for power, flashing, and serial monitoring. Charge-only cables will not work. |
 | **macOS / Linux / Windows host** | Any host that can run ESP-IDF. Commands below use macOS/Linux paths; Windows uses an ESP-IDF PowerShell and `COMx` ports. |
 
@@ -22,7 +22,6 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 |---|---|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception. FC0013 is currently recommended because it keeps BOM cost low. |
 | USB Type-A female to MX1.25 4-pin cable | Adapts the board's P1 USB HS OTG port to a standard USB-A socket for the RTL-SDR. |
-| 2.4-inch TK024F3036 / ST7789 transflective SPI display | Local PFD and UI display. |
 | BNO085 / GY-BN008X IMU module | Attitude fusion for the PFD. |
 | USB-UART adapter | Required once per fresh board to flash the ESP32-C6 hosted slave firmware for BLE. |
 
@@ -245,7 +244,7 @@ pilot_kit: USB host stack online — spawning SDR + DSP tasks
 rec_file: LittleFS mounted at /storage
 pk_sd: no microSD card at boot (will keep probing)
 sdr: USB client registered, waiting for RTL-SDR enumeration
-display: TK024F3036 320x240 ready, framebuffer @ 0x48xxxxxx (150 KiB PSRAM)
+display: ST7701 DSI ready: logical 800x480 -> PPA 90 CCW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 pilot_kit: IMU init failed (...) — PFD will run without attitude
 pfd: pfd_task running (G1000 landscape)
 transport: Identified slave [esp32c6]
@@ -257,7 +256,7 @@ Optional hardware expectations:
 | Action | Expected result |
 |---|---|
 | Attach RTL-SDR to P1 USB HS OTG | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
-| Wire the ST7789 display | Boot splash appears for at least 3 seconds, then the PFD renders |
+| Power the integrated 4.3-inch display | 800x480 boot splash appears for at least 3 seconds, then the PFD renders |
 | Wire the BNO085 IMU | `imu: rpy = ... (acc=N ...)` logs update and PFD horizon follows motion |
 | Fit the GT-U8 module | GPS/BeiDou fix, satellite/SNR, antenna, and system-time rows update on DIAG |
 | Fit the BMP388 | PFD and DIAG show pressure, QNH-adjusted altitude, and vertical speed |

@@ -146,31 +146,25 @@ three seconds and checks a mounted card every two seconds. The writer
 does not migrate backends during one boot; after card removal, reinsert
 and reboot or select Flash and reboot.
 
-## Display / ST7789
+## Display / ST7701 MIPI-DSI
 
 Defined in `firmware/main/display.h`:
 
 ```c
-#define PK_LCD_SPI_HOST       SPI2_HOST
-#define PK_LCD_PIN_SCLK       30
-#define PK_LCD_PIN_MOSI       29
-#define PK_LCD_PIN_MISO       -1
-#define PK_LCD_PIN_CS         28
-#define PK_LCD_PIN_DC         31
-#define PK_LCD_PIN_RST        -1
-#define PK_LCD_PIN_BL         50
-#define PK_LCD_SPI_HZ         (40 * 1000 * 1000)
+#define PK_DISPLAY_W                     800
+#define PK_DISPLAY_H                     480
+#define PK_LCD_PIN_RST                    27
+#define PK_LCD_PIN_BL                     26
+#define PK_LCD_PIN_BL_EN                  33
+#define PK_LCD_DSI_LANE_COUNT             2
+#define PK_LCD_DSI_LANE_BIT_RATE_MBPS     500
+#define PK_LCD_DPI_CLOCK_MHZ              30
 ```
 
-Current verified wiring uses the left header:
-
-- CS: GPIO28
-- MOSI: GPIO29
-- SCK: GPIO30
-- DC: GPIO31
-- BL: GPIO50
-
-GPIO28/29/30 are SPI2 IO_MUX direct pins, which avoids the older right-header GPIO-matrix wiring and the GPIO46 / GND / GPIO47 shorting hazard.
+The panel scans its native 480x800 framebuffer continuously. PPA rotates
+the logical 800x480 RGB565-swapped framebuffer 90 degrees CCW, performs
+the byte swap, and presents it through two DPI framebuffers at VSYNC.
+GPIO26 uses inverted LEDC PWM because it injects the AP3032 feedback node.
 
 ## IMU / BNO085
 
@@ -224,7 +218,7 @@ Common ESP_LOG tags:
 | `gps` | GT-U8 NMEA, PPS, and satellite diagnostics |
 | `baro` | BMP388 pressure, altitude, and vertical speed |
 | `ble_gatt` | NimBLE host, GATT, GDL90 emitter |
-| `display` | ST7789 panel |
+| `display` | ST7701 MIPI-DSI + PPA rotation |
 | `imu` | BNO085 driver |
 | `pfd` | renderer |
 

@@ -1,0 +1,177 @@
+/*
+ * touch_gt911.c — GT911 电容触摸 → LVGL 输入设备。
+ *
+ * 没有它，dock、FAB、二级页面的三条退路全都点不动：pk_ui_nav.c 里那些
+ * lv_indev_active() / lv_indev_get_vect() 取的是「当前正在上报的输入设备」，
+ * 而在本文件出现之前，这台机器一个输入设备都没注册过。
+ *
+ * 硬件事实（docs/hardware/board_pinout-zh_CN.md §GT911，据实物原理图）
+ * ------------------------------------------------------------------
+ *   SDA GPIO7 / SCL GPIO8   与 BNO085、BMP388 共用 I²C0，走 pk_i2c0_bus_get()
+ *   RESET GPIO23
+ *   INT   GPIO2，**R35 默认不贴**
+ *
+ * INT 不贴带来两个后果，都不是可选项：
+ *
+ *   1. 不能用中断，只能轮询。这也是为什么下面走 LVGL 的定时读取而不是
+ *      esp_lcd_touch_register_interrupt_callback()。
+ *
+ *   2. I²C 地址不确定。GT911 在复位释放的瞬间采样 INT 电平来决定自己是
+ *      0x5D 还是 0x14，而 INT 悬空时采到什么取决于芯片内部下拉——**没有**
+ *      可依赖的默认值。驱动组件也帮不上忙：它那段「拉 INT 选地址」的时序
+ *      只在 int_gpio_num 有效时才走（esp_lcd_touch_gt911.c 第 101 行的条件），
+ *      INT 传 NC 就直接跳到 else 分支，只做一次普通复位。
+ *      所以这里先在总线上探两个地址，探到哪个用哪个。
+ */
+#include "touch_gt911.h"
+
+#include "driver/i2c_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_touch_gt911.h"
+#include "esp_log.h"
+#include "lvgl.h"
+
+#include "display.h"
+#include "imu_task.h"      /* pk_i2c0_bus_get() */
+
+static const char *TAG = "touch";
+
+#define TOUCH_RST_GPIO      GPIO_NUM_23
+#define TOUCH_PROBE_MS      50
+
+/* GT911 报的是**面板原生**坐标系（竖屏 480×800），与固件的逻辑横屏无关。 */
+#define TOUCH_NATIVE_W      480
+#define TOUCH_NATIVE_H      800
+
+static esp_lcd_touch_handle_t s_tp;
+
+/*
+ * 原生触摸坐标 → 逻辑屏坐标。
+ *
+ * display.c 每帧把 800×480 的逻辑 framebuffer 顺时针旋转 90° 送进 480×800 的
+ * 面板（那里用 PPA 的 270° CCW 表达同一件事，见 display.c 的 rotation_angle）。
+ * 触摸面板没有参与这次旋转，它报的仍是原生坐标，所以这里要把旋转**反过来**
+ * 做一次，否则手指点左上角、光标落在右上角。
+ *
+ *   顺时针 90°：逻辑 (lx, ly) → 原生 (px, py) = (LH-1-ly, lx)
+ *   反解：      lx = py,  ly = LH-1-px          （LH = 逻辑高 = 480）
+ *
+ * 自己算而不用 esp_lcd_touch 的 swap_xy/mirror 标志位：那三个开关的组合顺序
+ * 藏在组件内部，出了偏差只能靠试；写成两行算式，对不对一眼就能看出来。
+ */
+static inline void native_to_logical(uint16_t px, uint16_t py, int *lx, int *ly)
+{
+    *lx = py;
+    *ly = (PK_DISPLAY_H - 1) - px;
+
+    if (*lx < 0) *lx = 0;
+    if (*ly < 0) *ly = 0;
+    if (*lx > PK_DISPLAY_W - 1) *lx = PK_DISPLAY_W - 1;
+    if (*ly > PK_DISPLAY_H - 1) *ly = PK_DISPLAY_H - 1;
+}
+
+static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    LV_UNUSED(indev);
+
+    /* 只取第一个触点：本机全部交互都是单点（拖 FAB、点页签、右滑返回）。
+     * 双指捏合切量程是雷达页的事，等那页迁过来再扩。 */
+    uint16_t px = 0, py = 0;
+    uint8_t  cnt = 0;
+
+    if (esp_lcd_touch_read_data(s_tp) != ESP_OK) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+    bool pressed = esp_lcd_touch_get_coordinates(s_tp, &px, &py, NULL, &cnt, 1);
+
+    if (pressed && cnt > 0) {
+        int lx, ly;
+        native_to_logical(px, py, &lx, &ly);
+        data->point.x = lx;
+        data->point.y = ly;
+        data->state   = LV_INDEV_STATE_PRESSED;
+        /* 标定用：真机上点四角，核对原生与逻辑两组数是否符合上面的算式。
+         * 若发现 X/Y 反了或某轴镜像，改 native_to_logical 一处即可。 */
+        ESP_LOGD(TAG, "native(%u,%u) -> logical(%d,%d)", px, py, lx, ly);
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+/* 在总线上探地址。返回探到的地址，两个都不在则返回 0。 */
+static uint8_t probe_addr(i2c_master_bus_handle_t bus)
+{
+    const uint8_t candidates[] = {
+        ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,          /* 0x5D，INT 上电为低 */
+        ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP,   /* 0x14，INT 上电为高 */
+    };
+    for (size_t i = 0; i < sizeof(candidates); ++i) {
+        if (i2c_master_probe(bus, candidates[i], TOUCH_PROBE_MS) == ESP_OK) {
+            ESP_LOGI(TAG, "GT911 found at 0x%02X", candidates[i]);
+            return candidates[i];
+        }
+    }
+    return 0;
+}
+
+esp_err_t pk_touch_init(void)
+{
+    i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
+    if (bus == NULL) {
+        ESP_LOGE(TAG, "I2C0 bus not ready — touch disabled");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint8_t addr = probe_addr(bus);
+    if (addr == 0) {
+        /* 不是致命错误：没有触摸设备照样能飞，PFD 该画还画。但必须喊出来，
+         * 否则现象只是「屏幕点不动」，会被当成 UI 的 bug 查上半天。 */
+        ESP_LOGE(TAG, "GT911 not responding at 0x5D or 0x14 — touch disabled");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+    io_cfg.dev_addr = addr;
+
+    esp_lcd_panel_io_handle_t io = NULL;
+    esp_err_t err = esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "panel_io_i2c failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const esp_lcd_touch_config_t tp_cfg = {
+        .x_max = TOUCH_NATIVE_W,
+        .y_max = TOUCH_NATIVE_H,
+        .rst_gpio_num = TOUCH_RST_GPIO,
+        /* INT 走线未贴（R35），传 NC：组件会跳过「拉 INT 选地址」那段时序，
+         * 只做一次普通复位——地址已经由上面探出来了。 */
+        .int_gpio_num = GPIO_NUM_NC,
+        .levels = {
+            .reset     = 0,        /* RST 低有效 */
+            .interrupt = 0,
+        },
+        /* 旋转在 native_to_logical() 里一次做完，这里全部保持原样。 */
+        .flags = {
+            .swap_xy  = 0,
+            .mirror_x = 0,
+            .mirror_y = 0,
+        },
+    };
+
+    err = esp_lcd_touch_new_i2c_gt911(io, &tp_cfg, &s_tp);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "gt911 init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    lv_indev_t *indev = lv_indev_create();
+    if (indev == NULL) return ESP_ERR_NO_MEM;
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, touch_read_cb);
+
+    ESP_LOGI(TAG, "GT911 ready: native %dx%d -> logical %dx%d (90 CCW)",
+             TOUCH_NATIVE_W, TOUCH_NATIVE_H, PK_DISPLAY_W, PK_DISPLAY_H);
+    return ESP_OK;
+}

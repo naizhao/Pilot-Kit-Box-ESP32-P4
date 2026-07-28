@@ -12,8 +12,9 @@
 
 | 文件 | 说明 | 来源 |
 |---|---|---|
-| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | 官方原理图（Rev1.2，2 页：P1 电路图 / P2 装配丝印图） | <https://files.waveshare.com/wiki/ESP32-P4-WIFI6-Touch-LCD-4.3/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
-| `ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf` | 外形尺寸图（20260411） | 官方 `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` 内解出（同 zip 另含 .stp / .dxf，体积大未入库） |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | 官方原理图（Rev1.2，2 页：P1 电路图 / P2 装配丝印图），SHA-256 `3697baa3ded0089446baf09705f437d13cf0324874031ccc57fd9b72cd9dfe53` | <https://www.waveshare.net/w/upload/b/b8/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf` | 外形尺寸图（20260411） | 官方 `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` 内解出 |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` | 官方机械资料包（尺寸 PDF + STEP + DXF），SHA-256 `8209b6aa405d4d3d8a2009e7eb545a4844e456b9cf95d8b8e53529414b03ecaf` | <https://www.waveshare.net/w/upload/3/36/ESP32-P4-WIFI6-Touch-LCD-4.3.zip> |
 | `ST7701-datasheet.pdf` | 屏驱动 IC 规格书（Sitronix ST7701 SPEC V1.2，303 页，含 MIPI-DSI 章节） | Crystalfontz 镜像 <https://www.crystalfontz.com/controllers/uploaded/ST7701.pdf> |
 | `GT911-datasheet.pdf` | Goodix GT911 触控 IC 数据手册 Rev.09 | <https://files.waveshare.com/wiki/common/GT911_EN_Datasheet.pdf> |
 | `GT911-programming-guide.pdf` | GT911 编程指南 Rev.10（寄存器表 / 坐标上报格式） | <https://www.lcd-module.de/fileadmin/eng/pdf/zubehoer/GT911_Programming_Guide_Rev.10.pdf> |
