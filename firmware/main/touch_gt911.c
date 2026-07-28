@@ -133,6 +133,14 @@ esp_err_t pk_touch_init(void)
 
     esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     io_cfg.dev_addr = addr;
+    /* 组件那个宏是给**旧** I2C 驱动写的，不含 scl_speed_hz；新驱动把它原样
+     * 传给 i2c_master_bus_add_device()，0 会被判为非法参数。实测现象就是
+     * 「GT911 found at 0x5D」之后紧跟一条 panel_io_i2c ESP_ERR_INVALID_ARG——
+     * 芯片明明在，却建不出 io。
+     *
+     * 取 400 kHz 与总线上其余设备一致（imu_task.c 的 IMU_I2C_HZ、baro_task.c
+     * 的 BARO_I2C_HZ 都是这个值），GT911 本身也支持到 400 kHz。 */
+    io_cfg.scl_speed_hz = 400000;
 
     esp_lcd_panel_io_handle_t io = NULL;
     esp_err_t err = esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io);
