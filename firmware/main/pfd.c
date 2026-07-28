@@ -52,8 +52,6 @@
 #include "traffic_page.h"
 #include "ui_state.h"
 #include "i18n.h"
-#include "text.h"
-#include "text_font_cjk.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -62,45 +60,23 @@
 static const char *TAG = "pfd";
 
 /* --- Transient toast overlay ---------------------------------------- *
- * Drawn on top of whichever page just rendered, so a confirmation
- * (TARE saved / own-ship bound or cleared) shows up in any mode. The
- * message text is localised at draw time via pk_i18n_text(), so it
- * follows the active UI language. Green banner for success, red for
- * failure. The toast auto-expires inside pk_ui_toast_get(). */
-static void render_toast(uint16_t *fb)
+ * 每帧把 ui_state 里的 toast 状态同步给控件层。
+ *
+ * 此前是自己在 framebuffer 上画一个框（pk_pfd_fill_rect + 旧 CJK 位图字体），
+ * 那样它与 PFD 同层，会被 dock、FAB 盖住——而 toast 恰恰是最该盖住别人的。
+ * 现在交给 pk_ui_nav_toast()，画在控件层最前面。
+ *
+ * 过期判定仍在 pk_ui_toast_get() 里：它带时间戳且线程安全，按键中断里也能
+ * 安全地 show。这里只做「有就显示、没有就收起」。 */
+static void sync_toast(void)
 {
     pk_tr_id_t id;
     bool is_error;
-    if (!pk_ui_toast_get(&id, &is_error)) return;
-
-    const char *msg = pk_i18n_text(id);
-    if (msg == NULL || msg[0] == '\0') return;
-
-    const int pad_x = 14;
-    const int pad_y = 9;
-    int tw = pk_text_title_width(msg);
-    int th = PK_TEXT_CJK_CELL_H;             /* 标题字形高 16px */
-
-    int box_w = tw + 2 * pad_x;
-    int box_h = th + 2 * pad_y;
-    int x0 = (PK_DISPLAY_W - box_w) / 2;
-    int y0 = (PK_DISPLAY_H - box_h) / 2;
-    int x1 = x0 + box_w;
-    int y1 = y0 + box_h;
-
-    uint16_t bg     = is_error ? pk_rgb565(120, 24, 24) : pk_rgb565(16, 96, 36);
-    uint16_t border = is_error ? pk_rgb565(255, 80, 80) : pk_rgb565(96, 230, 120);
-    uint16_t fg     = pk_rgb565(255, 255, 255);
-
-    pk_pfd_fill_rect(fb, x0, y0, x1, y1, bg);
-    /* 2px 边框(上/下/左/右) */
-    pk_pfd_fill_rect(fb, x0,     y0,     x1,     y0 + 2, border);
-    pk_pfd_fill_rect(fb, x0,     y1 - 2, x1,     y1,     border);
-    pk_pfd_fill_rect(fb, x0,     y0,     x0 + 2, y1,     border);
-    pk_pfd_fill_rect(fb, x1 - 2, y0,     x1,     y1,     border);
-
-    pk_text_puts_title(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                       x0 + pad_x, y0 + pad_y, msg, fg);
+    if (pk_ui_toast_get(&id, &is_error)) {
+        pk_ui_nav_toast(pk_i18n_text(id), is_error);
+    } else {
+        pk_ui_nav_toast(NULL, false);
+    }
 }
 
 static void pfd_task(void *arg)
@@ -363,7 +339,7 @@ static void pfd_task(void *arg)
         }
 
         /* 瞬时提示叠加在任意页面之上(TARE 保存 / own 绑定·取消反馈)。 */
-        render_toast(fb);
+        sync_toast();
 
         /* 交给 LVGL 合成并推屏：它会把 canvas 与其上的控件混合到 display
          * 缓冲，再经 lv_port 的 flush_cb 调 pk_display_flush_full()。

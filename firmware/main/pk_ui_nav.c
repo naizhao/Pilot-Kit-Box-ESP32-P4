@@ -455,3 +455,68 @@ __attribute__((weak)) void pk_ui_nav_on_fab_moved(bool left, int y_pct)
     LV_UNUSED(left);
     LV_UNUSED(y_pct);
 }
+
+/* ── Toast ─────────────────────────────────────────────────────────
+ *
+ * 覆盖层，居中显示一句短提示（调平已保存 / 已绑定本机 …）。
+ *
+ * 从 pfd.c 的 render_toast() 迁过来，两点变化：
+ *   - 画在**控件层**而不是 canvas 上。此前它跟 PFD 画在同一块缓冲里，
+ *     于是被 dock、FAB 盖住——而 toast 恰恰是最该盖住别人的东西。
+ *   - 文字走 TinyTTF，不再用 190 KB 的旧 CJK 位图字库。那批字库的退役
+ *     就卡在这类零散调用点上，逐个迁完才能删。
+ *
+ * 生命周期仍由 ui_state 的 pk_ui_toast_get() 掌握（它带过期时间且线程安全，
+ * 按键中断里也能安全地 show）。这里只负责「当前该不该显示、显示什么」，
+ * 每帧同步一次——把过期逻辑再实现一遍只会多一处不一致。
+ */
+static lv_obj_t *s_toast;
+
+static void toast_ensure(void)
+{
+    if (s_toast) return;
+
+    s_toast = lv_obj_create(lv_screen_active());
+    lv_obj_set_style_radius(s_toast, 10, 0);
+    lv_obj_set_style_border_width(s_toast, 2, 0);
+    lv_obj_set_style_pad_hor(s_toast, 18, 0);
+    lv_obj_set_style_pad_ver(s_toast, 12, 0);
+    lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_SCROLLABLE);
+    /* 不接受点击：它是通知不是按钮，让触摸穿透到底下的页面。 */
+    lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(s_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+    lv_obj_t *l = lv_label_create(s_toast);
+    lv_obj_set_style_text_font(l, s_font_zh_m, 0);
+    lv_obj_center(l);
+
+    lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+    /* 永远在最上层：dock 展开时弹出的提示也得看得见。 */
+    lv_obj_move_foreground(s_toast);
+}
+
+void pk_ui_nav_toast(const char *msg, bool is_error)
+{
+    toast_ensure();
+
+    if (msg == NULL || msg[0] == '\0') {
+        lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    /* 配色沿用既有约定：绿=成功、红=失败。边框比底色亮，暗背景上才立得住。 */
+    lv_color_t bg     = is_error ? lv_color_hex(0x781818) : lv_color_hex(0x106024);
+    lv_color_t border = is_error ? lv_color_hex(0xFF5050) : lv_color_hex(0x60E678);
+
+    lv_obj_set_style_bg_color(s_toast, bg, 0);
+    lv_obj_set_style_bg_opa(s_toast, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(s_toast, border, 0);
+
+    lv_obj_t *l = lv_obj_get_child(s_toast, 0);
+    lv_label_set_text(l, msg);
+    lv_obj_set_style_text_color(l, lv_color_white(), 0);
+
+    lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_toast);
+    lv_obj_center(s_toast);
+}

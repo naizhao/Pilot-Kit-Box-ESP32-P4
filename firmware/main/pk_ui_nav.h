@@ -25,6 +25,15 @@ bool pk_ui_nav_dock_open(void);
 /* FAB 是否处于按下态（供模拟器核对命中区）。 */
 bool pk_ui_nav_fab_pressed(void);
 
+/*
+ * 显示 / 收起居中的瞬时提示。msg 为 NULL 或空串即收起。
+ *
+ * 只管「显示什么」，不管「显示多久」——过期由 ui_state 的 pk_ui_toast_get()
+ * 判定（它带时间戳且线程安全，中断里也能 show）。调用方每帧同步一次即可，
+ * 在这里再实现一套计时只会多一处不一致。
+ */
+void pk_ui_nav_toast(const char *msg, bool is_error);
+
 /* ── 由导航层回调出去的动作 ──────────────────────────────────────
  *
  * 导航层只管「点了哪个」，不管「切页要做什么」——后者在固件里是
