@@ -27,7 +27,6 @@
 #include "lvgl.h"
 
 #include "display.h"
-#include "pk_ui_nav.h"
 
 static const char *TAG = "lv_port";
 
@@ -35,6 +34,8 @@ static const char *TAG = "lv_port";
 #define PK_LV_CF   LV_COLOR_FORMAT_RGB565_SWAPPED
 
 static lv_display_t *s_disp;
+static lv_obj_t     *s_canvas;
+static uint16_t     *s_canvas_px;
 
 /*
  * DIRECT 模式下 LVGL 已经把结果画进了 framebuffer，这里只需把整帧推给面板。
@@ -93,36 +94,53 @@ esp_err_t pk_lv_port_init(void)
 
 uint16_t *pk_lv_port_canvas_px(void)
 {
-    /*
-     * PFD 直接画进 LVGL 的显示缓冲，不再单独开一块 canvas。
-     *
-     * 原先的结构是：PFD 画 canvas（PSRAM 768 KB）→ LVGL 把整块 canvas blit
-     * 到 display 缓冲 → PPA 旋转推屏。中间那次 blit 是 768 KB 读 + 768 KB 写，
-     * 实测占每帧 33 ms，而它搬运的内容与源一模一样——纯粹是为了让 PFD 与
-     * 控件分层。
-     *
-     * DIRECT 渲染模式下 LVGL 的缓冲就是 pk_display_framebuffer() 本身，所以
-     * 让 PFD 直接画在上面，控件叠着画即可，分层关系不变，只是少搬一趟。
-     *
-     * 前提是屏幕背景**透明**：否则 LVGL 每次重绘脏区都会先用背景色刷一遍，
-     * 把 PFD 刚画好的内容抹掉。透明之后它只画控件本身，控件底下露出的就是
-     * PFD 的像素。
-     *
-     * 控件被 PFD 覆盖的问题由 pk_lv_port_invalidate() 解决：PFD 每帧重画整屏，
-     * 所以每帧都要让控件重绘一次。
-     */
+    if (s_canvas_px != NULL) return s_canvas_px;
+
+    /* 单独一块，不复用 display 的 framebuffer：合成时 LVGL 要把 canvas 混到
+     * display 缓冲上，同一块内存会源目重叠。放 PSRAM——800×480×2 = 768 KB，
+     * 内部 RAM 放不下，而这块每帧顺序写、不参与 DMA，PSRAM 带宽足够。 */
+    s_canvas_px = heap_caps_malloc(PK_DISPLAY_FB_BYTES, MALLOC_CAP_SPIRAM);
+    if (s_canvas_px == NULL) {
+        ESP_LOGE(TAG, "canvas buffer alloc failed (%d bytes)", PK_DISPLAY_FB_BYTES);
+        return NULL;
+    }
+
     lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_opa(scr, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_pad_all(scr, 0, 0);
-    return pk_display_framebuffer();
+
+    s_canvas = lv_canvas_create(scr);
+    lv_canvas_set_buffer(s_canvas, s_canvas_px, PK_DISPLAY_W, PK_DISPLAY_H, PK_LV_CF);
+    lv_obj_set_pos(s_canvas, 0, 0);
+    /* canvas 是最底层：FAB / dock / Toast 都叠在它上面。 */
+    lv_obj_move_background(s_canvas);
+    return s_canvas_px;
 }
 
+/*
+ * 为什么这里必须是「整块 canvas 标脏」，而不是只标控件
+ * -----------------------------------------------------
+ * 试过让 PFD 直接画进 display 缓冲、屏幕背景设 LV_OPA_TRANSP、每帧只把
+ * FAB/dock 标脏，以此省掉 canvas → display 那次 768 KB 的 blit（实测 33 ms）。
+ * 真机上的结果是 FAB 带一圈白底、且 FAB 与 dock 持续频闪。
+ *
+ * 两个原因，都是硬伤：
+ *
+ *   1. RGB565 没有 alpha 通道。DIRECT 模式下 LVGL 重绘控件脏区时需要一个
+ *      不透明的底，屏幕透明就拿不到，圆角与半透明处填出未定义的颜色。
+ *
+ *   2. PFD 每帧覆盖整屏，而 LVGL 有自己的刷新周期（LV_DEF_REFR_PERIOD），
+ *      并非每次 lv_timer_handler 都真的重绘。于是有的帧控件画上去、有的帧
+ *      被 PFD 盖掉——正是频闪。
+ *
+ * 要省掉这次 blit，得让控件与 PFD 在同一次遍历里合成（例如放弃 LVGL 图层、
+ * 自己叠控件像素），不是改标脏范围能解决的。
+ */
 void pk_lv_port_invalidate(void)
 {
-    /* 谁该重绘由导航层决定（它知道哪些控件此刻可见），这里不再整屏标脏——
-     * invalidate(screen) 会让 LVGL 按 800×480 去遍历，而真正要重画的只有
-     * FAB 与 dock 那点面积。见 pk_ui_nav_refresh()。 */
-    pk_ui_nav_refresh();
+    /* canvas 的像素是绕过 LVGL 直接写的，必须显式告知已变脏，否则 LVGL
+     * 认为无需重绘，屏幕停在上一帧。 */
+    if (s_canvas) lv_obj_invalidate(s_canvas);
 }
 
 void pk_lv_port_tick(uint32_t elapsed_ms)

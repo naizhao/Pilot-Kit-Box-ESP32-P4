@@ -711,16 +711,3 @@ void pk_ui_nav_toast(const char *msg, bool is_error)
 __attribute__((weak)) void pk_ui_nav_on_back(void)
 {
 }
-
-void pk_ui_nav_refresh(void)
-{
-    /* PFD 每帧覆盖整屏，控件必须跟着重绘，否则会被抹掉。
-     *
-     * 只标记控件本身，不是整个屏幕：invalidate(screen) 会让 LVGL 按 800×480
-     * 的脏区去遍历图层，而实际需要重画的只有 FAB 那 56×56 加上 dock 那一条。
-     * 两者差着两个数量级。 */
-    if (s_fab)     lv_obj_invalidate(s_fab);
-    if (s_dock && s_dock_open) lv_obj_invalidate(s_dock);
-    if (s_toast)   lv_obj_invalidate(s_toast);
-    if (s_backbar) lv_obj_invalidate(s_backbar);
-}
