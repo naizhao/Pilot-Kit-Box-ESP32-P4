@@ -61,9 +61,9 @@
 
 #define AB_LEFT_X        24
 #define AB_LEFT_W       248
-#define AB_LOGO_SIZE    128
-#define AB_LOGO_Y        84
-#define AB_NAME_Y       (AB_LOGO_Y + AB_LOGO_SIZE + 24)
+#define AB_LOGO_SIZE    176   /* 176-2*12 略大于源图，见 draw_logo */
+#define AB_LOGO_Y        76
+#define AB_NAME_Y       (AB_LOGO_Y + AB_LOGO_SIZE + 20)
 
 #define AB_RIGHT_X      304               /* 右栏标签起点 */
 #define AB_VALUE_X      452               /* 数值起点：容得下最长的标签 */
@@ -75,7 +75,7 @@
  * 「这台设备是什么」。 */
 #define AB_QR_SIZE      104
 #define AB_QR_X         (AB_LEFT_X + (AB_LEFT_W - AB_QR_SIZE) / 2)
-#define AB_QR_Y         308
+#define AB_QR_Y         340
 
 /* 混排的垂直对齐已经在 text.c 内部处理（CJK 相对拉丁 cell 下移半个差值），
  * 这里不要再叠加一次。 */
@@ -129,7 +129,10 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
  * 图标该有的样子是：图案完整，四周留一圈内边距，再套圆角。所以这里不裁源图，
  * 而是把它整体缩进 AB_LOGO_PAD，空出来的部分由白色底板填充。
  */
-#define AB_LOGO_PAD     12
+/* 内边距取 8：内容区正好 176-16 = 160 = 源图尺寸，**1:1 不缩放**。
+ * 缩放会让量角器那圈细刻度断成虚线（最近邻采样直接丢像素）——开机画面上
+ * 实测过，反馈是「四周有点破」。 */
+#define AB_LOGO_PAD     8
 #define AB_LOGO_RADIUS  (AB_LOGO_SIZE * 22 / 100)
 
 /* 该像素是否落在圆角矩形内。只在四个角上做圆检测，其余直接通过。 */
