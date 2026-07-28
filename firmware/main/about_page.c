@@ -2,7 +2,7 @@
  * about_page.c — 「关于」页。
  *
  * 定位（spec §5.6）：**纯静态身份**。logo / 版本 / 构建时间 / 依赖版本 /
- * 硬件型号 + 二维码，仅此而已。
+ * 硬件型号 + 网址，仅此而已。
  *
  * 所有 ✓ 状态灯、校准精度、实时数值一律归诊断页，**两页零重复**。旧版把
  * IMU 校准指示器放在这里，是错的——那是运行时状态，不是身份。
@@ -70,12 +70,8 @@
 #define AB_ROW0_Y        64
 #define AB_ROW_H         40               /* M 档 26 px + 14 行距，九行铺满 */
 
-/* 二维码放左栏（身份区）下方，不放右下角：右下既会压住最后一行键值，也正好
- * 是 FAB 的位置。左栏 logo 与产品名之下本来就有空档，语义上也更贴——它同属
- * 「这台设备是什么」。 */
-#define AB_QR_SIZE      104
-#define AB_QR_X         (AB_LEFT_X + (AB_LEFT_W - AB_QR_SIZE) / 2)
-#define AB_QR_Y         340
+/* 网址跟在产品名之下，同属左栏的身份区。 */
+#define AB_URL_Y        (AB_NAME_Y + 44)
 
 /* 混排的垂直对齐已经在 text.c 内部处理（CJK 相对拉丁 cell 下移半个差值），
  * 这里不要再叠加一次。 */
@@ -89,8 +85,7 @@
 #define COL_NAME         pk_rgb565(240, 245, 255)
 #define COL_LOGO_PLATE   pk_rgb565(255, 255, 255)  /* 与图案白底同色 */
 #define COL_LOGO_MARK    pk_rgb565( 64, 156, 255)
-#define COL_QR_PLATE     pk_rgb565(238, 240, 245)
-#define COL_QR_INK       pk_rgb565( 12,  12,  16)
+#define COL_URL          pk_rgb565(110, 180, 240)
 
 static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
 {
@@ -110,13 +105,38 @@ static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
  * 标签与数值走**同一份字体的同一档**（S）——中西文都由 gen_pfd_aa_font.py
  * 一次生成，CJK 的 cell 高度与拉丁一致，所以这里不需要任何垂直补偿。
  */
+/* 数值区的可用宽度：从数值起点到屏幕右缘，留一个右边距。 */
+#define AB_VALUE_W      (PK_DISPLAY_W - AB_VALUE_X - 24)
+
+/*
+ * 挑一个装得下的档位。
+ *
+ * 值的长度不受我们控制——version 是 git describe 的产物
+ * （"0.9.3-4.3in-127-g1a2b3c4d-dirty" 这种），构建串与型号也都可能变长。
+ * 与其截断（把最有信息量的尾部 sha 切掉），不如降档显示：18 → 14 → 12。
+ * 三档都覆盖到 0x7F，降下去仍是完整可读的文本。
+ */
+static pk_aa_size_t fit_size(const char *s, int avail)
+{
+    static const pk_aa_size_t kLadder[] = { PK_AA_M, PK_AA_S, PK_AA_XS };
+    const int n = (int)strlen(s);
+    for (size_t i = 0; i < sizeof(kLadder) / sizeof(kLadder[0]); ++i) {
+        if (n * pk_aa_cell_w(kLadder[i]) <= avail) return kLadder[i];
+    }
+    return PK_AA_XS;
+}
+
 static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
     const int y = AB_ROW0_Y + row * AB_ROW_H;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_AA_M);
+
+    /* 降档后字更矮，往下挪半个差值，与标签保持同一条视觉中线。 */
+    const pk_aa_size_t vs = fit_size(val, AB_VALUE_W);
+    const int dy = (pk_aa_cell_h(PK_AA_M) - pk_aa_cell_h(vs)) / 2;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_VALUE_X, y, val, COL_VAL, PK_AA_M);
+               AB_VALUE_X, y + dy, val, COL_VAL, vs);
 }
 
 /*
@@ -176,34 +196,6 @@ static void draw_logo(uint16_t *fb, int x, int y, int size)
             /* blob 与 framebuffer 的字节序约定不同，见 display.h 的 pk_rgb565()。 */
             dst[xx] = (uint16_t)((v >> 8) | (v << 8));
         }
-    }
-}
-
-/*
- * 二维码占位。
- *
- * spec §5.6 要求本页带二维码（指向产品页 / 说明书）。目标 URL 尚未确定，
- * 先按最终尺寸画出静区与三个定位角，把版面占住——URL 定了用生成器产出真码
- * 替换即可，周围留白与位置都已按最终形态摆好。
- */
-static void draw_qr_placeholder(uint16_t *fb, int x, int y, int size)
-{
-    fill_rect(fb, x, y, x + size, y + size, COL_QR_PLATE);
-
-    const int m = 10;                  /* 静区 */
-    const int e = (size - 2 * m) / 4;  /* 定位角边长 */
-    const int corners[3][2] = {
-        { x + m,            y + m },
-        { x + size - m - e, y + m },
-        { x + m,            y + size - m - e },
-    };
-    for (int i = 0; i < 3; ++i) {
-        const int cx0 = corners[i][0], cy0 = corners[i][1];
-        fill_rect(fb, cx0, cy0, cx0 + e, cy0 + e, COL_QR_INK);
-        fill_rect(fb, cx0 + e / 4, cy0 + e / 4,
-                  cx0 + e - e / 4, cy0 + e - e / 4, COL_QR_PLATE);
-        fill_rect(fb, cx0 + e * 3 / 8, cy0 + e * 3 / 8,
-                  cx0 + e * 5 / 8, cy0 + e * 5 / 8, COL_QR_INK);
     }
 }
 
@@ -273,6 +265,15 @@ void pk_about_page_render(uint16_t *fb)
     draw_row(fb, row++, PK_TR_ABOUT_IMU, "BNO085 I2C0 0x4A");
     draw_row(fb, row++, PK_TR_ABOUT_DONGLE, "RTL-SDR 2MS/s");
 
-    /* ── 二维码 ─────────────────────────────────────────────── */
-    draw_qr_placeholder(fb, AB_QR_X, AB_QR_Y, AB_QR_SIZE);
+    /* ── 网址 ───────────────────────────────────────────────
+     * spec §5.6 原本要求二维码。先用文字网址顶上：二维码要占 100 px 见方
+     * 才扫得动，而这一页真正的主角是身份与版本；等 URL 与落地页定稿再换回
+     * 图形码不迟。 */
+    {
+        static const char kUrl[] = "https://air.club";
+        const int w = (int)(sizeof(kUrl) - 1) * pk_aa_cell_w(PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_URL_Y,
+                   kUrl, COL_URL, PK_AA_M);
+    }
 }

@@ -18,9 +18,14 @@
 
 const esp_app_desc_t *esp_app_get_description(void)
 {
+    /* 按**最糟情况**填，不是按好看的值填。
+     *
+     * version 是 git describe 的产物，编译安装后长这样：标签 + 提交数 +
+     * 短 sha + dirty 标记。之前桩成 "0.9.3-4.3in" 这种短值，模拟器上排得
+     * 好好的，真机上一溢出就露馅。 */
     static const esp_app_desc_t d = {
         .project_name = "pilot_kit_box",
-        .version      = "0.9.3-4.3in",
+        .version      = "0.9.3-4.3in-127-g1a2b3c4d-dirty",
         .date         = "Jul 28 2026",
         .time         = "21:40:00",
     };
