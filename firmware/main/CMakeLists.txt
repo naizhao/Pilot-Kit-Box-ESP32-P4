@@ -50,9 +50,12 @@ idf_component_register(
         "pfd_font_aa.c"
         "pfd_aa_font.c"
         "pfd_icon_font.c"
+        "pfd_statusbar_icons.c"
         "pfd_aa_text.c"
         "pfd_hsi.c"
         "pfd_infobox.c"
+        "lv_font_zh.c"
+        "lv_port.c"
         "pfd_hsi_traffic.c"
         "pfd_statusbar.c"
         "pfd_speed_tape.c"
@@ -87,6 +90,7 @@ idf_component_register(
         nvs_flash                # software-tare persistence (imu_task.c)
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about
+        lvgl__lvgl               # 4.3″ 触摸 UI 的控件层（见 lv_port.c）
         esp_hw_support           # esp_chip_info() for About page
         esp_driver_uart          # UART driver for GT-U8 GPS (UART1)
         fatfs                    # microSD FAT mount/format (pk_sdcard.c)

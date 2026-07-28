@@ -165,3 +165,45 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 # do nothing for IDLE0, and would just spam "task not found" warnings on
 # every fwrite() from the unsubscribed rec_file writer task.)
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+
+# ── LVGL v9（4.3″ 触摸 UI）────────────────────────────────────────
+#
+# ESP-IDF 版 LVGL 走 Kconfig 而不是 lv_conf.h：组件自带的 Kconfig 默认定义
+# LV_CONF_SKIP，所有 LV_* 选项都从 sdkconfig 来。桌面版那套 lv_conf.h +
+# LV_CONF_PATH 在这里用不上——试过，预处理器要的是带引号的字符串，而且与
+# 组件已定义的 LV_CONF_INCLUDE_SIMPLE 互相打架。
+#
+# 模拟器侧仍用 sim/lv_conf.h（那边是原生桌面构建），两处配置须保持一致。
+
+CONFIG_LV_COLOR_DEPTH_16=y
+
+# 大端 RGB565：pk_rgb565() 在源头就按面板线序交换好了，LVGL 需要对应的混合
+# 实现，才能正确地与 PFD 图层做 alpha 合成。
+CONFIG_LV_DRAW_SW_SUPPORT_RGB565_SWAPPED=y
+
+# 中文走 TinyTTF：一份约 30 KB 的子集轮廓服务所有字号，比每档预渲染一份
+# CJK 位图省得多（见 firmware/scripts/gen_lv_font.py）。
+CONFIG_LV_USE_TINY_TTF=y
+CONFIG_LV_TINY_TTF_FILE_SUPPORT=n
+
+# 用不到的一律关掉——app 分区实测只剩 471 KB。ThorVG 尤其大，而 PFD 全部
+# 自绘、控件只用基本图形，矢量引擎无处可用。
+CONFIG_LV_USE_THORVG_INTERNAL=n
+CONFIG_LV_USE_LOG=n
+
+# FAB 图标用内置符号，字号按视觉稿的 3.2 mm ≈ 27 px 取最近档。
+CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# 不编 LVGL 自带的 examples / demos：白白拖长编译，产物也都会被 gc-sections
+# 丢掉。
+# CONFIG_LV_BUILD_EXAMPLES is not set
+# CONFIG_LV_BUILD_DEMOS is not set
+
+# ── esp_hosted：BT feature gate ───────────────────────────────────
+#
+# 新版 esp_hosted 把蓝牙拆成了可选 feature（default n）；旧版没有这一层，
+# BT 是默认可用的。升级后不显式打开，ble_gatt.c 里的
+# esp_hosted_bt_controller_init/enable 两个兼容宏就不会被定义，编译直接报
+# implicit declaration。
+#
+# 本项目的 BLE GDL90 输出依赖它，必开。

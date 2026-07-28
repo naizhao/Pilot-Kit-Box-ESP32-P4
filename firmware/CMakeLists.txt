@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 # Pull components from the in-tree `components/` directory (esp32-rtl-sdr lives there).
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components")
 
+
 # Local version = version.txt + current git short hash, e.g. "v0.8.0-ce49d37".
 # An explicit -DPROJECT_VER (used by release CI) wins and stays exactly equal
 # to the release tag so firmware metadata and asset names remain aligned.

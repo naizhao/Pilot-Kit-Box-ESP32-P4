@@ -8,5 +8,12 @@ dependencies:
   # 32 MB Nor flash, which can see thousands of writes per flight hour
   # (one CRC-valid Mode-S frame per ts-line).
   joltwallet/littlefs: ^1.16.0
-  espressif/esp_hosted: '*'
+  # 锁 2.12.x：3.0.0 是重大重构（"unified the supported MCU and Linux host/
+  # co-processor stacks"），把蓝牙协议栈桥接从主组件拆成了 example component，
+  # 现有 ble_gatt.c 按 2.x 的 API 写，升上去链接期会缺 ble_transport_* 强符号。
+  # 原先写 '*' 是隐患：任何一次新增依赖都会触发全量重解析，把它悄悄升级。
+  espressif/esp_hosted: '~2.12.7'
   espressif/esp_wifi_remote: '*'
+  # LVGL v9 —— 4.3″ 触摸 UI 的控件层。锁小版本而不用 '*'：布局评审要能复现，
+  # 绘制细节在小版本之间也会变（模拟器侧同样固定在 v9.5.0）。
+  lvgl/lvgl: '~9.5.0'
