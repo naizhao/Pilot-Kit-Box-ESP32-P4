@@ -23,6 +23,8 @@
 
 #include "display.h"
 #include "pfd_layout.h"
+#include "pfd_aa_text.h"
+#include "pfd_aa_font.h"
 #include "pfd_draw.h"
 #include "pfd_font.h"
 
@@ -54,6 +56,22 @@
 #define CX     (TFC_RADAR_W / 2)
 #define CY     (TFC_TOP + (PK_DISPLAY_H - TFC_TOP) / 2)
 #define RMAX   200
+
+/* 文字统一走抗锯齿字体：normal 档做正文，XS 做卡片里的次要列。
+ * 原先满页 5×7 位图，在 217 PPI 上既小又糊，与已改好的其余页面也不是一套。 */
+#define TFC_PUTS(fb, x, y, s, col) \
+        pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
+#define TFC_PUTS_XS(fb, x, y, s, col) \
+        pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XS)
+#define TFC_HDR_TY    ((PFD_BAR_BOT - PK_AA_M_H) / 2)
+
+/* ── 右栏（spec §5.2：280 px，4 张卡片可滚动）───────────────── */
+#define SIDE_X        TFC_SIDE_X
+#define SIDE_W        (PK_DISPLAY_W - SIDE_X)
+#define SIDE_PAD      12
+#define CARD_N        4
+#define CARD_GAP      8
+#define CARD_H        (((PK_DISPLAY_H - TFC_TOP - SIDE_PAD) / CARD_N) - CARD_GAP)
 
 /* 目标快照缓冲——放 PSRAM，避免吃任务栈（照 pfd.c 的 scratch）。 */
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -234,6 +252,79 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
                  pk_rgb565(207, 211, 220), 1);
 }
 
+/*
+ * 右栏卡片（spec §5.2）。
+ *
+ * 每张给一个目标：方位八向箭头 + 呼号 + 距离 + 高度（带升降率）+ 速度。
+ * 按距离由近到远取前 4 个——最近的才是最要紧的。
+ *
+ * 方位用八向箭头而不是数字度数：余光扫一眼就要知道「它在我哪边」，
+ * 读三位数再在脑子里换算成方向，飞行中没有这个余裕。
+ */
+static const char *bearing_arrow(float rel_deg)
+{
+    /* 相对机头的方位 → 八个扇区。用 ASCII 记号而不是箭头字形：
+     * 抗锯齿字库只到 0x7F，没有箭头码位。 */
+    static const char *kArrow[8] = { "^", "/", ">", "\\", "v", "/", "<", "\\" };
+    float d = rel_deg;
+    while (d < 0.0f)      d += 360.0f;
+    while (d >= 360.0f)   d -= 360.0f;
+    return kArrow[((int)(d + 22.5f) / 45) & 7];
+}
+
+static void draw_side_cards(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
+{
+    /* 配色与雷达区一致，但在这里本地声明——渲染主函数里那组是局部量。 */
+    const uint16_t COL_RING = pk_rgb565(120, 145, 175);
+    const uint16_t COL_SEL  = pk_rgb565(255, 200,  60);
+    const uint16_t COL_TXT  = pk_rgb565(235, 240, 248);
+    const uint16_t COL_CYAN = pk_rgb565(  0, 210, 235);
+    const uint16_t COL_GREY = pk_rgb565(155, 170, 190);
+
+    for (int i = 0; i < CARD_N; ++i) {
+        const int y0 = TFC_TOP + SIDE_PAD / 2 + i * (CARD_H + CARD_GAP);
+        const int x0 = SIDE_X + SIDE_PAD / 2;
+        const int x1 = PK_DISPLAY_W - SIDE_PAD / 2;
+
+        /* 空槽也画出边框：4 张卡片的位置恒定，内容多寡不该让版面跳动。 */
+        pk_pfd_darken_rect(fb, x0, y0, x1, y0 + CARD_H, 90);
+        const uint16_t border = (i == sel_row) ? COL_SEL : COL_RING;
+        pk_pfd_fill_rect(fb, x0, y0, x1, y0 + 1, border);
+        pk_pfd_fill_rect(fb, x0, y0 + CARD_H - 1, x1, y0 + CARD_H, border);
+        pk_pfd_fill_rect(fb, x0, y0, x0 + 1, y0 + CARD_H, border);
+        pk_pfd_fill_rect(fb, x1 - 1, y0, x1, y0 + CARD_H, border);
+
+        if (i >= nv) continue;
+
+        const vis_t *v = &vis[i];
+        char cs[12];
+        callsign_of(v->ac, cs, sizeof(cs));
+
+        /* 第一行：方位箭头 + 呼号 */
+        TFC_PUTS(fb, x0 + 10, y0 + 8, bearing_arrow(v->rel.rel_bearing), COL_CYAN);
+        TFC_PUTS(fb, x0 + 34, y0 + 8, cs, COL_TXT);
+
+        /* 第二行：距离 + 高度差（带升降箭头） */
+        char line[24];
+        if (v->rel.rel_alt_valid) {
+            const int rel100 = (int)lroundf(v->rel.rel_alt_ft / 100.0f);
+            const char *vs = (v->rel.vs_fpm >  200) ? "^"
+                           : (v->rel.vs_fpm < -200) ? "v" : " ";
+            snprintf(line, sizeof(line), "%.1fNM %+d%s", v->rel.dist_nm, rel100, vs);
+        } else {
+            snprintf(line, sizeof(line), "%.1fNM  ---", v->rel.dist_nm);
+        }
+        TFC_PUTS_XS(fb, x0 + 10, y0 + 8 + PK_AA_M_H + 2, line, COL_GREY);
+
+        /* 第三行：地速。没有速度就留空，不要写 0 —— 0 是个真值。 */
+        if (v->ac->have_velocity) {
+            snprintf(line, sizeof(line), "%dkt", (int)lroundf(v->ac->ground_speed_kt));
+            TFC_PUTS_XS(fb, x0 + 10, y0 + 8 + PK_AA_M_H + 2 + PK_AA_XS_H + 2,
+                        line, COL_GREY);
+        }
+    }
+}
+
 void pk_traffic_page_render(uint16_t *fb)
 {
     const uint16_t COL_BG    = pk_rgb565(  7,  10,  16);
@@ -303,22 +394,22 @@ void pk_traffic_page_render(uint16_t *fb)
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
 
-    /* ── 顶栏 ── */
+    /* ── 顶栏 ──
+     * 与 PFD 状态栏同高（PFD_BAR_BOT），文字走统一字体的 normal 档。 */
     char buf[24];
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 4, 3, "TRAFFIC", COL_HDR, 1);
+    TFC_PUTS(fb, 24, TFC_HDR_TY, "TRAFFIC", COL_HDR);
     if (hdg_valid) {
-        snprintf(buf, sizeof(buf), "HDG %03d", ((int)lroundf(own_heading) + 360) % 360);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 120, 3, buf, COL_CYAN, 1);
+        snprintf(buf, sizeof(buf), "HDG %03d~", ((int)lroundf(own_heading) + 360) % 360);
+        TFC_PUTS(fb, 200, TFC_HDR_TY, buf, COL_CYAN);
     } else {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 120, 3, "HDG ---", COL_AMBER, 1);
+        TFC_PUTS(fb, 200, TFC_HDR_TY, "HDG ---~", COL_AMBER);
     }
     snprintf(buf, sizeof(buf), "TFC %d", (int)n);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 206, 3, buf, COL_GREY, 1);
+    TFC_PUTS(fb, 400, TFC_HDR_TY, buf, COL_GREY);
     snprintf(buf, sizeof(buf), "%dNM", range_nm);
     {
-        int w = (int)strlen(buf) * 6;
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     PK_DISPLAY_W - 4 - w, 3, buf, COL_GREY, 1);
+        int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
+        TFC_PUTS(fb, PK_DISPLAY_W - 24 - w, TFC_HDR_TY, buf, COL_GREY);
     }
 
     /* ── 距离环 ── */
@@ -383,6 +474,8 @@ void pk_traffic_page_render(uint16_t *fb)
     /* 雷达页独立选中(返回 -1 = 无选中,不高亮/不显详情;绝不 fallback row 0)。 */
     int sel_row = pk_ui_traffic_resolve(s_icaos, (size_t)nv);
 
+    draw_side_cards(fb, s_vis, nv, sel_row);
+
     if (!own_valid) {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                      CX - 30, CY - 4, "NO OWN POS", COL_AMBER, 1);
@@ -398,7 +491,8 @@ void pk_traffic_page_render(uint16_t *fb)
     /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */
     draw_own_aircraft(fb, (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f, COL_OWN);
 
-    /* ── 选中目标详情条(底部) ── */
-    if (own_valid && nv > 0 && sel_row >= 0 && sel_row < nv)
-        draw_detail_bar(fb, &s_vis[sel_row]);
+    /* 详情不再压在雷达上：同样的信息已经在右栏卡片里（spec §5.2 也把它归到
+     * 卡片），雷达区留给图形本身。draw_detail_bar() 暂时保留，等右栏补上机型
+     * 与注册号之后一并删除。 */
+    (void)draw_detail_bar;
 }
