@@ -50,9 +50,15 @@ endif()
 # 也就避免了一次会波及现役固件的字节序改动。
 include(FetchContent)
 set(LV_CONF_PATH ${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h CACHE FILEPATH "" FORCE)
-# 不编 examples / demos：既省编译时间，也免掉它们找不到 lv_conf.h 的一堆警告。
-set(LV_CONF_BUILD_DISABLE_EXAMPLES 1 CACHE BOOL "" FORCE)
-set(LV_CONF_BUILD_DISABLE_DEMOS    1 CACHE BOOL "" FORCE)
+# 不编 examples / demos：省编译时间，也免掉「找不到 lv_conf.h」以及链接期
+# 「ignoring duplicate libraries」两类噪音——LVGL 把 lvgl_demos / lvgl_examples
+# 以 PUBLIC 方式挂在 lvgl target 上，只要它们存在就会被一并链进来。
+# 选项名以 v9.5 的 env_support/cmake/os_desktop.cmake 为准。
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS    OFF CACHE BOOL "" FORCE)
+# ThorVG 是 LVGL 的矢量图形引擎，本项目用不到：PFD 全部自绘，控件只用基本
+# 图形。它是一大坨 C++，编译慢且会刷出上千条 pragma 警告。
+set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(lvgl
     GIT_REPOSITORY https://github.com/lvgl/lvgl.git
     GIT_TAG        v9.5.0
