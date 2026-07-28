@@ -75,3 +75,6 @@ void pk_display_test_pattern(void);
 #ifdef __cplusplus
 }
 #endif
+
+/* 诊断：取出并清零 PPA 旋转 / 等 VSYNC 的累计耗时。 */
+void pk_display_flush_split(int64_t *ppa_us, int64_t *wait_us, uint32_t *cnt);

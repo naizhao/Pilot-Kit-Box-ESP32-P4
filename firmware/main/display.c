@@ -23,6 +23,7 @@
 #include "esp_lcd_st7701.h"
 #include "esp_ldo_regulator.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -44,6 +45,10 @@ static ppa_client_handle_t s_ppa;
 static SemaphoreHandle_t s_refresh_done;
 static uint16_t *s_fb;
 static uint16_t *s_dpi_fb[2];
+
+/* 诊断：PPA 旋转与等 VSYNC 分别的累计耗时。 */
+static int64_t  s_ppa_us, s_ppa_wait_us;
+static uint32_t s_ppa_cnt;
 static unsigned s_front_fb;
 static volatile uint32_t s_refresh_count;
 
@@ -187,11 +192,14 @@ static esp_err_t rotate_and_present(void)
         .mode = PPA_TRANS_MODE_BLOCKING,
     };
 
+    const int64_t t_ppa0 = esp_timer_get_time();
     esp_err_t err = ppa_do_scale_rotate_mirror(s_ppa, &operation);
+    s_ppa_us += esp_timer_get_time() - t_ppa0;
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "PPA rotate failed: %s", esp_err_to_name(err));
         return err;
     }
+    const int64_t t_wait0 = esp_timer_get_time();
 
     err = esp_lcd_panel_draw_bitmap(s_panel, 0, 0,
                                     PK_LCD_NATIVE_W, PK_LCD_NATIVE_H,
@@ -219,8 +227,18 @@ static esp_err_t rotate_and_present(void)
             return ESP_ERR_TIMEOUT;
         }
     }
+    s_ppa_wait_us += esp_timer_get_time() - t_wait0;
+    s_ppa_cnt++;
     s_front_fb = back_fb;
     return ESP_OK;
+}
+
+void pk_display_flush_split(int64_t *ppa_us, int64_t *wait_us, uint32_t *cnt)
+{
+    if (ppa_us)  *ppa_us  = s_ppa_us;
+    if (wait_us) *wait_us = s_ppa_wait_us;
+    if (cnt)     *cnt     = s_ppa_cnt;
+    s_ppa_us = 0; s_ppa_wait_us = 0; s_ppa_cnt = 0;
 }
 
 esp_err_t pk_display_init(void)

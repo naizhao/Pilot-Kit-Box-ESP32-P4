@@ -405,6 +405,14 @@ static void pfd_task(void *arg)
                          (long long)(acc_att_us / n), (long long)(acc_bar_us / n),
                          (long long)(acc_tape_us / n), (long long)(acc_hsi_us / n));
                 acc_att_us = acc_bar_us = acc_tape_us = acc_hsi_us = 0;
+                {
+                    int64_t ppa_us = 0, wait_us = 0; uint32_t pcnt = 0;
+                    pk_display_flush_split(&ppa_us, &wait_us, &pcnt);
+                    if (pcnt) {
+                        ESP_LOGD(TAG, "PERF3: ppa=%lldus vsync_wait=%lldus per flush",
+                                 (long long)(ppa_us / pcnt), (long long)(wait_us / pcnt));
+                    }
+                }
                 ESP_LOGD(TAG, "PERF: draw=%lldus lvgl=%lldus (flush=%lldus x%lu) per frame",
                          (long long)(acc_draw_us / n),
                          (long long)(acc_lvgl_us / n),
