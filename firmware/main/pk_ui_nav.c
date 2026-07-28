@@ -51,6 +51,12 @@ static size_t    s_active_tab;   /* 当前高亮的页签，索引进 DOCK_TABS 
 static bool s_fab_left;                 /* true = 吸在左缘 */
 static int  s_fab_y = FAB_DEFAULT_Y;
 static bool s_dragging;
+/* 本次按压过程中是否发生过拖动。
+ *
+ * s_dragging 在 RELEASED 里就被清掉了，而 CLICKED 紧随其后才到，那时已经
+ * 分辨不出这一下是点击还是拖动的收尾——于是拖完 FAB 一松手，dock 就展开了。
+ * 这个标志跨过 RELEASED 活到 CLICKED，由 CLICKED 消费。 */
+static bool s_drag_happened;
 
 /* 当前层级。spec §4.3：**最多两层、不做返回栈**——二级页面只能从诊断进入，
  * 返回目标唯一确定，所以一个 bool 就够，不需要压栈。
@@ -447,11 +453,13 @@ static void fab_event_cb(lv_event_t *e)
     switch (code) {
     case LV_EVENT_PRESSED:
         s_pressed = true;
+        s_drag_happened = false;    /* 新的一次按压，重新判定 */
         break;
 
     case LV_EVENT_LONG_PRESSED:
         /* 进入拖动态：微放大 + 半透明，让人看出「它现在跟手了」。 */
         s_dragging = true;
+        s_drag_happened = true;
         lv_obj_set_style_transform_scale(s_fab, 280, 0);   /* 256 = 1.0×，即 1.09× */
         lv_obj_set_style_bg_opa(s_fab, LV_OPA_60, 0);
         /* 拖动期间 dock 必须收起：它锚在 FAB 上，跟着乱跑没有意义。 */
@@ -491,8 +499,14 @@ static void fab_event_cb(lv_event_t *e)
         break;
 
     case LV_EVENT_CLICKED:
-        /* 拖动结束时 LVGL 不会再补一个 CLICKED，这里只处理真正的点击。
-         * 二级页面里 FAB 是返回键，不是 dock 开关。 */
+        /* 拖动的收尾也会走到这里——FAB 拖动时是跟着手指的，松手那一刻指针
+         * 必然还落在它身上，LVGL 照样判定为点击。不挡掉的话，每拖一次
+         * 位置，dock 就跟着弹出来一次。 */
+        if (s_drag_happened) {
+            s_drag_happened = false;
+            break;
+        }
+        /* 二级页面里 FAB 是返回键，不是 dock 开关。 */
         if (s_in_subpage) {
             pk_ui_nav_set_subpage(false, NULL);
             pk_ui_nav_on_back();
