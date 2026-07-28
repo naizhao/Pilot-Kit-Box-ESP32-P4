@@ -242,6 +242,35 @@ with normal operation. Or pull them off; doesn't matter for BLE.
 > (keep your own bootloader + partition table). Verified bit-for-bit
 > functionally equivalent to our own build for ESP-Hosted purposes.
 
+### Troubleshooting — the USB-UART bridge is wedged
+
+This has been observed on real hardware: `/dev/cu.usbserial-*` still
+exists, but opening it raises `termios.error: (22, 'Invalid argument')`,
+or esptool can no longer synchronize. Repeating the P4 RESET/BOOT
+sequence, restarting C6 download mode, or power-cycling the P4 board
+does not recover the port.
+
+The USB-UART adapter is powered independently by the computer's USB
+port. Resetting P4 or C6 does **not** power-cycle a wedged USB-UART
+bridge. This condition is not caused by Python, the firmware image, or
+the ESP32-C6 itself.
+
+Recovery:
+
+1. Close any serial monitor, terminal, or old esptool process that may
+   still own the port.
+2. **Unplug the USB-UART adapter from the computer**, then wait 2–3
+   seconds.
+3. Plug it back in and wait for `/dev/cu.usbserial-*` to reappear.
+4. Run `firmware/tools/flash_c6_hosted.sh` again; it polls for the
+   recovered port once per second.
+
+If reconnecting only the USB-UART fixes the problem without changing
+the wiring, the fault was in the UART bridge or host serial-driver
+state. Batch mode deliberately waits for the serial node to disappear
+before moving to the next board, making each USB-UART re-enumeration
+visible to the script.
+
 ### Troubleshooting — flash drops out mid-write ("chip stopped responding")
 
 If `write-flash` dies partway through, and **at a different

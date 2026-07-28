@@ -134,6 +134,28 @@ ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
 - 确认 USB-UART 是 3.3 V TTL，不是 RS232 电平。
 - H4 没有 reset 线，必须用 `--before no-reset`。
 
+### 串口节点还在，但 USB-UART 已经卡死
+
+实测遇到过这种情况：`/dev/cu.usbserial-*` 仍然存在，但打开端口时报
+`termios.error: (22, 'Invalid argument')`，或者 esptool 一直无法同步。
+反复按 P4 RESET、重新让 P4/C6 进入 download mode，甚至给 P4 板断电重启，
+都不能恢复串口。
+
+原因是 USB-UART 转接器由电脑的 USB 口独立供电。重启 P4 或 C6 只会复位
+板上芯片，**不会给已经卡死的 USB-UART 桥断电**。这不是 Python、镜像或
+ESP32-C6 本身的问题。
+
+恢复步骤：
+
+1. 关闭可能占用串口的 monitor、串口终端和旧 esptool 进程。
+2. 把 **USB-UART 转接器的 USB 插头从电脑上拔掉**，等待 2–3 秒。
+3. 重新插入 USB-UART，等待 `/dev/cu.usbserial-*` 重新出现。
+4. 再运行 `firmware/tools/flash_c6_hosted.sh`；脚本会每 1 秒自动发现恢复后的端口。
+
+如果不改接线、只拔插 USB-UART 就立刻恢复，基本可以确认故障点在 USB-UART
+桥或主机串口驱动状态。项目脚本的批量模式也会等待串口节点消失后才进入下一
+块板，正好保证每轮都能观察到一次完整的 USB-UART 重新枚举。
+
 ### 烧录中途随机断开（"The chip stopped responding"）
 
 症状：`write-flash` 跑到一半突然报错，而且**每次断在不同进度**（例如一次停在 0%、另一次停在 21%）：
