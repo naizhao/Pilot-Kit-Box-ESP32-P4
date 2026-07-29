@@ -38,6 +38,7 @@ idf_component_register(
         "adsb_list.c"
         "settings_page.c"
         "settings_draw.c"
+        "config_ble.c"
         "traffic_page.c"
         "about_page.c"
         "diag_page.c"

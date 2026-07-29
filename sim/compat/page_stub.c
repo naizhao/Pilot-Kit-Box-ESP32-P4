@@ -216,3 +216,6 @@ bool pk_sdcard_is_mounted(void) { return sim_env("PK_SIM_SET_SD", 0) != 0; }
 int pk_settings_format_state(void) { return sim_env("PK_SIM_SET_FMT", 0); }
 
 bool record_sink_file_uses_sd(void) { return sim_env("PK_SIM_SET_LOGSD", 0) != 0; }
+
+/* BLE 开关（config_ble）。PK_SIM_SET_BLE=0 关，默认开。 */
+bool pk_ble_enabled_get(void) { return sim_env("PK_SIM_SET_BLE", 1) != 0; }

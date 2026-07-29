@@ -38,6 +38,7 @@
 #include "imu_task.h"
 #include "baro.h"
 #include "battery.h"
+#include "config_ble.h"
 #include "i18n.h"
 #include "pfd.h"
 #include "power.h"
@@ -356,7 +357,12 @@ void app_main(void)
      * (CONFIG_PK_BLE_ENABLED=y); turn off via menuconfig if you haven't
      * flashed C6 yet or are running CI without it. */
 #if CONFIG_PK_BLE_ENABLED
-    esp_err_t ble_err = ble_gatt_init();
+    /* 用户开关（设置页，NVS）。编译期 CONFIG_PK_BLE_ENABLED 是"这台设备有没有
+     * BLE"，运行期这个是"用户要不要用"，两者是与的关系。 */
+    pk_config_ble_load();
+    esp_err_t ble_err = pk_ble_enabled_get() ? ble_gatt_init() : ESP_OK;
+    if (!pk_ble_enabled_get())
+        ESP_LOGI(TAG, "BLE disabled by user setting — skipping ble_gatt_init()");
     if (ble_err != ESP_OK) {
         ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
                  esp_err_to_name(ble_err));

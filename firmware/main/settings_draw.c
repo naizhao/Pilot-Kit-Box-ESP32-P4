@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config_ble.h"
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
@@ -45,7 +46,7 @@
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 #define SET_ROWS_VIS   ((PK_DISPLAY_H - PFD_BAR_BOT) / SET_ROW_H)
 
-#define SET_ROWS      8
+#define SET_ROWS      9
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
@@ -83,11 +84,18 @@ static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
     const int x0    = SET_CTL_R - total;
     const int y0    = y_mid - SET_CTL_H / 2;
 
+    /* 整组先铺一个圆角底槽，再把选中段画成圆角胶囊叠上去——这是分段控件的
+     * 标准形态（iOS/Material 都是），比"每段各画一个方块"干净得多：段之间
+     * 没有缝，视觉上就是一条被分成几格的轨道，而不是几个独立按钮。 */
+    const int radius = SET_CTL_H / 2;      /* 全圆角，扁控件用半高最自然 */
+    pk_pfd_fill_round_rect(fb, x0, y0, SET_CTL_R, y0 + SET_CTL_H, radius, SEG_OFF);
+
     for (int i = 0; i < n; ++i) {
         const int sx = x0 + i * seg_w;
         const bool on = (i == sel);
-        pk_pfd_fill_rect(fb, sx, y0, sx + seg_w - 2, y0 + SET_CTL_H,
-                         dim ? SEG_OFF : (on ? SEG_ON : SEG_OFF));
+        if (on && !dim)
+            pk_pfd_fill_round_rect(fb, sx + 2, y0 + 2, sx + seg_w - 2,
+                                   y0 + SET_CTL_H - 2, radius - 2, SEG_ON);
         const int tw = (int)strlen(opts[i]) * pk_aa_cell_w(PK_AA_S);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    sx + (seg_w - 2 - tw) / 2, y0 + (SET_CTL_H - PK_AA_S_H) / 2,
@@ -107,7 +115,8 @@ static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
     const int y0    = y_mid - SET_CTL_H / 2;
     const int x0    = SET_CTL_R - (btn_w * 2 + val_w);
 
-    pk_pfd_fill_rect(fb, x0, y0, x0 + btn_w, y0 + SET_CTL_H, STP_BTN);
+    const int r = SET_CTL_H / 2;
+    pk_pfd_fill_round_rect(fb, x0, y0, x0 + btn_w, y0 + SET_CTL_H, r, STP_BTN);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + btn_w / 2 - 5,
                y0 + (SET_CTL_H - PK_AA_M_H) / 2, "-", STP_TXT, PK_AA_M);
 
@@ -117,7 +126,7 @@ static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
                y0 + (SET_CTL_H - PK_AA_S_H) / 2, val, STP_TXT, PK_AA_S);
 
     const int bx = x0 + btn_w + val_w;
-    pk_pfd_fill_rect(fb, bx, y0, bx + btn_w, y0 + SET_CTL_H, STP_BTN);
+    pk_pfd_fill_round_rect(fb, bx, y0, bx + btn_w, y0 + SET_CTL_H, r, STP_BTN);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, bx + btn_w / 2 - 5,
                y0 + (SET_CTL_H - PK_AA_M_H) / 2, "+", STP_TXT, PK_AA_M);
 }
@@ -193,7 +202,22 @@ void pk_settings_page_render(uint16_t *fb)
                !pk_sdcard_is_mounted());
       row++; }
 
-    /* 8 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 8 蓝牙开关（P2-4）——放在格式化之前，让危险按钮独占最底下那一行。 */
+    { static const char *o[] = { "OFF", "ON" };
+      ROW_LABEL(row, "BLUETOOTH");
+      draw_seg(fb, ROW_Y(row), o, 2, pk_ble_enabled_get() ? 1 : 0, false);
+      /* 「重启后生效」必须写出来：BLE 起停牵扯 NimBLE 的卸载路径，更牵扯
+       * hosted 握手要排在点屏之前那条硬约束，运行时切会打乱开机顺序。
+       * 不写的话，点了没反应会被当成 bug。 */
+      { const int _y = ROW_Y(row);
+        if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                       SET_PAD + 11 * pk_aa_cell_w(PK_AA_M) + 12,
+                       _y - PK_AA_XS_H / 2, "(restart)",
+                       pk_rgb565(120, 130, 145), PK_AA_XS); }
+      row++; }
+
+    /* 9 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, "FORMAT SD");
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;
@@ -201,7 +225,7 @@ void pk_settings_page_render(uint16_t *fb)
       const int x0 = SET_CTL_R - w;
       const bool armed = (pk_settings_format_state() == 1);
       const bool avail = pk_sdcard_is_mounted() && !record_sink_file_uses_sd();
-      pk_pfd_fill_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
+      pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H, SET_CTL_H / 2,
                        !avail  ? pk_rgb565(45, 45, 50)
                        : armed ? pk_rgb565(200, 40, 40)
                                : pk_rgb565(90, 30, 30));

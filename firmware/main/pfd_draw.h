@@ -14,6 +14,11 @@
 void pk_pfd_put_pixel(uint16_t *fb, int x, int y, uint16_t c);
 void pk_pfd_blend_pixel(uint16_t *fb, int x, int y, uint16_t c, uint8_t alpha);
 void pk_pfd_fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c);
+
+/* 圆角矩形填充（抗锯齿）。r 会被收到 min(w,h)/2，传过大也不会画坏。
+ * 由 boot_splash 的正方形版泛化而来，分段控件 / 卡片通用。 */
+void pk_pfd_fill_round_rect(uint16_t *fb, int x0, int y0, int x1, int y1,
+                            int r, uint16_t c);
 void pk_pfd_draw_line(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c);
 void pk_pfd_draw_line_aa(uint16_t *fb,
                          float x0, float y0, float x1, float y1,

@@ -120,6 +120,56 @@ void pk_pfd_fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
     }
 }
 
+/*
+ * 圆角矩形填充（抗锯齿）。
+ *
+ * 从 boot_splash.c 的 rounded_coverage() 泛化而来——那个只吃一个 size，
+ * 是正方形专用（开机卡片）。分段控件是扁矩形，宽高不等，所以拆成 dx/dy
+ * 各自判边。算法不变：离角圆心 r±1 的 1 px 过渡带内按距离线性插值，
+ * 整数平方根，无浮点。
+ *
+ * 半径会被自动收到 min(w,h)/2 —— 传一个比控件还大的 r 时不至于画出鬼影。
+ */
+void pk_pfd_fill_round_rect(uint16_t *fb, int x0, int y0, int x1, int y1,
+                            int r, uint16_t c)
+{
+    if (x1 <= x0 || y1 <= y0) return;
+    const int w = x1 - x0, h = y1 - y0;
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    if (r <= 0) { pk_pfd_fill_rect(fb, x0, y0, x1, y1, c); return; }
+
+    const int rin = r - 1, rout = r + 1;
+
+    for (int row = 0; row < h; ++row) {
+        const int yy = y0 + row;
+        if (yy < 0 || yy >= PK_DISPLAY_H) continue;
+        int dy = 0;
+        if (row < r)              dy = r - row;
+        else if (row >= h - r)    dy = row - (h - r - 1);
+
+        for (int col = 0; col < w; ++col) {
+            const int xx = x0 + col;
+            if (xx < 0 || xx >= PK_DISPLAY_W) continue;
+            int dx = 0;
+            if (col < r)           dx = r - col;
+            else if (col >= w - r) dx = col - (w - r - 1);
+
+            if (dx == 0 || dy == 0) { pk_pfd_put_pixel(fb, xx, yy, c); continue; }
+
+            const int d2 = dx * dx + dy * dy;
+            if (d2 <= rin * rin) { pk_pfd_put_pixel(fb, xx, yy, c); continue; }
+            if (d2 >= rout * rout) continue;
+
+            int d = 0;
+            while ((d + 1) * (d + 1) <= d2) ++d;
+            int t = (rout - d) * 255 / (rout - rin);
+            if (t < 0) t = 0; else if (t > 255) t = 255;
+            pk_pfd_blend_pixel(fb, xx, yy, c, (uint8_t)t);
+        }
+    }
+}
+
 /* Bresenham line. Cheap, jaggy at fine angles — acceptable; Wu
  * anti-aliasing would be a v3 nicety. */
 void pk_pfd_draw_line(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
