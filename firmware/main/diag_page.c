@@ -1015,8 +1015,137 @@ static void draw_detail(uint16_t *fb, int which)
         break;
     }
 
+    case 3: {   /* SDR */
+        uint32_t drop_kb = 0;
+        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
+        pk_dsp_stats_t d;
+        pk_dsp_get_stats(&d);
+        static const char *const kSdr[] = {
+            "NO DONGLE", "attached", "STALLED", "streaming" };
+        det_kv(fb, line++, "STATE", kSdr[st], st == PK_SDR_STREAMING
+                                              ? COL_ONLINE : COL_ALERT);
+        if (st == PK_SDR_NO_DEVICE)
+            det_kv(fb, line++, "HINT", "connect to H2 (USB OTG)", COL_WARN);
+        snprintf(buf, sizeof(buf), "%lu MS/s",
+                 (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL));
+        det_kv(fb, line++, "SAMPLE RATE", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.msgs_total);
+        det_kv(fb, line++, "ADS-B MSGS", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.iq_drop_total);
+        det_kv(fb, line++, "IQ DROPPED", buf,
+               d.iq_drop_total ? COL_WARN : COL_VAL);
+        break;
+    }
+
+    case 4:     /* BLE */
+        det_kv(fb, line++, "LINK",
+               ble_gatt_is_connected() ? "connected"
+               : ble_gatt_is_advertising() ? "advertising" : "idle",
+               ble_gatt_is_connected() ? COL_ONLINE : COL_OFFLINE);
+        det_kv(fb, line++, "PROTOCOL", "GDL90 over BLE", COL_VAL);
+        break;
+
+    case 5: {   /* LOG */
+        uint32_t written = 0, dropped = 0;
+        if (record_sink_file_stats(&written, &dropped)) {
+            det_kv(fb, line++, "BACKEND",
+                   record_sink_file_uses_sd() ? "microSD" : "flash", COL_VAL);
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)written);
+            det_kv(fb, line++, "WRITTEN", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)dropped);
+            det_kv(fb, line++, "DROPPED", buf, dropped ? COL_WARN : COL_VAL);
+        } else {
+            det_kv(fb, line++, "SINK", "down", COL_ALERT);
+        }
+        break;
+    }
+
+    case 6:     /* CLK */
+        fmt_clock(buf, sizeof(buf));
+        det_kv(fb, line++, "TIME", buf, COL_VAL);
+        det_kv(fb, line++, "SYNCED", pk_clock_is_synced() ? "yes" : "no",
+               pk_clock_is_synced() ? COL_ONLINE : COL_WARN);
+        break;
+
+    case 7: {   /* SYS */
+        int temp_c = 0;
+        pk_soc_temp_get(&temp_c);
+        snprintf(buf, sizeof(buf), "%d C", temp_c);
+        det_kv(fb, line++, "SOC TEMP", buf, temp_c >= 75 ? COL_WARN : COL_VAL);
+        const uint32_t sec = (uint32_t)(esp_timer_get_time() / 1000000);
+        snprintf(buf, sizeof(buf), "%luh %lum %lus",
+                 (unsigned long)(sec / 3600), (unsigned long)((sec % 3600) / 60),
+                 (unsigned long)(sec % 60));
+        det_kv(fb, line++, "UPTIME", buf, COL_VAL);
+        static const char *const kRst2[] = {
+            "unknown", "power-on", "external", "software", "panic",
+            "int WDT", "task WDT", "other WDT", "deep sleep", "brownout",
+            "SDIO", "USB", "JTAG" };
+        const esp_reset_reason_t rr = esp_reset_reason();
+        det_kv(fb, line++, "LAST RESET",
+               rr < (int)(sizeof(kRst2) / sizeof(kRst2[0])) ? kRst2[rr] : "?",
+               (rr == ESP_RST_POWERON) ? COL_VAL : COL_WARN);
+        break;
+    }
+
+    case 8: {   /* microSD */
+        uint64_t total = 0, free_b = 0;
+        const bool mounted = (pk_sdcard_state() == PK_SD_MOUNTED);
+        det_kv(fb, line++, "STATE", mounted ? "mounted" : "no card",
+               mounted ? COL_ONLINE : COL_ALERT);
+        if (mounted && pk_sdcard_info(&total, &free_b)) {
+            snprintf(buf, sizeof(buf), "%.1f GB",
+                     (double)total / (1024.0 * 1024.0 * 1024.0));
+            det_kv(fb, line++, "CAPACITY", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%.1f GB",
+                     (double)free_b / (1024.0 * 1024.0 * 1024.0));
+            det_kv(fb, line++, "FREE", buf, COL_VAL);
+        }
+        break;
+    }
+
+    case 9:     /* QNH */
+        snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
+        det_kv(fb, line++, "QNH", buf, COL_VAL);
+        det_kv(fb, line++, "NOTE", "baro altitude reference", COL_OFFLINE);
+        break;
+
+    case 10: {  /* BATT */
+        pk_batt_t b;
+        pk_batt_get(&b);
+        if (b.valid) {
+            snprintf(buf, sizeof(buf), "%d %%", b.pct);
+            det_kv(fb, line++, "CHARGE", buf, b.pct >= 20 ? COL_ONLINE : COL_WARN);
+            snprintf(buf, sizeof(buf), "%.3f V", b.batt_mv / 1000.0);
+            det_kv(fb, line++, "VOLTAGE", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%d mV", b.raw_mv);
+            det_kv(fb, line++, "ADC RAW", buf, COL_OFFLINE);
+            det_kv(fb, line++, "CHARGING", b.charging ? "yes" : "no",
+                   b.charging ? COL_ONLINE : COL_VAL);
+            /* 这块板的电池只接充电通路、没有 power path：拔掉 USB 是彻底
+             * 断电再上电（实测复位原因为 power-on，不是 brownout）。这一行
+             * 是给排查者的，不是给飞行员的——但它能省掉一轮"为什么会重启"。 */
+            det_kv(fb, line++, "ON UNPLUG", "device reboots (no power path)",
+                   COL_WARN);
+        } else {
+            det_kv(fb, line++, "BATTERY", "not detected", COL_ALERT);
+        }
+        break;
+    }
+
+    case 11: {  /* UPTIME */
+        const uint32_t sec = (uint32_t)(esp_timer_get_time() / 1000000);
+        snprintf(buf, sizeof(buf), "%luh %lum %lus",
+                 (unsigned long)(sec / 3600), (unsigned long)((sec % 3600) / 60),
+                 (unsigned long)(sec % 60));
+        det_kv(fb, line++, "SINCE BOOT", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "%lu s", (unsigned long)sec);
+        det_kv(fb, line++, "SECONDS", buf, COL_OFFLINE);
+        break;
+    }
+
     default:
-        det_kv(fb, line++, "DETAIL", "(总览卡片已含全部信息)", COL_OFFLINE);
+        det_kv(fb, line++, "DETAIL", "no further data", COL_OFFLINE);
         break;
     }
 }
