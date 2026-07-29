@@ -92,6 +92,16 @@ const char *pk_aircraft_type_code(uint32_t icao24)
     return kTypes[icao24 % (sizeof(kTypes) / sizeof(kTypes[0]))];
 }
 
+/* 完整机型名。抽屉里最长的一格，正好用来压「值超出格宽要降档」那条路径。 */
+const char *pk_aircraft_type_model(uint32_t icao24)
+{
+    static const char *kModel[] = {
+        "Airbus A320-214", "Boeing 737-89P", "Airbus A350-941",
+        "Boeing 777-39L(ER)", "Embraer ERJ-190",
+    };
+    return kModel[icao24 % (sizeof(kModel) / sizeof(kModel[0]))];
+}
+
 const char *pk_aircraft_type_desc(uint32_t icao24)
 {
     static const char *kDesc[] = {

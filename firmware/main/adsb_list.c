@@ -37,9 +37,12 @@
 #include "esp_attr.h"
 #include "esp_timer.h"
 
+#include "aircraft_db.h"
 #include "aircraft_state.h"
+#include "airline_codes.h"
 #include "baro.h"
 #include "display.h"
+#include "icao_country.h"
 #include "imu_task.h"
 #include "mag_var.h"
 #include "own_ship.h"
@@ -59,6 +62,11 @@
 #define ROW_H         48
 #define ROW_N         8
 #define LIST_BOT      (ROW0_Y + ROW_N * ROW_H) /* 462 */
+
+/* 抽屉：贴底，高 230（spec §5.3）。开着时数据区只画得下 DRAWER_ROWS 行。 */
+#define DRAWER_H      230
+#define DRAWER_TOP    (PK_DISPLAY_H - DRAWER_H)      /* 250 */
+#define DRAWER_ROWS   ((DRAWER_TOP - ROW0_Y) / ROW_H)
 
 #define PAD_L         16
 #define PAD_R         16
@@ -224,6 +232,7 @@ static bool sort_is_default(void)
 /* 模拟器专用：用环境变量摆布排序状态，好把各列各方向都截出来核对。
  * 固件不编译这段——排序只该由手指改。 */
 #include <stdlib.h>
+static int s_sim_drawer_row = -1;
 static void sim_sort_override(void)
 {
     const char *k = getenv("PK_SIM_SORT");
@@ -233,6 +242,30 @@ static void sim_sort_override(void)
 }
 #endif
 static int        s_hdr_down = -1;   /* 按下高亮的列，-1 = 无 */
+
+/* 详情抽屉。点行打开、再点同一行关闭（spec §5.3 还写了"下滑关闭"，那要等
+ * 手势层做出来；在此之前必须有一条能靠单击退出的路，否则抽屉一开就关不掉）。
+ *
+ * 记的是 ICAO 而不是行号：排序一变、目标一进一出，行号指向的就是另一架飞机
+ * 了，而抽屉里那些字段（机型/航司/国籍）全是按 ICAO 查的，对不上会非常
+ * 误导人。 */
+static uint32_t   s_drawer_icao;
+
+/*
+ * 本屏每一行画的是哪架飞机。
+ *
+ * 触摸回调（touch_gt911.c 的 read_cb）拿不到排序后的结果——那是 render 的
+ * 局部量，而且排序键、滚动位置、目标进出都会让行号指向不同的飞机。所以
+ * render 每帧把屏上这几行的 ICAO 留在这里，触摸时按行号查。
+ *
+ * 0 表示该行没画（列表不足一屏）。 */
+static uint32_t   s_screen_icao[ROW_N];
+
+static uint32_t pk_adsb_row_icao(int row)
+{
+    if (row < 0 || row >= ROW_N) return 0;
+    return s_screen_icao[row];
+}
 
 /*
  * 右对齐：先量宽再倒推起点。CJK/箭头是宽字形，这里的列全是 ASCII，
@@ -628,6 +661,124 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
                cage, PK_AA_XS);
 }
 
+/*
+ * 详情抽屉：把主表放不下的字段补齐（spec §5.3 点名的机型 / SQK / ICAO /
+ * 航司 / 国籍）。
+ *
+ * 为什么这些字段进抽屉而不是主表：它们是**身份**信息，不随时间变，看一次
+ * 就够；主表那八列全是**状态**，每秒都在变，得能一眼扫完一屏。把机型塞进
+ * 主表只会挤掉一列真正需要盯着的数。
+ *
+ * 排成两列键值：左列身份（呼号/ICAO/注册号/机型），右列归属与状态
+ * （航司/国籍/应答机/上次报文）。值缺就写 ---，不留空白——空白让人以为
+ * 这一格没画出来，而这里"查不到"本身就是有用的信息（多半是军机或未收录）。
+ */
+/*
+ * 抽屉里的一个值：先逐级降字号（M→S→XS），仍放不下才截断并加省略号。
+ *
+ * 只降一档是不够的——"China Southern Airlines" 23 个字符，S 档仍要 253 px，
+ * 而右列只有 200 px，结果溢出去被 FAB 盖掉了尾巴。截断放在最后一步：机型和
+ * 航司截短了还能认，字号小一点则是无损的，所以先榨字号。
+ *
+ * 不同字号的字高不同，按各自 cell 高在行内居中，否则几行值会一高一低。
+ */
+static void put_val(uint16_t *fb, int x, int y_top, int avail,
+                    const char *val, uint16_t col)
+{
+    const int len = (int)strlen(val);
+    pk_aa_size_t sz = PK_AA_M;
+    if (len * pk_aa_cell_w(PK_AA_S) <= avail && len * pk_aa_cell_w(PK_AA_M) > avail)
+        sz = PK_AA_S;
+    else if (len * pk_aa_cell_w(PK_AA_M) > avail)
+        sz = PK_AA_XS;
+
+    const int cw = pk_aa_cell_w(sz);
+    const int y  = y_top + (PK_AA_M_H - pk_aa_cell_h(sz)) / 2;
+
+    if (len * cw <= avail) { LST_PUTS(fb, x, y, val, col, sz); return; }
+
+    /* 还是放不下：留两格给 ".."，至少保住一个字符。 */
+    int keep = avail / cw - 2;
+    if (keep < 1) keep = 1;
+    char tmp[64];
+    snprintf(tmp, sizeof(tmp), "%.*s..", keep, val);
+    LST_PUTS(fb, x, y, tmp, col, sz);
+}
+
+static void draw_drawer(uint16_t *fb, const row_t *r,
+                        uint16_t col_key, uint16_t col_val, uint16_t col_dim)
+{
+    const aircraft_t *a = r->ac;
+
+    pk_pfd_fill_rect(fb, 0, DRAWER_TOP, PK_DISPLAY_W, PK_DISPLAY_H,
+                     pk_rgb565(14, 20, 30));
+    /* 顶边一条亮线，把抽屉和它盖住的表格分开——没有这条线，抽屉看起来像是
+     * 表格的又一行，而它其实是浮在上面的。 */
+    pk_pfd_fill_rect(fb, 0, DRAWER_TOP, PK_DISPLAY_W, DRAWER_TOP + 2,
+                     pk_rgb565(70, 130, 190));
+
+    char cs[AIRCRAFT_CALLSIGN_LEN];
+    callsign_of(a, cs, sizeof(cs));
+
+    /* 标题行：呼号用 L 档——抽屉一次只讲一架飞机，它是这块区域的主语。 */
+    LST_PUTS(fb, PAD_L + 8, DRAWER_TOP + 14, cs, col_val, PK_AA_L);
+
+    const char *tag = emergency_tag(a);
+    if (tag) {
+        const int tx = PAD_L + 8 + (int)strlen(cs) * pk_aa_cell_w(PK_AA_L) + 12;
+        const int tw = (int)strlen(tag) * pk_aa_cell_w(PK_AA_S);
+        pk_pfd_fill_rect(fb, tx - 5, DRAWER_TOP + 16, tx + tw + 5,
+                         DRAWER_TOP + 16 + PK_AA_S_H + 6, pk_rgb565(220, 40, 40));
+        LST_PUTS(fb, tx, DRAWER_TOP + 19, tag, pk_rgb565(255, 255, 255), PK_AA_S);
+    }
+
+    /* 两列键值。键用 XS 暗色、值用 M——扫的时候眼睛只需要抓值。 */
+    const int col_x[2]  = { PAD_L + 8, 420 };
+    const int key_w     = 96;
+    const int y0        = DRAWER_TOP + 62;
+    const int line_h    = 34;
+
+    const char *keys[2][4] = {
+        { "ICAO",   "REG",     "TYPE",    "MODEL"   },
+        { "AIRLINE","COUNTRY", "SQUAWK",  "LAST SEEN" },
+    };
+    char v[8][48];
+
+    snprintf(v[0], sizeof(v[0]), "%06lX", (unsigned long)a->icao24);
+    const char *reg = pk_aircraft_registration(a->icao24);
+    snprintf(v[1], sizeof(v[1]), "%s", (reg && reg[0]) ? reg : "---");
+    const char *tc = pk_aircraft_type_code(a->icao24);
+    snprintf(v[2], sizeof(v[2]), "%s", (tc && tc[0]) ? tc : "---");
+    const char *tm = pk_aircraft_type_model(a->icao24);
+    snprintf(v[3], sizeof(v[3]), "%s", (tm && tm[0]) ? tm : "---");
+
+    /* 航司按呼号前三字母查。查不到不是错误：尾号呼号（N12345）、军用呼号
+     * 本来就不带航司前缀。 */
+    const char *fnum = NULL;
+    const pk_airline_t *al = a->have_callsign
+                           ? pk_airline_from_callsign(a->callsign, &fnum) : NULL;
+    snprintf(v[4], sizeof(v[4]), "%s", al ? al->name : "---");
+
+    const pk_country_t *cn = pk_country_from_icao24(a->icao24);
+    snprintf(v[5], sizeof(v[5]), "%s", cn ? cn->name : "---");
+
+    if (a->have_squawk) snprintf(v[6], sizeof(v[6]), "%04d", a->squawk);
+    else                snprintf(v[6], sizeof(v[6]), "---");
+
+    snprintf(v[7], sizeof(v[7]), "%d s ago", r->age_s);
+
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < 4; ++i) {
+            const int y = y0 + i * line_h;
+            LST_PUTS(fb, col_x[c], y + (PK_AA_M_H - PK_AA_XS_H) / 2,
+                     keys[c][i], col_key, PK_AA_XS);
+            const char *val = v[c * 4 + i];
+            const int avail = (c == 0 ? col_x[1] - 16 : CONTENT_R) - col_x[c] - key_w;
+            put_val(fb, col_x[c] + key_w, y, avail, val, col_val);
+            (void)col_dim;
+        }
+}
+
 void pk_adsb_list_render(uint16_t *fb)
 {
     const uint16_t COL_BG   = pk_rgb565(  7,  10,  16);
@@ -642,6 +793,9 @@ void pk_adsb_list_render(uint16_t *fb)
      * 真机上表现为右侧和底部各一条永不刷新的亮线。 */
 #ifdef PK_SIM_BUILD
     sim_sort_override();
+    /* PK_SIM_DRAWER=<行号> 打开该行的抽屉，用来截图。 */
+    { const char *e = getenv("PK_SIM_DRAWER");
+      if (e) s_sim_drawer_row = atoi(e); }
 #endif
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
@@ -722,6 +876,9 @@ void pk_adsb_list_render(uint16_t *fb)
         const char *msg = "NO CONTACTS";
         const int w = (int)strlen(msg) * pk_aa_cell_w(PK_AA_L);
         LST_PUTS(fb, (PK_DISPLAY_W - w) / 2, ROW0_Y + 120, msg, COL_DIM, PK_AA_L);
+        /* 清掉行映射与抽屉：否则触摸还会命中上一帧留下的飞机。 */
+        for (int i = 0; i < ROW_N; ++i) s_screen_icao[i] = 0;
+        s_drawer_icao = 0;
         return;
     }
 
@@ -731,17 +888,44 @@ void pk_adsb_list_render(uint16_t *fb)
      * 不做「选中行走到底才滚一行」那种最小移动——表格里视线是往下扫的，
      * 把选中行钉在中间能同时看到它前后各三四架，比贴边好用。
      */
-    int first = sel - ROW_N / 2;
-    if (first > nr - ROW_N) first = nr - ROW_N;
-    if (first < 0)          first = 0;
+    /* 抽屉开着时可见行数减少。抽屉认的是 ICAO：排序一变、目标一进一出，
+     * 行号就指向另一架飞机了。找不到（目标已过期）就自动收起抽屉——继续显示
+     * 一架已经不在表里的飞机，比不显示更糟。 */
+    int drawer_row = -1;
+#ifdef PK_SIM_BUILD
+    if (s_sim_drawer_row >= 0 && s_sim_drawer_row < nr)
+        s_drawer_icao = s_rows[s_sim_drawer_row].ac->icao24;
+#endif
+    if (s_drawer_icao) {
+        for (int i = 0; i < nr; ++i)
+            if (s_rows[i].ac->icao24 == s_drawer_icao) { drawer_row = i; break; }
+        if (drawer_row < 0) s_drawer_icao = 0;
+    }
+    const int rows_vis = (drawer_row >= 0) ? DRAWER_ROWS : ROW_N;
+
+    /* 抽屉开着时，把被选中的那一行钉在可见区里——抽屉讲的就是它，
+     * 让它滚出屏幕等于把上下文丢了。 */
+    const int anchor = (drawer_row >= 0) ? drawer_row : sel;
+    int first = anchor - rows_vis / 2;
+    if (first > nr - rows_vis) first = nr - rows_vis;
+    if (first < 0)             first = 0;
 
     int drawn = 0;
-    for (int i = 0; i < ROW_N && first + i < nr; ++i, ++drawn)
-        draw_row(fb, &s_rows[first + i], ROW0_Y + i * ROW_H, first + i == sel);
+    for (int i = 0; i < ROW_N; ++i) s_screen_icao[i] = 0;
+    for (int i = 0; i < rows_vis && first + i < nr; ++i, ++drawn) {
+        draw_row(fb, &s_rows[first + i], ROW0_Y + i * ROW_H,
+                 first + i == (drawer_row >= 0 ? drawer_row : sel));
+        s_screen_icao[i] = s_rows[first + i].ac->icao24;
+    }
 
     /* 线画在行**之后**：行底（斑马纹 / 威胁红底 / 选中亮底）是整条铺过去的，
      * 先画线会被行底盖掉。 */
     draw_col_seps(fb, drawn);
+
+    if (drawer_row >= 0) {
+        draw_drawer(fb, &s_rows[drawer_row], COL_TITL, COL_HDR, COL_DIM);
+        return;   /* 抽屉盖住了底部的滚动条，不必再画 */
+    }
 
     /* ── 底部：还有多少没看到 ──
      * 只画滚动条不够：条的长度只说得清「大概还有一些」，而「14 架里的 3-10」
@@ -777,6 +961,20 @@ bool pk_adsb_list_touch(int x, int y)
         s_hdr_down  = HDR_HIT_RESET;
         s_sort      = SORT_DEFAULT_KEY;
         s_sort_desc = false;
+        return true;
+    }
+
+    /* 点数据行：开抽屉；点同一行再点一次：收起。
+     * 抽屉自身区域内的点击一律吃掉（但不做任何事）——否则手指落在抽屉上会
+     * 穿透到底下的表格，把抽屉换成另一架飞机的。 */
+    if (s_drawer_icao && y >= DRAWER_TOP) return true;
+
+    const int rows_vis = s_drawer_icao ? DRAWER_ROWS : ROW_N;
+    if (y >= ROW0_Y && y < ROW0_Y + rows_vis * ROW_H &&
+        x >= PAD_L - 8 && x < CONTENT_R + 8) {
+        const int row = (y - ROW0_Y) / ROW_H;
+        const uint32_t icao = pk_adsb_row_icao(row);
+        if (icao) s_drawer_icao = (s_drawer_icao == icao) ? 0 : icao;
         return true;
     }
 

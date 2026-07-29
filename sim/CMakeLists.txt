@@ -103,6 +103,9 @@ set(FW_DRAW_SRC
     ${FW}/boot_splash.c
     ${FW}/traffic_page.c
     ${FW}/adsb_list.c
+    # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
+    ${FW}/airline_codes.c
+    ${FW}/icao_country.c
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c
