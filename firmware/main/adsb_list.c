@@ -283,6 +283,19 @@ static int  s_scroll_first = -1;/* 手动滚动到的顶行，-1 = 自动锚定 
  * 在点击时的自然抖动大，又远小于一次有意的滑动。 */
 #define DRAG_SLOP  12
 
+/*
+ * 表头的命中范围：视觉是 HDR_H=30 px，命中上下各外扩 6 px → 42 px。
+ *
+ * 30 px 只有 3.6 mm，远低于 9 mm 的手指目标（屏 8.4 px/mm）。这一档**没有**
+ * 做到 9 mm，是权衡后的结果：每列横向有 60~140 px 宽，按 Fitts 定律宽度能
+ * 补偿高度；而把表头抬到 76 px 要吃掉一整行数据（8 行 → 7 行），一行飞机比
+ * 一次排序切换值钱。折中到 42 px ≈ 5 mm。
+ *
+ * 写在这里是为了下次有人照着"9 mm"那条规则来改它时，先看到这个取舍。
+ */
+#define HDR_HIT_TOP  (LST_TOP - 6)
+#define HDR_HIT_BOT  (ROW0_Y + 6)
+
 static uint32_t pk_adsb_row_icao(int row)
 {
     if (row < 0 || row >= ROW_N) return 0;
@@ -988,7 +1001,7 @@ void pk_adsb_list_render(uint16_t *fb)
 static bool in_list_area(int x, int y)
 {
     if (s_drawer_icao && y >= DRAWER_TOP) return true;
-    if (y >= LST_TOP && y < LIST_BOT && x >= PAD_L - 8 && x < CONTENT_R + 8)
+    if (y >= HDR_HIT_TOP && y < LIST_BOT && x >= PAD_L - 8 && x < CONTENT_R + 8)
         return true;
     if (y >= 0 && y < PFD_BAR_BOT && x >= RESET_X0 && x < RESET_X1 &&
         !sort_is_default())
@@ -1012,7 +1025,7 @@ bool pk_adsb_list_touch(int x, int y)
 
     /* 表头的按下高亮要立刻给，否则 10 fps 下点上去像没反应。真正切排序仍
      * 留到松手——高亮只是"我收到了"，不是"我做了"。 */
-    if (y >= LST_TOP && y < ROW0_Y) {
+    if (y >= HDR_HIT_TOP && y < HDR_HIT_BOT) {
         for (int k = 0; k < SORT_COUNT; ++k)
             if (x >= COLS[k].hit_x0 && x < COLS[k].hit_x1) { s_hdr_down = k; break; }
     } else if (y < PFD_BAR_BOT) {
@@ -1086,7 +1099,7 @@ void pk_adsb_list_touch_up(void)
     if (s_drawer_icao && y >= DRAWER_TOP) return;
 
     /* 表头：切排序列 / 翻方向。 */
-    if (y >= LST_TOP && y < ROW0_Y) {
+    if (y >= HDR_HIT_TOP && y < HDR_HIT_BOT) {
         for (int k = 0; k < SORT_COUNT; ++k) {
             if (x < COLS[k].hit_x0 || x >= COLS[k].hit_x1) continue;
             if (s_sort == (sort_key_t)k) {

@@ -90,7 +90,10 @@
  * 命中区比图形本身大一圈（BTN_HIT_PAD）：手指按下的落点与眼睛看到的中心
  * 常差几毫米，按钮画多大与该给多大命中区是两回事。 */
 #define BTN_D         56
-#define BTN_HIT_PAD    8
+/* 命中半径要凑够 9 mm 的手指目标：屏 8.4 px/mm，56 px 的图形只有 6.7 mm，
+ * 加 12 px 外扩后命中 80 px ≈ 9.5 mm。视觉仍是 56——按钮画大了会压掉雷达
+ * 的可用面积，而命中区不占像素。（原来 pad=8 得到 72 px = 8.6 mm，差一点。）*/
+#define BTN_HIT_PAD   12
 #define BTN_M         16                      /* 距屏幕边 */
 #define BTN_ORI_X     BTN_M
 #define BTN_ORI_Y     (PK_DISPLAY_H - BTN_M - BTN_D)
