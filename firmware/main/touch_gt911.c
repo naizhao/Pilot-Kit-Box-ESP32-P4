@@ -35,6 +35,7 @@
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
 #include "adsb_list.h"
 #include "diag_page.h"
+#include "settings_page.h"
 #include "pk_ui_nav.h"
 #include "traffic_page.h"
 #include "ui_state.h"
@@ -129,13 +130,17 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * 手指还没松抽屉就自己开了。 */
             pk_adsb_list_touch_cancel();
             pk_diag_page_touch_cancel();
+            pk_settings_page_touch_cancel();
         } else if (s_armed) {
             eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                  || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
-                 || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly));
+                 || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
+                 || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly));
             if (eaten) s_armed = false;
         } else if (m == PK_UI_MODE_DIAG) {
             eaten = pk_diag_page_drag(lx, ly);
+        } else if (m == PK_UI_MODE_SETTINGS) {
+            eaten = pk_settings_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_ADSB_LIST) {
             /* 按住不放的后续帧交给列表做滚动。表格的滑动必须是连续的，
              * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
@@ -157,6 +162,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_traffic_page_touch_up();
         pk_adsb_list_touch_up();
         pk_diag_page_touch_up();
+        pk_settings_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }

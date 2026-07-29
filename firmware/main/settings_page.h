@@ -3,6 +3,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 void pk_settings_page_render(uint16_t *fb);
@@ -19,3 +20,10 @@ void pk_settings_format_action(void);
 
 /* 两步确认状态机：1 = 已 ARM（等第二次点击确认），0 = 其余。 */
 int pk_settings_format_state(void);
+
+/* 触摸：拖动滚动（8 行放不下一屏，格式化按钮在最底下）。
+ * 约定同 pk_adsb_list_* / pk_diag_page_*：返回 true 表示被本页消费。 */
+bool pk_settings_page_touch(int x, int y);
+bool pk_settings_page_drag(int x, int y);
+void pk_settings_page_touch_up(void);
+void pk_settings_page_touch_cancel(void);

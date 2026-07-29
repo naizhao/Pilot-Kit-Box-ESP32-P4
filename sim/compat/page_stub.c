@@ -183,3 +183,36 @@ int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n)
 void pk_ui_list_scroll(int delta) { (void)delta; }
 
 uint32_t pk_ui_list_get_selected_icao(void) { return 0; }
+
+/* ── 设置页要的那几样 ──────────────────────────────────────────────
+ * 全是 getter：设置页的绘制层只读状态。写操作留在 settings_page.c，
+ * 那个文件依赖 FreeRTOS，不进模拟器。
+ *
+ * 默认值按**最糟情况**给，不给"一切正常"的理想值：SD 未挂载（格式化按钮
+ * 该置灰）、格式化处于已 ARM（"TAP AGAIN 5s" 那个态平时截不到）、亮度取
+ * 中档。PK_SIM_SET_* 可逐项覆盖，用来把各状态都截一遍。 */
+#include "config_qnh.h"
+#include "config_storage.h"
+
+static int sim_env(const char *k, int dflt)
+{
+    const char *e = getenv(k);
+    return e ? atoi(e) : dflt;
+}
+
+float pk_qnh_get(void) { return sim_env("PK_SIM_SET_QNH", 101325) / 100.0f; }
+
+pk_log_store_t pk_log_store_get(void)
+{
+    return sim_env("PK_SIM_SET_STORE", 0) ? PK_LOG_STORE_SD : PK_LOG_STORE_FLASH;
+}
+
+uint8_t pk_backlight_level_get(void) { return (uint8_t)sim_env("PK_SIM_SET_BL", 1); }
+
+/* 默认 false：无卡时格式化按钮置灰、存储那行也置灰，这是出厂开机的样子，
+ * 也是最容易被漏掉的一种版面。 */
+bool pk_sdcard_is_mounted(void) { return sim_env("PK_SIM_SET_SD", 0) != 0; }
+
+int pk_settings_format_state(void) { return sim_env("PK_SIM_SET_FMT", 0); }
+
+bool record_sink_file_uses_sd(void) { return sim_env("PK_SIM_SET_LOGSD", 0) != 0; }

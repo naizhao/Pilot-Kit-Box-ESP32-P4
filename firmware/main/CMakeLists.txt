@@ -37,6 +37,7 @@ idf_component_register(
         "text_font_cjk_ui.c"
         "adsb_list.c"
         "settings_page.c"
+        "settings_draw.c"
         "traffic_page.c"
         "about_page.c"
         "diag_page.c"
