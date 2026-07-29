@@ -448,6 +448,7 @@ static void diag_render_legacy(uint16_t *fb)
 
 #include "pfd_aa_text.h"
 #include "pfd_layout.h"
+#include "pk_ui_nav.h"
 #include "pfd_draw.h"
 #include "battery.h"
 #include "soc_temp.h"
@@ -550,9 +551,6 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18,
                y + CARD_H - 12 - pk_aa_cell_h(sz), value, state_color(st), sz);
 }
-
-/* 详情页返回区宽度。放在这里而不是详情那段里：触摸判定用得比绘制更早。 */
-#define DET_BACK_W  96
 
 /* 前向声明：详情那层定义在文件末尾（它复用 draw_snr_row 等 legacy 工具）。 */
 static void draw_detail(uint16_t *fb, int which);
@@ -871,12 +869,11 @@ bool pk_diag_page_touch(int x, int y)
     /* 详情页：顶栏左侧那块是返回。它是这一页唯一的出路，命中区做到 96 px
      * 宽、整个顶栏高——比箭头本身大得多，宁可多占空间也不能让人点不中。 */
     if (s_detail >= 0) {
-        if (y < PFD_BAR_BOT && x < DET_BACK_W) {
-            s_detail = -1;
-            s_press_valid = false;
-            return true;
-        }
-        /* 详情页其余区域一律吃掉：底下是总览的卡片，穿透过去会直接换一页。 */
+        /* 顶栏不拦：那块是 nav 的 backbar（LVGL 控件），让它自己收点击。
+         * 三条退路里"顶栏按钮"与"FAB"都由导航层提供，本页只要不挡路。 */
+        if (y < PFD_BAR_BOT) { s_press_valid = false; return false; }
+
+        /* 其余区域一律吃掉：底下是总览的卡片，穿透过去会直接换一页。 */
         s_press_valid = false;
         return (x < PK_DISPLAY_W - 80);
     }
@@ -922,7 +919,14 @@ void pk_diag_page_touch_up(void)
     const int col = (x < CARD_PAD + CARD_W + CARD_GAP / 2) ? 0 : 1;
     const int row = (y + s_scroll_y - CARD_TOP) / (CARD_H + CARD_GAP);
     const int idx = row * CARD_COLS + col;
-    if (row >= 0 && idx >= 0 && idx < CARD_N) s_detail = idx;
+    if (row >= 0 && idx >= 0 && idx < CARD_N) {
+        s_detail = idx;
+        /* 走导航层的二级页机制，而不是自己画一个返回箭头就算完（上一版就是
+         * 那么干的）。spec §4.2：进子页后 FAB 图标变 ←、dock 收起且不可展开，
+         * **三条退路（顶栏按钮 / FAB / 右滑）同时可用**——无物理按键的设备
+         * 上，任何一条失效都不能让用户困在里面。自画一个箭头只提供了一条。 */
+        pk_ui_nav_set_subpage(true, "DIAGNOSTICS");
+    }
 }
 void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
 
@@ -934,7 +938,7 @@ void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
  * SNR 柱状图，那是排查 no-fix 的命门（不能只盯 fix=0，要看 SNR 和天线）。
  * ═════════════════════════════════════════════════════════════════════ */
 
-#define DET_TOP     (PFD_BAR_BOT + 8)
+#define DET_TOP     (PFD_BAR_BOT + 24 + PK_AA_L_H)
 #define DET_LINE_H  38
 #define DET_KEY_X   24
 #define DET_VAL_X   240
@@ -1182,17 +1186,39 @@ static void draw_detail(uint16_t *fb, int which)
     }
 }
 
-/* 详情页顶栏：返回箭头 + 子系统名。返回区（DET_BACK_W）做得比箭头本身大
- * 得多——它是这一页唯一的出路，宁可多吃空间也不能让人点不中。 */
+/*
+ * 详情页的标题条。
+ *
+ * **顶栏不归这里管**——pk_ui_nav_set_subpage() 会显示一条 LVGL 的
+ * 「← DIAGNOSTICS」backbar 并 move_foreground，自己再画一条只会被它盖住，
+ * 或者两条叠在一起。上一版就是那么写的。
+ *
+ * 这里只在内容区顶部标一行当前子系统名：backbar 说的是"返回去哪"，这行说的
+ * 是"现在看的是谁"，两句话不重复。
+ */
 static void draw_detail_header(uint16_t *fb, int which)
 {
-    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, COL_BG);
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2, "\u2190", COL_HEADER, PK_AA_M);
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_BACK_W,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2,
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, PFD_BAR_BOT + 10,
                (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
-               COL_HEADER, PK_AA_M);
-    pk_pfd_fill_rect(fb, 0, PFD_BAR_BOT - 1, PK_DISPLAY_W, PFD_BAR_BOT,
+               COL_HEADER, PK_AA_L);
+    pk_pfd_fill_rect(fb, DET_KEY_X, PFD_BAR_BOT + 12 + PK_AA_L_H,
+                     PK_DISPLAY_W - 24, PFD_BAR_BOT + 13 + PK_AA_L_H,
                      pk_rgb565(38, 48, 62));
 }
+
+/*
+ * 退出子系统详情，回到诊断总览。
+ *
+ * 三条退路共用它：顶栏返回区、FAB（导航层的 ← ）、右滑手势。退出时必须把
+ * 导航层的子页状态一起清掉，否则 FAB 会一直停在 ← 的样子——状态分两处各记
+ * 一份就会这样，所以只留这一个出口。
+ */
+void pk_diag_page_leave_detail(void)
+{
+    s_detail = -1;
+    pk_ui_nav_set_subpage(false, NULL);
+}
+
+/* 当前是否在子系统详情里。pk_ui_nav_on_back() 据此决定是"退出详情"还是
+ * "切回诊断页"——两者在诊断页上下文里是不同的动作。 */
+bool pk_diag_page_in_detail(void) { return s_detail >= 0; }

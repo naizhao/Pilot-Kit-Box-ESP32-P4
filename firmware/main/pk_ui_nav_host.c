@@ -17,6 +17,7 @@
 #include "config_fab.h"
 #include "i18n_catalog.h"
 #include "imu_task.h"
+#include "diag_page.h"
 #include "ui_state.h"
 
 static const char *TAG = "nav_host";
@@ -85,6 +86,13 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct)
  */
 void pk_ui_nav_on_back(void)
 {
+    /* 诊断的子系统详情是"页内的第二层"，不是独立页面：在它里面按返回应该
+     * 回到诊断总览，而不是把整页切一遍（那样会连滚动位置一起丢掉）。
+     * 只有不在详情里时，返回才是"切回诊断页"。 */
+    if (pk_diag_page_in_detail()) {
+        pk_diag_page_leave_detail();
+        return;
+    }
     pk_ui_set_mode(PK_UI_MODE_DIAG);
 }
 

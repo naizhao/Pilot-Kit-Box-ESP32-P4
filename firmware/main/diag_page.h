@@ -9,3 +9,7 @@ bool pk_diag_page_touch(int x, int y);
 bool pk_diag_page_drag(int x, int y);
 void pk_diag_page_touch_up(void);
 void pk_diag_page_touch_cancel(void);
+
+/* 退出子系统详情回到总览。三条退路（顶栏返回 / FAB / 右滑）共用。 */
+void pk_diag_page_leave_detail(void);
+bool pk_diag_page_in_detail(void);
