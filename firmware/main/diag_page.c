@@ -685,13 +685,15 @@ void pk_diag_page_render(uint16_t *fb)
             draw_card(fb, 0, 4, "microSD", "formatting...", ST_WARN);
             break;
         default:
-            /* 热插拔是支持的：pk_sdcard 的探测任务每 3 s 重试一次挂载
-             * （sd_detect_task）。把重试次数显示出来，就能区分"没插卡"
-             * （计数不动/为 0）和"插了但挂不上"（计数一直涨）——后者才是
-             * 需要拔出来重插或换卡的信号。 */
-            snprintf(buf, sizeof(buf), "no card  (retry %lu)",
-                     (unsigned long)pk_sdcard_mount_attempts());
-            draw_card(fb, 0, 4, "microSD", buf, ST_BAD);
+            /* 只说"没插卡"。
+             *
+             * retry 计数是排查 slot 没注销那个 bug 时加的临时诊断，问题定位
+             * 之后它就成了噪音——不插卡使用是完全正常的用法，屏上却挂着一个
+             * 一直在涨的数字，看起来像有什么东西反复失败。
+             *
+             * 重试逻辑本身保留（热插拔靠它），只是不再摆到台面上。真要再排查
+             * 同类问题，看串口日志里的 "mount attempt #N failed" 就够了。 */
+            draw_card(fb, 0, 4, "microSD", "no card", ST_BAD);
             break;
         }
     }

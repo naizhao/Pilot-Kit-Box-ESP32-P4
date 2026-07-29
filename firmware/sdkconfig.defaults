@@ -119,17 +119,11 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-# Waveshare ESP32-P4-WIFI6 (and the related P4-Nano) routes P4-GPIO54
-# through an inverter/level-shifter before it reaches C6's EN pin, so
-# from the P4's point of view the reset signal is ACTIVE-HIGH: driving
-# GPIO54 HIGH asserts reset, driving it LOW releases. This is the
-# opposite of the C6 silicon polarity and the opposite of what the
-# ESP32-P4-Function-EV-Board uses. The clue came from ESPHome user
-# `sobiso` (github.com/esphome/esphome#10393 — same C6 pins as us)
-# whose working YAML uses `active_high: true`, which their adapter
-# translates exactly to CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y.
-# With our previous ACTIVE_LOW setting we were holding C6 in reset
-# right after the P4 boot reset pulse, hence the 0x107 CMD5 failures.
+# Rev1.2 connects P4 GPIO54 directly to C6 EN through R34 (0 ohm);
+# there is no inverter or level shifter. Hardware testing nevertheless
+# confirms that this ESP-Hosted option must remain ACTIVE_HIGH for this
+# project. Treat it as verified driver-option semantics, not as evidence
+# of board-level inversion. ACTIVE_LOW causes 0x107 CMD5 failures.
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 
@@ -208,3 +202,4 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 # implicit declaration。
 #
 # 本项目的 BLE GDL90 输出依赖它，必开。
+CONFIG_PK_BATT_DIVIDER_X100=296

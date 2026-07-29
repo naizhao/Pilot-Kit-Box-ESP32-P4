@@ -120,6 +120,13 @@ bool pk_batt_get(pk_batt_t *out)
             }
             s_prev_mv = s_ema_mv;
             s_last_us = now;
+            /* 标定用：万用表量到的电池电压 ÷ 这里的 raw = 分压比。
+             * 2026-07-29 已用它标出 296（raw 1387 mV ↔ 实测 4.10 V），故降到
+             * DEBUG。换板子或换电芯要重标时，esp_log_level_set("batt",
+             * ESP_LOG_DEBUG) 打开即可，不必回头改代码。 */
+            ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV)", s_ema_mv,
+                     CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
+                     s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100);
         }
     }
 

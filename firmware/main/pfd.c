@@ -1,14 +1,12 @@
 /*
  * pfd.c — Primary Flight Display task + frame dispatcher.
  *
- * Renders one of four UI modes into the 320×240 ST7789 framebuffer at
- * 30 FPS:
+ * Renders the current UI mode into the logical 800×480 RGB565 framebuffer
+ * at about 30 FPS. display.c rotates it into the native 480×800 ST7701
+ * MIPI-DSI scan buffers.
  *
- *   PFD         — G1000-style attitude + statusbar + HSI + ALT tape +
- *                 GS / VS readouts.
- *   CAL_WIZARD  — IMU compass-calibration figure-8 prompt.
- *   ABOUT       — system info page.
- *   ADSB_LIST   — live ADS-B contacts table + detail pane.
+ * Top-level modes are PFD, traffic, ADS-B list, settings, about and
+ * diagnostics; the calibration wizard is a full-screen overlay.
  *
  * Each PFD widget owns its screen region and reads from a small
  * per-frame POD assembled here (pk_pfd_imu_t, pk_pfd_status_t,
@@ -25,6 +23,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "battery.h"
 #include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
@@ -229,7 +228,7 @@ static void pfd_task(void *arg)
              * 顶栏的降级逻辑会自动不显示它们 —— 详见 IMPLEMENTATION_PLAN.md
              * 的「P2 · 顶栏状态位数据源接入」：
              *   TODO(P2-1): rec_active   ← record_sink_file_stats() 加时间窗
-             *   TODO(P2-2): batt_*       ← 需要 ADC 分压 + 充电检测脚，硬件未定
+             *   （P2-2 batt_* 已接：battery.c 读 GPIO20 BAT_ADC）
              *
              * temp（P2-3）已接：soc_temp.c 读片内结温，1 Hz 采样 + 滞回。
              * 注意不能改用 baro 的温度——那是 BMP388 测的座舱环境温度，与
@@ -245,6 +244,17 @@ static void pfd_task(void *arg)
                 .uptime_ms      = (uint32_t)(now_us / 1000),
             };
             stat.temp_warn = pk_soc_temp_get(&stat.temp_c);
+
+            /* 电池。放在这里而不是只在诊断页取：顶栏那枚电池图标每帧都要画，
+             * 而且采样挪到公共路径上之后，电量在任何页面都是活的——原先
+             * pk_batt_get() 只在诊断页渲染时被调用，切到别的页电量就停更了。 */
+            {
+                pk_batt_t b;
+                pk_batt_get(&b);
+                stat.batt_valid    = b.valid;
+                stat.batt_pct      = (uint8_t)b.pct;
+                stat.batt_charging = b.charging;
+            }
             pk_pfd_hsi_t hsi = {
                 .imu_valid = yaw_valid,
                 .yaw_deg   = yaw_deg,
