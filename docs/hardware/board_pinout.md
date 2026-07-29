@@ -1,591 +1,499 @@
-# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 — pin & GPIO map
+# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 pinout
+
+> ⚠️ **部分内容未随 4.3″ Rev1.2 更新（2026-07-29 实测发现）**
+>
+> 本文虽声称基于 Rev1.2 原理图，但下列条目仍是 2.4″ 载板 + 核心板的旧数据，
+> 已导致两次错误结论：
+>
+> | 本文说法 | 4.3″ Rev1.2 实际（wiki + 实测） |
+> |---|---|
+> | `P1` = USB HS OTG 排针，RTL-SDR 数据路径 | `P1` 是 **C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB** |
+> | RTL-SDR 接 P1 排针 | 接 **H2「USB OTG」Type-C**（USB 2.0 HS） |
+> | GPIO20 = BNO085 INT | **BAT_ADC**（电池电压检测，未从 J3 引出） |
+> | 无电池检测硬件 | **MX1.25 锂电池座 3.7 V，支持充放电** |
+>
+> 涉及接口、供电、GPIO 归属时，以
+> [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md)
+> 和 [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf)
+> 为准，不要引用本文。
+
 
 Chinese version: [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md)
 
-All assignments below are cross-checked against three sources:
+This document is derived from the **Waveshare Rev1.2 schematic** for the
+4.3-inch board:
 
-1. `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` — Waveshare Rev1.2
-   schematic (board-level wiring).
-2. `ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md` — offline resource index and
-   the exact timings used by the official Waveshare BSP.
-3. `ESP32-P4 Series Datasheet v1.1` (Espressif) — chip-level pin
-   functions, strapping rules, and reserved pins.
+- [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf)
+  is the board-level authority.
+- [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md)
+  records the official BSP parameters and local datasheet references.
+- Firmware behavior is verified against `firmware/main/` and
+  `firmware/sdkconfig.defaults`.
 
-When the firmware references a GPIO number, **this file is the source
-of truth**. Update the relevant table here *before* changing any
-driver, then propagate the change into the `*_PIN` defines in
-`firmware/main/`.
+Labels used below:
 
-The ESP32-P4 chip has 55 GPIOs total (GPIO0–GPIO54). The Waveshare
-board exposes **27** of them on the user-facing 2×20 headers (the
-others are consumed by on-board peripherals or are package-dedicated
-signals — see §3).
+- **Board** — fixed by the Rev1.2 PCB and cannot be remapped in firmware.
+- **Firmware** — behavior implemented by the current Pilot Kit build.
+- **Project** — external Pilot Kit wiring; change the wiring and firmware
+  together if this allocation changes.
 
----
+> Do not use `ESP32-P4-WIFI6-datasheet.pdf` as pinout evidence for this board.
+> Despite its filename, it is the schematic of a different ESP32-P4-WIFI6
+> board. The Rev1.2 PDF above is the only board schematic used here.
 
-## 1. User-facing headers — physical layout
+## 1. Identify the connectors first
 
-Looking at the board with the USB-C / SD-card edge at the top, ESP32-C6
-module at the bottom:
+Several old project documents used connector names from the former 2.4-inch
+carrier. Those names are not valid on the 4.3-inch board.
 
+| Ref. | Physical connector | Purpose |
+|---|---|---|
+| **H1** | USB-C, silkscreen `USB TO UART` | CH343P bridge for P4 flashing and serial console |
+| **H2** | USB-C, silkscreen `USB` | Native ESP32-P4 USB 2.0 High-Speed OTG; shares its data nets with J3 pins 25/27 |
+| **P1** | 1×4, 2.54 mm header, silkscreen `TX RX IO9 GND` | ESP32-C6 UART download header; **not USB** |
+| **J3** | 2×20, 2.54 mm header | Power, GPIO and two USB signal pairs; only partially Raspberry Pi HAT-like |
+| **P2** | 30-pin, 0.5 mm display/touch FFC | MIPI-DSI LCD, backlight-related panel nets and GT911 touch |
+| **J1** | 15-pin camera FFC | 2-lane MIPI-CSI camera |
+| **J2** | 2-pin battery connector | 3.7 V Li-ion/LiPo battery |
+| **H8** | 2-pin RTC battery connector | Rechargeable RTC battery only |
+| **H4** | 2-pin speaker connector | 8 Ω / 2 W speaker output |
+
+The board has three buttons: **Key1 RESET**, **Key2 BOOT** and
+**Key3 POWER**. It does not have the former carrier's four application keys.
+
+## 2. J3 40-pin expansion header
+
+### Physical silkscreen view
+
+This section fixes the viewing direction to the user's view while facing the
+physical board, **without mirroring**:
+
+- upper-left is `GND`, lower-left is `GPIO48`
+- upper-right is `ESP_3V3`, lower-right is `VCC_5V`
+- reading left to right, J3 pin numbers descend from 40/39 to 2/1
+
+A mating HAT footprint is mirrored when viewed from its connector side, so
+verify the footprint orientation again before routing.
+
+#### Horizontal quick-reference: facing the board, left to right
+
+| Facing the board | left 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 right |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **Upper silkscreen** | GND | 52 | 51 | 50 | 49 | 35 | 34 | GND | 31 | 30 | 29 | 3V3 | 28 | 4 | 3 | GND | 2 | SCL | SDA | 3V3 |
+| **Actual upper net** | GND | GPIO52 | GPIO51 | GPIO50 | GPIO49 | GPIO35 | GPIO34 | GND | GPIO31 | GPIO30 | GPIO29 | ESP_3V3 | GPIO28 | GPIO4 | GPIO3 | GND | GPIO2 | GPIO8 | GPIO7 | ESP_3V3 |
+| **Upper J3 pin** | 40 | 38 | 36 | 34 | 32 | 30 | 28 | 26 | 24 | 22 | 20 | 18 | 16 | 14 | 12 | 10 | 8 | 6 | 4 | 2 |
+| **Lower silkscreen** | 48 | 47 | 46 | GND | 32 | GND | DP | DM | 25 | 24 | GND | 22 | 21 | GND | 5 | 38 | 37 | GND | 5V | 5V |
+| **Actual lower net** | GPIO48 | GPIO47 | GPIO46 | GND | GPIO32 | GND | `USBD_P` | `USBD_N` | GPIO25 | GPIO24 | GND | GPIO22 | GPIO21 | GND | GPIO5 | GPIO38 | GPIO37 | GND | VCC_5V | VCC_5V |
+| **Lower J3 pin** | 39 | 37 | 35 | 33 | 31 | 29 | 27 | 25 | 23 | 21 | 19 | 17 | 15 | 13 | 11 | 9 | 7 | 5 | 3 | 1 |
+
+#### Per-column detail: same physical direction
+
+| Physical position (left→right) | Upper J3 pin | Actual upper net | Lower J3 pin | Actual lower net |
+|---:|---:|---|---:|---|
+| 1 | 40 | GND | 39 | GPIO48 |
+| 2 | 38 | GPIO52 | 37 | GPIO47 |
+| 3 | 36 | GPIO51 | 35 | GPIO46 |
+| 4 | 34 | GPIO50 | 33 | GND |
+| 5 | 32 | GPIO49 | 31 | GPIO32 |
+| 6 | 30 | GPIO35 / BOOT and auto-download circuit | 29 | GND |
+| 7 | 28 | GPIO34 | 27 | `USBD_P`, native USB HS D+, silkscreen `DP` |
+| 8 | 26 | GND | 25 | `USBD_N`, native USB HS D−, silkscreen `DM` |
+| 9 | 24 | GPIO31 | 23 | GPIO25 / `USB1P1_P` |
+| 10 | 22 | GPIO30 | 21 | GPIO24 / `USB1P1_N` |
+| 11 | 20 | GPIO29 | 19 | GND |
+| 12 | 18 | ESP_3V3 | 17 | GPIO22 |
+| 13 | 16 | GPIO28 | 15 | GPIO21 |
+| 14 | 14 | GPIO4 | 13 | GND |
+| 15 | 12 | GPIO3 | 11 | GPIO5 |
+| 16 | 10 | GND | 9 | GPIO38 / P4 UART RX from CH343P |
+| 17 | 8 | GPIO2 / optional TP_INT through unpopulated R35 | 7 | GPIO37 / P4 UART TX to CH343P |
+| 18 | 6 | GPIO8 / shared I²C SCL, silkscreen `SCL` | 5 | GND |
+| 19 | 4 | GPIO7 / shared I²C SDA, silkscreen `SDA` | 3 | VCC_5V |
+| 20 | 2 | ESP_3V3 | 1 | VCC_5V |
+
+```text
+Silkscreen readable, J3 below the text:
+
+left   upper J3-40 ───────────────────────────── J3-2   right
+       lower J3-39 ───────────────────────────── J3-1
 ```
-              ┌───────────────────────┐
-       (top)  │ ◯ Type-C  ◯ MicroSD ◯ │  (top)
-              ├───────────────────────┤
-    GPIO52  ──┤                       ├──  VBUS         (5 V in)
-    GPIO51  ──┤                       ├──  VSYS         (battery / 5 V)
-       GND  ──┤                       ├──  GND
-    GPIO31  ──┤                       ├──  EN           (chip enable)
-    GPIO30  ──┤  ┌──────────────┐     ├──  3V3          (3.3 V out)
-    GPIO29  ──┤  │              │     ├──  GPIO20
-    GPIO28  ──┤  │   ESP32-P4   │     ├──  GPIO21
-       GND  ──┤  │              │     ├──  GND
-    GPIO50  ──┤  │              │     ├──  GPIO22
-    GPIO49  ──┤  └──────────────┘     ├──  GPIO23
-     GPIO5  ──┤                       ├──  RUN          (system reset)
-     GPIO4  ──┤    [DISPLAY FFC]      ├──  GPIO26
-       GND  ──┤                       ├──  GND
-     GPIO3  ──┤    [CAMERA FFC]       ├──  GPIO27
-     GPIO2  ──┤                       ├──  GPIO32
-     GPIO8 ──┤    H4 (C6 debug)      ├──  GPIO33
-     GPIO7 ──┤    IO9 GND RX  TX     ├──  GPIO46
-       GND  ──┤                       ├──  GND
-    GPIO24  ──┤    [USB MX1.25 P1]    ├──  GPIO47
-    GPIO25  ──┤    V  D-  D+  G       ├──  GPIO48
-              ├───────────────────────┤
-   (bottom)   │  ◯  ESP32-C6 module ◯ │  (bottom)
-              └───────────────────────┘
-              (left header)         (right header)
-```
 
-Both headers count from the **top** (USB-C side) downward.
+The native USB HS connection for the new HAT carrier is therefore:
 
-### Left header pins (top → bottom)
+- J3-27: `USBD_P` / `DP`
+- J3-25: `USBD_N` / `DM`
+- J3-29 or J3-26: adjacent GND
+- J3-1/J3-3: `VCC_5V`; pass it through a USB Host current-limited switch
+  before connecting it to dongle VBUS
 
-| Silkscreen | Net      | Current allocation             | Notes                                          |
-|------------|----------|--------------------------------|------------------------------------------------|
-| 52         | GPIO52   | free                           |                                                |
-| **51**     | GPIO51   | **GPS TXD → P4 UART RX**      | remapped from GPIO33 because BL_EN owns 33     |
-| GND        | GND      | —                              | recommended LCD GND return                     |
-| **31**     | GPIO31   | **BARO_INT**                   | remapped from GPIO27; optional BMP388 IRQ      |
-| 30         | GPIO30   | free                           | released by the MIPI-DSI migration             |
-| 29         | GPIO29   | free                           | released by the MIPI-DSI migration             |
-| 28         | GPIO28   | free                           | released by the MIPI-DSI migration             |
-| GND        | GND      | —                              |                                                |
-| 50         | GPIO50   | free                           | released with the old SPI display              |
-| 49         | GPIO49   | free                           |                                                |
-| 5          | GPIO5    | free / legacy MODE wiring      | no external buttons on the 4.3-inch target     |
-| 4          | GPIO4    | free                           | ⚠ JTAG MTMS default — using disables JTAG.     |
-| GND        | GND      | —                              |                                                |
-| 3          | GPIO3    | free                           | ⚠ JTAG MTDI default — using disables JTAG.     |
-| 2          | GPIO2    | free                           | ⚠ JTAG MTCK default — using disables JTAG.     |
-| **SCL/8**  | GPIO8    | **I²C0 SCL** (codec + IMU)     |                                                |
-| **SDA/7**  | GPIO7    | **I²C0 SDA** (codec + IMU)     |                                                |
-| GND        | GND      | —                              |                                                |
-| DM/24      | GPIO24   | reserved                       | ⚠ USB Serial/JTAG default (USB1P1_N0).          |
-| DP/25      | GPIO25   | reserved                       | ⚠ USB Serial/JTAG default (USB1P1_P0).          |
+The silkscreen labels `25`/`24` mean GPIO25/GPIO24 and carry the separate
+Full-Speed `USB1P1_P/N` pair. They are not the native USB HS `DP`/`DM` pair.
 
-### Right header pins (top → bottom)
+### Schematic pin-number order
 
-| Silkscreen | Net      | Current allocation        | Notes                                          |
-|------------|----------|---------------------------|------------------------------------------------|
-| VBUS       | +5 V     | —                         | USB-C VBUS in. Shorted to USB connector.       |
-| VSYS       | +5 V     | —                         | Battery / external 5 V input.                  |
-| GND        | GND      | —                         |                                                |
-| EN         | CHIP_PU  | —                         | Hold low → chip in reset.                      |
-| 3V3        | +3.3 V   | —                         | 3.3 V output from on-board LDO (≤500 mA).      |
-| **20**     | GPIO20   | **IMU INT** (BNO085, polled — not IRQ yet)  |                              |
-| **21**     | GPIO21   | **IMU RST** (BNO085 active-low reset)       |                              |
-| GND        | GND      | —                         |                                                |
-| 22         | GPIO22   | free                                           |                                  |
-| **23**     | GPIO23   | **GT911 TP_RST**                               | board-fixed                       |
-| RUN        | RUN      | —                         | System reset button net.                       |
-| **26**     | GPIO26   | **LCD_BL_PWM**             | inverted LEDC PWM injected into AP3032 FB node |
-| GND        | GND      | —                         |                                                |
-| **27**     | GPIO27   | **LCD RESET**              | board-fixed ST7701 reset, 10 kΩ pull-down       |
-| **32**     | GPIO32   | **GPS RX** (carrier board) | P4 UART **TX** → GPS RXD; driver implemented (`gps_task.c`, UART1 NMEA) |
-| **33**     | GPIO33   | **LCD BL_EN**              | AP3032 enable, 100 kΩ pull-up to Core_5V        |
-| **46**     | GPIO46   | **GPS PPS** (carrier board) | 1 Hz pulse for time discipline; (was LCD CS earlier) |
-| GND        | GND      | —                         | ⚠ Between GPIO46 and GPIO47 — easy to misplace |
-| 47         | GPIO47   | free                      | (was LCD SCK in an earlier bring-up build)     |
-| 48         | GPIO48   | free                      | (was LCD DC in an earlier bring-up build)      |
+The following table starts at schematic pin 1 and therefore reads **right to
+left relative to the physical board table above**. Prefer the physical-view
+table above when wiring or drawing the mating HAT footprint.
 
-### Other access points (board midline)
+| Odd pin | Net / board use | Even pin | Net / board use |
+|---:|---|---:|---|
+| 1 | VCC_5V | 2 | ESP_3V3 |
+| 3 | VCC_5V | 4 | GPIO7 / shared I²C SDA |
+| 5 | GND | 6 | GPIO8 / shared I²C SCL |
+| 7 | GPIO37 / P4 UART TX to CH343P | 8 | GPIO2 / optional TP_INT through unpopulated R35 |
+| 9 | GPIO38 / P4 UART RX from CH343P | 10 | GND |
+| 11 | GPIO5 | 12 | GPIO3 |
+| 13 | GND | 14 | GPIO4 |
+| 15 | GPIO21 | 16 | GPIO28 |
+| 17 | GPIO22 | 18 | ESP_3V3 |
+| 19 | GND | 20 | GPIO29 |
+| 21 | GPIO24 / USB1P1_N | 22 | GPIO30 |
+| 23 | GPIO25 / USB1P1_P | 24 | GPIO31 |
+| 25 | USBD_N, native USB HS D− | 26 | GND |
+| 27 | USBD_P, native USB HS D+ | 28 | GPIO34 |
+| 29 | GND | 30 | GPIO35 / BOOT and auto-download circuit |
+| 31 | GPIO32 | 32 | GPIO49 |
+| 33 | GND | 34 | GPIO50 |
+| 35 | GPIO46 | 36 | GPIO51 |
+| 37 | GPIO47 | 38 | GPIO52 |
+| 39 | GPIO48 | 40 | GND |
 
-- **BOOT button** — pulls **GPIO0** low at reset. Hold during power-on
-  to enter UART download mode. **GPIO0 is a strapping pin and is not
-  available as an application GPIO** (it's not broken out anyway).
-- **RESET button** — pulls CHIP_PU low. Standalone reset.
-- **MIC** — board's electret, routed through the ES8311 codec.
-- **DISPLAY FFC (J2, 22-pin)** — MIPI-DSI panel connector. Uses
-  dedicated DSI pins on the chip; does not consume GPIOs.
-- **CAMERA FFC (J1, 22-pin)** — MIPI-CSI camera connector. Same:
-  dedicated CSI pins, no GPIO cost.
-- **H4 (4-pin C6 debug header)** — `IO9 / GND / RXD / TXD`. Flashes
-  the on-board ESP32-C6 module via an external USB-UART. Not on any
-  P4 GPIO — standalone path.
-- **USB (MX1.25 4-pin P1)** — USB 2.0 **HS** OTG. Wired straight to
-  ESP32-P4 chip pins 49/50 (the dedicated USB HS PHY). This is the
-  RTL-SDR data path. **Not GPIO24/25** — that's a separate FS PHY.
+J3 exposes **26 numbered P4 GPIOs**:
+`2, 3, 4, 5, 7, 8, 21, 22, 24, 25, 28, 29, 30, 31, 32, 34, 35, 37,
+38, 46, 47, 48, 49, 50, 51, 52`.
 
----
+It does **not** expose GPIO20, GPIO23, GPIO26, GPIO27 or GPIO33. Older
+left/right header drawings that show those pins belong to the previous board.
 
-## 2. On-board peripherals (firmware-fixed)
+Important cautions:
 
-These GPIOs and signals are committed by the Waveshare board itself
-(not by the firmware) and **cannot be reassigned**. Most aren't even
-broken out to the user headers — they're internal traces.
+- J3 is not electrically pin-compatible with a complete Raspberry Pi 40-pin
+  header. Check every pin before attaching a HAT.
+- J3 pins 25/27 share the native USB HS data nets with H2. Use either H2 or
+  the HAT USB-A port, never both.
+- GPIO24/25 are a separate Full-Speed USB Serial/JTAG pair. They are not the
+  H2 native HS pair.
+- GPIO35 is BOOT and is also driven by the CH343P auto-download circuit.
+- GPIO37/38 are shared with the on-board CH343P. External UART use may contend
+  with H1.
+- GPIO2 reaches the touch interrupt net only if optional 0 Ω resistor R35 is
+  populated. It is open by default.
 
-### MicroSD card slot (TF1, SDMMC 4-bit)
+### Recommended J3 allocation for Pilot Kit
 
-51 kΩ pull-ups to 3V3 on every data line and CMD; use **SDMMC Slot 0**
-(GPIO39-44 are the P4's dedicated Slot 0 pins — Slot 1 is taken by the
-ESP-Hosted SDIO link to the C6). On IDF ≥ 6.0 the SDMMC host controller
-can only be initialised once (IDF issue #16233): ESP-Hosted initialises
-it first, so the SD mount must stub out `host.init`/`host.deinit`
-(see `firmware/main/pk_sdcard.c` and the esp_hosted
-`examples/host_sdcard_with_hosted` workaround).
+| Function | J3 connection | Status |
+|---|---|---|
+| Shared I²C SDA / SCL | GPIO7 / GPIO8 | **Project + firmware** |
+| BNO085 reset | GPIO21 | **Project + firmware** |
+| BNO085 interrupt | Not connected | Firmware polls; GPIO20 is not on J3 and is BAT_ADC |
+| BMP388 interrupt | GPIO31 optional | Reserved by project; current driver polls |
+| GPS UART1 TX / RX | GPIO32 / GPIO51 | **Project + firmware**, 9600 8N1 |
+| GPS PPS | GPIO46 optional | Wiring reservation only; current firmware does not consume PPS |
+| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **New HAT carrier**; leave H2 empty and feed VBUS from J3 `VCC_5V` through a current-limited switch |
 
-| TF pin   | Function   | ESP32-P4 GPIO |
-|----------|------------|---------------|
-| 5        | CLK        | GPIO43        |
-| 3        | CMD        | GPIO44        |
-| 7        | D0         | GPIO39        |
-| 8        | D1         | GPIO40        |
-| 1        | D2         | GPIO41        |
-| 2        | D3 / CD    | GPIO42        |
+Reasonable general-purpose candidates, when the optional project functions
+above are unused, are GPIO5, GPIO22, GPIO28, GPIO29, GPIO30, GPIO34,
+GPIO47, GPIO48, GPIO49, GPIO50 and GPIO52.
 
-No card-detect pin to a P4 GPIO — detect via mount-retry.
+Use these only after considering their caveats:
 
-### ESP32-C6 co-processor (ESP-Hosted SDIO slave)
+- GPIO2/3/4 overlap default JTAG functions.
+- GPIO24/25 overlap USB Serial/JTAG.
+- GPIO31 is reserved for a possible BMP388 interrupt.
+- GPIO32/51 are the current GPS UART.
+- GPIO46 is reserved for a possible GPS PPS input.
+- GPIO35 and GPIO37/38 should normally be left to boot/console circuitry.
 
-The C6-MINI-1 hosts Wi-Fi + BLE; the P4 talks to it as an ESP-Hosted
-SDIO slave. Pins match Espressif's eval-board layout, so upstream
-`esp_hosted` examples work without GPIO overrides.
+## 3. Complete board-level GPIO ownership
 
-| C6 pad | Function           | ESP32-P4 GPIO |
-|--------|--------------------|---------------|
-| IO19   | CLK                | GPIO18        |
-| IO18   | CMD                | GPIO19        |
-| IO12   | D0                 | GPIO14        |
-| IO13   | D1                 | GPIO15        |
-| IO14   | D2                 | GPIO16        |
-| IO15   | D3                 | GPIO17        |
-| EN     | RESET (P4 software view is active-high) | GPIO54        |
-| IO2    | (boot strap)       | GPIO6         |
+This table prevents internal board signals from being mistaken for free pins.
 
-Configured via:
-```
+| GPIO | Rev1.2 board connection | J3? |
+|---:|---|:---:|
+| 0, 1 | 32.768 kHz crystal | No |
+| 2 | Optional GT911 TP_INT through R35 (not fitted) | 8 |
+| 3 | Expansion; default JTAG MTDI | 12 |
+| 4 | Expansion; default JTAG MTMS | 14 |
+| 5 | Expansion | 11 |
+| 6 | ESP32-C6 IO2 through R33, 0 Ω | No |
+| 7 | Shared I²C SDA: touch, audio, camera and J3 | 4 |
+| 8 | Shared I²C SCL: touch, audio, camera and J3 | 6 |
+| 9 | I²S DSDIN, P4 to ES8311 | No |
+| 10 | I²S LRCK | No |
+| 11 | I²S ASDOUT, ES7210 to P4 | No |
+| 12 | I²S SCLK | No |
+| 13 | I²S MCLK | No |
+| 14–17 | P4↔C6 SDIO D0–D3 | No |
+| 18, 19 | P4↔C6 SDIO CLK, CMD | No |
+| 20 | BAT_ADC, battery voltage divided by 3 | No |
+| 21, 22 | Expansion | 15, 17 |
+| 23 | GT911 TP_RST | No |
+| 24, 25 | USB1P1_N/P Full-Speed USB Serial/JTAG | 21, 23 |
+| 26 | LCD_BL_PWM | No |
+| 27 | LCD RESET | No |
+| 28–32 | Expansion | 16, 20, 22, 24, 31 |
+| 33 | BL_EN, pulled up by 100 kΩ | No |
+| 34 | Expansion | 28 |
+| 35 | BOOT plus CH343P auto-download | 30 |
+| 36 | 10 kΩ pull-up only; not exposed | No |
+| 37 | P4 UART TX to CH343P RXD | 7 |
+| 38 | P4 UART RX from CH343P TXD | 9 |
+| 39–42 | microSD D0–D3 | No |
+| 43, 44 | microSD CLK, CMD | No |
+| 45 | microSD power-switch control | No |
+| 46–52 | Expansion | 35, 37, 39, 32, 34, 36, 38 |
+| 53 | NS4150B PA_CTRL | No |
+| 54 | ESP32-C6 CHIP_PU/EN through R34, 0 Ω | No |
+
+Dedicated non-GPIO nets carry MIPI-DSI, MIPI-CSI, native USB HS and external
+flash. They must not be assigned GPIO numbers.
+
+## 4. Display, touch and backlight
+
+### ST7701 MIPI-DSI display
+
+The panel is natively 480×800 portrait. The current firmware presents an
+800×480 landscape UI.
+
+| Item | Board / current firmware |
+|---|---|
+| DSI | 2 lanes at 500 Mbit/s per lane |
+| DPI framebuffer | 480×800, RGB565, 30 MHz pixel clock |
+| Horizontal porch | back 42 / pulse 12 / front 42 |
+| Vertical porch | back 2 / pulse 8 / front 60 |
+| DSI PHY supply | ESP LDO_VO3 channel 3 at 2.5 V |
+| LCD reset | GPIO27, active low; 10 kΩ pull-down |
+| Backlight PWM | GPIO26 into AP3032 feedback network |
+| Backlight enable | GPIO33; 100 kΩ pull-up, default enabled |
+| Firmware transform | PPA 270° counter-clockwise, equivalent to 90° clockwise, with byte swap |
+| Framebuffers | Two native 480×800 DPI buffers, switched at VSYNC |
+
+The LEDC PWM on GPIO26 is output-inverted because PWM is injected into the
+AP3032 feedback node. Current firmware uses 5 kHz, 10-bit duty control,
+a 0–255 application brightness scale and starts at 180. It does not actively
+drive BL_EN.
+
+### P2 display/touch FFC
+
+| Pin | Net | Pin | Net |
+|---:|---|---:|---|
+| 1 | VLED− | 16 | NC |
+| 2 | VLED+ | 17 | NC |
+| 3 | NC | 18 | NC |
+| 4 | ESP_3V3 | 19 | NC |
+| 5 | NC | 20 | NC |
+| 6 | DSI_D0_P | 21 | VCC_1.8V / IOVCC |
+| 7 | DSI_D0_N | 22 | TE, not routed onward to P4 |
+| 8 | NC | 23 | LCD RESET |
+| 9 | DSI_D1_P | 24 | NC |
+| 10 | DSI_D1_N | 25 | TP_RST |
+| 11 | NC | 26 | TP_SDA |
+| 12 | DSI_CLK_P | 27 | TP_SCL |
+| 13 | DSI_CLK_N | 28 | TP_INT |
+| 14 | NC | 29 | ESP_3V3 / TP_VDD |
+| 15 | NC | 30 | GND |
+
+### GT911 touch
+
+- **Board:** SDA GPIO7, SCL GPIO8, reset GPIO23.
+- **Board:** TP_INT can reach GPIO2 through R35, but R35 is not fitted.
+- **Firmware:** 400 kHz I²C; probe address `0x5D`, then `0x14`; polling mode.
+- **Firmware:** maps native 480×800 coordinates to the logical 800×480 UI.
+- **Hardware capability:** GT911 supports up to five contacts.
+- **Current firmware:** consumes only the first contact.
+
+## 5. ESP32-C6 wireless co-processor
+
+The ESP32-P4 has no built-in Wi-Fi or Bluetooth. The on-board
+ESP32-C6-MINI-1-N4 supplies Wi-Fi 6 and Bluetooth 5 LE through
+ESP-Hosted.
+
+| Function | P4 GPIO | C6 pad |
+|---|---:|---|
+| SDIO D0 | 14 | IO20 |
+| SDIO D1 | 15 | IO21 |
+| SDIO D2 | 16 | IO22 |
+| SDIO D3 | 17 | IO23 |
+| SDIO CLK | 18 | IO19 |
+| SDIO CMD | 19 | IO18 |
+| C6 IO2 | 6 | IO2 |
+| C6 CHIP_PU / EN | 54 | EN |
+
+All six SDIO lines have 51 kΩ pull-ups on the C6 side. GPIO54 reaches C6 EN
+directly through R34, 0 Ω; Rev1.2 has **no reset inverter**. The current,
+hardware-verified project configuration remains:
+
+```text
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 ```
-(see `firmware/sdkconfig.defaults`).
 
-On this Waveshare board, P4 GPIO54 reaches the C6 EN path through
-board-level logic, so the reset signal is active-high from the P4
-software point of view. Do not change this to active-low; the common
-failure mode is SDIO CMD5 returning `0x107 INVALID_RESPONSE`.
+Do not explain that software option with a nonexistent board inverter.
 
-### USB-to-UART bridge (CH343P U4) — `idf.py monitor` console
+The C6 UART download header is **P1**:
 
-| Signal             | ESP32-P4 GPIO |
-|--------------------|---------------|
-| RXD (PC → P4)      | GPIO37        |
-| TXD (P4 → PC)      | GPIO38        |
+| P1 | Signal | USB-UART wiring |
+|---:|---|---|
+| 1 | C6_U0TXD | Adapter RX |
+| 2 | C6_U0RXD | Adapter TX |
+| 3 | C6_IO9 | Pull low while powering/resetting C6 to enter download |
+| 4 | GND | Adapter GND |
 
-`GPIO35` is wired through R35 (4.7 kΩ) to the CH343P auto-reset /
-auto-bootloader transistor pair (U5, MMDT3906DW). Don't use GPIO35
-as an application GPIO — it would fight the auto-reset circuit.
-(Moot in practice: GPIO35 isn't broken out anyway.)
+H4 is the speaker connector, not the C6 header.
 
-### I²C0 (ES8311 codec + BNO085 IMU + BMP388 baro)
+## 6. USB paths and debug console
 
-Bus is shared; addresses don't collide.
+| Path | Electrical connection | Use |
+|---|---|---|
+| H1 `USB TO UART` | USB-C → CH343P → P4 GPIO38 RX / GPIO37 TX | Flashing and `idf.py monitor` |
+| H2 `USB` | USB-C → dedicated USBD_N/P | Native USB 2.0 HS OTG; shares the J3 HS data nets |
+| J3 pins 21/23 | GPIO24/25, USB1P1_N/P | Separate Full-Speed USB Serial/JTAG |
+| J3 pins 25/27 | Dedicated USBD_N/P | RTL-SDR USB HS data path on the new HAT carrier |
 
-| Signal | ESP32-P4 GPIO | On left header? |
-|--------|---------------|-----------------|
-| SDA    | GPIO7         | yes (SDA/7)     |
-| SCL    | GPIO8         | yes (SCL/8)     |
+The new HAT carrier should route J3-27 `DP` and J3-25 `DM` to a USB-A
+receptacle while leaving H2 empty. Feed USB-A VBUS from J3 `VCC_5V` through a
+500 mA USB Host current-limited switch. Do not follow obsolete instructions
+for a four-pin P1/MX1.25 USB cable.
 
-Slaves currently on the bus:
-- **ES8311 audio codec** — `0x18` (on-board)
-- **BNO085 IMU** — `0x4A` (or `0x4B` if SA0 strap pulled high)
-- **BMP388 barometer** — `0x76` (SDO→GND) — carrier board; driver implemented (`baro_task.c`, polling ~10 Hz)
+## 7. microSD
 
-### I²S0 (ES8311 codec audio)
+The on-board socket uses SDMMC Slot 0 in 4-bit mode.
 
-All on-board; not broken out to user headers.
-
-| Signal | ESP32-P4 GPIO | Direction              |
-|--------|---------------|------------------------|
-| MCLK   | GPIO13        | P4 → codec             |
-| SCLK   | GPIO12        | P4 ↔ codec             |
-| LRCK   | GPIO10        | P4 → codec             |
-| DSDIN  | GPIO9         | P4 → codec (playback)  |
-| ASDOUT | GPIO11        | codec → P4 (capture)   |
-
-### Speaker amplifier (NS4150B U11)
-
-| Signal           | ESP32-P4 GPIO |
-|------------------|---------------|
-| PA_CTRL (enable) | GPIO53        |
-
-Drives the 8 Ω 2 W speaker via the MX1.25 SPK header (board midline,
-near the C6 module).
-
-### On-board NOR flash (octal-SPI, GD25Q256EYIGR, 32 MB)
-
-On the chip's dedicated MSPI bus (chip package pins 27–33). Not muxed
-to any GPIO. Default partition table fits comfortably within 32 MB
-(`CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y` already in `sdkconfig.defaults`).
-
-### On-board PSRAM (32 MB, HEX-SPI on-die)
-
-ESP32-P4NRW32 — internal stacked PSRAM, runs at 200 MHz in HEX mode
-on v1.x silicon. Bound to chip-package pins, not muxed to any GPIO.
-
-### Power LED (D1)
-
-3V3 indicator only; no GPIO control.
-
----
-
-## 3. Display, touch, and external peripherals
-
-### ST7701 display via 2-lane MIPI-DSI
-
-The display is board-integrated, not user-wired. The panel is physically
-480×800 portrait and the firmware exposes an 800×480 landscape framebuffer.
-PPA rotates the complete RGB565 frame 90° clockwise into a native
-DPI framebuffer. Two native framebuffers are alternated at VSYNC so PPA
-never writes into the buffer currently being scanned.
-
-| Parameter | Value |
+| Signal | GPIO |
 |---|---:|
-| Native resolution | 480×800 |
-| Logical resolution | 800×480 |
-| DSI data lanes | 2 |
-| Lane bit rate | 500 Mbps |
-| DPI pixel clock | 30 MHz |
-| H sync back / pulse / front | 42 / 12 / 42 |
-| V sync back / pulse / front | 2 / 8 / 60 |
-| Pixel format | RGB565 |
-| D-PHY supply | LDO_VO3, channel 3, 2500 mV |
-| Reset | GPIO27, active low |
-| Backlight PWM | GPIO26, LEDC output inverted |
-| Backlight enable | GPIO33, pulled up and normally left enabled |
+| D0 | 39 |
+| D1 | 40 |
+| D2 | 41 |
+| D3 | 42 |
+| CLK | 43 |
+| CMD | 44 |
+| Power-switch control | 45 |
 
-The renderer keeps its historical byte-swapped RGB565 convention for LVGL
-and the existing PFD code. PPA performs the byte swap while rotating to the
-native DPI framebuffer, so upper layers do not change color representation.
+CMD and all data lines have 51 kΩ pull-ups to ESP_LDO_VO4. There is no
+independent card-detect GPIO; D3 shares the socket's CD contact. The card
+supply is controlled by a P-channel MOSFET whose gate is GPIO45, with a 10 kΩ
+default pull-down.
 
-### GT911 capacitive touch
+**Firmware:** ESP-Hosted already initializes the shared SDMMC controller for
+C6 Slot 1. The microSD driver therefore uses Slot 0 with dummy host
+`init`/`deinit` callbacks to avoid reinitializing the controller.
 
-| Signal | GPIO | Notes |
-|---|---:|---|
-| SDA | 7 | shared I²C0 |
-| SCL | 8 | shared I²C0 |
-| RESET | 23 | board-fixed |
-| INT | NC by default | R35 is not fitted; poll unless R35 is populated |
+## 8. Camera, audio and storage
 
-Probe address `0x5D` first and fall back to `0x14`. Coordinate report
-registers and packet format are documented in
-`GT911-programming-guide.pdf`, not the shorter electrical datasheet.
+### J1 MIPI-CSI camera
 
-### BNO085 IMU via I²C0 — GY-BN008X 10-pin breakout
+| Pin | Net | Pin | Net |
+|---:|---|---:|---|
+| 1 | GND | 9 | CSI_CLK_P |
+| 2 | CSI_D0_N | 10 | GND |
+| 3 | CSI_D0_P | 11 | CSI_IO0 |
+| 4 | GND | 12 | CSI_IO1 |
+| 5 | CSI_D1_N | 13 | ESP_I2C_SCL |
+| 6 | CSI_D1_P | 14 | ESP_I2C_SDA |
+| 7 | GND | 15 | ESP_3V3 |
+| 8 | CSI_CLK_N |  |  |
 
-Verified hardware: **`GY-BN008X`** (silkscreen on board, purple PCB,
-through-hole 1×10 0.1" header). 10 pins total + one `BOOT` solder pad
-on the side that we leave open. The breakout has an on-board 3.3 V
-LDO and 4.7 kΩ I²C pull-ups, so 3.3 V from the ESP host is fine.
+CSI_IO0 has a 10 kΩ pull-up; the optional CSI_IO1 pull resistor is not fitted.
+The schematic does not assign GPIO numbers to CSI_IO0/1. Camera capture is not
+implemented in the current Pilot Kit firmware.
 
-Shares the on-board I²C0 bus with the ES8311 codec (different
-addresses; no conflict). The firmware uses SH-2 / SHTP Rotation
-Vector reports at 100 Hz.
+### Audio
 
-10-pin wiring (top → bottom on the GY-BN008X header):
+| Device / net | Connection |
+|---|---|
+| ES8311 codec | I²C address `0x18` in the official BSP |
+| ES7210 four-channel ADC | I²C address `0x40`; two on-board microphones and playback-reference AEC path |
+| I²C | SDA GPIO7 / SCL GPIO8 |
+| I²S MCLK / SCLK / LRCK | GPIO13 / GPIO12 / GPIO10 |
+| I²S DSDIN / ASDOUT | GPIO9 / GPIO11 |
+| NS4150B amplifier enable | PA_CTRL GPIO53 |
+| Speaker | H4, 8 Ω / 2 W recommended |
 
-| # | Breakout label  | Connect to             | Why                                                      |
-|---|-----------------|------------------------|----------------------------------------------------------|
-| 1 | `VCC`           | ESP **3V3** (right hdr)| On-board LDO accepts 3.3 V directly                      |
-| 2 | `GND`           | ESP **GND** (any)      |                                                          |
-| 3 | `SCL`           | ESP **GPIO 8** (left "SCL/8") | I²C0 clock; shared with codec                     |
-| 4 | `SDA`           | ESP **GPIO 7** (left "SDA/7") | I²C0 data;  shared with codec                     |
-| 5 | `AD0`           | **GND**                | I²C 7-bit address strap → `0x4A` (matches firmware)      |
-| 6 | `CS`            | **3V3**                | SPI chip-select; in I²C mode hold high to disable SPI    |
-| 7 | `INT`           | ESP **GPIO 20** (right "20") | Data-ready (active-low); currently polled, not used as IRQ |
-| 8 | `RST`           | ESP **GPIO 21** (right "21") | Hard reset (active-low), pulsed at `pk_imu_init()`  |
-| 9 | `PS1`           | **GND**                | Protocol-select bit 1                                    |
-| 10| `PS0`           | **GND**                | Protocol-select bit 0  → `PS1=0, PS0=0` = I²C mode       |
+The current Pilot Kit firmware does not initialize the audio subsystem.
 
-The side `←BOOT` pad is the BNO08X `BOOTN#` (DFU entry). Leave open
-for normal operation.
+### Memory
 
-> ⚠️ `PS0`, `PS1`, `AD0` and `CS` must **not** be left floating. The
-> GY-BN008X has no internal pull-up/down on these pins. Floating
-> protocol-select bits cause BNO085 to land in UART or SPI mode at
-> power-on and stop responding on I²C — the symptom in the firmware
-> is `imu: enable_rotation_vector: ESP_ERR_INVALID_RESPONSE` followed
-> by `PFD will run without attitude`.
+- ESP32-P4NRW32: 32 MB in-package PSRAM.
+- GD25Q256EYIGR: 256 Mbit / 32 MB external NOR flash on dedicated flash pins.
+- ESP32-C6-MINI-1-N4: wireless co-processor module; its flash size is implied
+  by the N4 module variant, not separately stated on the schematic.
 
-#### Mounting orientation
+## 9. Power and batteries
 
-BNO085 outputs an **absolute-orientation quaternion** referenced to
-Earth's gravity + magnetic-north frame, so the sensor identifies
-"which way is down" on its own — there's no requirement to power it
-up in any specific orientation. But the chip body's X/Y/Z axes are
-what the quaternion is expressed in. The breakout silkscreen (back
-side) shows the body frame:
+- J2 accepts a 3.7 V Li-ion/LiPo battery. ETA6098 handles charging and SCT12
+  boosts the battery rail into the board's 5 V system.
+- BAT_ADC is connected to GPIO20 through a 200 kΩ / 100 kΩ divider, so the ADC
+  sees approximately one third of the battery voltage.
+- Key3 POWER: short press powers on; hold for about two seconds to power off
+  (official board behavior).
+- Key1 RESET pulls ESP_EN low. Key2 BOOT pulls GPIO35 low.
+- H8 is for a **rechargeable RTC battery only**. Do not install a
+  non-rechargeable coin cell because the board supplies a charging path.
+- The PWR LED is tied to Core_5V and is not software-controlled.
 
-```
-     X →
-     ┌───┐
-   Z •  │
-     │  │
-     └──┘
-       Y ↓
-```
+## 10. Pilot external modules
 
-For the PFD to interpret `roll / pitch / yaw` in the aerospace NED
-convention used by `firmware/main/imu_task.c:188-209`
-(`quat_to_euler` comment), the body axes must be glued to the
-"aircraft" frame:
+### BNO085 IMU
 
-- **chip +X → device forward** (toward the nose, where the PFD is pointing)
-- **chip +Y → device right** (right wing)
-- **chip +Z → device down** (toward the belly when level)
+| BNO085 pin | Connection |
+|---|---|
+| VCC / GND | J3 ESP_3V3 / GND |
+| SDA / SCL | GPIO7 / GPIO8 |
+| RST | GPIO21 |
+| INT | Not connected; current driver polls |
+| AD0 / PS1 / PS0 | GND / GND / GND |
+| CS | ESP_3V3 |
 
-If physical packaging forces a different mounting, two software fixes
-are available — pick whichever fits the build:
+The current driver supports address `0x4A`; wire AD0 low. GPIO20 must not be
+used for BNO085 INT: it is not on J3 and is hardwired to BAT_ADC.
 
-1. **Constant rotation in firmware** — multiply the incoming
-   quaternion by a fixed mounting quaternion before
-   `quat_to_euler()`. Cheap, deterministic, zero runtime calibration.
-2. **BNO085 internal reorient** — send SH-2 *Set Reorientation*
-   (command `0x02` on the control channel). The chip stores the
-   offset and applies it to every subsequent report. Survives a soft
-   reset only; `Save DCD` is needed to persist across power-on.
+The current firmware mounting transform assumes the IMU board is vertical,
+with the chip face toward the pilot, its header on the pilot's left and VCC
+at the top. Under that installation, chip +X maps to aircraft up, chip +Y to
+aircraft left and chip +Z to aircraft back. The firmware applies
+`q_body_fix = (0, 0.7071068, 0, -0.7071068)`. If the sensor is mounted in the
+canonical aircraft axes instead, update the transform and revalidate attitude
+before flight.
 
-The current firmware includes a fixed mounting quaternion in
-`firmware/main/imu_task.h`. Keep the physical mounting and that
-constant in agreement; changing one without the other produces
-misleading roll, pitch, and heading.
+### BMP388 barometer
 
-#### Legacy tare / cage button (not fitted on the 4.3-inch board)
+| BMP388 pin | Connection |
+|---|---|
+| VCC / GND | ESP_3V3 / GND |
+| SDA / SCL | GPIO7 / GPIO8 |
+| SDO / CSB | GND / ESP_3V3 for address `0x76` |
+| INT | Optional GPIO31; current driver polls |
 
-The following section documents the retired 2.4-inch carrier controls
-only. The integrated 4.3-inch target uses touch; firmware does not start
-`button_task.c` because GPIO23 is `TP_RST` and GPIO26 is `LCD_BL_PWM`.
+### GPS
 
-### Legacy tact buttons — reference only
+| GPS pin | Connection |
+|---|---|
+| TXD | GPIO51, GPS → P4 UART1 RX |
+| RXD | GPIO32, P4 UART1 TX → GPS |
+| PPS | Optional GPIO46 wiring only |
+| VCC / GND | ESP_3V3 / GND |
 
-Four active-low momentary tact switches, each between the named GPIO
-and any GND pad. `button_task.c` enables the internal pull-up on all
-four, so no external resistors are needed:
+Current firmware uses UART1 at 9600 8N1 and derives time from NMEA RMC.
+It does not implement a GPIO interrupt or timing discipline from PPS.
 
-```
-GPIO ────┬──── tact switch ──── GND
-         │
-         └─ INPUT_PULLUP (enabled by button_task gpio_config)
-```
+## 11. Bring-up checklist
 
-Pressed → GPIO reads `0`. Released → reads `1`. Polled at 50 Hz with
-40 ms debounce.
+1. Use H1 to flash and monitor the P4; use P1 only to flash the C6.
+2. Confirm `ST7701 DSI ready: logical 800x480 -> PPA 90 CW`.
+3. Confirm touch tracks the full screen; TP_INT should remain open unless R35
+   was intentionally populated.
+4. Confirm BNO085 at `0x4A`, BMP388 at `0x76`, and GPS RX on GPIO51.
+5. Confirm C6 ESP-Hosted starts before DSI initialization and no SDIO CMD5
+   error appears.
+6. Confirm microSD mounts through Slot 0 without reinitializing the shared
+   SDMMC host.
+7. Attach RTL-SDR to the new HAT USB-A port, confirm native USB HS enumeration
+   through J3, and leave H2 empty.
+8. Perform repeated cold boots before treating any wiring change as stable.
 
-| Button | GPIO | Header | Function                                |
-|--------|------|--------|-----------------------------------------|
-| **TARE** (BTN1) | 26 | right | tare / persist / factory reset (short / long / very-long) |
-| **MODE** (BTN2) | **5** | **left** | short = cycle PFD → TRAFFIC → LIST → SETTINGS → ABOUT → DIAG; long = power off |
-| **UP**   (BTN3) | 22 | right | target select / setting adjust / scroll up |
-| **DOWN** (BTN4) | 23 | right | target select / setting adjust / scroll down |
+## 12. Legacy boundary
 
-TARE / UP / DOWN cluster on the **right header** so their wiring stays on
-one side of the breadboard. MODE sits on **GPIO5 on the left header**
-because GPIO0–15 are the only LP_IO pins on this chip — the LP_IO
-domain is the only one still powered during deep sleep, so a press on
-GPIO5 (low level) can wake the device. HP_IO pins (anything ≥16) are
-fully unpowered while sleeping and can't act as wake sources. The
-left/right split is acceptable: MODE doesn't share a gesture with the
-other three buttons.
-
-#### Press semantics
-
-| Press kind                          | TARE                 | MODE              | UP        | DOWN      |
-|-------------------------------------|----------------------|-------------------|-----------|-----------|
-| **Short** (released within < 3 s)   | context-sensitive: Settings moves the cursor, ADS-B LIST binds own-ship, other modes snapshot current pose as zero (RAM only) | cycle PFD → TRAFFIC → LIST → SETTINGS → ABOUT → DIAG → PFD … | select/adjust/scroll up | select/adjust/scroll down |
-| **Long**  (held ≥ 3 s)              | persist current tare to NVS (survives reboot) | enter deep sleep; next MODE press wakes / cold-boots | *(suppressed)* | *(suppressed)* |
-| **Very-long** (held ≥ 10 s)         | **factory reset** — wipe NVS tare + BNO's persisted reorientation + DCD, reinit chip | — | — | — |
-| **Combo** (UP + DOWN both held ≥ 5 s, second press landing within 1 s of first) | — | — | **BLE pairing window** (firmware records request; mobile UI handling not implemented yet) | — |
-
-#### Calibration / heading-reset workflow
-
-BNO085 magnetometer fusion is **continuously self-learning** — you
-don't have to manually calibrate. But it only converges while the
-device is **rotating** (figure-8 / multi-axis motion). If the device
-sits still, `acc` stays at 0 forever. When `acc` finally reaches 2 or
-3, the heading is usable for this device's situational-awareness UI.
-The BNO085 saves Dynamic Calibration Data on its own schedule; a TARE
-long-press persists only the ESP32-side software tare quaternion to
-NVS.
-
-If the heading is wrong even after a reboot, either a stale TARE
-is saved in NVS or the BNO's persisted DCD is bad. Use **TARE
-very-long-press** to factory-reset:
-
-```
-TARE very-long-press 10s
-   → fires pk_imu_factory_reset()
-   → wipes the persisted software tare (NVS key on ESP32)
-   → clears BNO's persisted reorientation matrix + DCD
-   → pulses RST and replays SH-2 init
-   → fusion engine restarts with no prior calibration in flash
-
-Now do figure-8 motion for ~15 s.
-   → watch `imu: rpy = ... (acc=N)` log line
-   → acc climbs 0 → 1 → 2 → 3 as mag fusion converges
-   → BNO persists DCD into its own internal flash automatically
-     as accuracy improves — no user action needed
-
-When acc reaches 2 or 3, hold the device in the desired "zero"
-orientation, then:
-   TARE short-press           → snapshot this pose as the new zero
-   TARE long-press 3s         → save that zero pose to ESP32 NVS
-                                (so the next boot wakes up zeroed)
-```
-
-**Why UP / DOWN don't fire single-button long press**: if they did,
-holding UP alone for 3 s would emit `UP_LONG`, then a UP+DOWN combo
-landing 2 s later would arrive *after* the `UP_LONG` event — two
-distinct gestures for what feels like one hold. Suppressing single-key
-long-press on UP and DOWN resolves this cleanly while leaving TARE /
-MODE long presses untouched.
-
-**Why only TARE emits very-long-press (≥10 s)**: factory reset is a
-destructive action that should require a sustained, unambiguous hold
-the user clearly meant to make. Putting it on the same button as the
-much more frequent "live tare" + "persist tare" gestures (TARE short
-/ long) keeps related-by-meaning operations under one finger, with
-the danger gradient (3 s long = recoverable; 10 s very-long = wipe)
-matching the press effort. MODE's long-press slot is used for
-soft power off / deep sleep instead — see
-`docs/superpowers/plans/2026-05-21-power-button.md`.
-
-#### Firmware structure
-
-- `firmware/main/button_task.c` — GPIO polling + per-button FSM (4
-  states: RELEASED / PRESSING / HELD_SHORT / HELD_LONG) + combo
-  detector pass. Reports `(id, event)` pairs to the registered
-  callback.
-- `firmware/main/main.c::on_button_event()` — single dispatch point.
-  Routes TARE SHORT by current UI mode (Settings language toggle,
-  ADS-B LIST own-ship bind, otherwise IMU tare), TARE LONG / VERY_LONG
-  to `pk_imu_tare_persist()` / `pk_imu_factory_reset()`,
-  MODE SHORT to `pk_ui_toggle_mode()`, MODE LONG to
-  `pk_power_enter_sleep()`, UP/DOWN to list/About scrolling, and the
-  combo to the BLE-pairing request log path.
-- `firmware/main/ui_state.c` — holds current `pk_ui_mode_t` and the
-  list cursor; mutex-protected for concurrent reads from
-  `pfd_task` (render) and `button_task` (input).
-- `firmware/main/pfd.c::pfd_task` — once per frame, branches on
-  `pk_ui_get_mode()`: PFD render path (horizon/ladder/tape/...)
-  or `pk_adsb_list_render()` for the ADS-B list view.
-
-### BMP388 barometric pressure sensor via I²C0 (carrier board)
-
-**Status**: Driver implemented — `baro_task.c`, polling ~10 Hz over I²C0.
-Provides barometric altitude + vertical speed (QNH-adjustable); results
-written to `g_baro_state` and rendered on the PFD right-side panel and
-DIAG view.
-
-Shares the on-board I²C0 bus with the ES8311 codec and BNO085 IMU
-(distinct addresses, no conflict).
-
-| BMP388 pin | Net      | ESP32-P4 pin | Notes                              |
-|------------|----------|--------------|------------------------------------|
-| VCC        | +3V3     | 3V3          |                                    |
-| GND        | GND      | GND          |                                    |
-| SCL        | I²C0 SCL | GPIO8        | shared bus                         |
-| SDA        | I²C0 SDA | GPIO7        | shared bus                         |
-| SDO        | GND      | GND          | I²C address strap → `0x76`         |
-| CSB        | +3V3     | 3V3          | tie high to select I²C mode        |
-| INT        | BARO_INT | **GPIO31**   | data-ready IRQ (optional; current driver polls) |
-
-### GPS receiver (GT-U8 / ATGM336H) via UART + PPS (carrier board)
-
-**Status**: Driver implemented — `gps_task.c`, UART1 NMEA parsing.
-Provides own-ship position / velocity / course and a 1 PPS pulse for
-precise time discipline.
-
-GOOUUU **GT-U8** module (AT6558 / ATGM336H GNSS core). Wide-range
-3.3–5 V supply via an on-board LDO; the GNSS core and its UART run at
-3.3 V, so the UART lines connect **directly** to the ESP32-P4 with no
-level shifting.
-
-| GPS pin | Net      | ESP32-P4 pin | Notes                                                |
-|---------|----------|--------------|------------------------------------------------------|
-| V (VCC) | +3V3     | 3V3          | silkscreen reads "5v", but 3.3 V is fine on this wide-range module — do **not** assume 5 V is required |
-| G (GND) | GND      | GND          |                                                      |
-| T (TXD) | GPS_TX   | **GPIO51**   | GPS → **P4 UART RX**; GPIO33 is LCD BL_EN             |
-| R (RXD) | GPS_RX   | **GPIO32**   | **P4 UART TX** → GPS (crossed)                        |
-| P (PPS) | GPS_PPS  | **GPIO46**   | 1 Hz pulse-per-second; rising edge marks the UTC second |
-
-> UART is crossed the standard way (GPS TX → P4 RX, GPS RX → P4 TX).
-> `GPIO46/47` bracket a header GND on the dev-board headers; on the
-> carrier board these are fixed traces so the gotcha doesn't apply.
-
----
-
-## 4. Freely-assignable GPIOs
-
-After accounting for everything above, the following P4 GPIOs are
-free for new application use:
-
-```
-GPIO5 GPIO22 GPIO28 GPIO29 GPIO30 GPIO47 GPIO48 GPIO49 GPIO50 GPIO52
-```
-
-GPIO31 is reserved for optional `BARO_INT`; GPIO32/51 are GPS UART and
-GPIO46 is GPS PPS. GPIO26/27/33 and GPIO23 are fixed LCD/touch signals.
-GPIO28/29/30/50 were released by retiring the SPI LCD.
-
-**Available but with caveats** — usable if you accept the trade-off:
-
-| GPIO    | Header     | Caveat                                                                |
-|---------|------------|-----------------------------------------------------------------------|
-| GPIO2   | left       | JTAG MTCK default — using disables JTAG over the USB Serial/JTAG port |
-| GPIO3   | left       | JTAG MTDI default — same                                              |
-| GPIO4   | left       | JTAG MTMS default — same                                              |
-| GPIO24  | left "DM"  | USB Serial/JTAG D− default (USB1P1_N0) — using disables on-chip USB JTAG |
-| GPIO25  | left "DP"  | USB Serial/JTAG D+ default (USB1P1_P0) — same                         |
-
-GPIO5 is free now that the legacy MODE button is not fitted.
-
-In practice JTAG-via-USB-Serial isn't used by this project (we have
-the CH343P UART console and SWD via the C6 debug header), so
-GPIO2–4 and GPIO24/25 are de-facto available. But if a future
-contributor ever wants USB JTAG, they'd have to free these up first.
-
-**Not in the free pool**:
-- `GPIO0` (BOOT strap; not broken out anyway)
-- `GPIO23` (TP_RST), `GPIO26` (LCD_BL_PWM), `GPIO27` (LCD_RESET),
-  `GPIO33` (LCD_BL_EN)
-- All on-board-only GPIOs (`6`, `9–19`, `34–45`, `53`, `54`) — not on
-  user headers.
-
----
-
-## 5. Pin-assignment policy
-
-When introducing new peripherals in later phases:
-
-1. **Pick from the "freely-assignable" pool above** first; only
-   reach into the "available with caveats" group if you've exhausted
-   the no-caveat pool *and* JTAG-via-USB-Serial isn't a future need.
-2. **Update this file *before* writing the driver.** Add a row to
-   the relevant table, then have the driver `#include` the number
-   from a shared header — never hard-code GPIO numbers in `.c` files
-   that don't also live next to a `*_PIN` define.
-3. **Sanity-check against `firmware/sdkconfig.defaults`.** Some IDF
-   defaults reserve GPIOs for JTAG, console UART, hosted SDIO, etc.
-4. **Avoid the right-header GND between GPIO46 and GPIO47** when
-   designing connectors — see the LCD wiring gotcha above.
+The old 2.4-inch SPI display and four-button carrier are historical material
+under `docs/jlc/`. Their GPIO28/29/30/31/50 display wiring, GPIO26/5/22/23
+application keys and old connector names must not be copied into the
+Rev1.2 4.3-inch build.

@@ -175,10 +175,28 @@ static bool sd_mount_locked(void)
 static void sd_unmount_locked(void)
 {
     if (s_card != NULL) {
-        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+        /*
+         * 必须检查返回值。
+         *
+         * 卡被物理拔出后，esp_vfs_fat_sdcard_unmount() 往往失败——它要访问
+         * 已经不在的卡去 flush/close。失败时**VFS 挂载点不会被注销**，于是
+         * 后面每一次 esp_vfs_fat_sdmmc_mount() 都直接返回
+         * ESP_ERR_INVALID_STATE（"这个路径已经挂了"），怎么重试都没用。
+         *
+         * 实测就是这个：插卡后日志一路 "mount attempt #24..#29 failed:
+         * ESP_ERR_INVALID_STATE"，而开机那次好好的——因为开机时挂载点本来
+         * 就是干净的。
+         *
+         * 所以失败要兜底：直接注销路径，把 VFS 恢复到可再挂的状态。
+         */
+        esp_err_t uerr = esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+        if (uerr != ESP_OK) {
+            ESP_LOGW(TAG, "unmount failed (%s) — force-unregistering %s",
+                     esp_err_to_name(uerr), SD_MOUNT_POINT);
+            esp_vfs_fat_unregister_path(SD_MOUNT_POINT);
+        }
         s_card = NULL;
-        /* 断电，让下一张卡能从冷态开始——不断电的话新卡跳不回 idle，
-         * 表现就是"拔出立刻响应，插入怎么也挂不上"。 */
+        /* 断电，让下一张卡能从冷态开始。 */
         sd_power_off_locked();
     }
     s_state = PK_SD_NO_CARD;
