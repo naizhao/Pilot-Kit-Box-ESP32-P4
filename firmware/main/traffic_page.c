@@ -75,10 +75,29 @@
  * 一开始自己造了「卡片」：一张 76~97 px、三行内容、带边框。做出来又大又
  * 看不懂。PFD 右下角那三行（B / ALT / VS）早就把这类信息排明白了——一行一
  * 条、半透明底、左标签右数值，没有边框。同一台设备上不该有两套列表语言。 */
-#define ROW_H         PFD_IB_ROW_H
-#define ROW_GAP       PFD_IB_ROW_GAP
 #define ROW_PAD       PFD_IB_PAD
-#define ROW_N         8            /* 280 px 宽 × 30 px 行，装得下 8 条 */
+#define ROW_GAP       PFD_IB_ROW_GAP
+/* 两行一条：五个字段在 280 px 里排不进一行——试过，呼号会和距离撞上。
+ * 主行放「在哪边 + 是谁 + 高度差」，次行放「多远 + 多快」。 */
+#define ROW_H         (PK_AA_M_H + PK_AA_XS_H + 8)
+#define ROW_N         ((PK_DISPLAY_H - PFD_BAR_BOT - 12) / (ROW_H + ROW_GAP))
+
+/* ── 雷达区上的操作按钮 ───────────────────────────────────────
+ *
+ * 朝向切换放左下角，与高德/Google Maps 的位置习惯一致——那是拇指最容易够到
+ * 的角落，而且不压住雷达中心。量程 +/- 叠在右下角，同理。
+ *
+ * 命中区比图形本身大一圈（BTN_HIT_PAD）：手指按下的落点与眼睛看到的中心
+ * 常差几毫米，按钮画多大与该给多大命中区是两回事。 */
+#define BTN_D         56
+#define BTN_HIT_PAD    8
+#define BTN_M         16                      /* 距屏幕边 */
+#define BTN_ORI_X     BTN_M
+#define BTN_ORI_Y     (PK_DISPLAY_H - BTN_M - BTN_D)
+#define BTN_ZIN_X     (TFC_RADAR_W - BTN_M - BTN_D)
+#define BTN_ZIN_Y     (PK_DISPLAY_H - BTN_M - BTN_D * 2 - 10)
+#define BTN_ZOUT_X    BTN_ZIN_X
+#define BTN_ZOUT_Y    (PK_DISPLAY_H - BTN_M - BTN_D)
 
 /* 目标快照缓冲——放 PSRAM，避免吃任务栈（照 pfd.c 的 scratch）。 */
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -277,20 +296,96 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
                  pk_rgb565(207, 211, 220), 1);
 }
 
+/* 圆形按钮底：半透明深色 + 细边，压在雷达上仍看得清，又不抢图形的注意力。 */
+static void draw_btn_plate(uint16_t *fb, int x, int y)
+{
+    const uint16_t face = pk_rgb565( 22,  30,  42);
+    const uint16_t edge = pk_rgb565(120, 145, 175);
+    const int r = BTN_D / 2, cx = x + r, cy = y + r;
+    for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+            const int d2 = dx * dx + dy * dy;
+            if (d2 > r * r) continue;
+            const int px = cx + dx, py = cy + dy;
+            if (px < 0 || px >= PK_DISPLAY_W || py < 0 || py >= PK_DISPLAY_H) continue;
+            fb[py * PK_DISPLAY_W + px] = (d2 >= (r - 2) * (r - 2)) ? edge : face;
+        }
+    }
+}
+
+static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
+{
+    const uint16_t ink = pk_rgb565(225, 235, 248);
+
+    /* 朝向切换：显示**当前**模式，点一下换到另一种（与高德的指北针同理）。 */
+    draw_btn_plate(fb, BTN_ORI_X, BTN_ORI_Y);
+    {
+        const char *l1 = (orient == PK_MAP_HEADING_UP) ? "\u2191" : "N";
+        const char *l2 = (orient == PK_MAP_HEADING_UP) ? "HDG" : "UP";
+        const int w1 = (int)strlen(l1) * pk_aa_cell_w(PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   BTN_ORI_X + (BTN_D - w1) / 2, BTN_ORI_Y + 6, l1, ink, PK_AA_M);
+        const int w2 = (int)strlen(l2) * pk_aa_cell_w(PK_AA_XS);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   BTN_ORI_X + (BTN_D - w2) / 2, BTN_ORI_Y + 6 + PK_AA_M_H - 2,
+                   l2, ink, PK_AA_XS);
+    }
+
+    /* 量程 +/-。放大是「看得更近」，所以 + 对应更小的 NM 数。 */
+    draw_btn_plate(fb, BTN_ZIN_X, BTN_ZIN_Y);
+    draw_btn_plate(fb, BTN_ZOUT_X, BTN_ZOUT_Y);
+    {
+        const int cw = pk_aa_cell_w(PK_AA_L);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   BTN_ZIN_X + (BTN_D - cw) / 2,
+                   BTN_ZIN_Y + (BTN_D - PK_AA_L_H) / 2, "+", ink, PK_AA_L);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   BTN_ZOUT_X + (BTN_D - cw) / 2,
+                   BTN_ZOUT_Y + (BTN_D - PK_AA_L_H) / 2, "-", ink, PK_AA_L);
+    }
+    (void)range_nm;
+}
+
 /*
- * 右栏目标列表。
+ * 相对方位 → 八向箭头。
  *
- * 视觉语言照搬 PFD 的信息框（pfd_infobox.c）：一行一条、半透明底、左边呼号
- * 右边数值，不画边框。相对高度也沿用 PFD 交通标签的写法——百英尺为单位、
- * 带符号、后缀升降箭头（"+26^"），飞行员在 PFD 上已经读惯了这个格式。
+ * 用 Unicode 的 ↑↗→↘↓↙←↖，不用 ASCII 拼。这些是既有符号，一眼就懂；之前
+ * 拿 "/" "^" "<" 去凑，读者只能猜。它们与汉字同走「非 ASCII 二分查表」那条
+ * 路径（码位见 gen_pfd_aa_font.py 的 ARROW_CODES）。
  *
- * 按距离由近到远排，最近的在最上面。
+ * 箭头指的是**目标在本机的哪个方向**，机头朝上时正前方就是 ↑。
+ */
+static const char *bearing_arrow(float rel_deg)
+{
+    static const char *kArrow[8] = {
+        "\u2191", "\u2197", "\u2192", "\u2198",
+        "\u2193", "\u2199", "\u2190", "\u2196",
+    };
+    float d = rel_deg;
+    while (d < 0.0f)    d += 360.0f;
+    while (d >= 360.0f) d -= 360.0f;
+    return kArrow[((int)((d + 22.5f) / 45.0f)) & 7];
+}
+
+/*
+ * 右栏目标列表（spec §5.2：方位 + 呼号 + 距离 + 高度带升降率 + 速度）。
+ *
+ * 视觉语言取自 PFD 的信息框（pfd_infobox.c）：一行一条、半透明底、无边框、
+ * 行高 30。相对高度沿用 PFD 交通标签的写法——百英尺、带符号、后缀升降箭头，
+ * 飞行员在 PFD 上已经读惯。
+ *
+ * 五个字段各有各的用处，缺一个这行就废了：方位说「在我哪边」，距离说「多远」，
+ * 高度差说「会不会撞上」，升降说「差距在缩小还是拉开」，速度说「追不追得上」。
+ * 只写呼号和距离，飞行员拿不到任何决策依据。
  */
 static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
 {
-    const uint16_t COL_SEL  = pk_rgb565(255, 210,  60);
-    const uint16_t COL_TXT  = pk_rgb565(235, 240, 248);
-    const uint16_t COL_DIM  = pk_rgb565(155, 170, 190);
+    const uint16_t COL_SEL   = pk_rgb565(255, 210,  60);
+    const uint16_t COL_TXT   = pk_rgb565(235, 240, 248);
+    const uint16_t COL_DIM   = pk_rgb565(155, 170, 190);
+    const uint16_t COL_ARROW = pk_rgb565(  0, 210, 235);
+    /* 高度差配色沿用 PFD 交通标签：同高度是威胁，红；上下分开是安全，灰蓝。 */
+    const uint16_t COL_NEAR  = pk_rgb565(255, 120,  90);
 
     const int x0 = SIDE_X + 8;
     const int x1 = PK_DISPLAY_W - 8;
@@ -302,23 +397,47 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
 
         pk_pfd_darken_rect(fb, x0, y0, x1, y0 + ROW_H, sel ? 120 : 170);
 
-        const int ty = y0 + (ROW_H - PK_AA_M_H) / 2;
-        char cs[10];
-        callsign_of(v->ac, cs, sizeof(cs));
-        TFC_PUTS(fb, x0 + ROW_PAD, ty, cs, sel ? COL_SEL : COL_TXT);
+        const int ty1 = y0 + 4;                         /* 主行 */
+        const int ty2 = ty1 + PK_AA_M_H + 1;            /* 次行 */
+        int x = x0 + ROW_PAD;
 
-        /* 右侧：距离 + 相对高度，格式与 PFD 交通标签一致。 */
-        char val[20];
+        /* ── 主行：方位 + 呼号 …… 高度差 ── */
+        x += pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, ty1,
+                        bearing_arrow(v->rel.rel_bearing),
+                        sel ? COL_SEL : COL_ARROW, PK_AA_M);
+        x += 4;
+        char cs[9];
+        callsign_of(v->ac, cs, sizeof(cs));
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, ty1, cs,
+                   sel ? COL_SEL : COL_TXT, PK_AA_M);
+
+        char l1[12];
         if (v->rel.rel_alt_valid) {
             const int h100 = v->rel.rel_alt_ft / 100;
             const char vs = (v->rel.vs_fpm >  200) ? '^'
                           : (v->rel.vs_fpm < -200) ? 'v' : ' ';
-            snprintf(val, sizeof(val), "%.0fNM %+d%c", v->rel.dist_nm, h100, vs);
+            snprintf(l1, sizeof(l1), "%+d%c", h100, vs);
         } else {
-            snprintf(val, sizeof(val), "%.0fNM  ---", v->rel.dist_nm);
+            snprintf(l1, sizeof(l1), "---");
         }
-        const int vw = (int)strlen(val) * pk_aa_cell_w(PK_AA_M);
-        TFC_PUTS(fb, x1 - ROW_PAD - vw, ty, val, sel ? COL_SEL : COL_DIM);
+        /* 高度差贴右缘。±1000 ft 以内标红——同高度才是威胁，上下分得开就不是。
+         * 这个阈值与 PFD 交通标签一致。 */
+        const bool near_alt = v->rel.rel_alt_valid &&
+                              v->rel.rel_alt_ft > -1000 && v->rel.rel_alt_ft < 1000;
+        const int w1 = (int)strlen(l1) * pk_aa_cell_w(PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x1 - ROW_PAD - w1, ty1, l1,
+                   sel ? COL_SEL : (near_alt ? COL_NEAR : COL_DIM), PK_AA_M);
+
+        /* ── 次行：距离 + 地速 ── */
+        char l2[20];
+        if (v->ac->have_velocity) {
+            snprintf(l2, sizeof(l2), "%.0f NM   %d kt",
+                     v->rel.dist_nm, (int)lroundf(v->ac->ground_speed_kt));
+        } else {
+            snprintf(l2, sizeof(l2), "%.0f NM   -- kt", v->rel.dist_nm);
+        }
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + ROW_PAD + 22, ty2, l2,
+                   sel ? COL_SEL : COL_DIM, PK_AA_XS);
     }
 }
 
@@ -401,15 +520,19 @@ void pk_traffic_page_render(uint16_t *fb)
     } else {
         TFC_PUTS(fb, 200, TFC_HDR_TY, "HDG ---~", COL_AMBER);
     }
-    snprintf(buf, sizeof(buf), "TFC %d", (int)n);
-    TFC_PUTS(fb, 400, TFC_HDR_TY, buf, COL_GREY);
-
-    /* 朝向图例。两种投影下同一幅画面含义完全不同——机头上时罗盘随本机转、
-     * 目标方位是相对的；正北上时罗盘固定、本机符号才转。不标出来，读者无从
-     * 判断自己看到的是哪一种。 */
-    TFC_PUTS(fb, 540, TFC_HDR_TY,
-             (orient == PK_MAP_HEADING_UP) ? "HDG UP" : "NORTH UP",
-             COL_CARD);
+    /* 目标计数用图标而不是 "TFC" 三个字母——PFD 状态栏已经用这枚
+     * connecting_airports 表示 ADS-B 目标数，同一台设备上同一件事该用同一个
+     * 符号。 */
+    {
+        const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+                          + (size_t)PK_ICON_ADSB
+                            * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                        392, (PFD_BAR_BOT - PK_ICON_H) / 2,
+                        ic, PK_ICON_W, PK_ICON_H, COL_GREY);
+        snprintf(buf, sizeof(buf), "%d", (int)n);
+        TFC_PUTS(fb, 392 + PK_ICON_W + 6, TFC_HDR_TY, buf, COL_GREY);
+    }
     snprintf(buf, sizeof(buf), "%dNM", range_nm);
     {
         int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
@@ -479,6 +602,7 @@ void pk_traffic_page_render(uint16_t *fb)
     int sel_row = pk_ui_traffic_resolve(s_icaos, (size_t)nv);
 
     draw_side_list(fb, s_vis, nv, sel_row);
+    draw_buttons(fb, orient, range_nm);
 
     if (!own_valid) {
         pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -499,4 +623,35 @@ void pk_traffic_page_render(uint16_t *fb)
      * 卡片），雷达区留给图形本身。draw_detail_bar() 暂时保留，等右栏补上机型
      * 与注册号之后一并删除。 */
     (void)draw_detail_bar;
+}
+
+/* 圆形按钮的命中判定，半径放宽 BTN_HIT_PAD。 */
+static bool hit_btn(int x, int y, int bx, int by)
+{
+    const int r = BTN_D / 2 + BTN_HIT_PAD;
+    const int dx = x - (bx + BTN_D / 2);
+    const int dy = y - (by + BTN_D / 2);
+    return dx * dx + dy * dy <= r * r;
+}
+
+bool pk_traffic_page_touch(int x, int y)
+{
+    if (hit_btn(x, y, BTN_ORI_X, BTN_ORI_Y)) {
+        /* 在两种投影间来回切，与高德点指北针的行为一致。 */
+        pk_map_orient_set(pk_map_orient_get() == PK_MAP_HEADING_UP
+                              ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP);
+        return true;
+    }
+    if (hit_btn(x, y, BTN_ZIN_X, BTN_ZIN_Y)) {
+        /* 放大 = 看得更近 = 更小的 NM 数 = 更小的档位序号。 */
+        const int idx = pk_traffic_range_idx_get();
+        if (idx > 0) pk_traffic_range_idx_set(idx - 1);
+        return true;
+    }
+    if (hit_btn(x, y, BTN_ZOUT_X, BTN_ZOUT_Y)) {
+        const int idx = pk_traffic_range_idx_get();
+        if (idx < 3) pk_traffic_range_idx_set(idx + 1);
+        return true;
+    }
+    return false;
 }

@@ -108,8 +108,14 @@ const char *pk_aircraft_registration(uint32_t icao24)
     return reg;
 }
 
-pk_map_orient_t pk_map_orient_get(void)   { return PK_MAP_HEADING_UP; }
-int  pk_traffic_range_idx_get(void)       { return 3; }   /* 20 NM，同真机默认 */
+/* 朝向与量程在模拟器里也要可变——按钮改的就是它们，写死就验证不了交互。 */
+static pk_map_orient_t s_orient = PK_MAP_HEADING_UP;
+static int             s_range_idx = 3;               /* 20 NM，同真机默认 */
+
+pk_map_orient_t pk_map_orient_get(void)        { return s_orient; }
+void pk_map_orient_set(pk_map_orient_t m)      { s_orient = m; }
+int  pk_traffic_range_idx_get(void)            { return s_range_idx; }
+void pk_traffic_range_idx_set(int idx)         { s_range_idx = idx < 0 ? 0 : (idx > 3 ? 3 : idx); }
 
 /* 航向解析：模拟器固定给一个朝向，够验证版面与旋转方向。 */
 bool pk_own_heading_resolve(bool own_valid, pk_own_src_t own_src,

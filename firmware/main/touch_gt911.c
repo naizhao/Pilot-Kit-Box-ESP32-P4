@@ -33,6 +33,8 @@
 
 #include "display.h"
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
+#include "traffic_page.h"
+#include "ui_state.h"
 
 static const char *TAG = "touch";
 
@@ -91,6 +93,20 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->point.x = lx;
         data->point.y = ly;
         data->state   = LV_INDEV_STATE_PRESSED;
+
+        /* 交通页在雷达上叠了几个自绘按钮（朝向 / 量程）。它们不是 LVGL 控件，
+         * 命中判定只能在这里做——落在按钮上就把这一下吃掉，报成 RELEASED，
+         * 否则手指同时会点到底下的 FAB。
+         *
+         * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
+         * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
+        static bool s_armed = true;
+        if (s_armed && pk_ui_get_mode() == PK_UI_MODE_TRAFFIC &&
+            pk_traffic_page_touch(lx, ly)) {
+            s_armed = false;
+            data->state = LV_INDEV_STATE_RELEASED;
+        }
+        if (!pressed) s_armed = true;
         /* 标定用：真机上点四角，核对原生与逻辑两组数是否符合上面的算式。
          * 若发现 X/Y 反了或某轴镜像，改 native_to_logical 一处即可。 */
         ESP_LOGD(TAG, "native(%u,%u) -> logical(%d,%d)", px, py, lx, ly);

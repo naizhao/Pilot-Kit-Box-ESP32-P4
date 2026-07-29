@@ -59,9 +59,24 @@ CJK_PT_RATIO = 0.92
 CJK_SIZES = ("m", "l")
 
 
+# 八向箭头。不是文案，但和汉字一样走「非 ASCII 二分查表」那条路径，所以并进
+# 同一张码位表。用它们表示相对方位——这是既有符号，飞行员一眼就懂；拿 ASCII
+# 的 "/" "^" "<" 去凑只会让人猜。
+ARROW_CODES = [
+    0x2191,  # ↑ 正前
+    0x2197,  # ↗ 右前
+    0x2192,  # → 正右
+    0x2198,  # ↘ 右后
+    0x2193,  # ↓ 正后
+    0x2199,  # ↙ 左后
+    0x2190,  # ← 正左
+    0x2196,  # ↖ 左前
+]
+
+
 def collect_cjk_codes() -> list[int]:
     import i18n_catalog
-    codes: set[int] = set()
+    codes: set[int] = set(ARROW_CODES)
 
     def walk(o) -> None:
         if isinstance(o, str):

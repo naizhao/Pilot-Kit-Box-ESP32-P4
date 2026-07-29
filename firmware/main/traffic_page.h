@@ -6,6 +6,18 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #include <stdint.h>
 
 void pk_traffic_page_render(uint16_t *fb);
+
+/*
+ * 交通页上的按钮命中处理（朝向切换 / 量程 +-）。
+ *
+ * 返回 true 表示这一下被按钮消费了，调用方不应再把它转给别的控件——否则手指
+ * 落在按钮上同时也会点到底下的 FAB。
+ *
+ * 坐标是**逻辑屏坐标**，与 framebuffer 同一套。
+ */
+bool pk_traffic_page_touch(int x, int y);

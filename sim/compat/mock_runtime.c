@@ -114,7 +114,13 @@ static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
     a->altitude_ft   = alt_ft;
     a->have_velocity = have_vel;
     a->heading_deg   = track_deg;      /* 与方位角无关，各飞各的 */
-    a->vert_rate_fpm = 0;
+    /* 地速也要喂：右栏列表有这一列，不喂就显示成一个看似真实的 0——比缺数据
+     * 更糟，因为 0 kt 是个合法读数（悬停/地面）。按 icao 散开，覆盖巡航到
+     * 进近的范围。 */
+    a->ground_speed_kt = have_vel ? (float)(120 + (int)(icao % 7) * 55) : 0.0f;
+    /* 升降率跟着高度差走：高的在爬、低的在降，好让列表里的 ^v 有东西可显。 */
+    a->vert_rate_fpm = have_alt ? ((alt_ft % 3 == 0) ? 800
+                                : (alt_ft % 3 == 1) ? -650 : 0) : 0;
 }
 
 size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
