@@ -550,20 +550,39 @@ void pk_diag_page_render(uint16_t *fb)
     {
         pk_gps_state_t g = {0};
         pk_gps_get(&g);
-        const bool fresh = g.have_fix &&
-                           (esp_timer_get_time() - g.updated_us) < GPS_FRESH_US;
-        if (fresh) {
+        const int64_t now = esp_timer_get_time();
+        const bool fresh = g.have_fix && (now - g.updated_us) < GPS_FRESH_US;
+
+        /*
+         * 五种情况必须分开说，它们指向完全不同的处理动作。
+         *
+         * 上一版只分了「有 fix / 看得见星 / 看不见星」，于是**根本没插 GPS
+         * 板卡**也报成 "no sats - check antenna"——罩哥在真机上一眼看出与
+         * 实际不符。模块在不在，看的是有没有收到 NMEA，跟有没有星无关。
+         */
+        if (g.last_nmea_us == 0) {
+            /* 一行 NMEA 都没收到 = 模块没插 / UART 没通。不是故障，是没装。 */
+            draw_card(fb, 0, 1, "GPS", "no module", ST_NA);
+        } else if (now - g.last_nmea_us > 5000000LL) {
+            /* 曾经在讲话，现在哑了 = 掉线/供电/接触不良，跟没装是两回事。 */
+            draw_card(fb, 0, 1, "GPS", "module silent >5s", ST_BAD);
+        } else if (g.ant_status == PK_GPS_ANT_OPEN) {
+            /* 模块自检报的天线开路，比"没星"精确得多——直接说结论。 */
+            draw_card(fb, 0, 1, "GPS", "antenna OPEN", ST_BAD);
+        } else if (g.ant_status == PK_GPS_ANT_SHORT) {
+            draw_card(fb, 0, 1, "GPS", "antenna SHORT", ST_BAD);
+        } else if (fresh) {
             snprintf(buf, sizeof(buf), "fix   %d sats   HDOP %.1f",
                      g.sats, (double)g.hdop);
             draw_card(fb, 0, 1, "GPS", buf, ST_OK);
         } else if (g.snr_count > 0) {
-            /* 看得见星却定不了位 = 信号弱/遮挡，是"再等等或换个位置"。 */
+            /* 看得见星却定不了位 = 信号弱/遮挡，动作是"再等等或换个位置"。 */
             snprintf(buf, sizeof(buf), "no fix   %d visible", g.snr_count);
             draw_card(fb, 0, 1, "GPS", buf, ST_WARN);
         } else {
-            /* 一颗都看不见 = 天线或馈电，跟"等信号"完全是两个方向。这个区分
-             * 是 no-fix 那次排查最贵的教训，必须留在总览层。 */
-            draw_card(fb, 0, 1, "GPS", "no sats - check antenna", ST_BAD);
+            /* 模块在讲话、天线自检没报错、但一颗星都没看见：冷启动搜星中，
+             * 或者被完全遮挡。这才是"再等等"，不该报成天线故障。 */
+            draw_card(fb, 0, 1, "GPS", "searching...", ST_WARN);
         }
     }
 
@@ -657,7 +676,13 @@ void pk_diag_page_render(uint16_t *fb)
             draw_card(fb, 0, 4, "microSD", "formatting...", ST_WARN);
             break;
         default:
-            draw_card(fb, 0, 4, "microSD", "no card", ST_NA);
+            /* 热插拔是支持的：pk_sdcard 的探测任务每 3 s 重试一次挂载
+             * （sd_detect_task）。把重试次数显示出来，就能区分"没插卡"
+             * （计数不动/为 0）和"插了但挂不上"（计数一直涨）——后者才是
+             * 需要拔出来重插或换卡的信号。 */
+            snprintf(buf, sizeof(buf), "no card  (retry %lu)",
+                     (unsigned long)pk_sdcard_mount_attempts());
+            draw_card(fb, 0, 4, "microSD", buf, ST_NA);
             break;
         }
     }

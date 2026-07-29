@@ -49,6 +49,9 @@ static const char *TAG = "pk_sd";
 
 static sdmmc_card_t          *s_card;
 static volatile pk_sd_state_t s_state = PK_SD_NO_CARD;
+/* 累计挂载尝试次数。诊断页用它区分"没插卡"与"插了但挂不上"——两者在
+ * 状态上都是 PK_SD_NO_CARD，但前者计数不动、后者每 3 s 涨一次。 */
+static volatile uint32_t s_mount_attempts;
 static SemaphoreHandle_t      s_lock;
 
 /* 容量缓存 — 由挂载点/探测任务刷新；pk_sdcard_info 只读缓存，
@@ -107,6 +110,7 @@ static bool sd_mount_locked(void)
         .allocation_unit_size   = 16 * 1024,
     };
 
+    s_mount_attempts++;
     esp_err_t err = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot,
                                             &mount_cfg, &s_card);
     if (err != ESP_OK) {
@@ -256,3 +260,5 @@ esp_err_t pk_sdcard_format(void)
     xSemaphoreGive(s_lock);
     return err;
 }
+
+uint32_t pk_sdcard_mount_attempts(void) { return s_mount_attempts; }

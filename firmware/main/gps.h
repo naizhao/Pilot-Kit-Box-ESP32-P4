@@ -45,6 +45,15 @@ typedef struct {
     int          snr_count;        /* snr[]/snr_con[] 有效个数 */
     float        hdop;         /* GGA 水平精度因子；无星时模块报 25.5 */
     pk_gps_ant_t ant_status;   /* 天线自检 */
+
+    /* 最后一次收到**任何** NMEA 行的时间；0 = 开机至今一行都没收到。
+     *
+     * 这是「模块在不在」的唯一依据，跟「有没有星」是两件事：模块没插时
+     * 一行也不会来；插了没天线时 NMEA 照常来（还会带 $GPTXT ANTENNA OPEN），
+     * 只是没有星。诊断页把这两种混成一句"检查天线"会把人指向完全错误的
+     * 方向——2026-07-29 罩哥没插 GPS 板卡，屏上却显示"no sats - check
+     * antenna"，就是这么来的。 */
+    int64_t      last_nmea_us;
 } pk_gps_state_t;
 
 /* Start UART1 + parser task. Call once at boot, after aircraft_state_init(). */

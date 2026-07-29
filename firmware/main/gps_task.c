@@ -174,6 +174,8 @@ static void parse_txt(char *f[], int n){
 
 static void handle_line(char *line){
     s_nmea_lines++;
+    /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。 */
+    take(); s_gps.last_nmea_us = esp_timer_get_time(); give();
     /* 原始 NMEA 行：默认不刷屏，需要时把 gps TAG 调到 DEBUG 即可调出。
      * split_csv 会就地改写，必须在解析前打印。 */
     ESP_LOGD(TAG, "NMEA: %s", line);
