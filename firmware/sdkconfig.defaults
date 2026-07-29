@@ -189,6 +189,13 @@ CONFIG_LV_USE_LOG=n
 # FAB 图标用内置符号，字号按视觉稿的 3.2 mm ≈ 27 px 取最近档。
 CONFIG_LV_FONT_MONTSERRAT_28=y
 
+# 二级页 backbar 的拉丁回退档。backbar 的文字几乎全是拉丁页名，回退档就是它
+# 实际的字号，所以这一档必须按**视觉高度**挑，不能照抄 PK_AA_M 的标称 18 px：
+# 页面标题那侧是 B612 Mono 位图，18 px 标称量出来大写字高 16 px；Montserrat 18
+# 量出来只有 13 px——同一个数字，屏幕上细一圈。22 档量出来正好 16 px，与
+# PK_AA_M 齐平（TinyTTF 那侧同步取 22，CJK 字身 19 px vs PK_AA_M 的 18 px）。
+CONFIG_LV_FONT_MONTSERRAT_22=y
+
 # 不编 LVGL 自带的 examples / demos：白白拖长编译，产物也都会被 gc-sections
 # 丢掉。
 # CONFIG_LV_BUILD_EXAMPLES is not set

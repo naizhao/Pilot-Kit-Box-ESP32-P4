@@ -42,7 +42,10 @@
 
 #define SET_ROW_H      64
 #define SET_CTL_H      38
-#define SET_PAD        20
+/* 行标签、分隔线、页面标题共用整页左边距（pfd_layout.h）。本页原来自留一份
+ * 20，夹在 diag/list 的 16 与 about 的 24 之间——三个页面三个数，切页时左边界
+ * 每次都挪一点。 */
+#define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 #define SET_ROWS_VIS   ((PK_DISPLAY_H - PFD_BAR_BOT) / SET_ROW_H)
 
@@ -188,7 +191,8 @@ static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
 void pk_settings_page_render(uint16_t *fb)
 {
     const uint16_t V2_BG   = pk_rgb565(7, 10, 16);
-    const uint16_t V2_HDR  = pk_rgb565(235, 235, 235);
+    /* 标题色不在这里另立一份，走 PK_UI_TITLE_COL —— 本页原来的 (235,235,235)
+     * 正是被选为全局标题色的那个值，抄一份只会让下次改动漏掉这里。 */
     const uint16_t V2_KEY  = pk_rgb565(215, 222, 232);
     const uint16_t V2_LINE = pk_rgb565(26, 33, 44);
 
@@ -203,7 +207,8 @@ void pk_settings_page_render(uint16_t *fb)
         const int _y = ROW_Y(i);                                               \
         if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H) {    \
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SET_PAD,                \
-                       _y - PK_AA_M_H / 2, (text), V2_KEY, PK_AA_M);          \
+                       _y - PK_UI_ITEM_H / 2, (text), V2_KEY,                  \
+                       PK_UI_ITEM_SIZE);                                       \
             pk_pfd_fill_rect(fb, SET_PAD, _y + SET_ROW_H / 2 - 1,              \
                              SET_CTL_R, _y + SET_ROW_H / 2, V2_LINE);         \
         }                                                                      \
@@ -275,7 +280,8 @@ void pk_settings_page_render(uint16_t *fb)
       { const int _y = ROW_Y(row);
         if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                       SET_PAD + pk_aa_text_width("BLUETOOTH", PK_AA_M) + 16,
+                       SET_PAD + pk_aa_text_width("BLUETOOTH",
+                                                  PK_UI_ITEM_SIZE) + 16,
                        _y - PK_AA_XS_H / 2, "(restart)",
                        pk_rgb565(120, 130, 145), PK_AA_XS); }
       row++; }
@@ -306,7 +312,7 @@ void pk_settings_page_render(uint16_t *fb)
     /* 顶栏最后画，行从底下滑过。 */
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, V2_BG);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SET_PAD,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2, "SETTINGS", V2_HDR, PK_AA_M);
+               PK_UI_TITLE_Y, "SETTINGS", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
     #undef ROW_Y
     #undef ROW_LABEL
 }

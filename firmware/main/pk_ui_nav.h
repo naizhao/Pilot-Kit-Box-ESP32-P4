@@ -71,7 +71,17 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct);
 /* backbar 的几何，供二级页排版避让——它是 LVGL 控件、画在 framebuffer 之上，
  * 子页把内容画到这块区域里就会被盖住。导出而不是让各页各抄一份数字：抄的那
  * 份不会跟着这里变（已经错过一次，把 44 抄成了 36）。 */
-#define PK_UI_BACKBAR_TOP   (PFD_BAR_BOT + 6)
+/*
+ * backbar 占**第一行**，就落在其他页画标题栏的那条带（0..PFD_BAR_BOT=48）里。
+ *
+ * 之前它排在 PFD_BAR_BOT + 6，等于把最顶上那 48 px 让给了子页自己画的子系统
+ * 名，于是屏幕从上到下读出来是「IMU / ← DIAGNOSTICS / 内容」——先看到"我在
+ * 哪"再看到"怎么回去"，层级是倒的。返回入口必须是视线落点的第一个东西。
+ *
+ * 44 高塞进 48 的带里，上下各留 2 px，正好与其他页的标题栏同高同位，
+ * 换页时顶部这条带不会跳。
+ */
+#define PK_UI_BACKBAR_TOP   2
 #define PK_UI_BACKBAR_H     44
 #define PK_UI_BACKBAR_BOT   (PK_UI_BACKBAR_TOP + PK_UI_BACKBAR_H)
 

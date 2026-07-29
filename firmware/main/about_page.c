@@ -56,10 +56,12 @@
  * 是因为这一页的主角是「这台设备是什么」，logo 该有它的分量；而 800 px 宽
  * 用单列排版会让每行右侧空掉一大片。 */
 #define AB_HEADER_H      PFD_BAR_BOT      /* 与 PFD 状态栏等高，切页时不跳 */
-#define AB_HEADER_PAD_X  24
-#define AB_HEADER_PAD_Y   9
+/* 标题的纵向位置改用 PK_UI_TITLE_Y（pfd_layout.h），本页不再自算——原来那个
+ * 手调的 PAD_Y-6 是为 L 档配的，换成 M 档后只会把字顶在栏子上沿。
+ * 横向同理走 PK_UI_PAD_L：本页原来自留一份 24，比 diag/list 的 16 多缩 8 px，
+ * 在切页时看得出来（罩哥点名「about 标题左边好像多了个空格」）。 */
 
-#define AB_LEFT_X        24
+#define AB_LEFT_X        PK_UI_PAD_L
 #define AB_LEFT_W       248
 #define AB_LOGO_SIZE    176   /* 176-2*12 略大于源图，见 draw_logo */
 #define AB_LOGO_Y        76
@@ -78,7 +80,8 @@
 
 /* ── 配色 ──────────────────────────────────────────────────────── */
 #define COL_BG           pk_rgb565( 12,  12,  16)
-#define COL_HEADER       pk_rgb565(180, 235, 255)
+/* 标题色见 PK_UI_TITLE_COL（pfd_layout.h）：本页原来的淡蓝与其余四页的白不
+ * 是一回事，而淡蓝在本页另有主人——COL_URL 那条可点链接。 */
 #define COL_KEY          pk_rgb565(150, 170, 195)   /* 标签退一档，让数值出挑 */
 #define COL_VAL          pk_rgb565(255, 255, 255)
 #define COL_DIVIDER      pk_rgb565( 60,  70,  86)
@@ -130,11 +133,11 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
     const int y = AB_ROW0_Y + row * AB_ROW_H;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_AA_M);
+               AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_UI_ITEM_SIZE);
 
     /* 降档后字更矮，往下挪半个差值，与标签保持同一条视觉中线。 */
     const pk_aa_size_t vs = fit_size(val, AB_VALUE_W);
-    const int dy = (pk_aa_cell_h(PK_AA_M) - pk_aa_cell_h(vs)) / 2;
+    const int dy = (pk_aa_cell_h(PK_UI_ITEM_SIZE) - pk_aa_cell_h(vs)) / 2;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_VALUE_X, y + dy, val, COL_VAL, vs);
 }
@@ -204,9 +207,12 @@ void pk_about_page_render(uint16_t *fb)
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
     /* ── 顶栏 ───────────────────────────────────────────────── */
+    /* 标题的字号/颜色/垂直位置由 pfd_layout.h 统一给：这一页曾经是全设备唯一
+     * 用 L 档的，比其余四页大整整一档。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_HEADER_PAD_X, AB_HEADER_PAD_Y - 6,
-               pk_i18n_text(PK_TR_ABOUT_TITLE), COL_HEADER, PK_AA_L);
+               AB_LEFT_X, PK_UI_TITLE_Y,
+               pk_i18n_text(PK_TR_ABOUT_TITLE), PK_UI_TITLE_COL,
+               PK_UI_TITLE_SIZE);
     fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
 
     /* ── 左栏：身份 ─────────────────────────────────────────── */

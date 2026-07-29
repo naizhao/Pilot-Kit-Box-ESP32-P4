@@ -68,7 +68,10 @@
 #define DRAWER_TOP    (PK_DISPLAY_H - DRAWER_H)      /* 250 */
 #define DRAWER_ROWS   ((DRAWER_TOP - ROW0_Y) / ROW_H)
 
-#define PAD_L         16
+/* 整页左边距走 pfd_layout.h 的共用 token（值仍是 16）。反过来说：本页是把
+ * PK_UI_PAD_L 钉在 16 的那个页面——BRG 列最宽 71 px，从 16 起画到 87，右边的
+ * 分隔线 SEP_CALL 钉在 95，只剩 8 px 余量。改 PK_UI_PAD_L 之前先看这里。 */
+#define PAD_L         PK_UI_PAD_L
 #define PAD_R         16
 
 /*
@@ -459,10 +462,12 @@ static bool row_less(const row_t *a, const row_t *b)
     return s_sort_desc ? ka > kb : ka < kb;
 }
 
-static void draw_header(uint16_t *fb, int n, uint16_t col_hdr, uint16_t col_dim)
+/* 标题的颜色不再由调用方传进来：它归全局层级管（PK_UI_TITLE_*），
+ * 留一个参数只会让人以为这一页可以自己挑颜色。 */
+static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
 {
-    const int ty = (PFD_BAR_BOT - PK_AA_M_H) / 2;
-    LST_PUTS(fb, PAD_L, ty, "AIRCRAFT", col_hdr, PK_AA_M);
+    const int ty = PK_UI_TITLE_Y;
+    LST_PUTS(fb, PAD_L, ty, "AIRCRAFT", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 
     /* 目标数用 PFD 状态栏那枚 connecting_airports——同一台设备上「ADS-B 目标
      * 数」只该有一个符号。绿=有效在线，与状态栏、交通页一致。 */
@@ -902,7 +907,7 @@ void pk_adsb_list_render(uint16_t *fb)
     for (int k = 0; k < nr; ++k) s_icaos[k] = s_rows[k].ac->icao24;
     const int sel = pk_ui_list_resolve_row(s_icaos, (size_t)nr);
 
-    draw_header(fb, nr, COL_HDR, COL_DIM);
+    draw_header(fb, nr, COL_DIM);
     draw_col_titles(fb, COL_TITL, COL_HDR);
     pk_pfd_fill_rect(fb, 0, ROW0_Y - 1, PK_DISPLAY_W, ROW0_Y, COL_LINE);
 

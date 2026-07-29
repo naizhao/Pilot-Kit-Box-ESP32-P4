@@ -455,7 +455,7 @@ static void diag_render_legacy(uint16_t *fb)
 #include "soc_temp.h"
 
 #define CARD_COLS   2
-#define CARD_PAD    16
+#define CARD_PAD    PK_UI_PAD_L   /* 卡片外边距 = 整页左边距（pfd_layout.h） */
 #define CARD_GAP    12
 #define CARD_W      ((PK_DISPLAY_W - CARD_PAD * 2 - CARD_GAP) / CARD_COLS)
 #define CARD_TOP    (PFD_BAR_BOT + 8)
@@ -542,8 +542,10 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
      * 的第一诉求就是「哪一格不对」。 */
     pk_pfd_fill_rect(fb, x, y, x + 5, y + CARD_H, state_color(st));
 
+    /* 卡片标题与 about / settings 的条目名同一档（PK_UI_ITEM_SIZE）：三处都是
+     * 「这一项叫什么」，原来这里用 XS，比那两页小两档，翻页时字忽大忽小。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18, y + 10,
-               title, COL_KEY, PK_AA_XS);
+               title, COL_KEY, PK_UI_ITEM_SIZE);
 
     /* 值太长就降到 S 档，避免把接口提示截掉。 */
     const int avail = CARD_W - 26;
@@ -845,9 +847,10 @@ void pk_diag_page_render(uint16_t *fb)
 
     /* 顶栏最后画：卡片从它底下滑过去，而不是压在它上面。 */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, COL_BG);
+    /* 标题走全局层级（pfd_layout.h）。这一页原来用 COL_HEADER 的淡蓝，是五页
+     * 里唯一的蓝标题——罩哥在真机上第一眼就点出来了。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2, "DIAGNOSTICS", COL_HEADER,
-               PK_AA_M);
+               PK_UI_TITLE_Y, "DIAGNOSTICS", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 }
 
 /* ── 触摸：拖动滚卡片 ──────────────────────────────────────────────
@@ -944,13 +947,27 @@ void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
  * SNR 柱状图，那是排查 no-fix 的命门（不能只盯 fix=0，要看 SNR 和天线）。
  * ═════════════════════════════════════════════════════════════════════ */
 
-/* 内容从 backbar 下面 8 px 开始。用导出的 PK_UI_BACKBAR_BOT 而不是抄数字
- * ——上一版把 44 抄成了 36，内容正好贴着 backbar 没有间隙。 */
-/* 内容接在 backbar 下面。子系统名已挪到顶栏，这里不必再为它让位——
- * 让位那一版把顶栏 48 px 空成了一片黑（模拟器截图逮到的）。 */
-#define DET_TOP     (PK_UI_BACKBAR_BOT + 8)
+/*
+ * 详情页从上到下三行：
+ *
+ *   1) backbar「← DIAGNOSTICS」 —— LVGL 层，几何见 pk_ui_nav.h
+ *   2) 子系统名（IMU / GPS …）  —— DET_TITLE_TOP，本文件画进 framebuffer
+ *   3) 键值内容                 —— DET_TOP 起，每行 DET_LINE_H
+ *
+ * 两个纵坐标都从导出的 PK_UI_BACKBAR_BOT 推出来，不在这里另抄数字：抄的那份
+ * 不会跟着 backbar 变，上一版把 44 抄成 36，内容正好贴着 backbar 没有间隙。
+ *
+ * 顺序不能反。子系统名一度画在顶栏（0..PFD_BAR_BOT），于是从上往下读成
+ * 「IMU / ← DIAGNOSTICS / 内容」——退路排在第二行，得先认出自己在哪儿才找得
+ * 到怎么出去。现在 backbar 占第一行，名字跟在它下面。 */
+/* 详情页的键列 = 整页左边距。原来是自留的 24，为的是对齐 backbar 的文字
+ * （那时胶囊内边距 14 把字推到了 22）；现在 backbar 反过来按 PK_UI_PAD_L 排
+ * 版（见 pk_ui_nav.c），两边都不用再互相迁就。 */
+#define DET_KEY_X     PK_UI_PAD_L
+/* 子系统名的左缘与内容键列同一条线：三行左对齐，视线不用来回找起点。 */
+#define DET_TITLE_TOP (PK_UI_BACKBAR_BOT + 8)
+#define DET_TOP       (DET_TITLE_TOP + PK_AA_M_H + 10)
 #define DET_LINE_H  38
-#define DET_KEY_X   24
 #define DET_VAL_X   240
 
 static void det_kv(uint16_t *fb, int line, const char *k, const char *v,
@@ -958,8 +975,11 @@ static void det_kv(uint16_t *fb, int line, const char *k, const char *v,
 {
     const int y = DET_TOP + line * DET_LINE_H;
     if (y + DET_LINE_H > PK_DISPLAY_H) return;
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X,
-               y + (PK_AA_M_H - PK_AA_XS_H) / 2, k, COL_KEY, PK_AA_XS);
+    /* 键名与值同档：键列宽 224 px（DET_VAL_X - DET_KEY_X），最长的
+     * "CALIBRATION" / "SAMPLE RATE" 各 11 字符 × 15 px = 165 px，装得下。
+     * 同档也就不再需要原来那半个字高的垂直补偿。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, y, k,
+               COL_KEY, PK_UI_ITEM_SIZE);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_VAL_X, y, v, vcol, PK_AA_M);
 }
 
@@ -1010,9 +1030,9 @@ static void draw_detail(uint16_t *fb, int which)
             if (cnt == 0) continue;
             const int y = DET_TOP + line * DET_LINE_H;
             if (y + DET_LINE_H > PK_DISPLAY_H) break;
-            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X,
-                       y + (PK_AA_M_H - PK_AA_XS_H) / 2, kCon[gi],
-                       COL_KEY, PK_AA_XS);
+            /* 星座名是 det_kv 的键列的一员，字号必须跟 det_kv 走。 */
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, y,
+                       kCon[gi], COL_KEY, PK_UI_ITEM_SIZE);
             draw_snr_row(fb, DET_VAL_X, y + PK_AA_M_H + 4,
                          g.snr, g.snr_con, g.snr_count, gi);
             line++;
@@ -1209,20 +1229,20 @@ static void draw_detail(uint16_t *fb, int which)
 static void draw_detail_header(uint16_t *fb, int which)
 {
     /*
-     * 子系统名画在**顶栏**（0..PFD_BAR_BOT），位置与总览页的 "DIAGNOSTICS"
-     * 完全一致。
+     * 子系统名是**第二行**，接在 backbar 下面（DET_TITLE_TOP）。
      *
-     * 之前把它放在 backbar 下方，于是顶栏那 48 px 整条空着——模拟器截图里
-     * 一眼就看见了，罩哥在真机上说的"title 上面有大量 padding"就是它。
-     * 详情页不画顶栏，那块并不会因此消失，只会变成一片黑。
+     * 中间试过把它塞进顶栏（0..PFD_BAR_BOT）——那是为了填掉 backbar 上方空
+     * 出来的一条黑带，可代价是"返回"被挤到第二行。真正的病根是 backbar 没在
+     * 最顶上，改 PK_UI_BACKBAR_TOP 才治本，把标题往空处搬只是把洞挪个地方。
      *
-     * 两处文案不重复：顶栏说"现在看的是谁"（GPS），backbar 说"返回去哪"
-     * （← DIAGNOSTICS）。
+     * 左缘用 DET_KEY_X：这一行归详情页的内容列，跟下面的键列对齐。两者现在
+     * 都等于 PK_UI_PAD_L，与总览页卡片边距也在同一条线上——早先 DET_KEY_X=24
+     * 而 CARD_PAD=16，下钻前后左边界会跳 8 px。
      */
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2,
+    /* 与总览标题同字号同色：详情是总览的第二层，标题层级不该在下钻后变。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, DET_TITLE_TOP,
                (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
-               COL_HEADER, PK_AA_M);
+               PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 }
 
 /*

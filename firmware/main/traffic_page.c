@@ -64,7 +64,8 @@
         pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
 #define TFC_PUTS_XS(fb, x, y, s, col) \
         pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XS)
-#define TFC_HDR_TY    ((PFD_BAR_BOT - PK_AA_M_H) / 2)
+/* 顶栏其余读数与标题同一条基线，所以直接取标题的纵坐标。 */
+#define TFC_HDR_TY    PK_UI_TITLE_Y
 
 /* ── 右栏（spec §5.2：280 px，4 张卡片可滚动）───────────────── */
 #define SIDE_X        TFC_SIDE_X
@@ -502,7 +503,7 @@ void pk_traffic_page_render(uint16_t *fb)
     const uint16_t COL_CARD  = pk_rgb565(220, 228, 238);  /* E/S/W */
     const uint16_t COL_N     = pk_rgb565(245, 250, 255);  /* N(最亮,突出北向) */
     const uint16_t COL_OWN   = pk_rgb565(255, 255, 255);
-    const uint16_t COL_HDR   = pk_rgb565(235, 235, 235);
+    /* 页面标题色见 PK_UI_TITLE_COL（pfd_layout.h），本页不再自留一份。 */
     const uint16_t COL_CYAN  = pk_rgb565(  0, 210, 235);
     /* 顶栏这几项（目标数、量程）曾用 120,120,128 的灰——在近黑底上对比度只有
      * 2:1 上下，日光下等于没有。它们是常驻读数不是次要注释，提到与 HDG 同级
@@ -567,7 +568,11 @@ void pk_traffic_page_render(uint16_t *fb)
     /* ── 顶栏 ──
      * 与 PFD 状态栏同高（PFD_BAR_BOT），文字走统一字体的 normal 档。 */
     char buf[24];
-    TFC_PUTS(fb, 24, TFC_HDR_TY, "TRAFFIC", COL_HDR);
+    /* 标题走全局层级（pfd_layout.h），不吃本页的 TFC_PUTS/COL_HDR。
+     * 左缘原来硬编码 24，比同一页左下角朝向按钮的 BTN_M(16) 还往里缩——
+     * 一页之内两个边距，切到 diag/list 更是差 8 px。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L, PK_UI_TITLE_Y,
+               "TRAFFIC", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
     if (hdg_valid) {
         snprintf(buf, sizeof(buf), "HDG %03d~", ((int)lroundf(own_heading) + 360) % 360);
         TFC_PUTS(fb, 200, TFC_HDR_TY, buf, COL_CYAN);

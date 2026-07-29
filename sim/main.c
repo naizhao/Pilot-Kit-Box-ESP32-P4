@@ -186,6 +186,22 @@ static int run_headless(float at_sec, const char *out)
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
     /* PK_SIM_SUB=1 进入二级页，核对返回栏与 FAB 图标是否都切到「←」。 */
     if (getenv("PK_SIM_SUB")) pk_ui_nav_set_subpage(true, "诊断");
+    /*
+     * 诊断详情页自带 backbar，不必再手动加 PK_SIM_SUB。
+     *
+     * 真机上 pk_diag_page_touch_up() 点开卡片时就顺手调了 set_subpage()，两者
+     * 是同一个动作的两半；模拟器这边靠环境变量直接跳进详情，漏掉后半截，截图
+     * 里 backbar 那条就是空的——顶部三行的次序错了整整四轮没人看出来，正是因
+     * 为截图上根本没有 backbar。这里补齐，让截图和真机是同一件事。
+     *
+     * parent_title 抄 diag_page.c 里的 "DIAGNOSTICS"，不用 PK_SIM_SUB 那个
+     * 中文串：文案不一致的话，量出来的 backbar 宽度就不是真机的宽度。
+     */
+    {
+        const char *pg = getenv("PK_SIM_PAGE");
+        if (getenv("PK_SIM_DIAG_DETAIL") && pg && strcmp(pg, "diag") == 0)
+            pk_ui_nav_set_subpage(true, "DIAGNOSTICS");
+    }
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 
     pk_pfd_imu_t imu; pk_pfd_hsi_t hsi; pk_pfd_alt_tape_t alt;

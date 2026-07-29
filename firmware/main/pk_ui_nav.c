@@ -70,6 +70,13 @@ static bool      s_dock_open;
 /* 中文字体。TinyTTF 在运行时从子集 TTF 渲染字形，一份轮廓服务所有字号——
  * 每个字号只是一个 lv_font_t 句柄，不再各存一份 CJK 位图。 */
 static const lv_font_t *s_font_zh_m;
+/* 二级页 backbar 专用的一档，视觉高度对齐 framebuffer 那侧的页面标题
+ * （PK_UI_TITLE_SIZE = PK_AA_M）。具体尺寸与量法见 pk_ui_nav_init()。
+ *
+ * 不能复用 s_font_zh_m：它是 26 px、且拉丁回退到 Montserrat 28，于是二级页顶
+ * 上那条「← DIAGNOSTICS」比总览页自己的「DIAGNOSTICS」大了将近一半——罩哥说的
+ * 「点进子页面后字号比外面还大」就是这里，不是子系统名（那个一直是 M）。 */
+static const lv_font_t *s_font_zh_title;
 
 bool pk_ui_nav_dock_open(void) { return s_dock_open; }
 
@@ -311,6 +318,14 @@ static void dock_touch_cb(lv_event_t *e)
  */
 #define BACKBAR_H   PK_UI_BACKBAR_H   /* 单一来源在 pk_ui_nav.h */
 
+/* 胶囊底板允许越过内容列 8 px，但**文字**必须落在 PK_UI_PAD_L 上：
+ * x = PK_UI_PAD_L - 8，左右内边距 = 8，两个 8 抵消，字正好从 16 开始。
+ * 这与列表页行高亮从 PAD_L-8 起画是同一套「底板可越线、文字不可」的规矩。
+ *
+ * 原来是 x=8 + 内边距 14，字落在 22，于是详情页的键列被迫也写成 24 去迁就它
+ * ——一个 LVGL 控件的内边距不该反过来决定 framebuffer 那侧的版面。 */
+#define BACKBAR_BLEED   8
+
 static lv_obj_t *s_backbar;
 static lv_obj_t *s_backbar_label;
 
@@ -342,17 +357,18 @@ static void backbar_ensure(void)
 
     s_backbar = lv_obj_create(lv_screen_active());
     lv_obj_set_size(s_backbar, LV_SIZE_CONTENT, BACKBAR_H);
-    lv_obj_align(s_backbar, LV_ALIGN_TOP_LEFT, 8, PK_UI_BACKBAR_TOP);
+    lv_obj_align(s_backbar, LV_ALIGN_TOP_LEFT,
+                 PK_UI_PAD_L - BACKBAR_BLEED, PK_UI_BACKBAR_TOP);
     lv_obj_set_style_bg_color(s_backbar, COL_DOCK_BG, 0);
     lv_obj_set_style_bg_opa(s_backbar, LV_OPA_90, 0);
     lv_obj_set_style_border_width(s_backbar, 0, 0);
     lv_obj_set_style_radius(s_backbar, 8, 0);
-    lv_obj_set_style_pad_hor(s_backbar, 14, 0);
+    lv_obj_set_style_pad_hor(s_backbar, BACKBAR_BLEED, 0);
     lv_obj_set_style_pad_ver(s_backbar, 0, 0);
     lv_obj_remove_flag(s_backbar, LV_OBJ_FLAG_SCROLLABLE);
 
     s_backbar_label = lv_label_create(s_backbar);
-    lv_obj_set_style_text_font(s_backbar_label, s_font_zh_m, 0);
+    lv_obj_set_style_text_font(s_backbar_label, s_font_zh_title, 0);
     lv_obj_set_style_text_color(s_backbar_label, COL_TAB_ON, 0);
     lv_obj_center(s_backbar_label);
 
@@ -545,6 +561,22 @@ void pk_ui_nav_init(void)
     if (s_font_zh_m) {
         /* v9.5 没有 setter，fallback 是 lv_font_t 的公开字段，直接接上即可。 */
         ((lv_font_t *)s_font_zh_m)->fallback = &lv_font_montserrat_28;
+    }
+
+    /* backbar 档：22 px。backbar 的文字几乎全是拉丁页名，**回退档**才是这里真正
+     * 决定视觉大小的那一档（sdkconfig.defaults 为此打开 CONFIG_LV_FONT_MONTSERRAT_22）。
+     *
+     * 为什么不是 18：上一版照抄了 PK_AA_M 的标称 18 px，结果 backbar 反而比外层
+     * 标题细一圈——两侧字体不同，标称 px 不可比，只能量像素：
+     *   PK_AA_M（B612 Mono 位图，标称 18）  大写字高 16 px / CJK 字身 18 px
+     *   Montserrat 18                      大写字高 13 px  ← 细一圈的真凶
+     *   Montserrat 22                      大写字高 16 px  ← 与外层齐平
+     * TinyTTF 那侧同步取 22（CJK 字身量得 19 px），中西文混排才不会一高一矮。
+     * 改这里之前先截图量，别只调数字。 */
+    s_font_zh_title = lv_tiny_ttf_create_data(pk_lv_font_zh_ttf,
+                                              pk_lv_font_zh_ttf_size, 22);
+    if (s_font_zh_title) {
+        ((lv_font_t *)s_font_zh_title)->fallback = &lv_font_montserrat_22;
     }
 
     /* 先建 dock 再建 FAB：同层内后建的在上，FAB 必须压在 dock 之上。 */
