@@ -587,10 +587,28 @@ void pk_traffic_page_render(uint16_t *fb)
         snprintf(buf, sizeof(buf), "%d", (int)n);
         TFC_PUTS(fb, 392 + PK_ICON_W + 6, TFC_HDR_TY, buf, COL_ADSB);
     }
-    snprintf(buf, sizeof(buf), "%dNM", range_nm);
+    /* 右上角：地图朝向 + 量程。
+     *
+     * 左下角那枚朝向按钮是**图标**，图标只说得清「点了会怎样」，说不清
+     * 「现在是哪种」——尤其正北模式下本机符号本身也在转，光看图分不出是
+     * 「机头朝上、地图在转」还是「地图朝北不动、本机在转」。所以这里补一行
+     * 文字把当前模式讲明白，与量程排在同一处，构成「这幅图是怎么画的」一栏。
+     *
+     * 朝向用 S 档、量程用 M 档：量程是随时要读的数，朝向是确认一次就不看的
+     * 状态，字号该分主次。 */
     {
-        int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
-        TFC_PUTS(fb, PK_DISPLAY_W - 24 - w, TFC_HDR_TY, buf, COL_GREY);
+        const char *om = (orient == PK_MAP_HEADING_UP) ? "HDG UP" : "NORTH UP";
+        snprintf(buf, sizeof(buf), "%dNM", range_nm);
+
+        const int nm_w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
+        const int om_w = (int)strlen(om)  * pk_aa_cell_w(PK_AA_S);
+        const int nm_x = PK_DISPLAY_W - 24 - nm_w;
+
+        TFC_PUTS(fb, nm_x, TFC_HDR_TY, buf, COL_GREY);
+        /* 两档字高不同，按各自 cell 高居中才不会一高一低。 */
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   nm_x - 16 - om_w, (PFD_BAR_BOT - PK_AA_S_H) / 2,
+                   om, COL_CYAN, PK_AA_S);
     }
 
     /* ── 距离环 ── */
