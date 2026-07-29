@@ -101,12 +101,61 @@
  * 初版让它紧跟呼号，8 字符满宽呼号 + "NO RADIO" 直接压进了 DIST 列，把
  * 距离盖掉一半——表格里任何"跟着内容长度走"的元素迟早会撞上邻列。 */
 #define COL_FLAG_X    239
-#define COL_DIST_R    365                            /* 右对齐基准 */
-#define COL_ALT_R     456
-#define COL_VS_R      544
-#define COL_GS_R      605
-#define COL_TRK_R     666
+#define COL_DIST_R    351                            /* 右对齐基准 */
+#define COL_ALT_R     442
+#define COL_VS_R      536
+#define COL_GS_R      603
+#define COL_TRK_R     670
 #define COL_SEEN_R    CONTENT_R                      /* 716 */
+
+/*
+ * 分隔线 x（同时是右侧那一列的命中区起点）。COLS[] 直接引用这些宏，不再
+ * 另抄一份数字——右对齐基准和线位分成两处各写各的，正是本文件出过的错：
+ * 改列位时只改了其中一份，数据右对齐到旧位置、线画在新位置，字被穿过去，
+ * 而缩略图上完全看不出来。
+ */
+#define SEP_CALL      95
+#define SEP_FLAG      231
+#define SEP_DIST      231      /* 徽章与 DIST 共用一个命中区，故与上面同值 */
+#define SEP_ALT       359
+#define SEP_VS        450
+#define SEP_GS        544
+#define SEP_TRK       611
+#define SEP_SEEN      678
+
+/* 各列最长内容宽度。改任何列位之前，先对着这张表把账算平。 */
+#define W_BRG   (26 + 3 * PK_AA_M_W)              /* 箭头 + 三位方位 */
+#define W_CALL  (8 * PK_AA_M_W)                   /* 满宽呼号 */
+#define W_FLAG  (3 * PK_AA_XS_W)                  /* EMG / RDO / HJK */
+#define W_DIST  (4 * PK_AA_M_W)                   /* "12.3" */
+#define W_ALT   (5 * PK_AA_M_W)                   /* "34322" */
+#define W_VS    (PK_AA_M_CJK_W + 4 * PK_AA_M_W)   /* "↑1500" */
+#define W_GS    (3 * PK_AA_M_W)
+#define W_TRK   (3 * PK_AA_M_W)
+#define W_SEEN  (3 * PK_AA_XS_W)                  /* "47s" */
+
+/* 内容与分隔线之间的最小留白。低于这个数，字看起来就是被线框住的。 */
+#define SEP_GAP  7
+
+/* 每列：左缘离左线 >= SEP_GAP，右缘离右线 >= SEP_GAP。
+ * 任何一处改动破坏了这个关系，这里直接编译失败——比在真机上用肉眼找字被
+ * 线穿过要快得多，也可靠得多。 */
+_Static_assert(SEP_CALL - (COL_BRG_X + W_BRG)   >= SEP_GAP, "BRG 右缘贴线");
+_Static_assert(COL_CALL_X - SEP_CALL            >= SEP_GAP, "CALLSIGN 左缘贴线");
+_Static_assert(SEP_FLAG - (COL_CALL_X + W_CALL) >= SEP_GAP, "CALLSIGN 右缘贴线");
+_Static_assert(COL_FLAG_X - SEP_FLAG            >= SEP_GAP, "徽章左缘贴线");
+_Static_assert(COL_DIST_R - W_DIST - SEP_DIST   >= SEP_GAP, "DIST 左缘贴线");
+_Static_assert(SEP_ALT  - COL_DIST_R            >= SEP_GAP, "DIST 右缘贴线");
+_Static_assert(COL_ALT_R - W_ALT - SEP_ALT      >= SEP_GAP, "ALT 左缘贴线");
+_Static_assert(SEP_VS   - COL_ALT_R             >= SEP_GAP, "ALT 右缘贴线");
+_Static_assert(COL_VS_R - W_VS - SEP_VS         >= SEP_GAP, "V/S 左缘贴线");
+_Static_assert(SEP_GS   - COL_VS_R              >= SEP_GAP, "V/S 右缘贴线");
+_Static_assert(COL_GS_R - W_GS - SEP_GS         >= SEP_GAP, "GS 左缘贴线");
+_Static_assert(SEP_TRK  - COL_GS_R              >= SEP_GAP, "GS 右缘贴线");
+_Static_assert(COL_TRK_R - W_TRK - SEP_TRK      >= SEP_GAP, "TRK 左缘贴线");
+_Static_assert(SEP_SEEN - COL_TRK_R             >= SEP_GAP, "TRK 右缘贴线");
+_Static_assert(COL_SEEN_R - W_SEEN - SEP_SEEN   >= SEP_GAP, "AGE 左缘贴线");
+_Static_assert(CONTENT_R + 8 - COL_SEEN_R       >= 0,       "AGE 超出内容区");
 
 #define LST_PUTS(fb, x, y, s, col, sz) \
         pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), (sz))
@@ -136,18 +185,18 @@ typedef struct {
 /* 命中区把列间空隙一并吃掉：手指落在两列标题中间时总得归给某一列，
  * 留缝隙只会让人以为「点了没反应」。 */
 static const col_def_t COLS[SORT_COUNT] = {
-    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, 95  },
-    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  95,        231 },
+    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, SEP_CALL },
+    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  SEP_CALL,  SEP_DIST },
     /* FLAG 不排序（徽章有无不构成一种顺序），命中区并进 DIST——中间夹一个
      * 点了没反应的列，比少一个可点的列更让人困惑。 */
-    [SORT_DIST] = { "DIST",     COL_DIST_R, true,   231,       359 },
-    [SORT_ALT]  = { "ALT",      COL_ALT_R,  true,   359,       450 },
-    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   450,       544 },
-    [SORT_GS]   = { "GS",       COL_GS_R,   true,   544,       611 },
-    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   611,       678 },
+    [SORT_DIST] = { "DIST",     COL_DIST_R, true,   SEP_DIST,  SEP_ALT  },
+    [SORT_ALT]  = { "ALT",      COL_ALT_R,  true,   SEP_ALT,   SEP_VS   },
+    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   SEP_VS,    SEP_GS   },
+    [SORT_GS]   = { "GS",       COL_GS_R,   true,   SEP_GS,    SEP_TRK  },
+    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   SEP_TRK,   SEP_SEEN },
     /* 标题写 AGE 不写 SEEN：SEEN 是 4 字符 40 px，比它管的那列数据
      * （"47s" = 30 px）还宽，右对齐后会顶到左边那条线上。 */
-    [SORT_SEEN] = { "AGE",      COL_SEEN_R, true,   678,       CONTENT_R + 8 },
+    [SORT_SEEN] = { "AGE",      COL_SEEN_R, true,   SEP_SEEN,  CONTENT_R + 8 },
 };
 
 /* 排序状态。默认距离升序——最近的威胁排最前，这是打开这一页最常见的意图。
@@ -185,8 +234,18 @@ static void sim_sort_override(void)
 #endif
 static int        s_hdr_down = -1;   /* 按下高亮的列，-1 = 无 */
 
-/* 右对齐：先量宽再倒推起点。CJK/箭头是宽字形，这里的列全是 ASCII，
- * 用 cell_w × 字符数即可（等宽字体）。 */
+/*
+ * 右对齐：先量宽再倒推起点。CJK/箭头是宽字形，这里的列全是 ASCII，
+ * 用 cell_w × 字符数即可（等宽字体）。
+ *
+ * 这里曾经出过一次很难看出来的错：右对齐基准（COL_*_R 宏）和分隔线位置
+ * （COLS[].hit_x0）是两份独立的数，我改列位时只改了其中一份，于是数据一律
+ * 右对齐到旧位置、线画在新位置，字被线穿过去。缩略图上看不出来，罩哥放大
+ * 才发现。
+ *
+ * 结论不是「下次仔细点」——是这两个数本来就不该分开写。见文件末尾的
+ * layout_assert()：它在每帧开头核对一遍，对不上直接把红条画到屏幕上。
+ */
 static void puts_right(uint16_t *fb, int right_x, int y, const char *s,
                        uint16_t col, pk_aa_size_t sz)
 {
@@ -443,7 +502,7 @@ static void draw_col_seps(uint16_t *fb, int rows)
     for (int k = 1; k < SORT_COUNT; ++k)
         pk_pfd_fill_rect(fb, COLS[k].hit_x0 - 1, y0, COLS[k].hit_x0, y1, COL_SEP);
     /* 徽章列的线单独补：它不在 COLS 里（不参与排序），视觉上仍是一列。 */
-    pk_pfd_fill_rect(fb, COL_FLAG_X - 9, y0, COL_FLAG_X - 8, y1, COL_SEP);
+    pk_pfd_fill_rect(fb, SEP_FLAG - 1, y0, SEP_FLAG, y1, COL_SEP);
 }
 
 static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
