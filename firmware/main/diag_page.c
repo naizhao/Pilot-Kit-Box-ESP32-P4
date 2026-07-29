@@ -473,13 +473,30 @@ static void diag_render_legacy(uint16_t *fb)
  *
  * 即**颜色只表达严重度，文字负责说清是哪种缺失**。用不了就是红的，至于是
  * 没插、没数据还是没硬件，看那一行字。 */
-typedef enum { ST_OK = 0, ST_WARN, ST_BAD } card_state_t;
+/*
+ * 四态。绿 / 琥珀 / 红 / 灰，语义严格分开：
+ *
+ *   ST_OK    绿   正常工作
+ *   ST_WARN  琥珀 连着但不正常，需要注意（丢过数据、温度偏高、掉链）
+ *   ST_BAD   红   不可用：模块缺失、故障、配置不成立
+ *   ST_IDLE  灰   **正常但未激活**——功能好着，只是现在没在用
+ *
+ * 之前一度只有前三态，于是"BLE 正在广播"（正常等待连接）被涂成琥珀、
+ * "日志写 flash 但还没写过一条"被涂成红——两个都是正常状态却在喊救命，
+ * 而真正的告警反而被稀释了。罩哥指出后加回 ST_IDLE。
+ *
+ * 与更早那次"删掉灰态"不矛盾：那次删的是拿灰表示**模块缺失**（GPS 没插
+ * 显示灰、别的模块离线显示红，同样是用不了却给了两种权重）。缺失一律红，
+ * 灰只留给"好着但闲着"。
+ */
+typedef enum { ST_OK = 0, ST_WARN, ST_BAD, ST_IDLE } card_state_t;
 
 static uint16_t state_color(card_state_t st)
 {
     switch (st) {
     case ST_OK:   return COL_ONLINE;
     case ST_WARN: return COL_WARN;
+    case ST_IDLE: return COL_OFFLINE;
     case ST_BAD:
     default:      return COL_ALERT;
     }
@@ -657,7 +674,10 @@ void pk_diag_page_render(uint16_t *fb)
         const bool adv  = ble_gatt_is_advertising();
         draw_card(fb, 0, 2, "BLE",
                   conn ? "connected" : adv ? "advertising" : "idle",
-                  conn ? ST_OK : adv ? ST_WARN : ST_BAD);
+                  /* 广播中 = 功能正常、只是还没人连，属于"好着但闲着"。
+                   * idle 才是红：那说明 BLE 压根没起来（被设置关掉或初始化
+                   * 失败），GDL90 这条输出通路是断的。 */
+                  conn ? ST_OK : adv ? ST_IDLE : ST_BAD);
     }
 
     /* ── LOG ── */
@@ -669,7 +689,10 @@ void pk_diag_page_render(uint16_t *fb)
                      (unsigned long)written);
             /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。 */
             draw_card(fb, 1, 2, "LOG", buf,
-                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_BAD);
+                      /* written == 0 只是"还没收到可写的数据"，不是故障——
+                       * 刚开机、或者 SDR 没插时本来就一条都没有。sink 建起来
+                       * 了就算正常；丢过条目才是琥珀（还在写但已不完整）。 */
+                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_IDLE);
         } else {
             draw_card(fb, 1, 2, "LOG", "sink down", ST_BAD);
         }
@@ -961,7 +984,12 @@ static void draw_detail(uint16_t *fb, int which)
 
         /* 每星座一行 SNR 柱状图。分星座画而不是混在一起：某个星座整体偏弱
          * 指向天线频段或遮挡方向，混画就看不出这个模式了。 */
-        static const char *const kCon[PK_GNSS_COUNT] = { "GPS", "BDS", "GLO", "GAL" };
+        /* 与 pk_gnss_t 同序、同长度——legacy 那份是
+         * { "GPS","BDS","GLO","GAL","QZS","?" } 六项，我照抄时只写了四项，
+         * gi 循环到 PK_GNSS_COUNT-1 会越界读。名表必须跟着枚举走，
+         * 少一项就是一次越界。 */
+        static const char *const kCon[PK_GNSS_COUNT] =
+            { "GPS", "BDS", "GLO", "GAL", "QZS", "?" };
         for (int gi = 0; gi < PK_GNSS_COUNT; ++gi) {
             int cnt = 0;
             for (int i = 0; i < g.snr_count; ++i) if (g.snr_con[i] == gi) cnt++;
@@ -1107,7 +1135,11 @@ static void draw_detail(uint16_t *fb, int which)
     case 9:     /* QNH */
         snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
         det_kv(fb, line++, "QNH", buf, COL_VAL);
-        det_kv(fb, line++, "NOTE", "baro altitude reference", COL_OFFLINE);
+        /* QNH 是**用户设定值**（设置页步进器 / NVS 持久化），不是 BMP388
+         * 测出来的。写清楚来源是有意义的：读数不对时该去改设置，而不是
+         * 怀疑气压计坏了。1013.25 是标准大气压，也是未设定时的默认。 */
+        det_kv(fb, line++, "SOURCE", "user setting (Settings page)", COL_VAL);
+        det_kv(fb, line++, "USED BY", "baro altitude calculation", COL_OFFLINE);
         break;
 
     case 10: {  /* BATT */
