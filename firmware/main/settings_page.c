@@ -27,6 +27,7 @@
 #include "i18n.h"
 #include "pfd_draw.h"
 #include "text.h"
+#include "config_ble.h"
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
@@ -275,4 +276,58 @@ static void settings_render_legacy(uint16_t *fb)
     pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                            6, PK_DISPLAY_H - 16,
                            pk_i18n_text(PK_TR_SETTINGS_FOOTER), COL_DIM);
+}
+
+/*
+ * 执行一次设置变更。row 是设置页的行号，v 的含义随控件而定：
+ * 分段=段序号，步进器=±1，按钮=0。
+ *
+ * 命中判定在 settings_draw.c（它拥有几何），写操作在这里——那边是纯绘制，
+ * 不该碰 NVS，更不该起格式化任务。
+ */
+void pk_settings_apply(int row, int v)
+{
+    switch (row) {
+    case 0:   /* 语言 */
+        pk_i18n_set_lang(v == 0 ? PK_LANG_ZH : PK_LANG_EN);
+        break;
+
+    case 1:   /* QNH ±0.01 hPa —— 与航空习惯一致（拨轮一格 0.01）。
+               * 长按连调等手势层做出来再说，现在一下一格。 */
+        pk_qnh_set(pk_qnh_get() + (v > 0 ? 0.01f : -0.01f));
+        break;
+
+    case 2:   /* 地图朝向 */
+        pk_map_orient_set(v == 0 ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
+        break;
+
+    case 3:   /* 雷达量程 */
+        pk_traffic_range_idx_set(v);
+        break;
+
+    case 4:   /* 屏幕亮度。AUTO(=3) 暂不可用：没有环境光传感器，选了也无从
+               * 自动，点它保持原档而不是假装切过去。 */
+        if (v < 3) pk_display_set_brightness((uint8_t)v);
+        break;
+
+    case 5:   /* 日间/夜间配色 —— 尚未接入，整行置灰，点击无动作 */
+        break;
+
+    case 6:   /* 记录存储。无卡时选 SD 没意义，直接忽略——渲染那边也是置灰的，
+               * 两处判据要一致，否则会出现"看着灰的却点得动"。 */
+        if (pk_sdcard_is_mounted() || v == 0)
+            pk_log_store_set(v == 1 ? PK_LOG_STORE_SD : PK_LOG_STORE_FLASH);
+        break;
+
+    case 7:   /* 蓝牙开关（下次开机生效，行尾已标 restart） */
+        pk_ble_enabled_set(v == 1);
+        break;
+
+    case 8:   /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+        pk_settings_format_action();
+        break;
+
+    default:
+        break;
+    }
 }

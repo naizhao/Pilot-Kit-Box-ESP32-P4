@@ -58,13 +58,34 @@ static int s_set_scroll;
 
 /* 触摸手势：与列表页/诊断页同一套——按下只记起点，位移超阈值才算拖动，
  * 松手时没拖过才当点击。三页共用同一套判定，手感才一致。 */
-static int  s_press_y, s_press_scroll;
+static int  s_press_x, s_press_y, s_press_scroll;
 static bool s_press_valid, s_moved;
 #define SET_DRAG_SLOP  12
 
 /* 触摸目标下限。屏 800 px ≈ 95 mm → 8.4 px/mm；通行下限 9 mm ≈ 76 px
  * （iOS 44 pt / Material 48 dp 同量级）。座舱里戴手套、有颠簸，取 80。 */
 #define SEG_MIN_TOUCH_W  80
+
+/*
+ * 每行控件的几何，渲染时写、触摸时读。
+ *
+ * 与列表页的 s_screen_icao[] 同一个套路：几何只有绘制那一刻才知道（段宽依
+ * 赖文字宽度、位置依赖滚动偏移），触摸回调拿不到，所以渲染每帧留一份。
+ * 好处是命中区与画出来的形状**天然一致**——分开各算一次迟早会飘，列表页
+ * 的分隔线就是这么飘过一次的。
+ *
+ * kind: 0=无控件 1=分段 2=步进器 3=按钮
+ */
+typedef struct {
+    uint8_t kind;
+    int     x0, w, n;      /* 分段：起点/段宽/段数；步进器与按钮：起点/总宽 */
+    int     y0, y1;        /* 命中区的上下沿 —— 用整行高，不是控件高 */
+} row_hit_t;
+
+static row_hit_t s_hit[SET_ROWS];
+
+/* draw_seg 算出的段宽，紧接着由 hit_set 取走。 */
+static int s_last_seg_w;
 
 /* 一个分段控件：n 个选项，sel 为当前项。返回控件左缘，供命中判定复用。 */
 static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
@@ -121,7 +142,19 @@ static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
                    opts[i], dim ? SEG_DIM : (on ? SEG_TXT_ON : SEG_TXT_OFF),
                    PK_AA_S);
     }
+    s_last_seg_w = seg_w;
     return x0;
+}
+
+static int seg_last_w(void) { return s_last_seg_w; }
+
+/* 记一行的命中区。y 用**整行**而不是控件高：视觉 38 px 是 spec 定的，
+ * 但 38 px ≈ 4.5 mm 手指够不着，命中放宽到 64 px 是控件类 UI 的通行做法。 */
+static void hit_set(int row, uint8_t kind, int x0, int w, int n, int y_mid)
+{
+    if (row < 0 || row >= SET_ROWS) return;
+    s_hit[row] = (row_hit_t){ kind, x0, w, n,
+                              y_mid - SET_ROW_H / 2, y_mid + SET_ROW_H / 2 };
 }
 
 /* 步进器：− 值 +。值居中，两枚按钮等宽，与分段控件右缘对齐。 */
@@ -179,26 +212,32 @@ void pk_settings_page_render(uint16_t *fb)
     /* 1 语言 */
     { static const char *o[] = { "\u4e2d\u6587", "EN" };
       ROW_LABEL(row, "LANGUAGE");
-      draw_seg(fb, ROW_Y(row), o, 2, pk_i18n_get_lang() == PK_LANG_ZH ? 0 : 1, false);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
+                             pk_i18n_get_lang() == PK_LANG_ZH ? 0 : 1, false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       row++; }
 
     /* 2 QNH —— 步进器：它是连续量，分段摆不下。 */
     { char v[16]; snprintf(v, sizeof(v), "%.2f hPa", (double)pk_qnh_get());
       ROW_LABEL(row, "QNH");
       draw_stepper(fb, ROW_Y(row), v);
+      hit_set(row, 2, SET_CTL_R - (SEG_MIN_TOUCH_W * 2 + 140),
+              SEG_MIN_TOUCH_W * 2 + 140, 0, ROW_Y(row));
       row++; }
 
     /* 3 地图朝向 */
     { static const char *o[] = { "HDG UP", "NORTH UP" };
       ROW_LABEL(row, "MAP ORIENT");
-      draw_seg(fb, ROW_Y(row), o, 2,
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                pk_map_orient_get() == PK_MAP_HEADING_UP ? 0 : 1, false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       row++; }
 
     /* 4 雷达量程 —— 选项取自 pk_traffic_range_nm，不另抄一份数字。 */
     { static const char *o[] = { "2", "5", "10", "20" };
       ROW_LABEL(row, "RADAR RANGE NM");
-      draw_seg(fb, ROW_Y(row), o, 4, pk_traffic_range_idx_get(), false);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_traffic_range_idx_get(), false);
+      hit_set(row, 1, _x, seg_last_w(), 4, ROW_Y(row));
       row++; }
 
     /* 5 屏幕亮度 */
@@ -206,7 +245,8 @@ void pk_settings_page_render(uint16_t *fb)
       ROW_LABEL(row, "BRIGHTNESS");
       /* AUTO 置灰：没有环境光传感器，选了也无从自动。摆出来是因为 spec 列了
        * 它，灰掉是因为不能假装能用——留一个点了没反应的选项更糟。 */
-      draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_level_get(), false);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_level_get(), false);
+      hit_set(row, 1, _x, seg_last_w(), 4, ROW_Y(row));
       row++; }
 
     /* 6 日间/夜间配色 */
@@ -218,15 +258,17 @@ void pk_settings_page_render(uint16_t *fb)
     /* 7 记录存储 */
     { static const char *o[] = { "FLASH", "SD CARD" };
       ROW_LABEL(row, "LOG STORAGE");
-      draw_seg(fb, ROW_Y(row), o, 2,
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                pk_log_store_get() == PK_LOG_STORE_SD ? 1 : 0,
                !pk_sdcard_is_mounted());
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       row++; }
 
     /* 8 蓝牙开关（P2-4）——放在格式化之前，让危险按钮独占最底下那一行。 */
     { static const char *o[] = { "OFF", "ON" };
       ROW_LABEL(row, "BLUETOOTH");
-      draw_seg(fb, ROW_Y(row), o, 2, pk_ble_enabled_get() ? 1 : 0, false);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2, pk_ble_enabled_get() ? 1 : 0, false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       /* 「重启后生效」必须写出来：BLE 起停牵扯 NimBLE 的卸载路径，更牵扯
        * hosted 握手要排在点屏之前那条硬约束，运行时切会打乱开机顺序。
        * 不写的话，点了没反应会被当成 bug。 */
@@ -258,6 +300,7 @@ void pk_settings_page_render(uint16_t *fb)
                  y0 + (SET_CTL_H - PK_AA_S_H) / 2, txt,
                  avail ? pk_rgb565(255, 255, 255) : pk_rgb565(120, 124, 132),
                  PK_AA_S);
+      hit_set(row, 3, x0, w, 0, y_mid);
       row++; }
 
     /* 顶栏最后画，行从底下滑过。 */
@@ -277,6 +320,7 @@ bool pk_settings_page_touch(int x, int y)
     /* 右侧 FAB 那条必须放行，否则设置页就切不走了（列表页踩过这个坑）。 */
     s_press_valid = (y >= PFD_BAR_BOT && x < SET_CTL_R + 8);
     if (!s_press_valid) return false;
+    s_press_x      = x;
     s_press_y      = y;
     s_press_scroll = s_set_scroll;
     s_moved        = false;
@@ -298,7 +342,43 @@ bool pk_settings_page_drag(int x, int y)
     return true;
 }
 
-void pk_settings_page_touch_up(void)     { s_press_valid = false; s_moved = false; }
+/*
+ * 松手：没拖动过才算点击，按**按下时**的坐标分派。
+ *
+ * 分工：本文件只做命中判定（它拥有几何），真正的写操作在 settings_page.c
+ * 的 pk_settings_apply()——那边才该碰 NVS、起格式化任务。
+ */
+void pk_settings_page_touch_up(void)
+{
+    const bool click = s_press_valid && !s_moved;
+    const int  y = s_press_y, x = s_press_x;
+    s_press_valid = false;
+    s_moved       = false;
+    if (!click) return;
+
+    for (int r = 0; r < SET_ROWS; ++r) {
+        const row_hit_t *h = &s_hit[r];
+        if (h->kind == 0 || y < h->y0 || y >= h->y1) continue;
+        if (x < h->x0 || x >= h->x0 + h->w * (h->kind == 1 ? h->n : 1)) continue;
+
+        switch (h->kind) {
+        case 1:   /* 分段：算落在第几段 */
+            pk_settings_apply(r, (x - h->x0) / h->w);
+            return;
+        case 2: { /* 步进器：左 1/3 是 −，右 1/3 是 + ，中间的值区不响应 */
+            const int third = h->w / 3;
+            if (x < h->x0 + third)            pk_settings_apply(r, -1);
+            else if (x >= h->x0 + h->w - third) pk_settings_apply(r, +1);
+            return;
+        }
+        case 3:   /* 按钮 */
+            pk_settings_apply(r, 0);
+            return;
+        default:
+            return;
+        }
+    }
+}
 void pk_settings_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
 
 #ifdef PK_SIM_BUILD

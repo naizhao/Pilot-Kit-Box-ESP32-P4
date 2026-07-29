@@ -219,3 +219,7 @@ bool record_sink_file_uses_sd(void) { return sim_env("PK_SIM_SET_LOGSD", 0) != 0
 
 /* BLE 开关（config_ble）。PK_SIM_SET_BLE=0 关，默认开。 */
 bool pk_ble_enabled_get(void) { return sim_env("PK_SIM_SET_BLE", 1) != 0; }
+
+/* 设置页的写操作在 settings_page.c（依赖 FreeRTOS，不进模拟器）。
+ * 桩成空实现：模拟器只验证版面与命中几何，不改状态。 */
+void pk_settings_apply(int row, int v) { (void)row; (void)v; }
