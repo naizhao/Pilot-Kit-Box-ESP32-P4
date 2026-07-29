@@ -152,7 +152,17 @@ static void fmt_clock(char *buf, size_t bufsz)
  * Main render entry point
  * -------------------------------------------------------------------------- */
 
-void pk_diag_page_render(uint16_t *fb)
+/*
+ * 旧的逐行详情视图。
+ *
+ * spec §5.5 把诊断改成两层：**总览 2×4 卡片**（每格只给标题 + 一行核心值），
+ * 点卡片才进子系统详情页；而详情页"必须保留 diag_page.c 现有全部深度"——
+ * 尤其 GPS 那段每星座独立的 SNR 柱状图，那是排查 no-fix 的命门。
+ *
+ * 所以这段一行都不删，改名留着，等详情那一层接上来直接复用。当前未被调用。
+ */
+__attribute__((unused))
+static void diag_render_legacy(uint16_t *fb)
 {
     /* Clear background — may be coming from any other view. */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
@@ -424,4 +434,196 @@ void pk_diag_page_render(uint16_t *fb)
     pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                     DIAG_LEFT_PAD, DIAG_HEADER_UI_Y, "DIAGNOSTICS", COL_HEADER);
     fill_rect(fb, 0, 22, PK_DISPLAY_W, 24, COL_DIVIDER);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 总览：2 × 4 卡片（spec §5.5）
+ *
+ * 每格只给「标题 + 一行核心值」，深度留给详情页。这个取舍是 spec 定的，
+ * 理由也站得住：诊断页最常见的用法是**扫一眼看哪个子系统不对**，而不是读
+ * 具体数值——旧的逐行版把十几行数据平铺出来，反而要逐行找哪一行是红的。
+ *
+ * 八格固定，不随状态增减：格子位置固定，肌肉记忆才建立得起来；某个子系统
+ * 没数据就在它自己那格里说，而不是从版面上消失。
+ * ═════════════════════════════════════════════════════════════════════ */
+
+#include "pfd_aa_text.h"
+#include "pfd_layout.h"
+#include "pfd_draw.h"
+#include "soc_temp.h"
+
+#define CARD_COLS   2
+#define CARD_ROWS   4
+#define CARD_PAD    16
+#define CARD_GAP    12
+#define CARD_W      ((PK_DISPLAY_W - CARD_PAD * 2 - CARD_GAP) / CARD_COLS)
+#define CARD_TOP    (PFD_BAR_BOT + 8)
+#define CARD_H      ((PK_DISPLAY_H - CARD_TOP - CARD_PAD + CARD_GAP) \
+                     / CARD_ROWS - CARD_GAP)
+
+/* 状态灯：一格一个圆点，颜色即结论。绿=正常、琥珀=连着但不正常、
+ * 红=不可用、灰=不适用/未启用。四种颜色与 PFD、交通页、列表页一致。 */
+typedef enum { ST_OK = 0, ST_WARN, ST_BAD, ST_NA } card_state_t;
+
+static uint16_t state_color(card_state_t st)
+{
+    switch (st) {
+    case ST_OK:   return COL_ONLINE;
+    case ST_WARN: return COL_WARN;
+    case ST_BAD:  return COL_ALERT;
+    default:      return COL_PLACEHOLDER;
+    }
+}
+
+static void draw_card(uint16_t *fb, int col, int row, const char *title,
+                      const char *value, card_state_t st)
+{
+    const int x = CARD_PAD + col * (CARD_W + CARD_GAP);
+    const int y = CARD_TOP + row * (CARD_H + CARD_GAP);
+
+    pk_pfd_fill_rect(fb, x, y, x + CARD_W, y + CARD_H, pk_rgb565(16, 22, 32));
+    /* 左侧一条状态色带，比只在角上点一个圆点更容易在余光里扫到——诊断页
+     * 的第一诉求就是「哪一格不对」。 */
+    pk_pfd_fill_rect(fb, x, y, x + 5, y + CARD_H, state_color(st));
+
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18, y + 10,
+               title, COL_KEY, PK_AA_XS);
+
+    /* 值太长就降到 S 档。卡片只有一行的空间，截断会把 "NO DONGLE - use P1
+     * header" 这种**正是要读的**信息截掉，降档是无损的。 */
+    const int avail = CARD_W - 26;
+    const int need  = (int)strlen(value) * pk_aa_cell_w(PK_AA_M);
+    const pk_aa_size_t sz = (need <= avail) ? PK_AA_M : PK_AA_S;
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18,
+               y + CARD_H - 12 - pk_aa_cell_h(sz), value, state_color(st), sz);
+}
+
+void pk_diag_page_render(uint16_t *fb)
+{
+    char buf[64];
+
+    fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2, "DIAGNOSTICS", COL_HEADER,
+               PK_AA_M);
+
+    /* ── IMU ── */
+    {
+        pk_imu_sample_t s;
+        if (pk_imu_sample_get(&s) && s.valid) {
+            snprintf(buf, sizeof(buf), "cal %u/3   yaw %.0f",
+                     s.accuracy, (double)s.yaw_deg);
+            /* 校准等级本身就是可信度：cal 0 时航向可以差几十度，数据却照样
+             * "有效"——这正是最该在总览里就看见的。 */
+            draw_card(fb, 0, 0, "IMU", buf,
+                      s.accuracy >= 2 ? ST_OK : ST_WARN);
+        } else {
+            draw_card(fb, 0, 0, "IMU", "BNO085 offline", ST_BAD);
+        }
+    }
+
+    /* ── BARO ── */
+    {
+        pk_baro_state_t b;
+        pk_baro_get(&b);
+        if (b.valid) {
+            snprintf(buf, sizeof(buf), "%d ft   %.1f hPa",
+                     b.alt_ft, (double)b.pressure_pa / 100.0);
+            draw_card(fb, 1, 0, "BARO", buf, ST_OK);
+        } else {
+            draw_card(fb, 1, 0, "BARO", "BMP388 offline", ST_BAD);
+        }
+    }
+
+    /* ── GPS ──
+     * 有没有 fix 与看得见几颗星是两件事：sats 有数而 fix=0 说明信号弱/遮挡，
+     * sats=0 才是天线或接线问题。总览里两个数都给，省得点进详情才发现方向
+     * 找错了（这正是 no-fix 那次排查的教训）。 */
+    {
+        pk_gps_state_t g = {0};
+        pk_gps_get(&g);
+        const bool fresh = g.have_fix &&
+                           (esp_timer_get_time() - g.updated_us) < GPS_FRESH_US;
+        if (fresh) {
+            snprintf(buf, sizeof(buf), "fix   %d sats   HDOP %.1f",
+                     g.sats, (double)g.hdop);
+            draw_card(fb, 0, 1, "GPS", buf, ST_OK);
+        } else if (g.snr_count > 0) {
+            /* 看得见星却定不了位 = 信号弱/遮挡，是"再等等或换个位置"。 */
+            snprintf(buf, sizeof(buf), "no fix   %d visible", g.snr_count);
+            draw_card(fb, 0, 1, "GPS", buf, ST_WARN);
+        } else {
+            /* 一颗都看不见 = 天线或馈电，跟"等信号"完全是两个方向。这个区分
+             * 是 no-fix 那次排查最贵的教训，必须留在总览层。 */
+            draw_card(fb, 0, 1, "GPS", "no sats - check antenna", ST_BAD);
+        }
+    }
+
+    /* ── SDR ── */
+    {
+        uint32_t drop_kb = 0;
+        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
+        pk_dsp_stats_t d;
+        pk_dsp_get_stats(&d);
+        switch (st) {
+        case PK_SDR_NO_DEVICE:
+            draw_card(fb, 1, 1, "SDR", "NO DONGLE - use P1 header", ST_BAD);
+            break;
+        case PK_SDR_ATTACHED:
+            draw_card(fb, 1, 1, "SDR", "attached, opening...", ST_WARN);
+            break;
+        case PK_SDR_STALLED:
+            draw_card(fb, 1, 1, "SDR", "STALLED - no IQ >1s", ST_WARN);
+            break;
+        default:
+            snprintf(buf, sizeof(buf), "%luMS/s  msgs %lu",
+                     (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
+                     (unsigned long)d.msgs_total);
+            draw_card(fb, 1, 1, "SDR", buf, ST_OK);
+            break;
+        }
+    }
+
+    /* ── BLE ── */
+    {
+        const bool conn = ble_gatt_is_connected();
+        const bool adv  = ble_gatt_is_advertising();
+        draw_card(fb, 0, 2, "BLE",
+                  conn ? "connected" : adv ? "advertising" : "idle",
+                  conn ? ST_OK : adv ? ST_WARN : ST_NA);
+    }
+
+    /* ── LOG ── */
+    {
+        uint32_t written = 0, dropped = 0;
+        if (record_sink_file_stats(&written, &dropped)) {
+            snprintf(buf, sizeof(buf), "%s  w %lu",
+                     record_sink_file_uses_sd() ? "microSD" : "flash",
+                     (unsigned long)written);
+            /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。 */
+            draw_card(fb, 1, 2, "LOG", buf,
+                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_NA);
+        } else {
+            draw_card(fb, 1, 2, "LOG", "sink down", ST_BAD);
+        }
+    }
+
+    /* ── CLK ── */
+    {
+        char tbuf[48];
+        fmt_clock(tbuf, sizeof(tbuf));
+        draw_card(fb, 0, 3, "CLK", tbuf,
+                  pk_clock_is_synced() ? ST_OK : ST_WARN);
+    }
+
+    /* ── SYS ──
+     * spec §5.5 点名新增：产品定位是「Garmin 高温死机时的备份」，那么自身
+     * 温度必须可见——一个会因为过热而死机的备份等于没有备份。 */
+    {
+        int temp_c = 0;
+        const bool over = pk_soc_temp_get(&temp_c);
+        snprintf(buf, sizeof(buf), "SoC %d C", temp_c);
+        draw_card(fb, 1, 3, "SYS", buf,
+                  over ? ST_BAD : temp_c >= 75 ? ST_WARN : ST_OK);
+    }
 }
