@@ -50,6 +50,13 @@ pk_aa_weight_t pk_aa_get_weight(void);
 
 /* 单个字形的 cell 尺寸 —— 定宽，布局计算直接乘字符数即可。 */
 int pk_aa_cell_w(pk_aa_size_t size);
+
+/*
+ * 文本显示宽度(px)。**排版一律用它，不要用 strlen × cell_w**——后者数的是
+ * 字节，一个汉字 3 字节却只画一个字形，而且 CJK 字形比拉丁宽。
+ * 推进规则与 pk_aa_puts 同源。
+ */
+int pk_aa_text_width(const char *s, pk_aa_size_t size);
 int pk_aa_cell_h(pk_aa_size_t size);
 
 /*

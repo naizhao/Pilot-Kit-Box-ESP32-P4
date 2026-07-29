@@ -62,6 +62,10 @@ static int  s_press_y, s_press_scroll;
 static bool s_press_valid, s_moved;
 #define SET_DRAG_SLOP  12
 
+/* 触摸目标下限。屏 800 px ≈ 95 mm → 8.4 px/mm；通行下限 9 mm ≈ 76 px
+ * （iOS 44 pt / Material 48 dp 同量级）。座舱里戴手套、有颠簸，取 80。 */
+#define SEG_MIN_TOUCH_W  80
+
 /* 一个分段控件：n 个选项，sel 为当前项。返回控件左缘，供命中判定复用。 */
 static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
                     int sel, bool dim)
@@ -74,12 +78,27 @@ static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
 
     /* 每段宽度按最长选项算，所有段等宽——不等宽的分段控件在余光里像是
      * "当前项被放大了"，会误以为那是可拖动的滑块。 */
-    int maxlen = 1;
+    int maxw = 1;
     for (int i = 0; i < n; ++i) {
-        const int l = (int)strlen(opts[i]);
-        if (l > maxlen) maxlen = l;
+        const int lw = pk_aa_text_width(opts[i], PK_AA_S);
+        if (lw > maxw) maxw = lw;
     }
-    const int seg_w = maxlen * pk_aa_cell_w(PK_AA_S) + 20;
+    /*
+     * 段宽有下限，不能只按文字宽度算。
+     *
+     * 这块屏 800 px 对应约 95 mm，即 8.4 px/mm。触摸目标的通行下限是 9 mm
+     * （iOS 44 pt / Material 48 dp 都在这个量级），换算过来 ≈ 76 px。
+     * 初版写的 maxw + 20，量程那行每段只有 42 px ≈ 5 mm——比指尖还小，
+     * 屏上看着也像一排装饰性的小标签。
+     *
+     * 座舱里还要再打个折扣：戴手套、有颠簸、注意力在窗外。所以取 80 px
+     * （≈9.5 mm）而不是刚好卡在 76。
+     *
+     * 高度那侧靠命中区补：视觉仍按 spec 的 38 px（版面不能被撑散），但
+     * 点击判定用整行 64 px——这是控件类 UI 的通行做法，视觉紧凑、手感宽松。
+     */
+    int seg_w = maxw + 32;
+    if (seg_w < SEG_MIN_TOUCH_W) seg_w = SEG_MIN_TOUCH_W;
     const int total = seg_w * n;
     const int x0    = SET_CTL_R - total;
     const int y0    = y_mid - SET_CTL_H / 2;
@@ -96,7 +115,7 @@ static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
         if (on && !dim)
             pk_pfd_fill_round_rect(fb, sx + 2, y0 + 2, sx + seg_w - 2,
                                    y0 + SET_CTL_H - 2, radius - 2, SEG_ON);
-        const int tw = (int)strlen(opts[i]) * pk_aa_cell_w(PK_AA_S);
+        const int tw = pk_aa_text_width(opts[i], PK_AA_S);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    sx + (seg_w - 2 - tw) / 2, y0 + (SET_CTL_H - PK_AA_S_H) / 2,
                    opts[i], dim ? SEG_DIM : (on ? SEG_TXT_ON : SEG_TXT_OFF),
@@ -110,8 +129,10 @@ static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
 {
     const uint16_t STP_BTN = pk_rgb565(28, 36, 48);
     const uint16_t STP_TXT = pk_rgb565(235, 240, 248);
-    const int btn_w = 44;
-    const int val_w = 130;
+    /* 与分段同一个下限：44 px 只有 5.2 mm，比指尖还小。QNH 是要连点好几下
+     * 才调到位的控件（0.01 hPa 一步），点不准的代价比别处更大。 */
+    const int btn_w = SEG_MIN_TOUCH_W;
+    const int val_w = 140;
     const int y0    = y_mid - SET_CTL_H / 2;
     const int x0    = SET_CTL_R - (btn_w * 2 + val_w);
 
@@ -120,7 +141,7 @@ static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + btn_w / 2 - 5,
                y0 + (SET_CTL_H - PK_AA_M_H) / 2, "-", STP_TXT, PK_AA_M);
 
-    const int vw = (int)strlen(val) * pk_aa_cell_w(PK_AA_S);
+    const int vw = pk_aa_text_width(val, PK_AA_S);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                x0 + btn_w + (val_w - vw) / 2,
                y0 + (SET_CTL_H - PK_AA_S_H) / 2, val, STP_TXT, PK_AA_S);
@@ -212,7 +233,7 @@ void pk_settings_page_render(uint16_t *fb)
       { const int _y = ROW_Y(row);
         if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                       SET_PAD + 11 * pk_aa_cell_w(PK_AA_M) + 12,
+                       SET_PAD + pk_aa_text_width("BLUETOOTH", PK_AA_M) + 16,
                        _y - PK_AA_XS_H / 2, "(restart)",
                        pk_rgb565(120, 130, 145), PK_AA_XS); }
       row++; }
@@ -232,7 +253,7 @@ void pk_settings_page_render(uint16_t *fb)
       const char *txt = !pk_sdcard_is_mounted() ? "NO CARD"
                       : record_sink_file_uses_sd() ? "IN USE"
                       : armed ? "TAP AGAIN 5s" : "FORMAT";
-      const int tw = (int)strlen(txt) * pk_aa_cell_w(PK_AA_S);
+      const int tw = pk_aa_text_width(txt, PK_AA_S);
       pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
                  y0 + (SET_CTL_H - PK_AA_S_H) / 2, txt,
                  avail ? pk_rgb565(255, 255, 255) : pk_rgb565(120, 124, 132),

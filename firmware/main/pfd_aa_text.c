@@ -272,6 +272,37 @@ static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
     pk_aa_blit_4bpp(fb, fb_w, fb_h, x, y, glyph, cw, ch, color);
 }
 
+/*
+ * 文本的**显示宽度**（px）。
+ *
+ * 不能用 strlen × cell_w：strlen 数的是字节，而一个汉字占 3 字节却只画一个
+ * 字形；反过来 CJK 字形也比拉丁宽（PK_AA_*_CJK_W vs PK_AA_*_W）。设置页那
+ * 个分段控件就是这么错位的——"中文" 被当成 6 个字符算宽度，段宽多出一截、
+ * 居中偏移也跟着偏。
+ *
+ * 推进规则与 pk_aa_puts 逐行一致（连"字库里没这个字时按 cell_w 留空"这条
+ * 都一样），两者必须同源，否则量出来的宽度和画出来的不符。
+ */
+int pk_aa_text_width(const char *s, pk_aa_size_t size)
+{
+    if (!s) return 0;
+    if (size < 0 || size >= PK_AA_SIZE_COUNT) size = PK_AA_M;
+
+    const aa_face_t *face = &s_faces[size];
+    const aa_cjk_face_t *cjk = &s_cjk_faces[size];
+    int w = 0;
+
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        uint32_t cp = utf8_next(&p);
+        if (cp == '~' || cp == 0x00B0) cp = 0x7F;
+        if (cp <= 0x7F) { w += face->cell_w; continue; }
+        const int gi = (cjk->bitmap[0] != NULL) ? cjk_index(cp) : -1;
+        w += (gi < 0) ? face->cell_w : cjk->cell_w;
+    }
+    return w;
+}
+
 int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
                int x, int y, const char *s,
                uint16_t color, pk_aa_size_t size)
