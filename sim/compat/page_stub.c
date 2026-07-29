@@ -155,3 +155,21 @@ int pk_ui_traffic_resolve(const uint32_t *icaos, size_t n)
     (void)icaos;
     return n > 0 ? 0 : -1;
 }
+
+/* 看板页的选中行。默认取中间那架而不是第 0 行：滚动窗口要把选中行钉在中央，
+ * 选 0 行则永远滚不起来，「超出一屏」这个最糟情况就压不到。
+ * PK_SIM_LIST_SEL=<row> 可指定，用来截图验证首/末行的边界处理。 */
+int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n)
+{
+    (void)icaos;
+    if (n == 0) return -1;
+    const char *e = getenv("PK_SIM_LIST_SEL");
+    int row = e ? atoi(e) : (int)n / 2;
+    if (row < 0) row = 0;
+    if (row >= (int)n) row = (int)n - 1;
+    return row;
+}
+
+void pk_ui_list_scroll(int delta) { (void)delta; }
+
+uint32_t pk_ui_list_get_selected_icao(void) { return 0; }

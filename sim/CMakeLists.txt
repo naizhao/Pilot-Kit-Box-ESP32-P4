@@ -76,9 +76,6 @@ set(FW ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/main)
 # 本身原样编译，不存在两套实现走偏的问题。mag_var.c / traffic_geom.c / geo.c
 # 是纯计算，直接编译。
 #
-# 尚未纳入：
-#   traffic_page.c  → 需要整页的输入状态，等 PFD 这条线定稿后再说
-#   adsb_list.c     → aircraft_db / i18n
 set(FW_DRAW_SRC
     ${FW}/pfd_draw.c
     ${FW}/pfd_font.c
@@ -105,6 +102,7 @@ set(FW_DRAW_SRC
     ${FW}/about_page.c
     ${FW}/boot_splash.c
     ${FW}/traffic_page.c
+    ${FW}/adsb_list.c
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c

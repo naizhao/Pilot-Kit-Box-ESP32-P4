@@ -40,6 +40,7 @@
 #include "lv_backend.h"
 #include "pk_ui_nav.h"
 #include "about_page.h"
+#include "adsb_list.h"
 #include "boot_splash.h"
 #include "traffic_page.h"
 
@@ -199,6 +200,8 @@ static int run_headless(float at_sec, const char *out)
             pk_boot_splash_render(fb);
         } else if (strcmp(page, "traffic") == 0) {
             pk_traffic_page_render(fb);
+        } else if (strcmp(page, "list") == 0) {
+            pk_adsb_list_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
             return 2;

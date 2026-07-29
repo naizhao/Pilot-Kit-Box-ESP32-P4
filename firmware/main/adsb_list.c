@@ -1,15 +1,28 @@
 /*
- * adsb_list.c — ADS-B aircraft list + selected-aircraft detail view.
+ * adsb_list.c — 空管看板：当前跟踪到的全部 ADS-B 目标，一行一架。
  *
- * Pure pixel pushing — no I/O, no allocation, no state of its own.
- * Pulls the live aircraft snapshot from aircraft_state, the selection
- * cursor from ui_state, and renders into the caller's framebuffer.
+ * 与交通页的分工
+ * --------------
+ * 交通页回答「谁会撞上我」——极坐标、只画量程内、信息压到最少。
+ * 本页回答「天上现在都有谁」——表格、全部目标、每架把能解出来的字段摊开。
+ * 同一份 aircraft_state 快照，两种读法，所以两页的**排序、配色、箭头语汇
+ * 必须一致**，否则同一架飞机在两页看起来像两架。
  *
- * The list uses scale-1 (5×7) font so we can fit ICAO + callsign +
- * altitude + speed + heading + vertical-rate on one 320-px landscape
- * row (≈ 52 columns wide). The detail pane below uses scale-2 (10×14)
- * for the "ICAO:" / "Callsign:" key columns and scale-1 for the
- * values that need more width (lat/lon).
+ * 布局（800 × 480，spec §5.3）
+ * ---------------------------
+ *   y   0..48    顶栏（与 PFD / 交通页同高）
+ *   y  48..78    列标题
+ *   y  78..462   数据行 8 × 48
+ *   y 462..480   底部：滚动位置
+ *
+ * spec 写的是 7 行 × 48 px。实测 78 + 8×48 = 462 正好落在屏内，多一行就多
+ * 一架能一眼看到的飞机，故取 8 行——spec 的行数是估算，屏高是硬的。
+ *
+ * 为什么单行而不是交通页那种两行卡片
+ * ----------------------------------
+ * 右栏卡片只有 260 px 宽，塞不下七列，只能折两行。这里有 768 px，七列一行
+ * 排得开；而表格的价值恰恰在于**同一列纵向可比**——高度、距离、速度扫一眼
+ * 就能排出大小，折行会把这个能力毁掉。
  */
 
 #include "adsb_list.h"
@@ -17,731 +30,418 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+
+#include "sdkconfig.h"
 
 #include "esp_attr.h"
 #include "esp_timer.h"
 
-#include "aircraft_db.h"
 #include "aircraft_state.h"
-#include "geo.h"
-#include "own_ship.h"
-#include "imu_task.h"
-#include "airline_codes.h"
+#include "baro.h"
 #include "display.h"
-#include "icao_country.h"
-#include "pfd_font.h"
+#include "imu_task.h"
+#include "mag_var.h"
+#include "own_ship.h"
+#include "pfd_aa_font.h"
+#include "pfd_aa_text.h"
+#include "pfd_draw.h"
+#include "pfd_icon_font.h"
+#include "pfd_layout.h"
+#include "traffic_geom.h"
 #include "ui_state.h"
 
-/* --- Layout constants ------------------------------------------------
+/* ── 版面 ───────────────────────────────────────────────────── */
+
+#define LST_TOP       PFD_BAR_BOT              /* 顶栏下沿 */
+#define HDR_H         30                       /* 列标题行 */
+#define ROW0_Y        (LST_TOP + HDR_H)
+#define ROW_H         48
+#define ROW_N         8
+#define LIST_BOT      (ROW0_Y + ROW_N * ROW_H) /* 462 */
+
+#define PAD_L         16
+#define PAD_R         16
+
+/*
+ * 列的 x 与宽度。
  *
- * The list / detail split is ADAPTIVE: each frame we count how many
- * detail lines the selected aircraft needs (some fields are conditional —
- * Reg, Op, Sqwk, Cat, Type, Dist) and grow / shrink the list area
- * accordingly.
+ * 数字列一律**右对齐**：右对齐后个位数纵向落在同一条线上，扫一眼就能比出
+ * 16700 和 9900 谁高；左对齐则要逐个数位数。呼号是文本，左对齐。
  *
- *   - When the selected aircraft has lots of fields populated, the
- *     detail pane is tall and the list shows fewer rows (down to
- *     MIN_LIST_ROWS_VISIBLE).
- *   - When the selection is sparse (just an ICAO/Call/Pos/Alt/Vel/Seen
- *     skeleton), the list expands toward the bottom of the screen,
- *     showing more aircraft.
- *   - When no aircraft are tracked at all, the list area gets the
- *     entire screen and the detail pane disappears.
- *
- * Header / col-titles / row0 stay fixed at the top; only LIST_BOTTOM_Y
- * and DETAIL_TOP_Y are computed per frame.
+ *   BRG   CALL        DIST     ALT      V/S      GS     TRK
+ *   ↗045  CES2116W    12.3    16700    ↑1500    395    011°
  */
-#define LIST_HEADER_Y       0
-#define LIST_COLTITLES_Y    14
-#define LIST_ROW0_Y         24
-#define LIST_ROW_H          10        /* scale-1 cell (8 px) + 2 px gap */
-#define DETAIL_LINE_H       9         /* 8 px font + 1 px gap */
-#define DETAIL_BOTTOM_PAD   2         /* leave 2 px below the last detail line */
-#define DIVIDER_GAP_PX      4         /* 2 px divider + 2 px margin */
-#define MIN_LIST_ROWS_VISIBLE 6       /* floor: don't squeeze list below this */
-
-#define LIST_LEFT_PAD       4
-#define LIST_RIGHT_LIMIT    (PK_DISPLAY_W - 2)
-
-/* Column x-positions (scale-1 cell = 6 px) — laid out for 320 wide.
- * Total content ends ~ x=280, leaving ~40 px right slack.
+/* 右缘退到 FAB 之外：FAB 直径 56、右边距 16（pk_ui_nav.c），左缘落在 728。
+ * 初版把 TRK 列右对齐到 784，结果 FAB 正好盖住那一行的航向——七列信息密度
+ * 这么高的表格，最右列被遮掉一个数就得靠猜。
  *
- *   ICAO     CALL      CT ALT   SPD HDG  VS    SQK   W
- *   780B1A   CZ1234    CN 16700 371 ^011 ^1500 1234  H
- *   6 chars  8 chars   2  5     3   4    5     4     1
- */
-#define COL_X_ICAO    (LIST_LEFT_PAD)              /*   4 */
-#define COL_X_CALL    (LIST_LEFT_PAD +  42)        /*  46  — 6c ICAO + gap */
-#define COL_X_CT      (LIST_LEFT_PAD +  96)        /* 100  — 8c CALL + gap */
-#define COL_X_ALT     (LIST_LEFT_PAD + 114)        /* 118  — 2c CT + gap */
-#define COL_X_SPD     (LIST_LEFT_PAD + 150)        /* 154  — 5c ALT + gap */
-#define COL_X_HDG     (LIST_LEFT_PAD + 174)        /* 178  — 3c SPD + gap */
-#define COL_X_VS      (LIST_LEFT_PAD + 204)        /* 208  — 4c HDG + gap */
-#define COL_X_SQK     (LIST_LEFT_PAD + 240)        /* 244  — 5c VS + gap */
-#define COL_X_TYPE    (LIST_LEFT_PAD + 270)        /* 274  — 4c SQK + gap */
+ * 不做「FAB 在哪边表格就往另一边让」的动态版面：FAB 可拖动，版面会跟着跳，
+ * 而表格列位一旦会动，纵向对齐这个唯一的好处就没了。 */
+#define FAB_LEFT_EDGE (PK_DISPLAY_W - 16 - 56)       /* 728 */
+#define CONTENT_R     (FAB_LEFT_EDGE - 12)           /* 716 */
 
-/* --- Palette --------------------------------------------------------- */
-#define COL_BG              pk_rgb565( 12,  12,  16)   /* very dark grey */
-#define COL_HEADER          pk_rgb565( 80, 220, 240)   /* cyan          */
-#define COL_COL_TITLE       pk_rgb565(140, 140, 140)   /* dim grey      */
-#define COL_ROW_FG          pk_rgb565(230, 230, 230)
-#define COL_ROW_BG          COL_BG
-#define COL_SELECTED_FG     pk_rgb565( 16,  16,  16)
-#define COL_SELECTED_BG     pk_rgb565(255, 215,   0)   /* yellow        */
-#define COL_DIVIDER         pk_rgb565( 60,  60,  70)
-#define COL_DETAIL_KEY      pk_rgb565( 80, 220, 240)   /* cyan          */
-#define COL_DETAIL_VAL      pk_rgb565(240, 240, 240)
-#define COL_EMPTY_HINT      pk_rgb565(160, 160, 160)
-#define COL_OWN_BIND        pk_rgb565(255,   0, 255)   /* magenta — runtime
-                                                          own-ship binding */
-#define COL_EMERGENCY       pk_rgb565(255,  72,  72)   /* bright red — Mode-A
-                                                          7500/7600/7700 squawk */
+#define COL_BRG_X     PAD_L                          /*  16 */
+#define COL_CALL_X    106
+/* 紧急码徽章自成一列，不跟在呼号后面浮动。
+ * 初版让它紧跟呼号，8 字符满宽呼号 + "NO RADIO" 直接压进了 DIST 列，把
+ * 距离盖掉一半——表格里任何"跟着内容长度走"的元素迟早会撞上邻列。 */
+#define COL_FLAG_X    234
+#define COL_DIST_R    350                            /* 右对齐基准 */
+#define COL_ALT_R     452
+#define COL_VS_R      558
+#define COL_GS_R      648
+#define COL_TRK_R     CONTENT_R                      /* 716 */
 
-/* --- Primitives ----------------------------------------------------- */
-static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
+#define LST_PUTS(fb, x, y, s, col, sz) \
+        pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), (sz))
+
+/* 右对齐：先量宽再倒推起点。CJK/箭头是宽字形，这里的列全是 ASCII，
+ * 用 cell_w × 字符数即可（等宽字体）。 */
+static void puts_right(uint16_t *fb, int right_x, int y, const char *s,
+                       uint16_t col, pk_aa_size_t sz)
 {
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > PK_DISPLAY_W) x1 = PK_DISPLAY_W;
-    if (y1 > PK_DISPLAY_H) y1 = PK_DISPLAY_H;
-    for (int y = y0; y < y1; ++y) {
-        uint16_t *row = fb + y * PK_DISPLAY_W;
-        for (int x = x0; x < x1; ++x) row[x] = c;
-    }
+    const int w = (int)strlen(s) * pk_aa_cell_w(sz);
+    LST_PUTS(fb, right_x - w, y, s, col, sz);
 }
 
-/* --- Helpers -------------------------------------------------------- */
-
-/* Right-justified scale-1 string. Returns x of the first glyph. */
-static int puts_right(uint16_t *fb, int right_x, int y,
-                      const char *s, uint16_t color)
+/* 八向箭头，与交通页同一张表——同一个方位在两页必须长得一样。 */
+static const char *bearing_arrow(float rel_deg)
 {
-    int w = (int)strlen(s) * PK_FONT_CELL_W(1);
-    int x = right_x - w;
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, y, s, color, 1);
-    return x;
-}
-
-/* Format helpers — keep these tight to fit in the row. */
-static void fmt_icao(char *buf, size_t cap, uint32_t icao)
-{
-    snprintf(buf, cap, "%06lX", (unsigned long)(icao & 0xFFFFFF));
-}
-
-/* Copy raw ADS-B callsign with trailing spaces trimmed. */
-static void trim_callsign(char *dst, size_t cap, const aircraft_t *a)
-{
-    if (cap == 0) return;
-    if (!a->have_callsign) {
-        dst[0] = '\0';
-        return;
-    }
-    size_t n = AIRCRAFT_CALLSIGN_LEN < cap ? AIRCRAFT_CALLSIGN_LEN : cap;
-    memcpy(dst, a->callsign, n);
-    dst[n - 1] = '\0';
-    for (int i = (int)strlen(dst) - 1; i >= 0 && dst[i] == ' '; --i) {
-        dst[i] = '\0';
-    }
+    static const char *kArrow[8] = {
+        "↑", "↗", "→", "↘",
+        "↓", "↙", "←", "↖",
+    };
+    float d = rel_deg;
+    while (d < 0.0f)    d += 360.0f;
+    while (d >= 360.0f) d -= 360.0f;
+    return kArrow[((int)((d + 22.5f) / 45.0f)) & 7];
 }
 
 /*
- * Format the list-view CALL column. Preference:
- *   1) "<IATA><digits>" if the ICAO prefix is in airline_codes.c
- *      (e.g. "CSN1234" → "CZ1234")
- *   2) Raw ADS-B callsign as-is (e.g. "N12345", "CSC1234" if no IATA)
- *   3) "--------" placeholder when no callsign decoded yet
- */
-static void fmt_call_column(char *buf, size_t cap, const aircraft_t *a)
-{
-    char raw[AIRCRAFT_CALLSIGN_LEN];
-    trim_callsign(raw, sizeof(raw), a);
-    if (raw[0] == '\0') {
-        snprintf(buf, cap, "--------");
-        return;
-    }
-    const char *flight_no = NULL;
-    const pk_airline_t *air = pk_airline_from_callsign(raw, &flight_no);
-    if (air && air->iata2 && air->iata2[0] && flight_no && flight_no[0]) {
-        snprintf(buf, cap, "%s%s", air->iata2, flight_no);
-    } else {
-        snprintf(buf, cap, "%s", raw);
-    }
-}
-
-/* True if the given decoded squawk is one of the three ICAO-reserved
- * emergency codes — values are decimal-display of the 4 octal digits
- * (see mode-s.c:412-428 conversion). */
-static bool squawk_is_emergency(int squawk)
-{
-    return squawk == 7500 || squawk == 7600 || squawk == 7700;
-}
-
-/* Vertical-rate state icon: ↑ any climb / ↓ any descent / '-' exactly
- * level (vs == 0). Re-uses the 0x80 / 0x84 (N/S) compass glyphs from
- * pfd_font so the iconography matches the HDG column.
+ * 紧急应答机码 → 短标签。无则返回 NULL。
  *
- * No magnitude threshold — using ±100 fpm as a "level" band caused
- * cases like vs=-64 to render as "-64 fpm" (dash icon + magnitude 64)
- * which reads as negative 64. With strict sign-based mapping, vs=-64
- * → ↓64 fpm and vs=+1500 → ↑1500 fpm, unambiguous. */
-static char vs_state_icon(int vs_fpm, bool have)
+ * spec §5.3 把 SQK 归到详情抽屉里。三个国际通用紧急码是例外，必须留在主表：
+ *
+ *   7500  劫机   7600  通信失效   7700  一般紧急
+ *
+ * 它们是「这架飞机现在有事」的最强信号，而抽屉一次只能开一架——真出事时
+ * 要挨个点开十几行才能找到那一架，等于没有。放在呼号右边，扫一眼就到。
+ *
+ * 只认这三个，不显示普通 SQK：普通码（1200、2000、管制分配的四位数）在
+ * 主表里既不影响决策也占地方，那才是抽屉该干的活。
+ */
+static const char *emergency_tag(const aircraft_t *a)
 {
-    if (!have)         return ' ';
-    if (vs_fpm > 0)    return PK_FONT_ARROW_N;
-    if (vs_fpm < 0)    return PK_FONT_ARROW_S;
-    return '-';
-}
-
-/* HDG direction icon — dual-mode:
- *   - Own-ship bound + has velocity: render the target's heading
- *     RELATIVE to own-ship's track. ↑ = same direction, ↘ = ~135°
- *     right of own's nose, etc. Operationally useful — shows
- *     convergent / divergent traffic at a glance.
- *   - Otherwise: render the target's ABSOLUTE compass heading.
- *     0° → ↑, 045° → ↗, 090° → →, ..., 315° → ↖. Every row gets a
- *     directional cue even without an own-ship reference.
- * Returns ' ' only when the target itself has no velocity. */
-static char hdg_dir_icon(const aircraft_t *target,
-                         bool have_own_velocity,
-                         int own_heading_deg)
-{
-    if (!target->have_velocity) return ' ';
-    int ref = have_own_velocity ? (target->heading_deg - own_heading_deg)
-                                : target->heading_deg;
-    return pk_font_arrow_for_delta_deg(ref);
-}
-
-/* geo_dist_brg + great-circle macros moved to geo.c / geo.h — shared by
- * the ADS-B list, the Traffic radar page, and the HSI traffic overlay. */
-
-static void fmt_age_s(char *buf, size_t cap, int64_t now_us, int64_t then_us)
-{
-    int sec = (int)((now_us - then_us) / 1000000LL);
-    if (sec < 0) sec = 0;
-    if (sec < 60) {
-        snprintf(buf, cap, "%2ds ago", sec);
-    } else {
-        int min = sec / 60;
-        snprintf(buf, cap, "%dm ago", min);
+    if (!a->have_squawk) return NULL;
+    switch (a->squawk) {
+    case 7500: return "HJK";     /* 劫机 */
+    case 7600: return "NORDO";   /* no radio，航空通用缩写 */
+    case 7700: return "EMG";
+    default:   return NULL;
     }
 }
 
-/* --- List render ---------------------------------------------------- */
-
-static void render_header(uint16_t *fb, size_t n_aircraft)
+/* 呼号；没广播过就退回 ICAO 十六进制。留空会被当成渲染坏了。 */
+static void callsign_of(const aircraft_t *a, char *out, size_t cap)
 {
-    char buf[40];
-    snprintf(buf, sizeof(buf), "ADS-B AIRCRAFT (%u)", (unsigned)n_aircraft);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD, LIST_HEADER_Y, buf, COL_HEADER, 1);
+    if (a->have_callsign && a->callsign[0]) {
+        size_t j = 0;
+        for (size_t i = 0; i < sizeof(a->callsign) && a->callsign[i]; ++i)
+            if (a->callsign[i] != ' ' && j + 1 < cap) out[j++] = a->callsign[i];
+        out[j] = '\0';
+        if (j) return;
+    }
+    snprintf(out, cap, "%06lX", (unsigned long)a->icao24);
 }
 
-static void render_col_titles(uint16_t *fb)
+/* 气压 → 1013.25 标准高度(ft)，与目标 Mode-C 同基准（同 traffic_page）。 */
+static int std_alt_ft_from_pa(float pa)
 {
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_ICAO, LIST_COLTITLES_Y, "ICAO",   COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_CALL, LIST_COLTITLES_Y, "CALL",   COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_CT,   LIST_COLTITLES_Y, "CT",     COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_ALT,  LIST_COLTITLES_Y, "ALT",    COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_SPD,  LIST_COLTITLES_Y, "SPD",    COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_HDG,  LIST_COLTITLES_Y, "HDG",    COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_VS,   LIST_COLTITLES_Y, "VS",     COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_SQK,  LIST_COLTITLES_Y, "SQK",    COL_COL_TITLE, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 COL_X_TYPE, LIST_COLTITLES_Y, "TYPE",   COL_COL_TITLE, 1);
+    float alt_m = 44330.0f * (1.0f - powf(pa / 101325.0f, 0.190295f));
+    return (int)lroundf(alt_m * 3.28084f);
 }
 
-static void render_row(uint16_t *fb, int row_idx, int y, bool selected,
-                       bool is_own_bound,
-                       bool have_own_velocity, int own_heading_deg,
-                       const aircraft_t *a)
+/* 一行的数据 + 算好的相对几何。 */
+typedef struct {
+    aircraft_t       *ac;
+    pk_traffic_rel_t  rel;
+} row_t;
+
+/*
+ * 威胁判据：**同高度且靠得近**。
+ *
+ * 高度差 ±1000 ft 是全项目统一的「同高度」阈值（PFD 交通标签、交通页高度差
+ * 都用它）；再叠一个 5 NM 的距离闸门，否则 60 NM 外的同高度飞机也会标红，
+ * 整屏红光一片——那等于没有告警。
+ *
+ * 没有相对高度数据时**不标红**：不知道高度差就不知道是不是威胁，标红是在
+ * 编造信息，而红色在座舱里意味着「立刻处理」。
+ */
+static bool is_threat(const pk_traffic_rel_t *r)
 {
-    uint16_t fg = selected ? COL_SELECTED_FG : COL_ROW_FG;
-    uint16_t bg = selected ? COL_SELECTED_BG : COL_ROW_BG;
+    return r->valid && r->rel_alt_valid &&
+           r->rel_alt_ft > -1000 && r->rel_alt_ft < 1000 &&
+           r->dist_nm < 5.0f;
+}
 
-    /* Row background spans the full width. */
-    fill_rect(fb, 0, y - 1, PK_DISPLAY_W, y + 8, bg);
+static void draw_header(uint16_t *fb, int n, uint16_t col_hdr, uint16_t col_dim)
+{
+    const int ty = (PFD_BAR_BOT - PK_AA_M_H) / 2;
+    LST_PUTS(fb, PAD_L, ty, "AIRCRAFT", col_hdr, PK_AA_M);
 
+    /* 目标数用 PFD 状态栏那枚 connecting_airports——同一台设备上「ADS-B 目标
+     * 数」只该有一个符号。绿=有效在线，与状态栏、交通页一致。 */
+    const uint16_t COL_ADSB = pk_rgb565(0, 220, 60);
+    const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+                      + (size_t)PK_ICON_ADSB
+                        * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+    pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                    200, (PFD_BAR_BOT - PK_ICON_H) / 2,
+                    ic, PK_ICON_W, PK_ICON_H, COL_ADSB);
     char buf[16];
+    snprintf(buf, sizeof(buf), "%d", n);
+    LST_PUTS(fb, 200 + PK_ICON_W + 6, ty, buf, COL_ADSB, PK_AA_M);
 
-    /* ICAO column — magenta if this aircraft is the runtime own-ship
-     * binding (set via TARE short-press), unless this row is also the
-     * selection highlight (yellow takes precedence so the cursor
-     * stays unambiguous). */
-    uint16_t icao_fg = (is_own_bound && !selected) ? COL_OWN_BIND : fg;
-    fmt_icao(buf, sizeof(buf), a->icao24);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ICAO, y, buf, icao_fg, 1);
+    /* 排序方式要写出来：表格默认按距离升序，不说清楚的话，用户会以为它是
+     * 按呼号或先来后到排的，从而误判「最近的那架」在哪一行。 */
+    puts_right(fb, CONTENT_R, (PFD_BAR_BOT - PK_AA_S_H) / 2,
+               "SORT BY DIST", col_dim, PK_AA_S);
+}
 
-    /* CALL — prefer IATA "CZ1234" form when the airline is in our table;
-     * else fall back to raw ADS-B callsign / "--------". */
-    fmt_call_column(buf, sizeof(buf), a);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_CALL, y, buf, fg, 1);
+/* 列标题。用 XS 档 + 暗色：它是一次性读物，不该跟数据抢注意力。 */
+static void draw_col_titles(uint16_t *fb, uint16_t col)
+{
+    const int ty = LST_TOP + (HDR_H - PK_AA_XS_H) / 2;
+    LST_PUTS(fb, COL_BRG_X,  ty, "BRG",  col, PK_AA_XS);
+    LST_PUTS(fb, COL_CALL_X, ty, "CALLSIGN", col, PK_AA_XS);
+    puts_right(fb, COL_DIST_R, ty, "DIST NM", col, PK_AA_XS);
+    puts_right(fb, COL_ALT_R,  ty, "ALT FT",  col, PK_AA_XS);
+    puts_right(fb, COL_VS_R,   ty, "V/S",     col, PK_AA_XS);
+    puts_right(fb, COL_GS_R,   ty, "GS KT",   col, PK_AA_XS);
+    puts_right(fb, COL_TRK_R,  ty, "TRK",     col, PK_AA_XS);
+}
 
-    /* CT — 2-letter ISO country code from ICAO 24-bit address. */
-    const pk_country_t *country = pk_country_from_icao24(a->icao24);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_CT, y,
-                 country ? country->iso2 : "--", fg, 1);
+static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
+{
+    const uint16_t COL_TXT  = pk_rgb565(235, 240, 248);
+    const uint16_t COL_DIM  = pk_rgb565(150, 162, 180);
+    const uint16_t COL_SEL  = pk_rgb565(255, 210,  60);
+    const uint16_t COL_ARR  = pk_rgb565(  0, 210, 235);
+    const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
+    const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
+    const uint16_t COL_THR  = pk_rgb565(120,  26,  26);   /* 威胁行底 */
 
-    /* ALT */
-    if (a->have_altitude) {
-        snprintf(buf, sizeof(buf), "%5d", a->altitude_ft);
+    const aircraft_t *a = r->ac;
+    const bool threat = is_threat(&r->rel);
+
+    /* 行底：威胁红底 > 选中亮底 > 斑马纹。
+     * 斑马纹不是装饰——七列横跨 768 px，没有底色区分时视线很容易串行。 */
+    if (threat)
+        pk_pfd_fill_rect(fb, PAD_L - 8, y0, CONTENT_R + 8,
+                         y0 + ROW_H - 2, COL_THR);
+    else
+        pk_pfd_darken_rect(fb, PAD_L - 8, y0, CONTENT_R + 8,
+                           y0 + ROW_H - 2, sel ? 110 : 200);
+
+    /* 选中行加一条左侧色带。只靠底色深浅在阳光下的半透屏上分不出来。 */
+    if (sel) pk_pfd_fill_rect(fb, PAD_L - 8, y0, PAD_L - 4, y0 + ROW_H - 2, COL_SEL);
+
+    const uint16_t ctxt = sel ? COL_SEL : COL_TXT;
+    const int ty = y0 + (ROW_H - 2 - PK_AA_M_H) / 2;
+    char buf[24];
+
+    /* ── BRG：箭头 + 相对方位角 ──
+     * 箭头给「大概哪个方向」，数字给「精确多少度」。只给数字要在脑子里换算，
+     * 只给箭头则 8 个方向不够用来引导目视搜索。 */
+    if (r->rel.valid) {
+        LST_PUTS(fb, COL_BRG_X, ty, bearing_arrow(r->rel.rel_bearing),
+                 sel ? COL_SEL : COL_ARR, PK_AA_M);
+        snprintf(buf, sizeof(buf), "%03d",
+                 ((int)lroundf(r->rel.abs_bearing) % 360 + 360) % 360);
+        LST_PUTS(fb, COL_BRG_X + 26, ty, buf, ctxt, PK_AA_M);
     } else {
-        snprintf(buf, sizeof(buf), "%5s", "-----");
+        LST_PUTS(fb, COL_BRG_X, ty, "---", COL_DIM, PK_AA_M);
     }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_ALT, y, buf, fg, 1);
 
-    /* SPD */
+    /* ── CALLSIGN ── */
+    char cs[AIRCRAFT_CALLSIGN_LEN];
+    callsign_of(a, cs, sizeof(cs));
+    LST_PUTS(fb, COL_CALL_X, ty, cs, ctxt, PK_AA_M);
+
+    /* 紧急码标签：红底白字的小徽章，紧跟呼号。
+     * 用 XS 档而不是正文档——它要显眼，但不能挤掉呼号本身的位置；红底已经
+     * 提供了足够的对比，字号再大就是喧宾夺主。 */
+    const char *tag = emergency_tag(a);
+    if (tag) {
+        const uint16_t COL_EMG = pk_rgb565(220, 40, 40);
+        const int tx = COL_FLAG_X;
+        const int tw = (int)strlen(tag) * pk_aa_cell_w(PK_AA_XS);
+        const int tyy = y0 + (ROW_H - 2 - PK_AA_XS_H) / 2;
+        pk_pfd_fill_rect(fb, tx - 4, tyy - 3, tx + tw + 3, tyy + PK_AA_XS_H + 2,
+                         COL_EMG);
+        LST_PUTS(fb, tx, tyy, tag, pk_rgb565(255, 255, 255), PK_AA_XS);
+    }
+
+    /* ── DIST ── */
+    if (r->rel.valid) snprintf(buf, sizeof(buf), "%.1f", r->rel.dist_nm);
+    else              snprintf(buf, sizeof(buf), "---");
+    puts_right(fb, COL_DIST_R, ty, buf, r->rel.valid ? ctxt : COL_DIM, PK_AA_M);
+
+    /* ── ALT：绝对气压高度 ──
+     * 这里给绝对值而不是交通页那个相对差：看板是「天上都有谁」的视角，绝对
+     * 高度才能和管制指令、航路高度层对上；相对差在交通页已经有了。 */
+    if (a->have_altitude) snprintf(buf, sizeof(buf), "%d", a->altitude_ft);
+    else                  snprintf(buf, sizeof(buf), "---");
+    puts_right(fb, COL_ALT_R, ty, buf, a->have_altitude ? ctxt : COL_DIM, PK_AA_M);
+
+    /* ── V/S：箭头分色 + 数值 ──
+     * 与交通页同规：爬升绿、下降橙。±200 fpm 内算平飞，不画箭头——ADS-B 的
+     * 升降率本身有噪声，几十 fpm 的抖动画成箭头是在报告不存在的机动。 */
+    if (a->have_velocity && a->vert_rate_fpm > 200) {
+        snprintf(buf, sizeof(buf), "%d", a->vert_rate_fpm);
+        const int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
+        puts_right(fb, COL_VS_R, ty, buf, ctxt, PK_AA_M);
+        LST_PUTS(fb, COL_VS_R - w - PK_AA_M_CJK_W, ty, "↑",
+                 sel ? COL_SEL : COL_UP, PK_AA_M);
+    } else if (a->have_velocity && a->vert_rate_fpm < -200) {
+        snprintf(buf, sizeof(buf), "%d", -a->vert_rate_fpm);
+        const int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
+        puts_right(fb, COL_VS_R, ty, buf, ctxt, PK_AA_M);
+        LST_PUTS(fb, COL_VS_R - w - PK_AA_M_CJK_W, ty, "↓",
+                 sel ? COL_SEL : COL_DOWN, PK_AA_M);
+    } else {
+        puts_right(fb, COL_VS_R, ty, a->have_velocity ? "0" : "---",
+                   a->have_velocity ? COL_DIM : COL_DIM, PK_AA_M);
+    }
+
+    /* ── GS / TRK ──
+     * 两者同源（DF17 metype 19），要缺一起缺，所以共用 have_velocity。
+     * 缺了显 --- 而不是 0：0 kt 是合法读数（地面/悬停），拿它冒充缺数据
+     * 比空着更危险。 */
     if (a->have_velocity) {
-        snprintf(buf, sizeof(buf), "%3d", a->ground_speed_kt);
+        snprintf(buf, sizeof(buf), "%d", a->ground_speed_kt);
+        puts_right(fb, COL_GS_R, ty, buf, ctxt, PK_AA_M);
+        snprintf(buf, sizeof(buf), "%03d", a->heading_deg % 360);
+        puts_right(fb, COL_TRK_R, ty, buf, ctxt, PK_AA_M);
     } else {
-        snprintf(buf, sizeof(buf), "%3s", "---");
+        puts_right(fb, COL_GS_R,  ty, "---", COL_DIM, PK_AA_M);
+        puts_right(fb, COL_TRK_R, ty, "---", COL_DIM, PK_AA_M);
     }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_SPD, y, buf, fg, 1);
-
-    /* HDG — 4 chars: icon (rel-track marker, ^=same v=opp ' '=other) +
-     * 3-digit heading. Icon is blank if own-ship has no velocity yet. */
-    if (a->have_velocity) {
-        char icon = hdg_dir_icon(a, have_own_velocity, own_heading_deg);
-        snprintf(buf, sizeof(buf), "%c%03d", icon, a->heading_deg);
-    } else {
-        snprintf(buf, sizeof(buf), " ---");
-    }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_HDG, y, buf, fg, 1);
-
-    /* VS — 5 chars: ^v- icon + unsigned 4-digit |fpm| left-aligned. */
-    if (a->have_velocity) {
-        char icon = vs_state_icon(a->vert_rate_fpm, true);
-        int  v    = a->vert_rate_fpm < 0 ? -a->vert_rate_fpm : a->vert_rate_fpm;
-        if (v > 9999) v = 9999;
-        snprintf(buf, sizeof(buf), "%c%-4d", icon, v);
-    } else {
-        snprintf(buf, sizeof(buf), "%5s", "-----");
-    }
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_VS, y, buf, fg, 1);
-
-    /* SQK — 4 octal digits, rendered red for 7500/7600/7700 even when
-     * the row is selected (emergency wins over selection visual). */
-    if (a->have_squawk) {
-        snprintf(buf, sizeof(buf), "%04d", a->squawk);
-    } else {
-        snprintf(buf, sizeof(buf), "----");
-    }
-    uint16_t sqk_fg = (a->have_squawk && squawk_is_emergency(a->squawk))
-                          ? COL_EMERGENCY : fg;
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_SQK, y, buf, sqk_fg, 1);
-
-    /* TYPE — 4-char ICAO type designator from the embedded
-     * aircraft_db (B738, A320, EC35, ...). Falls back to "----" when
-     * the ICAO24 isn't in the DB (rare aircraft, military, brand-new
-     * tail not yet harvested). Wake category went to detail-only. */
-    const char *type_code = pk_aircraft_type_code(a->icao24);
-    char tbuf[8];
-    snprintf(tbuf, sizeof(tbuf), "%-4s", type_code ? type_code : "----");
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COL_X_TYPE, y, tbuf, fg, 1);
-
-    (void)row_idx;
 }
-
-static void render_divider(uint16_t *fb, int list_bottom_y)
-{
-    fill_rect(fb, 0, list_bottom_y, PK_DISPLAY_W, list_bottom_y + 2,
-              COL_DIVIDER);
-}
-
-/* Count how many lines render_detail() would draw for this aircraft.
- * Must mirror the conditionals in render_detail() exactly — keep the
- * two in sync. Used by the layout pass to size the detail pane up
- * front, before the divider position is known. */
-static int count_detail_lines(const aircraft_t *a,
-                              bool is_own_bound,
-                              bool have_own, const aircraft_t *own)
-{
-    int n = 1;                          /* ICAO (always) */
-
-    if (pk_aircraft_registration(a->icao24)) n++;     /* Reg */
-
-    n++;                                /* Call (always) */
-
-    {                                   /* Op (only when airline known) */
-        char raw[AIRCRAFT_CALLSIGN_LEN];
-        trim_callsign(raw, sizeof(raw), a);
-        if (raw[0] != '\0') {
-            const char *fn = NULL;
-            const pk_airline_t *air = pk_airline_from_callsign(raw, &fn);
-            if (air && air->name && air->name[0]) n++;
-        }
-    }
-
-    n++;                                /* Pos (always — placeholder if no fix) */
-    n++;                                /* Alt (always) */
-    n++;                                /* Vel (always) */
-
-    if (a->have_squawk) n++;            /* Sqwk */
-
-    {                                   /* Cat (only when wake known) */
-        const char *wn = pk_wake_name(a->wake);
-        if (wn && wn[0]) n++;
-    }
-
-    if (pk_aircraft_type_code(a->icao24)) n++;        /* Type */
-
-    if (have_own && !is_own_bound &&
-        own && own->have_position && a->have_position) n++;   /* Dist */
-
-    n++;                                /* Seen (always) */
-    return n;
-}
-
-/* --- Detail pane ---------------------------------------------------- */
-
-#define DETAIL_KEY_X      LIST_LEFT_PAD
-#define DETAIL_VAL_X      (LIST_LEFT_PAD + 48)   /* "Key   :" = 7 chars × 6 + gap */
-
-/* Helper — render a "Key  :" / "value" pair on one line.
- * Returns next y. Skips rendering entirely when value is NULL. */
-static int detail_line(uint16_t *fb, int y, const char *key, const char *value,
-                       uint16_t value_color)
-{
-    if (value == NULL) return y;
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 DETAIL_KEY_X, y, key, COL_DETAIL_KEY, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 DETAIL_VAL_X, y, value, value_color, 1);
-    return y + DETAIL_LINE_H;
-}
-
-static void render_detail(uint16_t *fb, int detail_top_y,
-                          const aircraft_t *a, int64_t now_us)
-{
-    int y = detail_top_y;
-    char buf[64];
-
-    uint32_t own_icao = pk_ui_get_own_icao();
-    bool is_own_bound = (own_icao != 0 && a->icao24 == own_icao);
-
-    /* Own-ship snapshot — used for relative altitude + dist/bearing.
-     * Resolves bound ADS-B transponder first; falls back to GPS fix. */
-    aircraft_t own;
-    pk_own_src_t own_src;
-    bool have_own = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US, &own, &own_src);
-    /* 本机航向(箭头用)统一走 4 级优先级 ADS-B>IMU>GPS track。 */
-    pk_imu_sample_t imu_s;
-    bool imu_ok = pk_imu_sample_get(&imu_s);
-    float own_hdg_f; pk_hdg_src_t hsrc;
-    bool have_own_hdg = pk_own_heading_resolve(
-        have_own, own_src, &own, imu_ok && imu_s.valid,
-        imu_ok ? imu_s.yaw_deg : 0.0f, &own_hdg_f, &hsrc);
-    int own_hdg_deg = have_own_hdg ? (int)lroundf(own_hdg_f) : 0;
-    (void)have_own;  /* used below for rel-alt / dist */
-
-    /* --- ICAO + country + own-binding marker --- */
-    {
-        const pk_country_t *country = pk_country_from_icao24(a->icao24);
-        if (country) {
-            snprintf(buf, sizeof(buf), "%06lX  %s/%s%s",
-                     (unsigned long)(a->icao24 & 0xFFFFFF),
-                     country->iso2, country->name,
-                     is_own_bound ? "  (OWN)" : "");
-        } else {
-            snprintf(buf, sizeof(buf), "%06lX%s",
-                     (unsigned long)(a->icao24 & 0xFFFFFF),
-                     is_own_bound ? "  (OWN)" : "");
-        }
-        y = detail_line(fb, y, "ICAO  :", buf,
-                        is_own_bound ? COL_OWN_BIND : COL_DETAIL_VAL);
-    }
-
-    /* --- Registration tail (e.g. "B-5797", "N12345"). Skipped if the
-     *     embedded DB has no reg for this ICAO24. */
-    {
-        const char *reg = pk_aircraft_registration(a->icao24);
-        if (reg && reg[0]) {
-            y = detail_line(fb, y, "Reg   :", reg, COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Callsign (ICAO long form + IATA short form when known) --- */
-    {
-        char raw[AIRCRAFT_CALLSIGN_LEN];
-        trim_callsign(raw, sizeof(raw), a);
-        if (raw[0] == '\0') {
-            y = detail_line(fb, y, "Call  :", "--------", COL_DETAIL_VAL);
-        } else {
-            const char *flight_no = NULL;
-            const pk_airline_t *air = pk_airline_from_callsign(raw, &flight_no);
-            if (air && air->iata2 && air->iata2[0] && flight_no && flight_no[0]) {
-                snprintf(buf, sizeof(buf), "%s  ->  %s%s",
-                         raw, air->iata2, flight_no);
-            } else {
-                snprintf(buf, sizeof(buf), "%s", raw);
-            }
-            y = detail_line(fb, y, "Call  :", buf, COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Operator (full airline name; skip if unknown) --- */
-    {
-        char raw[AIRCRAFT_CALLSIGN_LEN];
-        trim_callsign(raw, sizeof(raw), a);
-        const char *flight_no = NULL;
-        const pk_airline_t *air = (raw[0] != '\0')
-            ? pk_airline_from_callsign(raw, &flight_no) : NULL;
-        if (air && air->name) {
-            y = detail_line(fb, y, "Op    :", air->name, COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Position (or "no fix") --- */
-    {
-        if (a->have_position) {
-            char age_buf[16];
-            fmt_age_s(age_buf, sizeof(age_buf), now_us, a->position_us);
-            snprintf(buf, sizeof(buf), "%+8.4f %+9.4f (%s)",
-                     a->lat, a->lon, age_buf);
-        } else {
-            snprintf(buf, sizeof(buf), "(no fix yet)");
-        }
-        y = detail_line(fb, y, "Pos   :", buf, COL_DETAIL_VAL);
-    }
-
-    /* --- Altitude + relative-to-own --- */
-    {
-        if (a->have_altitude) {
-            int n = snprintf(buf, sizeof(buf), "%d ft", a->altitude_ft);
-            if (have_own && own.have_altitude && !is_own_bound &&
-                n > 0 && (size_t)n < sizeof(buf)) {
-                int rel = a->altitude_ft - own.altitude_ft;
-                snprintf(buf + n, sizeof(buf) - n,
-                         "   REL %+d ft", rel);
-            }
-        } else {
-            snprintf(buf, sizeof(buf), "---");
-        }
-        y = detail_line(fb, y, "Alt   :", buf, COL_DETAIL_VAL);
-    }
-
-    /* --- Velocity — ground speed + heading (with compass arrow) +
-     *     vertical rate (with climb/descent arrow). Two arrows so the
-     *     line is parseable at a glance even before reading the digits.
-     *     The HDG arrow uses the same dual-mode logic as the list view:
-     *     relative to own-ship when bound, absolute compass direction
-     *     otherwise. */
-    {
-        if (a->have_velocity) {
-            char vsicon  = vs_state_icon(a->vert_rate_fpm, true);
-            int  vs_abs  = a->vert_rate_fpm < 0
-                              ? -a->vert_rate_fpm : a->vert_rate_fpm;
-            char hdgicon = hdg_dir_icon(a, have_own_hdg,
-                                        have_own_hdg ? own_hdg_deg : 0);
-            /* "~" is the degree symbol per pk_font's mapping. */
-            snprintf(buf, sizeof(buf), "%d kt @ %c%03d~  %c%d fpm",
-                     a->ground_speed_kt, hdgicon, a->heading_deg,
-                     vsicon, vs_abs);
-        } else {
-            snprintf(buf, sizeof(buf), "---");
-        }
-        y = detail_line(fb, y, "Vel   :", buf, COL_DETAIL_VAL);
-    }
-
-    /* --- Squawk (red if emergency) --- */
-    {
-        if (a->have_squawk) {
-            const char *emerg_tag = "";
-            if (a->squawk == 7500)      emerg_tag = "  HIJACK";
-            else if (a->squawk == 7600) emerg_tag = "  RADIO FAIL";
-            else if (a->squawk == 7700) emerg_tag = "  EMERGENCY";
-            snprintf(buf, sizeof(buf), "%04d%s", a->squawk, emerg_tag);
-            y = detail_line(fb, y, "Sqwk  :", buf,
-                            squawk_is_emergency(a->squawk)
-                                ? COL_EMERGENCY : COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Wake / aircraft category --- */
-    {
-        const char *wname = pk_wake_name(a->wake);
-        if (wname && wname[0]) {
-            snprintf(buf, sizeof(buf), "%s (%c)", wname, pk_wake_letter(a->wake));
-            y = detail_line(fb, y, "Cat   :", buf, COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Type (ICAO 4-char designator + Doc 8643 tech descriptor +
-     *     canonical model name). Format: "B738 L2J  BOEING 737-800"
-     *     — code first for the 1-glance read, then desc in parens, then
-     *     the model name when distinct from the code.
-     *     "L2J" parses as Land 2-engine Jet, "H2T" as Helicopter 2-Turbo,
-     *     etc. (ICAO Doc 8643 designator). */
-    {
-        const char *code  = pk_aircraft_type_code(a->icao24);
-        const char *model = pk_aircraft_type_model(a->icao24);
-        const char *desc  = pk_aircraft_type_desc(a->icao24);
-        if (code && code[0]) {
-            int n = snprintf(buf, sizeof(buf), "%s", code);
-            if (desc && desc[0] && n > 0 && (size_t)n < sizeof(buf)) {
-                n += snprintf(buf + n, sizeof(buf) - n, " %s", desc);
-            }
-            if (model && model[0] && strcmp(code, model) != 0 &&
-                n > 0 && (size_t)n < sizeof(buf)) {
-                snprintf(buf + n, sizeof(buf) - n, "  %s", model);
-            }
-            y = detail_line(fb, y, "Type  :", buf, COL_DETAIL_VAL);
-        }
-    }
-
-    /* --- Distance / bearing to own-ship --- */
-    if (have_own && !is_own_bound && own.have_position && a->have_position) {
-        double dist_nm, brg_deg;
-        geo_dist_brg(own.lat, own.lon, a->lat, a->lon, &dist_nm, &brg_deg);
-        snprintf(buf, sizeof(buf), "%.1f NM  brg %03d~",
-                 dist_nm, (int)(brg_deg + 0.5));
-        y = detail_line(fb, y, "Dist  :", buf, COL_DETAIL_VAL);
-    }
-
-    /* --- Last seen (+ GND suffix when on the ground) --- */
-    {
-        char age_buf[16];
-        fmt_age_s(age_buf, sizeof(age_buf), now_us, a->last_seen_us);
-        if (a->on_ground) {
-            snprintf(buf, sizeof(buf), "%s  GND", age_buf);
-        } else {
-            snprintf(buf, sizeof(buf), "%s", age_buf);
-        }
-        y = detail_line(fb, y, "Seen  :", buf, COL_DETAIL_VAL);
-    }
-
-    (void)puts_right; /* may be useful later for right-justified fields */
-}
-
-static void render_empty_hint(uint16_t *fb)
-{
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD, LIST_ROW0_Y + 20,
-                 "No aircraft in the trailing 60s window.",
-                 COL_EMPTY_HINT, 1);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                 LIST_LEFT_PAD, LIST_ROW0_Y + 36,
-                 "Antenna pointed up? RTL-SDR streaming?",
-                 COL_EMPTY_HINT, 1);
-}
-
-/* --- Public entry --------------------------------------------------- */
 
 void pk_adsb_list_render(uint16_t *fb)
 {
-    int64_t now_us = esp_timer_get_time();
+    const uint16_t COL_BG   = pk_rgb565(  7,  10,  16);
+    const uint16_t COL_HDR  = pk_rgb565(235, 235, 235);
+    const uint16_t COL_DIM  = pk_rgb565(150, 162, 180);
+    const uint16_t COL_TITL = pk_rgb565(125, 140, 160);
+    const uint16_t COL_LINE = pk_rgb565( 38,  48,  62);
 
-    /* Background — explicit fill avoids ghosting from the previous frame
-     * (which may have been a PFD render with a horizon). */
-    fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
+    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W - 1, PK_DISPLAY_H - 1, COL_BG);
 
-    /* Snapshot — same 60 s "fresh contacts" window the PFD uses. We
-     * stash this in static storage so the on-stack cost is one int
-     * pointer; aircraft_state's lock-protected copy is cheap. Placed
-     * in PSRAM (EXT_RAM_BSS) — the renderer is the only consumer and
-     * doesn't need the snapshot in fast DRAM. Keeps internal DRAM
-     * free for FreeRTOS / ESP-Hosted timer-task allocations at boot;
-     * without this the daemon-task stack-malloc trips
-     * vApplicationGetTimerTaskMemory's NULL assert. */
-    static EXT_RAM_BSS_ATTR aircraft_t scratch[AIRCRAFT_TABLE_CAPACITY];
-    size_t n = aircraft_state_snapshot(scratch,
-                                       sizeof(scratch) / sizeof(scratch[0]),
-                                       now_us,
-                                       AIRCRAFT_STALE_AGE_US);
+    const int64_t now_us = esp_timer_get_time();
+    static aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
+    size_t n = aircraft_state_snapshot(
+        s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
 
-    render_header(fb, n);
+    /* ── 本机基准：与 traffic_page 完全同一套取数 ──
+     * 两页对同一架飞机算出的方位/距离必须一模一样，所以这里不另起炉灶。 */
+    pk_imu_sample_t s;
+    const bool have = pk_imu_sample_get(&s);
 
-    if (n == 0) {
-        /* Empty list: no detail pane, no divider — give the empty hint
-         * the whole screen below the header. */
-        render_empty_hint(fb);
+    aircraft_t own = {0};
+    pk_own_src_t src;
+    const bool own_valid = pk_own_ship_resolve(
+        now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &src);
+
+    pk_baro_state_t baro;
+    const bool baro_ok = pk_baro_get(&baro);
+
+    float own_heading = 0.0f, mag_var = 0.0f;
+    {
+        pk_hdg_src_t hsrc;
+        pk_own_heading_resolve(own_valid, src, &own, have,
+                               have ? s.yaw_deg : 0.0f, &own_heading, &hsrc);
+        if (hsrc == PK_HDG_SRC_IMU && own_valid)
+            mag_var = pk_mag_var_lookup(own.lat, own.lon);
+    }
+
+    int own_palt;
+    if (own_valid && own.have_altitude)      own_palt = own.altitude_ft;
+    else if (baro_ok && baro.valid)          own_palt = std_alt_ft_from_pa(baro.pressure_pa);
+    else                                     own_palt = PK_ALT_UNAVAIL;
+
+    /* ── 组行 ──
+     * 与交通页的关键差别：**没有量程过滤，也不因本机无位置而放弃**。
+     * 本机位置未知时方位/距离两列显 ---，但呼号、高度、速度、航向照常显示——
+     * 那些字段本来就与本机无关，一起藏掉等于白丢掉大半个页面。 */
+    static row_t s_rows[AIRCRAFT_TABLE_CAPACITY];
+    static uint32_t s_icaos[AIRCRAFT_TABLE_CAPACITY];
+    int nr = 0;
+
+    for (size_t i = 0; i < n; ++i) {
+        aircraft_t *t = &s_scratch[i];
+        if (own_valid && own.icao24 != 0 && t->icao24 == own.icao24) continue;
+        s_rows[nr].ac  = t;
+        s_rows[nr].rel = pk_traffic_rel_calc(
+            own_valid, own.lat, own.lon, own_heading, mag_var, own_palt,
+            t->have_position, t->lat, t->lon,
+            t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+        nr++;
+    }
+
+    /* 按距离升序；算不出距离的沉到最底（它们既不能被引导目视，也不构成
+     * 可判定的威胁，排在前面只会挡住能用的信息）。n ≤ 64，插入排序足够。 */
+    for (int a = 0; a < nr; ++a)
+        for (int b = a + 1; b < nr; ++b) {
+            const float da = s_rows[a].rel.valid ? s_rows[a].rel.dist_nm : 1e9f;
+            const float db = s_rows[b].rel.valid ? s_rows[b].rel.dist_nm : 1e9f;
+            if (db < da) { row_t t = s_rows[a]; s_rows[a] = s_rows[b]; s_rows[b] = t; }
+        }
+
+    for (int k = 0; k < nr; ++k) s_icaos[k] = s_rows[k].ac->icao24;
+    const int sel = pk_ui_list_resolve_row(s_icaos, (size_t)nr);
+
+    draw_header(fb, nr, COL_HDR, COL_DIM);
+    draw_col_titles(fb, COL_TITL);
+    pk_pfd_fill_rect(fb, 0, ROW0_Y - 1, PK_DISPLAY_W - 1, ROW0_Y, COL_LINE);
+
+    if (nr == 0) {
+        /* 空列表也是一种状态，不能留白屏——留白让人以为页面没画出来。 */
+        const char *msg = "NO CONTACTS";
+        const int w = (int)strlen(msg) * pk_aa_cell_w(PK_AA_L);
+        LST_PUTS(fb, (PK_DISPLAY_W - w) / 2, ROW0_Y + 120, msg, COL_DIM, PK_AA_L);
         return;
     }
 
-    /* Resolve the selected row against the live (sorted-by-ICAO)
-     * snapshot. The resolver tracks selection by ICAO under the hood,
-     * so the highlight sticks to the same aircraft across snapshot
-     * reshuffles (entries entering / leaving the trailing-60s window)
-     * and consumes any buffered UP/DOWN intent in the process. */
-    uint32_t sel_icaos[AIRCRAFT_TABLE_CAPACITY];
-    for (size_t i = 0; i < n; ++i) sel_icaos[i] = scratch[i].icao24;
-    int sel = pk_ui_list_resolve_row(sel_icaos, n);
+    /*
+     * 滚动窗口：让选中行始终留在屏内，且尽量居中。
+     *
+     * 不做「选中行走到底才滚一行」那种最小移动——表格里视线是往下扫的，
+     * 把选中行钉在中间能同时看到它前后各三四架，比贴边好用。
+     */
+    int first = sel - ROW_N / 2;
+    if (first > nr - ROW_N) first = nr - ROW_N;
+    if (first < 0)          first = 0;
 
-    /* Snapshot the own-ship aircraft (if bound) so we can:
-     *   - compute the HDG-relative arrow per row (render_row)
-     *   - feed render_detail for REL alt + Dist + Vel relative HDG
-     *   - feed count_detail_lines for the layout pass below
-     * All three callees only need the velocity / position fields, so we
-     * stash the whole record once and read out the relevant bits. */
-    uint32_t   own_icao   = pk_ui_get_own_icao();
-    aircraft_t own;
-    pk_own_src_t own_src_list;
-    bool       have_own   = pk_own_ship_resolve(now_us, AIRCRAFT_STALE_AGE_US,
-                                                &own, &own_src_list);
-    /* 本机航向(每行 HDG 箭头用)统一走 4 级优先级 ADS-B>IMU>GPS track。 */
-    pk_imu_sample_t imu_s;
-    bool imu_ok = pk_imu_sample_get(&imu_s);
-    pk_hdg_src_t hsrc_list;
-    float own_hdg_f;
-    bool have_own_velocity = pk_own_heading_resolve(
-        have_own, own_src_list, &own, imu_ok && imu_s.valid,
-        imu_ok ? imu_s.yaw_deg : 0.0f, &own_hdg_f, &hsrc_list);
-    int  own_heading_deg   = have_own_velocity ? (int)lroundf(own_hdg_f) : 0;
+    for (int i = 0; i < ROW_N && first + i < nr; ++i)
+        draw_row(fb, &s_rows[first + i], ROW0_Y + i * ROW_H, first + i == sel);
 
-    /* ----- Adaptive layout ---------------------------------------------
-     * Count how many lines the detail pane will draw for the selected
-     * aircraft, then compute where to put the divider so the detail
-     * exactly fits at the bottom of the screen. If the detail is too
-     * tall to leave room for MIN_LIST_ROWS_VISIBLE list rows, clamp
-     * the divider up and let the detail overflow off-screen at the
-     * bottom (rare with the 12-line worst case + 10-row floor). */
-    bool sel_is_own = (own_icao != 0 && scratch[sel].icao24 == own_icao);
-    int detail_lines = count_detail_lines(&scratch[sel], sel_is_own,
-                                          have_own, &own);
-    int detail_height = detail_lines * DETAIL_LINE_H + DETAIL_BOTTOM_PAD;
-    int detail_top_y  = PK_DISPLAY_H - detail_height;
-    int list_bottom_y = detail_top_y - DIVIDER_GAP_PX;
+    /* ── 底部：还有多少没看到 ──
+     * 只画滚动条不够：条的长度只说得清「大概还有一些」，而「14 架里的 3-10」
+     * 是个能直接对上的数。两者都给。 */
+    if (nr > ROW_N) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%d-%d / %d", first + 1, first + ROW_N, nr);
+        puts_right(fb, CONTENT_R, LIST_BOT + 1, buf, COL_DIM, PK_AA_XS);
 
-    const int min_list_bottom_y =
-        LIST_ROW0_Y + MIN_LIST_ROWS_VISIBLE * LIST_ROW_H;
-    if (list_bottom_y < min_list_bottom_y) {
-        list_bottom_y = min_list_bottom_y;
-        detail_top_y  = list_bottom_y + DIVIDER_GAP_PX;
+        const int track_w = 240;
+        const int tx = PAD_L;
+        const int ty = LIST_BOT + PK_AA_XS_H / 2;
+        pk_pfd_fill_rect(fb, tx, ty, tx + track_w, ty + 3, COL_LINE);
+        const int bar_w = track_w * ROW_N / nr;
+        const int bar_x = tx + track_w * first / nr;
+        pk_pfd_fill_rect(fb, bar_x, ty, bar_x + bar_w, ty + 3, COL_DIM);
     }
-
-    render_col_titles(fb);
-
-    /* Auto-scroll the list so the selected row is visible. Window
-     * [first, first+n_visible) contains `sel`. n_visible depends on
-     * the adaptive list_bottom_y above. */
-    int n_visible = (list_bottom_y - LIST_ROW0_Y) / LIST_ROW_H;
-    if (n_visible < 1) n_visible = 1;
-    int first = 0;
-    if ((int)n > n_visible) {
-        first = sel - n_visible / 2;
-        if (first < 0) first = 0;
-        if (first + n_visible > (int)n) first = (int)n - n_visible;
-    }
-
-    for (int row = 0; row < n_visible && (first + row) < (int)n; ++row) {
-        int y = LIST_ROW0_Y + row * LIST_ROW_H;
-        bool is_selected   = ((first + row) == sel);
-        bool is_own_bound  = (own_icao != 0 &&
-                              scratch[first + row].icao24 == own_icao);
-        render_row(fb, first + row, y, is_selected, is_own_bound,
-                   have_own_velocity, own_heading_deg,
-                   &scratch[first + row]);
-    }
-
-    render_divider(fb, list_bottom_y);
-    render_detail(fb, detail_top_y, &scratch[sel], now_us);
 }
