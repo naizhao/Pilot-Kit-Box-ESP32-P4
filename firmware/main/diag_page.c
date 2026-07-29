@@ -453,13 +453,12 @@ static void diag_render_legacy(uint16_t *fb)
 #include "soc_temp.h"
 
 #define CARD_COLS   2
-#define CARD_ROWS   4
 #define CARD_PAD    16
 #define CARD_GAP    12
 #define CARD_W      ((PK_DISPLAY_W - CARD_PAD * 2 - CARD_GAP) / CARD_COLS)
 #define CARD_TOP    (PFD_BAR_BOT + 8)
 #define CARD_H      ((PK_DISPLAY_H - CARD_TOP - CARD_PAD + CARD_GAP) \
-                     / CARD_ROWS - CARD_GAP)
+                     / 4 - CARD_GAP)
 
 /* 状态灯：一格一个圆点，颜色即结论。绿=正常、琥珀=连着但不正常、
  * 红=不可用、灰=不适用/未启用。四种颜色与 PFD、交通页、列表页一致。 */
@@ -475,11 +474,23 @@ static uint16_t state_color(card_state_t st)
     }
 }
 
+/* 卡片总数与滚动。
+ *
+ * spec §5.5 写的是「2 × 4」八格，但那是版面示意不是容量上限——诊断数据本来
+ * 就比八条多（SD 卡、QNH、运行时长…），塞不下的不该被删掉，该能滚。所以
+ * 行数由卡片数推出来，屏幕放不下就滚动。 */
+#define CARD_ROWS_VIS  4                       /* 一屏能完整看到的行数 */
+static int s_card_rows;                        /* 本帧实际画了几行 */
+static int s_scroll_y;                         /* 滚动偏移(px)，0 = 顶 */
+
 static void draw_card(uint16_t *fb, int col, int row, const char *title,
                       const char *value, card_state_t st)
 {
     const int x = CARD_PAD + col * (CARD_W + CARD_GAP);
-    const int y = CARD_TOP + row * (CARD_H + CARD_GAP);
+    const int y = CARD_TOP + row * (CARD_H + CARD_GAP) - s_scroll_y;
+
+    /* 滚出屏幕的卡整张跳过：省掉绘制，也避免半张卡压到顶栏上。 */
+    if (y + CARD_H <= PFD_BAR_BOT || y >= PK_DISPLAY_H) return;
 
     pk_pfd_fill_rect(fb, x, y, x + CARD_W, y + CARD_H, pk_rgb565(16, 22, 32));
     /* 左侧一条状态色带，比只在角上点一个圆点更容易在余光里扫到——诊断页
@@ -503,9 +514,6 @@ void pk_diag_page_render(uint16_t *fb)
     char buf[64];
 
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
-               (PFD_BAR_BOT - PK_AA_M_H) / 2, "DIAGNOSTICS", COL_HEADER,
-               PK_AA_M);
 
     /* ── IMU ── */
     {
@@ -626,4 +634,137 @@ void pk_diag_page_render(uint16_t *fb)
         draw_card(fb, 1, 3, "SYS", buf,
                   over ? ST_BAD : temp_c >= 75 ? ST_WARN : ST_OK);
     }
+
+    /* ── microSD ──
+     * 与 LOG 分开：LOG 说的是「有没有在写」，SD 说的是「卡在不在、还剩多少」。
+     * 卡满了 LOG 仍会显示在写（写进 flash），只看 LOG 会漏掉换卡这件事。 */
+    {
+        uint64_t total = 0, free_b = 0;
+        switch (pk_sdcard_state()) {
+        case PK_SD_MOUNTED:
+            if (pk_sdcard_info(&total, &free_b)) {
+                snprintf(buf, sizeof(buf), "%.1f/%.1f GB used",
+                         (double)(total - free_b) / (1024.0 * 1024.0 * 1024.0),
+                         (double)total / (1024.0 * 1024.0 * 1024.0));
+                /* 剩余不足 10% 转琥珀：卡还在、还能写，但快写不下了。 */
+                draw_card(fb, 0, 4, "microSD", buf,
+                          (total && free_b * 10 < total) ? ST_WARN : ST_OK);
+            } else {
+                draw_card(fb, 0, 4, "microSD", "mounted", ST_OK);
+            }
+            break;
+        case PK_SD_FORMATTING:
+            draw_card(fb, 0, 4, "microSD", "formatting...", ST_WARN);
+            break;
+        default:
+            draw_card(fb, 0, 4, "microSD", "no card", ST_NA);
+            break;
+        }
+    }
+
+    /* ── QNH ──
+     * baro 高度的基准。它不是"状态"而是"设定值"，但设错了高度就整体偏——
+     * 标准 1013.25 与当地实际能差几百英尺，值得占一格。 */
+    {
+        const float q = pk_qnh_get();
+        snprintf(buf, sizeof(buf), "%.2f hPa", (double)q);
+        draw_card(fb, 1, 4, "QNH", buf, ST_OK);
+    }
+
+    /* ── BATT ──
+     * 板上没有电量检测通路：右排针只有 VSYS（Battery / external 5 V input），
+     * 没有分压到 ADC、没有充电 IC 状态脚（docs/hardware/board_pinout.md:93）。
+     * 所以接上电池也读不到电量或充电状态。
+     *
+     * 如实写"无检测硬件"而不是显示 0% 或藏起来：藏起来会让人以为固件漏了，
+     * 显示 0% 则是编造数据——而这一格的读者正想知道还能飞多久。 */
+    draw_card(fb, 0, 5, "BATT", "no sense HW", ST_NA);
+
+    /* ── UPTIME ──
+     * 排查偶发重启的第一手证据：屏上这个数突然归零，说明刚重启过，而不是
+     * "某个子系统自己恢复了"。26 秒重启循环那次就是靠它才看出问题的性质。 */
+    {
+        const uint32_t sec = (uint32_t)(esp_timer_get_time() / 1000000);
+        if (sec < 3600) snprintf(buf, sizeof(buf), "%lum %lus",
+                                 (unsigned long)(sec / 60), (unsigned long)(sec % 60));
+        else            snprintf(buf, sizeof(buf), "%luh %lum",
+                                 (unsigned long)(sec / 3600),
+                                 (unsigned long)((sec % 3600) / 60));
+        draw_card(fb, 1, 5, "UPTIME", buf, ST_OK);
+    }
+
+    s_card_rows = 6;
+
+    /* 滚动条：贴右缘，只在有内容超出一屏时出现。 */
+    {
+        const int total_h = s_card_rows * (CARD_H + CARD_GAP);
+        const int view_h  = PK_DISPLAY_H - CARD_TOP;
+        if (total_h > view_h) {
+            const int tx = PK_DISPLAY_W - 6;
+            const int bar_h = view_h * view_h / total_h;
+            const int bar_y = CARD_TOP + s_scroll_y * view_h / total_h;
+            pk_pfd_fill_rect(fb, tx, CARD_TOP, tx + 3, PK_DISPLAY_H,
+                             pk_rgb565(30, 38, 50));
+            pk_pfd_fill_rect(fb, tx, bar_y, tx + 3, bar_y + bar_h,
+                             pk_rgb565(120, 135, 155));
+        }
+    }
+
+    /* 顶栏最后画：卡片从它底下滑过去，而不是压在它上面。 */
+    fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, COL_BG);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2, "DIAGNOSTICS", COL_HEADER,
+               PK_AA_M);
 }
+
+/* ── 触摸：拖动滚卡片 ──────────────────────────────────────────────
+ *
+ * 与列表页同一套：按下只记起点，位移超过阈值才算拖动。这里暂时没有"点击"
+ * 动作（点卡进详情是下一步），但阈值逻辑先立住——等详情页接上来时，判定
+ * 规则不必再改一遍。
+ *
+ * 与 touch_gt911.c 的约定同 pk_adsb_list_*：返回 true 表示这一下被本页消费。
+ * dock 展开时由 read_cb 统一让路，这里不重复判断。 */
+static int  s_press_y, s_press_scroll;
+static bool s_press_valid, s_moved;
+
+#define DIAG_DRAG_SLOP  12
+
+/* 卡片区之外（顶栏、右侧 FAB 那条）一律不消费。 */
+static bool diag_in_cards(int x, int y)
+{
+    return y >= PFD_BAR_BOT && y < PK_DISPLAY_H &&
+           x >= CARD_PAD - 8 && x < PK_DISPLAY_W - 80;
+}
+
+bool pk_diag_page_touch(int x, int y)
+{
+    s_press_valid = diag_in_cards(x, y);
+    if (!s_press_valid) return false;
+    s_press_y      = y;
+    s_press_scroll = s_scroll_y;
+    s_moved        = false;
+    return true;
+}
+
+bool pk_diag_page_drag(int x, int y)
+{
+    if (!s_press_valid) return false;
+    (void)x;
+    const int dy = y - s_press_y;
+    if (!s_moved && (dy > DIAG_DRAG_SLOP || dy < -DIAG_DRAG_SLOP)) s_moved = true;
+    if (!s_moved) return true;
+
+    /* 方向与手指一致：手指往上滑，内容往上走。 */
+    int sy = s_press_scroll - dy;
+    const int total_h = s_card_rows * (CARD_H + CARD_GAP);
+    const int view_h  = PK_DISPLAY_H - CARD_TOP;
+    const int max_y   = (total_h > view_h) ? (total_h - view_h) : 0;
+    if (sy < 0)     sy = 0;
+    if (sy > max_y) sy = max_y;
+    s_scroll_y = sy;
+    return true;
+}
+
+void pk_diag_page_touch_up(void)   { s_press_valid = false; s_moved = false; }
+void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
