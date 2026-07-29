@@ -81,17 +81,32 @@
 #define FAB_LEFT_EDGE (PK_DISPLAY_W - 16 - 56)       /* 728 */
 #define CONTENT_R     (FAB_LEFT_EDGE - 12)           /* 716 */
 
+/*
+ * 八列的 x。宽度按各列**最长可能内容**算，间隙统一 16 px：
+ *
+ *   BRG 箭头26+3位45=71   CALL 8字符×15=120   FLAG 徽章 XS 5字符=50
+ *   DIST "12.3"=60        ALT "34322"=75      V/S 箭头12+4位60=72
+ *   GS "450"=45           TRK "355"=45        SEEN "47s" XS=30
+ *
+ * 加上 7 个间隙正好落在 716 内。加 SEEN 之前间隙是 23 px，看着更松快，但
+ * 「刚才还在、现在多久没消息了」比那点呼吸感值钱——尤其它是判断一条数据
+ * 还能不能信的唯一依据。
+ *
+ * SEEN 用 XS 档：它是元数据（这行有多新），不是飞行数据，不该和高度速度
+ * 抢同一个视觉层级。
+ */
 #define COL_BRG_X     PAD_L                          /*  16 */
-#define COL_CALL_X    106
+#define COL_CALL_X    103
 /* 紧急码徽章自成一列，不跟在呼号后面浮动。
  * 初版让它紧跟呼号，8 字符满宽呼号 + "NO RADIO" 直接压进了 DIST 列，把
  * 距离盖掉一半——表格里任何"跟着内容长度走"的元素迟早会撞上邻列。 */
-#define COL_FLAG_X    234
-#define COL_DIST_R    350                            /* 右对齐基准 */
-#define COL_ALT_R     452
-#define COL_VS_R      558
-#define COL_GS_R      648
-#define COL_TRK_R     CONTENT_R                      /* 716 */
+#define COL_FLAG_X    239
+#define COL_DIST_R    365                            /* 右对齐基准 */
+#define COL_ALT_R     456
+#define COL_VS_R      544
+#define COL_GS_R      605
+#define COL_TRK_R     666
+#define COL_SEEN_R    CONTENT_R                      /* 716 */
 
 #define LST_PUTS(fb, x, y, s, col, sz) \
         pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), (sz))
@@ -107,6 +122,7 @@
  */
 typedef enum {
     SORT_BRG = 0, SORT_CALL, SORT_DIST, SORT_ALT, SORT_VS, SORT_GS, SORT_TRK,
+    SORT_SEEN,
     SORT_COUNT
 } sort_key_t;
 
@@ -120,13 +136,14 @@ typedef struct {
 /* 命中区把列间空隙一并吃掉：手指落在两列标题中间时总得归给某一列，
  * 留缝隙只会让人以为「点了没反应」。 */
 static const col_def_t COLS[SORT_COUNT] = {
-    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, 105 },
-    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  106,       233 },
-    [SORT_DIST] = { "DIST NM",  COL_DIST_R, true,   234,       360 },
-    [SORT_ALT]  = { "ALT FT",   COL_ALT_R,  true,   361,       466 },
-    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   467,       570 },
-    [SORT_GS]   = { "GS KT",    COL_GS_R,   true,   571,       656 },
-    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   657,       CONTENT_R + 8 },
+    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, 102 },
+    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  103,       238 },
+    [SORT_DIST] = { "DIST",  COL_DIST_R, true,   239,       375 },
+    [SORT_ALT]  = { "ALT",   COL_ALT_R,  true,   376,       466 },
+    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   467,       554 },
+    [SORT_GS]   = { "GS",    COL_GS_R,   true,   555,       615 },
+    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   616,       676 },
+    [SORT_SEEN] = { "SEEN",     COL_SEEN_R, true,   677,       CONTENT_R + 8 },
 };
 
 /* 排序状态。默认距离升序——最近的威胁排最前，这是打开这一页最常见的意图。
@@ -135,6 +152,20 @@ static const col_def_t COLS[SORT_COUNT] = {
  * 距离升序才是对的默认，把上次点的 TRK 降序记住反而会让人困惑。 */
 static sort_key_t s_sort   = SORT_DIST;
 static bool       s_sort_desc;
+
+/* 顶栏右上角：排序说明 + RESET 按钮的位置。RESET 贴 CONTENT_R 右缘，
+ * 说明文字排在它左边。 */
+#define RESET_X1      (CONTENT_R + 8)
+#define RESET_X0      (RESET_X1 - 66)
+#define SORT_LBL_X    (RESET_X0 - 150)
+#define HDR_HIT_RESET SORT_COUNT      /* s_hdr_down 里给 RESET 留的编号 */
+
+#define SORT_DEFAULT_KEY  SORT_DIST
+
+static bool sort_is_default(void)
+{
+    return s_sort == SORT_DEFAULT_KEY && !s_sort_desc;
+}
 
 #ifdef PK_SIM_BUILD
 /* 模拟器专用：用环境变量摆布排序状态，好把各列各方向都截出来核对。
@@ -220,6 +251,7 @@ static int std_alt_ft_from_pa(float pa)
 typedef struct {
     aircraft_t       *ac;
     pk_traffic_rel_t  rel;
+    int               age_s;   /* 距上次收到报文的秒数，0..60 */
 } row_t;
 
 /*
@@ -256,6 +288,7 @@ static bool row_has_key(const row_t *r, sort_key_t k)
     case SORT_VS:
     case SORT_GS:
     case SORT_TRK:  return r->ac->have_velocity;
+    case SORT_SEEN:                          /* last_seen 恒有值——能进快照就说明收到过 */
     case SORT_CALL: default: return true;   /* 呼号总有值（退回 ICAO hex） */
     }
 }
@@ -269,6 +302,7 @@ static float row_key(const row_t *r, sort_key_t k)
     case SORT_VS:   return (float)r->ac->vert_rate_fpm;
     case SORT_GS:   return (float)r->ac->ground_speed_kt;
     case SORT_TRK:  return (float)(r->ac->heading_deg % 360);
+    case SORT_SEEN: return (float)r->age_s;
     default:        return 0.0f;
     }
 }
@@ -310,10 +344,34 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_hdr, uint16_t col_dim)
     snprintf(buf, sizeof(buf), "%d", n);
     LST_PUTS(fb, 200 + PK_ICON_W + 6, ty, buf, COL_ADSB, PK_AA_M);
 
-    /* 曾经在这里写死一行 "SORT BY DIST"。表头改成可点之后它就是错的了——
-     * 排序会变，这行不会。现在由高亮的列标题 + 方向箭头自己说明，顶栏这块
-     * 空出来。 */
-    (void)col_dim;
+    /*
+     * 右上角：当前排序 + 重置。
+     *
+     * 曾经写死过一行 "SORT BY DIST"，表头改成可点之后它就成了假的。现在跟着
+     * 排序状态走：`SORT DIST↑`。列标题上的高亮说的是「哪一列」，这里说的是
+     * 「现在整张表是按什么排的」——扫顶栏一眼就知道，不必回头找哪个标题亮着。
+     *
+     * 非默认排序时右边额外冒出 RESET：一路点下来换了好几列之后，想回
+     * 到「最近的排最前」得记住原来是哪列、什么方向，不如给一个回原点的按钮。
+     * 默认状态下它不出现——一个按下去什么都不变的按钮只会让人怀疑没点中。
+     */
+    char sbuf[24];
+    snprintf(sbuf, sizeof(sbuf), "SORT %s%s",
+             COLS[s_sort].title, s_sort_desc ? "↓" : "↑");
+    /* 箭头是 3 字节 UTF-8 但只占一个字形宽，strlen 会多算 2 个 cell。 */
+    const int sw = ((int)strlen(sbuf) - 2) * pk_aa_cell_w(PK_AA_S)
+                 - pk_aa_cell_w(PK_AA_S) + PK_AA_S_CJK_W;
+    LST_PUTS(fb, SORT_LBL_X, (PFD_BAR_BOT - PK_AA_S_H) / 2, sbuf,
+             col_dim, PK_AA_S);
+    (void)sw;
+
+    if (!sort_is_default()) {
+        const uint16_t COL_RST = pk_rgb565(255, 210, 60);
+        const int ty2 = (PFD_BAR_BOT - PK_AA_XS_H) / 2;
+        if (s_hdr_down == HDR_HIT_RESET)
+            pk_pfd_darken_rect(fb, RESET_X0, 4, RESET_X1, PFD_BAR_BOT - 4, 60);
+        LST_PUTS(fb, RESET_X0 + 8, ty2, "RESET", COL_RST, PK_AA_XS);
+    }
 }
 
 /*
@@ -336,6 +394,18 @@ static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
 
         if (k == s_hdr_down)
             pk_pfd_darken_rect(fb, c->hit_x0, LST_TOP, c->hit_x1, ROW0_Y - 1, 60);
+
+        /* 列分隔线：一条 1 px 暗竖线，从标题一直拉到最后一行。
+         *
+         * 八列挤进 700 px 之后列间距只剩 17 px，比一个字符还窄，"0 340 270"
+         * 会连成一片，眼睛容易串列。加宽已经没地方了——竖线不占宽度就能把
+         * 列分开，这也是纸质航图和表格软件的通用做法。
+         *
+         * 只画在数值列之间（跳过第一列左侧），且颜色压得很暗：它是辅助线，
+         * 一旦比数据显眼就成了干扰。 */
+        if (k > 0)
+            pk_pfd_fill_rect(fb, c->hit_x0 - 1, LST_TOP + 4,
+                             c->hit_x0, LIST_BOT - 4, pk_rgb565(30, 38, 50));
 
         const uint16_t cc = active ? col_hi : col_dim;
         /* 箭头贴在标题外侧：左对齐列跟在后面，右对齐列因为要保住右缘对齐，
@@ -460,6 +530,21 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
         puts_right(fb, COL_GS_R,  ty, "---", COL_DIM, PK_AA_M);
         puts_right(fb, COL_TRK_R, ty, "---", COL_DIM, PK_AA_M);
     }
+
+    /* ── SEEN：上次收到报文距今多少秒 ──
+     * 这一列决定「上面那七列还能不能信」。ADS-B 目标掉出覆盖后，其余字段会
+     * 原样停在最后一次的读数上——看不出它是在飞还是早就没消息了。
+     *
+     * 超过 15 s 转暗、30 s 转橙：60 s 才会被踢出快照，中间这段最危险，因为
+     * 数据看起来仍然完整。用 XS 档，它是元数据不是飞行数据。 */
+    const uint16_t COL_STALE = pk_rgb565(255, 170, 70);
+    snprintf(buf, sizeof(buf), "%ds", r->age_s);
+    const uint16_t cage = sel        ? COL_SEL
+                        : r->age_s >= 30 ? COL_STALE
+                        : r->age_s >= 15 ? COL_DIM
+                                         : COL_TXT;
+    puts_right(fb, COL_SEEN_R, y0 + (ROW_H - 2 - PK_AA_XS_H) / 2, buf,
+               cage, PK_AA_XS);
 }
 
 void pk_adsb_list_render(uint16_t *fb)
@@ -522,7 +607,14 @@ void pk_adsb_list_render(uint16_t *fb)
     for (size_t i = 0; i < n; ++i) {
         aircraft_t *t = &s_scratch[i];
         if (own_valid && own.icao24 != 0 && t->icao24 == own.icao24) continue;
-        s_rows[nr].ac  = t;
+        s_rows[nr].ac = t;
+        /* 上次收到报文距今多少秒。快照窗口是 60 s（AIRCRAFT_STALE_AGE_US），
+         * 所以恒为两位数以内。 */
+        {
+            const int64_t d = now_us - t->last_seen_us;
+            int a = (int)(d / 1000000);
+            s_rows[nr].age_s = a < 0 ? 0 : (a > 99 ? 99 : a);
+        }
         s_rows[nr].rel = pk_traffic_rel_calc(
             own_valid, own.lat, own.lon, own_heading, mag_var, own_palt,
             t->have_position, t->lat, t->lon,
@@ -592,6 +684,16 @@ void pk_adsb_list_render(uint16_t *fb)
  */
 bool pk_adsb_list_touch(int x, int y)
 {
+    /* 顶栏的 RESET：回到默认排序（距离升序）。只在非默认时才画，也只在
+     * 非默认时才吃这一下——否则默认状态下这块区域会白白拦掉别的手势。 */
+    if (y >= 0 && y < PFD_BAR_BOT &&
+        x >= RESET_X0 && x < RESET_X1 && !sort_is_default()) {
+        s_hdr_down  = HDR_HIT_RESET;
+        s_sort      = SORT_DEFAULT_KEY;
+        s_sort_desc = false;
+        return true;
+    }
+
     if (y < LST_TOP || y >= ROW0_Y) return false;
 
     for (int k = 0; k < SORT_COUNT; ++k) {
