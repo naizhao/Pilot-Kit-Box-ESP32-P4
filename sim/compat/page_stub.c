@@ -223,3 +223,93 @@ bool pk_ble_enabled_get(void) { return sim_env("PK_SIM_SET_BLE", 1) != 0; }
 /* 设置页的写操作在 settings_page.c（依赖 FreeRTOS，不进模拟器）。
  * 桩成空实现：模拟器只验证版面与命中几何，不改状态。 */
 void pk_settings_apply(int row, int v) { (void)row; (void)v; }
+
+/* ── 诊断页要的那一批 ──────────────────────────────────────────────
+ *
+ * 默认值按**最糟情况**给，不给一切正常的理想值——诊断页的价值就在于把
+ * 异常显示出来，全绿的截图什么也验证不了：GPS 没模块、SDR 没 dongle、
+ * SD 没卡、BLE 只在广播、日志一条没写。PK_SIM_DIAG_OK=1 可整体切成正常态。
+ */
+#include "baro.h"
+#include "battery.h"
+#include "dsp_task.h"
+#include "gps.h"
+#include "pilot_kit.h"
+#include "pk_clock.h"
+#include "pk_sdcard.h"
+#include "record_sink.h"
+#include "soc_temp.h"
+
+static int diag_ok(void) { return sim_env("PK_SIM_DIAG_OK", 0); }
+
+bool ble_gatt_is_connected(void)   { return diag_ok(); }
+bool ble_gatt_is_advertising(void) { return !diag_ok(); }
+
+bool pk_batt_get(pk_batt_t *out)
+{
+    if (out) {
+        out->valid = true;  out->raw_mv = 1387;  out->batt_mv = 4106;
+        out->pct = 96;      out->charging = diag_ok();
+    }
+    return true;
+}
+
+bool pk_clock_is_synced(void) { return diag_ok(); }
+const char *pk_clock_source(void) { return diag_ok() ? "gps" : "none"; }
+
+void pk_dsp_get_stats(pk_dsp_stats_t *o)
+{
+    if (!o) return;
+    o->msgs_total    = diag_ok() ? 18432 : 0;
+    o->iq_drop_total = 0;
+}
+
+bool pk_gps_get(pk_gps_state_t *o)
+{
+    if (!o) return false;
+    memset(o, 0, sizeof(*o));
+    if (!diag_ok()) return false;          /* last_nmea_us=0 → "no module" */
+    o->have_fix = true;  o->sats = 11;  o->hdop = 0.9f;
+    o->sats_in_view = 17;  o->ant_status = PK_GPS_ANT_OK;
+    o->lat = 39.90750;  o->lon = 116.39125;
+    o->last_nmea_us = 1;  o->updated_us = 1;
+    /* 每星座几颗，用来验证 SNR 柱状图分行——这是 spec 点名的那张图，
+     * 桩不喂数据就永远只能看到 "(no satellites in view)"。 */
+    static const uint8_t snr[] = { 44,38,31,22,41,36,28,19,33,25 };
+    static const uint8_t con[] = {  0, 0, 0, 0, 1, 1, 1, 1, 2, 3 };
+    memcpy(o->snr, snr, sizeof(snr));
+    memcpy(o->snr_con, con, sizeof(con));
+    o->snr_count = (int)sizeof(snr);
+    return true;
+}
+
+pk_sd_state_t pk_sdcard_state(void)
+{
+    return diag_ok() ? PK_SD_MOUNTED : PK_SD_NO_CARD;
+}
+
+bool pk_sdcard_info(uint64_t *total, uint64_t *free_b)
+{
+    if (total)  *total  = 31914983424ULL;
+    if (free_b) *free_b = 28991029248ULL;
+    return diag_ok();
+}
+
+pk_sdr_state_t pk_sdr_state_get(uint32_t *drop_kb)
+{
+    if (drop_kb) *drop_kb = 0;
+    return diag_ok() ? PK_SDR_STREAMING : PK_SDR_NO_DEVICE;
+}
+
+bool pk_soc_temp_get(int *temp_c) { if (temp_c) *temp_c = 47; return false; }
+
+bool record_sink_file_stats(uint32_t *written, uint32_t *dropped)
+{
+    if (written) *written = diag_ok() ? 5120 : 0;
+    if (dropped) *dropped = 0;
+    return true;
+}
+
+/* PK_SIM_DIAG_DETAIL=<卡片序号> 直接打开该子系统的详情页，用来截图核对
+ * 版面——详情是点击才进的第二层，没有这个开关就只能截到总览。 */
+void pk_diag_sim_open_detail(void);

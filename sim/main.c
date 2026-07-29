@@ -41,6 +41,7 @@
 #include "pk_ui_nav.h"
 #include "about_page.h"
 #include "adsb_list.h"
+#include "diag_page.h"
 #include "settings_page.h"
 #include "boot_splash.h"
 #include "traffic_page.h"
@@ -203,6 +204,8 @@ static int run_headless(float at_sec, const char *out)
             pk_traffic_page_render(fb);
         } else if (strcmp(page, "list") == 0) {
             pk_adsb_list_render(fb);
+        } else if (strcmp(page, "diag") == 0) {
+            pk_diag_page_render(fb);
         } else if (strcmp(page, "settings") == 0) {
             pk_settings_page_render(fb);
 

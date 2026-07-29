@@ -103,6 +103,7 @@ set(FW_DRAW_SRC
     ${FW}/boot_splash.c
     ${FW}/traffic_page.c
     ${FW}/adsb_list.c
+    ${FW}/diag_page.c
     ${FW}/settings_draw.c
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c

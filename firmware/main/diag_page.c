@@ -25,6 +25,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -564,6 +565,11 @@ void pk_diag_page_render(uint16_t *fb)
 
     /* 详情层：spec §5.5 的第二层。总览负责"哪个子系统不对"，详情负责
      * "到底怎么不对"，两层的信息密度差着一个量级，不该挤在一起。 */
+#ifdef PK_SIM_BUILD
+    /* 截图用：PK_SIM_DIAG_DETAIL=<卡片序号> 直接进该详情页。 */
+    { const char *e = getenv("PK_SIM_DIAG_DETAIL");
+      if (e) s_detail = atoi(e); }
+#endif
     if (s_detail >= 0) {
         draw_detail(fb, s_detail);
         draw_detail_header(fb, s_detail);
@@ -940,8 +946,9 @@ void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
 
 /* 内容从 backbar 下面 8 px 开始。用导出的 PK_UI_BACKBAR_BOT 而不是抄数字
  * ——上一版把 44 抄成了 36，内容正好贴着 backbar 没有间隙。 */
-/* 内容排在「backbar → 子系统名 → 分隔线」之下。 */
-#define DET_TOP     (PK_UI_BACKBAR_BOT + 22 + PK_AA_L_H)
+/* 内容接在 backbar 下面。子系统名已挪到顶栏，这里不必再为它让位——
+ * 让位那一版把顶栏 48 px 空成了一片黑（模拟器截图逮到的）。 */
+#define DET_TOP     (PK_UI_BACKBAR_BOT + 8)
 #define DET_LINE_H  38
 #define DET_KEY_X   24
 #define DET_VAL_X   240
@@ -1201,20 +1208,21 @@ static void draw_detail(uint16_t *fb, int which)
  */
 static void draw_detail_header(uint16_t *fb, int which)
 {
-    /* 子系统名**左对齐到 DET_KEY_X**，与下面所有键值同一条左边界。
+    /*
+     * 子系统名画在**顶栏**（0..PFD_BAR_BOT），位置与总览页的 "DIAGNOSTICS"
+     * 完全一致。
      *
-     * 躲开 backbar 靠的是**纵向**——排在它下面（PK_UI_BACKBAR_BOT 之后），
-     * 而不是横向挪到 x=260。上一版横着躲，结果标题悬在版面中间、跟内容对
-     * 不齐；再上一版画在 x=24/y=58，又正好被 backbar 整个盖住。backbar 只
-     * 占 TOP..BOT 那一条，它下面整片都是自由的。 */
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X,
-               PK_UI_BACKBAR_BOT + 10,
+     * 之前把它放在 backbar 下方，于是顶栏那 48 px 整条空着——模拟器截图里
+     * 一眼就看见了，罩哥在真机上说的"title 上面有大量 padding"就是它。
+     * 详情页不画顶栏，那块并不会因此消失，只会变成一片黑。
+     *
+     * 两处文案不重复：顶栏说"现在看的是谁"（GPS），backbar 说"返回去哪"
+     * （← DIAGNOSTICS）。
+     */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2,
                (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
-               COL_HEADER, PK_AA_L);
-    pk_pfd_fill_rect(fb, DET_KEY_X, PK_UI_BACKBAR_BOT + 12 + PK_AA_L_H,
-                     PK_DISPLAY_W - DET_KEY_X,
-                     PK_UI_BACKBAR_BOT + 13 + PK_AA_L_H,
-                     pk_rgb565(38, 48, 62));
+               COL_HEADER, PK_AA_M);
 }
 
 /*
