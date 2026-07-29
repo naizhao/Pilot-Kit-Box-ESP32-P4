@@ -132,13 +132,6 @@ static int std_alt_ft_from_pa(float pa)
 }
 
 /* 把点绕盘心顺时针旋转 deg 度（屏幕 y 向下，正角=顺时针）。 */
-static void rot_point(int px, int py, float deg, int *ox, int *oy)
-{
-    float a  = deg * (float)M_PI / 180.0f;
-    float dx = (float)(px - CX), dy = (float)(py - CY);
-    *ox = CX + (int)lroundf(dx * cosf(a) - dy * sinf(a));
-    *oy = CY + (int)lroundf(dx * sinf(a) + dy * cosf(a));
-}
 
 /* 本机飞机符号(机身 + 主翼 + 平尾)，机头朝上；rot_deg 绕盘心旋转
  * (NORTH-UP 时按磁航向标朝向)。和交互原型 / HSI 的飞机图标一致。 */
@@ -152,9 +145,10 @@ static void rot_point(int px, int py, float deg, int *ox, int *oy)
  * north-up 时符号要按航向转任意角度，而字形表是预渲染的、转不了，只能退回
  * 手绘。这也是 PFD 罗盘能一直用图标的原因：那里恒 heading-up。
  */
-static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
+static void draw_own_aircraft(uint16_t *fb, float rot_deg, bool use_icon,
+                              uint16_t col)
 {
-    if (fabsf(rot_deg) < 0.5f) {
+    if (use_icon) {
         const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
                           + (size_t)PK_ICON_OWNSHIP
                             * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
@@ -164,18 +158,14 @@ static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
         return;
     }
 
-    /* 需要旋转：手绘机身 + 机翼 + 尾翼。 */
-    const int nose = 18, tail = 12, wing = 15, tailw = 7;
-    int x1, y1, x2, y2;
-    rot_point(0, -nose, rot_deg, &x1, &y1);
-    rot_point(0,  tail, rot_deg, &x2, &y2);
-    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 3.0f, col);
-    rot_point(-wing, 0, rot_deg, &x1, &y1);
-    rot_point( wing, 0, rot_deg, &x2, &y2);
-    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 3.0f, col);
-    rot_point(-tailw, tail - 3, rot_deg, &x1, &y1);
-    rot_point( tailw, tail - 3, rot_deg, &x2, &y2);
-    pk_pfd_draw_line_aa(fb, (float)x1, (float)y1, (float)x2, (float)y2, 2.5f, col);
+    /* 需要旋转：用 PFD 那个可旋转剪影，与交通目标同一套形态，只是更大。
+     *
+     * 上一版在这里手绘了三条线，并且把**相对偏移**传给了 rot_point()——
+     * 而它期望的是绝对屏幕坐标（内部会减 CX/CY）。于是 dx = 0-260 = -260，
+     * 旋转后整架飞机飞出屏幕，正北模式下本机符号直接消失。
+     *
+     * 本机比目标画大一圈（22 : 11），它是这幅图的原点，该一眼找得到。 */
+    pk_pfd_draw_aircraft(fb, CX, CY, rot_deg, 22, col);
 }
 
 static void draw_hsi_sector(uint16_t *fb, pk_map_orient_t orient,
@@ -270,22 +260,34 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
         int hh = rel->rel_alt_ft / 100;
         if (hh >  99) hh =  99;
         if (hh < -99) hh = -99;
-        /* 升降用真箭头 ↑↓，不再拿 ^v 凑——那两个字符当初是权宜之计，
-         * 现在字库里已经有方向箭头了。 */
-        const char *arrow = rel->rel_alt_ft >  100 ? "\u2191"
-                          : rel->rel_alt_ft < -100 ? "\u2193" : "";
-        snprintf(lab, sizeof(lab), "%+d%s", hh, arrow);
+        snprintf(lab, sizeof(lab), "%+d", hh);
     } else {
         snprintf(lab, sizeof(lab), "---");
     }
 
     /* 标签压一层暗底再写字：雷达上目标扎堆时，白字叠白字谁也读不出来。
      * PFD 的交通标签同样这么做。 */
+    /* 升降箭头单独着色：爬升绿、下降橙。
+     *
+     * 和高度差数字分开画，是因为两者说的是不同的事——数字是「差多少」（静态
+     * 位置），箭头是「在往哪走」（趋势）。同色的话趋势会被淹没在数字里，而
+     * 判断会不会冲突恰恰要先看趋势。绿/橙这对在本项目里已经用于 VS 与温度，
+     * 语义一致：绿=正在离开、橙=需要留意。 */
+    const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
+    const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
+    const char *arrow = !rel->rel_alt_valid   ? ""
+                      : rel->vs_fpm >  200    ? "\u2191"
+                      : rel->vs_fpm < -200    ? "\u2193" : "";
     const int lw = (int)strlen(lab) * pk_aa_cell_w(PK_AA_XS);
+    const int aw = arrow[0] ? PK_AA_XS_CJK_W : 0;
     const int lx = tx + 12, ly = ty - PK_AA_XS_H / 2;
-    pk_pfd_darken_rect(fb, lx - 2, ly - 1, lx + lw + 2, ly + PK_AA_XS_H + 1, 120);
+    pk_pfd_darken_rect(fb, lx - 2, ly - 1, lx + lw + aw + 2, ly + PK_AA_XS_H + 1, 120);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, ly, lab,
                selected ? COL_SEL : COL_LBL, PK_AA_XS);
+    if (arrow[0]) {
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx + lw, ly, arrow,
+                   rel->vs_fpm > 0 ? COL_UP : COL_DOWN, PK_AA_XS);
+    }
 
     /* 呼号只给选中的那架：14 个目标每架都标呼号，雷达会糊成一片字。
      * 想看全部就看右栏列表，那里一行一条排得整整齐齐。 */
@@ -465,9 +467,7 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
         char l1[16];   /* 箭头是 3 字节 UTF-8，留够 */
         if (v->rel.rel_alt_valid) {
             const int h100 = v->rel.rel_alt_ft / 100;
-            const char *vs = (v->rel.vs_fpm >  200) ? "\u2191"
-                           : (v->rel.vs_fpm < -200) ? "\u2193" : "";
-            snprintf(l1, sizeof(l1), "%+d%s", h100, vs);
+            snprintf(l1, sizeof(l1), "%+d", h100);
         } else {
             snprintf(l1, sizeof(l1), "---");
         }
@@ -475,9 +475,22 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
          * 这个阈值与 PFD 交通标签一致。 */
         const bool near_alt = v->rel.rel_alt_valid &&
                               v->rel.rel_alt_ft > -1000 && v->rel.rel_alt_ft < 1000;
+        /* 箭头与数字分色，同 draw_target 的理由：数字说「差多少」，箭头说
+         * 「在往哪走」，后者才是判断会不会冲突的第一眼。 */
+        const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
+        const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
+        const char *ar = !v->rel.rel_alt_valid ? ""
+                       : v->rel.vs_fpm >  200  ? "\u2191"
+                       : v->rel.vs_fpm < -200  ? "\u2193" : "";
+        const int aw = ar[0] ? PK_AA_M_CJK_W : 0;
         const int w1 = (int)strlen(l1) * pk_aa_cell_w(PK_AA_M);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x1 - ROW_PAD - w1, ty1, l1,
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   x1 - ROW_PAD - w1 - aw, ty1, l1,
                    sel ? COL_SEL : (near_alt ? COL_NEAR : COL_DIM), PK_AA_M);
+        if (ar[0]) {
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x1 - ROW_PAD - aw, ty1, ar,
+                       v->rel.vs_fpm > 0 ? COL_UP : COL_DOWN, PK_AA_M);
+        }
 
         /* ── 次行：距离 + 地速 ── */
         char l2[20];
@@ -581,11 +594,14 @@ void pk_traffic_page_render(uint16_t *fb)
         const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
                           + (size_t)PK_ICON_ADSB
                             * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+        /* 绿色取自 PFD 状态栏的 COL_GREEN——那里的星数、目标数都是这个绿。
+         * 绿在本项目里表示「有效且在线」，灰是「数据失效」，用错色等于说谎。 */
+        const uint16_t COL_ADSB = pk_rgb565(0, 220, 60);
         pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                         392, (PFD_BAR_BOT - PK_ICON_H) / 2,
-                        ic, PK_ICON_W, PK_ICON_H, COL_GREY);
+                        ic, PK_ICON_W, PK_ICON_H, COL_ADSB);
         snprintf(buf, sizeof(buf), "%d", (int)n);
-        TFC_PUTS(fb, 392 + PK_ICON_W + 6, TFC_HDR_TY, buf, COL_GREY);
+        TFC_PUTS(fb, 392 + PK_ICON_W + 6, TFC_HDR_TY, buf, COL_ADSB);
     }
     snprintf(buf, sizeof(buf), "%dNM", range_nm);
     {
@@ -671,7 +687,9 @@ void pk_traffic_page_render(uint16_t *fb)
     }
 
     /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */
-    draw_own_aircraft(fb, (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f, COL_OWN);
+    draw_own_aircraft(fb,
+                      (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f,
+                      orient == PK_MAP_HEADING_UP, COL_OWN);
 
     /* 详情不再压在雷达上：同样的信息已经在右栏卡片里（spec §5.2 也把它归到
      * 卡片），雷达区留给图形本身。draw_detail_bar() 暂时保留，等右栏补上机型

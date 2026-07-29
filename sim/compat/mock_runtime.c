@@ -9,6 +9,7 @@
 #include "mock_runtime.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "aircraft_state.h"
@@ -44,7 +45,13 @@ bool pk_imu_sample_get(pk_imu_sample_t *out)
     if (!out) return false;
     memset(out, 0, sizeof(*out));
     out->valid    = s_own_ok;
-    out->yaw_deg  = s_yaw_deg;
+    /* PK_SIM_HDG=<deg> 把航向钉住。动画驱动的 yaw 每帧都在变，截不出
+     * 「正好 60°」那一帧，而验证「正北朝上时本机符号跟着航向转」恰恰需要
+     * 一个确定的角度。 */
+    {
+        const char *e = getenv("PK_SIM_HDG");
+        out->yaw_deg = e ? (float)atof(e) : s_yaw_deg;
+    }
     out->accuracy = 3;
     return s_own_ok;
 }
@@ -69,7 +76,6 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
     if (src) *src = PK_OWN_SRC_BOUND_ADSB;
     return true;
 }
-
 /* ── 气压 ─────────────────────────────────────────────────────────── */
 bool pk_baro_get(pk_baro_state_t *out)
 {

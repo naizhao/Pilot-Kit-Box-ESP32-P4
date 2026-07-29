@@ -109,10 +109,22 @@ const char *pk_aircraft_registration(uint32_t icao24)
 }
 
 /* 朝向与量程在模拟器里也要可变——按钮改的就是它们，写死就验证不了交互。 */
-static pk_map_orient_t s_orient = PK_MAP_HEADING_UP;
+/* PK_SIM_ORIENT=north 起手就用正北朝上——要验证「本机符号跟着航向转」
+ * 只能在这个模式下看，机头朝上模式里它恒指屏幕上方。 */
+static pk_map_orient_t s_orient_init(void)
+{
+    const char *e = getenv("PK_SIM_ORIENT");
+    return (e && (e[0] == 'n' || e[0] == 'N')) ? PK_MAP_NORTH_UP
+                                               : PK_MAP_HEADING_UP;
+}
+static pk_map_orient_t s_orient = (pk_map_orient_t)-1;
 static int             s_range_idx = 3;               /* 20 NM，同真机默认 */
 
-pk_map_orient_t pk_map_orient_get(void)        { return s_orient; }
+pk_map_orient_t pk_map_orient_get(void)
+{
+    if ((int)s_orient < 0) s_orient = s_orient_init();
+    return s_orient;
+}
 void pk_map_orient_set(pk_map_orient_t m)      { s_orient = m; }
 int  pk_traffic_range_idx_get(void)            { return s_range_idx; }
 void pk_traffic_range_idx_set(int idx)         { s_range_idx = idx < 0 ? 0 : (idx > 3 ? 3 : idx); }
