@@ -143,8 +143,15 @@ static esp_err_t backlight_init(void)
     return ledc_channel_config(&channel_config);
 }
 
+/* 当前亮度档。设置页要显示"现在选的是哪一档"，而硬件那侧只有 set 没有
+ * get——PWM 占空比反推不出档位（档位到占空比不是线性的）。 */
+static uint8_t s_bl_level;
+
+uint8_t pk_backlight_level_get(void) { return s_bl_level; }
+
 void pk_display_set_brightness(uint8_t level)
 {
+    s_bl_level = level;
     const uint32_t duty = ((uint32_t)level * BL_LEDC_MAX_DUTY) / UINT8_MAX;
     if (ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, duty) == ESP_OK) {
         (void)ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);

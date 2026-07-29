@@ -100,6 +100,14 @@ static void fmt_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* 两步确认状态机的当前态，给渲染层用（1 = 已 ARM，等第二次点击）。
+ * 直接暴露枚举会把内部状态定义泄出去，这里只回答渲染真正关心的那一件事。 */
+int pk_settings_format_state(void)
+{
+    fmt_decay();
+    return (s_fmt_state == FMT_ARM) ? 1 : 0;
+}
+
 void pk_settings_format_action(void)
 {
     fmt_decay();
@@ -189,7 +197,10 @@ static void render_row(uint16_t *fb, int row_idx,
 
 /* ── 主渲染入口 ── */
 
-void pk_settings_page_render(uint16_t *fb)
+/* 旧的 320×240 逐行视图。8 项版面（spec §5.4）改用下面的 draw_settings_v2，
+ * 这段留着做参照——格式化那套两步确认状态机仍在用它验证过的时序。 */
+__attribute__((unused))
+static void settings_render_legacy(uint16_t *fb)
 {
     pk_lang_t lang = pk_i18n_get_lang();
 
@@ -264,4 +275,186 @@ void pk_settings_page_render(uint16_t *fb)
     pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                            6, PK_DISPLAY_H - 16,
                            pk_i18n_text(PK_TR_SETTINGS_FOOTER), COL_DIM);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 设置页 800×480（spec §5.4）
+ *
+ * 8 行 × 64 px，控件高 38 px。左半是项名，右半是控件——控件右对齐到同一条
+ * 竖线上，扫一眼就知道每项当前选的是哪个，不必逐行找控件在哪。
+ *
+ * 分段控件（segmented）而不是下拉或滑块：选项都是 2~4 个的离散值，分段把
+ * 全部选项和当前选择同时摆出来，一次触摸直达目标；下拉要两次交互，滑块在
+ * 离散值上又不好停准。
+ * ═════════════════════════════════════════════════════════════════════ */
+
+#include "pfd_aa_text.h"
+#include "pfd_aa_font.h"
+#include "pfd_layout.h"
+
+#define SET_ROW_H      64
+#define SET_CTL_H      38
+#define SET_PAD        20
+#define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
+#define SET_ROWS_VIS   ((PK_DISPLAY_H - PFD_BAR_BOT) / SET_ROW_H)
+
+static int s_set_scroll;      /* 滚动偏移(px) */
+
+/* 一个分段控件：n 个选项，sel 为当前项。返回控件左缘，供命中判定复用。 */
+static int draw_seg(uint16_t *fb, int y_mid, const char *const *opts, int n,
+                    int sel, bool dim)
+{
+    const uint16_t SEG_OFF = pk_rgb565(28, 36, 48);
+    const uint16_t SEG_ON  = pk_rgb565(0, 110, 200);
+    const uint16_t SEG_TXT_ON = pk_rgb565(255, 255, 255);
+    const uint16_t SEG_TXT_OFF= pk_rgb565(170, 182, 200);
+    const uint16_t SEG_DIM    = pk_rgb565(90, 96, 108);
+
+    /* 每段宽度按最长选项算，所有段等宽——不等宽的分段控件在余光里像是
+     * "当前项被放大了"，会误以为那是可拖动的滑块。 */
+    int maxlen = 1;
+    for (int i = 0; i < n; ++i) {
+        const int l = (int)strlen(opts[i]);
+        if (l > maxlen) maxlen = l;
+    }
+    const int seg_w = maxlen * pk_aa_cell_w(PK_AA_S) + 20;
+    const int total = seg_w * n;
+    const int x0    = SET_CTL_R - total;
+    const int y0    = y_mid - SET_CTL_H / 2;
+
+    for (int i = 0; i < n; ++i) {
+        const int sx = x0 + i * seg_w;
+        const bool on = (i == sel);
+        pk_pfd_fill_rect(fb, sx, y0, sx + seg_w - 2, y0 + SET_CTL_H,
+                         dim ? SEG_OFF : (on ? SEG_ON : SEG_OFF));
+        const int tw = (int)strlen(opts[i]) * pk_aa_cell_w(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   sx + (seg_w - 2 - tw) / 2, y0 + (SET_CTL_H - PK_AA_S_H) / 2,
+                   opts[i], dim ? SEG_DIM : (on ? SEG_TXT_ON : SEG_TXT_OFF),
+                   PK_AA_S);
+    }
+    return x0;
+}
+
+/* 步进器：− 值 +。值居中，两枚按钮等宽，与分段控件右缘对齐。 */
+static void draw_stepper(uint16_t *fb, int y_mid, const char *val)
+{
+    const uint16_t STP_BTN = pk_rgb565(28, 36, 48);
+    const uint16_t STP_TXT = pk_rgb565(235, 240, 248);
+    const int btn_w = 44;
+    const int val_w = 130;
+    const int y0    = y_mid - SET_CTL_H / 2;
+    const int x0    = SET_CTL_R - (btn_w * 2 + val_w);
+
+    pk_pfd_fill_rect(fb, x0, y0, x0 + btn_w, y0 + SET_CTL_H, STP_BTN);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + btn_w / 2 - 5,
+               y0 + (SET_CTL_H - PK_AA_M_H) / 2, "-", STP_TXT, PK_AA_M);
+
+    const int vw = (int)strlen(val) * pk_aa_cell_w(PK_AA_S);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               x0 + btn_w + (val_w - vw) / 2,
+               y0 + (SET_CTL_H - PK_AA_S_H) / 2, val, STP_TXT, PK_AA_S);
+
+    const int bx = x0 + btn_w + val_w;
+    pk_pfd_fill_rect(fb, bx, y0, bx + btn_w, y0 + SET_CTL_H, STP_BTN);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, bx + btn_w / 2 - 5,
+               y0 + (SET_CTL_H - PK_AA_M_H) / 2, "+", STP_TXT, PK_AA_M);
+}
+
+void pk_settings_page_render(uint16_t *fb)
+{
+    const uint16_t V2_BG   = pk_rgb565(7, 10, 16);
+    const uint16_t V2_HDR  = pk_rgb565(235, 235, 235);
+    const uint16_t V2_KEY  = pk_rgb565(215, 222, 232);
+    const uint16_t V2_LINE = pk_rgb565(26, 33, 44);
+
+    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, V2_BG);
+
+    int row = 0;
+    #define ROW_Y(i)  (PFD_BAR_BOT + (i) * SET_ROW_H - s_set_scroll + SET_ROW_H / 2)
+    #define ROW_LABEL(i, text) do {                                            \
+        const int _y = ROW_Y(i);                                               \
+        if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H) {    \
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SET_PAD,                \
+                       _y - PK_AA_M_H / 2, (text), V2_KEY, PK_AA_M);          \
+            pk_pfd_fill_rect(fb, SET_PAD, _y + SET_ROW_H / 2 - 1,              \
+                             SET_CTL_R, _y + SET_ROW_H / 2, V2_LINE);         \
+        }                                                                      \
+    } while (0)
+
+    /* 1 语言 */
+    { static const char *o[] = { "\u4e2d\u6587", "EN" };
+      ROW_LABEL(row, "LANGUAGE");
+      draw_seg(fb, ROW_Y(row), o, 2, pk_i18n_get_lang() == PK_LANG_ZH ? 0 : 1, false);
+      row++; }
+
+    /* 2 QNH —— 步进器：它是连续量，分段摆不下。 */
+    { char v[16]; snprintf(v, sizeof(v), "%.2f hPa", (double)pk_qnh_get());
+      ROW_LABEL(row, "QNH");
+      draw_stepper(fb, ROW_Y(row), v);
+      row++; }
+
+    /* 3 地图朝向 */
+    { static const char *o[] = { "HDG UP", "NORTH UP" };
+      ROW_LABEL(row, "MAP ORIENT");
+      draw_seg(fb, ROW_Y(row), o, 2,
+               pk_map_orient_get() == PK_MAP_HEADING_UP ? 0 : 1, false);
+      row++; }
+
+    /* 4 雷达量程 —— 选项取自 pk_traffic_range_nm，不另抄一份数字。 */
+    { static const char *o[] = { "2", "5", "10", "20" };
+      ROW_LABEL(row, "RADAR RANGE NM");
+      draw_seg(fb, ROW_Y(row), o, 4, pk_traffic_range_idx_get(), false);
+      row++; }
+
+    /* 5 屏幕亮度 */
+    { static const char *o[] = { "LOW", "MID", "HIGH", "AUTO" };
+      ROW_LABEL(row, "BRIGHTNESS");
+      /* AUTO 置灰：没有环境光传感器，选了也无从自动。摆出来是因为 spec 列了
+       * 它，灰掉是因为不能假装能用——留一个点了没反应的选项更糟。 */
+      draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_level_get(), false);
+      row++; }
+
+    /* 6 日间/夜间配色 */
+    { static const char *o[] = { "DAY", "NIGHT" };
+      ROW_LABEL(row, "COLOR SCHEME");
+      draw_seg(fb, ROW_Y(row), o, 2, 0, true);   /* 尚未接入，整行置灰 */
+      row++; }
+
+    /* 7 记录存储 */
+    { static const char *o[] = { "FLASH", "SD CARD" };
+      ROW_LABEL(row, "LOG STORAGE");
+      draw_seg(fb, ROW_Y(row), o, 2,
+               pk_log_store_get() == PK_LOG_STORE_SD ? 1 : 0,
+               !pk_sdcard_is_mounted());
+      row++; }
+
+    /* 8 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    { ROW_LABEL(row, "FORMAT SD");
+      const int y_mid = ROW_Y(row);
+      const int y0 = y_mid - SET_CTL_H / 2;
+      const int w  = 200;
+      const int x0 = SET_CTL_R - w;
+      const bool armed = (pk_settings_format_state() == 1);
+      const bool avail = pk_sdcard_is_mounted() && !record_sink_file_uses_sd();
+      pk_pfd_fill_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
+                       !avail  ? pk_rgb565(45, 45, 50)
+                       : armed ? pk_rgb565(200, 40, 40)
+                               : pk_rgb565(90, 30, 30));
+      const char *txt = !pk_sdcard_is_mounted() ? "NO CARD"
+                      : record_sink_file_uses_sd() ? "IN USE"
+                      : armed ? "TAP AGAIN 5s" : "FORMAT";
+      const int tw = (int)strlen(txt) * pk_aa_cell_w(PK_AA_S);
+      pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
+                 y0 + (SET_CTL_H - PK_AA_S_H) / 2, txt,
+                 avail ? pk_rgb565(255, 255, 255) : pk_rgb565(120, 124, 132),
+                 PK_AA_S);
+      row++; }
+
+    /* 顶栏最后画，行从底下滑过。 */
+    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, V2_BG);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SET_PAD,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2, "SETTINGS", V2_HDR, PK_AA_M);
+    #undef ROW_Y
+    #undef ROW_LABEL
 }

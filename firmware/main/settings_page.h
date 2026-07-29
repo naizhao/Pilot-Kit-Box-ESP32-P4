@@ -16,3 +16,6 @@ int  pk_settings_cursor_row(void);    /* 0=Language 1=QNH 2=MAP 3=RANGE
  * 第一次按进入待确认,5 s 内再按启动后台格式化任务;无卡或日志
  * 正写 SD 时拒绝。状态由 settings 页渲染展示。 */
 void pk_settings_format_action(void);
+
+/* 两步确认状态机：1 = 已 ARM（等第二次点击确认），0 = 其余。 */
+int pk_settings_format_state(void);

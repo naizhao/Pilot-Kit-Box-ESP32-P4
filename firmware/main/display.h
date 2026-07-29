@@ -52,6 +52,9 @@ esp_err_t pk_display_init(void);
 /* 背光亮度：0（关闭）至 255（最亮）。 */
 void pk_display_set_brightness(uint8_t level);
 
+/* 当前亮度档（设置页显示用）。硬件侧只有 set，占空比反推不出档位。 */
+uint8_t pk_backlight_level_get(void);
+
 /* 发送 ST7701 display-off 命令。 */
 void pk_display_panel_off(void);
 
