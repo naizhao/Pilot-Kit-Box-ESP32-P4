@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include "esp_system.h"
 #include "esp_timer.h"
 
 #include "display.h"
@@ -688,9 +689,30 @@ void pk_diag_page_render(uint16_t *fb)
     {
         int temp_c = 0;
         const bool over = pk_soc_temp_get(&temp_c);
-        snprintf(buf, sizeof(buf), "SoC %d C", temp_c);
+
+        /*
+         * 温度 + **上次复位原因**。
+         *
+         * 复位原因放在这里而不是单开一格：它和"设备自身健康"是同一件事，
+         * 而且平时是 POR（上电），只有出过问题才值得看一眼。
+         *
+         * 区分能力是它的价值所在——BROWNOUT（欠压）说明供电撑不住瞬时负载，
+         * POR 说明真的断过电，PANIC/WDT 说明是固件的锅。三者的排查方向完全
+         * 不同，靠"它重启了"这一句话分不出来。
+         */
+        static const char *const kRst[] = {
+            "unknown", "POR", "ext", "SW", "panic", "int-WDT", "task-WDT",
+            "WDT", "deepsleep", "brownout", "SDIO", "USB", "JTAG",
+        };
+        const esp_reset_reason_t rr = esp_reset_reason();
+        const char *rs = (rr < (int)(sizeof(kRst) / sizeof(kRst[0])))
+                       ? kRst[rr] : "?";
+        snprintf(buf, sizeof(buf), "SoC %d C   rst %s", temp_c, rs);
         draw_card(fb, 1, 3, "SYS", buf,
-                  over ? ST_BAD : temp_c >= 75 ? ST_WARN : ST_OK);
+                  over ? ST_BAD
+                  : (rr == ESP_RST_BROWNOUT || rr == ESP_RST_PANIC ||
+                     rr == ESP_RST_INT_WDT  || rr == ESP_RST_TASK_WDT) ? ST_WARN
+                  : temp_c >= 75 ? ST_WARN : ST_OK);
     }
 
     /* ── microSD ──
