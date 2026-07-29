@@ -270,9 +270,11 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
         int hh = rel->rel_alt_ft / 100;
         if (hh >  99) hh =  99;
         if (hh < -99) hh = -99;
-        const char arrow = rel->rel_alt_ft >  100 ? '^'
-                         : rel->rel_alt_ft < -100 ? 'v' : ' ';
-        snprintf(lab, sizeof(lab), "%+d%c", hh, arrow);
+        /* 升降用真箭头 ↑↓，不再拿 ^v 凑——那两个字符当初是权宜之计，
+         * 现在字库里已经有方向箭头了。 */
+        const char *arrow = rel->rel_alt_ft >  100 ? "\u2191"
+                          : rel->rel_alt_ft < -100 ? "\u2193" : "";
+        snprintf(lab, sizeof(lab), "%+d%s", hh, arrow);
     } else {
         snprintf(lab, sizeof(lab), "---");
     }
@@ -335,11 +337,18 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
                  pk_rgb565(207, 211, 220), 1);
 }
 
-/* 圆形按钮底：半透明深色 + 细边，压在雷达上仍看得清，又不抢图形的注意力。 */
-static void draw_btn_plate(uint16_t *fb, int x, int y)
+/* 当前被按住的按钮（-1 = 无）。触摸层在按下时置位、松手时清除，绘制时据此
+ * 高亮——在 10 fps 上没有这个反馈，点下去会像是没反应。 */
+static int s_btn_down = -1;
+
+/* 圆形按钮底：半透明深色 + 细边，压在雷达上仍看得清，又不抢图形的注意力。
+ * 按住时底色提亮一档，这是按钮唯一的「我收到了」信号。 */
+static void draw_btn_plate(uint16_t *fb, int x, int y, bool down)
 {
-    const uint16_t face = pk_rgb565( 22,  30,  42);
-    const uint16_t edge = pk_rgb565(120, 145, 175);
+    const uint16_t face = down ? pk_rgb565( 62,  84, 112)
+                               : pk_rgb565( 22,  30,  42);
+    const uint16_t edge = down ? pk_rgb565(210, 228, 245)
+                               : pk_rgb565(120, 145, 175);
     const int r = BTN_D / 2, cx = x + r, cy = y + r;
     for (int dy = -r; dy <= r; ++dy) {
         for (int dx = -r; dx <= r; ++dx) {
@@ -361,7 +370,7 @@ static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
      * 用图标不用文字。"HDG UP"/"N UP" 这类缩写要先读、再想它是什么意思；
      * navigation 那个导航箭头和 explore 那个指南针是通用符号，扫一眼就懂。
      * 两枚都取自内置的 Material Symbols 集（见 gen_pfd_icons.py）。 */
-    draw_btn_plate(fb, BTN_ORI_X, BTN_ORI_Y);
+    draw_btn_plate(fb, BTN_ORI_X, BTN_ORI_Y, s_btn_down == 0);
     {
         const pk_icon_id_t id = (orient == PK_MAP_HEADING_UP)
                                   ? PK_ICON_NAV_HDG : PK_ICON_NAV_NORTH;
@@ -374,8 +383,8 @@ static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
     }
 
     /* 量程 +/-。放大是「看得更近」，所以 + 对应更小的 NM 数。 */
-    draw_btn_plate(fb, BTN_ZIN_X, BTN_ZIN_Y);
-    draw_btn_plate(fb, BTN_ZOUT_X, BTN_ZOUT_Y);
+    draw_btn_plate(fb, BTN_ZIN_X, BTN_ZIN_Y, s_btn_down == 1);
+    draw_btn_plate(fb, BTN_ZOUT_X, BTN_ZOUT_Y, s_btn_down == 2);
     {
         const int cw = pk_aa_cell_w(PK_AA_L);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -456,9 +465,9 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
         char l1[12];
         if (v->rel.rel_alt_valid) {
             const int h100 = v->rel.rel_alt_ft / 100;
-            const char vs = (v->rel.vs_fpm >  200) ? '^'
-                          : (v->rel.vs_fpm < -200) ? 'v' : ' ';
-            snprintf(l1, sizeof(l1), "%+d%c", h100, vs);
+            const char *vs = (v->rel.vs_fpm >  200) ? "\u2191"
+                           : (v->rel.vs_fpm < -200) ? "\u2193" : "";
+            snprintf(l1, sizeof(l1), "%+d%s", h100, vs);
         } else {
             snprintf(l1, sizeof(l1), "---");
         }
@@ -679,21 +688,26 @@ static bool hit_btn(int x, int y, int bx, int by)
     return dx * dx + dy * dy <= r * r;
 }
 
+void pk_traffic_page_touch_up(void) { s_btn_down = -1; }
+
 bool pk_traffic_page_touch(int x, int y)
 {
     if (hit_btn(x, y, BTN_ORI_X, BTN_ORI_Y)) {
+        s_btn_down = 0;
         /* 在两种投影间来回切，与高德点指北针的行为一致。 */
         pk_map_orient_set(pk_map_orient_get() == PK_MAP_HEADING_UP
                               ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP);
         return true;
     }
     if (hit_btn(x, y, BTN_ZIN_X, BTN_ZIN_Y)) {
+        s_btn_down = 1;
         /* 放大 = 看得更近 = 更小的 NM 数 = 更小的档位序号。 */
         const int idx = pk_traffic_range_idx_get();
         if (idx > 0) pk_traffic_range_idx_set(idx - 1);
         return true;
     }
     if (hit_btn(x, y, BTN_ZOUT_X, BTN_ZOUT_Y)) {
+        s_btn_down = 2;
         const int idx = pk_traffic_range_idx_get();
         if (idx < 3) pk_traffic_range_idx_set(idx + 1);
         return true;

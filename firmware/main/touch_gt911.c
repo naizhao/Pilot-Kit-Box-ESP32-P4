@@ -47,6 +47,9 @@ static const char *TAG = "touch";
 
 static esp_lcd_touch_handle_t s_tp;
 
+/* 自绘按钮的「一次按下只触发一次」闸门，松手时重新装弹。 */
+static bool s_armed = true;
+
 /*
  * 原生触摸坐标 → 逻辑屏坐标。
  *
@@ -100,17 +103,22 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          *
          * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
          * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
-        static bool s_armed = true;
         if (s_armed && pk_ui_get_mode() == PK_UI_MODE_TRAFFIC &&
             pk_traffic_page_touch(lx, ly)) {
             s_armed = false;
             data->state = LV_INDEV_STATE_RELEASED;
         }
-        if (!pressed) s_armed = true;
         /* 标定用：真机上点四角，核对原生与逻辑两组数是否符合上面的算式。
          * 若发现 X/Y 反了或某轴镜像，改 native_to_logical 一处即可。 */
         ESP_LOGD(TAG, "native(%u,%u) -> logical(%d,%d)", px, py, lx, ly);
     } else {
+        /* 松手才重新装弹。
+         *
+         * 上一版把这行写在 pressed 分支**内部**（if (!pressed) s_armed = true;），
+         * 那里 !pressed 恒假——于是第一次点击把 s_armed 置 false 之后再也没机会
+         * 恢复，所有自绘按钮从此全部失灵。 */
+        s_armed = true;
+        pk_traffic_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }

@@ -61,8 +61,8 @@ ICONS = [
     # 交通页左下角的朝向切换。两个图标各自表意：navigation 是跟着走向的导航
     # 箭头（机头朝上），explore 是指南针（正北朝上）——按钮显示的是**当前**
     # 模式，点一下换到另一种。
-    ("NAV_HDG",   "navigation",          0xE55D, 1),
-    ("NAV_NORTH", "explore",             0xE87A, 1),
+    ("NAV_HDG",   "near_me",             0xE569, 1),
+    ("NAV_NORTH", "navigation",          0xE55D, 1),
     # 电量刻度：alert → _0…_6 → full 共九档，必须**连号**（batt_icon_for()
     # 直接按 BATT_ALERT+step 取，没有特判分支）。
     #

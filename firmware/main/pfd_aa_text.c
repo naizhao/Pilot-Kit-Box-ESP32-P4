@@ -51,10 +51,14 @@ typedef struct {
 } aa_cjk_face_t;
 
 static const aa_cjk_face_t s_cjk_faces[PK_AA_SIZE_COUNT] = {
-    [PK_AA_M] = { { pk_aa_m_cjk_regular, pk_aa_m_cjk_bold },
-                  PK_AA_M_CJK_W, PK_AA_M_CJK_H },
-    [PK_AA_L] = { { pk_aa_l_cjk_regular, pk_aa_l_cjk_bold },
-                  PK_AA_L_CJK_W, PK_AA_L_CJK_H },
+    [PK_AA_XS] = { { pk_aa_xs_cjk_regular, pk_aa_xs_cjk_bold },
+                   PK_AA_XS_CJK_W, PK_AA_XS_CJK_H },
+    [PK_AA_S]  = { { pk_aa_s_cjk_regular,  pk_aa_s_cjk_bold  },
+                   PK_AA_S_CJK_W,  PK_AA_S_CJK_H  },
+    [PK_AA_M]  = { { pk_aa_m_cjk_regular,  pk_aa_m_cjk_bold  },
+                   PK_AA_M_CJK_W,  PK_AA_M_CJK_H  },
+    [PK_AA_L]  = { { pk_aa_l_cjk_regular,  pk_aa_l_cjk_bold  },
+                   PK_AA_L_CJK_W,  PK_AA_L_CJK_H  },
 };
 
 static pk_aa_weight_t s_weight = PK_AA_REGULAR;

@@ -33,12 +33,20 @@ extern const uint8_t pk_aa_xl_regular[];
 extern const uint8_t pk_aa_xl_bold[];
 
 #define PK_AA_CJK_COUNT  99
+#define PK_AA_XS_CJK_W  12
+#define PK_AA_XS_CJK_H  17
+#define PK_AA_S_CJK_W  14
+#define PK_AA_S_CJK_H  20
 #define PK_AA_M_CJK_W  18
 #define PK_AA_M_CJK_H  26
 #define PK_AA_L_CJK_W  26
 #define PK_AA_L_CJK_H  37
 
 extern const uint16_t pk_aa_cjk_codes[];
+extern const uint8_t pk_aa_xs_cjk_regular[];
+extern const uint8_t pk_aa_xs_cjk_bold[];
+extern const uint8_t pk_aa_s_cjk_regular[];
+extern const uint8_t pk_aa_s_cjk_bold[];
 extern const uint8_t pk_aa_m_cjk_regular[];
 extern const uint8_t pk_aa_m_cjk_bold[];
 extern const uint8_t pk_aa_l_cjk_regular[];

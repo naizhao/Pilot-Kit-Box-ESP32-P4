@@ -21,3 +21,7 @@ void pk_traffic_page_render(uint16_t *fb);
  * 坐标是**逻辑屏坐标**，与 framebuffer 同一套。
  */
 bool pk_traffic_page_touch(int x, int y);
+
+/* 松手。清掉按下高亮——按钮要给「我收到了」的即时反馈，否则在 10 fps 上
+ * 点下去像是没反应。 */
+void pk_traffic_page_touch_up(void);

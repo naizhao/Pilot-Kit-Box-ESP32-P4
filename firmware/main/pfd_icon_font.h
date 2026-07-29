@@ -19,8 +19,8 @@ typedef enum {
     PK_ICON_SD = 5,   /* sd_card  U+E1C2  FILL=1 */
     PK_ICON_ADSB = 6,   /* connecting_airports  U+E7C9  FILL=1 */
     PK_ICON_OWNSHIP = 7,   /* flight  U+E539  FILL=1 */
-    PK_ICON_NAV_HDG = 8,   /* navigation  U+E55D  FILL=1 */
-    PK_ICON_NAV_NORTH = 9,   /* explore  U+E87A  FILL=1 */
+    PK_ICON_NAV_HDG = 8,   /* near_me  U+E569  FILL=1 */
+    PK_ICON_NAV_NORTH = 9,   /* navigation  U+E55D  FILL=1 */
     PK_ICON_BATT_ALERT = 10,   /* battery_android_alert  U+F306  FILL=0 */
     PK_ICON_BATT_0 = 11,   /* battery_android_0  U+F30D  FILL=0 */
     PK_ICON_BATT_1 = 12,   /* battery_android_1  U+F30C  FILL=0 */
