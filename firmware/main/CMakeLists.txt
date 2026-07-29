@@ -59,6 +59,7 @@ idf_component_register(
         "pk_ui_nav.c"
         "pk_ui_nav_host.c"
         "touch_gt911.c"
+        "battery.c"
         "soc_temp.c"
         "config_fab.c"
         "logo_blob.c"
@@ -94,6 +95,7 @@ idf_component_register(
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
         esp_driver_gpio          # BNO085 RST pin
         esp_driver_tsens         # 片内结温 → 顶栏过热告警（soc_temp.c）
+        esp_adc                  # GPIO20 BAT_ADC → 电池电压（battery.c）
         nvs_flash                # software-tare persistence (imu_task.c)
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about

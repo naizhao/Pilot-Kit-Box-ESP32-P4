@@ -199,13 +199,11 @@ static void diag_render_legacy(uint16_t *fb)
      * SDR — RTL-SDR dongle。
      *
      * 这一行以前恒显示"在线"（旧注释原话："dongle 未插无法区分"）。2026-07-29
-     * 罩哥把 dongle 插到了 USB-C 口——那是 GPIO24/25 的 FS PHY（USB
-     * Serial/JTAG），而 host 栈跑在 HS 控制器上，两套 PHY——屏上看不出任何
-     * 异常，只能抓串口日志才发现从头到尾没有枚举事件。一台带诊断页的设备
-     * 不该逼人去抓日志。
+     * 旧板曾有另一套 USB 接口说明；Rev1.2 上 RTL-SDR 应接 H2（丝印 USB）
+     * 原生 USB 2.0 HS Type-C。H1 是 CH343P 调试串口，P1 是 C6 下载排针。
      *
      * 现在四态分开显示，并且**没枚举时直接把该插哪儿写在屏上**：这是接线
-     * 问题，写"OFFLINE"帮不上忙，写"接 P1 排针"才解决问题。
+     * 问题，写"OFFLINE"帮不上忙，直接写 H2 才能解决问题。
      * ------------------------------------------------------------------ */
     {
         pk_dsp_stats_t d;
@@ -218,7 +216,7 @@ static void diag_render_legacy(uint16_t *fb)
         switch (st) {
         case PK_SDR_NO_DEVICE:
             /* 把排查方向直接写出来——这一行的读者正拿着 dongle 在找哪个口。 */
-            snprintf(buf, sizeof(buf), "NO DONGLE - use P1 header (not USB-C)");
+            snprintf(buf, sizeof(buf), "NO DONGLE - use H2 USB-C");
             col = COL_ALERT;
             break;
         case PK_SDR_ATTACHED:
@@ -450,6 +448,7 @@ static void diag_render_legacy(uint16_t *fb)
 #include "pfd_aa_text.h"
 #include "pfd_layout.h"
 #include "pfd_draw.h"
+#include "battery.h"
 #include "soc_temp.h"
 
 #define CARD_COLS   2
@@ -511,8 +510,7 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18, y + 10,
                title, COL_KEY, PK_AA_XS);
 
-    /* 值太长就降到 S 档。卡片只有一行的空间，截断会把 "NO DONGLE - use P1
-     * header" 这种**正是要读的**信息截掉，降档是无损的。 */
+    /* 值太长就降到 S 档，避免把接口提示截掉。 */
     const int avail = CARD_W - 26;
     const int need  = (int)strlen(value) * pk_aa_cell_w(PK_AA_M);
     const pk_aa_size_t sz = (need <= avail) ? PK_AA_M : PK_AA_S;
@@ -605,7 +603,7 @@ void pk_diag_page_render(uint16_t *fb)
         pk_dsp_get_stats(&d);
         switch (st) {
         case PK_SDR_NO_DEVICE:
-            draw_card(fb, 1, 1, "SDR", "NO DONGLE - use P1 header", ST_BAD);
+            draw_card(fb, 1, 1, "SDR", "NO DONGLE - use H2 USB-C", ST_BAD);
             break;
         case PK_SDR_ATTACHED:
             draw_card(fb, 1, 1, "SDR", "attached, opening...", ST_WARN);
@@ -714,7 +712,25 @@ void pk_diag_page_render(uint16_t *fb)
      *
      * 如实写"无检测硬件"而不是显示 0% 或藏起来：藏起来会让人以为固件漏了，
      * 显示 0% 则是编造数据——而这一格的读者正想知道还能飞多久。 */
-    draw_card(fb, 0, 5, "BATT", "no sense HW", ST_BAD);
+    {
+        pk_batt_t b;
+        pk_batt_get(&b);
+        if (b.valid) {
+            /* 同时给百分比、电压和 raw：raw 是标定分压比的唯一依据，
+             * 拿万用表量到的电池电压除以它就是比值（见 CONFIG_PK_BATT_
+             * DIVIDER_X100）。标定完这一项就没用了，但留着不碍事，
+             * 换板子时还得再标一次。 */
+            snprintf(buf, sizeof(buf), "%d%% %.2fV%s raw %dmV",
+                     b.pct, b.batt_mv / 1000.0, b.charging ? " CHG" : "",
+                     b.raw_mv);
+            draw_card(fb, 0, 5, "BATT", buf,
+                      b.charging ? ST_OK : b.pct >= 20 ? ST_OK : ST_WARN);
+        } else {
+            /* 没接电池时引脚浮空，读数乱跳——不显示百分比，只说没接。 */
+            snprintf(buf, sizeof(buf), "no battery (raw %dmV)", b.raw_mv);
+            draw_card(fb, 0, 5, "BATT", buf, ST_BAD);
+        }
+    }
 
     /* ── UPTIME ──
      * 排查偶发重启的第一手证据：屏上这个数突然归零，说明刚重启过，而不是

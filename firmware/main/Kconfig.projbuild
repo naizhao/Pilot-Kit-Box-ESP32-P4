@@ -64,3 +64,12 @@ config PK_SDMMC_VERBOSE
       打开后 sdmmc_req / sdmmc_cmd / sdmmc_common / vfs_fat_sdmmc /
       SD_HOST / sdmmc_periph 全部降到 DEBUG。正常运行会刷屏，但热插拔
       挂不上时它们是唯一的线索来源（卡的 CID/CSD、命令超时、时钟协商）。
+
+config PK_BATT_DIVIDER_X100
+    int "电池分压比 ×100（BAT_ADC → 电池电压）"
+    default 200
+    range 100 500
+    help
+      引脚电压 × (本值/100) = 电池电压。默认 200 = 1:1 分压（读数 ×2）。
+      原理图 PDF 里 BAT_ADC 的电阻对关联不出来，所以做成可标定：拿万用表量
+      电池实际电压，除以诊断页显示的 raw mV，×100 填进来即可。

@@ -37,6 +37,7 @@
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
+#include "battery.h"
 #include "i18n.h"
 #include "pfd.h"
 #include "power.h"
@@ -311,6 +312,7 @@ void app_main(void)
     /* microSD 探测 + 日志存储位置设置必须先于 file sink 创建：
      * record_sink_file_create() 据此决定写 flash LittleFS 还是 /sdcard。 */
     pk_config_storage_load();
+    pk_batt_init();
     pk_sdcard_init();
 
     const char *file_mount = record_sinks_install_defaults();
