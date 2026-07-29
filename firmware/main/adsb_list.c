@@ -136,14 +136,18 @@ typedef struct {
 /* 命中区把列间空隙一并吃掉：手指落在两列标题中间时总得归给某一列，
  * 留缝隙只会让人以为「点了没反应」。 */
 static const col_def_t COLS[SORT_COUNT] = {
-    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, 102 },
-    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  103,       238 },
-    [SORT_DIST] = { "DIST",  COL_DIST_R, true,   239,       375 },
-    [SORT_ALT]  = { "ALT",   COL_ALT_R,  true,   376,       466 },
-    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   467,       554 },
-    [SORT_GS]   = { "GS",    COL_GS_R,   true,   555,       615 },
-    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   616,       676 },
-    [SORT_SEEN] = { "SEEN",     COL_SEEN_R, true,   677,       CONTENT_R + 8 },
+    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, 95  },
+    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  95,        231 },
+    /* FLAG 不排序（徽章有无不构成一种顺序），命中区并进 DIST——中间夹一个
+     * 点了没反应的列，比少一个可点的列更让人困惑。 */
+    [SORT_DIST] = { "DIST",     COL_DIST_R, true,   231,       359 },
+    [SORT_ALT]  = { "ALT",      COL_ALT_R,  true,   359,       450 },
+    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   450,       544 },
+    [SORT_GS]   = { "GS",       COL_GS_R,   true,   544,       611 },
+    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   611,       678 },
+    /* 标题写 AGE 不写 SEEN：SEEN 是 4 字符 40 px，比它管的那列数据
+     * （"47s" = 30 px）还宽，右对齐后会顶到左边那条线上。 */
+    [SORT_SEEN] = { "AGE",      COL_SEEN_R, true,   678,       CONTENT_R + 8 },
 };
 
 /* 排序状态。默认距离升序——最近的威胁排最前，这是打开这一页最常见的意图。
@@ -220,9 +224,11 @@ static const char *emergency_tag(const aircraft_t *a)
 {
     if (!a->have_squawk) return NULL;
     switch (a->squawk) {
-    case 7500: return "HJK";     /* 劫机 */
-    case 7600: return "NORDO";   /* no radio，航空通用缩写 */
-    case 7700: return "EMG";
+    /* 三个都压到 3 字符：徽章列只有 30 px（见列位那段的宽度账），
+     * NORDO 这种 5 字符的标准缩写塞不下，只能退到 RDO。 */
+    case 7500: return "HJK";   /* 劫机 */
+    case 7600: return "RDO";   /* 通信失效 */
+    case 7700: return "EMG";   /* 一般紧急 */
     default:   return NULL;
     }
 }
@@ -386,6 +392,10 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_hdr, uint16_t col_dim)
  */
 static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
 {
+    const uint16_t COL_SEP = pk_rgb565(30, 38, 50);
+    /* 徽章列的线单独补：它不在 COLS 里（不参与排序），但视觉上仍是一列。 */
+    pk_pfd_fill_rect(fb, COL_FLAG_X - 9, LST_TOP + 4,
+                     COL_FLAG_X - 8, LIST_BOT - 4, COL_SEP);
     const int ty = LST_TOP + (HDR_H - PK_AA_XS_H) / 2;
 
     for (int k = 0; k < SORT_COUNT; ++k) {
@@ -405,7 +415,7 @@ static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
          * 一旦比数据显眼就成了干扰。 */
         if (k > 0)
             pk_pfd_fill_rect(fb, c->hit_x0 - 1, LST_TOP + 4,
-                             c->hit_x0, LIST_BOT - 4, pk_rgb565(30, 38, 50));
+                             c->hit_x0, LIST_BOT - 4, COL_SEP);
 
         const uint16_t cc = active ? col_hi : col_dim;
         /* 箭头贴在标题外侧：左对齐列跟在后面，右对齐列因为要保住右缘对齐，
