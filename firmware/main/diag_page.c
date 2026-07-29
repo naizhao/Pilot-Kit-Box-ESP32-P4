@@ -938,7 +938,9 @@ void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
  * SNR 柱状图，那是排查 no-fix 的命门（不能只盯 fix=0，要看 SNR 和天线）。
  * ═════════════════════════════════════════════════════════════════════ */
 
-#define DET_TOP     (PFD_BAR_BOT + 24 + PK_AA_L_H)
+/* 内容从 backbar 下面 8 px 开始。用导出的 PK_UI_BACKBAR_BOT 而不是抄数字
+ * ——上一版把 44 抄成了 36，内容正好贴着 backbar 没有间隙。 */
+#define DET_TOP     (PK_UI_BACKBAR_BOT + 8)
 #define DET_LINE_H  38
 #define DET_KEY_X   24
 #define DET_VAL_X   240
@@ -1198,12 +1200,14 @@ static void draw_detail(uint16_t *fb, int which)
  */
 static void draw_detail_header(uint16_t *fb, int which)
 {
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, PFD_BAR_BOT + 10,
+    /* backbar 的几何（pk_ui_nav.c）：align(TOP_LEFT, 8, PFD_BAR_BOT + 6)、
+     * 高 BACKBAR_H、宽度随「← DIAGNOSTICS」自适应，约 220 px。子系统名必须
+     * 排在它右边——上一版画在 x=24/y=58，正好被它整个盖住，而内容区又为这个
+     * 看不见的标题让了位，屏上就成了"内容挤在中间"。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 260,
+               PK_UI_BACKBAR_TOP + (PK_UI_BACKBAR_H - PK_AA_M_H) / 2,
                (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
-               COL_HEADER, PK_AA_L);
-    pk_pfd_fill_rect(fb, DET_KEY_X, PFD_BAR_BOT + 12 + PK_AA_L_H,
-                     PK_DISPLAY_W - 24, PFD_BAR_BOT + 13 + PK_AA_L_H,
-                     pk_rgb565(38, 48, 62));
+               COL_HEADER, PK_AA_M);
 }
 
 /*

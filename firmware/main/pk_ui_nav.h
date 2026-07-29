@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include "pfd_layout.h"
+
 #include <stdbool.h>
 
 /* 在当前活动屏幕上创建 FAB 与 dock。须在 LVGL 初始化、canvas 建立之后调用。 */
@@ -66,6 +68,13 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct);
  *
  * 层级最多两层、不做返回栈：子页只能从诊断进入，返回目标唯一确定。
  */
+/* backbar 的几何，供二级页排版避让——它是 LVGL 控件、画在 framebuffer 之上，
+ * 子页把内容画到这块区域里就会被盖住。导出而不是让各页各抄一份数字：抄的那
+ * 份不会跟着这里变（已经错过一次，把 44 抄成了 36）。 */
+#define PK_UI_BACKBAR_TOP   (PFD_BAR_BOT + 6)
+#define PK_UI_BACKBAR_H     44
+#define PK_UI_BACKBAR_BOT   (PK_UI_BACKBAR_TOP + PK_UI_BACKBAR_H)
+
 void pk_ui_nav_set_subpage(bool on, const char *parent_title);
 bool pk_ui_nav_in_subpage(void);
 

@@ -309,7 +309,7 @@ static void dock_touch_cb(lv_event_t *e)
  * 三条都实现在这里，任何一条失效都还剩两条。二级页面**不提供 dock**——那是
  * 一级页面之间的横向切换，在子页里给出来只会让人以为能直接跳走。
  */
-#define BACKBAR_H   44
+#define BACKBAR_H   PK_UI_BACKBAR_H   /* 单一来源在 pk_ui_nav.h */
 
 static lv_obj_t *s_backbar;
 static lv_obj_t *s_backbar_label;
@@ -342,7 +342,7 @@ static void backbar_ensure(void)
 
     s_backbar = lv_obj_create(lv_screen_active());
     lv_obj_set_size(s_backbar, LV_SIZE_CONTENT, BACKBAR_H);
-    lv_obj_align(s_backbar, LV_ALIGN_TOP_LEFT, 8, PFD_BAR_BOT + 6);
+    lv_obj_align(s_backbar, LV_ALIGN_TOP_LEFT, 8, PK_UI_BACKBAR_TOP);
     lv_obj_set_style_bg_color(s_backbar, COL_DOCK_BG, 0);
     lv_obj_set_style_bg_opa(s_backbar, LV_OPA_90, 0);
     lv_obj_set_style_border_width(s_backbar, 0, 0);
