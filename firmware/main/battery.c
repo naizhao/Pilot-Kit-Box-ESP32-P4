@@ -6,6 +6,7 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
@@ -25,6 +26,8 @@ static bool                      s_ready;
 static int64_t s_last_us;
 static int     s_ema_mv;        /* 平滑后的引脚电压 */
 static int     s_prev_mv;       /* 上一次判充电用 */
+static int     s_trend_mv;      /* 30 s 前的读数，长窗口趋势判据用 */
+static int64_t s_trend_us;
 static bool    s_charging;
 
 void pk_batt_init(void)
@@ -66,6 +69,15 @@ void pk_batt_init(void)
         ESP_LOGW(TAG, "ADC calibration unavailable — readings will be coarse");
         s_cali = NULL;
     }
+
+    /* STAT 探测脚：只读不驱动。配成输入 + 上拉——ETA6098 的 STAT 是开漏，
+     * 没有上拉的话高阻态读数会浮动。若这两个脚其实没接 STAT，上拉也无害。 */
+    const gpio_config_t probe = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_3) | (1ULL << GPIO_NUM_4),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&probe);
 
     s_ready = true;
     ESP_LOGI(TAG, "BAT_ADC on GPIO%d (unit %d chan %d), divider x%.2f",
@@ -114,11 +126,46 @@ bool pk_batt_get(pk_batt_t *out)
              *
              * 这是**推断不是事实**——真要可靠，得把 STAT 引到一个空闲 GPIO。
              */
-            if (s_prev_mv != 0) {
-                if (s_ema_mv > s_prev_mv + 8)      s_charging = true;
-                else if (s_ema_mv < s_prev_mv - 8) s_charging = false;
+            /*
+             * 充电判据：与 **30 秒前** 比，不是与上一次比。
+             *
+             * 初版比相邻两次（1 Hz、阈值 8 mV），在低电量快充时能用，一到
+             * 涓流阶段就失效——2026-07-29 罩哥实测 98% 时不显示充电符号，
+             * 就是这个原因：涓流阶段电压上升 <1 mV/s，再经 EMA 1/8 平滑，
+             * 相邻两次的差值永远够不到阈值。
+             *
+             * 改成长窗口：留一份 30 s 前的读数，比它高 5 mV 就算在充。
+             * 涓流 0.5 mV/s × 30 s = 15 mV > 5 mV，检得出；而放电时电压
+             * 只会往下走，不会误判。
+             *
+             * 仍然是**推断**——真正可靠要读 ETA6098 的 STAT 脚，见下面那段
+             * 探测日志。
+             */
+            if (now - s_trend_us >= 30000000LL) {
+                if (s_trend_mv != 0) {
+                    if (s_ema_mv > s_trend_mv + 5)      s_charging = true;
+                    else if (s_ema_mv < s_trend_mv - 5) s_charging = false;
+                    /* 差值落在 ±5 mV 内：维持原判断。满电静置和涓流末期都
+                     * 长这样，翻来覆去改状态比保持上一次更糟。 */
+                }
+                s_trend_mv  = s_ema_mv;
+                s_trend_us  = now;
             }
             s_prev_mv = s_ema_mv;
+
+            /* ETA6098 的 STAT 脚探测（临时）。
+             *
+             * 原理图里 STAT 在 U19 pin 9，文本上邻近 GPIO3/GPIO4，但**文本
+             * 邻近不等于电气连接**——这个项目已经因为照抄过时文档给出过两次
+             * 错误结论，所以不写死，先把两个脚的电平打出来。
+             *
+             * ETA6098 的 STAT 是开漏：充电中拉低，充满或未接输入时高阻
+             * （被上拉拉高）。插拔 USB 各抓一次日志，看哪个脚跟着变，就能
+             * 确定接的是哪一个；都不变说明没引到 GPIO，那就只能继续用电压
+             * 趋势推断。 */
+            ESP_LOGD(TAG, "STAT probe: GPIO3=%d GPIO4=%d mv=%d chg=%d",
+                     gpio_get_level(GPIO_NUM_3), gpio_get_level(GPIO_NUM_4),
+                     s_ema_mv, (int)s_charging);
             s_last_us = now;
             /* 标定用：万用表量到的电池电压 ÷ 这里的 raw = 分压比。
              * 2026-07-29 已用它标出 296（raw 1387 mV ↔ 实测 4.10 V），故降到
@@ -131,10 +178,20 @@ bool pk_batt_get(pk_batt_t *out)
     }
 
     if (out) {
+        /*
+         * 满电（≥4.15 V）直接按"充满"报，不再纠结在不在充。
+         *
+         * 罩哥实测：插 CH1 后显示 100% 但没有充电图标。那不是 bug 而是电压
+         * 趋势法的物理极限——满电时"在充"和"已断开"的电压完全一样，无从
+         * 区分。产品语义上也没必要区分：都 100% 了，充不充都不影响决策。
+         *
+         * 所以满电时 charging 报 false、pct 报 100，顶栏画成满格电池而不是
+         * 充电动画。真要区分得读 ETA6098 的 STAT 脚（见上面的探测日志）。
+         */
         out->raw_mv   = s_ema_mv;
         out->batt_mv  = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
         out->pct      = mv_to_pct(out->batt_mv);
-        out->charging = s_charging;
+        out->charging = s_charging && (s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100) < 4150;
         /* 合理量程之外判为无效：没接电池时引脚是浮空的，读数会乱跳，
          * 显示一个煞有介事的百分比比不显示更糟。 */
         out->valid    = (out->batt_mv > 2500 && out->batt_mv < 4500);
