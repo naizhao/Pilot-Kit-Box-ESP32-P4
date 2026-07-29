@@ -265,7 +265,7 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
     }
 
     /* 标签：相对高度（百 ft）+ 方向箭头，格式与 PFD 一致。 */
-    char lab[12];
+    char lab[16];   /* 同上 */
     if (rel->rel_alt_valid) {
         int hh = rel->rel_alt_ft / 100;
         if (hh >  99) hh =  99;
@@ -462,7 +462,7 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, ty1, cs,
                    sel ? COL_SEL : COL_TXT, PK_AA_M);
 
-        char l1[12];
+        char l1[16];   /* 箭头是 3 字节 UTF-8，留够 */
         if (v->rel.rel_alt_valid) {
             const int h100 = v->rel.rel_alt_ft / 100;
             const char *vs = (v->rel.vs_fpm >  200) ? "\u2191"
