@@ -121,6 +121,7 @@ add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_s
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}
     PK_DISPLAY_H=${PANEL_H}
+    PK_SIM_BUILD=1        # 让页面里少数「只为截图」的钩子编进来（如列表排序覆盖）
 )
 
 target_include_directories(pkbox_sim PRIVATE

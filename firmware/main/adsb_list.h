@@ -34,6 +34,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Renders the full ADS-B list view into a 240 × 320 RGB565 framebuffer.
@@ -41,3 +42,14 @@
  * duration of the call (i.e. flushes after). Pulls the aircraft
  * snapshot internally via aircraft_state_snapshot(). */
 void pk_adsb_list_render(uint16_t *fb);
+
+/*
+ * 表头点击 → 切换排序列 / 翻转排序方向。
+ *
+ * 返回 true 表示这一下被表头消费了，调用方不应再转给别的控件（同
+ * pk_traffic_page_touch 的约定）。坐标是逻辑屏坐标，与 framebuffer 同一套。
+ */
+bool pk_adsb_list_touch(int x, int y);
+
+/* 松手：清掉按下高亮。 */
+void pk_adsb_list_touch_up(void);

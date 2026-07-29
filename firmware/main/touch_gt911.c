@@ -33,6 +33,7 @@
 
 #include "display.h"
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
+#include "adsb_list.h"
 #include "traffic_page.h"
 #include "ui_state.h"
 
@@ -105,10 +106,15 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          *
          * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
          * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
-        if (s_armed && pk_ui_get_mode() == PK_UI_MODE_TRAFFIC &&
-            pk_traffic_page_touch(lx, ly)) {
-            s_armed = false;
-            data->state = LV_INDEV_STATE_RELEASED;
+        if (s_armed) {
+            const pk_ui_mode_t m = pk_ui_get_mode();
+            const bool eaten =
+                (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly)) ||
+                (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly));
+            if (eaten) {
+                s_armed = false;
+                data->state = LV_INDEV_STATE_RELEASED;
+            }
         }
         /* 标定用：真机上点四角，核对原生与逻辑两组数是否符合上面的算式。
          * 若发现 X/Y 反了或某轴镜像，改 native_to_logical 一处即可。 */
@@ -121,6 +127,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 恢复，所有自绘按钮从此全部失灵。 */
         s_armed = true;
         pk_traffic_page_touch_up();
+        pk_adsb_list_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }
