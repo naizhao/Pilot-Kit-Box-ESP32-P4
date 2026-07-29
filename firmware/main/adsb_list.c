@@ -338,7 +338,11 @@ void pk_adsb_list_render(uint16_t *fb)
     const uint16_t COL_TITL = pk_rgb565(125, 140, 160);
     const uint16_t COL_LINE = pk_rgb565( 38,  48,  62);
 
-    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W - 1, PK_DISPLAY_H - 1, COL_BG);
+    /* 注意是 W / H 而不是 W-1 / H-1：pk_pfd_fill_rect 收的是**半开区间**
+     * （pfd_draw.c 里 x < x1、y < y1）。写成 -1 会漏掉最右一列和最下一行，
+     * 而 DIRECT 渲染下 framebuffer 是复用的，那一列一行就保留着上一帧的内容，
+     * 真机上表现为右侧和底部各一条永不刷新的亮线。 */
+    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
     const int64_t now_us = esp_timer_get_time();
     static aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -405,7 +409,7 @@ void pk_adsb_list_render(uint16_t *fb)
 
     draw_header(fb, nr, COL_HDR, COL_DIM);
     draw_col_titles(fb, COL_TITL);
-    pk_pfd_fill_rect(fb, 0, ROW0_Y - 1, PK_DISPLAY_W - 1, ROW0_Y, COL_LINE);
+    pk_pfd_fill_rect(fb, 0, ROW0_Y - 1, PK_DISPLAY_W, ROW0_Y, COL_LINE);
 
     if (nr == 0) {
         /* 空列表也是一种状态，不能留白屏——留白让人以为页面没画出来。 */
