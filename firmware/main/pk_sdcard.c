@@ -85,8 +85,45 @@ static sd_pwr_ctrl_handle_t s_pwr_ctrl;
 static esp_err_t sdmmc_host_init_dummy(void)   { return ESP_OK; }
 static esp_err_t sdmmc_host_deinit_dummy(void) { return ESP_OK; }
 
+/*
+ * 卡槽上电。拔卡时会被 sd_unmount_locked() 拆掉，重挂前再建一次。
+ *
+ * 为什么要拆了重建：热插拔插入后一直挂不上（2026-07-29 罩哥实测），而**开机
+ * 挂载是成功的**（日志 "microSD mounted at /sdcard: SL32G 29.7 GB"）——同一
+ * 套引脚和 LDO 配置，区别只在于开机那次卡是从**冷态**开始的。
+ *
+ * unmount 走的 esp_vfs_fat_sdcard_unmount() 只会调 host.deinit()，而这里的
+ * deinit 是 dummy（ESP-Hosted 占着同一个 SDMMC 控制器，不能真 deinit，
+ * 见 project_sd_slot0_hosted_workaround）。于是电源一直没断，新插入的卡跳不
+ * 回 idle 状态，后续 CMD0/CMD8 自然谈不拢。
+ *
+ * 拆掉 LDO 句柄 = 给卡断电，重建 = 重新上电，等于把冷启动那条路再走一遍。
+ */
+static bool sd_power_on_locked(void)
+{
+    if (s_pwr_ctrl != NULL) return true;
+    sd_pwr_ctrl_ldo_config_t ldo_cfg = { .ldo_chan_id = SD_LDO_CHAN };
+    esp_err_t err = sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg, &s_pwr_ctrl);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LDO chan %d power-on failed: %s",
+                 SD_LDO_CHAN, esp_err_to_name(err));
+        s_pwr_ctrl = NULL;
+        return false;
+    }
+    return true;
+}
+
+static void sd_power_off_locked(void)
+{
+    if (s_pwr_ctrl == NULL) return;
+    sd_pwr_ctrl_del_on_chip_ldo(s_pwr_ctrl);
+    s_pwr_ctrl = NULL;
+}
+
 static bool sd_mount_locked(void)
 {
+    if (!sd_power_on_locked()) return false;
+
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot   = SD_SLOT;
     host.init   = &sdmmc_host_init_dummy;
@@ -114,12 +151,14 @@ static bool sd_mount_locked(void)
     esp_err_t err = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot,
                                             &mount_cfg, &s_card);
     if (err != ESP_OK) {
-        /* 只在错误码变化时打一条，避免 3s 重试刷屏 */
-        static esp_err_t s_last_err = ESP_OK;
-        if (err != s_last_err) {
-            ESP_LOGW(TAG, "mount attempt failed: %s", esp_err_to_name(err));
-            s_last_err = err;
-        }
+        /* 每次都打，带尝试序号。
+         *
+         * 原先"只在错误码变化时打一条"是为了防 3 s 重试刷屏，代价是**热插拔
+         * 失败时日志里一条都看不到**——2026-07-29 排查"插卡后一直 retry 挂不
+         * 上"时，抓了 20 s 串口一行 SD 日志都没有，因为错误码从开机起就没变
+         * 过。3 s 一条的频率完全可接受，可见性比省日志重要。 */
+        ESP_LOGW(TAG, "mount attempt #%lu failed: %s",
+                 (unsigned long)s_mount_attempts, esp_err_to_name(err));
         s_card = NULL;
         return false;
     }
@@ -138,6 +177,9 @@ static void sd_unmount_locked(void)
     if (s_card != NULL) {
         esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
         s_card = NULL;
+        /* 断电，让下一张卡能从冷态开始——不断电的话新卡跳不回 idle，
+         * 表现就是"拔出立刻响应，插入怎么也挂不上"。 */
+        sd_power_off_locked();
     }
     s_state = PK_SD_NO_CARD;
     s_total_bytes = 0;
@@ -185,22 +227,29 @@ void pk_sdcard_init(void)
 
     /* 无卡时 sdmmc 协议层每轮重试都会刷 E/W 日志，静音掉；
      * 状态变化由本模块自己报。 */
+    /* 这几路在正常运行时会刷屏，故默认静音。但热插拔挂不上时它们正是唯一的
+     * 线索来源（卡的 CID/CSD、命令超时、时钟协商都在这里报），所以留一个
+     * 编译开关：排障时打开重烧一次即可，不必回头翻代码找是哪几个 tag。 */
+#if CONFIG_PK_SDMMC_VERBOSE
+    esp_log_level_set("sdmmc_req", ESP_LOG_DEBUG);
+    esp_log_level_set("sdmmc_cmd", ESP_LOG_DEBUG);
+    esp_log_level_set("sdmmc_common", ESP_LOG_DEBUG);
+    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_DEBUG);
+    esp_log_level_set("SD_HOST", ESP_LOG_DEBUG);
+    esp_log_level_set("sdmmc_periph", ESP_LOG_DEBUG);
+#else
     esp_log_level_set("sdmmc_req", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_cmd", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_common", ESP_LOG_NONE);
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
     esp_log_level_set("SD_HOST", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_periph", ESP_LOG_NONE);
+#endif
 
     /* SLOT_0 IO 供电：P4 片上 LDO 通道 4。失败则 SD 永远探测不到，
      * 打 ERROR 但不崩 —— 其余固件功能不受影响。 */
-    sd_pwr_ctrl_ldo_config_t ldo_cfg = { .ldo_chan_id = SD_LDO_CHAN };
-    esp_err_t perr = sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg, &s_pwr_ctrl);
-    if (perr != ESP_OK) {
-        ESP_LOGE(TAG, "LDO%d power ctrl init failed: %s — microSD disabled",
-                 SD_LDO_CHAN, esp_err_to_name(perr));
-        return;
-    }
+/* 上电交给 sd_power_on_locked()（mount 内部会调），这里不再单独建句柄——
+     * 两处各建一次的话，热插拔断电后 init 那份就成了悬空引用。 */
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!sd_mount_locked()) {

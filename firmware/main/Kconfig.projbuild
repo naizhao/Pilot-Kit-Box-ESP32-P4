@@ -56,3 +56,11 @@ menu "Pilot Kit Box"
             corresponds to the panel approaching its own limit.
 
 endmenu
+
+config PK_SDMMC_VERBOSE
+    bool "microSD: 放开 sdmmc 底层日志（排障用）"
+    default n
+    help
+      打开后 sdmmc_req / sdmmc_cmd / sdmmc_common / vfs_fat_sdmmc /
+      SD_HOST / sdmmc_periph 全部降到 DEBUG。正常运行会刷屏，但热插拔
+      挂不上时它们是唯一的线索来源（卡的 CID/CSD、命令超时、时钟协商）。

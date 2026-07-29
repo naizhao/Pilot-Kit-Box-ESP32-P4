@@ -462,15 +462,26 @@ static void diag_render_legacy(uint16_t *fb)
 
 /* 状态灯：一格一个圆点，颜色即结论。绿=正常、琥珀=连着但不正常、
  * 红=不可用、灰=不适用/未启用。四种颜色与 PFD、交通页、列表页一致。 */
-typedef enum { ST_OK = 0, ST_WARN, ST_BAD, ST_NA } card_state_t;
+/*
+ * 三态，没有"灰色"。
+ *
+ * 原先有个 ST_BAD 用灰色表示"不适用/未装"，于是 GPS 没插模块显示灰色
+ * "no module"，而别的模块离线是红色——同样是"这个功能现在用不了"，却给了
+ * 两种视觉权重，扫一眼分不清哪些是真该管的。罩哥要求统一：
+ *
+ *   「统一文字颜色为红色，no module 就 no module，no data 那就 no data」
+ *
+ * 即**颜色只表达严重度，文字负责说清是哪种缺失**。用不了就是红的，至于是
+ * 没插、没数据还是没硬件，看那一行字。 */
+typedef enum { ST_OK = 0, ST_WARN, ST_BAD } card_state_t;
 
 static uint16_t state_color(card_state_t st)
 {
     switch (st) {
     case ST_OK:   return COL_ONLINE;
     case ST_WARN: return COL_WARN;
-    case ST_BAD:  return COL_ALERT;
-    default:      return COL_PLACEHOLDER;
+    case ST_BAD:
+    default:      return COL_ALERT;
     }
 }
 
@@ -562,7 +573,7 @@ void pk_diag_page_render(uint16_t *fb)
          */
         if (g.last_nmea_us == 0) {
             /* 一行 NMEA 都没收到 = 模块没插 / UART 没通。不是故障，是没装。 */
-            draw_card(fb, 0, 1, "GPS", "no module", ST_NA);
+            draw_card(fb, 0, 1, "GPS", "no module", ST_BAD);
         } else if (now - g.last_nmea_us > 5000000LL) {
             /* 曾经在讲话，现在哑了 = 掉线/供电/接触不良，跟没装是两回事。 */
             draw_card(fb, 0, 1, "GPS", "module silent >5s", ST_BAD);
@@ -617,7 +628,7 @@ void pk_diag_page_render(uint16_t *fb)
         const bool adv  = ble_gatt_is_advertising();
         draw_card(fb, 0, 2, "BLE",
                   conn ? "connected" : adv ? "advertising" : "idle",
-                  conn ? ST_OK : adv ? ST_WARN : ST_NA);
+                  conn ? ST_OK : adv ? ST_WARN : ST_BAD);
     }
 
     /* ── LOG ── */
@@ -629,7 +640,7 @@ void pk_diag_page_render(uint16_t *fb)
                      (unsigned long)written);
             /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。 */
             draw_card(fb, 1, 2, "LOG", buf,
-                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_NA);
+                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_BAD);
         } else {
             draw_card(fb, 1, 2, "LOG", "sink down", ST_BAD);
         }
@@ -682,7 +693,7 @@ void pk_diag_page_render(uint16_t *fb)
              * 需要拔出来重插或换卡的信号。 */
             snprintf(buf, sizeof(buf), "no card  (retry %lu)",
                      (unsigned long)pk_sdcard_mount_attempts());
-            draw_card(fb, 0, 4, "microSD", buf, ST_NA);
+            draw_card(fb, 0, 4, "microSD", buf, ST_BAD);
             break;
         }
     }
@@ -703,7 +714,7 @@ void pk_diag_page_render(uint16_t *fb)
      *
      * 如实写"无检测硬件"而不是显示 0% 或藏起来：藏起来会让人以为固件漏了，
      * 显示 0% 则是编造数据——而这一格的读者正想知道还能飞多久。 */
-    draw_card(fb, 0, 5, "BATT", "no sense HW", ST_NA);
+    draw_card(fb, 0, 5, "BATT", "no sense HW", ST_BAD);
 
     /* ── UPTIME ──
      * 排查偶发重启的第一手证据：屏上这个数突然归零，说明刚重启过，而不是
