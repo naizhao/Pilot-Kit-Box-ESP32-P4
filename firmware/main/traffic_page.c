@@ -222,40 +222,79 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
                         int range_nm, bool selected)
 {
     const pk_traffic_rel_t *rel = &v->rel;
-    float screen = (orient == PK_MAP_HEADING_UP) ? rel->rel_bearing : rel->abs_bearing;
+    const float screen = (orient == PK_MAP_HEADING_UP) ? rel->rel_bearing
+                                                       : rel->abs_bearing;
     int tx, ty;
     polar(screen, rel->dist_nm / range_nm * RMAX, &tx, &ty);
 
-    /* 选中用黄色高亮(区别于本机的白色,避免混淆);未选中青色。 */
-    uint16_t cyan   = pk_rgb565(  0, 210, 235);
-    uint16_t yellow = pk_rgb565(255, 210,  60);
-    uint16_t lbl    = pk_rgb565(207, 211, 220);
-    uint16_t col    = selected ? yellow : cyan;
-    uint16_t txtcol = selected ? yellow : lbl;
-    fill_diamond(fb, tx, ty, selected ? 6 : 4, col);
+    /* 配色照搬 PFD 罗盘外圈那份（pfd_hsi_traffic.c）：颜色本身就是「威胁等级」
+     * ——同高度琥珀、高于青、低于蓝灰、无高度灰。飞行员在 PFD 上已经按这套
+     * 读了，交通页再换一套只会让人重新学。 */
+    const uint16_t COL_LEVEL = pk_rgb565(255, 176,   0);   /* ±1000 ft 内 */
+    const uint16_t COL_ABOVE = pk_rgb565(  0, 210, 235);
+    const uint16_t COL_BELOW = pk_rgb565( 95, 150, 190);
+    const uint16_t COL_NOALT = pk_rgb565(150, 155, 165);
+    const uint16_t COL_SEL   = pk_rgb565(255, 210,  60);
+    const uint16_t COL_LBL   = pk_rgb565(207, 211, 220);
 
-    /* 相对高度(百ft,最多 3 位) + 上/下箭头。箭头基于"相对高度方向"
-     * (目标在本机上方=^ / 下方=v / 同高=-),不是升降率。 */
-    char alt[12];
+    const uint16_t col = selected ? COL_SEL
+                       : !rel->rel_alt_valid       ? COL_NOALT
+                       : (rel->rel_alt_ft >  1000) ? COL_ABOVE
+                       : (rel->rel_alt_ft < -1000) ? COL_BELOW
+                                                   : COL_LEVEL;
+
+    /*
+     * 目标符号：**可旋转的飞机剪影**，不是菱形。
+     *
+     * 直接用 PFD 那个 pk_pfd_draw_aircraft()——它已经调好了后掠翼与尾部凹口的
+     * 比例（注释里记着初版「又扁又胖像回旋镖」的教训）。之前这里自己画菱形，
+     * 于是迎面飞来的和同向飞离的长得一模一样，而这恰恰是防撞最要紧的信息
+     * （spec §5.2 点名：「一眼可辨迎面/同向，此信息三角形无法表达」）。
+     *
+     * 旋转角取目标自己的 ADS-B 航迹；机头朝上模式下要减去本机航向，因为整幅
+     * 图已经跟着本机转过了。无航迹数据就退回菱形——那表示「不知道朝向」，
+     * 画一个朝某方向的飞机等于编造信息。
+     */
+    if (v->ac->have_velocity) {
+        const float rot = (orient == PK_MAP_HEADING_UP)
+                            ? v->ac->heading_deg - (screen - rel->rel_bearing)
+                            : v->ac->heading_deg;
+        pk_pfd_draw_aircraft(fb, tx, ty, rot, selected ? 15 : 11, col);
+    } else {
+        fill_diamond(fb, tx, ty, selected ? 6 : 5, col);
+    }
+
+    /* 标签：相对高度（百 ft）+ 方向箭头，格式与 PFD 一致。 */
+    char lab[12];
     if (rel->rel_alt_valid) {
         int hh = rel->rel_alt_ft / 100;
-        if (hh >  999) hh =  999;
-        if (hh < -999) hh = -999;
-        snprintf(alt, sizeof(alt), "%+d", hh);
+        if (hh >  99) hh =  99;
+        if (hh < -99) hh = -99;
+        const char arrow = rel->rel_alt_ft >  100 ? '^'
+                         : rel->rel_alt_ft < -100 ? 'v' : ' ';
+        snprintf(lab, sizeof(lab), "%+d%c", hh, arrow);
     } else {
-        snprintf(alt, sizeof(alt), "?");
+        snprintf(lab, sizeof(lab), "---");
     }
-    char arrow = !rel->rel_alt_valid ? ' '
-               : rel->rel_alt_ft > 0 ? '^'
-               : rel->rel_alt_ft < 0 ? 'v' : '-';
-    char lab[16];
-    snprintf(lab, sizeof(lab), "%s%c", alt, arrow);
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty - 3, lab, txtcol, 1);
 
-    /* 每个目标都标呼号(与交互原型一致)。 */
-    char cs[10];
-    callsign_of(v->ac, cs, sizeof(cs));
-    pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, tx + 6, ty + 6, cs, txtcol, 1);
+    /* 标签压一层暗底再写字：雷达上目标扎堆时，白字叠白字谁也读不出来。
+     * PFD 的交通标签同样这么做。 */
+    const int lw = (int)strlen(lab) * pk_aa_cell_w(PK_AA_XS);
+    const int lx = tx + 12, ly = ty - PK_AA_XS_H / 2;
+    pk_pfd_darken_rect(fb, lx - 2, ly - 1, lx + lw + 2, ly + PK_AA_XS_H + 1, 120);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, ly, lab,
+               selected ? COL_SEL : COL_LBL, PK_AA_XS);
+
+    /* 呼号只给选中的那架：14 个目标每架都标呼号，雷达会糊成一片字。
+     * 想看全部就看右栏列表，那里一行一条排得整整齐齐。 */
+    if (selected) {
+        char cs[10];
+        callsign_of(v->ac, cs, sizeof(cs));
+        const int cw = (int)strlen(cs) * pk_aa_cell_w(PK_AA_XS);
+        const int cy2 = ly + PK_AA_XS_H + 2;
+        pk_pfd_darken_rect(fb, lx - 2, cy2 - 1, lx + cw + 2, cy2 + PK_AA_XS_H + 1, 120);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, cy2, cs, COL_SEL, PK_AA_XS);
+    }
 }
 
 /* 底部详情条：选中目标的机型/注册 + 高度/地速/距离/磁方位。 */
