@@ -392,10 +392,6 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_hdr, uint16_t col_dim)
  */
 static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
 {
-    const uint16_t COL_SEP = pk_rgb565(30, 38, 50);
-    /* 徽章列的线单独补：它不在 COLS 里（不参与排序），但视觉上仍是一列。 */
-    pk_pfd_fill_rect(fb, COL_FLAG_X - 9, LST_TOP + 4,
-                     COL_FLAG_X - 8, LIST_BOT - 4, COL_SEP);
     const int ty = LST_TOP + (HDR_H - PK_AA_XS_H) / 2;
 
     for (int k = 0; k < SORT_COUNT; ++k) {
@@ -404,18 +400,6 @@ static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
 
         if (k == s_hdr_down)
             pk_pfd_darken_rect(fb, c->hit_x0, LST_TOP, c->hit_x1, ROW0_Y - 1, 60);
-
-        /* 列分隔线：一条 1 px 暗竖线，从标题一直拉到最后一行。
-         *
-         * 八列挤进 700 px 之后列间距只剩 17 px，比一个字符还窄，"0 340 270"
-         * 会连成一片，眼睛容易串列。加宽已经没地方了——竖线不占宽度就能把
-         * 列分开，这也是纸质航图和表格软件的通用做法。
-         *
-         * 只画在数值列之间（跳过第一列左侧），且颜色压得很暗：它是辅助线，
-         * 一旦比数据显眼就成了干扰。 */
-        if (k > 0)
-            pk_pfd_fill_rect(fb, c->hit_x0 - 1, LST_TOP + 4,
-                             c->hit_x0, LIST_BOT - 4, COL_SEP);
 
         const uint16_t cc = active ? col_hi : col_dim;
         /* 箭头贴在标题外侧：左对齐列跟在后面，右对齐列因为要保住右缘对齐，
@@ -432,6 +416,34 @@ static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
             if (ar) LST_PUTS(fb, c->x + w + 2, ty, ar, cc, PK_AA_XS);
         }
     }
+}
+
+/*
+ * 列分隔线。只画在**数据区**，表头一条不画。
+ *
+ * 八列挤进 700 px 后列间距只剩 17 px，"0 340 270" 会连成一片、眼睛串列，
+ * 竖线是不占宽度的分组手段。但表头不能跟着画：标题比数据长（"CALLSIGN"
+ * 八个字符），带排序箭头的列还要多挂 12 px，8 px 留白根本不够——真机上
+ * DIST 的箭头、ALT 的 T、V/S 的 S 全压在线上。表头靠高亮区分排序列，本来
+ * 就不需要线。
+ *
+ * 颜色压到几乎贴着背景：它是辅助线，一旦比数据显眼就成了干扰。初版取
+ * (30,38,50)，在模拟器里几乎看不见，真机上却是明晃晃的亮蓝——这块 4.3″
+ * 是普通 IPS，不是 2.4″ 那块半透屏，暗色不会被环境光冲淡。
+ *
+ * rows 是本屏实际画了几行：空列表时一条都不画，否则满屏竖线会穿过
+ * "NO CONTACTS"。
+ */
+static void draw_col_seps(uint16_t *fb, int rows)
+{
+    if (rows <= 0) return;
+    const uint16_t COL_SEP = pk_rgb565(20, 26, 36);
+    const int y0 = ROW0_Y + 2, y1 = ROW0_Y + rows * ROW_H - 4;
+
+    for (int k = 1; k < SORT_COUNT; ++k)
+        pk_pfd_fill_rect(fb, COLS[k].hit_x0 - 1, y0, COLS[k].hit_x0, y1, COL_SEP);
+    /* 徽章列的线单独补：它不在 COLS 里（不参与排序），视觉上仍是一列。 */
+    pk_pfd_fill_rect(fb, COL_FLAG_X - 9, y0, COL_FLAG_X - 8, y1, COL_SEP);
 }
 
 static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
@@ -664,8 +676,13 @@ void pk_adsb_list_render(uint16_t *fb)
     if (first > nr - ROW_N) first = nr - ROW_N;
     if (first < 0)          first = 0;
 
-    for (int i = 0; i < ROW_N && first + i < nr; ++i)
+    int drawn = 0;
+    for (int i = 0; i < ROW_N && first + i < nr; ++i, ++drawn)
         draw_row(fb, &s_rows[first + i], ROW0_Y + i * ROW_H, first + i == sel);
+
+    /* 线画在行**之后**：行底（斑马纹 / 威胁红底 / 选中亮底）是整条铺过去的，
+     * 先画线会被行底盖掉。 */
+    draw_col_seps(fb, drawn);
 
     /* ── 底部：还有多少没看到 ──
      * 只画滚动条不够：条的长度只说得清「大概还有一些」，而「14 架里的 3-10」
