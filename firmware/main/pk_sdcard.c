@@ -196,6 +196,26 @@ static void sd_unmount_locked(void)
             esp_vfs_fat_unregister_path(SD_MOUNT_POINT);
         }
         s_card = NULL;
+
+        /*
+         * 注销 slot——这是 dummy deinit 漏掉的那一半，也是热插拔挂不上的真因。
+         *
+         * host.deinit 被换成 dummy 是为了不去动 ESP-Hosted 共用的那个 SDMMC
+         * **控制器**（project_sd_slot0_hosted_workaround）。但 slot 是控制器
+         * 之下的一层：mount 时 esp_vfs_fat_sdmmc_sdcard_init() 会调
+         * init_sdmmc_host() 注册 slot，而 dummy deinit 什么都不做，于是 slot
+         * 一直停在"已注册"。下一次 mount 走到同一处就被
+         * sd_host_sdmmc.c:156 的 `ESP_GOTO_ON_FALSE(slot_available, ...)`
+         * 挡下，返回 ESP_ERR_INVALID_STATE——实测日志里那串
+         * "mount attempt #77..#81 failed: ESP_ERR_INVALID_STATE" 就是它。
+         *
+         * sdmmc_host_deinit_slot() 只注销 slot、不碰控制器，正好是我们要的
+         * 粒度：Hosted 的 SDIO 仍在 slot 1 上跑，互不影响。
+         */
+        esp_err_t derr = sdmmc_host_deinit_slot(SD_SLOT);
+        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE)
+            ESP_LOGW(TAG, "deinit_slot(%d): %s", SD_SLOT, esp_err_to_name(derr));
+
         /* 断电，让下一张卡能从冷态开始。 */
         sd_power_off_locked();
     }
