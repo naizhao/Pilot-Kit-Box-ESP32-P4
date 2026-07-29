@@ -19,23 +19,25 @@ typedef enum {
     PK_ICON_SD = 5,   /* sd_card  U+E1C2  FILL=1 */
     PK_ICON_ADSB = 6,   /* connecting_airports  U+E7C9  FILL=1 */
     PK_ICON_OWNSHIP = 7,   /* flight  U+E539  FILL=1 */
-    PK_ICON_BATT_ALERT = 8,   /* battery_android_alert  U+F306  FILL=0 */
-    PK_ICON_BATT_0 = 9,   /* battery_android_0  U+F30D  FILL=0 */
-    PK_ICON_BATT_1 = 10,   /* battery_android_1  U+F30C  FILL=0 */
-    PK_ICON_BATT_2 = 11,   /* battery_android_2  U+F30B  FILL=0 */
-    PK_ICON_BATT_3 = 12,   /* battery_android_3  U+F30A  FILL=0 */
-    PK_ICON_BATT_4 = 13,   /* battery_android_4  U+F309  FILL=0 */
-    PK_ICON_BATT_5 = 14,   /* battery_android_5  U+F308  FILL=0 */
-    PK_ICON_BATT_6 = 15,   /* battery_android_6  U+F307  FILL=0 */
-    PK_ICON_BATT_FULL = 16,   /* battery_android_full  U+F304  FILL=0 */
-    PK_ICON_BATT_CHG_1 = 17,   /* battery_android_frame_1  U+F257  FILL=0 */
-    PK_ICON_BATT_CHG_2 = 18,   /* battery_android_frame_2  U+F256  FILL=0 */
-    PK_ICON_BATT_CHG_3 = 19,   /* battery_android_frame_3  U+F255  FILL=0 */
-    PK_ICON_BATT_CHG_4 = 20,   /* battery_android_frame_4  U+F254  FILL=0 */
-    PK_ICON_BATT_CHG_5 = 21,   /* battery_android_frame_5  U+F253  FILL=0 */
-    PK_ICON_BATT_CHG_6 = 22,   /* battery_android_frame_6  U+F252  FILL=0 */
-    PK_ICON_BATT_CHG_FULL = 23,   /* battery_android_frame_full  U+F24F  FILL=0 */
-    PK_ICON_COUNT = 24
+    PK_ICON_NAV_HDG = 8,   /* navigation  U+E55D  FILL=1 */
+    PK_ICON_NAV_NORTH = 9,   /* explore  U+E87A  FILL=1 */
+    PK_ICON_BATT_ALERT = 10,   /* battery_android_alert  U+F306  FILL=0 */
+    PK_ICON_BATT_0 = 11,   /* battery_android_0  U+F30D  FILL=0 */
+    PK_ICON_BATT_1 = 12,   /* battery_android_1  U+F30C  FILL=0 */
+    PK_ICON_BATT_2 = 13,   /* battery_android_2  U+F30B  FILL=0 */
+    PK_ICON_BATT_3 = 14,   /* battery_android_3  U+F30A  FILL=0 */
+    PK_ICON_BATT_4 = 15,   /* battery_android_4  U+F309  FILL=0 */
+    PK_ICON_BATT_5 = 16,   /* battery_android_5  U+F308  FILL=0 */
+    PK_ICON_BATT_6 = 17,   /* battery_android_6  U+F307  FILL=0 */
+    PK_ICON_BATT_FULL = 18,   /* battery_android_full  U+F304  FILL=0 */
+    PK_ICON_BATT_CHG_1 = 19,   /* battery_android_frame_1  U+F257  FILL=0 */
+    PK_ICON_BATT_CHG_2 = 20,   /* battery_android_frame_2  U+F256  FILL=0 */
+    PK_ICON_BATT_CHG_3 = 21,   /* battery_android_frame_3  U+F255  FILL=0 */
+    PK_ICON_BATT_CHG_4 = 22,   /* battery_android_frame_4  U+F254  FILL=0 */
+    PK_ICON_BATT_CHG_5 = 23,   /* battery_android_frame_5  U+F253  FILL=0 */
+    PK_ICON_BATT_CHG_6 = 24,   /* battery_android_frame_6  U+F252  FILL=0 */
+    PK_ICON_BATT_CHG_FULL = 25,   /* battery_android_frame_full  U+F24F  FILL=0 */
+    PK_ICON_COUNT = 26
 } pk_icon_id_t;
 
 /* [0] = regular, [1] = bold —— 与文字字重联动。 */

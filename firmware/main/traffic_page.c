@@ -356,18 +356,21 @@ static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
 {
     const uint16_t ink = pk_rgb565(225, 235, 248);
 
-    /* 朝向切换：显示**当前**模式，点一下换到另一种（与高德的指北针同理）。 */
+    /* 朝向切换：显示**当前**模式，点一下换到另一种（与高德的指北针同理）。
+     *
+     * 用图标不用文字。"HDG UP"/"N UP" 这类缩写要先读、再想它是什么意思；
+     * navigation 那个导航箭头和 explore 那个指南针是通用符号，扫一眼就懂。
+     * 两枚都取自内置的 Material Symbols 集（见 gen_pfd_icons.py）。 */
     draw_btn_plate(fb, BTN_ORI_X, BTN_ORI_Y);
     {
-        const char *l1 = (orient == PK_MAP_HEADING_UP) ? "\u2191" : "N";
-        const char *l2 = (orient == PK_MAP_HEADING_UP) ? "HDG" : "UP";
-        const int w1 = (int)strlen(l1) * pk_aa_cell_w(PK_AA_M);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   BTN_ORI_X + (BTN_D - w1) / 2, BTN_ORI_Y + 6, l1, ink, PK_AA_M);
-        const int w2 = (int)strlen(l2) * pk_aa_cell_w(PK_AA_XS);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   BTN_ORI_X + (BTN_D - w2) / 2, BTN_ORI_Y + 6 + PK_AA_M_H - 2,
-                   l2, ink, PK_AA_XS);
+        const pk_icon_id_t id = (orient == PK_MAP_HEADING_UP)
+                                  ? PK_ICON_NAV_HDG : PK_ICON_NAV_NORTH;
+        const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+                          + (size_t)id * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                        BTN_ORI_X + (BTN_D - PK_ICON_W) / 2,
+                        BTN_ORI_Y + (BTN_D - PK_ICON_H) / 2,
+                        ic, PK_ICON_W, PK_ICON_H, ink);
     }
 
     /* 量程 +/-。放大是「看得更近」，所以 + 对应更小的 NM 数。 */
@@ -492,7 +495,10 @@ void pk_traffic_page_render(uint16_t *fb)
     const uint16_t COL_OWN   = pk_rgb565(255, 255, 255);
     const uint16_t COL_HDR   = pk_rgb565(235, 235, 235);
     const uint16_t COL_CYAN  = pk_rgb565(  0, 210, 235);
-    const uint16_t COL_GREY  = pk_rgb565(120, 120, 128);
+    /* 顶栏这几项（目标数、量程）曾用 120,120,128 的灰——在近黑底上对比度只有
+     * 2:1 上下，日光下等于没有。它们是常驻读数不是次要注释，提到与 HDG 同级
+     * 的亮度；真要压视觉重量该靠字号，不是靠让人看不清。 */
+    const uint16_t COL_GREY  = pk_rgb565(205, 214, 228);
     const uint16_t COL_AMBER = pk_rgb565(255, 176,   0);
 
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
