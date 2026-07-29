@@ -57,5 +57,9 @@ bool pk_adsb_list_touch(int x, int y);
  */
 bool pk_adsb_list_drag(int x, int y);
 
+/* 取消本次触摸：只丢状态，不执行动作。dock 展开等需要让路的场合用它，
+ * 不能用 touch_up——那会把之前的按下当成一次完整点击提交出去。 */
+void pk_adsb_list_touch_cancel(void);
+
 /* 松手：清掉按下高亮，并在「没拖动过」时才把这一下当作点击执行。 */
 void pk_adsb_list_touch_up(void);

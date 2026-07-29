@@ -1044,6 +1044,20 @@ bool pk_adsb_list_drag(int x, int y)
 }
 
 /*
+ * 取消本次触摸：只丢状态，**不执行**动作。
+ *
+ * 与 touch_up 的区别很要紧：dock 展开时要让路，如果那时调 touch_up，
+ * 之前落在列表上的那次按下会被当成一次完整点击提交出去——手指还没松，
+ * 抽屉就自己开了。
+ */
+void pk_adsb_list_touch_cancel(void)
+{
+    s_hdr_down    = -1;
+    s_press_valid = false;
+    s_moved       = false;
+}
+
+/*
  * 松手：没移动过才算点击，按**按下时**的坐标分派动作。
  *
  * 用按下坐标而不是松手坐标：手指在 12 px 内挪一点仍算点击，但那点位移可能

@@ -34,6 +34,7 @@
 #include "display.h"
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
 #include "adsb_list.h"
+#include "pk_ui_nav.h"
 #include "traffic_page.h"
 #include "ui_state.h"
 
@@ -106,10 +107,27 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          *
          * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
          * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
+        /*
+         * dock 展开时，页面的自绘命中一律让路。
+         *
+         * dock 是浮在页面之上的 LVGL 控件，覆盖屏幕中部——正好压在列表页的
+         * 数据区上。而列表把**整个数据区**都当命中区（不像交通页只有三个小
+         * 按钮），于是点 dock 页签的坐标先被列表吃掉，dock 永远收不到，
+         * 表现就是「进了 list 就切不走页」。
+         *
+         * FAB 之所以不受影响，纯属巧合：它在 x >= 728，刚好落在列表内容区
+         * 右缘（724）之外。这种靠坐标碰巧不重叠的"安全"不能依赖，所以这里
+         * 按状态显式让路。
+         */
         const pk_ui_mode_t m = pk_ui_get_mode();
         bool eaten = false;
 
-        if (s_armed) {
+        if (pk_ui_nav_dock_open()) {
+            /* 让路期间把页面的手势状态**取消**掉（不是 touch_up）：否则
+             * dock 展开前落在列表上的那次按下会被当成一次完整点击提交，
+             * 手指还没松抽屉就自己开了。 */
+            pk_adsb_list_touch_cancel();
+        } else if (s_armed) {
             eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                  || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly));
             if (eaten) s_armed = false;
