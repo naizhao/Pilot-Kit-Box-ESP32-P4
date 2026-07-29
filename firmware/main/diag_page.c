@@ -63,6 +63,9 @@
 #define COL_DIVIDER          pk_rgb565( 90, 100, 120)
 #define COL_VAL              pk_rgb565(220, 225, 235)   /* bright — detail value text */
 #define COL_ALERT            pk_rgb565(255,  90,  40)   /* red    — antenna OPEN/SHORT */
+/* 琥珀 —— 「连着但不正常」，介于绿与红之间。SDR 已枚举却不出数就属于这一档：
+ * 说它离线是错的（设备在），说它在线也是错的（没数据）。 */
+#define COL_WARN             pk_rgb565(255, 176,   0)
 
 /* GPS stale threshold: 5 s in microseconds */
 #define GPS_FRESH_US         5000000LL
@@ -183,19 +186,49 @@ void pk_diag_page_render(uint16_t *fb)
     y += DIAG_LINE_H;
 
     /* ------------------------------------------------------------------
-     * SDR — RTL-SDR (always present, always "online" once streaming)
-     * Shows: sample rate + cumulative msg/drop counters
+     * SDR — RTL-SDR dongle。
+     *
+     * 这一行以前恒显示"在线"（旧注释原话："dongle 未插无法区分"）。2026-07-29
+     * 罩哥把 dongle 插到了 USB-C 口——那是 GPIO24/25 的 FS PHY（USB
+     * Serial/JTAG），而 host 栈跑在 HS 控制器上，两套 PHY——屏上看不出任何
+     * 异常，只能抓串口日志才发现从头到尾没有枚举事件。一台带诊断页的设备
+     * 不该逼人去抓日志。
+     *
+     * 现在四态分开显示，并且**没枚举时直接把该插哪儿写在屏上**：这是接线
+     * 问题，写"OFFLINE"帮不上忙，写"接 P1 排针"才解决问题。
      * ------------------------------------------------------------------ */
     {
         pk_dsp_stats_t d;
         pk_dsp_get_stats(&d);
-        /* SDR 常驻在线;暂无 streaming-active getter,msgs=0 时也显示在线(dongle 未插无法区分)。 */
-        /* e.g. "2MS/s msgs 1234 drop 0" */
-        snprintf(buf, sizeof(buf), "%luMS/s msgs %lu drop %lu",
-                 (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
-                 (unsigned long)d.msgs_total,
-                 (unsigned long)d.iq_drop_total);
-        draw_diag_row(fb, y, "SDR", buf, COL_ONLINE);
+
+        uint32_t drop_kb = 0;
+        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
+        uint16_t col = COL_ONLINE;
+
+        switch (st) {
+        case PK_SDR_NO_DEVICE:
+            /* 把排查方向直接写出来——这一行的读者正拿着 dongle 在找哪个口。 */
+            snprintf(buf, sizeof(buf), "NO DONGLE - use P1 header (not USB-C)");
+            col = COL_ALERT;
+            break;
+        case PK_SDR_ATTACHED:
+            snprintf(buf, sizeof(buf), "attached, opening...");
+            col = COL_WARN;
+            break;
+        case PK_SDR_STALLED:
+            /* 已经打开却不出数：供电不足 / 过热 / USB 掉链，都不是"离线"。 */
+            snprintf(buf, sizeof(buf), "STALLED - no IQ for >1s");
+            col = COL_WARN;
+            break;
+        case PK_SDR_STREAMING:
+        default:
+            snprintf(buf, sizeof(buf), "%luMS/s msgs %lu drop %lu",
+                     (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
+                     (unsigned long)d.msgs_total,
+                     (unsigned long)d.iq_drop_total);
+            break;
+        }
+        draw_diag_row(fb, y, "SDR", buf, col);
     }
     y += DIAG_LINE_H;
 

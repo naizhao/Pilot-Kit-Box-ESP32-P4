@@ -79,6 +79,39 @@ static atomic_bool s_reinit_pending;
 static int64_t     s_last_iq_us;            /* updated in on_iq, read by sdr_task */
 static uint32_t    s_reinit_attempts;       /* consecutive failed re-inits */
 
+/*
+ * Dongle 状态查询（诊断页用）。
+ *
+ * 为什么必须有这个：在它之前，诊断页把 SDR 一律显示成"在线"——注释里明写着
+ * "dongle 未插无法区分"。2026-07-29 罩哥把 dongle 插到了 USB-C 口（那是
+ * GPIO24/25 的 FS PHY，即 USB Serial/JTAG；host 栈跑在 HS 控制器上，两者是
+ * 两套 PHY），屏幕上什么异常都看不出来，只能靠抓串口日志才发现从头到尾没有
+ * 枚举事件。一台带诊断页的设备不该让人干这种事。
+ *
+ * 三态取自 sdr_task 自己的两个事实，不额外维护状态机：
+ *   dev_addr == 0        USB 上没有枚举到设备 → 根本没插，或插错了口
+ *   dev == NULL          枚举到了但还没打开/已关闭 → 正在初始化或出错
+ *   有 IQ 回调           在流
+ *
+ * 「在流」用最后一次 on_iq 的时间戳判定而不是 dev != NULL：dongle 插着但
+ * 停止出数（供电不足、过热、USB 掉链）时 dev 仍然非空，那种情况正是最需要
+ * 被诊断页喊出来的。
+ */
+pk_sdr_state_t pk_sdr_state_get(uint32_t *dropped_kb)
+{
+    if (dropped_kb) *dropped_kb = s_iq_dropped_bytes / 1024;
+
+    if (s_ctx.dev_addr == 0) return PK_SDR_NO_DEVICE;
+    if (s_ctx.dev == NULL)   return PK_SDR_ATTACHED;
+
+    const int64_t now = esp_timer_get_time();
+    /* 1 s 没有 IQ 就算停流。真实速率是 2 MSPS，回调以毫秒计，1 s 已经是
+     * 三个数量级的宽容。 */
+    if (s_last_iq_us == 0 || now - s_last_iq_us > 1000000LL)
+        return PK_SDR_STALLED;
+    return PK_SDR_STREAMING;
+}
+
 void pk_sdr_request_reinit(const char *reason)
 {
     ESP_LOGW(TAG, "re-init requested: %s", reason ? reason : "(no reason)");

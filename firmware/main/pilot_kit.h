@@ -75,3 +75,18 @@ uint32_t pk_iq_dropped_bytes_swap(void);
  * as a last-resort recovery.
  */
 void pk_sdr_request_reinit(const char *reason);
+
+/* --- Dongle 状态（诊断页）--------------------------------------------- *
+ *
+ * NO_DEVICE 与其余三态的区别是**接线问题 vs 运行问题**，诊断页要分开说：
+ * 前者多半是插到了 USB-C（GPIO24/25 的 FS PHY = USB Serial/JTAG），而 host
+ * 栈跑在 HS 控制器上，dongle 必须接 P1 排针（MX1.25 四针，芯片 pin 49/50）。
+ */
+typedef enum {
+    PK_SDR_NO_DEVICE = 0,   /* USB 上没枚举到任何设备 —— 没插或插错口 */
+    PK_SDR_ATTACHED,        /* 枚举到了，尚未打开（初始化中或打开失败） */
+    PK_SDR_STALLED,         /* 已打开但超过 1 s 没有 IQ —— 掉链/供电/过热 */
+    PK_SDR_STREAMING,       /* 正常出数 */
+} pk_sdr_state_t;
+
+pk_sdr_state_t pk_sdr_state_get(uint32_t *dropped_kb);
