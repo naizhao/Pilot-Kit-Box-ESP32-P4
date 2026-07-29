@@ -131,41 +131,25 @@ static int std_alt_ft_from_pa(float pa)
     return (int)lroundf(alt_m * 3.28084f);
 }
 
-/* 把点绕盘心顺时针旋转 deg 度（屏幕 y 向下，正角=顺时针）。 */
-
-/* 本机飞机符号(机身 + 主翼 + 平尾)，机头朝上；rot_deg 绕盘心旋转
- * (NORTH-UP 时按磁航向标朝向)。和交互原型 / HSI 的飞机图标一致。 */
 /*
- * 本机符号。
+ * 本机符号：Material Symbols 的 flight 字形，按航向整体旋转。
  *
- * heading-up 时机头恒指屏幕上方，直接用 PFD 罗盘那枚 Material Symbols 的
- * flight 字形——两处是同一架飞机，形态该一致；字形是专业设计过的轮廓，比
- * 手拼矩形干净得多（pfd_hsi.c 里有同样的说明）。
+ * 早先这里分了两条路——heading-up 用字形、north-up 用手绘矢量剪影——理由是
+ * 「字形是预渲染的、转不了」。那是错的：位图旋转只是一次反向映射加采样，
+ * 缺的是函数不是可能性。补上 pk_aa_blit_4bpp_rot() 之后两条路合成一条，
+ * 本机、PFD 罗盘中心从此是同一架飞机。
  *
- * north-up 时符号要按航向转任意角度，而字形表是预渲染的、转不了，只能退回
- * 手绘。这也是 PFD 罗盘能一直用图标的原因：那里恒 heading-up。
+ * heading-up 时传 0°：机头恒指屏幕上方，此时旋转路径退化成 1:1 采样，
+ * 与直接 blit 等价，不必再分支。
  */
-static void draw_own_aircraft(uint16_t *fb, float rot_deg, bool use_icon,
-                              uint16_t col)
+static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
 {
-    if (use_icon) {
-        const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
-                          + (size_t)PK_ICON_OWNSHIP
-                            * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
-        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                        CX - PK_ICON_W / 2, CY - PK_ICON_H / 2,
-                        ac, PK_ICON_W, PK_ICON_H, col);
-        return;
-    }
+    const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
+                      + (size_t)PK_ICON_OWNSHIP
+                        * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
 
-    /* 需要旋转：用 PFD 那个可旋转剪影，与交通目标同一套形态，只是更大。
-     *
-     * 上一版在这里手绘了三条线，并且把**相对偏移**传给了 rot_point()——
-     * 而它期望的是绝对屏幕坐标（内部会减 CX/CY）。于是 dx = 0-260 = -260，
-     * 旋转后整架飞机飞出屏幕，正北模式下本机符号直接消失。
-     *
-     * 本机比目标画大一圈（22 : 11），它是这幅图的原点，该一眼找得到。 */
-    pk_pfd_draw_aircraft(fb, CX, CY, rot_deg, 22, col);
+    pk_aa_blit_4bpp_rot(fb, PK_DISPLAY_W, PK_DISPLAY_H, CX, CY,
+                        ac, PK_ICON_W, PK_ICON_H, rot_deg, col);
 }
 
 static void draw_hsi_sector(uint16_t *fb, pk_map_orient_t orient,
@@ -689,7 +673,7 @@ void pk_traffic_page_render(uint16_t *fb)
     /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */
     draw_own_aircraft(fb,
                       (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f,
-                      orient == PK_MAP_HEADING_UP, COL_OWN);
+                      COL_OWN);
 
     /* 详情不再压在雷达上：同样的信息已经在右栏卡片里（spec §5.2 也把它归到
      * 卡片），雷达区留给图形本身。draw_detail_bar() 暂时保留，等右栏补上机型

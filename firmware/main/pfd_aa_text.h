@@ -67,3 +67,14 @@ int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
  */
 void pk_aa_blit_4bpp(uint16_t *fb, int fb_w, int fb_h, int x, int y,
                      const uint8_t *bitmap, int w, int h, uint16_t color);
+
+/*
+ * 同上，但把位图**绕自身中心旋转** deg 度后画到 (cx, cy)——(cx, cy) 落在
+ * 旋转后图形的中心，不是左上角。deg 顺时针为正，与航向角一致。
+ *
+ * 有了它，Material Symbols 里那些本来就有方向的字形（flight、near_me…）
+ * 可以直接当可旋转符号使，不必再为「同一个东西但要转」手绘第二套几何。
+ */
+void pk_aa_blit_4bpp_rot(uint16_t *fb, int fb_w, int fb_h, int cx, int cy,
+                         const uint8_t *bitmap, int w, int h,
+                         float deg, uint16_t color);

@@ -9,6 +9,7 @@
 
 #include "pfd_aa_text.h"
 
+#include <math.h>
 #include <stddef.h>
 
 #include "display.h"
@@ -167,6 +168,84 @@ void pk_aa_blit_4bpp(uint16_t *fb, int fb_w, int fb_h, int x, int y,
             int xx = x + col;
             if (xx < 0 || xx >= fb_w) continue;
             line[xx] = blend565(line[xx], color, a4);
+        }
+    }
+}
+
+/* 取 4bpp 位图上某点的 alpha，出界算 0（旋转后包围盒必然扫到图外）。 */
+static inline int a4_at(const uint8_t *bm, int w, int h, int x, int y)
+{
+    if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+    int idx = y * w + x;
+    uint8_t packed = bm[idx >> 1];
+    return (idx & 1) ? (packed & 0x0F) : (packed >> 4);
+}
+
+/*
+ * 带旋转的 4bpp blit。
+ *
+ * 「字形是预渲染的所以转不了」是个误解——位图旋转就是一次反向映射加采样，
+ * 缺的只是这个函数。之前为「要转的飞机」手绘了第二套矢量剪影，于是系统里
+ * 同一架飞机有了两种长相；有了这里就只剩一种。
+ *
+ * 走**反向**映射（遍历目标像素、回算源坐标）而不是正向：正向会在目标上留
+ * 下没被任何源像素命中的空洞，缩放/旋转类变换一律用反向。
+ *
+ * 屏幕坐标 y 向下，故顺时针旋转 θ 的正变换是
+ *     dx = sx·cosθ − sy·sinθ ,  dy = sx·sinθ + sy·cosθ
+ * 反解即下面的 sx/sy。沿扫描行 dx 每 +1，源坐标只是各加一个常量
+ * （+cosθ / −sinθ），所以内层没有乘法，与 pfd_attitude.c 那条地平线同一
+ * 个套路：三角函数一行算一次，逐像素只做加法。
+ *
+ * 采样用双线性。最近邻在 30 px 这个尺度上会把机翼边缘啃出台阶，正好抵消
+ * 掉用抗锯齿字形的意义。
+ */
+void pk_aa_blit_4bpp_rot(uint16_t *fb, int fb_w, int fb_h, int cx, int cy,
+                         const uint8_t *bitmap, int w, int h,
+                         float deg, uint16_t color)
+{
+    const float rad = deg * 0.017453292f;
+    const int32_t cos_fp = (int32_t)(cosf(rad) * 65536.0f);
+    const int32_t sin_fp = (int32_t)(sinf(rad) * 65536.0f);
+
+    /* 包围盒取原图对角线，够装下任意角度；+2 给双线性多留一圈。 */
+    const int half = (int)((w > h ? w : h) * 0.7072f) + 2;
+
+    /* 源图中心用 (w-1)/2 而不是 w/2：采样点落在像素中心上，偏半个像素在
+     * 30 px 的图标上肉眼可见（整架飞机会朝右下偏移半格）。 */
+    const int32_t src_cx_fp = ((int32_t)(w - 1) << 15);
+    const int32_t src_cy_fp = ((int32_t)(h - 1) << 15);
+
+    for (int dy = -half; dy <= half; ++dy) {
+        int yy = cy + dy;
+        if (yy < 0 || yy >= fb_h) continue;
+        uint16_t *line = fb + (size_t)yy * fb_w;
+
+        /* 该行最左端 (dx = -half) 对应的源坐标，之后逐列递推。 */
+        int32_t sx_fp = src_cx_fp + (int32_t)(-half) * cos_fp + (int32_t)dy * sin_fp;
+        int32_t sy_fp = src_cy_fp - (int32_t)(-half) * sin_fp + (int32_t)dy * cos_fp;
+
+        for (int dx = -half; dx <= half; ++dx, sx_fp += cos_fp, sy_fp -= sin_fp) {
+            int xx = cx + dx;
+            if (xx < 0 || xx >= fb_w) continue;
+
+            const int sx = sx_fp >> 16, sy = sy_fp >> 16;
+            /* 整块在图外就跳过，省掉四次取样。 */
+            if (sx < -1 || sy < -1 || sx >= w || sy >= h) continue;
+
+            const int fx = (sx_fp >> 12) & 0xF, fy = (sy_fp >> 12) & 0xF;
+            const int a00 = a4_at(bitmap, w, h, sx,     sy);
+            const int a10 = a4_at(bitmap, w, h, sx + 1, sy);
+            const int a01 = a4_at(bitmap, w, h, sx,     sy + 1);
+            const int a11 = a4_at(bitmap, w, h, sx + 1, sy + 1);
+            if (!(a00 | a10 | a01 | a11)) continue;
+
+            /* 四点加权，权重和为 16×16=256，故 >>8 回到 0…15。 */
+            const int a4 = (a00 * (16 - fx) * (16 - fy) + a10 * fx * (16 - fy)
+                          + a01 * (16 - fx) * fy       + a11 * fx * fy) >> 8;
+            if (!a4) continue;
+
+            line[xx] = blend565(line[xx], color, (uint8_t)a4);
         }
     }
 }
