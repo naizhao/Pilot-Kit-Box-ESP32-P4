@@ -51,5 +51,11 @@ void pk_adsb_list_render(uint16_t *fb);
  */
 bool pk_adsb_list_touch(int x, int y);
 
-/* 松手：清掉按下高亮。 */
+/*
+ * 按住不放的后续帧：竖直位移换算成列表滚动。返回 true 表示本次触摸仍由
+ * 列表消费。按下时 pk_adsb_list_touch() 返回过 true 才需要继续调用。
+ */
+bool pk_adsb_list_drag(int x, int y);
+
+/* 松手：清掉按下高亮，并在「没拖动过」时才把这一下当作点击执行。 */
 void pk_adsb_list_touch_up(void);

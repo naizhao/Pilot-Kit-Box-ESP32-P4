@@ -261,6 +261,28 @@ static uint32_t   s_drawer_icao;
  * 0 表示该行没画（列表不足一屏）。 */
 static uint32_t   s_screen_icao[ROW_N];
 
+/*
+ * 触摸手势状态。
+ *
+ * 一次触摸要么是**点击**（开抽屉 / 切排序），要么是**拖动**（滚列表），
+ * 按下的那一刻分不出来，所以按下只记起点，真正的动作留到松手时按「有没有
+ * 移动过」来分派。分不清这两者的后果很具体：手指滑一下列表，松手时又把
+ * 抽屉给开了。
+ *
+ * s_first_row 是 render 算出的当前顶行，拖动以它为基准换算；
+ * s_scroll_first < 0 表示"没手动滚过"，此时顶行由选中行/抽屉自动锚定。
+ */
+static int  s_press_x, s_press_y;
+static int  s_press_first;
+static bool s_press_valid;      /* 按下点落在列表可消费的区域内 */
+static bool s_moved;            /* 本次触摸已判定为拖动 */
+static int  s_first_row;        /* render 写：本帧的顶行 */
+static int  s_scroll_first = -1;/* 手动滚动到的顶行，-1 = 自动锚定 */
+
+/* 超过这个位移就算拖动，不再当点击。48 px 是一行高，取它的 1/4——比手指
+ * 在点击时的自然抖动大，又远小于一次有意的滑动。 */
+#define DRAG_SLOP  12
+
 static uint32_t pk_adsb_row_icao(int row)
 {
     if (row < 0 || row >= ROW_N) return 0;
@@ -905,10 +927,19 @@ void pk_adsb_list_render(uint16_t *fb)
 
     /* 抽屉开着时，把被选中的那一行钉在可见区里——抽屉讲的就是它，
      * 让它滚出屏幕等于把上下文丢了。 */
-    const int anchor = (drawer_row >= 0) ? drawer_row : sel;
-    int first = anchor - rows_vis / 2;
+    int first;
+    if (s_scroll_first >= 0) {
+        first = s_scroll_first;          /* 手指滚过：听手指的 */
+    } else {
+        const int anchor = (drawer_row >= 0) ? drawer_row : sel;
+        first = anchor - rows_vis / 2;
+    }
     if (first > nr - rows_vis) first = nr - rows_vis;
     if (first < 0)             first = 0;
+    s_first_row = first;
+    /* 收窄后的值要写回去：否则手指拖过了底部，s_scroll_first 会停在一个越界
+     * 的大数上，往回拖时得先把那段虚位移抵消完列表才开始动——手感像卡住。 */
+    if (s_scroll_first >= 0) s_scroll_first = first;
 
     int drawn = 0;
     for (int i = 0; i < ROW_N; ++i) s_screen_icao[i] = 0;
@@ -952,49 +983,125 @@ void pk_adsb_list_render(uint16_t *fb)
  * touch_gt911.c 在 read_cb 里转发进来，返回 true 表示这一下被吃掉，不再
  * 传给底下的 FAB。
  */
-bool pk_adsb_list_touch(int x, int y)
+/* 按下点是否落在列表要消费的区域内（表头 / 数据区 / 抽屉）。
+ * FAB 那一块必须放行，否则列表页就切不走了。 */
+static bool in_list_area(int x, int y)
 {
-    /* 顶栏的 RESET：回到默认排序（距离升序）。只在非默认时才画，也只在
-     * 非默认时才吃这一下——否则默认状态下这块区域会白白拦掉别的手势。 */
-    if (y >= 0 && y < PFD_BAR_BOT &&
-        x >= RESET_X0 && x < RESET_X1 && !sort_is_default()) {
-        s_hdr_down  = HDR_HIT_RESET;
-        s_sort      = SORT_DEFAULT_KEY;
-        s_sort_desc = false;
-        return true;
-    }
-
-    /* 点数据行：开抽屉；点同一行再点一次：收起。
-     * 抽屉自身区域内的点击一律吃掉（但不做任何事）——否则手指落在抽屉上会
-     * 穿透到底下的表格，把抽屉换成另一架飞机的。 */
     if (s_drawer_icao && y >= DRAWER_TOP) return true;
-
-    const int rows_vis = s_drawer_icao ? DRAWER_ROWS : ROW_N;
-    if (y >= ROW0_Y && y < ROW0_Y + rows_vis * ROW_H &&
-        x >= PAD_L - 8 && x < CONTENT_R + 8) {
-        const int row = (y - ROW0_Y) / ROW_H;
-        const uint32_t icao = pk_adsb_row_icao(row);
-        if (icao) s_drawer_icao = (s_drawer_icao == icao) ? 0 : icao;
+    if (y >= LST_TOP && y < LIST_BOT && x >= PAD_L - 8 && x < CONTENT_R + 8)
         return true;
-    }
-
-    if (y < LST_TOP || y >= ROW0_Y) return false;
-
-    for (int k = 0; k < SORT_COUNT; ++k) {
-        if (x < COLS[k].hit_x0 || x >= COLS[k].hit_x1) continue;
-        s_hdr_down = k;
-        if (s_sort == (sort_key_t)k) {
-            s_sort_desc = !s_sort_desc;   /* 同一列再点：翻方向 */
-        } else {
-            s_sort = (sort_key_t)k;
-            /* 换列时**不继承**上一列的方向，一律回到升序：降序的距离
-             * （最远的排最前）几乎没人想要，而「点一下换列结果顺序还是反的」
-             * 会让人以为点错了列。 */
-            s_sort_desc = false;
-        }
+    if (y >= 0 && y < PFD_BAR_BOT && x >= RESET_X0 && x < RESET_X1 &&
+        !sort_is_default())
         return true;
-    }
     return false;
 }
 
-void pk_adsb_list_touch_up(void) { s_hdr_down = -1; }
+/*
+ * 按下。只记起点，不做动作——按下的那一刻还分不出这是点击还是滑动，
+ * 现在就开抽屉的话，手指滑一下列表松手时抽屉也开了。
+ */
+bool pk_adsb_list_touch(int x, int y)
+{
+    s_press_valid = in_list_area(x, y);
+    if (!s_press_valid) return false;
+
+    s_press_x     = x;
+    s_press_y     = y;
+    s_press_first = s_first_row;
+    s_moved       = false;
+
+    /* 表头的按下高亮要立刻给，否则 10 fps 下点上去像没反应。真正切排序仍
+     * 留到松手——高亮只是"我收到了"，不是"我做了"。 */
+    if (y >= LST_TOP && y < ROW0_Y) {
+        for (int k = 0; k < SORT_COUNT; ++k)
+            if (x >= COLS[k].hit_x0 && x < COLS[k].hit_x1) { s_hdr_down = k; break; }
+    } else if (y < PFD_BAR_BOT) {
+        s_hdr_down = HDR_HIT_RESET;
+    }
+    return true;
+}
+
+/*
+ * 按住不放的后续帧：竖直位移换算成滚动。
+ *
+ * 方向与手指一致（手指往上滑 = 列表往上走 = 顶行变大），跟所有触摸列表
+ * 一样；反过来会立刻觉得"这屏坏了"。
+ */
+bool pk_adsb_list_drag(int x, int y)
+{
+    if (!s_press_valid) return false;
+    (void)x;
+
+    const int dy = y - s_press_y;
+    if (!s_moved && (dy > DRAG_SLOP || dy < -DRAG_SLOP)) s_moved = true;
+    if (!s_moved) return true;
+
+    s_hdr_down = -1;                       /* 已判定为拖动，撤掉按下高亮 */
+    int first = s_press_first - dy / ROW_H;
+    if (first < 0) first = 0;
+    s_scroll_first = first;                /* 上界由 render 按行数收窄 */
+    return true;
+}
+
+/*
+ * 松手：没移动过才算点击，按**按下时**的坐标分派动作。
+ *
+ * 用按下坐标而不是松手坐标：手指在 12 px 内挪一点仍算点击，但那点位移可能
+ * 已经跨到相邻行/相邻列了，按松手位置分派会点到隔壁。
+ */
+void pk_adsb_list_touch_up(void)
+{
+    const bool click = s_press_valid && !s_moved;
+    const int  x = s_press_x, y = s_press_y;
+
+    s_hdr_down    = -1;
+    s_press_valid = false;
+    if (!click) { s_moved = false; return; }
+    s_moved = false;
+
+    /* 顶栏 RESET：回到默认排序。 */
+    if (y >= 0 && y < PFD_BAR_BOT &&
+        x >= RESET_X0 && x < RESET_X1 && !sort_is_default()) {
+        s_sort         = SORT_DEFAULT_KEY;
+        s_sort_desc    = false;
+        s_scroll_first = -1;      /* 排序变了，回到自动锚定 */
+        return;
+    }
+
+    /* 抽屉自身：点在上面不做事，但要吃掉（in_list_area 已保证走到这里）。 */
+    if (s_drawer_icao && y >= DRAWER_TOP) return;
+
+    /* 表头：切排序列 / 翻方向。 */
+    if (y >= LST_TOP && y < ROW0_Y) {
+        for (int k = 0; k < SORT_COUNT; ++k) {
+            if (x < COLS[k].hit_x0 || x >= COLS[k].hit_x1) continue;
+            if (s_sort == (sort_key_t)k) {
+                s_sort_desc = !s_sort_desc;
+            } else {
+                s_sort      = (sort_key_t)k;
+                /* 换列时不继承上一列的方向，一律回到升序：降序的距离
+                 * （最远的排最前）几乎没人想要。 */
+                s_sort_desc = false;
+            }
+            s_scroll_first = -1;
+            return;
+        }
+        return;
+    }
+
+    /* 数据区。 */
+    if (y >= ROW0_Y && y < LIST_BOT) {
+        const int rows_vis = s_drawer_icao ? DRAWER_ROWS : ROW_N;
+        const int row = (y - ROW0_Y) / ROW_H;
+        const uint32_t icao = (row < rows_vis) ? pk_adsb_row_icao(row) : 0;
+
+        if (icao) {
+            /* 点别的行直接换一架讲，不必先关再开；点同一行才收起。 */
+            s_drawer_icao = (s_drawer_icao == icao) ? 0 : icao;
+        } else {
+            /* 空白处（列表不满一屏留下的空行，或抽屉盖住的那段）：关抽屉。
+             * 这是最符合直觉的退出方式——不必回头去找刚才点的是哪一行。 */
+            s_drawer_icao = 0;
+        }
+    }
+}

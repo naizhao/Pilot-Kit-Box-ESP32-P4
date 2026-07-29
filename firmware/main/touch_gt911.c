@@ -106,16 +106,21 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          *
          * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
          * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
+        const pk_ui_mode_t m = pk_ui_get_mode();
+        bool eaten = false;
+
         if (s_armed) {
-            const pk_ui_mode_t m = pk_ui_get_mode();
-            const bool eaten =
-                (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly)) ||
-                (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly));
-            if (eaten) {
-                s_armed = false;
-                data->state = LV_INDEV_STATE_RELEASED;
-            }
+            eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
+                 || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly));
+            if (eaten) s_armed = false;
+        } else if (m == PK_UI_MODE_ADSB_LIST) {
+            /* 按住不放的后续帧交给列表做滚动。表格的滑动必须是连续的，
+             * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
+             * 不能沿用交通页那种「一次按下只处理一次」的写法。 */
+            eaten = pk_adsb_list_drag(lx, ly);
         }
+
+        if (eaten) data->state = LV_INDEV_STATE_RELEASED;
         /* 标定用：真机上点四角，核对原生与逻辑两组数是否符合上面的算式。
          * 若发现 X/Y 反了或某轴镜像，改 native_to_logical 一处即可。 */
         ESP_LOGD(TAG, "native(%u,%u) -> logical(%d,%d)", px, py, lx, ly);
