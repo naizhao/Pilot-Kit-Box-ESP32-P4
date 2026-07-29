@@ -27,6 +27,7 @@ static int64_t s_last_us;
 static int     s_ema_mv;        /* 平滑后的引脚电压 */
 static int     s_prev_mv;       /* 上一次判充电用 */
 static int     s_trend_mv;      /* 30 s 前的读数，长窗口趋势判据用 */
+static int     s_raw_prev;      /* 上一次**原始**读数，阶跃检测用（不能用 EMA 后的） */
 static int64_t s_trend_us;
 static bool    s_charging;
 
@@ -113,6 +114,28 @@ bool pk_batt_get(pk_batt_t *out)
             int mv = raw;
             if (s_cali) adc_cali_raw_to_voltage(s_cali, raw, &mv);
 
+            /*
+             * 阶跃检测：插拔充电线的那一瞬间，电压会跳一个台阶。
+             *
+             * 罩哥实测：拔掉线的瞬间 100% → 95%（约 65 mV）。物理上是
+             * 电池端电压 = 开路电压 + 充电电流 × 内阻——接着线时被抬高，
+             * 拔掉就回落到真实开路电压。
+             *
+             * 这个阶跃比缓慢趋势可靠得多，而且正好补上满电那个盲区：满电时
+             * 插上线电压会跳 +65 mV，趋势法看不见（已经到顶了），阶跃法一眼
+             * 就能看见。
+             *
+             * **必须用原始读数判，不能用 EMA 之后的**：EMA 1/8 会把 65 mV 的
+             * 阶跃第一次只反映成 8 mV，正好埋在噪声里。阈值取 30 mV——远大于
+             * ADC 噪声（实测同一状态下读数稳在 ±2 mV），也远小于真实阶跃。
+             */
+            if (s_raw_prev != 0) {
+                const int step = mv - s_raw_prev;
+                if (step > 30)       s_charging = true;    /* 接上了 */
+                else if (step < -30) s_charging = false;   /* 拔掉了 */
+            }
+            s_raw_prev = mv;
+
             if (s_ema_mv == 0) s_ema_mv = mv;
             else s_ema_mv += (mv - s_ema_mv) * BATT_EMA_NUM / BATT_EMA_DEN;
 
@@ -179,19 +202,21 @@ bool pk_batt_get(pk_batt_t *out)
 
     if (out) {
         /*
-         * 满电（≥4.15 V）直接按"充满"报，不再纠结在不在充。
+         * 一个已知的系统性偏差，暂不补偿：**充电时电量虚高**。
          *
-         * 罩哥实测：插 CH1 后显示 100% 但没有充电图标。那不是 bug 而是电压
-         * 趋势法的物理极限——满电时"在充"和"已断开"的电压完全一样，无从
-         * 区分。产品语义上也没必要区分：都 100% 了，充不充都不影响决策。
+         * 同一块电池，接着线读 4165 mV（100%）、拔掉立刻回落到 4100 mV
+         * （95%）——差的 65 mV 是充电电流在内阻上的压降，不是真实电量。
          *
-         * 所以满电时 charging 报 false、pct 报 100，顶栏画成满格电池而不是
-         * 充电动画。真要区分得读 ETA6098 的 STAT 脚（见上面的探测日志）。
+         * 不做补偿是因为压降随充电电流变化（快充阶段远大于涓流），减一个
+         * 固定值会在别的阶段引入新的错。要做准得测内阻或读电量计，这块板
+         * 两样都没有。记在这里，免得下次有人把它当 bug 查。
          */
         out->raw_mv   = s_ema_mv;
         out->batt_mv  = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
         out->pct      = mv_to_pct(out->batt_mv);
-        out->charging = s_charging && (s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100) < 4150;
+        /* 满电仍如实报充电状态：阶跃检测能证明线插着，不必再靠"电压还在涨"
+         * 来推断，上一版那条 <4150 的抑制反而会把已知事实盖掉。 */
+        out->charging = s_charging;
         /* 合理量程之外判为无效：没接电池时引脚是浮空的，读数会乱跳，
          * 显示一个煞有介事的百分比比不显示更糟。 */
         out->valid    = (out->batt_mv > 2500 && out->batt_mv < 4500);
