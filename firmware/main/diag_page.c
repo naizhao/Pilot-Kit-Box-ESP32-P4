@@ -493,6 +493,21 @@ static uint16_t state_color(card_state_t st)
 static int s_card_rows;                        /* 本帧实际画了几行 */
 static int s_scroll_y;                         /* 滚动偏移(px)，0 = 顶 */
 
+/*
+ * 当前展开的子系统详情，-1 = 总览（spec §5.5 的两层结构）。
+ *
+ * 记的是**卡片序号**而不是指针：卡片是每帧重画的，序号是稳定的。
+ */
+static int s_detail = -1;
+
+/* 卡片序号 → 标题。顺序必须与 render 里的 draw_card 调用一致——两处各写
+ * 一份序号迟早会错位，所以这张表是唯一的真值来源，render 也从它取标题。 */
+static const char *const CARD_TITLE[] = {
+    "IMU", "BARO", "GPS", "SDR", "BLE", "LOG", "CLK", "SYS",
+    "microSD", "QNH", "BATT", "UPTIME",
+};
+#define CARD_N  ((int)(sizeof(CARD_TITLE) / sizeof(CARD_TITLE[0])))
+
 static void draw_card(uint16_t *fb, int col, int row, const char *title,
                       const char *value, card_state_t st)
 {
@@ -518,11 +533,26 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
                y + CARD_H - 12 - pk_aa_cell_h(sz), value, state_color(st), sz);
 }
 
+/* 详情页返回区宽度。放在这里而不是详情那段里：触摸判定用得比绘制更早。 */
+#define DET_BACK_W  96
+
+/* 前向声明：详情那层定义在文件末尾（它复用 draw_snr_row 等 legacy 工具）。 */
+static void draw_detail(uint16_t *fb, int which);
+static void draw_detail_header(uint16_t *fb, int which);
+
 void pk_diag_page_render(uint16_t *fb)
 {
     char buf[64];
 
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
+
+    /* 详情层：spec §5.5 的第二层。总览负责"哪个子系统不对"，详情负责
+     * "到底怎么不对"，两层的信息密度差着一个量级，不该挤在一起。 */
+    if (s_detail >= 0) {
+        draw_detail(fb, s_detail);
+        draw_detail_header(fb, s_detail);
+        return;
+    }
 
     /* ── IMU ── */
     {
@@ -779,7 +809,7 @@ void pk_diag_page_render(uint16_t *fb)
  *
  * 与 touch_gt911.c 的约定同 pk_adsb_list_*：返回 true 表示这一下被本页消费。
  * dock 展开时由 read_cb 统一让路，这里不重复判断。 */
-static int  s_press_y, s_press_scroll;
+static int  s_press_x, s_press_y, s_press_scroll;
 static bool s_press_valid, s_moved;
 
 #define DIAG_DRAG_SLOP  12
@@ -793,8 +823,22 @@ static bool diag_in_cards(int x, int y)
 
 bool pk_diag_page_touch(int x, int y)
 {
+    /* 详情页：顶栏左侧那块是返回。它是这一页唯一的出路，命中区做到 96 px
+     * 宽、整个顶栏高——比箭头本身大得多，宁可多占空间也不能让人点不中。 */
+    if (s_detail >= 0) {
+        if (y < PFD_BAR_BOT && x < DET_BACK_W) {
+            s_detail = -1;
+            s_press_valid = false;
+            return true;
+        }
+        /* 详情页其余区域一律吃掉：底下是总览的卡片，穿透过去会直接换一页。 */
+        s_press_valid = false;
+        return (x < PK_DISPLAY_W - 80);
+    }
+
     s_press_valid = diag_in_cards(x, y);
     if (!s_press_valid) return false;
+    s_press_x      = x;
     s_press_y      = y;
     s_press_scroll = s_scroll_y;
     s_moved        = false;
@@ -820,5 +864,152 @@ bool pk_diag_page_drag(int x, int y)
     return true;
 }
 
-void pk_diag_page_touch_up(void)   { s_press_valid = false; s_moved = false; }
+/* 松手：没拖动过才算点击 → 进入该卡片的详情。
+ * 用按下时的坐标分派，理由同列表页：12 px 内的位移可能已经跨到相邻卡了。 */
+void pk_diag_page_touch_up(void)
+{
+    const bool click = s_press_valid && !s_moved;
+    const int  x = s_press_x, y = s_press_y;
+    s_press_valid = false;
+    s_moved       = false;
+    if (!click || s_detail >= 0) return;
+
+    const int col = (x < CARD_PAD + CARD_W + CARD_GAP / 2) ? 0 : 1;
+    const int row = (y + s_scroll_y - CARD_TOP) / (CARD_H + CARD_GAP);
+    const int idx = row * CARD_COLS + col;
+    if (row >= 0 && idx >= 0 && idx < CARD_N) s_detail = idx;
+}
 void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 子系统详情（spec §5.5 第二层）
+ *
+ * spec 要求"详情必须保留 diag_page.c 现有全部深度"。所以这里不重新发明，
+ * 直接复用 legacy 那套取数与 draw_snr_row()——尤其 GPS 每星座独立一行的
+ * SNR 柱状图，那是排查 no-fix 的命门（不能只盯 fix=0，要看 SNR 和天线）。
+ * ═════════════════════════════════════════════════════════════════════ */
+
+#define DET_TOP     (PFD_BAR_BOT + 8)
+#define DET_LINE_H  38
+#define DET_KEY_X   24
+#define DET_VAL_X   240
+
+static void det_kv(uint16_t *fb, int line, const char *k, const char *v,
+                   uint16_t vcol)
+{
+    const int y = DET_TOP + line * DET_LINE_H;
+    if (y + DET_LINE_H > PK_DISPLAY_H) return;
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X,
+               y + (PK_AA_M_H - PK_AA_XS_H) / 2, k, COL_KEY, PK_AA_XS);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_VAL_X, y, v, vcol, PK_AA_M);
+}
+
+static void draw_detail(uint16_t *fb, int which)
+{
+    char buf[64];
+    int line = 0;
+
+    switch (which) {
+    case 2: {   /* GPS —— spec 点名的那一页 */
+        pk_gps_state_t g = {0};
+        pk_gps_get(&g);
+        const bool fresh = g.have_fix &&
+                           (esp_timer_get_time() - g.updated_us) < GPS_FRESH_US;
+
+        snprintf(buf, sizeof(buf), "%s", g.last_nmea_us == 0 ? "no module"
+                                       : fresh ? "3D fix" : "no fix");
+        det_kv(fb, line++, "STATUS", buf, fresh ? COL_ONLINE : COL_ALERT);
+
+        snprintf(buf, sizeof(buf), "%d used / %d in view", g.sats, g.sats_in_view);
+        det_kv(fb, line++, "SATELLITES", buf, COL_VAL);
+
+        snprintf(buf, sizeof(buf), "%.1f", (double)g.hdop);
+        det_kv(fb, line++, "HDOP", buf, COL_VAL);
+
+        /* 天线自检单独一行：它比"没星"精确得多，直接给结论。 */
+        static const char *const kAnt[] = { "unknown", "OK", "OPEN", "SHORT" };
+        det_kv(fb, line++, "ANTENNA",
+               kAnt[g.ant_status <= PK_GPS_ANT_SHORT ? g.ant_status : 0],
+               g.ant_status == PK_GPS_ANT_OK ? COL_ONLINE
+               : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE : COL_ALERT);
+
+        if (fresh) snprintf(buf, sizeof(buf), "%.5f  %.5f", g.lat, g.lon);
+        else       snprintf(buf, sizeof(buf), "---");
+        det_kv(fb, line++, "POSITION", buf, fresh ? COL_VAL : COL_OFFLINE);
+
+        /* 每星座一行 SNR 柱状图。分星座画而不是混在一起：某个星座整体偏弱
+         * 指向天线频段或遮挡方向，混画就看不出这个模式了。 */
+        static const char *const kCon[PK_GNSS_COUNT] = { "GPS", "BDS", "GLO", "GAL" };
+        for (int gi = 0; gi < PK_GNSS_COUNT; ++gi) {
+            int cnt = 0;
+            for (int i = 0; i < g.snr_count; ++i) if (g.snr_con[i] == gi) cnt++;
+            if (cnt == 0) continue;
+            const int y = DET_TOP + line * DET_LINE_H;
+            if (y + DET_LINE_H > PK_DISPLAY_H) break;
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X,
+                       y + (PK_AA_M_H - PK_AA_XS_H) / 2, kCon[gi],
+                       COL_KEY, PK_AA_XS);
+            draw_snr_row(fb, DET_VAL_X, y + PK_AA_M_H + 4,
+                         g.snr, g.snr_con, g.snr_count, gi);
+            line++;
+        }
+        if (g.snr_count == 0)
+            det_kv(fb, line++, "SNR", "(no satellites in view)", COL_OFFLINE);
+        break;
+    }
+
+    case 0: {   /* IMU */
+        pk_imu_sample_t st;
+        const bool ok = pk_imu_sample_get(&st) && st.valid;
+        det_kv(fb, line++, "SENSOR", ok ? "BNO085 online" : "offline",
+               ok ? COL_ONLINE : COL_ALERT);
+        if (ok) {
+            snprintf(buf, sizeof(buf), "%u / 3", st.accuracy);
+            det_kv(fb, line++, "CALIBRATION", buf,
+                   st.accuracy >= 2 ? COL_ONLINE : COL_WARN);
+            snprintf(buf, sizeof(buf), "%+.1f", (double)st.roll_deg);
+            det_kv(fb, line++, "ROLL", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%+.1f", (double)st.pitch_deg);
+            det_kv(fb, line++, "PITCH", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%.1f", (double)st.yaw_deg);
+            det_kv(fb, line++, "YAW", buf, COL_VAL);
+        }
+        break;
+    }
+
+    case 1: {   /* BARO */
+        pk_baro_state_t b;
+        pk_baro_get(&b);
+        det_kv(fb, line++, "SENSOR", b.valid ? "BMP388 online" : "offline",
+               b.valid ? COL_ONLINE : COL_ALERT);
+        if (b.valid) {
+            snprintf(buf, sizeof(buf), "%.2f hPa", (double)b.pressure_pa / 100.0);
+            det_kv(fb, line++, "PRESSURE", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%d ft", b.alt_ft);
+            det_kv(fb, line++, "ALTITUDE", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
+            det_kv(fb, line++, "QNH REF", buf, COL_VAL);
+        }
+        break;
+    }
+
+    default:
+        det_kv(fb, line++, "DETAIL", "(总览卡片已含全部信息)", COL_OFFLINE);
+        break;
+    }
+}
+
+/* 详情页顶栏：返回箭头 + 子系统名。返回区（DET_BACK_W）做得比箭头本身大
+ * 得多——它是这一页唯一的出路，宁可多吃空间也不能让人点不中。 */
+static void draw_detail_header(uint16_t *fb, int which)
+{
+    pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, COL_BG);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2, "\u2190", COL_HEADER, PK_AA_M);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_BACK_W,
+               (PFD_BAR_BOT - PK_AA_M_H) / 2,
+               (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
+               COL_HEADER, PK_AA_M);
+    pk_pfd_fill_rect(fb, 0, PFD_BAR_BOT - 1, PK_DISPLAY_W, PFD_BAR_BOT,
+                     pk_rgb565(38, 48, 62));
+}
