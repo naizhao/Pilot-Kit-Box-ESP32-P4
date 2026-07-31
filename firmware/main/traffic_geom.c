@@ -35,3 +35,13 @@ pk_traffic_rel_t pk_traffic_rel_calc(
     }
     return r;
 }
+
+float pk_traffic_symbol_rot_deg(bool heading_up, float tgt_track_true_deg,
+                                float mag_var_deg, float own_heading_deg)
+{
+    /* 真北 → 地图参考北：与 abs_bearing 减的是同一个 mag_var。 */
+    float rot = tgt_track_true_deg - mag_var_deg;
+    /* 机头朝上：图已经转过 own_heading，符号得跟着一起转回来。 */
+    if(heading_up) rot -= own_heading_deg;
+    return norm360(rot);
+}

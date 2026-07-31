@@ -67,6 +67,7 @@
 #include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
+#include "keyboard_page.h"
 #include "settings_page.h"
 #include "boot_splash.h"
 #include "traffic_page.h"
@@ -200,7 +201,6 @@ static void mock_fill_boxes(pk_pfd_infobox_t *ib, pk_pfd_leftbox_t *lb,
     memset(lb, 0, sizeof(*lb));
     lb->speed_valid = !k.no_own;
     lb->kmh = (int)(spd->ground_speed_kt * 1.852f + 0.5f);
-    lb->mph = (int)(spd->ground_speed_kt * 1.15078f + 0.5f);
     lb->src = PK_PFD_SRC_ADSB;
     /* 呼号只有绑定了本机才有。没绑就留空串——不是留上一次的 "CES2158"，
      * 那会让「没有本机」这一态看起来像绑着一架幽灵飞机。 */
@@ -317,6 +317,16 @@ static int run_headless(float at_sec, const char *out)
         } else if (strcmp(page, "settings") == 0) {
             pk_settings_page_render(fb);
 
+        } else if (strcmp(page, "keyboard") == 0) {
+            /* 键盘编辑器。真机上它由设置页那一行点开（pk_settings_apply
+             * 的 case 8），模拟器直接调 open() —— 这与诊断详情页那边用
+             * PK_SIM_DIAG_DETAIL 跳进去是同一个套路。
+             *
+             * PK_SIM_KBD=<初值> 摆不同的输入态：不给 = 空输入，
+             * 给满 10 个字符 = 计数器转警示色的那一态。 */
+            pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME,
+                                  getenv("PK_SIM_KBD"), 10);
+            pk_keyboard_page_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
             return 2;

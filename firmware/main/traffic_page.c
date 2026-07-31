@@ -226,8 +226,8 @@ static uint16_t target_color(const pk_traffic_rel_t *rel, bool selected)
 }
 
 static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
-                               pk_map_orient_t orient, bool selected,
-                               uint16_t col)
+                               pk_map_orient_t orient, float own_heading,
+                               float mag_var, bool selected, uint16_t col)
 {
     /*
      * 目标符号：**可旋转的飞机剪影**，不是菱形。
@@ -240,18 +240,19 @@ static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
      * 旋转角取目标自己的 ADS-B 航迹。无航迹数据就退回菱形——那表示「不知道
      * 朝向」，画一个朝某方向的飞机等于编造信息。
      *
-     * ⚠ 已知未修：按理机头朝上模式该**减去本机航向**（整幅图已经跟着本机转过
-     * 了），原注释也是这么写的，但原代码写成
-     *     rot = heading_deg - (screen - rel_bearing)
-     * 而 screen 在该分支里恒等于 rel_bearing，那个减法是个恒为 0 的空操作，
-     * 两种朝向下实际都只用了 heading_deg。本次是「标签防遮挡」的重构，刻意
-     * **一像素不改**地保留这个行为：混进一个让所有目标机头整体转 82° 的改动，
-     * 会让这次的截图评审说不清是哪一处造成的。修它请单开一件事。
+     * 角度换算交给 pk_traffic_symbol_rot_deg()：它和算落点的
+     * pk_traffic_rel_calc() 在同一个文件里，共用「地图参考北 = 真北 - mag_var」
+     * 这一条约定，也就不会再出现符号与落点分属两套参考系的情况。此前这里内联
+     * 写的是 `heading_deg - (screen - rel_bearing)`，而该分支中 screen 恒等于
+     * rel_bearing，减法恒为 0——两种朝向都只用了目标航迹本身，于是机头朝上时
+     * 迎面与同向画出来一模一样，而 PFD 罗盘外圈那份（pfd_hsi_traffic.c）算的
+     * 是对的，同一架飞机在两个页面上机头差了一个 mag_var + 本机航向。
      */
     if (v->ac->have_velocity) {
-        (void)orient;
-        pk_pfd_draw_aircraft(fb, tx, ty, v->ac->heading_deg,
-                             selected ? 15 : 11, col);
+        const float rot = pk_traffic_symbol_rot_deg(
+            orient == PK_MAP_HEADING_UP, (float)v->ac->heading_deg,
+            mag_var, own_heading);
+        pk_pfd_draw_aircraft(fb, tx, ty, rot, selected ? 15 : 11, col);
     } else {
         fill_diamond(fb, tx, ty, selected ? 6 : 5, col);
     }
@@ -1010,13 +1011,13 @@ void pk_traffic_page_render(uint16_t *fb)
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;                /* 选中最后画(置顶) */
             draw_target_symbol(fb, &s_vis[k], s_lbls[k].tx, s_lbls[k].ty,
-                               orient_eff, false,
+                               orient_eff, own_heading, mag_var, false,
                                target_color(&s_vis[k].rel, false));
         }
         if (nv > 0 && sel_row >= 0 && sel_row < nv)
             draw_target_symbol(fb, &s_vis[sel_row],
                                s_lbls[sel_row].tx, s_lbls[sel_row].ty,
-                               orient_eff, true,
+                               orient_eff, own_heading, mag_var, true,
                                target_color(&s_vis[sel_row].rel, true));
 
         for (int k = 0; k < nv; k++) {

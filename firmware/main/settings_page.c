@@ -21,20 +21,31 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "ble_gatt.h"
 #include "display.h"
 #include "i18n.h"
 #include "config_ble.h"
+#include "config_devname.h"
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
+#include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
 
-#define SETTINGS_ROW_COUNT       6
+/*
+ * 行数必须与 settings_draw.c 的 SET_ROWS 一致——那边才是版面的真源。
+ * 这里原来写着 6，是 320×240 时代六项版面的遗留：4.3″ 上早已是 9 行（现在
+ * 10 行），于是 cursor_next() 转到第 6 行就绕回去了，后面几项按键根本选不到。
+ * 触摸上线后这条路径没人走，问题才一直没被发现。
+ */
+#define SETTINGS_ROW_COUNT       10
 
 static const char *TAG = "settings";
 
-/* 当前选中行:0=Language 1=QNH 2=MAP 3=RANGE 4=LOG 5=FORMAT SD */
+/* 当前选中行。行号即 pk_settings_apply() 的 case 序号，见那边的注释；
+ * 具体是哪一行由 settings_draw.c 的渲染顺序决定，不在这里另抄一份清单——
+ * 抄的那份不会跟着版面变（上一版就停在「5=FORMAT SD」，实际早已是 8）。 */
 static volatile int s_sel_row = 0;
 
 /* ── FORMAT SD 两步确认状态机 ──
@@ -178,11 +189,36 @@ void pk_settings_apply(int row, int v)
         pk_ble_enabled_set(v == 1);
         break;
 
-    case 8:   /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 8:   /* 设备名（P2-5）—— 不在这里改值，弹出受限 ASCII 编辑器。
+               * 传进去的是**用户串**（NVS 里那半截），不是屏上显示的完整
+               * 广播名：MAC 后缀是设备自己接的，让用户去编辑它没有意义，
+               * 也会让「改一次名字后缀就跟着进了正文」。 */
+        { char cur[PK_DEVNAME_BUF_SIZE];
+          pk_devname_get(cur, sizeof(cur));
+          pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME, cur,
+                                PK_DEVNAME_MAX_LEN); }
+        break;
+
+    case 9:   /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 
     default:
         break;
     }
+}
+
+/*
+ * 键盘编辑器按下「确定」——keyboard_page.c 里那个弱符号的强实现。
+ *
+ * 编辑器本身不知道自己在编什么（它是个通用的受限 ASCII 输入框），落 NVS 与
+ * 重开广播都归设置页。两步顺序不能反：先存，再让 ble_gatt 按存好的值重拼名字。
+ */
+void pk_keyboard_page_on_commit(const char *text)
+{
+    pk_devname_set(text);
+    /* 改名不必重启整机——广播停掉重开就行（与 BLE 总开关那行不同，那个受
+     * hosted 握手必须排在点屏之前的硬约束限制，只能下次开机生效）。 */
+    pk_ble_device_name_apply();
+    ESP_LOGI(TAG, "device name committed: \"%s\"", pk_ble_device_name());
 }

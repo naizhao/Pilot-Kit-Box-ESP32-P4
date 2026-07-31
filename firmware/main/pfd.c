@@ -50,6 +50,7 @@
 #include "pfd_tape.h"
 #include "baro.h"
 #include "sdkconfig.h"
+#include "keyboard_page.h"
 #include "settings_page.h"
 #include "traffic_page.h"
 #include "ui_state.h"
@@ -148,7 +149,11 @@ static void pfd_task(void *arg)
             break;
 
         case PK_UI_MODE_SETTINGS:
-            pk_settings_page_render(fb);
+            /* 键盘编辑器是设置页之上的**模态层**，不是独立的 pk_ui_mode_t：
+             * 模式循环（PFD→TRAFFIC→…）里不该冒出一个「键盘页」，用户按
+             * MODE 也不该切进一个半途的编辑态。 */
+            if (pk_keyboard_page_active()) pk_keyboard_page_render(fb);
+            else                           pk_settings_page_render(fb);
             break;
 
         case PK_UI_MODE_TRAFFIC:
@@ -330,7 +335,6 @@ static void pfd_task(void *arg)
                 pk_pfd_leftbox_t lb = {
                     .speed_valid = spd.valid,
                     .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
-                    .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
                     .adsb_lost_alert = (s_adsb_lost_us != 0) &&
                                        (now_us - s_adsb_lost_us < 5000000LL),
                     .alert_blink_on  = ((now_us / 400000) & 1) != 0,

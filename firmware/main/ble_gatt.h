@@ -64,3 +64,26 @@ bool ble_gatt_is_connected(void);
  * state; the two flags are mutually exclusive in normal operation.
  */
 bool ble_gatt_is_advertising(void);
+
+/*
+ * 当前**完整**的广播名，形如 "Pilot Kit Box-AABBCC" 或 "<用户串>-AABBCC"。
+ *
+ * 设置页显示的就是这一串——用户关心的是「手机上会扫到什么」，而不是自己在
+ * NVS 里存了半截什么（那半截在 config_devname.h）。控制器还没同步出 MAC 时
+ * 返回的是不带后缀的前缀，不会是空串。
+ *
+ * 返回的是内部静态缓冲。它只在 on_sync() 与 pk_ble_device_name_apply() 里被
+ * 改写，两者都在 NimBLE host 任务上下文，渲染任务读到的最坏情况是「上一版
+ * 的名字」，不会读到半截——名字整串由一次 snprintf 写成。
+ */
+const char *pk_ble_device_name(void);
+
+/*
+ * 按当前 NVS 设置重拼广播名，并把广播重开一遍让改动立刻生效。
+ *
+ * 设置页改完名字调它。不必重启整机：断连路径本来就会复用 start_advertising()
+ * （见 ble_gatt.c 的 gap_event_cb），运行时重开广播是这个模块的既有能力。
+ *
+ * BLE 关闭或控制器尚未同步时是安全的空操作。
+ */
+void pk_ble_device_name_apply(void);

@@ -51,6 +51,14 @@
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
 #  define TGT_LBL_W     PK_AA_M_W
 #  define TGT_LBL_H     PK_AA_M_H
+/* 「后方 N 架」前缀的下箭头。
+ *
+ * 必须按渲染器分两份：AA 字库走 UTF-8 解码 + 码位二分查表（pfd_aa_text.c
+ * utf8_next / cjk_index），它的箭头存在 U+2193；而旧 5×7 位图字体没有 UTF-8
+ * 这一说，箭头挂在私有码位 0x84 上。此前两档共用 PK_FONT_ARROW_S(0x84)，喂给
+ * pk_aa_puts 就是一个非法 UTF-8 前导字节 → U+FFFD → 查表落空 → 只推进 15 px
+ * 不画：屏上永远只剩一个孤零零的数字，左边空着 15 px。 */
+#  define TGT_ARROW_BEHIND  "↓"
 /* 标签底的压暗强度。目标常落在天地交界或罗盘刻度上，纯文字会糊进背景。
  * 只压暗、不描边：十几个目标各带一个方框，外圈立刻显得杂乱。 */
 #  define TGT_LBL_BG    90
@@ -60,6 +68,7 @@
 #  define TGT_LBL_W     6
 #  define TGT_LBL_H     6
 #  define TGT_LBL_BG    0
+#  define TGT_ARROW_BEHIND  "\x84"      /* 位图字体的私有码位，见上 */
 #endif
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
@@ -119,14 +128,34 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
     int64_t now_us = esp_timer_get_time();
 
     pk_imu_sample_t s;
-    if (!pk_imu_sample_get(&s)) return;     /* 无航向无法定相对方位 */
-    float yaw = s.yaw_deg;
+    const bool imu_ok = pk_imu_sample_get(&s);
 
     aircraft_t own = {0};
     pk_own_src_t src;
     if (!pk_own_ship_resolve(now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL,
                              &own, &src))
         return;                              /* 无本机位置 */
+
+    /*
+     * 航向口径必须与**这一圈罗盘本身**一致，而罗盘的刻度来自 pfd.c 的
+     * pk_own_heading_resolve（ADS-B > IMU > GPS track，见 own_ship.h）。
+     *
+     * 此前这里直接读裸 IMU yaw。绑定了 ADS-B 本机时，罗盘刻度盘转的是 ADS-B
+     * 真航迹、叠在它上面的交通层却按 IMU 磁航向摆位——两层错开一个磁偏角，
+     * 中国境内 3~11°，而这一层的全部意义就是「目标相对刻度盘在哪个方位」。
+     * 顺带修掉一处更硬的降级：原来 IMU 一失效就整层不画，哪怕 ADS-B 航向还
+     * 在、罗盘照常在转。
+     *
+     * mag_var 跟着来源走，口径照抄 traffic_page.c:781-795：IMU 是磁北参考，
+     * 要把目标的真方位/真航迹减到磁系；ADS-B / GPS track 本身就是真北，减了
+     * 反而多转一个磁偏角。「地图参考北 = 航向来源的北」——只有这样刻度盘上
+     * 的 030 和叠加层上的 030 才是同一个方向。
+     */
+    float yaw = 0.0f;
+    pk_hdg_src_t hsrc;
+    if (!pk_own_heading_resolve(true, src, &own, imu_ok, imu_ok ? s.yaw_deg : 0.0f,
+                                &yaw, &hsrc))
+        return;                              /* 无航向无法定相对方位 */
 
     pk_baro_state_t baro;
     bool baro_ok = pk_baro_get(&baro);
@@ -137,7 +166,8 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
     if (own.have_altitude)          own_palt = own.altitude_ft;
     else if (baro_ok && baro.valid) own_palt = std_alt_ft_from_pa(baro.pressure_pa);
     else                            own_palt = PK_ALT_UNAVAIL;
-    float mag_var = pk_mag_var_lookup(own.lat, own.lon);
+    const float mag_var = (hsrc == PK_HDG_SRC_IMU)
+                        ? pk_mag_var_lookup(own.lat, own.lon) : 0.0f;
 
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
@@ -191,14 +221,17 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
          * 不能一律画飞机：没有 track 的目标画成箭头等于凭空编出一个朝向，
          * 而「它朝我来还是背我去」正是飞行员据此决策的信息，编不得。
          *
-         * 罗盘是 heading-up 的，所以屏幕上的朝向 = 目标航迹 - 本机航向。
-         * 目标 track 是真北参考、IMU yaw 是磁北参考，先把 track 降到磁系。 */
+         * 罗盘恒是 heading-up 的，所以屏幕上的朝向 = 目标航迹 - 本机航向，
+         * 且要先把真北参考的 track 降到本图的参考北（见 mag_var 的注释）。
+         * 这套换算与交通页共用 pk_traffic_symbol_rot_deg()——两处各推一遍的
+         * 后果已经付过学费：同一架飞机在两页上机头差 74.6°。 */
         uint16_t tcol = !rel.rel_alt_valid            ? COL_TGT_NOALT
                       : (rel.rel_alt_ft >  1000)         ? COL_TGT_ABOVE
                       : (rel.rel_alt_ft < -1000)         ? COL_TGT_BELOW
                                                          : COL_TGT_LEVEL;
         if (t->have_velocity) {
-            float rot = ((float)t->heading_deg - mag_var) - yaw;
+            const float rot = pk_traffic_symbol_rot_deg(
+                true, (float)t->heading_deg, mag_var, yaw);
             pk_pfd_draw_aircraft(fb, tx, ty, rot, ROSE_SC(7), tcol);
         } else {
             fill_diamond(fb, tx, ty, ROSE_SC(4), tcol);
@@ -246,7 +279,7 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
 
     if (behind > 0) {
         char b[16];
-        snprintf(b, sizeof(b), "%c%d", PK_FONT_ARROW_S, behind);  /* ▼N 后方 */
+        snprintf(b, sizeof(b), "%s%d", TGT_ARROW_BEHIND, behind);  /* ↓N 后方 */
         /* 放右下角 VS 框(y≤228)下方的空隙：避开左下 own-ship badge
          * (x[0,78] y[210,232])，否则会被 pfd.c 后画的 badge darken+文字覆盖
          * 导致永久不可见。 */

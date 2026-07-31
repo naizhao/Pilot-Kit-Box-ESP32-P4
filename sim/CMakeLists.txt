@@ -104,6 +104,9 @@ set(FW_DRAW_SRC
     ${FW}/adsb_list.c
     ${FW}/diag_page.c
     ${FW}/settings_draw.c
+    # 键盘编辑器同样是纯排版 + 命中判定，唯一的外部依赖是 config_devname 的
+    # 长度常量（头文件里的宏）与 pk_ui_nav 的 FAB 显隐，两者都已在这里。
+    ${FW}/keyboard_page.c
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c
     ${FW}/icao_country.c

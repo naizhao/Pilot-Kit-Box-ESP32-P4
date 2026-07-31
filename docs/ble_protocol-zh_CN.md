@@ -33,7 +33,7 @@ Advertisement:
 | 字段 | 值 |
 |---|---|
 | Flags | LE General Discoverable + BR/EDR Not Supported |
-| Complete Local Name | `Pilot Kit Box-AABBCC` |
+| Complete Local Name | `Pilot Kit Box-AABBCC`（出厂默认）或 `<用户名>-AABBCC` |
 
 Scan response:
 
@@ -41,7 +41,33 @@ Scan response:
 |---|---|
 | Complete List of 128-bit Service UUIDs | `1090AD5B-0000-1000-8000-1090AD5B0000` |
 
-`AABBCC` 是设备 BLE MAC 最后 3 字节的大写十六进制，跨重启稳定、跨设备不同。客户端应按名称前缀 `Pilot Kit Box-` 或 service UUID 过滤，不要匹配完整固定字符串。
+`AABBCC` 是设备 BLE MAC 最后 3 字节的大写十六进制，跨重启稳定、跨设备不同。
+
+### 用户可改的设备名
+
+固件 v0.9.4 起，机主可以在**设置页 →「设备名」**里改名（屏上的受限编辑器，
+字符集 A–Z / 0–9 / `-` / `_`，最长 **10** 字符）。改掉的只是 `Pilot Kit Box`
+这一段前缀，`-AABBCC` 这个 MAC 后缀由固件**无条件**追加，用户去不掉：
+
+```
+出厂默认       Pilot Kit Box-0B5A8A     20 字节
+改成 N123AB    N123AB-0B5A8A            13 字节
+最长情况       WWWWWWWWWW-0B5A8A        17 字节
+```
+
+10 字符的上限是按广播包算出来的：31 字节总长 − 3（Flags AD）− 2（Name AD 头）
+= **26 字节**可用，而 10 + 1 + 6 = 17 ≤ 26，**溢出不可能发生**。
+
+清空名字即逐字节恢复出厂默认。改名**立即生效**——固件会把广播停掉重开，
+不需要重启设备。
+
+### 过滤方式（对按名称前缀过滤的客户端是破坏性变更）
+
+客户端**必须**按 **128-bit Service UUID**
+`1090AD5B-0000-1000-8000-1090AD5B0000` 过滤扫描结果（它在 scan response 里）。
+
+**不要按名称过滤。** 名称前缀 `Pilot Kit Box-` 曾经是一条可选路径，但改过名的
+设备根本不带这个前缀——按前缀过滤的客户端会直接扫不到它。名称**只用于显示**。
 
 ## 3. GATT Service
 

@@ -251,6 +251,20 @@ bool record_sink_file_uses_sd(void) { return sim_env("PK_SIM_SET_LOGSD", 0) != 0
 /* BLE 开关（config_ble）。PK_SIM_SET_BLE=0 关，默认开。 */
 bool pk_ble_enabled_get(void) { return sim_env("PK_SIM_SET_BLE", 1) != 0; }
 
+/*
+ * BLE 广播名（ble_gatt.c）。设置页那一行显示的就是它。
+ *
+ * 默认给**最长**的那个值，不是好看的短名：出厂默认 "Pilot Kit Box-AABBCC"
+ * 共 20 字符，正是值框宽度（240 px）的定值依据；自定义名最长 17 字符，比它
+ * 短。只截短名的图，撑破了也看不出来。
+ * PK_SIM_DEVNAME=<串> 可换成自定义名那一态（记得连 MAC 后缀一起写全）。
+ */
+const char *pk_ble_device_name(void)
+{
+    const char *e = getenv("PK_SIM_DEVNAME");
+    return (e && e[0]) ? e : "Pilot Kit Box-A1B2C3";
+}
+
 /* 设置页的写操作在 settings_page.c（依赖 FreeRTOS，不进模拟器）。
  * 桩成空实现：模拟器只验证版面与命中几何，不改状态。 */
 void pk_settings_apply(int row, int v) { (void)row; (void)v; }

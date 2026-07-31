@@ -36,6 +36,7 @@
 #include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
+#include "keyboard_page.h"
 #include "settings_page.h"
 #include "pk_ui_nav.h"
 #include "traffic_page.h"
@@ -156,18 +157,28 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             pk_adsb_list_touch_cancel();
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
+            pk_keyboard_page_touch_cancel();
             pk_about_page_touch_cancel();
         } else if (s_armed) {
+            /* 设置页那一条要先问键盘：编辑器是浮在设置页之上的模态层
+             * （渲染那侧同样是这个次序，见 pfd.c），设置页此刻在屏上根本
+             * 看不见，它的命中表却还留着上一帧的几何——不挡掉的话，点
+             * 「Q」会被判成点中了底下的某个分段控件。 */
             eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                  || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                  || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
-                 || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
+                 || (m == PK_UI_MODE_SETTINGS  && (pk_keyboard_page_active()
+                        ? pk_keyboard_page_touch(lx, ly)
+                        : pk_settings_page_touch(lx, ly)))
                  || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
             if (eaten) s_armed = false;
         } else if (m == PK_UI_MODE_DIAG) {
             eaten = pk_diag_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_SETTINGS) {
-            eaten = pk_settings_page_drag(lx, ly);
+            /* 键盘不滚动，按住不放的后续帧没有它要做的事——但仍然要**吃掉**：
+             * 不吃就会落到设置页的滚动上（编辑器底下那一页会被悄悄滚走），
+             * 或者漏给底下的 LVGL 控件。 */
+            eaten = pk_keyboard_page_active() || pk_settings_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_ABOUT) {
             /* 关于页正文比屏高，同样要按住不放地连续滚动，判定与 diag/settings 一致。 */
             eaten = pk_about_page_drag(lx, ly);
@@ -193,6 +204,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_adsb_list_touch_up();
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();
+        pk_keyboard_page_touch_up();
         pk_about_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }

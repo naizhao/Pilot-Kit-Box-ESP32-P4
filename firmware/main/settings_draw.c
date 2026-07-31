@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ble_gatt.h"          /* pk_ble_device_name —— 设备名那行显示完整广播名 */
 #include "config_ble.h"
 #include "config_qnh.h"
 #include "config_storage.h"
@@ -49,12 +50,12 @@
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 #define SET_ROWS_VIS   ((PK_DISPLAY_H - PFD_BAR_BOT) / SET_ROW_H)
 
-#define SET_ROWS      9
+#define SET_ROWS      10
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
 
-/* 滚动偏移(px)。8 行 × 64 = 512 > 可视的 432，第 8 行"格式化 SD"必须滚
+/* 滚动偏移(px)。10 行 × 64 = 640 > 可视的 432，最后一行"格式化 SD"必须滚
  * 才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动可见）"），把最危险
  * 的操作放在需要多一个动作才能够到的地方。 */
 static int s_set_scroll;
@@ -299,7 +300,34 @@ void pk_settings_page_render(uint16_t *fb)
                        pk_rgb565(120, 130, 145), PK_AA_XS); }
       row++; }
 
-    /* 9 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 9 设备名（P2-5）——紧跟蓝牙那行：它改的就是 BLE 广播出去的名字，
+     * 隔开放会让人以为是另一码事。控件是个可点的值框，点了进键盘编辑器。 */
+    { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_DEVNAME));
+      const int y_mid = ROW_Y(row);
+      const int y0 = y_mid - SET_CTL_H / 2;
+      /* 240 是按**最长的名字**定的，不是按当前值：出厂默认
+       * "Pilot Kit Box-AABBCC" 共 20 字符，S 档 11 px/字符 = 220 px，
+       * 左右各留 10。自定义名最长 10+1+6 = 17 字符，比它还短。 */
+      const int w  = 240;
+      const int x0 = SET_CTL_R - w;
+      pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
+                             SET_CTL_H / 2, pk_rgb565(28, 36, 48));
+      /* 显示的是**完整广播名**（含 MAC 后缀），不是用户存的那半截：用户要
+       * 核对的是「手机上会扫到什么」。未设置时前半段就是出厂前缀。 */
+      const char *nm = pk_ble_device_name();
+      /* 名字全是 ASCII（字符集限死在 A-Z 0-9 - _），但宽度仍走
+       * pk_aa_text_width：这一页别处都这么算，留一处 strlen×cell 迟早被抄走。 */
+      pk_aa_size_t sz = PK_AA_S;
+      int tw = pk_aa_text_width(nm, sz);
+      /* 装不下就降档而不是截断——名字被切一半比小一号更难辨认。 */
+      if (tw > w - 20) { sz = PK_AA_XS; tw = pk_aa_text_width(nm, sz); }
+      pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
+                 y0 + (SET_CTL_H - pk_aa_cell_h(sz)) / 2, nm,
+                 pk_rgb565(235, 240, 248), sz);
+      hit_set(row, 3, x0, w, 0, y_mid);
+      row++; }
+
+    /* 10 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;

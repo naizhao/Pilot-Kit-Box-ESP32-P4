@@ -32,6 +32,17 @@ bool pk_ui_nav_dock_open(void);
 bool pk_ui_nav_fab_pressed(void);
 
 /*
+ * 整个藏掉 / 放出 FAB。
+ *
+ * 给**模态**页面用（当前只有键盘编辑器）。与 set_subpage 不同：那个只是把
+ * 图标换成「←」，FAB 本身还在，仍然压在页面之上；模态编辑器铺满全屏且自绘
+ * 命中区排在 LVGL 之前（见 touch_gt911.c），FAB 留着的结果是它自己点不动、
+ * 又盖住底下的键。藏起来的同时收掉 dock —— dock 锚在 FAB 上，FAB 没了它就
+ * 会浮在半空。
+ */
+void pk_ui_nav_set_fab_hidden(bool hidden);
+
+/*
  * 显示 / 收起居中的瞬时提示。msg 为 NULL 或空串即收起。
  *
  * 只管「显示什么」，不管「显示多久」——过期由 ui_state 的 pk_ui_toast_get()

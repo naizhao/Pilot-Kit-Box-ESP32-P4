@@ -629,6 +629,19 @@ void pk_ui_nav_init(void)
 
 bool pk_ui_nav_fab_pressed(void) { return s_pressed; }
 
+void pk_ui_nav_set_fab_hidden(bool hidden)
+{
+    if (s_fab == NULL) return;
+    if (hidden) {
+        /* 先收 dock 再藏 FAB：dock 的收起动画要飞回 FAB 那一侧的屏外，
+         * 顺序反了它会从一个已经不存在的锚点开始滑。 */
+        pk_ui_nav_set_dock_open(false);
+        lv_obj_add_flag(s_fab, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_fab, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 
 
 

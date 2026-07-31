@@ -42,6 +42,7 @@
 #include "esp_hosted_misc.h"          /* esp_hosted_bt_controller_init/enable */
 
 #include "aircraft_state.h"
+#include "config_devname.h"           /* 用户自定义的广播名前半段 */
 #include "gdl90.h"
 #include "gps.h"
 #include "own_ship.h"
@@ -54,6 +55,10 @@ static const char *TAG = "ble_gatt";
  * tweak of the prefix up to ~26 chars (the adv-packet hard limit). */
 #define BLE_DEVICE_NAME_MAX     32
 static char s_device_name[BLE_DEVICE_NAME_MAX] = BLE_DEVICE_NAME_PREFIX;
+/* MAC 后三字节，on_sync() 拿到地址后填。空串 = 控制器还没同步过。
+ * 单独存一份是为了 pk_ble_device_name_apply() 能在任何时候重拼名字——用户改
+ * 名字发生在开机很久之后，那时 on_sync() 早就返回了，地址不会再送来一次。 */
+static char s_addr_suffix[8];
 #define BLE_RAW_QUEUE_DEPTH  64
 #define BLE_RAW_LINE_MAX     80
 #define BLE_EMIT_PERIOD_MS   1000
@@ -396,6 +401,83 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     }
 }
 
+/*
+ * 把「用户串（NVS）」+「MAC 后缀」拼成最终广播名，并同步给 GAP。
+ *
+ * 长度核算（BLE 4.x legacy adv，31 字节 payload）：
+ *   flags AD              3
+ *   name AD 头            2
+ *   ──────────────────────
+ *   留给名字本身         26
+ *
+ *   默认名 "Pilot Kit Box-AABBCC"   20 ≤ 26   （余 6，与改名前完全一致）
+ *   自定义 "<≤10>-AABBCC"          ≤17 ≤ 26   （余 ≥9）
+ *
+ * 所以**溢出不可能发生**，用户输入再怎么填也踩不回 UUID 那次的
+ * BLE_HS_EINVAL（见下面 start_advertising 的注释）。上限 10 就是这么来的，
+ * 改 PK_DEVNAME_MAX_LEN 之前先把这笔账重算一遍。
+ */
+/* 「先把这笔账重算一遍」靠人自觉是不够的——上面那次 UUID 溢出就是算漏了。
+ * 把预算钉成编译期断言：把上限调大到装不下，构建当场就红，而不是等真机上
+ * ble_gap_adv_set_fields() 回一个 BLE_HS_EINVAL、广播静默地起不来。 */
+#define BLE_ADV_NAME_BUDGET   26   /* 31 − flags(3) − name AD 头(2) */
+#define BLE_ADDR_SUFFIX_LEN    6   /* "AABBCC" */
+_Static_assert(sizeof(BLE_DEVICE_NAME_PREFIX) - 1 + 1 + BLE_ADDR_SUFFIX_LEN
+                   <= BLE_ADV_NAME_BUDGET,
+               "出厂默认广播名超出 adv 的 26 字节预算");
+_Static_assert(PK_DEVNAME_MAX_LEN + 1 + BLE_ADDR_SUFFIX_LEN
+                   <= BLE_ADV_NAME_BUDGET,
+               "自定义广播名可能超出 adv 的 26 字节预算");
+_Static_assert(sizeof(BLE_DEVICE_NAME_PREFIX) + 1 + BLE_ADDR_SUFFIX_LEN
+                   <= BLE_DEVICE_NAME_MAX,
+               "s_device_name 装不下默认名，snprintf 会静默截断");
+
+static void compose_device_name(void)
+{
+    char user[PK_DEVNAME_BUF_SIZE];
+    pk_devname_get(user, sizeof(user));
+
+    /* 用户没设过名字 → 完全走出厂前缀，与这个功能上线之前的行为逐字节一致。 */
+    const char *base = (user[0] != '\0') ? user : BLE_DEVICE_NAME_PREFIX;
+
+    if (s_addr_suffix[0] != '\0') {
+        snprintf(s_device_name, sizeof(s_device_name), "%s-%s",
+                 base, s_addr_suffix);
+    } else {
+        /* 控制器还没同步出地址：先用不带后缀的名字，on_sync() 会再拼一次。 */
+        snprintf(s_device_name, sizeof(s_device_name), "%s", base);
+    }
+
+    int rc = ble_svc_gap_device_name_set(s_device_name);
+    if (rc != 0) ESP_LOGW(TAG, "device_name_set failed: %d", rc);
+}
+
+const char *pk_ble_device_name(void)
+{
+    return s_device_name;
+}
+
+void pk_ble_device_name_apply(void)
+{
+    /* 没起过 BLE（用户在设置页关掉了）就只更新名字缓冲，不去碰广播——
+     * NimBLE 没初始化时调 ble_gap_adv_* 会踩空。名字本身仍要更新，设置页
+     * 显示的就是它，否则用户改完看着像是没生效。 */
+    compose_device_name();
+    if (!s_advertising) {
+        ESP_LOGI(TAG, "device name -> \"%s\" (not advertising)", s_device_name);
+        return;
+    }
+
+    /* 广播中的名字改不了，只能停掉重开。断连路径本来就是这么复用
+     * start_advertising() 的，不是为改名新开的一条路。 */
+    int rc = ble_gap_adv_stop();
+    if (rc != 0 && rc != BLE_HS_EALREADY) {
+        ESP_LOGW(TAG, "adv_stop failed: %d", rc);
+    }
+    s_advertising = false;
+    start_advertising();
+}
+
 static void start_advertising(void)
 {
     /* BLE adv packet is capped at 31 bytes. flags(3) + complete name
@@ -464,13 +546,9 @@ static void on_sync(void)
          * Pilot Kit Boxes in the same hangar can be told apart in a
          * BLE scanner. addr[] is little-endian per NimBLE convention,
          * so the human-readable last three bytes are addr[2..0]. */
-        snprintf(s_device_name, sizeof(s_device_name),
-                 BLE_DEVICE_NAME_PREFIX "-%02X%02X%02X",
+        snprintf(s_addr_suffix, sizeof(s_addr_suffix), "%02X%02X%02X",
                  addr[2], addr[1], addr[0]);
-        int set_rc = ble_svc_gap_device_name_set(s_device_name);
-        if (set_rc != 0) {
-            ESP_LOGW(TAG, "device_name_set (post-addr) failed: %d", set_rc);
-        }
+        compose_device_name();
     }
     start_advertising();
 }

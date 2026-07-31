@@ -46,7 +46,7 @@ and re-starts advertising on every disconnect.
 | Field | Value |
 |-------|-------|
 | **Flags** | LE General Discoverable + BR/EDR Not Supported |
-| **Complete Local Name** | `Pilot Kit Box-AABBCC` |
+| **Complete Local Name** | `Pilot Kit Box-AABBCC` (factory default) or `<USER>-AABBCC` |
 
 **Scan response (31 bytes):**
 
@@ -74,10 +74,38 @@ Pilot Kit Box-3F1224
 …
 ```
 
-Clients **MUST** filter scan results by either the prefix
-`Pilot Kit Box-` OR the 128-bit Service UUID. **Do not** match the
-full literal `Pilot Kit Box-AABBCC` — that's per-device. Doing a
-substring match on the prefix is fine.
+### User-settable device name
+
+Since firmware v0.9.4 the owner can rename the box from **Settings →
+DEVICE NAME** (an on-screen A–Z / 0–9 / `-` / `_` editor, max **10**
+characters). The stored string replaces only the `Pilot Kit Box`
+prefix; the `-AABBCC` MAC suffix is **always** appended by the firmware
+and cannot be removed:
+
+```
+factory default   Pilot Kit Box-0B5A8A     20 bytes
+renamed "N123AB"  N123AB-0B5A8A            13 bytes
+worst case        WWWWWWWWWW-0B5A8A        17 bytes
+```
+
+The 10-character cap exists so the name can never overflow the
+advertisement: 31 bytes total − 3 (Flags AD) − 2 (Name AD header) =
+**26 bytes** available, and 10 + 1 + 6 = 17 ≤ 26.
+
+Clearing the name restores the factory default byte-for-byte. Renaming
+takes effect immediately — the firmware stops and restarts advertising,
+no reboot needed.
+
+### Filtering (BREAKING for clients that matched the name prefix)
+
+Clients **MUST** filter scan results by the **128-bit Service UUID**
+`1090AD5B-0000-1000-8000-1090AD5B0000` (advertised in the scan
+response).
+
+**Do not** filter on the name. The `Pilot Kit Box-` prefix used to be a
+valid alternative, but a renamed box does not carry it — a
+prefix-filtering client will simply stop seeing that device. The name
+is for **display only**.
 
 ## 3. GATT Service
 
