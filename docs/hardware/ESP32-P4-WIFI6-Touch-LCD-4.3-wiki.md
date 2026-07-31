@@ -12,7 +12,7 @@
 
 | 文件 | 说明 | 来源 |
 |---|---|---|
-| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | 官方原理图（Rev1.2，2 页：P1 电路图 / P2 装配丝印图），SHA-256 `3697baa3ded0089446baf09705f437d13cf0324874031ccc57fd9b72cd9dfe53` | <https://www.waveshare.net/w/upload/b/b8/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | 官方原理图（Rev1.2，2 页：第 1 页电路图 / 第 2 页装配丝印图），SHA-256 `3697baa3ded0089446baf09705f437d13cf0324874031ccc57fd9b72cd9dfe53` | <https://www.waveshare.net/w/upload/b/b8/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
 | `ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf` | 外形尺寸图（20260411） | 官方 `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` 内解出 |
 | `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` | 官方机械资料包（尺寸 PDF + STEP + DXF），SHA-256 `8209b6aa405d4d3d8a2009e7eb545a4844e456b9cf95d8b8e53529414b03ecaf` | <https://www.waveshare.net/w/upload/3/36/ESP32-P4-WIFI6-Touch-LCD-4.3.zip> |
 | `ST7701-datasheet.pdf` | 屏驱动 IC 规格书（Sitronix ST7701 SPEC V1.2，303 页，含 MIPI-DSI 章节） | Crystalfontz 镜像 <https://www.crystalfontz.com/controllers/uploaded/ST7701.pdf> |
@@ -111,15 +111,40 @@
 - 复位：GPIO23；中断：默认 NC（见上）
 - 坐标上报格式、状态寄存器 `0x814E`、配置区 `0x8047–0x80FE` 校验和刷新流程见 `GT911-programming-guide.pdf`
 
-## 与本项目现有外设的引脚冲突（对照 `board_pinout.md`）
+## 本项目迁移结果（对照 `board_pinout.md`）
 
-| GPIO | 本项目现用途 | 4.3 屏板用途 | 结论 |
+下表中的“旧用途”只描述迁移前 2.4 寸载板；当前 Rev1.2 4.3 寸固件已经
+解除这些冲突。
+
+| GPIO | 旧 2.4 寸用途 | Rev1.2 板载用途 | 当前处理 |
 |---|---|---|---|
-| 7 / 8 | I²C0（codec + BNO085 IMU） | GT911 + codec I²C | 同一条总线，地址不冲突，可共存 |
-| 23 | BTN4 — DOWN 按键 | TP_RST | **冲突** |
-| 26 | BTN1 — IMU Tare 按键 | LCD_BL_PWM | **冲突** |
-| 27 | BARO_INT（BMP388） | LCD RESET | **冲突** |
-| 33 | GPS TX → P4 UART RX | BL_EN | **冲突** |
+| 7 / 8 | I²C0（BNO085） | GT911 + audio + camera 共享 I²C | BNO085/BMP388 继续共享，地址不冲突 |
+| 20 | BNO085 INT | BAT_ADC，且未从 J3 引出 | BNO085 INT 不接，固件轮询 |
+| 23 | DOWN 按键 | TP_RST | 旧四按键任务停用 |
+| 26 | TARE 按键 | LCD_BL_PWM | 调平迁移到触摸 UI |
+| 27 | BMP388 INT | LCD RESET | BMP388 改为轮询，可选 INT 预留 GPIO31 |
+| 33 | GPS RX | BL_EN | GPS UART RX 用 GPIO51（不占用 GPIO33）；GPIO50 留给 PPS |
+
+必须同时区分以下接口：
+
+- H1：P4 烧录/串口日志的 `USB TO UART` Type-C。
+- H2：P4 原生 USB 2.0 HS OTG Type-C，也是 RTL-SDR 数据口。
+- P1：C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB。
+- H4：喇叭座，不是 C6 调试排针。
+
+## J3 引脚再分配（2026-07-31，因 60mm PCB 走线）
+
+原始引脚分配中，IMU_RST（GPIO21/Pin15）、GPS_RX（GPIO32/Pin31）、GPS_PPS（GPIO46/Pin35）都在
+J3 下排（奇数 pin）。由于 60mm 窄板下排紧贴 PCB 边缘没有走线空间，将这三个功能信号与相邻上排
+引脚对调：
+
+| 功能信号 | 原 GPIO / Pin | 新 GPIO / Pin |
+|---|---|---|
+| IMU_RST | GPIO21 / Pin15（下排） | GPIO28 / Pin16（上排） |
+| GPS_RX | GPIO32 / Pin31（下排） | GPIO49 / Pin32（上排） |
+| GPS_PPS | GPIO46 / Pin35（下排） | GPIO50 / Pin34（上排） |
+
+GPS_TX 保留在 Pin36（GPIO51，上排），未变动。固件中的引脚定义已同步更新。
 
 ## FAQ（官方原文摘译）
 

@@ -50,8 +50,8 @@ static const char *TAG = "imu";
 #define IMU_I2C_SCL              8
 #define IMU_I2C_HZ               400000
 #define IMU_I2C_ADDR             0x4A
-#define IMU_PIN_INT              20    /* unused in current polled mode */
-#define IMU_PIN_RST              21
+#define IMU_PIN_INT              34    /* J3 Pin 28 = GPIO34 (JLC PCB net IMU_INT); current driver polls, INT unused */
+#define IMU_PIN_RST              28    /* moved to J3 Pin 16 (upper) for PCB routing */
 
 /* --- SH-2 constants -------------------------------------------------- */
 #define SHTP_CH_COMMAND          0

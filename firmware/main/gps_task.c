@@ -17,8 +17,8 @@ static const char *TAG = "gps";
 #define GPS_CLOCK_SKEW_MS  500
 
 #define GPS_UART    UART_NUM_1
-#define GPS_TX_PIN  32   /* P4 TX → GPS RXD */
-#define GPS_RX_PIN  51   /* GPS TXD → P4 RX；GPIO33 为板载 LCD BL_EN */
+#define GPS_TX_PIN  49   /* P4 TX → GPS RXD; moved to J3 Pin 32 (upper) */
+#define GPS_RX_PIN  51   /* GPS TXD → P4 RX; J3 Pin 36 = GPIO51 (J3 Pin 34 / GPIO50 is GPS_PPS) */
 #define GPS_BAUD    9600
 #define GPS_BUF_SZ  512
 

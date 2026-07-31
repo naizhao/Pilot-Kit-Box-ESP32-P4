@@ -1,5 +1,9 @@
 /*
- * power.c — Soft power-off via ESP32-P4 deep sleep.
+ * power.c — Legacy 2.4-inch carrier soft power-off helper.
+ *
+ * The current Rev1.2 4.3-inch target uses its board-level Key3 POWER and
+ * does not start the former MODE-button task. The sequence below documents
+ * the retained legacy helper only.
  *
  * Sequence on entry:
  *
