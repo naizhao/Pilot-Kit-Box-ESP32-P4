@@ -32,7 +32,7 @@ extern const uint8_t pk_aa_l_bold[];
 extern const uint8_t pk_aa_xl_regular[];
 extern const uint8_t pk_aa_xl_bold[];
 
-#define PK_AA_CJK_COUNT  99
+#define PK_AA_CJK_COUNT  130
 #define PK_AA_XS_CJK_W  12
 #define PK_AA_XS_CJK_H  17
 #define PK_AA_S_CJK_W  14

@@ -215,8 +215,11 @@ void pk_settings_page_render(uint16_t *fb)
     } while (0)
 
     /* 1 语言 */
-    { static const char *o[] = { "\u4e2d\u6587", "EN" };
-      ROW_LABEL(row, "LANGUAGE");
+    { /* 两个选项不过 catalog：语言选择器要用各语言自己的写法（endonym），中文
+       * 永远是「中文」、英文永远是「EN」。翻译它就成了「当前看不懂的语言里
+       * 写着另一种看不懂的语言」——切过去就切不回来。 */
+      const char *o[] = { "\u4e2d\u6587", "EN" };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_LANGUAGE));
       const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                              pk_i18n_get_lang() == PK_LANG_ZH ? 0 : 1, false);
       hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
@@ -224,15 +227,16 @@ void pk_settings_page_render(uint16_t *fb)
 
     /* 2 QNH —— 步进器：它是连续量，分段摆不下。 */
     { char v[16]; snprintf(v, sizeof(v), "%.2f hPa", (double)pk_qnh_get());
-      ROW_LABEL(row, "QNH");
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_QNH));
       draw_stepper(fb, ROW_Y(row), v);
       hit_set(row, 2, SET_CTL_R - (SEG_MIN_TOUCH_W * 2 + 140),
               SEG_MIN_TOUCH_W * 2 + 140, 0, ROW_Y(row));
       row++; }
 
     /* 3 地图朝向 */
-    { static const char *o[] = { "HDG UP", "NORTH UP" };
-      ROW_LABEL(row, "MAP ORIENT");
+    { const char *o[] = { pk_i18n_text(PK_TR_MAP_ORIENT_HDG_UP),
+                          pk_i18n_text(PK_TR_MAP_ORIENT_NORTH_UP) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_MAP_ORIENT));
       const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                pk_map_orient_get() == PK_MAP_HEADING_UP ? 0 : 1, false);
       hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
@@ -240,14 +244,17 @@ void pk_settings_page_render(uint16_t *fb)
 
     /* 4 雷达量程 —— 选项取自 pk_traffic_range_nm，不另抄一份数字。 */
     { static const char *o[] = { "2", "5", "10", "20" };
-      ROW_LABEL(row, "RADAR RANGE NM");
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_RADAR_RANGE));
       const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_traffic_range_idx_get(), false);
       hit_set(row, 1, _x, seg_last_w(), 4, ROW_Y(row));
       row++; }
 
     /* 5 屏幕亮度 */
-    { static const char *o[] = { "LOW", "MID", "HIGH", "AUTO" };
-      ROW_LABEL(row, "BRIGHTNESS");
+    { const char *o[] = { pk_i18n_text(PK_TR_BRIGHT_LOW),
+                          pk_i18n_text(PK_TR_BRIGHT_MID),
+                          pk_i18n_text(PK_TR_BRIGHT_HIGH),
+                          pk_i18n_text(PK_TR_BRIGHT_AUTO) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_BRIGHTNESS));
       /* AUTO 置灰：没有环境光传感器，选了也无从自动。摆出来是因为 spec 列了
        * 它，灰掉是因为不能假装能用——留一个点了没反应的选项更糟。 */
       const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_level_get(), false);
@@ -255,14 +262,16 @@ void pk_settings_page_render(uint16_t *fb)
       row++; }
 
     /* 6 日间/夜间配色 */
-    { static const char *o[] = { "DAY", "NIGHT" };
-      ROW_LABEL(row, "COLOR SCHEME");
+    { const char *o[] = { pk_i18n_text(PK_TR_THEME_DAY),
+                          pk_i18n_text(PK_TR_THEME_NIGHT) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_THEME));
       draw_seg(fb, ROW_Y(row), o, 2, 0, true);   /* 尚未接入，整行置灰 */
       row++; }
 
     /* 7 记录存储 */
-    { static const char *o[] = { "FLASH", "SD CARD" };
-      ROW_LABEL(row, "LOG STORAGE");
+    { const char *o[] = { pk_i18n_text(PK_TR_LOG_STORE_FLASH),
+                          pk_i18n_text(PK_TR_LOG_STORE_SD) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_LOG_STORE));
       const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                pk_log_store_get() == PK_LOG_STORE_SD ? 1 : 0,
                !pk_sdcard_is_mounted());
@@ -270,8 +279,10 @@ void pk_settings_page_render(uint16_t *fb)
       row++; }
 
     /* 8 蓝牙开关（P2-4）——放在格式化之前，让危险按钮独占最底下那一行。 */
-    { static const char *o[] = { "OFF", "ON" };
-      ROW_LABEL(row, "BLUETOOTH");
+    { const char *o[] = { pk_i18n_text(PK_TR_SWITCH_OFF),
+                          pk_i18n_text(PK_TR_SWITCH_ON) };
+      const char *label = pk_i18n_text(PK_TR_SETTINGS_BLUETOOTH);
+      ROW_LABEL(row, label);
       const int _x = draw_seg(fb, ROW_Y(row), o, 2, pk_ble_enabled_get() ? 1 : 0, false);
       hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       /* 「重启后生效」必须写出来：BLE 起停牵扯 NimBLE 的卸载路径，更牵扯
@@ -280,14 +291,15 @@ void pk_settings_page_render(uint16_t *fb)
       { const int _y = ROW_Y(row);
         if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                       SET_PAD + pk_aa_text_width("BLUETOOTH",
+                       SET_PAD + pk_aa_text_width(label,
                                                   PK_UI_ITEM_SIZE) + 16,
-                       _y - PK_AA_XS_H / 2, "(restart)",
+                       _y - PK_AA_XS_H / 2,
+                       pk_i18n_text(PK_TR_SETTINGS_RESTART_HINT),
                        pk_rgb565(120, 130, 145), PK_AA_XS); }
       row++; }
 
     /* 9 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
-    { ROW_LABEL(row, "FORMAT SD");
+    { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;
       const int w  = 200;
@@ -298,9 +310,11 @@ void pk_settings_page_render(uint16_t *fb)
                        !avail  ? pk_rgb565(45, 45, 50)
                        : armed ? pk_rgb565(200, 40, 40)
                                : pk_rgb565(90, 30, 30));
-      const char *txt = !pk_sdcard_is_mounted() ? "NO CARD"
-                      : record_sink_file_uses_sd() ? "IN USE"
-                      : armed ? "TAP AGAIN 5s" : "FORMAT";
+      const char *txt =
+            !pk_sdcard_is_mounted()      ? pk_i18n_text(PK_TR_FORMAT_BTN_NO_CARD)
+          : record_sink_file_uses_sd()   ? pk_i18n_text(PK_TR_FORMAT_BTN_IN_USE)
+          : armed                        ? pk_i18n_text(PK_TR_FORMAT_BTN_ARMED)
+                                         : pk_i18n_text(PK_TR_FORMAT_BTN_FORMAT);
       const int tw = pk_aa_text_width(txt, PK_AA_S);
       pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
                  y0 + (SET_CTL_H - PK_AA_S_H) / 2, txt,
@@ -312,7 +326,8 @@ void pk_settings_page_render(uint16_t *fb)
     /* 顶栏最后画，行从底下滑过。 */
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, V2_BG);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SET_PAD,
-               PK_UI_TITLE_Y, "SETTINGS", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+               PK_UI_TITLE_Y, pk_i18n_text(PK_TR_SETTINGS_TITLE),
+               PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
     #undef ROW_Y
     #undef ROW_LABEL
 }

@@ -17,5 +17,5 @@
 
 #include <stdint.h>
 
-/* Renders the boot splash into the 240×320 RGB565 framebuffer. */
+/* Renders the boot splash into the logical 800×480 RGB565 framebuffer. */
 void pk_boot_splash_render(uint16_t *fb);

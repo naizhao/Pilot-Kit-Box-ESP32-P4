@@ -5,7 +5,7 @@
  * wizard auto-enters from PFD when the BNO085 has reported acc=0 for
  * UI_CAL_WIZARD_ENTER_MS milliseconds and auto-exits back to PFD
  * when acc has been ≥ 2 for UI_CAL_WIZARD_EXIT_MS. The user can also
- * dismiss it with MODE.
+ * dismiss it with the on-screen “Later” action.
  *
  * UX
  * --
@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-/* Renders one frame of the calibration wizard into the 240×320
+/* Renders one frame of the calibration wizard into the logical 800×480
  * framebuffer. Animation phase is derived from esp_timer_get_time()
  * so consecutive calls produce smooth motion without internal state. */
 void pk_cal_wizard_render(uint16_t *fb);

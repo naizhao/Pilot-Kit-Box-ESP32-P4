@@ -21,7 +21,22 @@ DEFAULT_CJK_FALLBACK_FONT = (
 )
 DEFAULT_TITLE_FONT = DEFAULT_UI_FONT
 DEFAULT_BODY_FONT = DEFAULT_UI_FONT
-DEFAULT_UI_BODY_H = 12
+
+# ── 字库尺寸（spec §2 字体阶梯）──────────────────────────────────────
+#
+# 这些数字曾经只活在某次手敲的命令行里，脚本自己的默认值还停在 320×240 时代
+# 的 16/8/12 px。于是「改完 catalog 重跑一遍脚本」这个本该无脑的动作，会把三
+# 套 CJK 字库**静默降级**回 spec §2 明令禁止的档位（「低于 18 px 一律禁止出
+# 现」），而且降级后照样编译、照样出图，只是屏上汉字全变小。
+#
+# 所以默认值就是真值：L30 / M26 / S21，与 3afa39c 重生成时用的一致。改档位请
+# 改这里，不要再靠命令行参数——命令行会随着终端历史一起消失。
+DEFAULT_TITLE_CELL = 30       # 页面标题档
+DEFAULT_TITLE_PT = 29
+DEFAULT_BODY_CELL = 26        # 正文主力档
+DEFAULT_BODY_PT = 25
+DEFAULT_UI_BODY_H = 21        # 标签档（UI 变宽字库）
+DEFAULT_UI_BODY_PT = 20
 DEFAULT_UI_ASCII_W = 8
 DEFAULT_UI_WIDE_W = 12
 
@@ -410,15 +425,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fallback-font", type=Path, default=DEFAULT_CJK_FALLBACK_FONT)
     parser.add_argument("--body-fallback-font", type=Path, default=DEFAULT_CJK_FALLBACK_FONT)
     parser.add_argument("--magick", default="magick")
-    parser.add_argument("--point-size", type=int, default=15)
-    parser.add_argument("--body-point-size", type=int, default=10)
+    parser.add_argument("--point-size", type=int, default=DEFAULT_TITLE_PT)
+    parser.add_argument("--body-point-size", type=int, default=DEFAULT_BODY_PT)
     parser.add_argument("--ui-body-font", type=Path, default=DEFAULT_UI_FONT)
     parser.add_argument("--ui-body-fallback-font", type=Path, default=DEFAULT_CJK_FALLBACK_FONT)
-    parser.add_argument("--ui-body-point-size", type=int, default=11)
-    parser.add_argument("--width", type=int, default=16)
-    parser.add_argument("--height", type=int, default=16)
-    parser.add_argument("--body-width", type=int, default=8)
-    parser.add_argument("--body-height", type=int, default=8)
+    parser.add_argument("--ui-body-point-size", type=int, default=DEFAULT_UI_BODY_PT)
+    parser.add_argument("--width", type=int, default=DEFAULT_TITLE_CELL)
+    parser.add_argument("--height", type=int, default=DEFAULT_TITLE_CELL)
+    parser.add_argument("--body-width", type=int, default=DEFAULT_BODY_CELL)
+    parser.add_argument("--body-height", type=int, default=DEFAULT_BODY_CELL)
     parser.add_argument("--ui-body-height", type=int, default=DEFAULT_UI_BODY_H)
     return parser.parse_args()
 
