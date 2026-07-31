@@ -14,15 +14,16 @@ sdmmc_init_ocr: send_op_cond returned 0x107
 
 最终发现有四层问题叠在一起。
 
-## 1. Reset 极性反了
+## 1. ESP-Hosted reset 选项
 
-Waveshare ESP32-P4-WIFI6 上，P4 GPIO54 到 C6 EN 之间存在板级反相 / 电平转换。对 P4 软件来说，reset 是高有效：
+Rev1.2 原理图复核确认：P4 GPIO54 经 R34 0 Ω 直接连接 C6 EN，板上不存在
+反相器或电平转换器。项目实机验证的 ESP-Hosted 配置仍必须是：
 
 ```text
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 ```
 
-不是 active-low。
+不是 active-low。这是驱动配置事实，不能再用不存在的板级反相器解释。
 
 如果配置反了，ESP-Hosted driver 会在 SDIO 初始化期间把 C6 hold 在 reset 状态，CMD5 会一直返回 `0x107 INVALID_RESPONSE`。
 

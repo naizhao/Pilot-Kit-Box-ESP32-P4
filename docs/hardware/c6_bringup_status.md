@@ -15,17 +15,20 @@ There were **four** stacked bugs hiding behind the original
 were ESP-Hosted internals — all three were on the Pilot Kit Box
 side. In order of "things that masked the next thing":
 
-### 1. Reset polarity inverted — `RESET_ACTIVE_HIGH=y`, not `LOW`
+### 1. Hosted reset option — `RESET_ACTIVE_HIGH=y`, not `LOW`
 
 Found via [ESPHome issue #10393](https://github.com/esphome/esphome/issues/10393):
 user `sobiso`'s working YAML for the same C6 wiring uses
 `active_high: true`. ESPHome's `__init__.py` translates that
 directly to `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`. We had the
-opposite. Mechanism (hypothesised — schematic is closed-source):
-P4-GPIO54 → some inverter / level-shifter → C6's EN pin, so driving
-GPIO54 HIGH asserts reset (chip held off), LOW releases. With our
-`ACTIVE_LOW` setting the ESP-Hosted driver was actively holding the
-C6 in reset right after the SDIO bus came up; the slave's
+opposite.
+
+The later Rev1.2 schematic audit corrected our original mechanism:
+P4 GPIO54 connects directly to C6 EN through R34, 0 Ω. There is no
+inverter or level shifter. `RESET_ACTIVE_HIGH=y` remains the
+hardware-verified ESP-Hosted configuration for this project, but it
+must not be explained by a nonexistent board inverter. With our
+previous `ACTIVE_LOW` setting, the slave's
 SDIO peripheral was already running from the cold POR but the
 controller couldn't respond. Hence `0x107 INVALID_RESPONSE` on CMD5
 indefinitely.

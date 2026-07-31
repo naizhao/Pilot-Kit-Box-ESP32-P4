@@ -2,9 +2,9 @@
 
 Chinese version: [`architecture-zh_CN.md`](architecture-zh_CN.md)
 
-Snapshot of the `v0.8.0` runtime topology, including ADS-B, BLE,
-GPS/PPS, barometer, dual storage backends, local traffic UI,
-diagnostics, IMU, i18n, and soft power.
+Snapshot of the current 4.3-inch touch runtime topology, including ADS-B,
+BLE, GPS NMEA/RMC, barometer, dual storage backends, local traffic UI,
+diagnostics, IMU and i18n.
 
 ## Big picture
 
@@ -13,14 +13,14 @@ flowchart LR
     subgraph HW["Hardware"]
         direction TB
         SDR["RTL-SDR\n(1090 MHz)"]
-        USB["USB-OTG HS\nDM/DP pins 49/50"]
+        USB["H2 native USB 2.0 HS\nUSBD_N/P dedicated nets"]
         C6["ESP32-C6-MINI-1\n(Wi-Fi 6 / BLE 5)"]
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BeiDou\nUART1 TX=32 RX=51\nPPS=46"]
+        GPS["GT-U8 GPS/BeiDou\nUART1 TX=32 RX=51\nRMC time; PPS not consumed"]
         BARO["BMP388\nI²C0 addr 0x76"]
-        BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\nINT=20 RST=21"]
+        BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\npolled; RST=21"]
         SCREEN["ST7701 MIPI-DSI\nnative 480×800\nPPA → 800×480\nRST=27 BL=26"]
         TOUCH["GT911 touch\nI²C0 7/8\nRST=23"]
         BLE_PEER["iPad / iPhone\nPilot Kit app"]
@@ -96,7 +96,7 @@ flowchart LR
     BARO --> P4
     BNO --> P4
     SCREEN --> P4
-    BUTTONS --> P4
+    TOUCH --> P4
 
 ```
 
@@ -148,7 +148,7 @@ flowchart LR
 | `sdr`             | 1   | 6    | 8 KiB | Owns the USB client, opens the RTL-SDR, drives `rtlsdr_read_async()`. The async URB callback runs *on this same task* (`rtlsdr_read_async`'s wait loop pumps client events itself), so the IQ producer is a single-task design with no cross-CPU contention. |
 | `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
 | `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the DSP task off storage writes. |
-| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and disciplines time with RMC + PPS. |
+| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is not consumed. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
@@ -212,8 +212,9 @@ battery-backed clock). Three paths can seed wall-clock time, with
 source-quality protection preventing a lower-quality source from
 overwriting a better one:
 
-1. **GT-U8 RMC + PPS** — RMC supplies UTC date/time and GPIO46 PPS
-   aligns the UTC second edge. This is the preferred source.
+1. **GT-U8 RMC** — RMC supplies UTC date/time. This is the preferred
+   source. GPIO50 is only a proposed PPS wire; current firmware has no PPS
+   GPIO input or discipline loop.
 2. **iOS Current Time Service** (BLE SIG std., UUID 0x1805) —
    immediately after every `GAP CONNECT` the firmware acts as a
    GATT client toward the peer's CTS, reads the 10-byte UTC date-time
@@ -260,20 +261,19 @@ discard them — the reference Pilot Kit app does.
 
 ### Carrier-board sensors (GPS / baro / microSD)
 
-The Pilot Kit Box carrier board wires up a GT-U8 GPS (UART + 1 PPS on
-GPIO46), a BMP388 barometer (I²C0, `0x76`), and routes recording to the
-on-board microSD slot. All three paths are implemented; design notes in
+Pilot Kit connects a GT-U8 GPS over UART, a BMP388 barometer (I²C0,
+`0x76`), and uses the Rev1.2 board's microSD slot. GPIO50 may be reserved
+for future PPS work, but that path is not implemented. Design notes:
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md).
 How each slots into the architecture:
 
-- **GPS time discipline** (`gps_task.c`) — GPS UTC + PPS seeds `settimeofday()`. GPS is
+- **GPS time sync** (`gps_task.c`) — GPS UTC from RMC seeds `settimeofday()`. GPS is
   **preferred (most accurate)**, BLE is the backup; overwrite protection
   keeps a lower-quality source from clobbering a good GPS fix. The clock
   self-disciplines without a phone, and DIAG shows system time, fix,
-  constellation, and SNR state. PPS aligns the UTC second edge for
-  higher-precision Mode-S timestamps.
-- **GPS own-ship** (`gps_task.c`) — only a **fallback** when no aircraft is manually
-  bound in the ADS-B LIST; a manual binding always wins. Feeds the same
+  constellation, and SNR state. There is no PPS-edge timestamp correction.
+- **GPS own-ship** (`gps_task.c`) — used when no compile-time ADS-B own-ship
+  ICAO is active. Feeds the same
   `aircraft_state` own-ship path + GDL90 ownship report.
 - **BMP388 baro** (`baro_task.c`) — altitude / vertical-speed shown as a **reference
   only** (unreliable in a pressurised cabin), never the authoritative

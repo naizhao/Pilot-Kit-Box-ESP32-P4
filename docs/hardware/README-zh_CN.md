@@ -2,62 +2,62 @@
 
 英文版：[`README.md`](README.md)
 
-本目录保存 Pilot Kit Box 当前硬件目标的厂商资料、GPIO 分配、C6 协处理器 bring-up 记录和接线说明。
+本目录保存 Pilot Kit Box 当前硬件目标的权威本地资料。
 
-## 开发板识别
+## 当前开发板
 
 | 项目 | 值 |
 |---|---|
-| 厂商 | Waveshare / 微雪 |
-| 产品型号 | **ESP32-P4-WIFI6-Touch-LCD-4.3**（SKU 33874） |
-| 主控 | **ESP32-P4NRW32**，RISC-V 双核，360 MHz，768 KB SRAM，32 MB stacked PSRAM |
-| 无线协处理器 | **ESP32-C6-MINI-1**，通过 SDIO 连接 P4，提供 Wi-Fi 6 / BLE 5 |
-| 显示 | 4.3 寸 480×800 IPS，ST7701，2-lane MIPI-DSI，横屏按 800×480 使用 |
-| 触摸 | GT911 五点电容触摸，I²C GPIO7/8 |
-| Wiki | <https://docs.waveshare.net/ESP32-P4-WIFI6-Touch-LCD-4.3/> |
-| 资料页 | <https://docs.waveshare.net/ESP32-P4-WIFI6-Touch-LCD-4.3/Resources-And-Documents/> |
-| 官方例程 | <https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4.3> |
+| 开发板 | 微雪 ESP32-P4-WIFI6-Touch-LCD-4.3，Rev1.2，SKU 33874 |
+| 主控 | ESP32-P4NRW32，768 KB SRAM、封装内 32 MB PSRAM |
+| 外置 Flash | GD25Q256EYIGR，256 Mbit / 32 MB NOR |
+| 无线 | ESP32-C6-MINI-1-N4，通过 4-bit ESP-Hosted SDIO 连接 |
+| 显示 | ST7701，4.3 寸 480×800 IPS，2-lane MIPI-DSI；横屏 UI 800×480 |
+| 触摸 | GT911，I²C GPIO7/8，复位 GPIO23，中断电阻默认未贴 |
+| P4 调试口 | H1 USB-C `USB TO UART`，经 CH343P |
+| 原生 USB HS | H2 USB-C `USB`；RTL-SDR 使用此口 |
+| C6 下载口 | P1 1×4 排针 `TX RX IO9 GND` |
+| 扩展口 | J3 2×20 排针；接线前必须核对项目 pinout |
 
-ESP32-P4 本身没有无线能力；当前固件通过 ESP-Hosted SDIO 使用板载 C6 的 BLE controller。
+ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，再初始化
+显示，并通过 C6 使用蓝牙 controller。
 
-## 当前外接硬件
+官方链接：
 
-| 模块 | 接线 | 状态 |
+- 文档：<https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3>
+- 资料：<https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3/Resources-And-Documents>
+- 例程：<https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4.3>
+
+## 当前 Pilot Kit 接线
+
+| 模块 | 连接 | 固件状态 |
 |---|---|---|
-| RTL-SDR FC0013 USB dongle | 板载 P1 USB 2.0 HS OTG 口，专用 USB HS PHY | 已接入 |
-| ST7701 480×800 MIPI-DSI LCD | 2 lane @ 500 Mbps，DPI 30 MHz，PPA 转 800×480 | bring-up 进行中 |
-| GT911 电容触摸 | SDA GPIO7，SCL GPIO8，RST GPIO23，INT 默认未贴 | 驱动待接 |
-| GY-BN008X / BNO085 IMU | SDA GPIO7，SCL GPIO8，INT GPIO20，RST GPIO21 | 已验证 |
-| GT-U8 GPS | P4 TX GPIO32，GPS TX → P4 RX GPIO51，PPS GPIO46 | 因 BL_EN 冲突已重映射 |
-| BMP388 气压计 | SDA GPIO7，SCL GPIO8，可选 INT GPIO31 | 因 LCD RESET 冲突已重映射 |
-| ESP32-C6 hosted slave 固件 | H4 UART header，首次设置用外部 USB-UART 烧录 | BLE 已跑通 |
+| RTL-SDR FC0013 | H2 原生 USB 2.0 HS，经 USB-C OTG 转接头或 Hub | 已集成 |
+| ST7701 显示 | 板载固定 MIPI-DSI，2 lane @ 500 Mbit/s | 已集成 |
+| GT911 触摸 | 板载 GPIO7/8、复位 GPIO23；轮询 | 已集成，当前只取第一触点 |
+| BNO085 IMU | GPIO7/8、复位 GPIO21、INT 不接、地址 0x4A | 已集成，轮询 |
+| BMP388 | GPIO7/8、可选 GPIO31 INT | 已集成，轮询 |
+| GPS | P4 TX GPIO49、P4 RX GPIO51；可选 PPS GPIO50 | UART/RMC 已集成；PPS 未实现 |
+| ESP32-C6 | P4 GPIO14–19 SDIO、GPIO54 EN | Wi-Fi/BLE 传输已集成 |
+| 音频 / 摄像头 | 板上硬件具备 | Pilot 固件未初始化 |
 
-## 本目录文件
+## 文档
 
-| 文件 | 内容 |
+| 文件 | 用途 |
 |---|---|
-| [`board_pinout.md`](board_pinout.md) | 英文 GPIO 分配、板载外设、LCD / IMU / 按钮接线 |
-| [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md) | 板卡引脚文档中文版本 |
-| [`c6_slave_firmware.md`](c6_slave_firmware.md) | ESP32-C6 hosted slave 首次烧录英文指南 |
-| [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md) | ESP32-C6 hosted slave 首次烧录中文指南 |
-| [`c6_bringup_status.md`](c6_bringup_status.md) | P4 <-> C6 SDIO / VHCI / NimBLE bring-up 英文排障记录 |
-| [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) | C6 bring-up 中文排障记录 |
-| [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **4.3″ 触摸板原理图** —— LCD / 触摸 / 背光引脚的权威依据 |
-| [`ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf) | 4.3″ 外形图：114.4 × 66.8 mm，VA 94.4 × 56.96 mm，4 × M2.5 孔距 92 × 50 mm |
-| [`ESP32-P4-WIFI6-Touch-LCD-4.3.zip`](ESP32-P4-WIFI6-Touch-LCD-4.3.zip) | 官方机械资料包（尺寸 PDF + STEP + DXF），SHA-256 `8209b6aa405d4d3d8a2009e7eb545a4844e456b9cf95d8b8e53529414b03ecaf` |
-| [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | 厂商 wiki 正文 + 从官方 BSP 读出的面板时序实值 |
-| [`ST7701-datasheet.pdf`](ST7701-datasheet.pdf) | LCD 驱动 IC —— 含 MIPI-DSI 章节与 MIPISET1-4 (D0h–D3h) 寄存器 |
-| [`GT911-datasheet.pdf`](GT911-datasheet.pdf) | 触摸控制器电气特性与 I²C 寻址 |
-| [`GT911-programming-guide.pdf`](GT911-programming-guide.pdf) | 触摸**坐标上报格式** —— datasheet 里没有，只在这份里 |
+| [`board_pinout.md`](board_pinout.md) / [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md) | 完整 J3、GPIO0–54、接口及 Pilot 接线参考 |
+| [`c6_slave_firmware.md`](c6_slave_firmware.md) / [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md) | 使用 P1 首次烧录 C6 slave |
+| [`c6_bringup_status.md`](c6_bringup_status.md) / [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) | 已验证的 ESP-Hosted SDIO/VHCI bring-up 记录 |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **板级最高依据：**Rev1.2 原理图和装配图 |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | 官方资料离线摘要及 BSP 参数 |
+| [`ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf) | 机械尺寸：114.4 × 66.8 mm，4 × M2.5 |
+| [`ST7701-datasheet.pdf`](ST7701-datasheet.pdf) | 显示控制器参考 |
+| [`GT911-datasheet.pdf`](GT911-datasheet.pdf) | 触摸电气和地址参考 |
+| [`GT911-programming-guide.pdf`](GT911-programming-guide.pdf) | 触摸上报及寄存器格式 |
 
-## 快速链接
+`ESP32-P4-WIFI6-datasheet.pdf` **不是** ESP32-P4 芯片 datasheet，也不是
+4.3 寸 Rev1.2 原理图；它描述另一款微雪 ESP32-P4-WIFI6 板，不能用于本
+目标的引脚分配。
 
-- ESP32-P4 官方 datasheet: <https://www.espressif.com/sites/default/files/documentation/esp32-p4_datasheet_en.pdf>
-- ESP32-P4 技术参考手册: <https://www.espressif.com/sites/default/files/documentation/esp32-p4_technical_reference_manual_en.pdf>
-- 微雪 ESP-IDF 开发与烧录指南: <https://docs.waveshare.net/ESP32-P4-WIFI6-Touch-LCD-4.3/Development-Environment-Setup-IDF/>
-- ESP-Hosted MCU 文档: <https://github.com/espressif/esp-hosted>
-- `espressif/esp_wifi_remote` component: <https://components.espressif.com/components/espressif/esp_wifi_remote>
-
-## 为什么本地保存厂商资料
-
-Waveshare wiki 偶尔会在中国大陆以外限流或返回 403。本地保存原理图、接口照片和我们的 pinout 摘要，可以让后续固件和硬件工作不依赖实时网络访问。
+旧 2.4 寸载板及其四按键接线仅作为历史设计源保存在 `docs/jlc/`，不是当前
+硬件。

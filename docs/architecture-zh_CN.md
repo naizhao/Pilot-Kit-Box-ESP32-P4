@@ -2,7 +2,9 @@
 
 英文版：[`architecture.md`](architecture.md)
 
-本文描述 `v0.8.0` ESP32-P4 固件的运行拓扑。当前基线包含 RTL-SDR USB Host、Mode-S DSP 解码、LittleFS / MicroSD / UART / BLE 输出、GT-U8 GPS/PPS、BMP388 气压计、BNO085 姿态融合、PFD、交通雷达、ADS-B 列表、Settings / About / Diag 中英文页面，以及 MODE 长按 deep sleep。
+本文描述当前 4.3 寸触摸版 ESP32-P4 固件的运行拓扑，包括 RTL-SDR USB
+Host、Mode-S DSP 解码、LittleFS / MicroSD / UART / BLE 输出、GT-U8
+GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于和诊断页面。
 
 ## 总览
 
@@ -11,14 +13,14 @@ flowchart LR
     subgraph HW["硬件"]
         direction TB
         SDR["RTL-SDR\n1090 MHz"]
-        USB["USB-OTG HS\n专用 PHY"]
+        USB["H2 原生 USB 2.0 HS\n专用 USBD_N/P"]
         C6["ESP32-C6-MINI-1\nWi-Fi 6 / BLE 5"]
         SDIO_C6["SDIO\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDMMC 4-bit\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BDS\nUART1 TX=32 RX=51\nPPS=46"]
+        GPS["GT-U8 GPS/BDS\nUART1 TX=32 RX=51\nRMC 授时；未读取 PPS"]
         BARO["BMP388\nI²C0 addr 0x76"]
-        BNO["BNO085 IMU\nSDA=7 SCL=8\nINT=20 RST=21"]
+        BNO["BNO085 IMU\nSDA=7 SCL=8\n轮询，RST=21"]
         SCREEN["ST7701 MIPI-DSI\n原生 480×800\nPPA → 800×480\nRST=27 BL=26"]
         TOUCH["GT911 触摸\nI²C0 7/8\nRST=23"]
         BLE_PEER["iPad / iPhone\nPilot Kit app"]
@@ -52,7 +54,7 @@ flowchart LR
     BNO --> IMU --> UI
     GPS --> UI
     BARO --> UI
-    BUTTONS --> UI
+    TOUCH --> UI
     SCREEN --> UI
     FLASH --> FILE
     SD --> FILE
@@ -66,7 +68,7 @@ flowchart LR
 | `sdr` | 1 | 6 | 8 KiB | 拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`。USB URB 回调在同一任务上下文执行，只负责把 IQ 推入 ring buffer。 |
 | `dsp` | 1 | 4 | 4 KiB | 从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位，并输出 1 Hz dashboard。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
-| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并用 RMC + PPS 校准系统时间。 |
+| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；不读取 GPIO50 PPS。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
@@ -117,9 +119,11 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 ## 时间同步
 
-固件没有 RTC，上电时系统时间从 Unix epoch 0 开始。当前有三条校时路径，按质量保护避免低质量来源覆盖高质量来源：
+固件没有持久化系统墙钟，上电时系统时间从 Unix epoch 0 开始。当前有三条
+校时路径，按质量保护避免低质量来源覆盖高质量来源：
 
-1. **GT-U8 RMC + PPS**：RMC 提供 UTC 日期时间，GPIO46 PPS 对齐 UTC 整秒，是首选来源。
+1. **GT-U8 RMC**：RMC 提供 UTC 日期时间，是首选来源。GPIO50 只是未来
+   PPS 的可选接线预留；当前固件没有 PPS GPIO 输入或纪律环。
 2. **iOS Current Time Service**：iOS 默认暴露 SIG 标准 CTS（UUID `0x1805`）。固件在 GAP CONNECT 后作为 GATT client 读取 `0x2A2B` 当前时间并调用 `settimeofday()`。
 3. **自定义 Time Sync characteristic**：UUID `...0004`，客户端写入 8 字节 little-endian Unix epoch milliseconds。Android 和跨平台客户端推荐使用这一条。
 
@@ -127,17 +131,16 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 ### 载板传感器（GPS / 气压 / microSD）
 
-Pilot Kit Box 载板布线了 GT-U8 GPS（UART + GPIO46 上的 1 PPS）、BMP388
-气压计（I²C0，`0x76`），并把记录引到板载 microSD 卡槽。三条路径均已实现
-—— 设计背景见
+Pilot Kit 通过 UART 连接 GT-U8 GPS，通过 I²C0（`0x76`）连接 BMP388，
+并使用 Rev1.2 板载 microSD 卡槽。GPIO50 可为未来 PPS 预留，但当前路径
+未实现。设计背景见
 [`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md)。
 各能力如何接入上面的架构：
 
-- **GPS 授时**（`gps_task.c`）：GPS UTC + PPS 校正 `settimeofday()`。**GPS 优先（最准）**，
+- **GPS 授时**（`gps_task.c`）：GPS RMC UTC 设置 `settimeofday()`。**GPS 优先**，
   BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可
-  自主校时，DIAG 显示系统时间、定位和卫星状态。PPS 对齐 UTC 整秒沿，
-  提升 Mode-S 时间戳精度。
-- **GPS own-ship**（`gps_task.c`）：仅在 ADS-B LIST 未手动绑定飞机时作**兜底**；绑定优先。
+  自主校时，DIAG 显示系统时间、定位和卫星状态；当前没有 PPS 边沿时间修正。
+- **GPS own-ship**（`gps_task.c`）：没有启用编译期 ADS-B 本机 ICAO 时作兜底。
   接入现有 `aircraft_state` own-ship 路径 + GDL90 ownship report。
 - **BMP388 气压**（`baro_task.c`）：高度/升降率仅作**参考**显示（增压座舱内失真），不作权威高度；QNH 可在 SETTINGS 中调整。
 - **microSD 记录后端**：Settings 可选 Flash / MicroSD，设置写入 NVS 并在下次启动生效。

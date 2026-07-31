@@ -3,7 +3,8 @@
 Chinese version: [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md)
 
 > 📌 **What this is**: a **one-time setup** every freshly-unboxed
-> Waveshare ESP32-P4-WIFI6 board needs to go through if you want
+> Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 board needs to go through
+> if you want
 > Bluetooth (and, in a future phase, Wi-Fi) to work. The P4 firmware
 > we ship talks to the on-board C6 over SDIO using Espressif's
 > "ESP-Hosted" protocol; out of the factory the C6 runs a different
@@ -52,32 +53,33 @@ Chinese version: [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md)
   copy that directory anywhere outside the P4 project and build it
   as a standalone ESP-IDF project against `esp32c6`.
 
-## 2. Wire the C6 debug header (H4)
+## 2. Wire the C6 download header (P1)
 
 The C6's UART0 + bootloader strap (IO9) are broken out to a 4-pin
-header on the back of the Waveshare board labelled `IO9 / GND / RXD /
-TXD` (item 10 in the silkscreen, schematic header `H4`). You wire
+header on the back of the Waveshare board labelled `TX / RX / IO9 /
+GND` (schematic header `P1`). You wire
 **3 of the 4 pins to the USB-UART**, plus a **board-local short on
 IO9 to GND**:
 
-| H4 pin | Function | Wired to |
+| P1 pin | Function | Wired to |
 |---|---|---|
-| 1 | C6 IO9 (bootloader strap) | **Board-local short to any P4 GND** with a paperclip — keeps C6 in download mode during flash, remove after flashing |
-| 2 | GND | GND of the USB-UART |
-| 3 | C6 U0RXD (input to C6) | TX of the USB-UART |
-| 4 | C6 U0TXD (output from C6) | RX of the USB-UART |
+| 1 | C6 U0TXD (output from C6) | RX of the USB-UART |
+| 2 | C6 U0RXD (input to C6) | TX of the USB-UART |
+| 3 | C6 IO9 (bootloader strap) | **Board-local short to any P4 GND** during power-on; remove after flashing |
+| 4 | GND | GND of the USB-UART |
 
-> Don't wire IO9 to the USB-UART's DTR — the H4 header doesn't carry
+> Don't wire IO9 to the USB-UART's DTR — P1 doesn't carry
 > the chip RESET line, so there's no way for esptool to toggle reset
 > automatically. Use `--before no-reset` and power-cycle the board
 > manually with the BOOT button held (see §4 step-by-step below).
 >
-> The C6's RESET pin is tied to P4's GPIO54. On the Waveshare board
-> there's an inverter / level shifter between P4-GPIO54 and C6-EN,
-> so from P4 software the reset signal is ACTIVE-HIGH (we drive
-> GPIO54 HIGH to assert reset, LOW to release). Pressing the board's
-> RST button on the front resets the P4, not the C6, so a full power
-> cycle is the only reliable way to reboot C6 cold.
+> The C6 EN pin is tied directly to P4 GPIO54 through R34, 0 Ω.
+> Rev1.2 has no inverter or level shifter on this path. The project has
+> nevertheless verified that ESP-Hosted must use
+> `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`; treat that as verified
+> driver configuration, not as evidence of an inverter. Pressing the
+> board's RESET button resets the P4, not the C6, so a full power cycle
+> is the reliable way to reboot both chips cold.
 
 ## 3. Build the slave image
 
@@ -166,7 +168,7 @@ No Enter key is required while waiting. Batch mode detects removal of
 the current serial port once per second before waiting for the next
 board.
 
-**Power-on sequence matters here**. H4 has no RESET line, so esptool
+**Power-on sequence matters here**. P1 has no RESET line, so esptool
 can't auto-toggle reset; you have to manually arrange for both chips
 to power up with the right strap pin held low:
 
@@ -174,23 +176,23 @@ to power up with the right strap pin held low:
   mode and waits for esptool.
 - **P4**: BOOT button held while powering up → P4 ROM enters
   download mode and **doesn't run our firmware**. This matters
-  because our P4 firmware drives GPIO54 (which is wired to C6's EN
-  through an inverter on this board) — if P4 runs while we're
+  because our P4 firmware drives GPIO54, which is wired directly to
+  C6 EN through R34 — if P4 runs while we're
   flashing C6, it'll reset C6 mid-write and corrupt the image.
 
 Step-by-step:
 
-1. **Unplug P4 Type-C** (board completely powered off, no LEDs on).
-2. **Wire the 3 dupont lines** per §2 (UART GND/TX/RX → H4-2/3/4).
-3. **Bridge H4-1 (IO9) to any P4 GND pin** with a paperclip or a
+1. **Unplug H1 `USB TO UART`** (board completely powered off, no LEDs on).
+2. **Wire the 3 dupont lines** per §2 (UART RX/TX/GND → P1-1/2/4).
+3. **Bridge P1-3 (IO9) to any P4 GND pin** with a paperclip or a
    short wire — board-local short, do **not** route this through the
    UART adapter.
 4. **Plug the USB-UART adapter into the computer first** (not the
-   board's Type-C yet). Verify `ls /dev/cu.usbserial-*` (macOS) or
+   board's H1 yet). Verify `ls /dev/cu.usbserial-*` (macOS) or
    `ls /dev/ttyUSB*` (Linux) shows the adapter — only the adapter is
    powered at this point, the P4/C6 are still dark.
 5. **Press and hold the BOOT button** on the front of the P4 board.
-6. **Plug the P4 Type-C into the computer** while still holding BOOT.
+6. **Plug H1 into the computer** while still holding BOOT.
    In this single instant:
    - P4 sees BOOT low → halts in download mode → GPIO54 stays high-Z
      and never touches C6.
@@ -219,11 +221,11 @@ Step-by-step:
 
    Watch for `Hash of data verified.` That's success.
 
-9. **Unplug P4 Type-C** (kill all power again).
+9. **Unplug H1** (kill all board power again).
 10. **Remove the IO9 ↔ GND short**. (If you leave it, next power-on
     C6 enters download mode again and won't run the firmware you
     just wrote.)
-11. **Plug P4 Type-C back in** — normal cold boot. C6 sees IO9 high
+11. **Plug H1 back in** — normal cold boot. C6 sees IO9 high
     this time, runs the hosted slave; P4 runs our firmware; on the
     P4 console you should see:
 
@@ -303,7 +305,7 @@ Work it in this order (cheapest first):
 3. **Manual download mode + reset fully disabled** (most reliable).
    Put C6 + P4 into download mode by hand exactly as in §4 steps 1-7,
    then run the §4 flash command with `--after hard-reset` changed to
-   `--after no-reset` (and `-b` dropped per step 2). H4 carries no
+   `--after no-reset` (and `-b` dropped per step 2). P1 carries no
    RESET line anyway, and on failure esptool otherwise tries to pulse
    RTS (the `Hard resetting via RTS pin…` line right before the
    traceback) — disabling the after-reset removes that noise.
@@ -319,7 +321,7 @@ Work it in this order (cheapest first):
 
 ### How to confirm C6 itself is healthy (independent of P4 host)
 
-Wire just CP2102 GND + RX (no TX needed) to H4-2 and H4-4, then
+Wire just CP2102 GND + RX (no TX needed) to P1-4 and P1-1, then
 power-cycle the board. C6's UART0 prints its full ESP-Hosted slave
 boot log at 115200 baud — look for:
 

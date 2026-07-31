@@ -8,9 +8,10 @@
 
 ## 1. 背景
 
-现行硬件为 2.4″ 320×240 SPI 屏 + 四个物理按钮。迁移至微雪
-ESP32-P4-WIFI6-Touch-LCD-4.3（480×800 原生竖屏，PPA 旋转 90° 后按 **800×480 横屏**使用，
-GT911 五点电容触摸）。
+迁移前基线是 2.4″ 320×240 SPI 屏 + 四个物理按钮；当前硬件已经切换到
+微雪 ESP32-P4-WIFI6-Touch-LCD-4.3（480×800 原生竖屏，PPA 逆时针
+270°、等效顺时针 90° 后按 **800×480 横屏**使用，GT911 电容触摸）。
+控制器支持五点，但当前固件只读取第一触点。
 
 最终目标屏为 5″ 800×480 半反半透（同分辨率），本规格可 1:1 迁移。
 
@@ -308,9 +309,9 @@ text_font_cjk_body.c 18.6 KB   8×8   CJK 正文
 
 ```
 I2C0（IMU/BMP388）   SCL/SDA 引脚      不变
-IMU INT / RST        GPIO21 / GPIO22
+IMU INT / RST        GPIO34 / GPIO28
 BARO_INT             GPIO31           （原 GPIO27 被 LCD RST 占用）
-GPS RX / TX / PPS    GPIO32 / 34 / 46 （32、46 不变）
+GPS RX / TX / PPS    GPIO51 / 49 / 50 （均为 Rev1.2 4.3″ 迁移后值）
 RTL-SDR              排针 DP/DM       = P4 专用 USB 2.0 HS PHY
 ```
 

@@ -7,7 +7,7 @@
 1. 安装编译环境 (ESP-IDF v6.0.1)
 2. 拉取源码 (含 git submodule)
 3. 配置 + 编译固件
-4. 通过 USB 烧录到 Waveshare ESP32-P4-WIFI6 开发板
+4. 通过 H1 `USB TO UART` 烧录到 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3
 5. 第一次（可选）烧录板载 ESP32-C6 协处理器的 esp_hosted slave 固件，启用蓝牙
 
 如果你是经验丰富的 ESP-IDF 用户，可以直接跳到第 5 节看具体 `idf.py` 命令；如果你是第一次接触这个项目，请按顺序读完。
@@ -29,7 +29,7 @@
 | 选配硬件 | 用途 | 对应功能 |
 |----------|------|-------------|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收；当前推荐 FC0013，主要因为成本低 | ADS-B 数据链路 |
-| USB Type-A 公座 → MX1.25 4-pin 转接线 | 把 P4 板上的 4-pin USB OTG 接口转成标准 A 母座插 RTL-SDR | ADS-B USB 数据链路 |
+| USB-C OTG 转接头或有源 USB Hub | 把 H2 原生 USB HS Type-C 接口转成 USB-A 母座连接 RTL-SDR | ADS-B USB 数据链路 |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |
 
@@ -148,7 +148,7 @@ Pilot-Kit-Box-ESP32-P4/
 
 ## 3. 新板首次设置：烧 ESP32-C6 hosted slave 固件（**一次性**）
 
-> ✅ **BLE 已经全链路跑通**（`CONFIG_PK_BLE_ENABLED=y` 是默认值）。每块全新的 Waveshare ESP32-P4-WIFI6 板第一次用都要做这一步——出厂的 C6 上面跑的是工厂 AT 命令固件，跟我们 P4 上的 ESP-Hosted / NimBLE host 协议对不上。**这一步耗时 ~30 分钟、每块板只做一次**，做完之后 C6 的 hosted slave 固件**永久驻留**（除非你重新烧 AT 固件覆盖），所有后续 P4 固件迭代都不再碰 C6。bring-up 过程的完整诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+> ✅ **BLE 已经全链路跑通**（`CONFIG_PK_BLE_ENABLED=y` 是默认值）。每块全新的 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 第一次用都要做这一步——出厂的 C6 上面跑的是工厂 AT 命令固件，跟我们 P4 上的 ESP-Hosted / NimBLE host 协议对不上。**这一步耗时 ~30 分钟、每块板只做一次**，做完之后 C6 的 hosted slave 固件**永久驻留**（除非你重新烧 AT 固件覆盖），所有后续 P4 固件迭代都不再碰 C6。bring-up 过程的完整诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
 >
 > **能不能跳过？** 可以，但 BLE 就不能用。如果你**确定不要 BLE**（比如只做 ADS-B 数据路径开发、没买 USB-UART 转接器、跑 CI），跳到 Section 4 之前先做：
 >
@@ -165,19 +165,19 @@ Pilot-Kit-Box-ESP32-P4/
 | 必备 | 描述 |
 |------|------|
 | **USB-UART 转接器** | CP2102 / FTDI FT232 / CH340 / CH343 都行，输出 3V3 TTL |
-| **3 根杜邦线（母对公）** | 转接器 ↔ H4 上的 GND / RXD / TXD |
+| **3 根杜邦线（母对公）** | 转接器 ↔ P1 上的 TX / RX / GND |
 | **1 段回形针 / 短线** | 板内短接 IO9 到任意 GND（让 C6 进 download mode）|
 
-### 接线（板子背面的 4-pin H4 header）
+### 接线（板子背面的 4-pin P1 下载排针）
 
-| H4 pin | 板上标注 | 接到 |
+| P1 pin | 板上标注 | 接到 |
 |--------|---------|------|
-| 1 | C6_IO9 | **板内** 短接到任意 P4 GND 针脚（C6 download mode strap，烧完再拔） |
-| 2 | GND | 转接器的 GND |
-| 3 | C6_RXD | 转接器的 TX |
-| 4 | C6_TXD | 转接器的 RX |
+| 1 | C6_TXD | 转接器的 RX |
+| 2 | C6_RXD | 转接器的 TX |
+| 3 | C6_IO9 | **板内** 短接到任意 P4 GND 针脚（C6 download mode strap，烧完再拔） |
+| 4 | GND | 转接器的 GND |
 
-H4-1 (IO9) **不接** 转接器 —— 它只需要在烧录期间被板内短到 GND
+P1-3 (IO9) **不接**转接器信号 —— 它只需要在烧录期间被板内短到 GND
 就行，跟 USB-UART 之间没有信号关系。
 
 ### 准备 C6 slave 固件二进制
@@ -212,21 +212,26 @@ idf.py build
 
 ### 烧录步骤（**顺序很重要**）
 
-**关键点**：H4 头只有 UART 信号线，没有引出 C6 的 RESET。要进 download mode 只能"启动时 IO9 拉低"——这要求 C6 在 IO9 已经短接到 GND 的状态下**冷启动**。同时还得防止 P4 在烧 C6 期间通过 GPIO54 把 C6 复位掉，所以也要让 P4 进 download mode 站着不动。
+**关键点**：P1 只有 UART 与 IO9，没有引出 C6 的 RESET。要进 download
+mode 只能“启动时 IO9 拉低”——这要求 C6 在 IO9 已经短接到 GND 的状态下
+**冷启动**。同时还得防止 P4 在烧 C6 期间通过 GPIO54 干扰 C6，所以也要
+让 P4 进 download mode 站着不动。Rev1.2 上 GPIO54 经 R34 0 Ω 直连 C6
+EN，没有反相器或电平转换器。
 
 按这个顺序：
 
-1. **断开所有电源**：拔掉 P4 Type-C，板子完全不通电。
+1. **断开所有电源**：拔掉 H1 `USB TO UART`，板子完全不通电。
 
-2. **接 3 根杜邦线**（按 [§3 接线表](#接线板子背面的-4-pin-h4-header)）：UART 转接器 GND→H4-2、TX→H4-3、RX→H4-4。
+2. **接 3 根杜邦线**（按 [§3 接线表](#接线板子背面的-4-pin-p1-下载排针)）：UART 转接器 RX→P1-1、TX→P1-2、GND→P1-4。
 
-3. **板内短接 IO9 → GND**：回形针 / 短跳线，H4-1 短到板上任意 P4 GND 针脚。**别接 UART 转接器的 GND**——板内短接就够了，多接一根反而会引入接地回路。
+3. **板内短接 IO9 → GND**：回形针 / 短跳线，P1-3 短到板上任意 P4
+   GND 针脚。IO9 不接 UART 控制信号。
 
 4. **先把 UART 转接器插上电脑**。此时只有转接器通电（电脑 USB → 转接器），P4 板还没电。`ls /dev/cu.usbserial-*` 应该看到设备出现（macOS 上类似 `/dev/cu.usbserial-0001`，CP2102/CH340 各家命名不同）。
 
 5. **按住板子正面的 BOOT 按钮不放**。
 
-6. **保持按住 BOOT** 的同时，把 P4 Type-C 插上电脑给板子上电。这一瞬间发生的事：
+6. **保持按住 BOOT** 的同时，把 H1 插上电脑给板子上电。这一瞬间发生的事：
    - P4 看到 BOOT 是低电平 → 进 download mode、不会跑我们的固件，于是 GPIO54 浮空（不会去乱 reset C6）
    - C6 看到 IO9 是低电平（你的短接）→ 进 download mode、停在 ROM bootloader 等命令
 
@@ -253,11 +258,11 @@ idf.py build
    看到 `Hash of data verified.` 即烧录成功。
 
 9. **断电收线**：
-   - 拔掉 P4 Type-C（断开整板电源）
+   - 拔掉 H1（断开整板电源）
    - 拔掉 IO9 ↔ GND 短接（不拔的话下次上电 C6 又会进 download mode）
    - 杜邦线可以留着也可以拆，下次烧 C6 还能用
 
-10. **重新插上 P4 Type-C**。C6 这次 IO9 是高电平了，正常引导执行 hosted slave 固件；P4 也正常引导执行我们的固件。验证日志里能看到：
+10. **重新插上 H1**。C6 这次 IO9 是高电平了，正常引导执行 hosted slave 固件；P4 也正常引导执行我们的固件。验证日志里能看到：
 
     ```
     I (xxxx) transport: Identified slave [esp32c6]
@@ -350,9 +355,11 @@ pilot_kit_box.bin binary size 0x989a40 bytes. Smallest app partition is 0xa00000
 
 ### 接线
 
-把 USB-C 数据线一端接 P4 板上**靠近 BOOT 按键那个 Type-C 口**（不是背面那个 SD 卡槽旁边的小 4-pin），另一端接电脑。
+把 USB-C 数据线一端接 H1、也就是丝印为 `USB TO UART` 的 Type-C 口，
+另一端接电脑。
 
-> ⚠️ Type-C 口走的是 CH343P USB-UART 桥，不是 P4 的原生 USB-OTG。原生 USB-OTG 在背面的 4-pin MX1.25 接口（之后接 RTL-SDR 用）。
+> H1 走 CH343P USB-UART 桥。RTL-SDR 使用另一个丝印为 `USB` 的 H2
+> Type-C 原生 USB 2.0 HS OTG 口；P1 是 C6 下载排针，不是 USB。
 
 ### 找串口
 
@@ -473,7 +480,7 @@ I (3472) rec_file:    logging ADS-B to /storage/pilot_kit_ts_1.txt (rotate every
 I (3474) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
 I (3480) sdr:         USB client registered, waiting for RTL-SDR enumeration
 I (3486) dsp:         dsp_task running (dump1090-derived edge decode)
-I (3617) display:     ST7701 DSI ready: logical 800x480 -> PPA 90 CCW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
+I (3617) display:     ST7701 DSI ready: logical 800x480 -> PPA 90 CW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 E (4401) imu:         enable_rotation_vector: ESP_ERR_INVALID_RESPONSE         ← 预期（没接 BNO085）
 W (4402) pilot_kit:   IMU init failed (ESP_ERR_INVALID_RESPONSE) — PFD will run without attitude
 I (4405) pfd:         pfd_task running (G1000 landscape)
@@ -511,7 +518,7 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 
 | 操作 | 预期 |
 |------|------|
-| 通过 4-pin USB 转接器接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
+| 通过 H2 USB-C OTG 转接头或 Hub 接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
 | 给 4.3 寸一体板上电 | 800×480 全屏显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD |
 | 装 GT-U8 GPS | DIAG 更新 GPS/北斗卫星、SNR、天线状态和系统时间；定位后 TRAFFIC 获得本机位置 |
 | 装 BMP388 | PFD / DIAG 显示压力、QNH 修正高度和升降率 |
@@ -631,7 +638,11 @@ CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=12    ← 应该是 54
 
 ### CMD5 `sdmmc_init_ocr: send_op_cond returned 0x107` 然后 reboot loop
 
-**原因**：P4 host 发了 SDIO CMD5 但 C6 没正确响应（具体是 `INVALID_RESPONSE`，CRC 错或者根本没回）。在 Waveshare P4-WIFI6 上**最常见的原因是 GPIO54 reset 极性反了**——板子上 P4-GPIO54 跟 C6-EN 之间有 inverter / level shifter，需要软件用 `RESET_ACTIVE_HIGH`，而不是匹配 C6 silicon 的 `ACTIVE_LOW`。
+**原因**：P4 host 发了 SDIO CMD5 但 C6 没正确响应（具体是
+`INVALID_RESPONSE`，CRC 错或者根本没回）。项目实机验证要求 ESP-Hosted
+使用 `RESET_ACTIVE_HIGH`；Rev1.2 原理图同时确认 P4 GPIO54 经 R34 0 Ω
+直连 C6 EN，板上没有 inverter / level shifter，不能再用反相器解释该
+软件选项。
 
 **修复**：sdkconfig.defaults 已经设置 `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`。如果你改过这一项，恢复默认即可。详细排查过程（包括为什么不是 SDIO 时钟、pull-up、LDO 那些常见嫌疑）见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
 

@@ -27,7 +27,7 @@
 6. [存储 / LittleFS / MicroSD](#6-存储--littlefs--microsd)
 7. [显示 / ST7701 MIPI-DSI](#7-显示--st7701-mipi-dsi)
 8. [IMU / BNO085](#8-imu--bno085)
-9. [按键与电源](#9-按键与电源)
+9. [触摸与电源](#9-触摸与电源)
 10. [日志输出](#10-日志输出)
 11. [FreeRTOS 调度](#11-freertos-调度)
 12. [编译优化](#12-编译优化)
@@ -206,10 +206,10 @@ MAC 后缀来自 C6 模组的 efuse —— 同板跨重启稳定、跨板唯一�
 
 ## 5. Own-ship 绑定
 
-PFD 的 ALT / GS / VS 可以来自某架已知本机 ADS-B transponder，而不是只依赖 IMU。两种方式：
-
-1. 编译期配置 `CONFIG_PK_OWN_ICAO`。
-2. 运行时在 ADS-B LIST 页高亮某架飞机后短按 TARE，临时绑定为 own-ship（重启后丢失）。
+PFD 的 ALT / GS / VS 可以来自编译期配置的本机 ADS-B transponder，也可在
+没有手动绑定时使用 GPS。本机 ICAO 通过 `CONFIG_PK_OWN_ICAO` 配置。
+当前 4.3 寸触摸 UI 不提供旧 TARE 按钮的运行时绑定手势。需要固定本机
+ICAO 时使用编译期 `CONFIG_PK_OWN_ICAO`；否则由 GPS 提供本机位置。
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -273,7 +273,7 @@ CLK=GPIO43  CMD=GPIO44  D0..D3=GPIO39..42
 ```
 
 面板持续扫描原生 480×800 framebuffer。PPA 把应用侧 800×480
-RGB565-swapped framebuffer 逆时针旋转 90°、执行字节交换，并在 VSYNC
+RGB565-swapped framebuffer 逆时针旋转 270°（等效顺时针 90°）、执行字节交换，并在 VSYNC
 切换两个 DPI framebuffer。GPIO26 经反相 LEDC 注入 AP3032 FB 节点，
 不能按普通正相背光处理。
 
@@ -287,9 +287,9 @@ RGB565-swapped framebuffer 逆时针旋转 90°、执行字节交换，并在 VS
 |--------|------|------|
 | `IMU_I2C_PORT` | `I2C_NUM_0` | 与 ES8311 codec 共享 I²C0 |
 | `IMU_I2C_HZ` | `400000` | I²C fast mode (400 kHz) |
-| `IMU_I2C_ADDR` | `0x4A` | BNO085 默认地址；SA0 拉高变 `0x4B` |
-| `IMU_PIN_RST` | `21` | BNO085 RST 接 P4 GPIO21 |
-| `IMU_PIN_INT` | `20` | HOST_INT 接 P4 GPIO20（目前仅占位，未中断驱动） |
+| `IMU_I2C_ADDR` | `0x4A` | 当前驱动只支持该地址；AD0 必须接 GND |
+| `IMU_PIN_RST` | `28` | BNO085 RST 接 P4 GPIO28（J3 pin 16） |
+| `IMU_PIN_INT` | `34` | J3 pin 28 = GPIO34（嘉立创 PCB 网络 IMU_INT）；当前轮询，未启用中断 |
 
 ### 报告速率
 
@@ -307,24 +307,27 @@ RGB565-swapped framebuffer 逆时针旋转 90°、执行字节交换，并在 VS
 - `pitch` (Y 轴旋转): -90..+90，机头上抬为正
 - `yaw` (Z 轴旋转): 0..360，从上方看顺时针为正
 
-如果传感器安装方向跟航空体轴不一致，可以在 `quat_to_euler` 之后加一个固定坐标变换。
+当前 `q_body_fix = (0, 0.7071068, 0, -0.7071068)` 假定模块竖直安装：
+芯片面朝飞行员、排针位于飞行员左侧、VCC 在顶部；芯片 +X 对应飞行器向上，
++Y 对应向左，+Z 对应向后。若实际安装方向不同，必须修改固件变换并重新验证
+姿态；触摸“调平”不能代替轴向变换。
 
 ---
 
-## 9. 按键与电源
+## 9. 触摸与电源
 
-按键 GPIO：
+Rev1.2 只有 RESET、BOOT、POWER 三个板级按键，没有 MODE/TARE/UP/DOWN
+应用按键。旧 `button_task.c` 只为 2.4 寸载板保留，当前 `main.c` 不启动它。
 
-| 按键 | GPIO | 短按 | 长按 | 超长按 |
-|---|---:|---|---|---|
-| TARE | 26 | Settings 移动选中行、ADS-B LIST 绑定 own-ship，其他页面执行 IMU tare | 把当前 IMU tare 持久化到 NVS | IMU 工厂重置 |
-| MODE | 5 | 切换 PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG | 进入 ESP32-P4 deep sleep；再次按 MODE 唤醒 | 无 |
-| UP | 22 | Traffic/List 选目标、Settings 调整、About/Diag 上滚 | 抑制，用于组合手势检测 | 无 |
-| DOWN | 23 | Traffic/List 选目标、Settings 调整、About/Diag 下滚 | 抑制，用于组合手势检测 | 无 |
+当前 UI 使用 GT911 触摸：
 
-TARE 超长按 10 秒会执行 IMU 工厂重置：清除 NVS tare、清除 BNO 持久 DCD / 旧 reorientation 状态，并重新初始化 IMU。
+- 点击 FAB 展开六页面 dock；
+- 长按并拖动 FAB 可改变位置，落点保存到 NVS；
+- 长按 dock 中“调平”一秒调用 `pk_imu_tare_persist()`；
+- 详情页可用返回 FAB、标题栏返回或右滑。
 
-UP + DOWN 同时按住 5 秒保留给 BLE pairing-window flow；当前固件会记录该请求，移动端 UI 处理尚未实现。
+Key3 POWER 短按开机、长按约两秒关机；Key1 RESET 重启 P4；Key2 BOOT
+用于下载模式。当前触摸 UI 没有工厂重置 / DCD 擦除手势。
 
 ## 10. 日志输出
 
@@ -358,7 +361,7 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 | `adsb` | dsp_task 每帧解码结果 |
 | `rec_file` | LittleFS / MicroSD 文件 sink |
 | `pk_sd` | MicroSD 挂载、插拔与格式化 |
-| `gps` | GT-U8 NMEA、PPS 和卫星诊断 |
+| `gps` | GT-U8 NMEA/RMC 与卫星诊断；未实现 PPS GPIO 处理 |
 | `baro` | BMP388 压力、高度和升降率 |
 | `record_sink` | sink 注册 |
 | `ble_gatt` | NimBLE host + GATT |

@@ -31,15 +31,15 @@ All public docs should match this baseline:
   not be documented as a primary instrument, backup instrument,
   navigation source, or collision-avoidance system.
 - Target board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
-- RTL-SDR attaches to the P1 USB 2.0 HS OTG port. The firmware defaults to 1090 MHz at 2 MSPS.
+- RTL-SDR attaches to the H2 native USB 2.0 HS Type-C port through an OTG adapter or hub. The firmware defaults to 1090 MHz at 2 MSPS.
 - Current recommended SDR dongle tuner: **FC0013**, mainly because the BOM cost is low.
 - Embedded identity databases include the ICAO24 aircraft database at `firmware/main/aircraft_db.bin`, the airline code table at `firmware/main/airline_codes.c`, and the ICAO24 country table at `firmware/main/icao_country.c`.
 - LCD: **4.3-inch ST7701 480x800 MIPI-DSI**, presented as 800x480 landscape through PPA rotation; backlight PWM GPIO26, reset GPIO27, BL_EN GPIO33.
 - GT911 touch shares I2C0 on GPIO7/8 and uses GPIO23 reset. The legacy four-button task is disabled.
-- IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, INT on GPIO20, RST on GPIO21.
-- UI mode cycle: **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**.
+- IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, RST on GPIO28, address `0x4A`; INT is wired to GPIO34 (J3 pin 28) but the driver polls. GPIO20 is board-fixed BAT_ADC.
+- The touch FAB dock directly selects **PFD, TRAFFIC, ADS-B LIST, SETTINGS, ABOUT, or DIAG**.
 - Navigation and tare actions are exposed through the 4.3-inch touch UI; references to MODE/TARE tact buttons describe the legacy 2.4-inch carrier only.
-- GT-U8 GPS/BeiDou, GPIO46 PPS, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths.
+- GT-U8 GPS/BeiDou, GPIO50 PPS, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths.
 - Settings controls language, QNH, map orientation, radar range, and log backend; MicroSD supports insertion/removal detection, capacity status, and guarded formatting.
 - Settings, About, Diagnostics, and Compass Calibration have English/Chinese firmware UI strings with configuration persisted through NVS.
 

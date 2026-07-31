@@ -87,7 +87,10 @@ CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 ```
 
-Do not change reset polarity to active-low on this board. Waveshare's board-level reset path makes GPIO54 active-high from the P4 software point of view. Wrong polarity causes SDIO CMD5 failures.
+Do not change the verified ESP-Hosted reset option to active-low on this
+project. Rev1.2 connects GPIO54 directly to C6 EN through R34, 0 Ω; there is
+no board inverter. The `RESET_ACTIVE_HIGH` setting is verified driver
+behavior, and the wrong option causes SDIO CMD5 failures.
 
 For low internal-RAM pressure, SDIO queues are reduced from upstream defaults:
 
@@ -107,7 +110,8 @@ binding is active.
 | `CONFIG_PK_OWN_ICAO` | `0x000000` | 24-bit ICAO address. Non-zero values make PFD use matching ADS-B altitude, ground speed, and vertical speed. |
 | `CONFIG_PK_OWN_STALE_AGE_MS` | `5000` | How long own-ship ADS-B data remains fresh before PFD readouts return to `---`. |
 
-Runtime alternative: in ADS-B LIST, highlight an aircraft and short-press TARE. That RAM-only binding is cleared on reboot.
+The current 4.3-inch touch UI does not expose the former TARE-button runtime
+binding gesture. Use the build-time ICAO option or GPS own-position.
 
 ## Storage / LittleFS / MicroSD
 
@@ -162,7 +166,8 @@ Defined in `firmware/main/display.h`:
 ```
 
 The panel scans its native 480x800 framebuffer continuously. PPA rotates
-the logical 800x480 RGB565-swapped framebuffer 90 degrees CCW, performs
+the logical 800x480 RGB565-swapped framebuffer 270 degrees CCW
+(equivalent to 90 degrees CW), performs
 the byte swap, and presents it through two DPI framebuffers at VSYNC.
 GPIO26 uses inverted LEDC PWM because it injects the AP3032 feedback node.
 
@@ -177,10 +182,13 @@ Defined in `firmware/main/imu_task.c`:
 | `IMU_I2C_SCL` | `8` | SCL. |
 | `IMU_I2C_HZ` | `400000` | I2C fast mode. |
 | `IMU_I2C_ADDR` | `0x4A` | BNO085 default address when AD0 is grounded. |
-| `IMU_PIN_INT` | `20` | Data-ready pin, currently polled rather than IRQ-driven. |
-| `IMU_PIN_RST` | `21` | Active-low hard reset pin. |
+| `IMU_PIN_INT` | `34` | J3 pin 28 = GPIO34 (JLC PCB net IMU_INT). Currently polled; INT not enabled. |
+| `IMU_PIN_RST` | `28` | Active-low hard reset pin (J3 pin 16). |
 
-The firmware enables Rotation Vector reports at 100 Hz (`report_interval_us = 10000`).
+The firmware enables Rotation Vector reports at 100 Hz
+(`report_interval_us = 10000`) and polls the device. BNO085 INT is not
+wired to GPIO34 (J3 pin 28) but polled; reset is GPIO28. The current driver supports address `0x4A`, so
+AD0 must be grounded.
 
 Euler convention:
 
@@ -188,20 +196,29 @@ Euler convention:
 - Pitch: Y-axis rotation, nose-up positive.
 - Yaw: Z-axis rotation, 0..360 degrees clockwise when viewed from above.
 
-## Buttons And Power
+The current `q_body_fix = (0, 0.7071068, 0, -0.7071068)` assumes a vertical
+breakout with the chip face toward the pilot, the header on the pilot's left
+and VCC at the top. That maps chip +X to aircraft up, +Y to aircraft left and
++Z to aircraft back. A different physical installation requires a firmware
+transform change and attitude revalidation; touch leveling is not a substitute.
 
-Button GPIOs:
+## Touch And Power
 
-| Button | GPIO | Short press | Long press | Very-long press |
-|---|---:|---|---|---|
-| TARE | 26 | Move SETTINGS row, bind ADS-B LIST own-ship, or perform IMU tare elsewhere | Persist current IMU tare to NVS | IMU factory reset |
-| MODE | 5 | Cycle PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG | Enter ESP32-P4 deep sleep; next MODE press wakes | None |
-| UP | 22 | Select target, adjust Settings, or scroll About/Diag up | Suppressed for combo detection | None |
-| DOWN | 23 | Select target, adjust Settings, or scroll About/Diag down | Suppressed for combo detection | None |
+Rev1.2 has RESET, BOOT and POWER buttons, but no MODE/TARE/UP/DOWN
+application buttons. The legacy `button_task.c` remains in source for the
+former 2.4-inch carrier and is not started by the current `main.c`.
 
-Very-long TARE press (10 seconds) performs IMU factory reset: clears NVS tare, clears BNO persisted DCD / legacy reorientation state, and reinitialises the IMU.
+The current UI uses GT911 touch:
 
-UP + DOWN held together for 5 seconds is reserved for a BLE pairing-window flow; current firmware records the request while mobile UI handling remains unimplemented.
+- tap the FAB to open the six-page navigation dock;
+- hold and drag the FAB to move it; its position is stored in NVS;
+- hold **Level** in the dock for one second to run
+  `pk_imu_tare_persist()`;
+- use the back FAB, title-bar back control or right swipe on detail pages.
+
+Key3 POWER powers on with a short press and powers off after an approximately
+two-second hold. Key1 RESET restarts the P4; Key2 BOOT is for download mode.
+The current touch UI has no factory-reset/DCD-wipe gesture.
 
 ## Logging
 
@@ -215,7 +232,7 @@ Common ESP_LOG tags:
 | `adsb` | decoded ADS-B message logs |
 | `rec_file` | LittleFS / MicroSD writer |
 | `pk_sd` | MicroSD mount, removal, and format |
-| `gps` | GT-U8 NMEA, PPS, and satellite diagnostics |
+| `gps` | GT-U8 NMEA/RMC and satellite diagnostics; no PPS GPIO handling |
 | `baro` | BMP388 pressure, altitude, and vertical speed |
 | `ble_gatt` | NimBLE host, GATT, GDL90 emitter |
 | `display` | ST7701 MIPI-DSI + PPA rotation |
@@ -232,7 +249,7 @@ Common ESP_LOG tags:
 | `imu` | 0 | 5 | 4 KiB | BNO085 polling |
 | `pfd` | 0 | 4 | 6 KiB | LCD UI renderer |
 | `rec_file` | 0 | 3 | 4 KiB | LittleFS / MicroSD writer |
-| `gps` | 0 | 4 | 4 KiB | GT-U8 NMEA + PPS |
+| `gps` | 0 | 4 | 4 KiB | GT-U8 NMEA/RMC; optional PPS wiring is not consumed |
 | `baro` | 0 | 4 | 4 KiB | BMP388 polling |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD insertion/removal probe |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host |

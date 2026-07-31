@@ -4,7 +4,10 @@
 
 ## 这是什么
 
-每块新出厂的 Waveshare ESP32-P4-WIFI6，如果要启用 Bluetooth / BLE，都需要做一次 C6 固件烧录。P4 固件通过 ESP-Hosted 协议和板载 ESP32-C6 通信；但出厂 C6 跑的是 factory AT 固件，不能直接配合本项目。
+每块新出厂的 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3，如果要启用
+Bluetooth / BLE，都需要做一次 C6 固件烧录。P4 固件通过 ESP-Hosted
+协议和板载 ESP32-C6 通信；但出厂 C6 跑的是 factory AT 固件，不能直接
+配合本项目。
 
 烧完 hosted slave 后，C6 固件会持久保留。后续反复烧 P4 主固件不会影响 C6。
 
@@ -21,20 +24,26 @@ idf.py menuconfig
 - 3.3 V TTL USB-UART 转接器，CP2102 / CH340 / FT232 等都可以。
 - 3 根杜邦线：GND / RXD / TXD。
 - 1 根短接线或回形针：让 C6 IO9 在冷启动时接 GND，进入 download mode。
-- P4 板子的 Type-C 供电线。
+- 接 H1 `USB TO UART` 的 USB-C 数据/供电线。
 
-## H4 接线
+## P1 接线
 
-H4 是板背面的 C6 debug header：
+P1 是板背面的 C6 下载排针，丝印从 1 脚到 4 脚为
+`TX / RX / IO9 / GND`：
 
-| H4 pin | 板上标注 | 接到 |
+| P1 pin | 板上标注 | 接到 |
 |---|---|---|
-| 1 | C6_IO9 | 烧录期间短接到板上任意 GND |
-| 2 | GND | USB-UART GND |
-| 3 | C6_RXD | USB-UART TX |
-| 4 | C6_TXD | USB-UART RX |
+| 1 | C6_TXD | USB-UART RX |
+| 2 | C6_RXD | USB-UART TX |
+| 3 | C6_IO9 | C6 上电时短接到板上任意 GND |
+| 4 | GND | USB-UART GND |
 
 IO9 不接 USB-UART 信号，只在烧录期间短到 GND。
+
+C6 EN 经 R34 0 Ω 直接连接 P4 GPIO54，Rev1.2 原理图上没有反相器或电平
+转换器。项目实机验证仍要求
+`CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`；这是驱动配置事实，不能再
+用不存在的板级反相器解释。
 
 ## 准备固件
 
@@ -80,12 +89,12 @@ firmware/tools/flash_c6_hosted.sh --batch
 
 顺序很重要：
 
-1. 拔掉 P4 Type-C，整板断电。
-2. 接 USB-UART：GND -> H4-2，TX -> H4-3，RX -> H4-4。
-3. 用短接线把 H4-1（C6_IO9）接到板上 GND。
+1. 拔掉 H1 `USB TO UART`，整板断电。
+2. 接 USB-UART：RX -> P1-1，TX -> P1-2，GND -> P1-4。
+3. 用短接线把 P1-3（C6_IO9）接到板上 GND。
 4. 先把 USB-UART 插到电脑，确认出现 `/dev/cu.usbserial-*` 或对应串口。
 5. 按住 P4 板正面的 BOOT 按钮。
-6. 保持 BOOT 按住，插上 P4 Type-C 给板子上电。
+6. 保持 BOOT 按住，插上 H1 给板子上电。
 7. 松开 BOOT。
 
 这时：
@@ -95,7 +104,7 @@ firmware/tools/flash_c6_hosted.sh --batch
 
 ## 烧录
 
-优先使用上面的项目脚本。下面是等价的手动命令，适合排障。H4 没有 C6
+优先使用上面的项目脚本。下面是等价的手动命令，适合排障。P1 没有 C6
 RESET 线，因此前后都不要让 esptool 自动复位：
 
 ```bash
@@ -113,10 +122,10 @@ Hash of data verified.
 
 ## 烧完后收线
 
-1. 拔掉 P4 Type-C。
+1. 拔掉 H1。
 2. 移除 IO9 到 GND 的短接。忘记移除会导致 C6 下次仍进 download mode。
 3. 可以拆掉 USB-UART 杜邦线。
-4. 重新插上 P4 Type-C。
+4. 重新插上 H1。
 
 如果 P4 固件中的 BLE 已启用，正常日志应包含：
 
@@ -132,7 +141,7 @@ ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
 - 确认 C6 IO9 在上电瞬间已经短接到 GND。
 - 确认 RX/TX 交叉：USB-UART TX 接 C6_RXD，USB-UART RX 接 C6_TXD。
 - 确认 USB-UART 是 3.3 V TTL，不是 RS232 电平。
-- H4 没有 reset 线，必须用 `--before no-reset`。
+- P1 没有 reset 线，必须用 `--before no-reset`。
 
 ### 串口节点还在，但 USB-UART 已经卡死
 
@@ -174,7 +183,7 @@ A fatal error occurred: The chip stopped responding.
 
 1. **接触与供电**：杜邦线全部重新插紧、USB-UART 直插电脑（不走 hub / 延长线）、拔掉其他大功率 USB 设备给烧录让电。随机断开最常见的就是这一类。
 2. **降波特率**：`-b` 从 460800 往下试 `230400 → 115200 → 57600`。ROM 握手固定在 115200，`-b` 只影响 stub 加载后的传输速度，低于 115200 反而会拖慢整个传输。
-3. **手动进 download mode + 全程禁用复位**（最可靠）：按上面《进入 C6 download mode》的步骤手动让 C6/P4 进下载模式，再把《烧录》那条命令里的 `--after hard-reset` 改成 `--after no-reset`（`-b` 按第 2 步降档）。H4 本来就没有 RESET 线，esptool 出错时会尝试用 RTS 复位（traceback 前那行 `Hard resetting via RTS pin…`），禁用 after-reset 把这个干扰去掉；写入完成后自己手动给板子断电重启即可。
+3. **手动进 download mode + 全程禁用复位**（最可靠）：按上面《进入 C6 download mode》的步骤手动让 C6/P4 进下载模式，再把《烧录》那条命令里的 `--after hard-reset` 改成 `--after no-reset`（`-b` 按第 2 步降档）。P1 本来就没有 RESET 线，esptool 出错时会尝试用 RTS 复位（traceback 前那行 `Hard resetting via RTS pin…`），禁用 after-reset 把这个干扰去掉；写入完成后自己手动给板子断电重启即可。
 
 ### P4 固件启动后 BLE abort
 
@@ -182,7 +191,7 @@ C6 还没烧 hosted slave，或者 IO9 短接没拔。先确认 C6 启动正常�
 
 ### CMD5 返回 0x107
 
-Waveshare 板上 P4 GPIO54 到 C6 EN 的极性与 C6 silicon 原始 EN 语义相反。P4 配置必须是：
+P4 GPIO54 经 R34 0 Ω 直接连接 C6 EN。项目实机验证的 P4 配置必须是：
 
 ```text
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y

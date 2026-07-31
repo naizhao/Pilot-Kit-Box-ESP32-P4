@@ -21,7 +21,7 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 | Item | Purpose |
 |---|---|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception. FC0013 is currently recommended because it keeps BOM cost low. |
-| USB Type-A female to MX1.25 4-pin cable | Adapts the board's P1 USB HS OTG port to a standard USB-A socket for the RTL-SDR. |
+| USB-C OTG adapter or powered USB hub | Connects the H2 native USB HS port to a USB-A RTL-SDR dongle. |
 | BNO085 / GY-BN008X IMU module | Attitude fusion for the PFD. |
 | USB-UART adapter | Required once per fresh board to flash the ESP32-C6 hosted slave firmware for BLE. |
 
@@ -91,7 +91,10 @@ git submodule update --init --recursive
 
 ## One-Time ESP32-C6 Slave Flashing For BLE
 
-BLE is enabled by default with `CONFIG_PK_BLE_ENABLED=y`. A new Waveshare ESP32-P4-WIFI6 board ships with factory AT firmware on the C6, which does not speak the ESP-Hosted / NimBLE host protocol used by the P4 firmware. Flash the C6 hosted slave image once per board before using BLE.
+BLE is enabled by default with `CONFIG_PK_BLE_ENABLED=y`. A new Waveshare
+ESP32-P4-WIFI6-Touch-LCD-4.3 board ships with factory AT firmware on the C6,
+which does not speak the ESP-Hosted / NimBLE host protocol used by the P4
+firmware. Flash the C6 hosted slave image once per board before using BLE.
 
 If you do not need BLE yet, disable it before building:
 
@@ -109,14 +112,14 @@ Required items:
 - Three jumper wires for GND / RXD / TXD
 - A short wire or paperclip to short C6 IO9 to board GND during boot
 
-H4 header wiring:
+P1 download-header wiring:
 
-| H4 pin | Board label | Connect to |
+| P1 pin | Board label | Connect to |
 |---|---|---|
-| 1 | C6_IO9 | Short to any board GND during C6 download-mode boot |
-| 2 | GND | USB-UART GND |
-| 3 | C6_RXD | USB-UART TX |
-| 4 | C6_TXD | USB-UART RX |
+| 1 | C6_TXD | USB-UART RX |
+| 2 | C6_RXD | USB-UART TX |
+| 3 | C6_IO9 | Short to any board GND during C6 download-mode boot |
+| 4 | GND | USB-UART GND |
 
 Fast path using the prebuilt ESPHome image:
 
@@ -192,9 +195,11 @@ Main build artifacts:
 
 ## Connect The Board
 
-Use the Type-C port near the BOOT button. That port is the CH343P USB-UART bridge for P4 flashing and monitoring.
+Use H1, the Type-C port marked `USB TO UART`. It is the CH343P bridge for P4
+flashing and monitoring.
 
-The board's native USB HS OTG data path for RTL-SDR is the separate 4-pin MX1.25 P1 connector, not the Type-C programming port.
+The RTL-SDR data path is H2, the separate Type-C port marked `USB`, connected
+to the P4 native USB 2.0 HS PHY. P1 is the C6 UART download header.
 
 ### Find The Serial Port
 
@@ -250,7 +255,7 @@ pilot_kit: USB host stack online — spawning SDR + DSP tasks
 rec_file: LittleFS mounted at /storage
 pk_sd: no microSD card at boot (will keep probing)
 sdr: USB client registered, waiting for RTL-SDR enumeration
-display: ST7701 DSI ready: logical 800x480 -> PPA 90 CCW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
+display: ST7701 DSI ready: logical 800x480 -> PPA 90 CW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 pilot_kit: IMU init failed (...) — PFD will run without attitude
 pfd: pfd_task running (G1000 landscape)
 transport: Identified slave [esp32c6]
@@ -261,7 +266,7 @@ Optional hardware expectations:
 
 | Action | Expected result |
 |---|---|
-| Attach RTL-SDR to P1 USB HS OTG | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
+| Attach RTL-SDR to H2 USB HS OTG | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
 | Power the integrated 4.3-inch display | 800x480 boot splash appears for at least 3 seconds, then the PFD renders |
 | Wire the BNO085 IMU | `imu: rpy = ... (acc=N ...)` logs update and PFD horizon follows motion |
 | Fit the GT-U8 module | GPS/BeiDou fix, satellite/SNR, antenna, and system-time rows update on DIAG |
@@ -330,7 +335,8 @@ Use DIAG to check card capacity and the active `LOG` backend.
 
 ### RTL-SDR does not enumerate
 
-Check the P1 USB HS OTG wiring and power budget. RTL-SDR dongles can draw a few hundred mA; use a stable 5 V supply if the host port is weak.
+Check the H2 USB HS OTG adapter and power budget. RTL-SDR dongles can draw a
+few hundred mA; use a powered hub or stable 5 V supply if necessary.
 
 ## Daily Development Loop
 
