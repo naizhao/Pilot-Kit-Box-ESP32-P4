@@ -470,17 +470,66 @@ static void draw_reticle(uint16_t *fb)
     pk_pfd_fill_rect(fb, cx -  2, cy - 2, cx +  3, cy + 3, COL_RETICLE);
 }
 
+/*
+ * 姿态失效旗（ATT FAIL）。
+ *
+ * 原来 valid=false 时 roll/pitch 一律取 0，然后**照常画一幅地平线**——于是
+ * 没接 IMU 的盒子开机后显示的是一幅完美水平的姿态仪。空态排查时截出来才发现：
+ * 这一屏不是「看起来像坏了」，是反过来的「看起来好好的，其实什么都不知道」，
+ * 比黑屏危险得多——飞行员没有任何线索去怀疑它。
+ *
+ * 画法照通用 EFIS 惯例：撤掉天地、划一个大红叉、盖 ATT FAIL 字样。撤掉天地
+ * 是关键一步，红叉只是强调；只加叉不撤天地，余光扫过去仍是一幅有姿态的图。
+ *
+ * 文案用英文字面量而不走 i18n：PFD 这一屏刻意零词条（HDG / ALT / VS / KM/H
+ * 全是固定缩写），中英两版逐字节相同，ATT 也是 ICAO 通用缩写，不该由它开
+ * 破例的头。
+ */
+static void draw_att_fail(uint16_t *fb)
+{
+    const uint16_t COL_BG   = pk_rgb565( 18,  20,  26);
+    const uint16_t COL_FAIL = pk_rgb565(255,  60,  60);
+
+    pk_pfd_fill_rect(fb, PFD_ATTITUDE_LEFT, PFD_ATTITUDE_TOP,
+                     PFD_ATTITUDE_RIGHT, PFD_ATTITUDE_BOT, COL_BG);
+
+    /* 红叉画在姿态区内，不铺满全屏：左右速度/高度带与底部 HSI 有各自的
+     * 有效性，被这道叉划掉会连累它们一起显得失效。 */
+    const int x0 = PFD_ATTITUDE_LEFT + 120, x1 = PFD_ATTITUDE_RIGHT - 120;
+    const int y0 = PFD_ATT_TOP + 24,        y1 = PFD_ATT_TOP + PFD_ATT_H - 24;
+    for (int t = -1; t <= 1; ++t) {          /* 3 px 粗：1 px 在 217 PPI 上太细 */
+        pk_pfd_draw_line(fb, x0, y0 + t, x1, y1 + t, COL_FAIL);
+        pk_pfd_draw_line(fb, x0, y1 + t, x1, y0 + t, COL_FAIL);
+    }
+
+    const char *msg = "ATT FAIL";
+    const int w  = pk_aa_text_width(msg, PK_AA_L);
+    /* 下移 56 px 而不是正中：正中是十字准星的位置，而准星要保留（它是机体
+     * 固定参考）。两者叠在一起时黄色横杠正好从 ATT 和 FAIL 中间穿过去。 */
+    const int ty = PFD_CY + 56 - PK_AA_L_H / 2;
+    /* 压一层实底再写字：字落在两条叉线之间，不铺底会被划穿。 */
+    pk_pfd_fill_rect(fb, PFD_CX - w / 2 - 14, ty - 8,
+                     PFD_CX + w / 2 + 14, ty + PK_AA_L_H + 8, COL_BG);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               PFD_CX - w / 2, ty, msg, COL_FAIL, PK_AA_L);
+}
+
 /* --- Public entry --------------------------------------------------- */
 
 void pk_pfd_attitude_render(uint16_t *fb, const pk_pfd_imu_t *imu)
 {
     build_gradient_luts();
 
-    float roll  = imu->valid ? imu->roll_deg  : 0.0f;
-    float pitch = imu->valid ? imu->pitch_deg : 0.0f;
+    if (!imu->valid) {
+        /* 坡度弧与刻度同样撤掉：它们刻的是 roll，而 roll 此刻是个假的 0。
+         * 十字准星保留——它是**机体固定参考**，不依赖任何传感器。 */
+        draw_att_fail(fb);
+        draw_reticle(fb);
+        return;
+    }
 
-    draw_horizon(fb, roll, pitch);
-    draw_pitch_ladder(fb, roll, pitch);
-    draw_bank_arc(fb, roll);
+    draw_horizon(fb, imu->roll_deg, imu->pitch_deg);
+    draw_pitch_ladder(fb, imu->roll_deg, imu->pitch_deg);
+    draw_bank_arc(fb, imu->roll_deg);
     draw_reticle(fb);
 }

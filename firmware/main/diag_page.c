@@ -308,6 +308,11 @@ void pk_diag_page_render(uint16_t *fb)
     /* 截图用：PK_SIM_DIAG_DETAIL=<卡片序号> 直接进该详情页。 */
     { const char *e = getenv("PK_SIM_DIAG_DETAIL");
       if (e) s_detail = atoi(e); }
+    /* PK_SIM_DIAG_SCROLL=<px> 把总览滚到指定位置。12 张卡片一屏只放得下 6 张，
+     * 不给这个旋钮，下面半屏（microSD/QNH/电池/运行时长）就永远截不到——而
+     * 「无卡」恰恰是空态最该核对的一格。用法与设置页的 PK_SIM_SET_SCROLL 一致。 */
+    { const char *e = getenv("PK_SIM_DIAG_SCROLL");
+      if (e) s_scroll_y = atoi(e); }
 #endif
     if (s_detail >= 0) {
         draw_detail(fb, s_detail);
@@ -865,6 +870,12 @@ static void draw_detail(uint16_t *fb, int which)
             det_kv_tr(fb, line++, PK_TR_DIAG_K_PITCH, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%.1f", (double)st.yaw_deg);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_YAW, buf, COL_VAL);
+        } else {
+            /* 离线时补一条接线提示，照 SDR 那页的做法。只写「离线」的话整页
+             * 就一行字加四百像素黑，看起来像详情页没画出来，而且没告诉用户
+             * 下一步能做什么。 */
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_IMU_HINT,
+                       COL_WARN);
         }
         break;
     }
@@ -882,6 +893,9 @@ static void draw_detail(uint16_t *fb, int which)
             det_kv_tr(fb, line++, PK_TR_DIAG_K_ALTITUDE, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
             det_kv_tr(fb, line++, PK_TR_DIAG_K_QNH_REF, buf, COL_VAL);
+        } else {
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_BARO_HINT,
+                       COL_WARN);
         }
         break;
     }
@@ -960,6 +974,11 @@ static void draw_detail(uint16_t *fb, int which)
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_SYNCED,
                    pk_clock_is_synced() ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
                    pk_clock_is_synced() ? COL_ONLINE : COL_WARN);
+        /* 未校时就说明在等谁校（pk_clock 的两条来源：手机 BLE / GPS）。
+         * 只写一个「否」，用户不知道这是坏了还是还没轮到。 */
+        if (!pk_clock_is_synced())
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_CLK_HINT,
+                       COL_WARN);
         break;
 
     case 7: {   /* SYS */
@@ -992,6 +1011,9 @@ static void draw_detail(uint16_t *fb, int which)
             snprintf(buf, sizeof(buf), "%.1f GB",
                      (double)free_b / (1024.0 * 1024.0 * 1024.0));
             det_kv_tr(fb, line++, PK_TR_DIAG_K_FREE, buf, COL_VAL);
+        } else if (!mounted) {
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_SD_HINT,
+                       COL_WARN);
         }
         break;
     }

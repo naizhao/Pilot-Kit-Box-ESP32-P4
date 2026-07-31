@@ -21,3 +21,16 @@ void pk_mock_update(float yaw_deg, int own_alt_ft);
 
 /* 是否生成本机与交通目标。关掉可验证「无数据」时各渲染器的降级表现。 */
 void pk_mock_set_enabled(bool own_valid, bool traffic_valid);
+
+/*
+ * 「这一项该不该缺数据」的统一判定。
+ *
+ * 为什么要有总开关：此前 mock 只压「极端大数据」（最长呼号、目标扎堆、数值
+ * 极值），可用户第一次开机看到的是**另一个极端**——什么都没有。产品负责人
+ * 手上那台盒子 IMU/气压/GPS/SDR 全没接，交通页那句「无本机位置」被本机符号
+ * 压住，就是这一侧从没被截过图的直接后果。
+ *
+ * 用法：PK_SIM_EMPTY=1 一次把所有数据源掐掉（=出厂开机 / 外设全没接）；
+ * 或用单项开关只掐一样，定位「只缺这一个」时该页降级成什么样。
+ */
+bool pk_sim_flag(const char *key);

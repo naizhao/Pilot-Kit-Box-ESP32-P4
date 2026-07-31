@@ -15,9 +15,22 @@
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
+#include "mock_runtime.h"      /* pk_sim_flag：PK_SIM_EMPTY 总开关 */
+
+/* 环境变量取整数，缺省回落。全文件的 PK_SIM_* 旋钮都走它。 */
+static int sim_env(const char *k, int dflt)
+{
+    const char *e = getenv(k);
+    return e ? atoi(e) : dflt;
+}
 
 const esp_app_desc_t *esp_app_get_description(void)
 {
+    /* PK_SIM_NO_APPDESC=1 → 返回 NULL，模拟读不到 app 描述符（分区表异常、
+     * 或从非 factory 槽启动）。关于页此时版本显示 "?"、构建时间退回编译期
+     * 宏——这条降级路径写在代码里好几个月，从没有人看过它长什么样。 */
+    if (pk_sim_flag("PK_SIM_NO_APPDESC")) return NULL;
+
     /* 按**最糟情况**填，不是按好看的值填。
      *
      * version 是 git describe 的产物，编译安装后长这样：标签 + 提交数 +
@@ -40,7 +53,11 @@ void esp_chip_info(esp_chip_info_t *out)
 }
 
 /* ── ui_state 的只读部分 ────────────────────────────────────────
- * 滚动位置在模拟器里恒为 0：截图要的是「页面顶端长什么样」。 */
+ * 滚动位置默认 0：截图多数时候要的是「页面顶端长什么样」。
+ *
+ * 关于页与诊断页都不走这里：两者各自维护 s_scroll_y（ui_state 里这两个是
+ * 没人调用的旧接口），滚动旋钮相应地做在页面自己那边——about_page.c 的
+ * PK_SIM_ABOUT_SCROLL、diag_page.c 的 PK_SIM_DIAG_SCROLL。 */
 int     pk_ui_about_scroll_y(void)          { return 0; }
 int     pk_ui_diag_scroll_y(void)           { return 0; }
 uint8_t pk_ui_cal_wizard_last_accuracy(void){ return 3; }   /* 3 = 已校准 */
@@ -139,16 +156,35 @@ void pk_map_orient_set(pk_map_orient_t m)      { s_orient = m; }
 int  pk_traffic_range_idx_get(void)            { return s_range_idx; }
 void pk_traffic_range_idx_set(int idx)         { s_range_idx = idx < 0 ? 0 : (idx > 3 ? 3 : idx); }
 
-/* 航向解析：模拟器固定给一个朝向，够验证版面与旋转方向。 */
+/*
+ * 航向解析。
+ *
+ * 只保留真实优先级（own_ship.c pk_own_heading_resolve：ADS-B > IMU > GPS
+ * track）里模拟器喂得出数据的两级，且**次序刻意与真实实现相反**——mock 的
+ * IMU 与 ADS-B 航向本就同源（都来自动画 yaw），谁在前画面一样，而把 IMU
+ * 放前面能让 PK_SIM_HDG 这个钉住航向的开关继续生效。
+ *
+ * 关键是最后那条 return false：原来这里无条件 return true，于是拔掉 IMU
+ * 的场景在模拟器上永远显示着一个有效航向，交通页/看板的「HDG ---」这条
+ * 降级分支一次都没被截到过。
+ */
 bool pk_own_heading_resolve(bool own_valid, pk_own_src_t own_src,
                             const aircraft_t *own,
                             bool imu_valid, float imu_yaw_deg,
                             float *out_deg, pk_hdg_src_t *out_src)
 {
-    (void)own_valid; (void)own_src; (void)own; (void)imu_valid;
-    if (out_deg) *out_deg = imu_yaw_deg;
-    if (out_src) *out_src = PK_HDG_SRC_IMU;
-    return true;
+    if (imu_valid) {
+        if (out_deg) *out_deg = imu_yaw_deg;
+        if (out_src) *out_src = PK_HDG_SRC_IMU;
+        return true;
+    }
+    if (own_valid && own && own->have_velocity && own_src == PK_OWN_SRC_BOUND_ADSB) {
+        if (out_deg) *out_deg = (float)own->heading_deg;
+        if (out_src) *out_src = PK_HDG_SRC_ADSB;
+        return true;
+    }
+    if (out_src) *out_src = PK_HDG_SRC_NONE;
+    return false;
 }
 
 int pk_traffic_range_nm(int idx)
@@ -193,12 +229,6 @@ uint32_t pk_ui_list_get_selected_icao(void) { return 0; }
  * 中档。PK_SIM_SET_* 可逐项覆盖，用来把各状态都截一遍。 */
 #include "config_qnh.h"
 #include "config_storage.h"
-
-static int sim_env(const char *k, int dflt)
-{
-    const char *e = getenv(k);
-    return e ? atoi(e) : dflt;
-}
 
 float pk_qnh_get(void) { return sim_env("PK_SIM_SET_QNH", 101325) / 100.0f; }
 

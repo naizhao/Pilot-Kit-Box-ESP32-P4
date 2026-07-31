@@ -630,6 +630,16 @@ STRINGS = [
     ("DIAG_V_SDR_STALL_S", {"en": "STALLED",       "zh": "停滞"}),
     ("DIAG_V_SDR_STREAM",  {"en": "streaming",     "zh": "数据流"}),
     ("DIAG_V_SDR_HINT",    {"en": "connect to H2 (USB OTG)", "zh": "接到 H2 (USB OTG)"}),
+    # IMU / BARO 离线时的接线提示，照 SDR 那条的样子给。
+    # 没有它，这两页在「外设全没接」时**整页只有一行**「传感器 离线」，下面
+    # 四百像素纯黑——空态排查时看到的就是这个，第一反应是详情页没渲染出来。
+    # 地址取各自驱动里的常量（imu_task.c IMU_I2C_ADDR / baro_task.c BMP388_ADDR），
+    # 不另抄一份数字。
+    ("DIAG_V_IMU_HINT",    {"en": "check I2C0 wiring (0x4A)", "zh": "检查 I2C0 接线 (0x4A)"}),
+    # microSD / 时钟同理：这两页在空态下也各只有一行。
+    ("DIAG_V_SD_HINT",     {"en": "insert a microSD card",   "zh": "插入 microSD 卡"}),
+    ("DIAG_V_CLK_HINT",    {"en": "waiting for GPS or BLE",  "zh": "等待 GPS 或 BLE 校时"}),
+    ("DIAG_V_BARO_HINT",   {"en": "check I2C0 wiring (0x76)", "zh": "检查 I2C0 接线 (0x76)"}),
     ("DIAG_V_BLE_CONN",    {"en": "connected",     "zh": "已连接"}),
     ("DIAG_V_BLE_ADV",     {"en": "advertising",   "zh": "广播中"}),
     ("DIAG_V_BLE_IDLE",    {"en": "idle",          "zh": "空闲"}),
@@ -722,4 +732,15 @@ STRINGS = [
     ("TFC_TITLE",      {"en": "TRAFFIC",    "zh": "交通"}),
     # 本机位置未知 → 极坐标图整幅失去基准，画不了任何目标。
     ("TFC_NO_OWN_POS", {"en": "NO OWN POS", "zh": "无本机位置"}),
+    # 光说「没有」不够：用户第一次开机看到的就是这一屏，得让他知道设备在等
+    # 什么、他能做什么，否则「没有本机位置」和「设备坏了」在他眼里一个样。
+    # 两条来源都要写：GPS 定位是自动等来的，绑定本机是他自己点一下的事。
+    # 不写标点：全表 246 个汉字里一个标点都没有，为一句话新增一个全角逗号
+    # 字形，既破了行文风格也白占四档字模。
+    ("TFC_NO_OWN_HINT", {"en": "WAITING FOR GPS OR OWN-SHIP BIND",
+                         "zh": "等待 GPS 定位或绑定本机"}),
+    # 收到了目标、但一架都不在当前量程内。与「一架都没收到」观感相同、成因
+    # 完全不同：那一种要等信号，这一种按一下 − 就能看见，不能共用一句话。
+    ("TFC_ALL_OUT_RANGE", {"en": "ALL TRAFFIC OUTSIDE RANGE",
+                           "zh": "目标全在量程外"}),
 ]

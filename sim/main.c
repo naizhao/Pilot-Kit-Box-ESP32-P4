@@ -25,6 +25,31 @@
  *     T         切换一条 toast 提示（验证它压在 dock / FAB 之上）
  *     B         进出二级页面（验证返回栏与 FAB 变 ←）
  *     ← →      手动步进 roll，观察极限姿态
+ *
+ * 「极端无数据」开关
+ * ------------------
+ * 改完 UI 除了压最长文本/目标扎堆/数值极值，**还要顺手截一轮空态**——用户
+ * 第一次开机、或外设一个都没接时看到的就是它，而那一侧此前从没被系统截过，
+ * 交通页那句「无本机位置」被本机符号压住整整几个版本没人发现。
+ *
+ *     PK_SIM_EMPTY=1        总开关：以下全部打开（= 出厂开机、外设全没接）
+ *
+ *     PK_SIM_NO_IMU=1       BNO085 没接（姿态/航向/调平同时失效）
+ *     PK_SIM_NO_OWN=1       没有本机位置（GPS 未定位且未绑定 ADS-B 本机）
+ *     PK_SIM_NO_BARO=1      BMP388 没接
+ *     PK_SIM_NO_GPS=1       GPS 模块没接 / 无定位
+ *     PK_SIM_NO_TRAFFIC=1   一架 ADS-B 目标都没收到
+ *     PK_SIM_TFC_FAR=1      收到了目标但全部在量程外（与上一条观感同、成因异）
+ *     PK_SIM_TFC_BARE=1     目标只有位置，呼号/高度/速度全缺（各列降级）
+ *     PK_SIM_NO_APPDESC=1   读不到 app 描述符（关于页版本显示 "?"）
+ *     PK_SIM_DIAG_OK=1      反向开关：把诊断页整体切成「一切正常」
+ *
+ * 版面位置类（与空态常配合用）：
+ *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
+ *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
+ *
+ * 常用组合已经登记在 capture.py 的 SCENES 里（empty-4.3-* 那一组），
+ * 跑 `python3 sim/capture.py --only empty` 一次出齐。
  */
 /* 用 <SDL.h> 而非 <SDL2/SDL.h>：sdl2-config --cflags 给出的是
  * -I<prefix>/include/SDL2，头文件已在搜索路径根部。这也是 SDL 官方
@@ -74,36 +99,68 @@ typedef struct {
     bool  paused;
 } sim_state_t;
 
+/*
+ * 「这一路数据在不在」的判定，与 mock_runtime / page_stub 用同一个总开关。
+ *
+ * 此前这个函数把每个 valid 位**恒填 true**：于是 PK_SIM_EMPTY 下别的页面都
+ * 空了，PFD 仍是一屏姿态齐全、速度高度俱在的假象，各仪表的降级显示一次都没
+ * 被截到过——而产品负责人手上那台盒子（IMU/气压/GPS/SDR 全没接）开机第一眼
+ * 看到的就是 PFD。数据源按真机接线对上：
+ *   姿态 / 航向      ← BNO085   (PK_SIM_NO_IMU)
+ *   地速 / 本机高度  ← ADS-B 绑定或 GPS (PK_SIM_NO_OWN)
+ *   气压高度 / 升降率 ← BMP388   (PK_SIM_NO_BARO)
+ *   星数 / 定位      ← ATGM336H (PK_SIM_NO_GPS)
+ */
+typedef struct {
+    bool no_imu, no_own, no_gps, no_baro, no_traffic, empty;
+} sim_lack_t;
+
+static sim_lack_t sim_lack(void)
+{
+    sim_lack_t l = {
+        .no_imu     = pk_sim_flag("PK_SIM_NO_IMU"),
+        .no_own     = pk_sim_flag("PK_SIM_NO_OWN"),
+        .no_gps     = pk_sim_flag("PK_SIM_NO_GPS"),
+        .no_baro    = pk_sim_flag("PK_SIM_NO_BARO"),
+        .no_traffic = pk_sim_flag("PK_SIM_NO_TRAFFIC"),
+        /* 总开关本身也当一路用：录制、蓝牙连接、超温这几项不是「传感器缺数据」
+         * 而是「什么都还没发生」，出厂开机一律是灭的。 */
+        .empty      = pk_sim_flag("PK_SIM_EMPTY"),
+    };
+    return l;
+}
+
 static void mock_fill(const sim_state_t *st,
                       pk_pfd_imu_t *imu, pk_pfd_hsi_t *hsi,
                       pk_pfd_alt_tape_t *alt, pk_pfd_speed_tape_t *spd,
                       pk_pfd_status_t *stat)
 {
     const float t = st->t;
+    const sim_lack_t k = sim_lack();
 
     /* 三个周期互质，避免动作同步显得假 */
-    imu->valid     = true;
+    imu->valid     = !k.no_imu;
     imu->roll_deg  = 25.0f * sinf(t * 0.37f) + st->roll_bias;
     imu->pitch_deg = 10.0f * sinf(t * 0.23f);
 
-    hsi->imu_valid = true;
+    hsi->imu_valid = !k.no_imu;
     hsi->yaw_deg   = fmodf(t * 6.0f, 360.0f);
 
-    alt->valid       = true;
+    alt->valid       = !k.no_own;
     alt->altitude_ft = 23225 + (int)(1200.0f * sinf(t * 0.11f));
 
-    spd->valid           = true;
+    spd->valid           = !k.no_own;
     spd->ground_speed_kt = 378 + (int)(60.0f * sinf(t * 0.17f));
 
-    stat->imu_valid      = true;
+    stat->imu_valid      = !k.no_imu;
     stat->yaw_deg        = hsi->yaw_deg;
-    stat->aircraft_count = 6;
-    stat->gps_have_fix   = true;
-    stat->gps_sats       = 17;
+    stat->aircraft_count = k.no_traffic ? 0 : 6;
+    stat->gps_have_fix   = !k.no_gps;
+    stat->gps_sats       = k.no_gps ? 0 : 17;
     /* 满载：所有状态位同时点亮并取最坏宽度，用于验证顶栏是否溢出。 */
-    stat->rec_active     = true;
-    stat->ble_connected  = true;
-    stat->batt_valid     = true;
+    stat->rec_active     = !k.empty;
+    stat->ble_connected  = !k.empty;
+    stat->batt_valid     = true;   /* 电池在板上，没有「没接」这一说 */
     /* 电量图标有七档刻度 + 低电告警 + 充电动画，逐档验证需要能改电量而
      * 不重编。走环境变量而非命令行参数：--shot 已占用位置参数，且这类
      * "临时拨一个值看看"的旋钮以后还会有别的。 */
@@ -114,8 +171,40 @@ static void mock_fill(const sim_state_t *st,
 
     /* 把本帧姿态推给运行时桩，交通目标才会随航向绕罗盘转。 */
     pk_mock_update(hsi->yaw_deg, alt->altitude_ft);
-    stat->temp_warn      = true;
-    stat->temp_c         = 78;
+    stat->temp_warn      = !k.empty;
+    stat->temp_c         = k.empty ? 42 : 78;
+}
+
+/*
+ * 右下信息框与左下速度框。
+ *
+ * 抽成函数是因为 headless 与交互两条路径本来各抄了一份**一模一样**的初始化，
+ * 于是给它们加降级开关就得改两处、漏一处就是两种画面。
+ */
+static void mock_fill_boxes(pk_pfd_infobox_t *ib, pk_pfd_leftbox_t *lb,
+                            const pk_pfd_alt_tape_t *alt,
+                            const pk_pfd_speed_tape_t *spd)
+{
+    const sim_lack_t k = sim_lack();
+
+    memset(ib, 0, sizeof(*ib));
+    ib->baro_valid   = !k.no_baro;
+    ib->baro_alt_ft  = alt->altitude_ft - 120;
+    ib->alt_valid    = !k.no_own;
+    ib->alt_ft       = alt->altitude_ft;
+    /* 升降率两个来源：ADS-B 报文里的 VS，或气压高度的微分。两条都断了才没有。 */
+    ib->vs_valid     = !(k.no_own && k.no_baro);
+    ib->vs_fpm       = -640;
+    ib->vs_from_adsb = !k.no_own;
+
+    memset(lb, 0, sizeof(*lb));
+    lb->speed_valid = !k.no_own;
+    lb->kmh = (int)(spd->ground_speed_kt * 1.852f + 0.5f);
+    lb->mph = (int)(spd->ground_speed_kt * 1.15078f + 0.5f);
+    lb->src = PK_PFD_SRC_ADSB;
+    /* 呼号只有绑定了本机才有。没绑就留空串——不是留上一次的 "CES2158"，
+     * 那会让「没有本机」这一态看起来像绑着一架幽灵飞机。 */
+    if (!k.no_own) snprintf(lb->label, sizeof(lb->label), "CES2158");
 }
 
 /* ------------------------------------------------------------------ */
@@ -242,20 +331,10 @@ static int run_headless(float at_sec, const char *out)
     pk_pfd_hsi_render(fb, &hsi);
     pk_pfd_hsi_traffic_render(fb);   /* 罗盘外圈的交通目标，顺序同 pfd.c */
     {
-        pk_pfd_infobox_t ib = {
-            .baro_valid = true,  .baro_alt_ft  = alt.altitude_ft - 120,
-            .alt_valid  = true,  .alt_ft       = alt.altitude_ft,
-            .vs_valid   = true,  .vs_fpm       = -640,
-            .vs_from_adsb = true,
-        };
+        pk_pfd_infobox_t ib;
+        pk_pfd_leftbox_t lb;
+        mock_fill_boxes(&ib, &lb, &alt, &spd);
         pk_pfd_infobox_render(fb, &ib);
-        pk_pfd_leftbox_t lb = {
-            .speed_valid = true,
-            .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
-            .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
-            .src = PK_PFD_SRC_ADSB,
-        };
-        snprintf(lb.label, sizeof(lb.label), "CES2158");
         pk_pfd_leftbox_render(fb, &lb);
     }
 
@@ -397,20 +476,10 @@ int main(int argc, char **argv)
         pk_pfd_hsi_render(fb, &hsi);
     pk_pfd_hsi_traffic_render(fb);   /* 罗盘外圈的交通目标，顺序同 pfd.c */
     {
-        pk_pfd_infobox_t ib = {
-            .baro_valid = true,  .baro_alt_ft  = alt.altitude_ft - 120,
-            .alt_valid  = true,  .alt_ft       = alt.altitude_ft,
-            .vs_valid   = true,  .vs_fpm       = -640,
-            .vs_from_adsb = true,
-        };
+        pk_pfd_infobox_t ib;
+        pk_pfd_leftbox_t lb;
+        mock_fill_boxes(&ib, &lb, &alt, &spd);
         pk_pfd_infobox_render(fb, &ib);
-        pk_pfd_leftbox_t lb = {
-            .speed_valid = true,
-            .kmh = (int)(spd.ground_speed_kt * 1.852f + 0.5f),
-            .mph = (int)(spd.ground_speed_kt * 1.15078f + 0.5f),
-            .src = PK_PFD_SRC_ADSB,
-        };
-        snprintf(lb.label, sizeof(lb.label), "CES2158");
         pk_pfd_leftbox_render(fb, &lb);
     }
 

@@ -47,6 +47,39 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     ("ui-4.3-battery-low",  {"PK_SIM_BATT": "3"},                 "低电量：电池转 alert 图标并变红"),
     ("ui-4.3-charging",     {"PK_SIM_BATT": "45",
                              "PK_SIM_CHARGING": "1"},             "充电中：电池播放逐帧动画"),
+
+    # ── 极端无数据 ──────────────────────────────────────────────────
+    #
+    # 上面那批压的都是「极端大数据」：最长呼号、目标扎堆、数值取极值。另一个
+    # 极端一直没人系统压过——而**用户第一次开机看到的就是它**：什么都没接、
+    # 什么都没收到。产品负责人手上那台盒子（IMU/气压/GPS/SDR 全没接）反馈
+    # 「无本机位置几个字被挡住了」，正是这一侧从没被截过图的直接后果。
+    #
+    # PK_SIM_EMPTY=1 是总开关（等于把所有单项开关一起打开）；单项开关见
+    # sim/main.c 文件头那张表，用来定位「只缺这一样」时该页降级成什么样。
+    # 中英两版都要：中文比英文宽，提示语的居中与遮挡在两侧不是同一回事。
+    ("empty-4.3-pfd",       {"PK_SIM_EMPTY": "1"},                "PFD 全空：ATT FAIL + 罗盘撤除 + 各读数 ---"),
+    ("empty-4.3-traffic",   {"PK_SIM_PAGE": "traffic",
+                             "PK_SIM_EMPTY": "1"},                "交通页全空：无本机位置 + 等什么的提示"),
+    ("empty-4.3-traffic-en",{"PK_SIM_PAGE": "traffic",
+                             "PK_SIM_EMPTY": "1",
+                             "PK_SIM_LANG": "en"},                "同上英文（英文更宽，另测一版）"),
+    ("empty-4.3-traffic-noown", {"PK_SIM_PAGE": "traffic",
+                             "PK_SIM_NO_OWN": "1"},               "只缺本机位置：收得到目标但画不出"),
+    ("empty-4.3-traffic-far",   {"PK_SIM_PAGE": "traffic",
+                             "PK_SIM_TFC_FAR": "1"},              "目标全在量程外：与「没收到」要分开说"),
+    ("empty-4.3-list",      {"PK_SIM_PAGE": "list",
+                             "PK_SIM_EMPTY": "1"},                "看板全空：NO CONTACTS"),
+    ("empty-4.3-list-bare", {"PK_SIM_PAGE": "list",
+                             "PK_SIM_TFC_BARE": "1"},             "目标只有位置：呼号/高度/速度各列降级"),
+    ("empty-4.3-diag",      {"PK_SIM_PAGE": "diag",
+                             "PK_SIM_EMPTY": "1"},                "诊断总览：八卡全离线（真机当前状态）"),
+    ("empty-4.3-diag-imu",  {"PK_SIM_PAGE": "diag",
+                             "PK_SIM_EMPTY": "1",
+                             "PK_SIM_DIAG_DETAIL": "0"},          "诊断详情：离线也要给出下一步"),
+    ("empty-4.3-settings",  {"PK_SIM_PAGE": "settings",
+                             "PK_SIM_EMPTY": "1",
+                             "PK_SIM_SET_SCROLL": "400"},         "设置页无卡：存储行与格式化按钮置灰"),
 ]
 
 

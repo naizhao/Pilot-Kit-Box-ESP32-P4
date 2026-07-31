@@ -707,6 +707,43 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
     }
 }
 
+/*
+ * 雷达区中央的降级提示。
+ *
+ * 「图上一架都没有」有三种成因，用户的下一步动作完全不同：没有本机位置要等
+ * 定位或去绑定，全在量程外按一下 − 就看见，真的没收到就只能等。共用一句
+ * 「无数据」等于什么也没说，而一个字都不写最糟——真机上就是一片黑，用户会
+ * 当成页面没画出来。
+ *
+ * 压一层暗底再写字：底下是距离环与罗盘刻度，亮灰细线穿过笔画会把字切断。
+ * 雷达上的目标标签同样这么做（draw_label）。
+ */
+static void draw_center_notice(uint16_t *fb, int cy, uint16_t col,
+                               const char *msg, pk_aa_size_t msg_size,
+                               const char *hint)
+{
+    const int mw = pk_aa_text_width(msg, msg_size);
+    const int mh = pk_aa_cell_h(msg_size);
+    const int hw = hint ? pk_aa_text_width(hint, PK_AA_S) : 0;
+    const int hh = hint ? PK_AA_S_H + 8 : 0;      /* 8 = 与主行的行距 */
+
+    const int w  = mw > hw ? mw : hw;
+    const int y0 = cy - (mh + hh) / 2;
+
+    /* 暗底比文字四周各外扩 14/8 px：贴着字沿切会显得像个补丁，留一圈才像
+     * 一块「这里没有内容」的牌子。 */
+    pk_pfd_darken_rect(fb, CX - w / 2 - 14, y0 - 8,
+                       CX + w / 2 + 14, y0 + mh + hh + 8, 190);
+
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CX - mw / 2, y0, msg, col, msg_size);
+    if (hint) {
+        /* 提示语用中性灰而非主提示的琥珀：琥珀是「注意这里」，同色两行会让
+         * 眼睛不知道先读哪句。 */
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CX - hw / 2, y0 + mh + 8,
+                   hint, pk_rgb565(170, 182, 200), PK_AA_S);
+    }
+}
+
 void pk_traffic_page_render(uint16_t *fb)
 {
     const uint16_t COL_BG    = pk_rgb565(  7,  10,  16);
@@ -770,11 +807,24 @@ void pk_traffic_page_render(uint16_t *fb)
     }
 
     pk_map_orient_t orient = pk_map_orient_get();
+    /*
+     * 没有航向就画不出「机头朝上」——那幅图的上方是哪儿全靠 own_heading，
+     * 而此刻它只是个占位的 0。数值上此时 rel_bearing 恒等于 abs_bearing，
+     * 画出来的**本来就是**一幅正北朝上的图；顶栏却照旧写着「航向朝上」，
+     * 同一行里还并排着 "HDG ---"，自相矛盾。于是这里把朝向降级成 NORTH-UP，
+     * 让扇区、罗盘、本机符号与顶栏那行字说同一件事。
+     *
+     * 左下角那枚按钮仍按 orient 画：它表达的是用户的**选择**，不是当前画面；
+     * 航向一回来就该立刻按选择生效。
+     */
+    const pk_map_orient_t orient_eff = hdg_valid ? orient : PK_MAP_NORTH_UP;
     int range_idx = pk_traffic_range_idx_get();
     int range_nm  = pk_traffic_range_nm(range_idx);
 
-    /* HSI 可见扇区半透明填充 — 背景层,必须在距离环/罗盘/目标之前画。 */
-    draw_hsi_sector(fb, orient, own_heading, hdg_valid);
+    /* HSI 可见扇区半透明填充 — 背景层,必须在距离环/罗盘/目标之前画。
+     * 无本机位置时不画：那片青色扇区说的是「我前方这一片」，而此刻连「我」
+     * 在哪都不知道。它也正压在中央提示文字底下。 */
+    if (own_valid) draw_hsi_sector(fb, orient_eff, own_heading, hdg_valid);
 
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
@@ -823,7 +873,7 @@ void pk_traffic_page_render(uint16_t *fb)
     {
         /* 朝向文案与设置页同一条词条：那里也是「地图朝向」这一项的两个选项，
          * 两处各写一份就会出现设置里叫一个名、雷达页上叫另一个名。 */
-        const char *om = pk_i18n_text(orient == PK_MAP_HEADING_UP
+        const char *om = pk_i18n_text(orient_eff == PK_MAP_HEADING_UP
                                       ? PK_TR_MAP_ORIENT_HDG_UP
                                       : PK_TR_MAP_ORIENT_NORTH_UP);
         snprintf(buf, sizeof(buf), "%dNM", range_nm);
@@ -841,20 +891,32 @@ void pk_traffic_page_render(uint16_t *fb)
                    om, COL_CYAN, PK_UI_TITLE_SIZE);
     }
 
-    /* ── 距离环 ── */
-    for (int k = 0; k < 3; k++) {
-        int nm = RINGS[range_idx][k];
-        if (nm <= 0 || nm > range_nm) continue;
-        float r = (float)nm / range_nm * RMAX;
-        pk_pfd_draw_arc_aa(fb, CX, CY, r, 0.0f, 360.0f, 1.0f, COL_RING);
-        snprintf(buf, sizeof(buf), "%d", nm);
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     CX + 2, CY - (int)r - 7, buf, COL_RINGL, 1);
+    /* ── 距离环 ──
+     * 只有知道「我在哪」，「离我 5 NM」才有意义。无本机位置时这几圈是在给一个
+     * 不存在的原点标刻度，而且 20 NM 档下最内圈 r=50 正好横穿中央那句提示。 */
+    if (own_valid) {
+        for (int k = 0; k < 3; k++) {
+            int nm = RINGS[range_idx][k];
+            if (nm <= 0 || nm > range_nm) continue;
+            float r = (float)nm / range_nm * RMAX;
+            pk_pfd_draw_arc_aa(fb, CX, CY, r, 0.0f, 360.0f, 1.0f, COL_RING);
+            snprintf(buf, sizeof(buf), "%d", nm);
+            pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                         CX + 2, CY - (int)r - 7, buf, COL_RINGL, 1);
+        }
+    } else {
+        /* 最外那一圈仍要画：它同时是罗盘的**边框**，与刻度、主向字母同属方向
+         * 系统，没有位置也成立。第一版把它一起去掉了，结果 30 段刻度成了黑底
+         * 上一把断线，比空白更像坏屏——那正是这次要消灭的观感。不标数字：
+         * 「20」是距离，而这一态没有距离。 */
+        pk_pfd_draw_arc_aa(fb, CX, CY, (float)RMAX, 0.0f, 360.0f, 1.0f, COL_RING);
     }
 
-    /* ── 罗盘刻度 + 主向字母（磁北系）── */
+    /* ── 罗盘刻度 + 主向字母（磁北系）──
+     * 这一圈**没有位置也成立**：它说的是方向不是地点，无本机位置时照画，
+     * 页面才不至于塌成一片黑，而且半径 184~200，离中央提示很远，不遮挡。 */
     for (int d = 0; d < 360; d += 30) {
-        float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
+        float screen = (orient_eff == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
         int x1, y1, x2, y2;
         polar(screen, RMAX, &x1, &y1);
         polar(screen, RMAX - (d % 90 == 0 ? 8 : 5), &x2, &y2);
@@ -864,7 +926,7 @@ void pk_traffic_page_render(uint16_t *fb)
         const char *cards[4] = { "N", "E", "S", "W" };
         for (int i = 0; i < 4; i++) {
             int d = i * 90;
-            float screen = (orient == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
+            float screen = (orient_eff == PK_MAP_HEADING_UP) ? (float)d - own_heading : (float)d;
             int lx, ly;
             polar(screen, RMAX - 16, &lx, &ly);
             pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -876,6 +938,9 @@ void pk_traffic_page_render(uint16_t *fb)
     static vis_t    s_vis[AIRCRAFT_TABLE_CAPACITY];
     static uint32_t s_icaos[AIRCRAFT_TABLE_CAPACITY];
     int nv = 0;
+    /* 被量程挡在外面的架数。空雷达时全靠它区分「按 − 就能看见」和「真的没
+     * 收到」——两种情况屏上都是一片空，成因与对策却完全不同。 */
+    int n_out_of_range = 0;
 
     if (own_valid) {
         for (size_t i = 0; i < n; i++) {
@@ -886,7 +951,7 @@ void pk_traffic_page_render(uint16_t *fb)
                 t->have_position, t->lat, t->lon,
                 t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
             if (!rel.valid) continue;
-            if (rel.dist_nm > (float)range_nm) continue;   /* 量程外不画 */
+            if (rel.dist_nm > (float)range_nm) { n_out_of_range++; continue; }
             s_vis[nv].ac  = t;
             s_vis[nv].rel = rel;
             nv++;
@@ -907,21 +972,37 @@ void pk_traffic_page_render(uint16_t *fb)
     draw_buttons(fb, orient, range_nm);
 
     if (!own_valid) {
-        /* 必须走抗锯齿字体：pk_font_puts 是 5×7 位图，只有 ASCII 字形，
-         * 中文进去会整句渲染成空白——而这条恰恰是「整幅雷达图为什么是空的」
-         * 的唯一解释，丢了它这一页就成了没有说明的黑屏。
-         * 居中同理用实测宽度，原来的 CX-30 是按 10 个 ASCII 字符手算的。 */
-        const char *msg = pk_i18n_text(PK_TR_TFC_NO_OWN_POS);
-        const int w = pk_aa_text_width(msg, PK_AA_M);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   CX - w / 2, CY - PK_AA_M_H / 2, msg, COL_AMBER, PK_AA_M);
+        /*
+         * 这是降级态**唯一**的解释，必须一眼可读。
+         *
+         * 真机反馈「无本机位置几个字被挡住了」，挡它的是页面最后画的那枚本机
+         * 符号：30×30 的白色 flight 字形正画在 (CX, CY)，而这句话也居中在
+         * (CX, CY)，「机」字被整个抹掉（英文侧吃掉的是 OWN 的 N）。现在这一态
+         * 不再画本机符号——不知道自己在哪的时候画一架「我在这」本身就是假话，
+         * 顺带也就没人挡它了。距离环与前方扇区同理已在上面跳过。
+         *
+         * 字号提到 L 档，与看板页的「无目标」同档：两页的空态提示是同一件事，
+         * 不该一页大一页小。必须走抗锯齿字体——pk_font_puts 是 5×7 位图只有
+         * ASCII 字形，中文进去整句渲染成空白。
+         */
+        draw_center_notice(fb, CY, COL_AMBER,
+                           pk_i18n_text(PK_TR_TFC_NO_OWN_POS), PK_AA_L,
+                           pk_i18n_text(PK_TR_TFC_NO_OWN_HINT));
+    } else if (nv == 0) {
+        /* 有本机、却一架都画不出。两种成因分开说，见 n_out_of_range 的注释。
+         * 位置抬到本机符号正上方：那枚符号此刻是有效信息（我在这、朝这边），
+         * 不能像上一分支那样撤掉，于是提示让开它。 */
+        draw_center_notice(fb, CY - 46, COL_AMBER,
+                           pk_i18n_text(n_out_of_range > 0 ? PK_TR_TFC_ALL_OUT_RANGE
+                                                           : PK_TR_LIST_NO_CONTACTS),
+                           PK_AA_M, NULL);
     } else {
         /* 先摆位再画：标签要互相避让，就必须在动笔之前知道所有目标的落点。
          * 这也是符号与标签分成两趟画的原因——一趟画完，后画的会盖住先画的。 */
         static lbl_t s_lbls[AIRCRAFT_TABLE_CAPACITY];
         for (int k = 0; k < nv; k++) {
             int tx, ty;
-            target_pos(&s_vis[k], orient, range_nm, &tx, &ty);
+            target_pos(&s_vis[k], orient_eff, range_nm, &tx, &ty);
             build_label(&s_lbls[k], &s_vis[k], tx, ty, k == sel_row);
         }
         place_labels(s_lbls, nv, (sel_row >= 0 && sel_row < nv) ? sel_row : -1);
@@ -929,13 +1010,13 @@ void pk_traffic_page_render(uint16_t *fb)
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;                /* 选中最后画(置顶) */
             draw_target_symbol(fb, &s_vis[k], s_lbls[k].tx, s_lbls[k].ty,
-                               orient, false,
+                               orient_eff, false,
                                target_color(&s_vis[k].rel, false));
         }
         if (nv > 0 && sel_row >= 0 && sel_row < nv)
             draw_target_symbol(fb, &s_vis[sel_row],
                                s_lbls[sel_row].tx, s_lbls[sel_row].ty,
-                               orient, true,
+                               orient_eff, true,
                                target_color(&s_vis[sel_row].rel, true));
 
         for (int k = 0; k < nv; k++) {
@@ -947,10 +1028,16 @@ void pk_traffic_page_render(uint16_t *fb)
                        target_color(&s_vis[sel_row].rel, true));
     }
 
-    /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */
-    draw_own_aircraft(fb,
-                      (orient == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f,
-                      COL_OWN);
+    /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ──
+     *
+     * 无本机位置时不画。两条理由，任何一条都足够：
+     *   1. 它是「我在这」的断言，而此刻恰恰不知道我在哪；
+     *   2. 它是页面**最后**画的一层，30×30 白色字形正落在 (CX, CY)，把同样
+     *      居中的那句「无本机位置」拦腰抹掉——真机反馈的遮挡就是这一处。 */
+    if (own_valid)
+        draw_own_aircraft(fb,
+                          (orient_eff == PK_MAP_NORTH_UP && hdg_valid) ? own_heading : 0.0f,
+                          COL_OWN);
 
     /* 详情不再压在雷达上：同样的信息已经在右栏卡片里（spec §5.2 也把它归到
      * 卡片），雷达区留给图形本身。draw_detail_bar() 暂时保留，等右栏补上机型

@@ -102,8 +102,13 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
 
     /* Enumerate integer headings in 5° steps, project each onto the
      * rose by its offset from the current yaw. The visible top of the
-     * arc corresponds to yaw itself. */
-    for (int hdg = 0; hdg < 360; hdg += 5) {
+     * arc corresponds to yaw itself.
+     *
+     * 无航向时整圈刻度与 N/E/S/W 全部不画。原来 yaw 退化成 0，罗盘照旧铺开、
+     * N 端端正正落在机头上方——那是在说「你正朝北」，而此刻一个航向源都没有。
+     * 下面的 HDG 框早就显示 "---" 了，两者各说各话；空态排查才看出来这一处。
+     * 本机符号与洋红占位杆保留：它们是机体固定参考，与航向无关。 */
+    for (int hdg = 0; h->imu_valid && hdg < 360; hdg += 5) {
         float delta = (float)hdg - yaw;
         while (delta >  180.0f) delta -= 360.0f;
         while (delta < -180.0f) delta += 360.0f;

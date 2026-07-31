@@ -40,11 +40,24 @@ void pk_mock_set_enabled(bool own_valid, bool traffic_valid)
     s_traffic_ok = traffic_valid;
 }
 
+/* 见 mock_runtime.h。PK_SIM_EMPTY=1 等价于把每个单项开关都打开。 */
+bool pk_sim_flag(const char *key)
+{
+    const char *e = getenv("PK_SIM_EMPTY");
+    if (e && e[0] == '1') return true;
+    e = getenv(key);
+    return e && e[0] == '1';
+}
+
 /* ── IMU ──────────────────────────────────────────────────────────── */
 bool pk_imu_sample_get(pk_imu_sample_t *out)
 {
     if (!out) return false;
     memset(out, 0, sizeof(*out));
+    /* PK_SIM_NO_IMU=1 → 模拟 BNO085 没接/无应答（真机串口上那句
+     * "BNO085 no response"）。姿态、航向、调平三条路径同时失效，是**盒子
+     * 单卖、用户还没装 IMU** 时的常态，不是罕见故障。 */
+    if (pk_sim_flag("PK_SIM_NO_IMU")) return false;
     out->valid    = s_own_ok;
     /* PK_SIM_HDG=<deg> 把航向钉住。动画驱动的 yaw 每帧都在变，截不出
      * 「正好 60°」那一帧，而验证「正北朝上时本机符号跟着航向转」恰恰需要
@@ -62,6 +75,10 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
                          aircraft_t *out, pk_own_src_t *src)
 {
     (void)now_us; (void)max_age_us;
+    /* PK_SIM_NO_OWN=1 → 既没绑定 ADS-B 本机、GPS 也没定位（真机 gps fix=0）。
+     * 这是**开机后到拿到首次定位之间**的必经状态，不是异常：室内、冷启动、
+     * 天线遮挡都会长时间停在这里。此时雷达上任何目标的距离/方位都算不出来。 */
+    if (pk_sim_flag("PK_SIM_NO_OWN")) { if (src) *src = PK_OWN_SRC_NONE; return false; }
     if (!s_own_ok) return false;
     if (out) {
         memset(out, 0, sizeof(*out));
@@ -82,6 +99,10 @@ bool pk_baro_get(pk_baro_state_t *out)
 {
     if (!out) return false;
     memset(out, 0, sizeof(*out));
+    /* PK_SIM_NO_BARO=1 → 模拟 BMP388 没焊/I²C 无应答（真机那句
+     * "BMP388 not found"）。返回 false 且 valid=0，与 baro_task 未初始化时
+     * 一致——调用方多数只看返回值，也有只看 valid 的，两边都得给对。 */
+    if (pk_sim_flag("PK_SIM_NO_BARO")) return false;
     out->valid       = true;
     out->pressure_pa = 40000.0f;      /* ≈ 23 000 ft 标准大气 */
     out->temp_c      = -30.0f;
@@ -154,7 +175,18 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     if (!out || cap == 0 || !s_traffic_ok) return 0;
     /* PK_SIM_NO_TRAFFIC=1 → 空快照。空列表是必须验证的一种状态：留白屏会被
      * 当成页面没画出来，得有明确的「当前无目标」文案。 */
-    { const char *e = getenv("PK_SIM_NO_TRAFFIC"); if (e && e[0] == '1') return 0; }
+    if (pk_sim_flag("PK_SIM_NO_TRAFFIC")) return 0;
+
+    /* PK_SIM_TFC_FAR=1 → 目标全部推到量程外（+40 NM，超过最大档 20 NM）。
+     * 这是「有数据但屏上一架都画不出」的那一种空：顶栏计数不为 0，雷达却是
+     * 空的，用户会以为渲染坏了。单独一个开关是因为它与「一架都没收到」的
+     * 观感相同、成因完全不同，两者的文案不能是同一句。
+     *
+     * PK_SIM_TFC_BARE=1 → 目标只有位置，呼号/高度/速度全缺。真实空域里
+     * 只发 DF17 位置报文、不发识别与速度的飞机相当常见（老应答机、刚上电），
+     * 看板上那几列会同时退化成 ---。 */
+    const bool far  = pk_sim_flag("PK_SIM_TFC_FAR");
+    const bool bare = pk_sim_flag("PK_SIM_TFC_BARE");
 
     /* 高度一栏是**相对本机**的差值，不是绝对高度：本机高度由模拟器动画驱动
      * （每帧都在变），写死绝对值会让相对高度整体漂移，三档配色也就试不准。 */
@@ -197,9 +229,11 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     size_t n = sizeof(SET) / sizeof(SET[0]);
     if (n > cap) n = cap;
     for (size_t i = 0; i < n; ++i) {
-        place(&out[i], 0x3C0000 + (uint32_t)i, SET[i].rel, SET[i].dist,
-              SET[i].have_alt, s_own_alt + SET[i].alt,
-              SET[i].have_vel, SET[i].track, SET[i].call, SET[i].sqk,
+        place(&out[i], 0x3C0000 + (uint32_t)i,
+              SET[i].rel, SET[i].dist + (far ? 40.0f : 0.0f),
+              bare ? false : SET[i].have_alt, s_own_alt + SET[i].alt,
+              bare ? false : SET[i].have_vel, SET[i].track,
+              bare ? NULL : SET[i].call, bare ? -1 : SET[i].sqk,
               SET[i].age, now_us);
     }
     return n;
