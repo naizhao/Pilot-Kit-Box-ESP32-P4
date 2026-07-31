@@ -59,19 +59,17 @@
 #define CY     (TFC_TOP + (PK_DISPLAY_H - TFC_TOP) / 2)
 #define RMAX   200
 
-/* 文字统一走抗锯齿字体：normal 档做正文，XS 做卡片里的次要列。
- * 原先满页 5×7 位图，在 217 PPI 上既小又糊，与已改好的其余页面也不是一套。 */
+/* 文字统一走抗锯齿字体。原先满页 5×7 位图，在 217 PPI 上既小又糊，与已改好
+ * 的其余页面也不是一套。
+ * 2026-08-01：配套的 TFC_PUTS_XS 已删——卡片里的次要列直接调 pk_aa_puts(…,
+ * PK_AA_XS)，那个宏从落地起就没有使用者。 */
 #define TFC_PUTS(fb, x, y, s, col) \
         pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#define TFC_PUTS_XS(fb, x, y, s, col) \
-        pk_aa_puts((fb), PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XS)
 /* 顶栏其余读数与标题同一条基线，所以直接取标题的纵坐标。 */
 #define TFC_HDR_TY    PK_UI_TITLE_Y
 
 /* ── 右栏（spec §5.2：280 px，4 张卡片可滚动）───────────────── */
 #define SIDE_X        TFC_SIDE_X
-#define SIDE_W        (PK_DISPLAY_W - SIDE_X)
-#define SIDE_PAD      12
 /* 行高与内边距直接取 PFD 信息框的值（PFD_IB_ROW_H/_GAP/_PAD）。
  *
  * 一开始自己造了「卡片」：一张 76~97 px、三行内容、带边框。做出来又大又

@@ -26,7 +26,6 @@
 #include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_aa_text.h"
-#include "pfd_font.h"
 
 /* ── geometry ─────────────────────────────────────────────────────────── */
 #define STAPE_X0     PFD_SPD_X0
@@ -45,19 +44,13 @@
  *      标签每 20 kt = 40 px 间距。注意这里是**每节 2 像素**，与 320 的
  *      「每像素 2 节」正好互为倒数，故用宏封装换算方向。
  * 320：历史值，1 px = 2 kt。 */
-#if PK_DISPLAY_W >= 800
-#  define KT_TO_PX(dkt)  ((dkt) * 2)
-#  define TAPE_HALF_KT   ((STAPE_BOT - STAPE_TOP) / 2 / 2)
-#  define MINOR_KT     5
-#  define MAJOR_KT    10
-#  define LABEL_EVERY 20
-#else
-#  define KT_TO_PX(dkt)  ((dkt) / 2)
-#  define TAPE_HALF_KT   ((STAPE_BOT - STAPE_TOP) / 2 * 2)
-#  define MINOR_KT    10
-#  define MAJOR_KT    50
-#  define LABEL_EVERY 50
-#endif
+/* 2026-08-01：原有一份 `#else` 的 320 档刻度密度（0.5 px/kt、50 kt 一标）。
+ * PK_DISPLAY_W 由 display.h 无条件钉死在 800，那条分支编不到，一并删除。 */
+#define KT_TO_PX(dkt)  ((dkt) * 2)
+#define TAPE_HALF_KT   ((STAPE_BOT - STAPE_TOP) / 2 / 2)
+#define MINOR_KT     5
+#define MAJOR_KT    10
+#define LABEL_EVERY 20
 
 /* ── 当前值框 ──────────────────────────────────────────────────
  * 与 pfd_tape.c 镜像对称：那边贴右缘向左突出，这边贴左缘向右突出。

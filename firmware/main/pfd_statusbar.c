@@ -19,7 +19,6 @@
 #include "pfd_statusbar_icons.h"
 #include "pfd_icon_font.h"
 #include "pfd_draw.h"
-#include "pfd_font.h"
 
 #define STATUSBAR_TOP   0
 #define STATUSBAR_BOT  PFD_BAR_BOT
@@ -31,9 +30,6 @@
 #define COL_STALE  pk_rgb565(100, 100, 100)
 #define COL_WARN   pk_rgb565(255, 180,  63)
 #define COL_RED    pk_rgb565(255,  80,  60)
-
-/* 状态栏水平中线（GPS 段以此居中）。 */
-#define MID_CENTRE_X (PFD_CX + 1)
 
 /* 4.3 寸屏走 TTF 派生的抗锯齿字形（B612 Mono，见 pfd_aa_text.h）。
  * 位图字体整数倍放大会变成方块像素，在 217 PPI 上无法接受。 */

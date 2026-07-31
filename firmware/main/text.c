@@ -18,9 +18,9 @@
 #include "pfd_aa_font.h"
 
 #include <stdbool.h>
+#include <stddef.h>     /* NULL —— 此前是从 pfd_font.h 顺带拿到的 */
 #include <stdint.h>
 
-#include "pfd_font.h"
 #include "text_font_cjk.h"
 #include "text_font_cjk_body.h"
 

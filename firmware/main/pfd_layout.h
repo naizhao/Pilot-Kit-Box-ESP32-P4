@@ -24,17 +24,10 @@
 #define PFD_TAPE_W         100      /* 左右两条 tape 各自的宽度        */
 #define PFD_TAPE_TOP        48
 #define PFD_TAPE_BOT       298      /* tape 刻度带下沿                 */
-/* 速度带下方 km/h + mph 换算区。
- *
- * spec §5.1 原本只给了 300…340 这 40 px，且默认宽度等于速度带的 100 px。
- * 两条都不够：S 档一行就 30 px，两行要 60 px；"672 km/h" 八个字符按 S 档
- * 是 136 px。而 6 px 的位图字低于 spec §2 的 18 px 硬下限，不能靠缩字解决。
- *
- * 往右下两个方向借空间：罗盘是半圆（x 285…515），左下这块本来就是空的，
- * 下沿 360 也还在罗盘顶（365）之上，谁都不挡。 */
-#define PFD_METRIC_TOP     300
-#define PFD_METRIC_BOT     360
-#define PFD_METRIC_X1      160
+/* 2026-08-01：PFD_METRIC_TOP/BOT/X1（速度带下方的 km/h + mph 换算区）已删。
+ * 那块换算板本身在 2026-07-30 随小屏兼容预览下线（见 pfd_speed_tape.c 尾部
+ * 注释），800 档早把这两个数并进了左下角三行信息框 pfd_infobox.c，三个坐标
+ * 从那以后就没有使用者。 */
 #define PFD_HSI_TOP        340      /* 底部 HSI/雷达区上沿             */
 /* 半圆半径（圆心在底边外）。
  *
@@ -99,7 +92,9 @@
  *
  * 规格中"低于 2.1 mm 一律禁止"，故新屏最小档为 scale 3。
  * ══════════════════════════════════════════════════════════════ */
-#define PFD_FS_BAR          3       /* 状态栏                        */
+/* 2026-08-01：PFD_FS_BAR（状态栏位图字号档 = 3）已删——状态栏早已改走 AA
+ * 字体的 PK_AA_M（见 pfd_statusbar.c 的 BAR_GLYPH_W），这个档位号没有使用者。
+ * 上面这张换算表留着：pfd_font.c 的位图字仍服务距离环标数与罗盘 N/E/S/W。 */
 #define PFD_BAR_TEXT_Y      9       /* 30 px cell 在 48 px 状态栏内垂直居中 */
 #define PFD_BAR_MARGIN_L   12
 #define PFD_BAR_MARGIN_R   16
@@ -242,4 +237,3 @@
 /* 底边贴屏幕下沿，三行往上排。 */
 #define PFD_IB_TOP          (PK_DISPLAY_H - 4 \
                              - 3 * PFD_IB_ROW_H - 2 * PFD_IB_ROW_GAP)
-#define PFD_IB_BOT          (PFD_IB_TOP + 3 * PFD_IB_ROW_H + 2 * PFD_IB_ROW_GAP)

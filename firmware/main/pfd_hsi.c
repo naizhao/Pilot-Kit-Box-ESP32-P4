@@ -20,7 +20,6 @@
 #include "pfd_aa_text.h"
 #include "pfd_icon_font.h"
 #include "pfd_draw.h"
-#include "pfd_font.h"
 
 /* --- Layout ---------------------------------------------------------- *
  *
@@ -30,7 +29,6 @@
  * unobstructed so the pilot still has a horizon reference around the
  * compass rose.
  */
-#define HSI_TOP        PFD_HSI_TOP
 #define HSI_BOT        PFD_HSI_BOT
 
 /* Virtual center is *below* the panel so we only see the top half of

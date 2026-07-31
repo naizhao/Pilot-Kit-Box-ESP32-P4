@@ -28,9 +28,6 @@ void pk_ui_nav_set_fab_side(bool left);
 void pk_ui_nav_set_fab_y_pct(int y_pct);
 bool pk_ui_nav_dock_open(void);
 
-/* FAB 是否处于按下态（供模拟器核对命中区）。 */
-bool pk_ui_nav_fab_pressed(void);
-
 /*
  * 整个藏掉 / 放出 FAB。
  *
@@ -97,7 +94,6 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct);
 #define PK_UI_BACKBAR_BOT   (PK_UI_BACKBAR_TOP + PK_UI_BACKBAR_H)
 
 void pk_ui_nav_set_subpage(bool on, const char *parent_title);
-bool pk_ui_nav_in_subpage(void);
 
 /* 用户请求返回上一级时回调（三条退路共用）。 */
 void pk_ui_nav_on_back(void);

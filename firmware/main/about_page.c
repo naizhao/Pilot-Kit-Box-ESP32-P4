@@ -88,7 +88,6 @@
 #define COL_DIVIDER      pk_rgb565( 60,  70,  86)
 #define COL_NAME         pk_rgb565(240, 245, 255)
 #define COL_LOGO_PLATE   pk_rgb565(255, 255, 255)  /* 与图案白底同色 */
-#define COL_LOGO_MARK    pk_rgb565( 64, 156, 255)
 #define COL_URL          pk_rgb565(110, 180, 240)
 
 static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)

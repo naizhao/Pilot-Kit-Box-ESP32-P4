@@ -73,7 +73,6 @@
  * PK_UI_PAD_L 钉在 16 的那个页面——BRG 列最宽 71 px，从 16 起画到 87，右边的
  * 分隔线 SEP_CALL 钉在 95，只剩 8 px 余量。改 PK_UI_PAD_L 之前先看这里。 */
 #define PAD_L         PK_UI_PAD_L
-#define PAD_R         16
 
 /*
  * 列的 x 与宽度。

@@ -206,7 +206,6 @@ static uint16_t state_color(card_state_t st)
  * spec §5.5 写的是「2 × 4」八格，但那是版面示意不是容量上限——诊断数据本来
  * 就比八条多（SD 卡、QNH、运行时长…），塞不下的不该被删掉，该能滚。所以
  * 行数由卡片数推出来，屏幕放不下就滚动。 */
-#define CARD_ROWS_VIS  4                       /* 一屏能完整看到的行数 */
 static int s_card_rows;                        /* 本帧实际画了几行 */
 static int s_scroll_y;                         /* 滚动偏移(px)，0 = 顶 */
 

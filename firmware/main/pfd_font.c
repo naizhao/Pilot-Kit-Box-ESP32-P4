@@ -18,13 +18,14 @@
 
 #include "pfd_draw.h"
 
-/* Glyph table: 96 printable ASCII (0x20..0x7F) + 8 compass arrows at
- * 0x80..0x87. Each glyph is 5 columns × 7 rows, packed column-major
- * with bit 0 = top row (see PK_FONT_W / PK_FONT_H in the header).
+/* Glyph table: 96 printable ASCII (0x20..0x7F). Each glyph is 5 columns
+ * × 7 rows, packed column-major with bit 0 = top row (see PK_FONT_W /
+ * PK_FONT_H in the header).
  *
- * The arrow rows below were hand-pixel-traced; comments next to each
- * entry show the visual outcome on a 5×7 grid. */
-static const uint8_t s_font[96 + 8][PK_FONT_W] = {
+ * 2026-08-01：表尾原有 8 行手工点出来的罗盘箭头，挂在私有码位 0x80..0x87
+ * 上，唯一的生产者是 pk_font_arrow_for_delta_deg()。那条链路已全部改走 AA
+ * 字库的真 UTF-8 箭头，整块一并删除，详见 pfd_font.h。 */
+static const uint8_t s_font[96][PK_FONT_W] = {
     {0x00,0x00,0x00,0x00,0x00}, /* 0x20  (space) */
     {0x00,0x00,0x5F,0x00,0x00}, /* 0x21 ! */
     {0x00,0x07,0x00,0x07,0x00}, /* 0x22 " */
@@ -121,82 +122,6 @@ static const uint8_t s_font[96 + 8][PK_FONT_W] = {
     {0x00,0x41,0x36,0x08,0x00}, /* 0x7D } */
     {0x02,0x01,0x02,0x04,0x02}, /* 0x7E ~ */
     {0x06,0x09,0x09,0x06,0x00}, /* 0x7F (repurposed: degree symbol °) */
-
-    /* 0x80 ↑ N — vertical line with wide chevron at top
-     *   . . X . .
-     *   . X X X .
-     *   X X X X X
-     *   . . X . .
-     *   . . X . .
-     *   . . X . .
-     *   . . X . .                                                  */
-    {0x04, 0x06, 0x7F, 0x06, 0x04}, /* 0x80 ↑ */
-
-    /* 0x81 ↗ NE — diagonal SW→NE with arrowhead in upper-right corner
-     *   . . X X X
-     *   . . . X X
-     *   . . X . X
-     *   . X . . .
-     *   X . . . .                                                  */
-    {0x10, 0x08, 0x05, 0x03, 0x07}, /* 0x81 ↗ */
-
-    /* 0x82 → E — horizontal line with chevron at right
-     *   . . . . .
-     *   . . . X .
-     *   . . . X X
-     *   X X X X X
-     *   . . . X X
-     *   . . . X .                                                  */
-    {0x08, 0x08, 0x08, 0x3E, 0x1C}, /* 0x82 → */
-
-    /* 0x83 ↘ SE — diagonal NW→SE with arrowhead in lower-right corner
-     *   . . . . .
-     *   . . . . .
-     *   X . . . .
-     *   . X . . .
-     *   . . X . X
-     *   . . . X X
-     *   . . X X X                                                  */
-    {0x04, 0x08, 0x50, 0x60, 0x70}, /* 0x83 ↘ */
-
-    /* 0x84 ↓ S — vertical line with wide chevron at bottom
-     *   . . X . .
-     *   . . X . .
-     *   . . X . .
-     *   . . X . .
-     *   X X X X X
-     *   . X X X .
-     *   . . X . .                                                  */
-    {0x10, 0x30, 0x7F, 0x30, 0x10}, /* 0x84 ↓ */
-
-    /* 0x85 ↙ SW — diagonal NE→SW with arrowhead in lower-left corner
-     *   . . . . .
-     *   . . . . .
-     *   . . . . X
-     *   . . . X .
-     *   X . X . .
-     *   X X . . .
-     *   X X X . .                                                  */
-    {0x70, 0x60, 0x50, 0x08, 0x04}, /* 0x85 ↙ */
-
-    /* 0x86 ← W — horizontal line with chevron at left
-     *   . . . . .
-     *   . X . . .
-     *   X X . . .
-     *   X X X X X
-     *   X X . . .
-     *   . X . . .                                                  */
-    {0x1C, 0x3E, 0x08, 0x08, 0x08}, /* 0x86 ← */
-
-    /* 0x87 ↖ NW — diagonal SE→NW with arrowhead in upper-left corner
-     *   X X X . .
-     *   X X . . .
-     *   X . X . .
-     *   . X . . .
-     *   . . X . .
-     *   . . . X .
-     *   . . . . X                                                  */
-    {0x07, 0x0B, 0x15, 0x20, 0x40}, /* 0x87 ↖ */
 };
 
 void pk_font_putchar(uint16_t *fb, int fb_w, int fb_h,
@@ -205,8 +130,9 @@ void pk_font_putchar(uint16_t *fb, int fb_w, int fb_h,
 {
     if (scale < 1) scale = 1;
     unsigned u = (unsigned char)c;
-    /* 0x20..0x7F = printable ASCII, 0x80..0x87 = compass arrows. */
-    if (u < 0x20 || u > 0x87) u = 0x20;
+    /* 0x20..0x7F = printable ASCII（0x7F 借作度数符号）。其余一律当空格：
+     * 本渲染器不认 UTF-8，多字节字符的续字节落到这里只能吞掉。 */
+    if (u < 0x20 || u > 0x7F) u = 0x20;
 
     const uint8_t *glyph = s_font[u - 0x20];
 
@@ -246,22 +172,4 @@ int pk_font_puts(uint16_t *fb, int fb_w, int fb_h,
         x += cell_w;
     }
     return x - x0;
-}
-
-char pk_font_arrow_for_delta_deg(int delta_deg)
-{
-    /* Wrap delta into [0, 360). Use a while-loop rather than modulo so
-     * the answer is correct regardless of how the input was clamped
-     * upstream (e.g. heading subtraction can produce values in
-     * [-360, +360]). */
-    int d = delta_deg;
-    while (d <    0) d += 360;
-    while (d >= 360) d -= 360;
-
-    /* Each compass arrow covers a 45°-wide sector centred on its
-     * bearing: N → [-22°, +22°], NE → [+23°, +67°], etc. Add 22° to
-     * fold the boundary so integer division by 45 yields the sector
-     * index directly: idx 0 = N, 1 = NE, 2 = E, …, 7 = NW. */
-    int idx = ((d + 22) / 45) % 8;
-    return (char)(0x80 + idx);
 }

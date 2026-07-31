@@ -43,17 +43,12 @@
  * 800：带高 250 px，取 2 ft/px → 视窗 ±250 ft，与真机 G1000 高度带
  *      相当；标签每 100 ft = 50 px 间距，容得下 30 px 的 cell。
  * 320：历史值，1 px = 5 ft。 */
-#if PK_DISPLAY_W >= 800
-#  define FT_PER_PX      2
-#  define MINOR_FT      20
-#  define MAJOR_FT     100
-#  define LABEL_EVERY  100
-#else
-#  define FT_PER_PX      5
-#  define MINOR_FT      20
-#  define MAJOR_FT     100
-#  define LABEL_EVERY  200
-#endif
+/* 2026-08-01：原有一份 `#else` 的 320 档刻度密度（5 ft/px、200 ft 一标）。
+ * PK_DISPLAY_W 由 display.h 无条件钉死在 800，那条分支编不到，一并删除。 */
+#define FT_PER_PX      2
+#define MINOR_FT      20
+#define MAJOR_FT     100
+#define LABEL_EVERY  100
 
 #define FT_TO_PX(dft)  ((dft) / FT_PER_PX)
 /* 视窗半高换算成 ft，决定要遍历哪一段刻度。 */

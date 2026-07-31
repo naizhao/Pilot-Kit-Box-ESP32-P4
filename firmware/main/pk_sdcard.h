@@ -44,7 +44,6 @@ esp_err_t pk_sdcard_format(void);
 }
 #endif
 
-/* 累计挂载尝试次数（含失败）。诊断页据此区分"没插卡"（计数不动）与
- * "插了但挂不上"（每 3 s 涨一次）——两者的 pk_sdcard_state() 都是
- * PK_SD_NO_CARD，光看状态分不出来。 */
-uint32_t pk_sdcard_mount_attempts(void);
+/* 2026-08-01：pk_sdcard_mount_attempts() 已删。它本想让诊断页区分"没插卡"
+ * （计数不动）与"插了但挂不上"（每 3 s 涨一次），但诊断页从来没接过这个数，
+ * 从落地起零调用者。计数本身仍在 pk_sdcard.c 里累加并打进日志。 */

@@ -64,7 +64,9 @@ static bool s_drag_happened;
  * 这个约束不是偷懒：无物理按键的设备上，返回栈越深越容易让人迷路，而飞行中
  * 没有余裕去数「我在第几层」。 */
 static bool s_in_subpage;
-static bool      s_pressed;
+/* 2026-08-01：曾有一个 s_pressed 跟踪 FAB 按下态，只喂 pk_ui_nav_fab_pressed()
+ * 这一个「供模拟器核对命中区」的取值器，而模拟器从没调过。按下态的视觉由
+ * LVGL 的 LV_STATE_PRESSED 样式（COL_FAB_PRESS）负责，与它无关。 */
 static bool      s_dock_open;
 
 /* 中文字体。TinyTTF 在运行时从子集 TTF 渲染字形，一份轮廓服务所有字号——
@@ -404,8 +406,6 @@ void pk_ui_nav_set_subpage(bool on, const char *parent_title)
     }
 }
 
-bool pk_ui_nav_in_subpage(void) { return s_in_subpage; }
-
 static void dock_build(lv_obj_t *scr)
 {
     /* 宽度要把分隔线**自身的 1 px** 也算进去：漏了它，flex 会把最后一项
@@ -478,7 +478,6 @@ static void fab_event_cb(lv_event_t *e)
 
     switch (code) {
     case LV_EVENT_PRESSED:
-        s_pressed = true;
         s_drag_happened = false;    /* 新的一次按压，重新判定 */
         break;
 
@@ -510,7 +509,6 @@ static void fab_event_cb(lv_event_t *e)
     }
 
     case LV_EVENT_RELEASED:
-        s_pressed = false;
         if (!s_dragging) break;
         s_dragging = false;
         lv_obj_set_style_transform_scale(s_fab, 256, 0);
@@ -626,8 +624,6 @@ void pk_ui_nav_init(void)
 
     lv_obj_add_event_cb(s_fab, fab_event_cb, LV_EVENT_ALL, NULL);
 }
-
-bool pk_ui_nav_fab_pressed(void) { return s_pressed; }
 
 void pk_ui_nav_set_fab_hidden(bool hidden)
 {

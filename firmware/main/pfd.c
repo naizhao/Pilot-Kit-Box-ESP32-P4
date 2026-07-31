@@ -36,7 +36,6 @@
 #include "imu_task.h"
 #include "pfd_attitude.h"
 #include "pfd_draw.h"
-#include "pfd_font.h"
 #include "pfd_hsi.h"
 #include "pfd_hsi_traffic.h"
 #include "lv_port.h"

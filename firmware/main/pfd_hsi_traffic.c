@@ -22,7 +22,6 @@
 #include "pfd_layout.h"
 #include "pfd_draw.h"
 #include "pfd_aa_text.h"
-#include "pfd_font.h"
 
 #include "aircraft_state.h"
 #include "own_ship.h"
@@ -46,30 +45,23 @@
  * 它和罗盘的刻度数字都挤在同一圈上，同为 S 档时角度接近的两者会读成一团。
  * 拉开一档是最直接的区分——而且这类标签本就属于 spec 说的「极次要」：
  * 飞行员先看菱形在哪个方位，才会去读它高多少。 */
-#if PK_DISPLAY_W >= 800
-#  define TGT_PUTS(fb, x, y, s, col) \
+/* 2026-08-01：原有一份 `#else` 的 320 档版面（5×7 位图、字宽 6、不压暗底）。
+ * PK_DISPLAY_W 由 display.h 无条件钉死在 800，那条分支编不到，一并删除；
+ * 它是位图字体私有码位 0x84 的最后一个使用者，那批码位也随之下线。 */
+#define TGT_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define TGT_LBL_W     PK_AA_M_W
-#  define TGT_LBL_H     PK_AA_M_H
+#define TGT_LBL_W     PK_AA_M_W
+#define TGT_LBL_H     PK_AA_M_H
 /* 「后方 N 架」前缀的下箭头。
  *
- * 必须按渲染器分两份：AA 字库走 UTF-8 解码 + 码位二分查表（pfd_aa_text.c
- * utf8_next / cjk_index），它的箭头存在 U+2193；而旧 5×7 位图字体没有 UTF-8
- * 这一说，箭头挂在私有码位 0x84 上。此前两档共用 PK_FONT_ARROW_S(0x84)，喂给
- * pk_aa_puts 就是一个非法 UTF-8 前导字节 → U+FFFD → 查表落空 → 只推进 15 px
- * 不画：屏上永远只剩一个孤零零的数字，左边空着 15 px。 */
-#  define TGT_ARROW_BEHIND  "↓"
+ * 走 AA 字库的真 UTF-8 码位 U+2193（pfd_aa_text.c utf8_next / cjk_index 解码
+ * 后二分查表）。曾经这里用的是位图字体的私有码位 0x84，喂给 pk_aa_puts 就是
+ * 一个非法 UTF-8 前导字节 → U+FFFD → 查表落空 → 只推进 15 px 不画：屏上永远
+ * 只剩一个孤零零的数字，左边空着 15 px。别再往这里填私有码位。 */
+#define TGT_ARROW_BEHIND  "↓"
 /* 标签底的压暗强度。目标常落在天地交界或罗盘刻度上，纯文字会糊进背景。
  * 只压暗、不描边：十几个目标各带一个方框，外圈立刻显得杂乱。 */
-#  define TGT_LBL_BG    90
-#else
-#  define TGT_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define TGT_LBL_W     6
-#  define TGT_LBL_H     6
-#  define TGT_LBL_BG    0
-#  define TGT_ARROW_BEHIND  "\x84"      /* 位图字体的私有码位，见上 */
-#endif
+#define TGT_LBL_BG    90
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
 

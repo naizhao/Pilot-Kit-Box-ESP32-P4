@@ -32,7 +32,6 @@
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
-#include "pfd_font.h"
 
 /* --- Layout constants ----------------------------------------------- *
  *
@@ -68,7 +67,6 @@
 /* --- Palette (spec §4, RGB565, panel byte order) ------------------- */
 #define COL_HORIZON_LINE        pk_rgb565(255, 255, 255)
 #define COL_RETICLE             pk_rgb565(255, 255,   0)   /* pure yellow */
-#define COL_PITCH_LINE          pk_rgb565(255, 255, 255)
 #define COL_BANK_TICK           pk_rgb565(255, 255, 255)
 #define COL_BANK_POINTER        pk_rgb565(255, 255,   0)   /* pure yellow */
 #define COL_SKY_POINTER         pk_rgb565(255, 255, 255)
@@ -81,54 +79,39 @@
  * 区三分之一」的观感差得远，故按区宽等比放大。
  *
  * 标签同样从 5×7 位图 scale-1（6 px）换成 S 档 —— 6 px 在 4.3″ 屏上只有
- * 0.7 mm，低于 spec §2 的 18 px 硬下限。 */
-#if PK_DISPLAY_W >= 800
+ * 0.7 mm，低于 spec §2 的 18 px 硬下限。
+ *
+ * 2026-08-01：上面那套 320 档的值原本以 `#else` 分支的形式并存（梯度半宽
+ * 35/24/16、5×7 位图标注、各符号小一号）。PK_DISPLAY_W 由 display.h 无条件
+ * 钉死在 800，那条分支一行都编不到，随小屏兼容预览一并删除。要换屏得先改
+ * display.h。 */
+
 /* ±10° 线全宽约占姿态区宽度的 22%（与 320 上 70/320 的观感一致）：
  * 800 姿态区宽 600 → 132 px 全宽 → 半宽 66，其余两档按 35:24:16 同比。 */
-#  define LADDER_W10        66
-#  define LADDER_W20        45
-#  define LADDER_W30        30
-#  define LADDER_PUTS(fb, x, y, s, col) \
+#define LADDER_W10        66
+#define LADDER_W20        45
+#define LADDER_W30        30
+#define LADDER_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define LADDER_LBL_W      PK_AA_M_W
-#  define LADDER_LBL_H      PK_AA_M_H
-#  define LADDER_LBL_GAP    8
+#define LADDER_LBL_W      PK_AA_M_W
+#define LADDER_LBL_H      PK_AA_M_H
+#define LADDER_LBL_GAP    8
 /* 梯度线的下界是**航向框顶**，不是罗盘顶：框坐在罗盘正上方、姿态区下沿，
  * 是这一侧最先挡路的东西。画到框上只会两层叠字。 */
-#  define LADDER_TOP        (BANK_ARC_CY - BANK_ARC_R + 4)
-#  define LADDER_BOT        (PFD_HDGBOX_Y0 - 10)
+#define LADDER_TOP        (BANK_ARC_CY - BANK_ARC_R + 4)
+#define LADDER_BOT        (PFD_HDGBOX_Y0 - 10)
 /* 坡度刻度长度 / 天空指针 / chevron 同样按物理尺寸对齐 320（×1.3），
  * 而不是按面板像素等比（×2.5）—— 后者会让这些符号在新屏上大得突兀。 */
-#  define BANK_TICK_S        5
-#  define BANK_TICK_M        8
-#  define BANK_TICK_L       13
-#  define SKYPTR_H          14
-#  define SKYPTR_HW         10
-#  define CHEVRON_LEN       16
-#  define CHEVRON_HW         8
+#define BANK_TICK_S        5
+#define BANK_TICK_M        8
+#define BANK_TICK_L       13
+#define SKYPTR_H          14
+#define SKYPTR_HW         10
+#define CHEVRON_LEN       16
+#define CHEVRON_HW         8
 /* 坡度弧比俯仰梯度更粗：它是姿态的**参考框架**，梯度是框架内的刻度，
  * 主次要一眼分得出。 */
-#  define BANK_ARC_TH      2.8f
-#else
-#  define LADDER_W10        35
-#  define LADDER_W20        24
-#  define LADDER_W30        16
-#  define LADDER_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define LADDER_LBL_W      6
-#  define LADDER_LBL_H      6
-#  define LADDER_LBL_GAP    2
-#  define LADDER_BOT        (PFD_ATTITUDE_BOT + 20)
-#  define BANK_TICK_S        4
-#  define BANK_TICK_M        6
-#  define BANK_TICK_L       10
-#  define SKYPTR_H          12
-#  define SKYPTR_HW          6
-#  define CHEVRON_LEN       12
-#  define CHEVRON_HW         6
-#  define BANK_ARC_TH      2.0f
-#endif
-
+#define BANK_ARC_TH      2.8f
 
 /* --- Gradient LUTs (sky/ground), built once on first render -------- */
 

@@ -49,7 +49,6 @@
  * 每次都挪一点。 */
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
-#define SET_ROWS_VIS   ((PK_DISPLAY_H - PFD_BAR_BOT) / SET_ROW_H)
 
 #define SET_ROWS      10
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)

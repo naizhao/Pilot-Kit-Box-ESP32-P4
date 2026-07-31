@@ -347,5 +347,3 @@ esp_err_t pk_sdcard_format(void)
     xSemaphoreGive(s_lock);
     return err;
 }
-
-uint32_t pk_sdcard_mount_attempts(void) { return s_mount_attempts; }

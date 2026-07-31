@@ -14,7 +14,6 @@
 #include "i18n.h"
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
-#include "pfd_font.h"
 #include "pfd_layout.h"
 
 #define COL_BARO   pk_rgb565(230, 200,  74)   /* amber：气压源，参考值 */
@@ -24,17 +23,13 @@
 #define COL_GREY   pk_rgb565(180, 180, 180)
 #define COL_STALE  pk_rgb565(100, 100, 100)
 
-#if PK_DISPLAY_W >= 800
-#  define IB_PUTS(fb, x, y, s, col) \
+/* 2026-08-01：这里原有一份 `#else` 的 320 档版面（5×7 位图、字宽 6）。
+ * PK_DISPLAY_W 已由 display.h 无条件钉死在 800，那条分支一行都编不到，
+ * 随小屏兼容预览一并删除。要换屏得先改 display.h。 */
+#define IB_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define IB_GLYPH_W   PK_AA_M_W
-#  define IB_TEXT_DY   ((PFD_IB_ROW_H - PK_AA_M_H) / 2)
-#else
-#  define IB_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define IB_GLYPH_W   6
-#  define IB_TEXT_DY   3
-#endif
+#define IB_GLYPH_W   PK_AA_M_W
+#define IB_TEXT_DY   ((PFD_IB_ROW_H - PK_AA_M_H) / 2)
 
 /*
  * ── 标签用词的边界 ───────────────────────────────────────────────
