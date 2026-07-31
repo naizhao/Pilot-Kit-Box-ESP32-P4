@@ -66,6 +66,7 @@
 #include "pk_ui_nav.h"
 #include "about_page.h"
 #include "adsb_list.h"
+#include "config_devname.h"   /* PK_DEVNAME_MAX_LEN —— 键盘页的上限跟真机同一个数 */
 #include "diag_page.h"
 #include "keyboard_page.h"
 #include "settings_page.h"
@@ -323,9 +324,11 @@ static int run_headless(float at_sec, const char *out)
              * PK_SIM_DIAG_DETAIL 跳进去是同一个套路。
              *
              * PK_SIM_KBD=<初值> 摆不同的输入态：不给 = 空输入，
-             * 给满 10 个字符 = 计数器转警示色的那一态。 */
+             * 给满 PK_DEVNAME_MAX_LEN 个字符 = 计数器转警示色的那一态。
+             * 上限跟着真机的宏走，不写字面量：写死过一次 10，上限一改
+             * 模拟器就在演一个真机上不存在的键盘。 */
             pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME,
-                                  getenv("PK_SIM_KBD"), 10);
+                                  getenv("PK_SIM_KBD"), PK_DEVNAME_MAX_LEN);
             pk_keyboard_page_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);

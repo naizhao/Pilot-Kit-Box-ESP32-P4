@@ -41,6 +41,12 @@
  */
 #define SETTINGS_ROW_COUNT       10
 
+/* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
+ * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后
+ * 名字短了两个字符」——用户只会觉得设备把输入弄坏了。钉成编译期断言。 */
+_Static_assert(PK_DEVNAME_MAX_LEN <= PK_KBD_TEXT_MAX,
+               "设备名上限超过了键盘编辑器的缓冲，输入会被静默截断");
+
 static const char *TAG = "settings";
 
 /* 当前选中行。行号即 pk_settings_apply() 的 case 序号，见那边的注释；
@@ -190,9 +196,10 @@ void pk_settings_apply(int row, int v)
         break;
 
     case 8:   /* 设备名（P2-5）—— 不在这里改值，弹出受限 ASCII 编辑器。
-               * 传进去的是**用户串**（NVS 里那半截），不是屏上显示的完整
-               * 广播名：MAC 后缀是设备自己接的，让用户去编辑它没有意义，
-               * 也会让「改一次名字后缀就跟着进了正文」。 */
+               * 传进去的是**用户串**（NVS 里那一条），不是屏上显示的广播名：
+               * 没设过名字时屏上显示的是出厂默认 "Pilot Kit Box-AABBCC"，
+               * 把那一串塞进输入框等于让用户在别人的默认名上改，而且 MAC
+               * 后缀会就此进了正文——用户设了名之后广播名里本来是没有它的。 */
         { char cur[PK_DEVNAME_BUF_SIZE];
           pk_devname_get(cur, sizeof(cur));
           pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME, cur,

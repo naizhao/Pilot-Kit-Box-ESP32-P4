@@ -46,7 +46,7 @@ and re-starts advertising on every disconnect.
 | Field | Value |
 |-------|-------|
 | **Flags** | LE General Discoverable + BR/EDR Not Supported |
-| **Complete Local Name** | `Pilot Kit Box-AABBCC` (factory default) or `<USER>-AABBCC` |
+| **Complete Local Name** | `Pilot Kit Box-AABBCC` (factory default) or `<USER>` (renamed — no suffix) |
 
 **Scan response (31 bytes):**
 
@@ -65,8 +65,9 @@ and re-starts advertising on every disconnect.
 
 `AABBCC` is the **upper-case hex of the last 3 bytes of the device's
 BLE MAC** — stable across reboots (it's burned into the C6's efuse),
-distinct across boards. So in a hangar with multiple Pilot Kit Boxes,
-each shows up as its own discoverable name:
+distinct across boards. It is appended to the **factory default name
+only** (see the next section). So in a hangar with multiple untouched
+Pilot Kit Boxes, each shows up as its own discoverable name:
 
 ```
 Pilot Kit Box-0B5A8A
@@ -77,24 +78,34 @@ Pilot Kit Box-3F1224
 ### User-settable device name
 
 Since firmware v0.9.4 the owner can rename the box from **Settings →
-DEVICE NAME** (an on-screen A–Z / 0–9 / `-` / `_` editor, max **10**
-characters). The stored string replaces only the `Pilot Kit Box`
-prefix; the `-AABBCC` MAC suffix is **always** appended by the firmware
-and cannot be removed:
+DEVICE NAME** (an on-screen A–Z / 0–9 / `-` / `_` editor, max **26**
+characters). Once a name is set, that string **is** the advertised
+name — the firmware adds nothing to it:
 
 ```
-factory default   Pilot Kit Box-0B5A8A     20 bytes
-renamed "N123AB"  N123AB-0B5A8A            13 bytes
-worst case        WWWWWWWWWW-0B5A8A        17 bytes
+factory default   Pilot Kit Box-0B5A8A          20 bytes
+renamed "N123AB"  N123AB                         6 bytes
+worst case        PILOT-KIT-BOX-HANGAR-01-AB    26 bytes
 ```
 
-The 10-character cap exists so the name can never overflow the
-advertisement: 31 bytes total − 3 (Flags AD) − 2 (Name AD header) =
-**26 bytes** available, and 10 + 1 + 6 = 17 ≤ 26.
+**Why the default keeps the MAC suffix and a custom name does not:**
+the suffix solves "several boxes in one hangar all look alike in the
+scan list", which is only true while every device carries the *same*
+name — exactly the factory default's situation. Once the owner picks a
+name, whether it collides is his own call. BLE connects by device
+address, not by name, and every scan result already carries the MAC, so
+dropping the suffix costs neither connectability nor distinguishability
+(clients must not identify devices by name anyway — see below).
 
-Clearing the name restores the factory default byte-for-byte. Renaming
-takes effect immediately — the firmware stops and restarts advertising,
-no reboot needed.
+The 26-character cap is the advertisement budget: 31 bytes total − 3
+(Flags AD) − 2 (Name AD header) = **26 bytes** available. With no
+suffix to reserve room for, the cap sits exactly on that budget —
+26 ≤ 26, filled to the brim — and a compile-time assertion in the
+firmware fails the build on the 27th character.
+
+Clearing the name restores the factory default byte-for-byte (MAC
+suffix included). Renaming takes effect immediately — the firmware
+stops and restarts advertising, no reboot needed.
 
 ### Filtering (BREAKING for clients that matched the name prefix)
 

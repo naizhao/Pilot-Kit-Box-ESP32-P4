@@ -402,7 +402,13 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 }
 
 /*
- * 把「用户串（NVS）」+「MAC 后缀」拼成最终广播名，并同步给 GAP。
+ * 定出最终广播名并同步给 GAP：用户设过名字就**原样广播那一串**，没设过才走
+ * 「出厂前缀 + MAC 后三字节」。
+ *
+ * 后缀只跟着默认名走，不跟着自定义名走——这不是漏了，理由见 config_devname.h
+ * 顶部那段：后缀是给「所有设备同名」这一种情况准备的，而出厂默认名正是那种
+ * 情况；用户自己取的名重不重名由他自己负责，固件不该在他改完的名字后面再挂
+ * 一条他去不掉的小尾巴。
  *
  * 长度核算（BLE 4.x legacy adv，31 字节 payload）：
  *   flags AD              3
@@ -411,11 +417,10 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
  *   留给名字本身         26
  *
  *   默认名 "Pilot Kit Box-AABBCC"   20 ≤ 26   （余 6，与改名前完全一致）
- *   自定义 "<≤10>-AABBCC"          ≤17 ≤ 26   （余 ≥9）
+ *   自定义 "<≤26>"                 ≤26 ≤ 26   （顶格，多一个字符就溢出）
  *
- * 所以**溢出不可能发生**，用户输入再怎么填也踩不回 UUID 那次的
- * BLE_HS_EINVAL（见下面 start_advertising 的注释）。上限 10 就是这么来的，
- * 改 PK_DEVNAME_MAX_LEN 之前先把这笔账重算一遍。
+ * 自定义名去掉后缀之后，上限直接顶到 adv 预算本身，余量为 0——所以下面那条
+ * 断言比以前更要紧，改 PK_DEVNAME_MAX_LEN 之前必须把这笔账重算一遍。
  */
 /* 「先把这笔账重算一遍」靠人自觉是不够的——上面那次 UUID 溢出就是算漏了。
  * 把预算钉成编译期断言：把上限调大到装不下，构建当场就红，而不是等真机上
@@ -425,27 +430,35 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 _Static_assert(sizeof(BLE_DEVICE_NAME_PREFIX) - 1 + 1 + BLE_ADDR_SUFFIX_LEN
                    <= BLE_ADV_NAME_BUDGET,
                "出厂默认广播名超出 adv 的 26 字节预算");
-_Static_assert(PK_DEVNAME_MAX_LEN + 1 + BLE_ADDR_SUFFIX_LEN
-                   <= BLE_ADV_NAME_BUDGET,
+_Static_assert(PK_DEVNAME_MAX_LEN <= BLE_ADV_NAME_BUDGET,
                "自定义广播名可能超出 adv 的 26 字节预算");
 _Static_assert(sizeof(BLE_DEVICE_NAME_PREFIX) + 1 + BLE_ADDR_SUFFIX_LEN
                    <= BLE_DEVICE_NAME_MAX,
                "s_device_name 装不下默认名，snprintf 会静默截断");
+/* 自定义名走的是同一个缓冲。默认名 20 字节比它短，所以这条不是上一条的重复：
+ * 上限放宽时先撞上的是这一条。 */
+_Static_assert(PK_DEVNAME_MAX_LEN + 1 <= BLE_DEVICE_NAME_MAX,
+               "s_device_name 装不下最长的自定义名，snprintf 会静默截断");
+/* NimBLE 的 GAP Device Name 特征另有一条上限（sdkconfig 的
+ * CONFIG_BT_NIMBLE_GAP_DEVICE_NAME_MAX_LEN，当前 31）。adv 预算 26 比它小，
+ * 所以先撞的一定是 adv；这里只把它记下来，免得将来有人误以为 26 是唯一的墙。 */
 
 static void compose_device_name(void)
 {
     char user[PK_DEVNAME_BUF_SIZE];
     pk_devname_get(user, sizeof(user));
 
-    /* 用户没设过名字 → 完全走出厂前缀，与这个功能上线之前的行为逐字节一致。 */
-    const char *base = (user[0] != '\0') ? user : BLE_DEVICE_NAME_PREFIX;
-
-    if (s_addr_suffix[0] != '\0') {
+    if (user[0] != '\0') {
+        /* 用户设过名字：原样广播，不加后缀、不加任何东西。 */
+        snprintf(s_device_name, sizeof(s_device_name), "%s", user);
+    } else if (s_addr_suffix[0] != '\0') {
+        /* 没设过 → 出厂默认名，与这个功能上线之前的行为逐字节一致。 */
         snprintf(s_device_name, sizeof(s_device_name), "%s-%s",
-                 base, s_addr_suffix);
+                 BLE_DEVICE_NAME_PREFIX, s_addr_suffix);
     } else {
-        /* 控制器还没同步出地址：先用不带后缀的名字，on_sync() 会再拼一次。 */
-        snprintf(s_device_name, sizeof(s_device_name), "%s", base);
+        /* 控制器还没同步出地址：先用不带后缀的前缀，on_sync() 会再拼一次。 */
+        snprintf(s_device_name, sizeof(s_device_name), "%s",
+                 BLE_DEVICE_NAME_PREFIX);
     }
 
     int rc = ble_svc_gap_device_name_set(s_device_name);

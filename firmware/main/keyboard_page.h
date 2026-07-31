@@ -31,9 +31,13 @@
 #include "i18n_catalog.h"    /* pk_tr_id_t — 标题按翻译条目 id 传 */
 
 /* 编辑缓冲上限（不含 NUL）。调用方给的 max_len 会被夹到这个数以内。
- * 24 不是需求，是「输入框一行装得下的上限」：M 档 15 px/字符 × 24 = 360 px，
- * 加上右侧计数器仍在 768 px 的框内。 */
-#define PK_KBD_TEXT_MAX  24
+ *
+ * 26 是当前唯一调用者（设备名，PK_DEVNAME_MAX_LEN）的硬上限——那个数由 BLE
+ * 广播包算出来，是真正的墙。版面在这里不是瓶颈：输入框内宽 768，文字从 x=32
+ * 起、右侧计数器占到 713，M 档 15 px/字符一行画得下 40 多个字符。
+ * 夹是**静默**的（见 pk_keyboard_page_open），所以 settings_page.c 里有一条
+ * 编译期断言钉住「调用方上限 ≤ 这个数」，免得出现屏上敲得进、存下来被截断。 */
+#define PK_KBD_TEXT_MAX  26
 
 /* 打开编辑器。initial 为 NULL 或空串即从空开始；max_len 是允许的字符数。 */
 void pk_keyboard_page_open(pk_tr_id_t title, const char *initial, int max_len);

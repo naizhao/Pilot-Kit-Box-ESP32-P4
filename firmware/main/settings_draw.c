@@ -17,6 +17,7 @@
 
 #include "ble_gatt.h"          /* pk_ble_device_name —— 设备名那行显示完整广播名 */
 #include "config_ble.h"
+#include "config_devname.h"    /* PK_DEVNAME_MAX_LEN —— 值框宽度按它定 */
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
@@ -69,6 +70,18 @@ static bool s_press_valid, s_moved;
 /* 触摸目标下限。屏 800 px ≈ 95 mm → 8.4 px/mm；通行下限 9 mm ≈ 76 px
  * （iOS 44 pt / Material 48 dp 同量级）。座舱里戴手套、有颠簸，取 80。 */
 #define SEG_MIN_TOUCH_W  80
+
+/* 设备名那行的值框宽度。与 PK_DEVNAME_MAX_LEN 绑死并加断言：名字上限是在
+ * config_devname.h 里定的，改那个数的人不会想到来这里量框宽，而屏上「多出来
+ * 的两个字符被裁掉了」肉眼很难发现——键盘页那两条触摸下限断言同一个道理。
+ * 20 = 左右内边距各 10。 */
+#define SET_DEVNAME_PAD  10
+#define SET_DEVNAME_W    (PK_DEVNAME_MAX_LEN * PK_AA_S_W + 2 * SET_DEVNAME_PAD)
+/* 左边那半是行标签的地盘。最宽的标签是英文 "DEVICE NAME"：M 档 15 px × 11
+ * = 165 px，从 SET_PAD 起到 181 结束；预算按 240 留，够将来换更长的译名。 */
+#define SET_LABEL_BUDGET 240
+_Static_assert(SET_CTL_R - SET_DEVNAME_W >= SET_PAD + SET_LABEL_BUDGET,
+               "设备名值框宽到压住行标签了");
 
 /*
  * 每行控件的几何，渲染时写、触摸时读。
@@ -305,10 +318,17 @@ void pk_settings_page_render(uint16_t *fb)
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_DEVNAME));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;
-      /* 240 是按**最长的名字**定的，不是按当前值：出厂默认
-       * "Pilot Kit Box-AABBCC" 共 20 字符，S 档 11 px/字符 = 220 px，
-       * 左右各留 10。自定义名最长 10+1+6 = 17 字符，比它还短。 */
-      const int w  = 240;
+      /* 框宽按**最长的名字**定，不是按当前值。最长的是自定义名：26 字符
+       * （= adv 预算，config_devname.h），S 档 11 px/字符 = 286 px，左右各
+       * 留 10 → 306。出厂默认 "Pilot Kit Box-AABBCC" 只有 20 字符（220 px），
+       * 比它短。
+       *
+       * 选择加宽而不是截断显示：这一行的用处就是让用户核对「手机上会扫到
+       * 什么」，显示成 "N123AB-HANGAR-0…" 等于把这个用处废掉。右缘 716
+       * （SET_CTL_R，避开 FAB）− 306 = 410，而最宽的行标签 "DEVICE NAME"
+       * 是 M 档 15 px × 11 字符 = 165 px，从 16 起到 181 就结束，中间还空着
+       * 229 px。 */
+      const int w  = SET_DEVNAME_W;
       const int x0 = SET_CTL_R - w;
       pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
                              SET_CTL_H / 2, pk_rgb565(28, 36, 48));

@@ -114,7 +114,7 @@ void pk_config_devname_load(void)
      * 字符串必须两段式读：先传 NULL 问长度，再按长度读。
      *
      * 不能像 u8/blob 那样「给个缓冲直接读」——nvs_get_str 若发现缓冲装不下
-     * 会返回 ESP_ERR_NVS_INVALID_LENGTH 且**什么都不写**。上限是自己钉的 10，
+     * 会返回 ESP_ERR_NVS_INVALID_LENGTH 且**什么都不写**。上限是自己钉的 26，
      * 但 NVS 里那条记录可能来自将来放宽了上限的固件版本（或降级回来的旧版），
      * 先问长度就能把这种情况识别成「存的名字比我认得的长」，而不是读出半截。
      */
