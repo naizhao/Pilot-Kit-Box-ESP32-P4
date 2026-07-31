@@ -20,10 +20,10 @@ scan and applicable regulations for every flight decision.
 | Key1 **RESET** | Restart the ESP32-P4 |
 | Key2 **BOOT** | Service control for download mode; not a UI key |
 | H1 `USB TO UART` | P4 flashing, power and serial monitor |
-| H2 `USB` | Native USB 2.0 HS OTG; connect RTL-SDR here |
+| H2 `USB` | Native USB 2.0 HS OTG. Same nets as J3-27/25: with the carrier fitted the RTL-SDR plugs into the carrier's USB-A and H2 stays empty; on a bare board connect the dongle here |
 | Touchscreen | All page navigation and user actions |
 
-The current firmware does not start the legacy `button_task.c`. There are no
+The legacy `button_task.c` is not compiled into the current firmware. There are no
 MODE, TARE, UP or DOWN application buttons on the Rev1.2 board.
 
 ## 2. Touch navigation
@@ -94,11 +94,15 @@ the active logger is writing to the card.
 
 ## 5. External-module behavior
 
-- **RTL-SDR:** connect to H2 through a suitable USB-C OTG adapter or powered
-  hub. H1 is not the SDR data path and P1 is not USB.
-- **BNO085:** current driver polls address `0x4A`; INT is not connected.
-- **BMP388:** current driver polls address `0x76`; GPIO31 is only an optional
-  project reservation.
+- **RTL-SDR:** with the Pilot Kit carrier fitted, plug the dongle into the
+  carrier's USB-A plug (J3-27/25) and leave H2 empty. On a bare board, use H2
+  through a suitable USB-C OTG adapter or powered hub. The two share the same
+  nets, so only one may be occupied. H1 is not the SDR data path and P1 is not
+  USB.
+- **BNO085:** current driver polls address `0x4A`; INT is wired to GPIO34 but
+  unused by firmware.
+- **BMP388:** current driver polls address `0x76`; INT is wired to GPIO31 but
+  unused by firmware.
 - **GPS:** UART1 uses P4 TX GPIO49 and P4 RX GPIO51 at 9600 8N1. Time comes
   from NMEA RMC; optional GPIO50 PPS wiring is not used by current firmware.
 - **BLE:** a new board needs the C6 ESP-Hosted slave image flashed once through
@@ -113,7 +117,7 @@ the active logger is writing to the card.
 | Touch is rotated or offset | Confirm the firmware reports logical 800×480 and PPA 90° clockwise |
 | Heading does not react correctly | Check the physical IMU mounting first, then run figure-eight calibration and Level |
 | Traffic says no own position | Move the GPS antenna to open sky and wait for a fix |
-| RTL-SDR does not enumerate | Confirm it is attached to H2, not H1 or P1; try a powered hub |
+| RTL-SDR does not enumerate | Confirm it is on the carrier USB-A plug (or H2 on a bare board), not H1 or P1, and that only one of the two is occupied; try a powered hub |
 | MicroSD selection still says reboot | Leave the card inserted and reboot; absent/bad cards fall back to LittleFS |
 | BLE never advertises | Complete the one-time C6 slave flash and check ESP-Hosted startup before DSI |
 

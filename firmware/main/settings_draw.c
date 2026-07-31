@@ -250,15 +250,16 @@ void pk_settings_page_render(uint16_t *fb)
       row++; }
 
     /* 5 屏幕亮度 */
+    /* 段数与 display.h 的 PK_BL_STEP_COUNT 一致：曾经多摆一个 AUTO 档，
+     * 但板上没有环境光传感器，那一格永远点不动。灰着的格子照样占触摸宽度，
+     * 还让人反复怀疑是不是坏了——干脆不出现。 */
     { const char *o[] = { pk_i18n_text(PK_TR_BRIGHT_LOW),
                           pk_i18n_text(PK_TR_BRIGHT_MID),
-                          pk_i18n_text(PK_TR_BRIGHT_HIGH),
-                          pk_i18n_text(PK_TR_BRIGHT_AUTO) };
+                          pk_i18n_text(PK_TR_BRIGHT_HIGH) };
       ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_BRIGHTNESS));
-      /* AUTO 置灰：没有环境光传感器，选了也无从自动。摆出来是因为 spec 列了
-       * 它，灰掉是因为不能假装能用——留一个点了没反应的选项更糟。 */
-      const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_step_get(), false);
-      hit_set(row, 1, _x, seg_last_w(), 4, ROW_Y(row));
+      const int _x = draw_seg(fb, ROW_Y(row), o, PK_BL_STEP_COUNT,
+                              pk_backlight_step_get(), false);
+      hit_set(row, 1, _x, seg_last_w(), PK_BL_STEP_COUNT, ROW_Y(row));
       row++; }
 
     /* 6 日间/夜间配色 */

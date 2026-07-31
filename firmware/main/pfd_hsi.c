@@ -200,7 +200,7 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
          * 这里能直接用图标、而交通目标不能，差别在于**旋转**：罗盘恒
          * heading-up，本机符号永远机头朝上；交通目标却要按各自航迹转任意角度，
          * 而字形表是预渲染的，转不了。 */
-        const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
+        const uint8_t *ac = pk_icon_bitmap
                           + (size_t)PK_ICON_OWNSHIP * ((PK_ICON_W * PK_ICON_H) / 2);
         pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                         cx - PK_ICON_W / 2, cy - PK_ICON_H / 2,

@@ -17,6 +17,7 @@ static const char *TAG = "batt";
 #define BATT_SAMPLE_US     (1000 * 1000)   /* 1 Hz：电池是慢变量 */
 #define BATT_EMA_NUM       1               /* EMA 系数 1/8，压 ADC 噪声 */
 #define BATT_EMA_DEN       8
+#define BATT_STAT_GPIO     21   /* TP1(ETA6098 STAT) 飞线 -> J3 pin 15 */
 
 static adc_oneshot_unit_handle_t s_adc;
 static adc_cali_handle_t         s_cali;
@@ -30,6 +31,7 @@ static int     s_trend_mv;      /* 30 s 前的读数，长窗口趋势判据用 
 static int     s_raw_prev;      /* 上一次**原始**读数，阶跃检测用（不能用 EMA 后的） */
 static int64_t s_trend_us;
 static bool    s_charging;
+static bool    s_stat_valid;   /* 曾观察到 STAT=LOW，确认飞线已接 */
 
 void pk_batt_init(void)
 {
@@ -71,14 +73,15 @@ void pk_batt_init(void)
         s_cali = NULL;
     }
 
-    /* STAT 探测脚：只读不驱动。配成输入 + 上拉——ETA6098 的 STAT 是开漏，
-     * 没有上拉的话高阻态读数会浮动。若这两个脚其实没接 STAT，上拉也无害。 */
-    const gpio_config_t probe = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_3) | (1ULL << GPIO_NUM_4),
+    /* STAT 引脚（TP1 飞线到 GPIO21）：输入 + 上拉。
+     * ETA6098 STAT 开漏——充电中拉低，充满/未接输入时高阻（上拉拉高）。
+     * 飞线未接时 GPIO21 恒为高，逻辑见 pk_batt_get() 的回退处理。 */
+    const gpio_config_t stat_cfg = {
+        .pin_bit_mask = (1ULL << BATT_STAT_GPIO),
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_ENABLE,
     };
-    gpio_config(&probe);
+    gpio_config(&stat_cfg);
 
     s_ready = true;
     ESP_LOGI(TAG, "BAT_ADC on GPIO%d (unit %d chan %d), divider x%.2f",
@@ -114,80 +117,64 @@ bool pk_batt_get(pk_batt_t *out)
             int mv = raw;
             if (s_cali) adc_cali_raw_to_voltage(s_cali, raw, &mv);
 
-            /*
-             * 阶跃检测：插拔充电线的那一瞬间，电压会跳一个台阶。
+            /* --- 充电状态判断 ---
              *
-             * 罩哥实测：拔掉线的瞬间 100% → 95%（约 65 mV）。物理上是
-             * 电池端电压 = 开路电压 + 充电电流 × 内阻——接着线时被抬高，
-             * 拔掉就回落到真实开路电压。
+             * 优先级：STAT 引脚 > 阶跃检测 > 30 s 趋势。
              *
-             * 这个阶跃比缓慢趋势可靠得多，而且正好补上满电那个盲区：满电时
-             * 插上线电压会跳 +65 mV，趋势法看不见（已经到顶了），阶跃法一眼
-             * 就能看见。
+             * STAT 引脚（TP1 -> GPIO21 飞线）是 ETA6098 的硬件状态输出，
+             * 充电中拉低。一旦观察到 STAT=LOW 就确认飞线已接（s_stat_valid），
+             * 之后完全信任 STAT：
+             *   LOW  -> 正在充电
+             *   HIGH -> 未充电（已充满或未接电源）
              *
-             * **必须用原始读数判，不能用 EMA 之后的**：EMA 1/8 会把 65 mV 的
-             * 阶跃第一次只反映成 8 mV，正好埋在噪声里。阈值取 30 mV——远大于
-             * ADC 噪声（实测同一状态下读数稳在 ±2 mV），也远小于真实阶跃。
+             * 飞线未接时 GPIO21 恒为 HIGH（内部上拉），无法区分"未充电"和
+             * "没接线"。此时回退到阶跃检测 + 30 s 电压趋势——两者都是推断，
+             * 不如 STAT 可靠，但在飞线接上前是唯一手段。
              */
-            if (s_raw_prev != 0) {
-                const int step = mv - s_raw_prev;
-                if (step > 30)       s_charging = true;    /* 接上了 */
-                else if (step < -30) s_charging = false;   /* 拔掉了 */
+            const int stat = gpio_get_level(BATT_STAT_GPIO);
+            if (stat == 0) {
+                s_stat_valid = true;
+                s_charging = true;
+            } else if (s_stat_valid) {
+                s_charging = false;
+            }
+
+            if (!s_stat_valid) {
+                /* STAT 飞线未确认连接，回退到电压推断 */
+                /*
+                 * 阶跃检测：插拔充电线的那一瞬间，电压会跳一个台阶。
+                 * 罩哥实测：拔掉线的瞬间 100% -> 95%（约 65 mV）。
+                 * 必须用原始读数判：EMA 1/8 会把 65 mV 的阶跃压到 8 mV，
+                 * 埋在噪声里。阈值 30 mV 远大于噪声（实测 +/-2 mV）。
+                 */
+                if (s_raw_prev != 0) {
+                    const int step = mv - s_raw_prev;
+                    if (step > 30)       s_charging = true;
+                    else if (step < -30) s_charging = false;
+                }
+
+                /*
+                 * 30 s 长窗口趋势：与 30 秒前比，高 5 mV 就算在充。
+                 * 涓流阶段相邻两次差值 <1 mV/s，短窗口检不出；30 s 窗口下
+                 * 涓流 0.5 mV/s * 30 s = 15 mV > 5 mV，检得出。
+                 */
+                if (now - s_trend_us >= 30000000LL) {
+                    if (s_trend_mv != 0) {
+                        if (s_ema_mv > s_trend_mv + 5)      s_charging = true;
+                        else if (s_ema_mv < s_trend_mv - 5) s_charging = false;
+                    }
+                    s_trend_mv  = s_ema_mv;
+                    s_trend_us  = now;
+                }
             }
             s_raw_prev = mv;
 
             if (s_ema_mv == 0) s_ema_mv = mv;
             else s_ema_mv += (mv - s_ema_mv) * BATT_EMA_NUM / BATT_EMA_DEN;
-
-            /*
-             * 充电判据：电压在**持续上升**。
-             *
-             * 板上的 ETA 充电 IC 有 STAT 脚，但它没引到任何 P4 GPIO（wiki 的
-             * 引脚表里找不到），所以读不到硬件充电状态，只能从电压趋势推。
-             * 阈值取 8 mV/次（1 Hz）：放电时电压只会降或持平，能连续上升
-             * 就是在充。噪声已被 EMA 压掉，误判概率低。
-             *
-             * 这是**推断不是事实**——真要可靠，得把 STAT 引到一个空闲 GPIO。
-             */
-            /*
-             * 充电判据：与 **30 秒前** 比，不是与上一次比。
-             *
-             * 初版比相邻两次（1 Hz、阈值 8 mV），在低电量快充时能用，一到
-             * 涓流阶段就失效——2026-07-29 罩哥实测 98% 时不显示充电符号，
-             * 就是这个原因：涓流阶段电压上升 <1 mV/s，再经 EMA 1/8 平滑，
-             * 相邻两次的差值永远够不到阈值。
-             *
-             * 改成长窗口：留一份 30 s 前的读数，比它高 5 mV 就算在充。
-             * 涓流 0.5 mV/s × 30 s = 15 mV > 5 mV，检得出；而放电时电压
-             * 只会往下走，不会误判。
-             *
-             * 仍然是**推断**——真正可靠要读 ETA6098 的 STAT 脚，见下面那段
-             * 探测日志。
-             */
-            if (now - s_trend_us >= 30000000LL) {
-                if (s_trend_mv != 0) {
-                    if (s_ema_mv > s_trend_mv + 5)      s_charging = true;
-                    else if (s_ema_mv < s_trend_mv - 5) s_charging = false;
-                    /* 差值落在 ±5 mV 内：维持原判断。满电静置和涓流末期都
-                     * 长这样，翻来覆去改状态比保持上一次更糟。 */
-                }
-                s_trend_mv  = s_ema_mv;
-                s_trend_us  = now;
-            }
             s_prev_mv = s_ema_mv;
 
-            /* ETA6098 的 STAT 脚探测（临时）。
-             *
-             * 原理图里 STAT 在 U19 pin 9，文本上邻近 GPIO3/GPIO4，但**文本
-             * 邻近不等于电气连接**——这个项目已经因为照抄过时文档给出过两次
-             * 错误结论，所以不写死，先把两个脚的电平打出来。
-             *
-             * ETA6098 的 STAT 是开漏：充电中拉低，充满或未接输入时高阻
-             * （被上拉拉高）。插拔 USB 各抓一次日志，看哪个脚跟着变，就能
-             * 确定接的是哪一个；都不变说明没引到 GPIO，那就只能继续用电压
-             * 趋势推断。 */
-            ESP_LOGD(TAG, "STAT probe: GPIO3=%d GPIO4=%d mv=%d chg=%d",
-                     gpio_get_level(GPIO_NUM_3), gpio_get_level(GPIO_NUM_4),
+            ESP_LOGD(TAG, "STAT(%d)=%d valid=%d mv=%d chg=%d",
+                     BATT_STAT_GPIO, stat, (int)s_stat_valid,
                      s_ema_mv, (int)s_charging);
             s_last_us = now;
             /* 标定用：万用表量到的电池电压 ÷ 这里的 raw = 分压比。

@@ -1,23 +1,5 @@
 # Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 pinout
 
-> ⚠️ **部分内容未随 4.3″ Rev1.2 更新（2026-07-29 实测发现）**
->
-> 本文虽声称基于 Rev1.2 原理图，但下列条目仍是 2.4″ 载板 + 核心板的旧数据，
-> 已导致两次错误结论：
->
-> | 本文说法 | 4.3″ Rev1.2 实际（wiki + 实测） |
-> |---|---|
-> | `P1` = USB HS OTG 排针，RTL-SDR 数据路径 | `P1` 是 **C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB** |
-> | RTL-SDR 接 P1 排针 | 接 **H2「USB OTG」Type-C**（USB 2.0 HS） |
-> | GPIO20 = BNO085 INT | **BAT_ADC**（电池电压检测，未从 J3 引出） |
-> | 无电池检测硬件 | **MX1.25 锂电池座 3.7 V，支持充放电** |
->
-> 涉及接口、供电、GPIO 归属时，以
-> [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md)
-> 和 [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf)
-> 为准，不要引用本文。
-
-
 Chinese version: [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md)
 
 This document is derived from the **Waveshare Rev1.2 schematic** for the
@@ -36,6 +18,22 @@ Labels used below:
 - **Firmware** — behavior implemented by the current Pilot Kit build.
 - **Project** — external Pilot Kit wiring; change the wiring and firmware
   together if this allocation changes.
+
+### UART direction convention
+
+Every UART signal in this document is named **from the ESP32-P4 point of
+view**: "P4 UART1 TX" is the line the P4 drives into the peer's RXD.
+
+The Pilot Kit carrier PCB (`docs/jlc/lcd-4.3in/`) names its nets from the
+*module* point of view, so the two conventions are exactly opposite:
+
+| Carrier PCB net | J3 pin | P4 GPIO | Meaning in this document |
+|---|---:|---:|---|
+| `GPS_RX` | 32 | 49 | **P4 UART1 TX** → GPS RXD |
+| `GPS_TX` | 36 | 51 | GPS TXD → **P4 UART1 RX** |
+
+Firmware follows the P4 convention: `GPS_TX_PIN = 49` and `GPS_RX_PIN = 51`
+in `firmware/main/gps_task.c`.
 
 > Do not use `ESP32-P4-WIFI6-datasheet.pdf` as pinout evidence for this board.
 > Despite its filename, it is the schematic of a different ESP32-P4-WIFI6
@@ -83,7 +81,7 @@ verify the footprint orientation again before routing.
 | **Actual upper net** | GND | GPIO52 | GPIO51 | GPIO50 | GPIO49 | GPIO35 | GPIO34 | GND | GPIO31 | GPIO30 | GPIO29 | ESP_3V3 | GPIO28 | GPIO4 | GPIO3 | GND | GPIO2 | GPIO8 | GPIO7 | ESP_3V3 |
 | **Upper J3 pin** | 40 | 38 | 36 | 34 | 32 | 30 | 28 | 26 | 24 | 22 | 20 | 18 | 16 | 14 | 12 | 10 | 8 | 6 | 4 | 2 |
 | **Lower silkscreen** | 48 | 47 | 46 | GND | 32 | GND | DP | DM | 25 | 24 | GND | 22 | 21 | GND | 5 | 38 | 37 | GND | 5V | 5V |
-| **Actual lower net** | GPIO48 | GPIO47 | GPIO46 | GND | GPIO32 | GND | `USBD_P` | `USBD_N` | GPIO25 | GPIO24 | GND | GPIO22 | GPIO21 | GND | GPIO5 | GPIO38 | GPIO37 | GND | VCC_5V | VCC_5V |
+| **Actual lower net** | GPIO48 | GPIO47 | GPIO46 | GND | GPIO32 | GND | `USBD_P` | `USBD_N` | GPIO25 | GPIO24 | GND | GPIO22 | GPIO21 (BAT_STAT) | GND | GPIO5 | GPIO38 | GPIO37 | GND | VCC_5V | VCC_5V |
 | **Lower J3 pin** | 39 | 37 | 35 | 33 | 31 | 29 | 27 | 25 | 23 | 21 | 19 | 17 | 15 | 13 | 11 | 9 | 7 | 5 | 3 | 1 |
 
 #### Per-column detail: same physical direction
@@ -92,17 +90,17 @@ verify the footprint orientation again before routing.
 |---:|---:|---|---:|---|
 | 1 | 40 | GND | 39 | GPIO48 |
 | 2 | 38 | GPIO52 | 37 | GPIO47 |
-| 3 | 36 | GPIO51 | 35 | GPIO46 (spare) |
-| 4 | 34 | GPIO50 (GPS_PPS) | 33 | GND |
-| 5 | 32 | GPIO49 (GPS_RX) | 31 | GPIO32 (spare) |
+| 3 | 36 | GPIO51 (GPS TXD → P4 UART1 RX; carrier net `GPS_TX`) | 35 | GPIO46 (spare) |
+| 4 | 34 | GPIO50 (GPS PPS) | 33 | GND |
+| 5 | 32 | GPIO49 (P4 UART1 TX → GPS; carrier net `GPS_RX`) | 31 | GPIO32 (spare) |
 | 6 | 30 | GPIO35 / BOOT and auto-download circuit | 29 | GND |
-| 7 | 28 | GPIO34 | 27 | `USBD_P`, native USB HS D+, silkscreen `DP` |
+| 7 | 28 | GPIO34 (IMU_INT) | 27 | `USBD_P`, native USB HS D+, silkscreen `DP` |
 | 8 | 26 | GND | 25 | `USBD_N`, native USB HS D−, silkscreen `DM` |
-| 9 | 24 | GPIO31 | 23 | GPIO25 / `USB1P1_P` |
+| 9 | 24 | GPIO31 (BARO_INT) | 23 | GPIO25 / `USB1P1_P` |
 | 10 | 22 | GPIO30 | 21 | GPIO24 / `USB1P1_N` |
 | 11 | 20 | GPIO29 | 19 | GND |
 | 12 | 18 | ESP_3V3 | 17 | GPIO22 |
-| 13 | 16 | GPIO28 (IMU_RST) | 15 | GPIO21 (spare) |
+| 13 | 16 | GPIO28 (IMU_RST) | 15 | GPIO21 (BAT_STAT, fly-wire from TP1) |
 | 14 | 14 | GPIO4 | 13 | GND |
 | 15 | 12 | GPIO3 | 11 | GPIO5 |
 | 16 | 10 | GND | 9 | GPIO38 / P4 UART RX from CH343P |
@@ -118,13 +116,17 @@ left   upper J3-40 ────────────────────�
        lower J3-39 ───────────────────────────── J3-1
 ```
 
-The native USB HS connection for the new HAT carrier is therefore:
+The native USB HS connection used by the Pilot Kit carrier is therefore:
 
-- J3-27: `USBD_P` / `DP`
-- J3-25: `USBD_N` / `DM`
-- J3-29 or J3-26: adjacent GND
-- J3-1/J3-3: `VCC_5V`; pass it through a USB Host current-limited switch
-  before connecting it to dongle VBUS
+- J3-27: `USBD_P` / `DP` (carrier net `USB_DP`)
+- J3-25: `USBD_N` / `DM` (carrier net `USB_DM`)
+- J3-26: adjacent GND
+- J3-1/J3-3: `VCC_5V` (carrier net `+5V_SYS`) → USB-A VBUS
+
+**As built**, the carrier connects `+5V_SYS` straight from J3-1/J3-3 to USB-A
+pin 1; `docs/jlc/lcd-4.3in/` contains no current-limited switch. Inserting a
+500 mA USB Host current-limited switch is a possible future revision, not
+present hardware.
 
 The silkscreen labels `25`/`24` mean GPIO25/GPIO24 and carry the separate
 Full-Speed `USB1P1_P/N` pair. They are not the native USB HS `DP`/`DM` pair.
@@ -144,17 +146,17 @@ table above when wiring or drawing the mating HAT footprint.
 | 9 | GPIO38 / P4 UART RX from CH343P | 10 | GND |
 | 11 | GPIO5 | 12 | GPIO3 |
 | 13 | GND | 14 | GPIO4 |
-| 15 | GPIO21 (spare) | 16 | GPIO28 (IMU_RST) |
+| 15 | GPIO21 (BAT_STAT, fly-wire from TP1) | 16 | GPIO28 (IMU_RST) |
 | 17 | GPIO22 | 18 | ESP_3V3 |
 | 19 | GND | 20 | GPIO29 |
 | 21 | GPIO24 / USB1P1_N | 22 | GPIO30 |
-| 23 | GPIO25 / USB1P1_P | 24 | GPIO31 |
+| 23 | GPIO25 / USB1P1_P | 24 | GPIO31 (BARO_INT) |
 | 25 | USBD_N, native USB HS D− | 26 | GND |
-| 27 | USBD_P, native USB HS D+ | 28 | GPIO34 |
+| 27 | USBD_P, native USB HS D+ | 28 | GPIO34 (IMU_INT) |
 | 29 | GND | 30 | GPIO35 / BOOT and auto-download circuit |
-| 31 | GPIO32 (spare) | 32 | GPIO49 (GPS_RX) |
-| 33 | GND | 34 | GPIO50 |
-| 35 | GPIO46 (spare) | 36 | GPIO51 (GPS_TX) |
+| 31 | GPIO32 (spare) | 32 | GPIO49 (P4 UART1 TX → GPS; carrier net `GPS_RX`) |
+| 33 | GND | 34 | GPIO50 (GPS PPS) |
+| 35 | GPIO46 (spare) | 36 | GPIO51 (GPS TXD → P4 UART1 RX; carrier net `GPS_TX`) |
 | 37 | GPIO47 | 38 | GPIO52 |
 | 39 | GPIO48 | 40 | GND |
 
@@ -170,7 +172,7 @@ Important cautions:
 - J3 is not electrically pin-compatible with a complete Raspberry Pi 40-pin
   header. Check every pin before attaching a HAT.
 - J3 pins 25/27 share the native USB HS data nets with H2. Use either H2 or
-  the HAT USB-A port, never both.
+  the carrier USB-A port, never both.
 - GPIO24/25 are a separate Full-Speed USB Serial/JTAG pair. They are not the
   H2 native HS pair.
 - GPIO35 is BOOT and is also driven by the CH343P auto-download circuit.
@@ -185,22 +187,23 @@ Important cautions:
 |---|---|---|
 | Shared I²C SDA / SCL | GPIO7 / GPIO8 | **Project + firmware** |
 | BNO085 reset | GPIO28 (moved from GPIO21 for PCB routing) | **Project + firmware** |
-| BNO085 interrupt | GPIO34 (J3 pin 28, JLC PCB net IMU_INT) | Wired on the HAT; firmware still polls |
-| BMP388 interrupt | GPIO31 optional | Reserved by project; current driver polls |
-| GPS UART1 TX / RX | GPIO49 / GPIO51 (P4 TX moved GPIO32→GPIO49; RX stays on GPIO51; J3 pin 32/36) | **Project + firmware**, 9600 8N1 |
+| BNO085 interrupt | GPIO34 (J3 pin 28, carrier net `IMU_INT`) | Wired on the carrier; firmware still polls |
+| BMP388 interrupt | GPIO31 (J3 pin 24, carrier net `BARO_INT`) | Wired on the carrier; firmware still polls |
+| GPS UART1 TX / RX | P4 TX GPIO49 (J3 pin 32) / P4 RX GPIO51 (J3 pin 36); P4 TX moved GPIO32→GPIO49 | **Project + firmware**, 9600 8N1 |
 | GPS PPS | GPIO50 optional (moved from GPIO46 for PCB routing) | Wiring reservation only; current firmware does not consume PPS |
-| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **New HAT carrier**; leave H2 empty and feed VBUS from J3 `VCC_5V` through a current-limited switch |
+| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **Carrier USB-A plug**; leave H2 empty. VBUS comes straight from J3 `VCC_5V`, with no current-limited switch on the carrier |
 
 Reasonable general-purpose candidates, when the optional project functions
-above are unused, are GPIO5, GPIO21, GPIO22, GPIO29, GPIO30, GPIO32, GPIO34,
-GPIO46, GPIO47, GPIO48, GPIO51 and GPIO52.
+above are unused, are GPIO5, GPIO22, GPIO29, GPIO30, GPIO32, GPIO46,
+GPIO47, GPIO48 and GPIO52.
 
 Use these only after considering their caveats:
 
 - GPIO2/3/4 overlap default JTAG functions.
 - GPIO24/25 overlap USB Serial/JTAG.
-- GPIO31 is reserved for a possible BMP388 interrupt.
-- GPIO49/51 are the current GPS UART (RX on GPIO51; GPIO50 is PPS).
+- GPIO31 carries the carrier's `BARO_INT` net (BMP388 interrupt).
+- GPIO34 carries the carrier's `IMU_INT` net (BNO085 interrupt).
+- GPIO49/51 are the current GPS UART (P4 TX on GPIO49, P4 RX on GPIO51).
 - GPIO50 is reserved for GPS PPS (GPIO46 now spare).
 - GPIO35 and GPIO37/38 should normally be left to boot/console circuitry.
 
@@ -226,14 +229,14 @@ This table prevents internal board signals from being mistaken for free pins.
 | 14–17 | P4↔C6 SDIO D0–D3 | No |
 | 18, 19 | P4↔C6 SDIO CLK, CMD | No |
 | 20 | BAT_ADC, battery voltage divided by 3 | No |
-| 21, 22 | Expansion (GPIO21 spare, GPS moved off) | 15, 17 |
+| 21, 22 | Expansion (GPIO21 = BAT_STAT, fly-wire from TP1; IMU_RST moved to GPIO28) | 15, 17 |
 | 23 | GT911 TP_RST | No |
 | 24, 25 | USB1P1_N/P Full-Speed USB Serial/JTAG | 21, 23 |
 | 26 | LCD_BL_PWM | No |
 | 27 | LCD RESET | No |
-| 28–32 | Expansion (GPIO28 = IMU_RST) | 16, 20, 22, 24, 31 |
+| 28–32 | Expansion (GPIO28 = IMU_RST, GPIO31 = BARO_INT) | 16, 20, 22, 24, 31 |
 | 33 | BL_EN, pulled up by 100 kΩ | No |
-| 34 | Expansion | 28 |
+| 34 | Expansion (GPIO34 = IMU_INT) | 28 |
 | 35 | BOOT plus CH343P auto-download | 30 |
 | 36 | 10 kΩ pull-up only; not exposed | No |
 | 37 | P4 UART TX to CH343P RXD | 7 |
@@ -241,7 +244,7 @@ This table prevents internal board signals from being mistaken for free pins.
 | 39–42 | microSD D0–D3 | No |
 | 43, 44 | microSD CLK, CMD | No |
 | 45 | microSD power-switch control | No |
-| 46–52 | Expansion (GPIO50 = GPS_PPS) | 35, 37, 39, 32, 34, 36, 38 |
+| 46–52 | Expansion (GPIO49 = P4 UART1 TX to GPS, GPIO50 = GPS PPS, GPIO51 = P4 UART1 RX from GPS) | 35, 37, 39, 32, 34, 36, 38 |
 | 53 | NS4150B PA_CTRL | No |
 | 54 | ESP32-C6 CHIP_PU/EN through R34, 0 Ω | No |
 
@@ -348,12 +351,21 @@ H4 is the speaker connector, not the C6 header.
 | H1 `USB TO UART` | USB-C → CH343P → P4 GPIO38 RX / GPIO37 TX | Flashing and `idf.py monitor` |
 | H2 `USB` | USB-C → dedicated USBD_N/P | Native USB 2.0 HS OTG; shares the J3 HS data nets |
 | J3 pins 21/23 | GPIO24/25, USB1P1_N/P | Separate Full-Speed USB Serial/JTAG |
-| J3 pins 25/27 | Dedicated USBD_N/P | RTL-SDR USB HS data path on the new HAT carrier |
+| J3 pins 25/27 | Dedicated USBD_N/P | RTL-SDR USB HS data path on the Pilot Kit carrier |
 
-The new HAT carrier should route J3-27 `DP` and J3-25 `DM` to a USB-A
-receptacle while leaving H2 empty. Feed USB-A VBUS from J3 `VCC_5V` through a
-500 mA USB Host current-limited switch. Do not follow obsolete instructions
-for a four-pin P1/MX1.25 USB cable.
+**Current wiring.** The Pilot Kit carrier (`docs/jlc/lcd-4.3in/`, designator
+`RTL-SDR`, a 4-pin USB Type-A plug) routes J3-27 `DP` and J3-25 `DM` to that
+plug, and takes VBUS straight from J3-1/J3-3 `VCC_5V`. The dongle therefore
+plugs into the carrier and **H2 must stay empty**.
+
+Without the carrier — a bare Waveshare board on the bench — use H2 `USB` with
+a USB-C OTG adapter or powered hub instead. H2 and J3-25/27 are the same
+nets, so exactly one of them may be occupied at a time.
+
+Known limitation: the carrier has **no current-limited switch** on VBUS; the
+dongle draws directly from the board 5 V rail. A 500 mA USB Host
+current-limited switch is a candidate for a future carrier revision. Do not
+follow obsolete instructions for a four-pin P1/MX1.25 USB cable.
 
 ## 7. microSD
 
@@ -440,7 +452,7 @@ The current Pilot Kit firmware does not initialize the audio subsystem.
 | VCC / GND | J3 ESP_3V3 / GND |
 | SDA / SCL | GPIO7 / GPIO8 |
 | RST | GPIO28 (moved from GPIO21 for 60mm PCB routing) |
-| INT | Not connected; current driver polls |
+| INT | GPIO34 (J3 pin 28, carrier net `IMU_INT`); wired, but the current driver polls |
 | AD0 / PS1 / PS0 | GND / GND / GND |
 | CS | ESP_3V3 |
 
@@ -462,9 +474,12 @@ before flight.
 | VCC / GND | ESP_3V3 / GND |
 | SDA / SCL | GPIO7 / GPIO8 |
 | SDO / CSB | GND / ESP_3V3 for address `0x76` |
-| INT | Optional GPIO31; current driver polls |
+| INT | GPIO31 (J3 pin 24, carrier net `BARO_INT`); wired, but the current driver polls |
 
 ### GPS
+
+Signal names below are the **GPS module's** pin names; the GPIO column is the
+P4 side (see the UART direction convention at the top of this document).
 
 | GPS pin | Connection |
 |---|---|
@@ -482,13 +497,15 @@ It does not implement a GPIO interrupt or timing discipline from PPS.
 2. Confirm `ST7701 DSI ready: logical 800x480 -> PPA 90 CW`.
 3. Confirm touch tracks the full screen; TP_INT should remain open unless R35
    was intentionally populated.
-4. Confirm BNO085 at `0x4A`, BMP388 at `0x76`, and GPS RX on GPIO51.
+4. Confirm BNO085 at `0x4A`, BMP388 at `0x76`, and NMEA arriving on P4 RX
+   GPIO51.
 5. Confirm C6 ESP-Hosted starts before DSI initialization and no SDIO CMD5
    error appears.
 6. Confirm microSD mounts through Slot 0 without reinitializing the shared
    SDMMC host.
-7. Attach RTL-SDR to the new HAT USB-A port, confirm native USB HS enumeration
-   through J3, and leave H2 empty.
+7. Attach RTL-SDR to the carrier's USB-A plug, confirm native USB HS
+   enumeration through J3, and leave H2 empty. On a bare board, use H2
+   instead.
 8. Perform repeated cold boots before treating any wiring change as stable.
 
 ## 12. Legacy boundary
@@ -497,3 +514,10 @@ The old 2.4-inch SPI display and four-button carrier are historical material
 under `docs/jlc/`. Their GPIO28/29/30/31/50 display wiring, GPIO26/5/22/23
 application keys and old connector names must not be copied into the
 Rev1.2 4.3-inch build.
+
+`firmware/main/button_task.c` implements those four legacy keys and is
+therefore **excluded from `firmware/main/CMakeLists.txt`**: its hard-coded
+GPIO26 and GPIO23 are LCD_BL_PWM and GT911 TP_RST on Rev1.2, so calling
+`pk_button_init()` would drive the backlight and touch reset as pulled-up
+inputs. The file is kept only as a reference for the button-to-action
+routing; re-mapping the pins is a prerequisite for ever building it again.

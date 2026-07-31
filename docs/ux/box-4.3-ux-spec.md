@@ -311,7 +311,7 @@ text_font_cjk_body.c 18.6 KB   8×8   CJK 正文
 I2C0（IMU/BMP388）   SCL/SDA 引脚      不变
 IMU INT / RST        GPIO34 / GPIO28
 BARO_INT             GPIO31           （原 GPIO27 被 LCD RST 占用）
-GPS RX / TX / PPS    GPIO51 / 49 / 50 （均为 Rev1.2 4.3″ 迁移后值）
+GPS P4 RX / P4 TX / PPS  GPIO51 / 49 / 50 （P4 视角；均为 Rev1.2 4.3″ 迁移后值）
 RTL-SDR              排针 DP/DM       = P4 专用 USB 2.0 HS PHY
 ```
 

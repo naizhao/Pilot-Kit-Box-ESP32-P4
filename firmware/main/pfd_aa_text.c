@@ -18,7 +18,7 @@
 /* ── 字形表查找 ───────────────────────────────────────────── */
 
 typedef struct {
-    const uint8_t *bitmap[2];   /* [PK_AA_REGULAR] / [PK_AA_BOLD] */
+    const uint8_t *bitmap;
     int            cell_w;
     int            cell_h;
     unsigned       last_code;   /* 该档实际覆盖到的末位码 */
@@ -28,16 +28,11 @@ typedef struct {
  * PFD 当前值，显示的都是纯数字（带正负号），存整套字母纯属浪费——app 分区
  * 实测只剩 471 KB。落在覆盖范围外的字符按空格处理（见 aa_putchar）。 */
 static const aa_face_t s_faces[PK_AA_SIZE_COUNT] = {
-    [PK_AA_XS] = { { pk_aa_xs_regular, pk_aa_xs_bold },
-                   PK_AA_XS_W, PK_AA_XS_H, PK_AA_XS_LAST },
-    [PK_AA_S]  = { { pk_aa_s_regular,  pk_aa_s_bold  },
-                   PK_AA_S_W,  PK_AA_S_H,  PK_AA_S_LAST  },
-    [PK_AA_M]  = { { pk_aa_m_regular,  pk_aa_m_bold  },
-                   PK_AA_M_W,  PK_AA_M_H,  PK_AA_M_LAST  },
-    [PK_AA_L]  = { { pk_aa_l_regular,  pk_aa_l_bold  },
-                   PK_AA_L_W,  PK_AA_L_H,  PK_AA_L_LAST  },
-    [PK_AA_XL] = { { pk_aa_xl_regular, pk_aa_xl_bold },
-                   PK_AA_XL_W, PK_AA_XL_H, PK_AA_XL_LAST },
+    [PK_AA_XS] = { pk_aa_xs, PK_AA_XS_W, PK_AA_XS_H, PK_AA_XS_LAST },
+    [PK_AA_S]  = { pk_aa_s,  PK_AA_S_W,  PK_AA_S_H,  PK_AA_S_LAST  },
+    [PK_AA_M]  = { pk_aa_m,  PK_AA_M_W,  PK_AA_M_H,  PK_AA_M_LAST  },
+    [PK_AA_L]  = { pk_aa_l,  PK_AA_L_W,  PK_AA_L_H,  PK_AA_L_LAST  },
+    [PK_AA_XL] = { pk_aa_xl, PK_AA_XL_W, PK_AA_XL_H, PK_AA_XL_LAST },
 };
 
 /* CJK 段。与拉丁**同一份字体资源**（gen_pfd_aa_font.py 一次生成），关键是
@@ -46,23 +41,17 @@ static const aa_face_t s_faces[PK_AA_SIZE_COUNT] = {
  * 只有 S 与 M 两档带中文：XS 服务交通目标的高度标签、XL 服务 PFD 当前值，
  * 两者都是纯数字带正负号。 */
 typedef struct {
-    const uint8_t *bitmap[2];
+    const uint8_t *bitmap;
     int            cell_w;
     int            cell_h;
 } aa_cjk_face_t;
 
 static const aa_cjk_face_t s_cjk_faces[PK_AA_SIZE_COUNT] = {
-    [PK_AA_XS] = { { pk_aa_xs_cjk_regular, pk_aa_xs_cjk_bold },
-                   PK_AA_XS_CJK_W, PK_AA_XS_CJK_H },
-    [PK_AA_S]  = { { pk_aa_s_cjk_regular,  pk_aa_s_cjk_bold  },
-                   PK_AA_S_CJK_W,  PK_AA_S_CJK_H  },
-    [PK_AA_M]  = { { pk_aa_m_cjk_regular,  pk_aa_m_cjk_bold  },
-                   PK_AA_M_CJK_W,  PK_AA_M_CJK_H  },
-    [PK_AA_L]  = { { pk_aa_l_cjk_regular,  pk_aa_l_cjk_bold  },
-                   PK_AA_L_CJK_W,  PK_AA_L_CJK_H  },
+    [PK_AA_XS] = { pk_aa_xs_cjk, PK_AA_XS_CJK_W, PK_AA_XS_CJK_H },
+    [PK_AA_S]  = { pk_aa_s_cjk,  PK_AA_S_CJK_W,  PK_AA_S_CJK_H  },
+    [PK_AA_M]  = { pk_aa_m_cjk,  PK_AA_M_CJK_W,  PK_AA_M_CJK_H  },
+    [PK_AA_L]  = { pk_aa_l_cjk,  PK_AA_L_CJK_W,  PK_AA_L_CJK_H  },
 };
-
-static pk_aa_weight_t s_weight = PK_AA_REGULAR;
 
 /* 码位表升序，二分查。返回字形序号，没有则 -1。 */
 static int cjk_index(uint32_t cp)
@@ -100,13 +89,6 @@ static uint32_t utf8_next(const unsigned char **ps)
     *ps = p + 1;
     return 0xFFFD;
 }
-
-void pk_aa_set_weight(pk_aa_weight_t w)
-{
-    s_weight = (w == PK_AA_BOLD) ? PK_AA_BOLD : PK_AA_REGULAR;
-}
-
-pk_aa_weight_t pk_aa_get_weight(void) { return s_weight; }
 
 int pk_aa_cell_w(pk_aa_size_t size)
 {
@@ -265,7 +247,7 @@ static void aa_putchar(uint16_t *fb, int fb_w, int fb_h,
      *
      * 这个错误藏了很久：早先四档的 cell 分别是 390/540/960/2368 像素，恰好
      * 全是偶数，取整与否没区别。新加的 L 档 21×37=777 才把它暴露出来。 */
-    const uint8_t *glyph = face->bitmap[s_weight]
+    const uint8_t *glyph = face->bitmap
                          + (size_t)(code - PK_AA_FIRST_CODE)
                            * (((size_t)cw * ch + 1) / 2);
 
@@ -297,7 +279,7 @@ int pk_aa_text_width(const char *s, pk_aa_size_t size)
         uint32_t cp = utf8_next(&p);
         if (cp == '~' || cp == 0x00B0) cp = 0x7F;
         if (cp <= 0x7F) { w += face->cell_w; continue; }
-        const int gi = (cjk->bitmap[0] != NULL) ? cjk_index(cp) : -1;
+        const int gi = (cjk->bitmap != NULL) ? cjk_index(cp) : -1;
         w += (gi < 0) ? face->cell_w : cjk->cell_w;
     }
     return w;
@@ -331,13 +313,13 @@ int pk_aa_puts(uint16_t *fb, int fb_w, int fb_h,
         /* 非拉丁：查 CJK 段。该档没有中文（XS/XL）或字库里没这个字时，
          * 退回一个空位——宁可留白，也不要画出错位的字形。加字的正确做法是
          * 改 i18n catalog 后重跑 gen_pfd_aa_font.py。 */
-        const int gi = (cjk->bitmap[0] != NULL) ? cjk_index(cp) : -1;
+        const int gi = (cjk->bitmap != NULL) ? cjk_index(cp) : -1;
         if (gi < 0) {
             advance += face->cell_w;
             continue;
         }
         const int cw = cjk->cell_w, ch = cjk->cell_h;
-        const uint8_t *glyph = cjk->bitmap[s_weight]
+        const uint8_t *glyph = cjk->bitmap
                              + (size_t)gi * (((size_t)cw * ch + 1) / 2);
         pk_aa_blit_4bpp(fb, fb_w, fb_h, x + advance, y, glyph, cw, ch, color);
         advance += cw;

@@ -427,21 +427,16 @@ void app_main(void)
     }
 
     /*
-     * 4.3 寸一体板以触摸为唯一 UI 输入。旧按键任务保留源码便于参考，但绝不
-     * 初始化：GPIO23/26 已分别固定给 TP_RST/LCD_BL_PWM。
+     * 4.3 寸一体板以触摸为唯一 UI 输入。button_task.c 已从 CMakeLists 移出
+     * 编译（它写死的 GPIO26/GPIO23 在本板是 LCD_BL_PWM / GT911 TP_RST），
+     * 所以这里不能再调用 pk_button_init()——调用会直接链接失败。
      *
-     * 常量分支仍引用回调，避免在迁移后半程删除大段已验证的动作路由；待触摸
-     * 手势全部覆盖后再按独立阶段退役旧模块。
+     * on_button_event 仍保留：ADS-B 列表里「TARE 短按绑定本机」
+     * （pk_ui_set_own_icao）这条动作路径目前还没有对应的触摸入口，这段代码
+     * 是移植时的唯一参考。用 (void) 引用它以避免 -Wunused-function。
      */
-    const bool legacy_buttons_enabled = false;
-    if (legacy_buttons_enabled) {
-        esp_err_t btn_err = pk_button_init(on_button_event);
-        if (btn_err != ESP_OK) {
-            ESP_LOGW(TAG, "button init failed (%s)", esp_err_to_name(btn_err));
-        }
-    } else {
-        ESP_LOGI(TAG, "legacy tact buttons disabled on 4.3-inch touch board");
-    }
+    (void)on_button_event;
+    ESP_LOGI(TAG, "legacy tact buttons disabled on 4.3-inch touch board");
 
     /* PFD render task. Starts after the display + IMU init
      * so it can read both straight away. Survives either failing.

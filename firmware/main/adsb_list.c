@@ -42,6 +42,7 @@
 #include "airline_codes.h"
 #include "baro.h"
 #include "display.h"
+#include "i18n.h"
 #include "icao_country.h"
 #include "imu_task.h"
 #include "mag_var.h"
@@ -186,29 +187,41 @@ typedef enum {
     SORT_COUNT
 } sort_key_t;
 
+/* title 存的是**词条 id** 而不是字符串：语言可以在运行时切，这张表是 static
+ * const，存字符串就意味着切语言后列头还停在旧语言上。 */
 typedef struct {
-    const char *title;
+    pk_tr_id_t  title;
     int         x;            /* right_align ? 右缘 : 左缘 */
     bool        right_align;
     int         hit_x0, hit_x1;
 } col_def_t;
 
+/* 当前语言下这一列的标题。列头与顶栏那行「SORT xxx」都从它取，两处不各查
+ * 一次表——那正是本文件出过的错的模式（同一个数分两处各写各的）。 */
+static const char *col_title(sort_key_t k);
+
 /* 命中区把列间空隙一并吃掉：手指落在两列标题中间时总得归给某一列，
  * 留缝隙只会让人以为「点了没反应」。 */
 static const col_def_t COLS[SORT_COUNT] = {
-    [SORT_BRG]  = { "BRG",      COL_BRG_X,  false,  PAD_L - 8, SEP_CALL },
-    [SORT_CALL] = { "CALLSIGN", COL_CALL_X, false,  SEP_CALL,  SEP_DIST },
+    [SORT_BRG]  = { PK_TR_LIST_COL_BRG,  COL_BRG_X,  false,  PAD_L - 8, SEP_CALL },
+    [SORT_CALL] = { PK_TR_LIST_COL_CALL, COL_CALL_X, false,  SEP_CALL,  SEP_DIST },
     /* FLAG 不排序（徽章有无不构成一种顺序），命中区并进 DIST——中间夹一个
      * 点了没反应的列，比少一个可点的列更让人困惑。 */
-    [SORT_DIST] = { "DIST",     COL_DIST_R, true,   SEP_DIST,  SEP_ALT  },
-    [SORT_ALT]  = { "ALT",      COL_ALT_R,  true,   SEP_ALT,   SEP_VS   },
-    [SORT_VS]   = { "V/S",      COL_VS_R,   true,   SEP_VS,    SEP_GS   },
-    [SORT_GS]   = { "GS",       COL_GS_R,   true,   SEP_GS,    SEP_TRK  },
-    [SORT_TRK]  = { "TRK",      COL_TRK_R,  true,   SEP_TRK,   SEP_SEEN },
+    [SORT_DIST] = { PK_TR_LIST_COL_DIST, COL_DIST_R, true,   SEP_DIST,  SEP_ALT  },
+    [SORT_ALT]  = { PK_TR_LIST_COL_ALT,  COL_ALT_R,  true,   SEP_ALT,   SEP_VS   },
+    [SORT_VS]   = { PK_TR_LIST_COL_VS,   COL_VS_R,   true,   SEP_VS,    SEP_GS   },
+    [SORT_GS]   = { PK_TR_LIST_COL_GS,   COL_GS_R,   true,   SEP_GS,    SEP_TRK  },
+    [SORT_TRK]  = { PK_TR_LIST_COL_TRK,  COL_TRK_R,  true,   SEP_TRK,   SEP_SEEN },
     /* 标题写 AGE 不写 SEEN：SEEN 是 4 字符 40 px，比它管的那列数据
-     * （"47s" = 30 px）还宽，右对齐后会顶到左边那条线上。 */
-    [SORT_SEEN] = { "AGE",      COL_SEEN_R, true,   SEP_SEEN,  CONTENT_R + 8 },
+     * （"47s" = 30 px）还宽，右对齐后会顶到左边那条线上。中文侧同理取两字
+     * 的「更新」（XS 档 24 px），仍窄于该列的 30 px。 */
+    [SORT_SEEN] = { PK_TR_LIST_COL_AGE,  COL_SEEN_R, true,   SEP_SEEN,  CONTENT_R + 8 },
 };
+
+static const char *col_title(sort_key_t k)
+{
+    return pk_i18n_text(COLS[(k >= 0 && k < SORT_COUNT) ? k : SORT_DIST].title);
+}
 
 /* 排序状态。默认距离升序——最近的威胁排最前，这是打开这一页最常见的意图。
  *
@@ -218,10 +231,10 @@ static sort_key_t s_sort   = SORT_DIST;
 static bool       s_sort_desc;
 
 /* 顶栏右上角：排序说明 + RESET 按钮的位置。RESET 贴 CONTENT_R 右缘，
- * 说明文字排在它左边。 */
+ * 说明文字右对齐排在它左边（起点由实测文本宽度算，不写死——中英文长度
+ * 差得多，写死的那个数只对其中一种语言成立）。 */
 #define RESET_X1      (CONTENT_R + 8)
 #define RESET_X0      (RESET_X1 - 66)
-#define SORT_LBL_X    (RESET_X0 - 150)
 #define HDR_HIT_RESET SORT_COUNT      /* s_hdr_down 里给 RESET 留的编号 */
 
 #define SORT_DEFAULT_KEY  SORT_DIST
@@ -306,9 +319,14 @@ static uint32_t pk_adsb_row_icao(int row)
 }
 
 /*
- * 右对齐：先量宽再倒推起点。CJK/箭头是宽字形，这里的列全是 ASCII，
- * 用 cell_w × 字符数即可（等宽字体）。
+ * 右对齐：先量宽再倒推起点。
  *
+ * 宽度一律走 pk_aa_text_width，不用 strlen × cell_w。数据列确实全是 ASCII，
+ * 但**列头也走这个函数**，而中文列头（「呼号」「距离」「更新」）一个字形三
+ * 个字节、又比拉丁宽——按 strlen 算会把两字的标题当成六字符量，右对齐后整
+ * 个标题被推到左边那条分隔线外。
+ *
+
  * 这里曾经出过一次很难看出来的错：右对齐基准（COL_*_R 宏）和分隔线位置
  * （COLS[].hit_x0）是两份独立的数，我改列位时只改了其中一份，于是数据一律
  * 右对齐到旧位置、线画在新位置，字被线穿过去。缩略图上看不出来，罩哥放大
@@ -320,7 +338,7 @@ static uint32_t pk_adsb_row_icao(int row)
 static void puts_right(uint16_t *fb, int right_x, int y, const char *s,
                        uint16_t col, pk_aa_size_t sz)
 {
-    const int w = (int)strlen(s) * pk_aa_cell_w(sz);
+    const int w = pk_aa_text_width(s, sz);
     LST_PUTS(fb, right_x - w, y, s, col, sz);
 }
 
@@ -467,12 +485,13 @@ static bool row_less(const row_t *a, const row_t *b)
 static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
 {
     const int ty = PK_UI_TITLE_Y;
-    LST_PUTS(fb, PAD_L, ty, "AIRCRAFT", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+    LST_PUTS(fb, PAD_L, ty, pk_i18n_text(PK_TR_LIST_TITLE),
+             PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 
     /* 目标数用 PFD 状态栏那枚 connecting_airports——同一台设备上「ADS-B 目标
      * 数」只该有一个符号。绿=有效在线，与状态栏、交通页一致。 */
     const uint16_t COL_ADSB = pk_rgb565(0, 220, 60);
-    const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+    const uint8_t *ic = pk_icon_bitmap
                       + (size_t)PK_ICON_ADSB
                         * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
     pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -493,22 +512,24 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
      * 到「最近的排最前」得记住原来是哪列、什么方向，不如给一个回原点的按钮。
      * 默认状态下它不出现——一个按下去什么都不变的按钮只会让人怀疑没点中。
      */
-    char sbuf[24];
-    snprintf(sbuf, sizeof(sbuf), "SORT %s%s",
-             COLS[s_sort].title, s_sort_desc ? "↓" : "↑");
-    /* 箭头是 3 字节 UTF-8 但只占一个字形宽，strlen 会多算 2 个 cell。 */
-    const int sw = ((int)strlen(sbuf) - 2) * pk_aa_cell_w(PK_AA_S)
-                 - pk_aa_cell_w(PK_AA_S) + PK_AA_S_CJK_W;
-    LST_PUTS(fb, SORT_LBL_X, (PFD_BAR_BOT - PK_AA_S_H) / 2, sbuf,
+    /* 缓冲按中文算：列名可能是 2 个汉字（6 字节），箭头再占 3 字节。 */
+    char sbuf[40];
+    snprintf(sbuf, sizeof(sbuf), "%s %s%s", pk_i18n_text(PK_TR_LIST_SORT),
+             col_title(s_sort), s_sort_desc ? "↓" : "↑");
+    /* 右对齐到 RESET 左边：这行的长度随排序列变（"SORT CALLSIGN↑" 比
+     * "SORT DIST↑" 长 55 px），左对齐画就会在非默认排序时顶到 RESET 上。
+     * 宽度必须问渲染器要——中文列名与箭头都不是一字节一格。 */
+    const int sw = pk_aa_text_width(sbuf, PK_AA_S);
+    LST_PUTS(fb, RESET_X0 - 10 - sw, (PFD_BAR_BOT - PK_AA_S_H) / 2, sbuf,
              col_dim, PK_AA_S);
-    (void)sw;
 
     if (!sort_is_default()) {
         const uint16_t COL_RST = pk_rgb565(255, 210, 60);
         const int ty2 = (PFD_BAR_BOT - PK_AA_XS_H) / 2;
         if (s_hdr_down == HDR_HIT_RESET)
             pk_pfd_darken_rect(fb, RESET_X0, 4, RESET_X1, PFD_BAR_BOT - 4, 60);
-        LST_PUTS(fb, RESET_X0 + 8, ty2, "RESET", COL_RST, PK_AA_XS);
+        LST_PUTS(fb, RESET_X0 + 8, ty2, pk_i18n_text(PK_TR_LIST_RESET),
+                 COL_RST, PK_AA_XS);
     }
 }
 
@@ -539,12 +560,15 @@ static void draw_col_titles(uint16_t *fb, uint16_t col_dim, uint16_t col_hi)
         const char *ar = !active ? NULL : (s_sort_desc ? "↓" : "↑");
         const int arw = ar ? PK_AA_XS_CJK_W : 0;
 
+        const char *t = col_title((sort_key_t)k);
         if (c->right_align) {
-            puts_right(fb, c->x - arw, ty, c->title, cc, PK_AA_XS);
+            puts_right(fb, c->x - arw, ty, t, cc, PK_AA_XS);
             if (ar) LST_PUTS(fb, c->x - arw, ty, ar, cc, PK_AA_XS);
         } else {
-            const int w = (int)strlen(c->title) * pk_aa_cell_w(PK_AA_XS);
-            LST_PUTS(fb, c->x, ty, c->title, cc, PK_AA_XS);
+            /* 中文列头是多字节，strlen × cell_w 会算出好几倍的宽度，
+             * 箭头就会飞到隔壁列去。宽度只能问渲染器要。 */
+            const int w = pk_aa_text_width(t, PK_AA_XS);
+            LST_PUTS(fb, c->x, ty, t, cc, PK_AA_XS);
             if (ar) LST_PUTS(fb, c->x + w + 2, ty, ar, cc, PK_AA_XS);
         }
     }
@@ -725,23 +749,50 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
 static void put_val(uint16_t *fb, int x, int y_top, int avail,
                     const char *val, uint16_t col)
 {
-    const int len = (int)strlen(val);
+    /* 宽度一律问渲染器：抽屉里的值有中文（「秒前」），也有航司/国家名这类
+     * 纯 ASCII 的库数据。strlen 会把一个汉字数成 3 格，于是中文界面下每一行
+     * 都被误判为放不下而降到 XS，甚至被截成「秒..」。 */
     pk_aa_size_t sz = PK_AA_M;
-    if (len * pk_aa_cell_w(PK_AA_S) <= avail && len * pk_aa_cell_w(PK_AA_M) > avail)
-        sz = PK_AA_S;
-    else if (len * pk_aa_cell_w(PK_AA_M) > avail)
-        sz = PK_AA_XS;
+    if (pk_aa_text_width(val, PK_AA_M) > avail)
+        sz = (pk_aa_text_width(val, PK_AA_S) <= avail) ? PK_AA_S : PK_AA_XS;
 
-    const int cw = pk_aa_cell_w(sz);
-    const int y  = y_top + (PK_AA_M_H - pk_aa_cell_h(sz)) / 2;
+    const int y = y_top + (PK_AA_M_H - pk_aa_cell_h(sz)) / 2;
 
-    if (len * cw <= avail) { LST_PUTS(fb, x, y, val, col, sz); return; }
+    if (pk_aa_text_width(val, sz) <= avail) {
+        LST_PUTS(fb, x, y, val, col, sz);
+        return;
+    }
 
-    /* 还是放不下：留两格给 ".."，至少保住一个字符。 */
-    int keep = avail / cw - 2;
-    if (keep < 1) keep = 1;
+    /* 还是放不下：截断 + ".."。按**码点**走而不是按字节切——UTF-8 从中间
+     * 切开会留下半个汉字，渲染成一个空白格（CJK 字库是 catalog 子集，
+     * 无效码点不落任何字形），看上去像丢了字而不像被截断。 */
+    const int dots = pk_aa_text_width("..", sz);
     char tmp[64];
-    snprintf(tmp, sizeof(tmp), "%.*s..", keep, val);
+    size_t out = 0;
+    int w = 0;
+    /* 余量按最坏情况留：一个码点最多 4 字节，后面还要放 ".." 和结尾符。 */
+    for (const char *p = val; *p && out + 4 + 3 <= sizeof(tmp); ) {
+        /* UTF-8 首字节决定这个码点占几字节；续字节一律 10xxxxxx。 */
+        int n = 1;
+        const unsigned char c = (unsigned char)*p;
+        if      ((c & 0xE0) == 0xC0) n = 2;
+        else if ((c & 0xF0) == 0xE0) n = 3;
+        else if ((c & 0xF8) == 0xF0) n = 4;
+        char one[5];
+        memcpy(one, p, (size_t)n);
+        one[n] = '\0';
+        const int cw = pk_aa_text_width(one, sz);
+        if (w + cw + dots > avail) break;
+        memcpy(tmp + out, one, (size_t)n);
+        out += (size_t)n;
+        w   += cw;
+        p   += n;
+    }
+    /* 一个码点都放不下也要给个交代，否则那一行整个空掉。 */
+    if (out == 0) { LST_PUTS(fb, x, y, "..", col, sz); return; }
+    tmp[out++] = '.';
+    tmp[out++] = '.';
+    tmp[out]   = '\0';
     LST_PUTS(fb, x, y, tmp, col, sz);
 }
 
@@ -765,8 +816,8 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
 
     const char *tag = emergency_tag(a);
     if (tag) {
-        const int tx = PAD_L + 8 + (int)strlen(cs) * pk_aa_cell_w(PK_AA_L) + 12;
-        const int tw = (int)strlen(tag) * pk_aa_cell_w(PK_AA_S);
+        const int tx = PAD_L + 8 + pk_aa_text_width(cs, PK_AA_L) + 12;
+        const int tw = pk_aa_text_width(tag, PK_AA_S);
         pk_pfd_fill_rect(fb, tx - 5, DRAWER_TOP + 16, tx + tw + 5,
                          DRAWER_TOP + 16 + PK_AA_S_H + 6, pk_rgb565(220, 40, 40));
         LST_PUTS(fb, tx, DRAWER_TOP + 19, tag, pk_rgb565(255, 255, 255), PK_AA_S);
@@ -778,9 +829,13 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
     const int y0        = DRAWER_TOP + 62;
     const int line_h    = 34;
 
-    const char *keys[2][4] = {
-        { "ICAO",   "REG",     "TYPE",    "MODEL"   },
-        { "AIRLINE","COUNTRY", "SQUAWK",  "LAST SEEN" },
+    /* 键存词条 id 而不是字符串：语言能在运行时切，static 的字符串表会停在
+     * 旧语言上（列头 COLS[] 已经栽过这一次）。 */
+    static const pk_tr_id_t keys[2][4] = {
+        { PK_TR_LIST_D_ICAO,    PK_TR_LIST_D_REG,     PK_TR_LIST_D_TYPE,
+          PK_TR_LIST_D_MODEL },
+        { PK_TR_LIST_D_AIRLINE, PK_TR_LIST_D_COUNTRY, PK_TR_LIST_D_SQUAWK,
+          PK_TR_LIST_D_LAST_SEEN },
     };
     char v[8][48];
 
@@ -805,13 +860,14 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
     if (a->have_squawk) snprintf(v[6], sizeof(v[6]), "%04d", a->squawk);
     else                snprintf(v[6], sizeof(v[6]), "---");
 
-    snprintf(v[7], sizeof(v[7]), "%d s ago", r->age_s);
+    snprintf(v[7], sizeof(v[7]), "%d %s", r->age_s,
+             pk_i18n_text(PK_TR_LIST_D_AGO));
 
     for (int c = 0; c < 2; ++c)
         for (int i = 0; i < 4; ++i) {
             const int y = y0 + i * line_h;
             LST_PUTS(fb, col_x[c], y + (PK_AA_M_H - PK_AA_XS_H) / 2,
-                     keys[c][i], col_key, PK_AA_XS);
+                     pk_i18n_text(keys[c][i]), col_key, PK_AA_XS);
             const char *val = v[c * 4 + i];
             const int avail = (c == 0 ? col_x[1] - 16 : CONTENT_R) - col_x[c] - key_w;
             put_val(fb, col_x[c] + key_w, y, avail, val, col_val);
@@ -913,8 +969,10 @@ void pk_adsb_list_render(uint16_t *fb)
 
     if (nr == 0) {
         /* 空列表也是一种状态，不能留白屏——留白让人以为页面没画出来。 */
-        const char *msg = "NO CONTACTS";
-        const int w = (int)strlen(msg) * pk_aa_cell_w(PK_AA_L);
+        const char *msg = pk_i18n_text(PK_TR_LIST_NO_CONTACTS);
+        /* 居中要的是显示宽度：「无目标」3 个汉字 9 字节，按 strlen 算会把
+         * 它推到屏幕外边去。 */
+        const int w = pk_aa_text_width(msg, PK_AA_L);
         LST_PUTS(fb, (PK_DISPLAY_W - w) / 2, ROW0_Y + 120, msg, COL_DIM, PK_AA_L);
         /* 清掉行映射与抽屉：否则触摸还会命中上一帧留下的飞机。 */
         for (int i = 0; i < ROW_N; ++i) s_screen_icao[i] = 0;

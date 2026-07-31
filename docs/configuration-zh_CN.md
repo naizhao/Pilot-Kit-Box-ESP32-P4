@@ -317,7 +317,9 @@ RGB565-swapped framebuffer 逆时针旋转 270°（等效顺时针 90°）、执
 ## 9. 触摸与电源
 
 Rev1.2 只有 RESET、BOOT、POWER 三个板级按键，没有 MODE/TARE/UP/DOWN
-应用按键。旧 `button_task.c` 只为 2.4 寸载板保留，当前 `main.c` 不启动它。
+应用按键。旧 `button_task.c` 只为 2.4 寸载板保留，且已从
+`firmware/main/CMakeLists.txt` 移出、根本不参与编译——它写死的
+GPIO26/GPIO23 在 Rev1.2 上是 LCD_BL_PWM 和 GT911 TP_RST。
 
 当前 UI 使用 GT911 触摸：
 

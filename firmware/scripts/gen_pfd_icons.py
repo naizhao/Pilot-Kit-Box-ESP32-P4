@@ -14,10 +14,11 @@ Material Symbols（Google，Apache-2.0）覆盖全、形状标准，且是四轴
 实测 pointsize=N 时图标墨迹为 (N+1)×(N+1)，故 pt=20 得 21 px，正好与
 B612 Mono 在 S 档的大写字母墨迹齐平。
 
-字重跟随文字设置
-----------------
-生成 regular / bold 两套（wght 500 / 700），使图标在用户切换"加粗"时
-与文字一同变粗，避免文字变粗而图标仍纤细的割裂感。整套仅约 8 KB。
+字重
+----
+只生成 wght=500 一套。原先还有一套 wght=700 的 bold，用来在用户切换
+"加粗"时跟着文字一起变粗；但文字那侧的 bold 从来没有开关（
+pk_aa_set_weight() 全仓零调用者），2026-07-30 随文字字重一并删除。
 """
 from __future__ import annotations
 
@@ -96,7 +97,9 @@ ICONS = [
 POINT_SIZE = 26
 CELL_W = CELL_H = 30     # 容纳 27 px 墨迹并留边距
 
-WEIGHTS = {"regular": 500, "bold": 700}
+# 500 而不是默认 400：深色背景上纤细笔画在 217 PPI 屏、尤其半反半透
+# 反射态下会"发虚"（见文件头图标选型说明）。
+ICON_WGHT = 500
 
 
 def instantiate(src: Path, wght: int, fill: int, out_dir: Path) -> Path:
@@ -123,19 +126,17 @@ def main() -> int:
     ap.add_argument("--out-h", type=Path, required=True)
     args = ap.parse_args()
 
-    blobs: dict[str, bytes] = {}
+    blob = bytearray()
     with tempfile.TemporaryDirectory() as tmp:
-        for weight, wght in WEIGHTS.items():
-            blob = bytearray()
-            for _, _, code, fill in ICONS:
-                font = instantiate(args.font, wght, fill, Path(tmp))
-                gray = render_glyph(args.magick, font, POINT_SIZE,
-                                    CELL_W, CELL_H, code)
-                if not any(gray):
-                    raise RuntimeError(f"图标 U+{code:04X} 渲染为空，码位可能有误")
-                blob += pack_4bpp(gray)
-            blobs[weight] = bytes(blob)
-            print(f"  {weight}: {len(blob)} bytes（{len(ICONS)} 个图标）")
+        for _, _, code, fill in ICONS:
+            font = instantiate(args.font, ICON_WGHT, fill, Path(tmp))
+            gray = render_glyph(args.magick, font, POINT_SIZE,
+                                CELL_W, CELL_H, code)
+            if not any(gray):
+                raise RuntimeError(f"图标 U+{code:04X} 渲染为空，码位可能有误")
+            blob += pack_4bpp(gray)
+    icons = bytes(blob)
+    print(f"  {len(icons)} bytes（{len(ICONS)} 个图标）")
 
     # ── 头文件 ──
     h = [
@@ -159,8 +160,8 @@ def main() -> int:
         f"    PK_ICON_COUNT = {len(ICONS)}",
         "} pk_icon_id_t;",
         "",
-        "/* [0] = regular, [1] = bold —— 与文字字重联动。 */",
-        "extern const uint8_t *const pk_icon_bitmap[2];",
+        "/* 单一字重（见脚本头「字重」一节）。所有图标按 PK_ICON_W×H 顺序拼接。 */",
+        "extern const uint8_t pk_icon_bitmap[];",
         "",
     ]
     args.out_h.write_text("\n".join(h), encoding="utf-8")
@@ -170,23 +171,14 @@ def main() -> int:
         "/* 由 firmware/scripts/gen_pfd_icons.py 生成，请勿手改。 */",
         '#include "pfd_icon_font.h"',
         "",
+        "const uint8_t pk_icon_bitmap[] = {",
     ]
-    for weight, blob in blobs.items():
-        c.append(f"static const uint8_t s_icons_{weight}[] = {{")
-        for i in range(0, len(blob), 16):
-            c.append("    " + ", ".join(f"0x{b:02X}" for b in blob[i:i + 16]) + ",")
-        c += ["};", ""]
-    c += [
-        "const uint8_t *const pk_icon_bitmap[2] = {",
-        "    s_icons_regular,",
-        "    s_icons_bold,",
-        "};",
-        "",
-    ]
+    for i in range(0, len(icons), 16):
+        c.append("    " + ", ".join(f"0x{b:02X}" for b in icons[i:i + 16]) + ",")
+    c += ["};", ""]
     args.out_c.write_text("\n".join(c), encoding="utf-8")
 
-    total = sum(len(b) for b in blobs.values())
-    print(f"共 {total} bytes → {args.out_c.name}")
+    print(f"共 {len(icons)} bytes → {args.out_c.name}")
     return 0
 
 

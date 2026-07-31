@@ -119,16 +119,18 @@
 | GPIO | 旧 2.4 寸用途 | Rev1.2 板载用途 | 当前处理 |
 |---|---|---|---|
 | 7 / 8 | I²C0（BNO085） | GT911 + audio + camera 共享 I²C | BNO085/BMP388 继续共享，地址不冲突 |
-| 20 | BNO085 INT | BAT_ADC，且未从 J3 引出 | BNO085 INT 不接，固件轮询 |
+| 20 | BNO085 INT | BAT_ADC，且未从 J3 引出 | BNO085 INT 改接 GPIO34（J3-28，载板网络 `IMU_INT`）；固件仍轮询 |
 | 23 | DOWN 按键 | TP_RST | 旧四按键任务停用 |
 | 26 | TARE 按键 | LCD_BL_PWM | 调平迁移到触摸 UI |
-| 27 | BMP388 INT | LCD RESET | BMP388 改为轮询，可选 INT 预留 GPIO31 |
-| 33 | GPS RX | BL_EN | GPS UART RX 用 GPIO51（不占用 GPIO33）；GPIO50 留给 PPS |
+| 27 | BMP388 INT | LCD RESET | BMP388 INT 改接 GPIO31（J3-24，载板网络 `BARO_INT`）；固件仍轮询 |
+| 33 | GPS RX | BL_EN | GPS 的 P4 侧 RX 改用 GPIO51（不占用 GPIO33）；GPIO50 留给 PPS |
 
 必须同时区分以下接口：
 
 - H1：P4 烧录/串口日志的 `USB TO UART` Type-C。
-- H2：P4 原生 USB 2.0 HS OTG Type-C，也是 RTL-SDR 数据口。
+- H2：P4 原生 USB 2.0 HS OTG Type-C，与 J3-25/27 同网。装上 Pilot Kit
+  载板时 RTL-SDR 插载板的 USB-A（走 J3-27/25），H2 必须空置；只有裸板
+  台面调试才把 dongle 接 H2。
 - P1：C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB。
 - H4：喇叭座，不是 C6 调试排针。
 
@@ -145,6 +147,11 @@ J3 下排（奇数 pin）。由于 60mm 窄板下排紧贴 PCB 边缘没有走�
 | GPS_PPS | GPIO46 / Pin35（下排） | GPIO50 / Pin34（上排） |
 
 GPS_TX 保留在 Pin36（GPIO51，上排），未变动。固件中的引脚定义已同步更新。
+
+> 本节的 `GPS_RX` / `GPS_TX` 是**载板 PCB 的网络名**，采用模块视角：
+> `GPS_RX`（GPIO49）是 GPS 模块的 RX，也就是 **P4 的 TX**；`GPS_TX`
+> （GPIO51）是 GPS 模块的 TX，也就是 **P4 的 RX**。`board_pinout.md`
+> 与固件常量一律用 P4 视角，两者方向相反，不要混用。
 
 ## FAQ（官方原文摘译）
 

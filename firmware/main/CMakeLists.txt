@@ -27,14 +27,15 @@ idf_component_register(
         "display.c"
         "imu_task.c"
         "baro_task.c"
-        "button_task.c"
+        # button_task.c 故意不编译：它写死的 GPIO26/GPIO23 在 Rev1.2
+        # 4.3 寸上是背光 PWM 和触摸复位，配成输入上拉会打死背光和触摸。
+        # 详见 button_task.h 顶部说明。
         "ui_state.c"
         "i18n.c"
         "i18n_catalog.c"
         "text.c"
         "text_font_cjk.c"
         "text_font_cjk_body.c"
-        "text_font_cjk_ui.c"
         "adsb_list.c"
         "settings_page.c"
         "settings_draw.c"

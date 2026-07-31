@@ -23,7 +23,6 @@
 #include "pfd_font.h"
 #include "text_font_cjk.h"
 #include "text_font_cjk_body.h"
-#include "text_font_cjk_ui.h"
 
 #define CJK_SOLID_ALPHA4_THRESHOLD 3
 
@@ -205,22 +204,6 @@ int pk_text_title_width(const char *s)
     return w;
 }
 
-int pk_text_ui_width(const char *s)
-{
-    int w = 0;
-    while (s && *s) {
-        uint32_t cp = utf8_next(&s);
-        if (cp == 0) break;
-        uint8_t cw = 0;
-        if (pk_text_cjk_ui_glyph(cp, &cw) != NULL && cw > 0) {
-            w += cw;
-        } else {
-            w += pk_aa_cell_w(PK_AA_M);
-        }
-    }
-    return w;
-}
-
 int pk_text_puts(uint16_t *fb, int fb_w, int fb_h,
                  int x, int y, const char *s,
                  uint16_t color, int ascii_scale)
@@ -278,80 +261,13 @@ int pk_text_puts_title(uint16_t *fb, int fb_w, int fb_h,
     return x - x0;
 }
 
-int pk_text_puts_ui(uint16_t *fb, int fb_w, int fb_h,
-                    int x, int y, const char *s,
-                    uint16_t color)
-{
-    int x0 = x;
-    while (s && *s) {
-        uint32_t cp = utf8_next(&s);
-        if (cp == 0) break;
-
-        uint8_t cw = 0;
-        const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
-        if (glyph != NULL) {
-            put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_UI_CELL_H), glyph,
-                    cw, PK_TEXT_CJK_UI_CELL_H, color, false);
-            x += cw;
-        } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
-        }
-    }
-    return x - x0;
-}
-
-int pk_text_puts_page_title(uint16_t *fb, int fb_w, int fb_h,
-                            int x, int y, const char *s,
-                            uint16_t color)
-{
-    int x0 = x;
-    while (s && *s) {
-        uint32_t cp = utf8_next(&s);
-        if (cp == 0) break;
-
-        if (cp <= 0x7F || cp == 0x00B0) {
-            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_L);
-            continue;
-        }
-
-        const uint8_t *glyph = pk_text_cjk_glyph(cp);
-        if (glyph != NULL) {
-            put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_L, PK_TEXT_CJK_CELL_H), glyph,
-                    PK_TEXT_CJK_CELL_W, PK_TEXT_CJK_CELL_H, color, false);
-            x += PK_TEXT_CJK_CELL_W;
-        } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_L);
-        }
-    }
-    return x - x0;
-}
-
-int pk_text_puts_page_body(uint16_t *fb, int fb_w, int fb_h,
-                           int x, int y, const char *s,
-                           uint16_t color)
-{
-    int x0 = x;
-    while (s && *s) {
-        uint32_t cp = utf8_next(&s);
-        if (cp == 0) break;
-
-        if (cp <= 0x7F || cp == 0x00B0) {
-            x += aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M);
-            continue;
-        }
-
-        uint8_t cw = 0;
-        const uint8_t *glyph = pk_text_cjk_ui_glyph(cp, &cw);
-        if (glyph != NULL && cw > 0) {
-            put_cjk(fb, fb_w, fb_h, x,
-                    y + cjk_dy(PK_AA_M, PK_TEXT_CJK_UI_CELL_H), glyph,
-                    cw, PK_TEXT_CJK_UI_CELL_H, color, false);
-            x += cw;
-        } else {
-            x += aa_putc(fb, fb_w, fb_h, x, y, '?', color, PK_AA_M);
-        }
-    }
-    return x - x0;
-}
+/*
+ * 2026-07-30 移除：pk_text_puts_ui / pk_text_puts_page_title /
+ * pk_text_puts_page_body 与 pk_text_ui_width。
+ *
+ * 这四个是 320×240 时代 settings/diag 逐行版面专用的渲染器，唯一的调用者
+ * 是那两页里挂着 __attribute__((unused)) 的 *_render_legacy()。legacy 一删，
+ * 它们连同 12×12 UI 档字库 text_font_cjk_ui.c（4143 行）就整条链路无人引用。
+ * 硬件已换成 4.3″ 800×480 触摸屏，各页面改由 pfd_aa_text 的 pk_aa_puts 绘制
+ * （中西文同一份 AA 字体、同一档 cell 高），不会再退回这条 UI 档路径。
+ */

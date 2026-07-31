@@ -40,5 +40,5 @@ typedef enum {
     PK_ICON_COUNT = 26
 } pk_icon_id_t;
 
-/* [0] = regular, [1] = bold —— 与文字字重联动。 */
-extern const uint8_t *const pk_icon_bitmap[2];
+/* 单一字重（见脚本头「字重」一节）。所有图标按 PK_ICON_W×H 顺序拼接。 */
+extern const uint8_t pk_icon_bitmap[];

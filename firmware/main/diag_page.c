@@ -31,15 +31,15 @@
 #include "esp_timer.h"
 
 #include "display.h"
-#include "text.h"
 #include "pilot_kit.h"       /* PK_RTLSDR_SAMPLERATE_HZ */
 #include "imu_task.h"        /* pk_imu_sample_get, pk_imu_sample_t */
 #include "dsp_task.h"        /* pk_dsp_get_stats, pk_dsp_stats_t */
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
 #include "baro.h"            /* pk_baro_get, pk_baro_state_t */
 #include "config_qnh.h"      /* pk_qnh_get — baro 高度的 QNH 基准 */
+#include "config_storage.h"  /* pk_log_store_get — 用户希望写哪个后端 */
+#include "i18n.h"            /* pk_i18n_text — 页面文案随语言切换 */
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
-#include "ui_state.h"        /* pk_ui_diag_scroll_y */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
@@ -47,22 +47,12 @@
 #include <sys/time.h>
 #include <time.h>
 
-/* Layout */
-#define DIAG_LEFT_PAD        6
-#define DIAG_HEADER_UI_Y     6
-#define DIAG_BODY_Y         30
-#define DIAG_LINE_H         26   /* 8 rows × 26px = 208px, fits within 240 */
-#define DIAG_KEY_X          DIAG_LEFT_PAD
-#define DIAG_VAL_X          58   /* value column starts here */
-
 /* Palette — matches about_page.c for visual consistency */
 #define COL_BG               pk_rgb565( 12,  12,  16)
 #define COL_HEADER           pk_rgb565(180, 235, 255)
 #define COL_KEY              pk_rgb565(180, 235, 255)
 #define COL_ONLINE           pk_rgb565( 80, 220,  80)   /* green  — subsystem live */
 #define COL_OFFLINE          pk_rgb565(140, 145, 155)   /* grey   — no data / offline */
-#define COL_PLACEHOLDER      pk_rgb565( 70,  72,  80)   /* dark   — N/A placeholder */
-#define COL_DIVIDER          pk_rgb565( 90, 100, 120)
 #define COL_VAL              pk_rgb565(220, 225, 235)   /* bright — detail value text */
 #define COL_ALERT            pk_rgb565(255,  90,  40)   /* red    — antenna OPEN/SHORT */
 /* 琥珀 —— 「连着但不正常」，介于绿与红之间。SDR 已枚举却不出数就属于这一档：
@@ -86,25 +76,6 @@ static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
         uint16_t *row = fb + y * PK_DISPLAY_W;
         for (int x = x0; x < x1; ++x) row[x] = c;
     }
-}
-
-/*
- * draw_diag_row — render one key-value status row.
- *
- *   fb    : framebuffer
- *   y     : top pixel of this row
- *   label : short ASCII label (e.g. "IMU", "GPS")
- *   value : value string (ASCII)
- *   color : colour for the value (COL_ONLINE / COL_OFFLINE / COL_PLACEHOLDER)
- */
-static void draw_diag_row(uint16_t *fb, int y,
-                           const char *label, const char *value,
-                           uint16_t color)
-{
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           DIAG_KEY_X, y, label, COL_KEY);
-    pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                           DIAG_VAL_X, y, value, color);
 }
 
 /* draw_snr_row — 画单个星座(want)的 SNR 竖条一行：柱高=C/N0，颜色按强弱
@@ -152,289 +123,15 @@ static void fmt_clock(char *buf, size_t bufsz)
 
 /* --------------------------------------------------------------------------
  * Main render entry point
+ * --------------------------------------------------------------------------
+ *
+ * 2026-07-30：删掉了 320×240 时代的逐行详情视图 diag_render_legacy() 与它
+ * 专属的 draw_diag_row()。它自总览+详情两层（spec §5.5）上线起就挂着
+ * __attribute__((unused))「留着供详情层复用」，但详情层最终是自己写的
+ * （见文件末尾 detail 段），只复用了 draw_snr_row()/fmt_clock() 这两个取数
+ * 与绘图工具——那两个仍然在用，没有动。硬件已换成 4.3″ 800×480 触摸屏，
+ * 不会再退回 2.4″ 逐行版面，这段死代码只是在占 app 分区。
  * -------------------------------------------------------------------------- */
-
-/*
- * 旧的逐行详情视图。
- *
- * spec §5.5 把诊断改成两层：**总览 2×4 卡片**（每格只给标题 + 一行核心值），
- * 点卡片才进子系统详情页；而详情页"必须保留 diag_page.c 现有全部深度"——
- * 尤其 GPS 那段每星座独立的 SNR 柱状图，那是排查 no-fix 的命门。
- *
- * 所以这段一行都不删，改名留着，等详情那一层接上来直接复用。当前未被调用。
- */
-__attribute__((unused))
-static void diag_render_legacy(uint16_t *fb)
-{
-    /* Clear background — may be coming from any other view. */
-    fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
-
-    /* Scrollable body — UP/DOWN pans it; header is re-drawn on top at the
-     * end so scrolled rows slide under it (mirrors about_page). */
-    int y = DIAG_BODY_Y - pk_ui_diag_scroll_y();
-    char buf[64];
-
-    /* ------------------------------------------------------------------
-     * IMU — BNO085
-     * Online: sample.valid == true
-     * Shows: cal N/3 and r/p/y angles
-     * ------------------------------------------------------------------ */
-    {
-        pk_imu_sample_t s;
-        bool ok = pk_imu_sample_get(&s);
-        if (ok && s.valid) {
-            uint8_t acc = s.accuracy;   /* 同一快照,免去额外 mutex */
-            /* Format: "cal 2/3 r+12 p-3 y270" — compact, fits 320px */
-            snprintf(buf, sizeof(buf), "cal %u/3 r%+.0f p%+.0f y%.0f",
-                     acc,
-                     (double)s.roll_deg,
-                     (double)s.pitch_deg,
-                     (double)s.yaw_deg);
-            draw_diag_row(fb, y, "IMU", buf, COL_ONLINE);
-        } else {
-            draw_diag_row(fb, y, "IMU", "BNO085 offline", COL_OFFLINE);
-        }
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * SDR — RTL-SDR dongle。
-     *
-     * 这一行以前恒显示"在线"（旧注释原话："dongle 未插无法区分"）。2026-07-29
-     * 旧板曾有另一套 USB 接口说明；Rev1.2 上 RTL-SDR 应接 H2（丝印 USB）
-     * 原生 USB 2.0 HS Type-C。H1 是 CH343P 调试串口，P1 是 C6 下载排针。
-     *
-     * 现在四态分开显示，并且**没枚举时直接把该插哪儿写在屏上**：这是接线
-     * 问题，写"OFFLINE"帮不上忙，直接写 H2 才能解决问题。
-     * ------------------------------------------------------------------ */
-    {
-        pk_dsp_stats_t d;
-        pk_dsp_get_stats(&d);
-
-        uint32_t drop_kb = 0;
-        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
-        uint16_t col = COL_ONLINE;
-
-        switch (st) {
-        case PK_SDR_NO_DEVICE:
-            /* 把排查方向直接写出来——这一行的读者正拿着 dongle 在找哪个口。 */
-            snprintf(buf, sizeof(buf), "NO DONGLE - use H2 USB-C");
-            col = COL_ALERT;
-            break;
-        case PK_SDR_ATTACHED:
-            snprintf(buf, sizeof(buf), "attached, opening...");
-            col = COL_WARN;
-            break;
-        case PK_SDR_STALLED:
-            /* 已经打开却不出数：供电不足 / 过热 / USB 掉链，都不是"离线"。 */
-            snprintf(buf, sizeof(buf), "STALLED - no IQ for >1s");
-            col = COL_WARN;
-            break;
-        case PK_SDR_STREAMING:
-        default:
-            snprintf(buf, sizeof(buf), "%luMS/s msgs %lu drop %lu",
-                     (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
-                     (unsigned long)d.msgs_total,
-                     (unsigned long)d.iq_drop_total);
-            break;
-        }
-        draw_diag_row(fb, y, "SDR", buf, col);
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * GPS — 排查多行：状态/HDOP、可见星+SNR+天线、位置，外加 SNR 柱状图
-     * ------------------------------------------------------------------ */
-    {
-        pk_gps_state_t g = {0};
-        pk_gps_get(&g);
-        int64_t now = esp_timer_get_time();
-        bool fresh = g.have_fix && (now - g.updated_us) < GPS_FRESH_US;
-
-        /* 行1：fix 状态 + HDOP */
-        if (fresh) snprintf(buf, sizeof(buf), "fix  sats %d     HDOP %.1f",
-                            g.sats, (double)g.hdop);
-        else       snprintf(buf, sizeof(buf), "no fix         HDOP %.1f",
-                            (double)g.hdop);
-        draw_diag_row(fb, y, "GPS", buf, fresh ? COL_ONLINE : COL_OFFLINE);
-        y += DIAG_LINE_H;
-
-        /* 行2：可见星(分 GPS/北斗) + 最强 SNR + 天线自检（天线单独着色） */
-        snprintf(buf, sizeof(buf), "GPS %d  BD %d  max %d",
-                 g.sats_in_view_gps, g.sats_in_view_bds, g.snr_max);
-        draw_diag_row(fb, y, "", buf, COL_VAL);
-        const char *ant = (g.ant_status == PK_GPS_ANT_OK)    ? "ANT OK"
-                        : (g.ant_status == PK_GPS_ANT_OPEN)  ? "ANT OPEN"
-                        : (g.ant_status == PK_GPS_ANT_SHORT) ? "ANT SHORT" : "ANT ?";
-        uint16_t ant_col = (g.ant_status == PK_GPS_ANT_OK)      ? COL_ONLINE
-                         : (g.ant_status == PK_GPS_ANT_UNKNOWN) ? COL_OFFLINE
-                         :                                        COL_ALERT;
-        pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H, 206, y, ant, ant_col);
-        y += DIAG_LINE_H;
-
-        /* 行3：位置（定位后才有意义） */
-        if (fresh) snprintf(buf, sizeof(buf), "%+.5f,%+.5f  %dft",
-                            g.lat, g.lon, g.have_altitude ? g.altitude_ft : 0);
-        else       snprintf(buf, sizeof(buf), "--");
-        draw_diag_row(fb, y, "", buf, fresh ? COL_VAL : COL_OFFLINE);
-        y += DIAG_LINE_H;
-
-        /* SNR 区：每个出现的星座单独一行 —— 行首完整星座名 + 该星座 SNR 柱状图。
-         * 卫星多时一行放不下,故分行;诊断页可滚动,行数不限。 */
-        if (g.snr_count <= 0) {
-            draw_diag_row(fb, y, "SNR", "(no sats)", COL_OFFLINE);
-            y += DIAG_LINE_H;
-        } else {
-            /* 名表与 pk_gnss_t 同序：GPS/北斗/GLONASS/Galileo/QZSS/其它。 */
-            static const char *const con_name[PK_GNSS_COUNT] =
-                { "GPS", "BDS", "GLO", "GAL", "QZS", "?" };
-            for (int gi = 0; gi < PK_GNSS_COUNT; ++gi) {
-                int cnt = 0;
-                for (int i = 0; i < g.snr_count; ++i)
-                    if (g.snr_con[i] == gi) cnt++;
-                if (cnt == 0) continue;
-                /* 标签垂直居中于本行(行高 28、字高 7 → 顶部偏移约 10)，
-                 * 与右侧柱状图视觉对齐。 */
-                pk_text_puts_page_body(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                                       DIAG_KEY_X, y + 10, con_name[gi], COL_KEY);
-                draw_snr_row(fb, DIAG_VAL_X, y + 24, g.snr, g.snr_con,
-                             g.snr_count, gi);
-                y += 28;
-            }
-            y += 8;   /* SNR 区(柱状图基线在 +24)与下一行 BARO 之间留间隙 */
-        }
-    }
-
-    /* ------------------------------------------------------------------
-     * BARO — BMP388
-     * Online: valid == true
-     * Shows: P hPa / alt ft / vs fpm / temp C
-     * ------------------------------------------------------------------ */
-    {
-        pk_baro_state_t b;
-        pk_baro_get(&b);
-        if (b.valid) {
-            /* Pa → hPa = Pa / 100 */
-            snprintf(buf, sizeof(buf), "%.1fhPa %dft %dfpm %.1fC",
-                     (double)b.pressure_pa / 100.0,
-                     b.alt_ft,
-                     b.vs_fpm,
-                     (double)b.temp_c);
-            draw_diag_row(fb, y, "BARO", buf, COL_ONLINE);
-        } else {
-            draw_diag_row(fb, y, "BARO", "--", COL_OFFLINE);
-        }
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * QNH — baro 高度的海平面参考压(settings 可调,默认标准大气 1013.25)。
-     * 紧贴 BARO 下方亮出来:上面那个 alt ft 就是按这个基准算的。
-     * ------------------------------------------------------------------ */
-    {
-        snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
-        draw_diag_row(fb, y, "QNH", buf, COL_VAL);
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * BLE
-     * No hard "online" concept — shows connection state
-     * ------------------------------------------------------------------ */
-    {
-        /* 一次性快照,避免两次调用之间状态变化导致 TOCTOU 判断矛盾 */
-        bool ble_conn = ble_gatt_is_connected();
-        bool ble_adv  = ble_gatt_is_advertising();
-        const char *ble_val;
-        uint16_t    ble_col;
-        if (ble_conn) {
-            ble_val = "connected";
-            ble_col = COL_ONLINE;
-        } else if (ble_adv) {
-            ble_val = "advertising";
-            ble_col = COL_OFFLINE;
-        } else {
-            ble_val = "idle";
-            ble_col = COL_OFFLINE;
-        }
-        draw_diag_row(fb, y, "BLE", ble_val, ble_col);
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * BATT — no sense hardware, placeholder
-     * ------------------------------------------------------------------ */
-    draw_diag_row(fb, y, "BATT", "N/A (no sense HW)", COL_PLACEHOLDER);
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * microSD — 挂载状态 + 已用/总容量（pk_sdcard 探测任务缓存，零 I/O）
-     * ------------------------------------------------------------------ */
-    {
-        char        sd_buf[40];
-        const char *sd_val;
-        uint16_t    sd_col;
-        uint64_t    total = 0, free_b = 0;
-
-        switch (pk_sdcard_state()) {
-        case PK_SD_MOUNTED:
-            if (pk_sdcard_info(&total, &free_b)) {
-                snprintf(sd_buf, sizeof(sd_buf), "mounted %.1f/%.1f GB used",
-                         (double)(total - free_b) / (1024.0 * 1024.0 * 1024.0),
-                         (double)total / (1024.0 * 1024.0 * 1024.0));
-                sd_val = sd_buf;
-            } else {
-                sd_val = "mounted";
-            }
-            sd_col = COL_ONLINE;
-            break;
-        case PK_SD_FORMATTING:
-            sd_val = "formatting...";
-            sd_col = COL_PLACEHOLDER;
-            break;
-        default:
-            sd_val = "no card";
-            sd_col = COL_OFFLINE;
-            break;
-        }
-        draw_diag_row(fb, y, "microSD", sd_val, sd_col);
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * LOG — file sink 后端 + 本次开机已写/丢弃条数（计数器只读，零 I/O）
-     * ------------------------------------------------------------------ */
-    {
-        uint32_t written = 0, dropped = 0;
-        if (record_sink_file_stats(&written, &dropped)) {
-            snprintf(buf, sizeof(buf), "%s  w %lu  drop %lu",
-                     record_sink_file_uses_sd() ? "microSD" : "flash",
-                     (unsigned long)written, (unsigned long)dropped);
-            draw_diag_row(fb, y, "LOG", buf,
-                          written > 0 ? COL_ONLINE : COL_OFFLINE);
-        } else {
-            draw_diag_row(fb, y, "LOG", "sink down", COL_OFFLINE);
-        }
-    }
-    y += DIAG_LINE_H;
-
-    /* ------------------------------------------------------------------
-     * TIME — 系统墙钟(被 GPS/BLE 校准)：UTC(Zulu) + 本地(UTC+8) + 来源
-     * ------------------------------------------------------------------ */
-    {
-        char tbuf[48];
-        fmt_clock(tbuf, sizeof(tbuf));
-        draw_diag_row(fb, y, "TIME", tbuf,
-                      pk_clock_is_synced() ? COL_ONLINE : COL_PLACEHOLDER);
-    }
-    y += DIAG_LINE_H;
-
-    /* Header overlay — fixed, drawn last so the scrolled body slides under it. */
-    fill_rect(fb, 0, 0, PK_DISPLAY_W, 22, COL_BG);
-    pk_text_puts_ui(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                    DIAG_LEFT_PAD, DIAG_HEADER_UI_Y, "DIAGNOSTICS", COL_HEADER);
-    fill_rect(fb, 0, 22, PK_DISPLAY_W, 24, COL_DIVIDER);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 总览：2 × 4 卡片（spec §5.5）
@@ -521,12 +218,48 @@ static int s_scroll_y;                         /* 滚动偏移(px)，0 = 顶 */
 static int s_detail = -1;
 
 /* 卡片序号 → 标题。顺序必须与 render 里的 draw_card 调用一致——两处各写
- * 一份序号迟早会错位，所以这张表是唯一的真值来源，render 也从它取标题。 */
-static const char *const CARD_TITLE[] = {
-    "IMU", "BARO", "GPS", "SDR", "BLE", "LOG", "CLK", "SYS",
-    "microSD", "QNH", "BATT", "UPTIME",
+ * 一份序号迟早会错位，所以这张表是唯一的真值来源，render 也从它取标题。
+ *
+ * 存的是词条 id 而不是字符串：语言可以在运行时切，取到的必须是**当前**语言
+ * 的写法。存字符串就意味着切语言后这张表还停在旧语言上。 */
+static const pk_tr_id_t CARD_TITLE[] = {
+    PK_TR_DIAG_CARD_IMU, PK_TR_DIAG_CARD_BARO, PK_TR_DIAG_CARD_GPS,
+    PK_TR_DIAG_CARD_SDR, PK_TR_DIAG_CARD_BLE,  PK_TR_DIAG_CARD_LOG,
+    PK_TR_DIAG_CARD_CLK, PK_TR_DIAG_CARD_SYS,  PK_TR_DIAG_CARD_SD,
+    PK_TR_DIAG_CARD_QNH, PK_TR_DIAG_CARD_BATT, PK_TR_DIAG_CARD_UPTIME,
 };
 #define CARD_N  ((int)(sizeof(CARD_TITLE) / sizeof(CARD_TITLE[0])))
+
+/* 卡片标题的当前语言写法。总览与详情页共用，两处不各查一次表。 */
+static const char *card_title(int idx)
+{
+    return pk_i18n_text((idx >= 0 && idx < CARD_N) ? CARD_TITLE[idx]
+                                                   : PK_TR_DIAG_K_DETAIL);
+}
+
+/* 上次复位原因 → 词条。索引即 esp_reset_reason_t，表长必须覆盖枚举全域，
+ * 少一项就是一次越界读（legacy 那张名表就因为照抄时少写了几项出过事）。 */
+static const pk_tr_id_t RESET_TR[] = {
+    PK_TR_DIAG_RST_UNKNOWN,  PK_TR_DIAG_RST_POWERON, PK_TR_DIAG_RST_EXT,
+    PK_TR_DIAG_RST_SW,       PK_TR_DIAG_RST_PANIC,   PK_TR_DIAG_RST_INT_WDT,
+    PK_TR_DIAG_RST_TASK_WDT, PK_TR_DIAG_RST_WDT,     PK_TR_DIAG_RST_SLEEP,
+    PK_TR_DIAG_RST_BROWNOUT, PK_TR_DIAG_RST_SDIO,    PK_TR_DIAG_RST_USB,
+    PK_TR_DIAG_RST_JTAG,
+};
+
+static const char *reset_reason_text(esp_reset_reason_t rr)
+{
+    const int n = (int)(sizeof(RESET_TR) / sizeof(RESET_TR[0]));
+    return pk_i18n_text(((int)rr >= 0 && (int)rr < n) ? RESET_TR[rr]
+                                                      : PK_TR_DIAG_RST_UNKNOWN);
+}
+
+/* 日志后端名。诊断页要同时说「现在实际在写哪个」和「用户设的是哪个」，
+ * 两处都从这里取名字，免得一处写 flash 另一处写 FLASH。 */
+static const char *log_store_text(bool on_sd)
+{
+    return pk_i18n_text(on_sd ? PK_TR_DIAG_V_LOG_SD : PK_TR_DIAG_V_LOG_FLASH);
+}
 
 static void draw_card(uint16_t *fb, int col, int row, const char *title,
                       const char *value, card_state_t st)
@@ -547,9 +280,13 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18, y + 10,
                title, COL_KEY, PK_UI_ITEM_SIZE);
 
-    /* 值太长就降到 S 档，避免把接口提示截掉。 */
+    /* 值太长就降到 S 档，避免把接口提示截掉。
+     *
+     * 宽度必须用 pk_aa_text_width：strlen 数的是字节，一个汉字 3 字节却只画
+     * 一个字形。按 strlen 算，「无接收机 - 用 H2 USB-C」会被当成 24 个字符
+     * （实际 16 个字形）而误降一档，中文界面上整页的值都会莫名其妙变小。 */
     const int avail = CARD_W - 26;
-    const int need  = (int)strlen(value) * pk_aa_cell_w(PK_AA_M);
+    const int need  = pk_aa_text_width(value, PK_AA_M);
     const pk_aa_size_t sz = (need <= avail) ? PK_AA_M : PK_AA_S;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18,
                y + CARD_H - 12 - pk_aa_cell_h(sz), value, state_color(st), sz);
@@ -582,14 +319,16 @@ void pk_diag_page_render(uint16_t *fb)
     {
         pk_imu_sample_t s;
         if (pk_imu_sample_get(&s) && s.valid) {
-            snprintf(buf, sizeof(buf), "cal %u/3   yaw %.0f",
-                     s.accuracy, (double)s.yaw_deg);
+            snprintf(buf, sizeof(buf), "%s %u/3   %s %.0f",
+                     pk_i18n_text(PK_TR_DIAG_U_CAL), s.accuracy,
+                     pk_i18n_text(PK_TR_DIAG_U_YAW), (double)s.yaw_deg);
             /* 校准等级本身就是可信度：cal 0 时航向可以差几十度，数据却照样
              * "有效"——这正是最该在总览里就看见的。 */
-            draw_card(fb, 0, 0, "IMU", buf,
+            draw_card(fb, 0, 0, card_title(0), buf,
                       s.accuracy >= 2 ? ST_OK : ST_WARN);
         } else {
-            draw_card(fb, 0, 0, "IMU", "BNO085 offline", ST_BAD);
+            draw_card(fb, 0, 0, card_title(0),
+                      pk_i18n_text(PK_TR_DIAG_V_IMU_OFFLINE), ST_BAD);
         }
     }
 
@@ -600,9 +339,10 @@ void pk_diag_page_render(uint16_t *fb)
         if (b.valid) {
             snprintf(buf, sizeof(buf), "%d ft   %.1f hPa",
                      b.alt_ft, (double)b.pressure_pa / 100.0);
-            draw_card(fb, 1, 0, "BARO", buf, ST_OK);
+            draw_card(fb, 1, 0, card_title(1), buf, ST_OK);
         } else {
-            draw_card(fb, 1, 0, "BARO", "BMP388 offline", ST_BAD);
+            draw_card(fb, 1, 0, card_title(1),
+                      pk_i18n_text(PK_TR_DIAG_V_BARO_OFFLINE), ST_BAD);
         }
     }
 
@@ -625,27 +365,38 @@ void pk_diag_page_render(uint16_t *fb)
          */
         if (g.last_nmea_us == 0) {
             /* 一行 NMEA 都没收到 = 模块没插 / UART 没通。不是故障，是没装。 */
-            draw_card(fb, 0, 1, "GPS", "no module", ST_BAD);
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_NO_MODULE), ST_BAD);
         } else if (now - g.last_nmea_us > 5000000LL) {
             /* 曾经在讲话，现在哑了 = 掉线/供电/接触不良，跟没装是两回事。 */
-            draw_card(fb, 0, 1, "GPS", "module silent >5s", ST_BAD);
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_MODULE_SILENT), ST_BAD);
         } else if (g.ant_status == PK_GPS_ANT_OPEN) {
             /* 模块自检报的天线开路，比"没星"精确得多——直接说结论。 */
-            draw_card(fb, 0, 1, "GPS", "antenna OPEN", ST_BAD);
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_ANT_OPEN), ST_BAD);
         } else if (g.ant_status == PK_GPS_ANT_SHORT) {
-            draw_card(fb, 0, 1, "GPS", "antenna SHORT", ST_BAD);
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_ANT_SHORT), ST_BAD);
         } else if (fresh) {
-            snprintf(buf, sizeof(buf), "fix   %d sats   HDOP %.1f",
-                     g.sats, (double)g.hdop);
-            draw_card(fb, 0, 1, "GPS", buf, ST_OK);
+            /* 数字与量词分开取：整句进 catalog 就等于把 snprintf 的格式串
+             * 交给翻译者改，参数个数一对不上就是越界读栈。中英的词序在这里
+             * 恰好一致（"fix 7 sats" / "已定位 7 星"），拼起来都读得通。 */
+            snprintf(buf, sizeof(buf), "%s   %d %s   HDOP %.1f",
+                     pk_i18n_text(PK_TR_DIAG_V_FIX), g.sats,
+                     pk_i18n_text(PK_TR_DIAG_U_SATS), (double)g.hdop);
+            draw_card(fb, 0, 1, card_title(2), buf, ST_OK);
         } else if (g.snr_count > 0) {
             /* 看得见星却定不了位 = 信号弱/遮挡，动作是"再等等或换个位置"。 */
-            snprintf(buf, sizeof(buf), "no fix   %d visible", g.snr_count);
-            draw_card(fb, 0, 1, "GPS", buf, ST_WARN);
+            snprintf(buf, sizeof(buf), "%s   %d %s",
+                     pk_i18n_text(PK_TR_DIAG_V_NO_FIX), g.snr_count,
+                     pk_i18n_text(PK_TR_DIAG_U_VISIBLE));
+            draw_card(fb, 0, 1, card_title(2), buf, ST_WARN);
         } else {
             /* 模块在讲话、天线自检没报错、但一颗星都没看见：冷启动搜星中，
              * 或者被完全遮挡。这才是"再等等"，不该报成天线故障。 */
-            draw_card(fb, 0, 1, "GPS", "searching...", ST_WARN);
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_SEARCHING), ST_WARN);
         }
     }
 
@@ -657,19 +408,23 @@ void pk_diag_page_render(uint16_t *fb)
         pk_dsp_get_stats(&d);
         switch (st) {
         case PK_SDR_NO_DEVICE:
-            draw_card(fb, 1, 1, "SDR", "NO DONGLE - use H2 USB-C", ST_BAD);
+            draw_card(fb, 1, 1, card_title(3),
+                      pk_i18n_text(PK_TR_DIAG_V_SDR_NONE), ST_BAD);
             break;
         case PK_SDR_ATTACHED:
-            draw_card(fb, 1, 1, "SDR", "attached, opening...", ST_WARN);
+            draw_card(fb, 1, 1, card_title(3),
+                      pk_i18n_text(PK_TR_DIAG_V_SDR_ATTACH), ST_WARN);
             break;
         case PK_SDR_STALLED:
-            draw_card(fb, 1, 1, "SDR", "STALLED - no IQ >1s", ST_WARN);
+            draw_card(fb, 1, 1, card_title(3),
+                      pk_i18n_text(PK_TR_DIAG_V_SDR_STALL), ST_WARN);
             break;
         default:
-            snprintf(buf, sizeof(buf), "%luMS/s  msgs %lu",
+            snprintf(buf, sizeof(buf), "%luMS/s  %s %lu",
                      (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
+                     pk_i18n_text(PK_TR_DIAG_U_MSGS),
                      (unsigned long)d.msgs_total);
-            draw_card(fb, 1, 1, "SDR", buf, ST_OK);
+            draw_card(fb, 1, 1, card_title(3), buf, ST_OK);
             break;
         }
     }
@@ -678,29 +433,52 @@ void pk_diag_page_render(uint16_t *fb)
     {
         const bool conn = ble_gatt_is_connected();
         const bool adv  = ble_gatt_is_advertising();
-        draw_card(fb, 0, 2, "BLE",
-                  conn ? "connected" : adv ? "advertising" : "idle",
+        draw_card(fb, 0, 2, card_title(4),
+                  pk_i18n_text(conn ? PK_TR_DIAG_V_BLE_CONN
+                                    : adv ? PK_TR_DIAG_V_BLE_ADV
+                                          : PK_TR_DIAG_V_BLE_IDLE),
                   /* 广播中 = 功能正常、只是还没人连，属于"好着但闲着"。
                    * idle 才是红：那说明 BLE 压根没起来（被设置关掉或初始化
                    * 失败），GDL90 这条输出通路是断的。 */
                   conn ? ST_OK : adv ? ST_IDLE : ST_BAD);
     }
 
-    /* ── LOG ── */
+    /* ── LOG ──
+     *
+     * 这一格说的是**现在实际在写哪个后端**（record_sink_file_uses_sd），不是
+     * 用户在设置页选了哪个（pk_log_store_get）。两者语义本来就不同，而且
+     * 改设置只在下次创建 file sink 时生效，即重启后。
+     *
+     * 罩哥验收时点出："切到 SD 卡存储后诊断页仍显示 flash"——那不是 bug，
+     * 是这一格只说了实际后端、没说还有个待生效的设置。诊断页的职责是说实话，
+     * 所以两个都说：主体仍是实际后端（说假话会让排查者去 SD 上找不存在的
+     * 文件），后面补一句「设为 X」把差异挑明。 */
     {
         uint32_t written = 0, dropped = 0;
         if (record_sink_file_stats(&written, &dropped)) {
-            snprintf(buf, sizeof(buf), "%s  w %lu",
-                     record_sink_file_uses_sd() ? "microSD" : "flash",
-                     (unsigned long)written);
+            const bool on_sd = record_sink_file_uses_sd();
+            const bool want_sd = (pk_log_store_get() == PK_LOG_STORE_SD);
+            int p = snprintf(buf, sizeof(buf), "%s  %s %lu",
+                             log_store_text(on_sd),
+                             pk_i18n_text(PK_TR_DIAG_U_W),
+                             (unsigned long)written);
+            if (want_sd != on_sd && p > 0 && p < (int)sizeof(buf))
+                snprintf(buf + p, sizeof(buf) - p, "  (%s %s)",
+                         pk_i18n_text(PK_TR_DIAG_V_SET_TO),
+                         log_store_text(want_sd));
             /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。 */
-            draw_card(fb, 1, 2, "LOG", buf,
+            draw_card(fb, 1, 2, card_title(5), buf,
                       /* written == 0 只是"还没收到可写的数据"，不是故障——
                        * 刚开机、或者 SDR 没插时本来就一条都没有。sink 建起来
-                       * 了就算正常；丢过条目才是琥珀（还在写但已不完整）。 */
-                      dropped > 0 ? ST_WARN : written > 0 ? ST_OK : ST_IDLE);
+                       * 了就算正常；丢过条目才是琥珀（还在写但已不完整）。
+                       * 设置与实际不一致也是琥珀：不是故障，但用户以为已经
+                       * 换过去了，得让这一格自己喊一声。 */
+                      dropped > 0 ? ST_WARN
+                      : want_sd != on_sd ? ST_WARN
+                      : written > 0 ? ST_OK : ST_IDLE);
         } else {
-            draw_card(fb, 1, 2, "LOG", "sink down", ST_BAD);
+            draw_card(fb, 1, 2, card_title(5),
+                      pk_i18n_text(PK_TR_DIAG_V_SINK_DOWN), ST_BAD);
         }
     }
 
@@ -708,7 +486,7 @@ void pk_diag_page_render(uint16_t *fb)
     {
         char tbuf[48];
         fmt_clock(tbuf, sizeof(tbuf));
-        draw_card(fb, 0, 3, "CLK", tbuf,
+        draw_card(fb, 0, 3, card_title(6), tbuf,
                   pk_clock_is_synced() ? ST_OK : ST_WARN);
     }
 
@@ -729,15 +507,13 @@ void pk_diag_page_render(uint16_t *fb)
          * POR 说明真的断过电，PANIC/WDT 说明是固件的锅。三者的排查方向完全
          * 不同，靠"它重启了"这一句话分不出来。
          */
-        static const char *const kRst[] = {
-            "unknown", "POR", "ext", "SW", "panic", "int-WDT", "task-WDT",
-            "WDT", "deepsleep", "brownout", "SDIO", "USB", "JTAG",
-        };
+        /* 复位原因与详情页共用 RESET_TR：总览曾经另存一份更短的缩写表
+         * （POR / SW / int-WDT…），于是同一个复位原因在两层里长得不一样，
+         * 下钻时还得先认一遍是不是同一件事。卡片放得下完整词，就不缩。 */
         const esp_reset_reason_t rr = esp_reset_reason();
-        const char *rs = (rr < (int)(sizeof(kRst) / sizeof(kRst[0])))
-                       ? kRst[rr] : "?";
-        snprintf(buf, sizeof(buf), "SoC %d C   rst %s", temp_c, rs);
-        draw_card(fb, 1, 3, "SYS", buf,
+        snprintf(buf, sizeof(buf), "SoC %d C   %s %s", temp_c,
+                 pk_i18n_text(PK_TR_DIAG_U_RST), reset_reason_text(rr));
+        draw_card(fb, 1, 3, card_title(7), buf,
                   over ? ST_BAD
                   : (rr == ESP_RST_BROWNOUT || rr == ESP_RST_PANIC ||
                      rr == ESP_RST_INT_WDT  || rr == ESP_RST_TASK_WDT) ? ST_WARN
@@ -752,18 +528,21 @@ void pk_diag_page_render(uint16_t *fb)
         switch (pk_sdcard_state()) {
         case PK_SD_MOUNTED:
             if (pk_sdcard_info(&total, &free_b)) {
-                snprintf(buf, sizeof(buf), "%.1f/%.1f GB used",
+                snprintf(buf, sizeof(buf), "%.1f/%.1f GB %s",
                          (double)(total - free_b) / (1024.0 * 1024.0 * 1024.0),
-                         (double)total / (1024.0 * 1024.0 * 1024.0));
+                         (double)total / (1024.0 * 1024.0 * 1024.0),
+                         pk_i18n_text(PK_TR_DIAG_U_USED));
                 /* 剩余不足 10% 转琥珀：卡还在、还能写，但快写不下了。 */
-                draw_card(fb, 0, 4, "microSD", buf,
+                draw_card(fb, 0, 4, card_title(8), buf,
                           (total && free_b * 10 < total) ? ST_WARN : ST_OK);
             } else {
-                draw_card(fb, 0, 4, "microSD", "mounted", ST_OK);
+                draw_card(fb, 0, 4, card_title(8),
+                          pk_i18n_text(PK_TR_DIAG_V_SD_MOUNTED), ST_OK);
             }
             break;
         case PK_SD_FORMATTING:
-            draw_card(fb, 0, 4, "microSD", "formatting...", ST_WARN);
+            draw_card(fb, 0, 4, card_title(8),
+                      pk_i18n_text(PK_TR_DIAG_V_SD_FORMATTING), ST_WARN);
             break;
         default:
             /* 只说"没插卡"。
@@ -774,7 +553,8 @@ void pk_diag_page_render(uint16_t *fb)
              *
              * 重试逻辑本身保留（热插拔靠它），只是不再摆到台面上。真要再排查
              * 同类问题，看串口日志里的 "mount attempt #N failed" 就够了。 */
-            draw_card(fb, 0, 4, "microSD", "no card", ST_BAD);
+            draw_card(fb, 0, 4, card_title(8),
+                      pk_i18n_text(PK_TR_DIAG_V_SD_NO_CARD), ST_BAD);
             break;
         }
     }
@@ -785,7 +565,7 @@ void pk_diag_page_render(uint16_t *fb)
     {
         const float q = pk_qnh_get();
         snprintf(buf, sizeof(buf), "%.2f hPa", (double)q);
-        draw_card(fb, 1, 4, "QNH", buf, ST_OK);
+        draw_card(fb, 1, 4, card_title(9), buf, ST_OK);
     }
 
     /* ── BATT ──
@@ -806,12 +586,13 @@ void pk_diag_page_render(uint16_t *fb)
             snprintf(buf, sizeof(buf), "%d%% %.2fV%s raw %dmV",
                      b.pct, b.batt_mv / 1000.0, b.charging ? " CHG" : "",
                      b.raw_mv);
-            draw_card(fb, 0, 5, "BATT", buf,
+            draw_card(fb, 0, 5, card_title(10), buf,
                       b.charging ? ST_OK : b.pct >= 20 ? ST_OK : ST_WARN);
         } else {
             /* 没接电池时引脚浮空，读数乱跳——不显示百分比，只说没接。 */
-            snprintf(buf, sizeof(buf), "no battery (raw %dmV)", b.raw_mv);
-            draw_card(fb, 0, 5, "BATT", buf, ST_BAD);
+            snprintf(buf, sizeof(buf), "%s (raw %dmV)",
+                     pk_i18n_text(PK_TR_DIAG_V_NO_BATTERY), b.raw_mv);
+            draw_card(fb, 0, 5, card_title(10), buf, ST_BAD);
         }
     }
 
@@ -825,7 +606,7 @@ void pk_diag_page_render(uint16_t *fb)
         else            snprintf(buf, sizeof(buf), "%luh %lum",
                                  (unsigned long)(sec / 3600),
                                  (unsigned long)((sec % 3600) / 60));
-        draw_card(fb, 1, 5, "UPTIME", buf, ST_OK);
+        draw_card(fb, 1, 5, card_title(11), buf, ST_OK);
     }
 
     s_card_rows = 6;
@@ -850,7 +631,8 @@ void pk_diag_page_render(uint16_t *fb)
     /* 标题走全局层级（pfd_layout.h）。这一页原来用 COL_HEADER 的淡蓝，是五页
      * 里唯一的蓝标题——罩哥在真机上第一眼就点出来了。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
-               PK_UI_TITLE_Y, "DIAGNOSTICS", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+               PK_UI_TITLE_Y, pk_i18n_text(PK_TR_DIAG_TITLE),
+               PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 }
 
 /* ── 触摸：拖动滚卡片 ──────────────────────────────────────────────
@@ -934,7 +716,9 @@ void pk_diag_page_touch_up(void)
          * 那么干的）。spec §4.2：进子页后 FAB 图标变 ←、dock 收起且不可展开，
          * **三条退路（顶栏按钮 / FAB / 右滑）同时可用**——无物理按键的设备
          * 上，任何一条失效都不能让用户困在里面。自画一个箭头只提供了一条。 */
-        pk_ui_nav_set_subpage(true, "DIAGNOSTICS");
+        /* backbar 走 LVGL 的 tiny_ttf（全字库，不是 catalog 子集），中文标题
+         * 不会缺字；set_subpage 内部 lv_snprintf 进自己的 buf，不留指针。 */
+        pk_ui_nav_set_subpage(true, pk_i18n_text(PK_TR_DIAG_TITLE));
     }
 }
 void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
@@ -983,6 +767,21 @@ static void det_kv(uint16_t *fb, int line, const char *k, const char *v,
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_VAL_X, y, v, vcol, PK_AA_M);
 }
 
+/* 键名从 catalog 取，值有的取 catalog、有的现算——两种写法混在一行里读着乱，
+ * 所以给键包一层：det_kv_tr(fb, line, 词条, 值, 颜色)。 */
+static void det_kv_tr(uint16_t *fb, int line, pk_tr_id_t key, const char *v,
+                      uint16_t vcol)
+{
+    det_kv(fb, line, pk_i18n_text(key), v, vcol);
+}
+
+/* 键与值都来自 catalog 的那些行（状态词），再省一层。 */
+static void det_kv_tr2(uint16_t *fb, int line, pk_tr_id_t key, pk_tr_id_t val,
+                       uint16_t vcol)
+{
+    det_kv(fb, line, pk_i18n_text(key), pk_i18n_text(val), vcol);
+}
+
 static void draw_detail(uint16_t *fb, int which)
 {
     char buf[64];
@@ -995,26 +794,33 @@ static void draw_detail(uint16_t *fb, int which)
         const bool fresh = g.have_fix &&
                            (esp_timer_get_time() - g.updated_us) < GPS_FRESH_US;
 
-        snprintf(buf, sizeof(buf), "%s", g.last_nmea_us == 0 ? "no module"
-                                       : fresh ? "3D fix" : "no fix");
-        det_kv(fb, line++, "STATUS", buf, fresh ? COL_ONLINE : COL_ALERT);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATUS,
+                   g.last_nmea_us == 0 ? PK_TR_DIAG_V_NO_MODULE
+                   : fresh             ? PK_TR_DIAG_V_FIX_3D
+                                       : PK_TR_DIAG_V_NO_FIX,
+                   fresh ? COL_ONLINE : COL_ALERT);
 
-        snprintf(buf, sizeof(buf), "%d used / %d in view", g.sats, g.sats_in_view);
-        det_kv(fb, line++, "SATELLITES", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "%d %s / %d %s",
+                 g.sats, pk_i18n_text(PK_TR_DIAG_U_USED),
+                 g.sats_in_view, pk_i18n_text(PK_TR_DIAG_U_IN_VIEW));
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_SATELLITES, buf, COL_VAL);
 
         snprintf(buf, sizeof(buf), "%.1f", (double)g.hdop);
-        det_kv(fb, line++, "HDOP", buf, COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_HDOP, buf, COL_VAL);
 
         /* 天线自检单独一行：它比"没星"精确得多，直接给结论。 */
-        static const char *const kAnt[] = { "unknown", "OK", "OPEN", "SHORT" };
-        det_kv(fb, line++, "ANTENNA",
-               kAnt[g.ant_status <= PK_GPS_ANT_SHORT ? g.ant_status : 0],
-               g.ant_status == PK_GPS_ANT_OK ? COL_ONLINE
-               : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE : COL_ALERT);
+        static const pk_tr_id_t kAnt[] = {
+            PK_TR_DIAG_V_ANT_UNKNOWN, PK_TR_DIAG_V_ANT_OK,
+            PK_TR_DIAG_V_ANT_OPEN_S,  PK_TR_DIAG_V_ANT_SHORT_S };
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_ANTENNA,
+                   kAnt[g.ant_status <= PK_GPS_ANT_SHORT ? g.ant_status : 0],
+                   g.ant_status == PK_GPS_ANT_OK ? COL_ONLINE
+                   : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE : COL_ALERT);
 
         if (fresh) snprintf(buf, sizeof(buf), "%.5f  %.5f", g.lat, g.lon);
         else       snprintf(buf, sizeof(buf), "---");
-        det_kv(fb, line++, "POSITION", buf, fresh ? COL_VAL : COL_OFFLINE);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_POSITION, buf,
+                  fresh ? COL_VAL : COL_OFFLINE);
 
         /* 每星座一行 SNR 柱状图。分星座画而不是混在一起：某个星座整体偏弱
          * 指向天线频段或遮挡方向，混画就看不出这个模式了。 */
@@ -1038,25 +844,27 @@ static void draw_detail(uint16_t *fb, int which)
             line++;
         }
         if (g.snr_count == 0)
-            det_kv(fb, line++, "SNR", "(no satellites in view)", COL_OFFLINE);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_SNR, PK_TR_DIAG_V_NO_SATS,
+                       COL_OFFLINE);
         break;
     }
 
     case 0: {   /* IMU */
         pk_imu_sample_t st;
         const bool ok = pk_imu_sample_get(&st) && st.valid;
-        det_kv(fb, line++, "SENSOR", ok ? "BNO085 online" : "offline",
-               ok ? COL_ONLINE : COL_ALERT);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_SENSOR,
+                   ok ? PK_TR_DIAG_V_IMU_ONLINE : PK_TR_DIAG_V_OFFLINE,
+                   ok ? COL_ONLINE : COL_ALERT);
         if (ok) {
             snprintf(buf, sizeof(buf), "%u / 3", st.accuracy);
-            det_kv(fb, line++, "CALIBRATION", buf,
-                   st.accuracy >= 2 ? COL_ONLINE : COL_WARN);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_CALIBRATION, buf,
+                      st.accuracy >= 2 ? COL_ONLINE : COL_WARN);
             snprintf(buf, sizeof(buf), "%+.1f", (double)st.roll_deg);
-            det_kv(fb, line++, "ROLL", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_ROLL, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%+.1f", (double)st.pitch_deg);
-            det_kv(fb, line++, "PITCH", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_PITCH, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%.1f", (double)st.yaw_deg);
-            det_kv(fb, line++, "YAW", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_YAW, buf, COL_VAL);
         }
         break;
     }
@@ -1064,15 +872,16 @@ static void draw_detail(uint16_t *fb, int which)
     case 1: {   /* BARO */
         pk_baro_state_t b;
         pk_baro_get(&b);
-        det_kv(fb, line++, "SENSOR", b.valid ? "BMP388 online" : "offline",
-               b.valid ? COL_ONLINE : COL_ALERT);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_SENSOR,
+                   b.valid ? PK_TR_DIAG_V_BARO_ONLINE : PK_TR_DIAG_V_OFFLINE,
+                   b.valid ? COL_ONLINE : COL_ALERT);
         if (b.valid) {
             snprintf(buf, sizeof(buf), "%.2f hPa", (double)b.pressure_pa / 100.0);
-            det_kv(fb, line++, "PRESSURE", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_PRESSURE, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%d ft", b.alt_ft);
-            det_kv(fb, line++, "ALTITUDE", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_ALTITUDE, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
-            det_kv(fb, line++, "QNH REF", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_QNH_REF, buf, COL_VAL);
         }
         break;
     }
@@ -1082,98 +891,121 @@ static void draw_detail(uint16_t *fb, int which)
         const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
         pk_dsp_stats_t d;
         pk_dsp_get_stats(&d);
-        static const char *const kSdr[] = {
-            "NO DONGLE", "attached", "STALLED", "streaming" };
-        det_kv(fb, line++, "STATE", kSdr[st], st == PK_SDR_STREAMING
-                                              ? COL_ONLINE : COL_ALERT);
+        static const pk_tr_id_t kSdr[] = {
+            PK_TR_DIAG_V_SDR_NONE_S,  PK_TR_DIAG_V_SDR_ATTACH_S,
+            PK_TR_DIAG_V_SDR_STALL_S, PK_TR_DIAG_V_SDR_STREAM };
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATE, kSdr[st],
+                   st == PK_SDR_STREAMING ? COL_ONLINE : COL_ALERT);
         if (st == PK_SDR_NO_DEVICE)
-            det_kv(fb, line++, "HINT", "connect to H2 (USB OTG)", COL_WARN);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_SDR_HINT,
+                       COL_WARN);
         snprintf(buf, sizeof(buf), "%lu MS/s",
                  (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL));
-        det_kv(fb, line++, "SAMPLE RATE", buf, COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_SAMPLE_RATE, buf, COL_VAL);
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.msgs_total);
-        det_kv(fb, line++, "ADS-B MSGS", buf, COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_ADSB_MSGS, buf, COL_VAL);
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.iq_drop_total);
-        det_kv(fb, line++, "IQ DROPPED", buf,
-               d.iq_drop_total ? COL_WARN : COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_IQ_DROPPED, buf,
+                  d.iq_drop_total ? COL_WARN : COL_VAL);
         break;
     }
 
     case 4:     /* BLE */
-        det_kv(fb, line++, "LINK",
-               ble_gatt_is_connected() ? "connected"
-               : ble_gatt_is_advertising() ? "advertising" : "idle",
-               ble_gatt_is_connected() ? COL_ONLINE : COL_OFFLINE);
-        det_kv(fb, line++, "PROTOCOL", "GDL90 over BLE", COL_VAL);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_LINK,
+                   ble_gatt_is_connected()   ? PK_TR_DIAG_V_BLE_CONN
+                   : ble_gatt_is_advertising() ? PK_TR_DIAG_V_BLE_ADV
+                                               : PK_TR_DIAG_V_BLE_IDLE,
+                   ble_gatt_is_connected() ? COL_ONLINE : COL_OFFLINE);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_PROTOCOL, PK_TR_DIAG_V_BLE_PROTO,
+                   COL_VAL);
         break;
 
     case 5: {   /* LOG */
         uint32_t written = 0, dropped = 0;
         if (record_sink_file_stats(&written, &dropped)) {
-            det_kv(fb, line++, "BACKEND",
-                   record_sink_file_uses_sd() ? "microSD" : "flash", COL_VAL);
+            /* 两行分开说，谁都不冒充谁：
+             *   当前后端 = record_sink_file_uses_sd()，**现在真在写的那个**；
+             *   设置为   = pk_log_store_get()，用户在设置页选的那个。
+             * 只显示前者会让人以为设置没生效（罩哥验收时的原话），只显示
+             * 后者则是诊断页在说谎——日志文件明明写在别处。 */
+            const bool on_sd   = record_sink_file_uses_sd();
+            const bool want_sd = (pk_log_store_get() == PK_LOG_STORE_SD);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_BACKEND,
+                      log_store_text(on_sd), COL_VAL);
+            if (want_sd == on_sd) {
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_SETTING,
+                          log_store_text(want_sd), COL_VAL);
+            } else {
+                /* 差异态才标琥珀并写明何时生效：file sink 只在创建时读一次
+                 * 这个设置，所以要等重启（见 config_storage.h 的说明）。 */
+                snprintf(buf, sizeof(buf), "%s  (%s)", log_store_text(want_sd),
+                         pk_i18n_text(PK_TR_DIAG_V_AFTER_RESTART));
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_SETTING, buf, COL_WARN);
+            }
             snprintf(buf, sizeof(buf), "%lu", (unsigned long)written);
-            det_kv(fb, line++, "WRITTEN", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_WRITTEN, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%lu", (unsigned long)dropped);
-            det_kv(fb, line++, "DROPPED", buf, dropped ? COL_WARN : COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_DROPPED, buf,
+                      dropped ? COL_WARN : COL_VAL);
         } else {
-            det_kv(fb, line++, "SINK", "down", COL_ALERT);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_SINK, PK_TR_DIAG_V_DOWN,
+                       COL_ALERT);
         }
         break;
     }
 
     case 6:     /* CLK */
         fmt_clock(buf, sizeof(buf));
-        det_kv(fb, line++, "TIME", buf, COL_VAL);
-        det_kv(fb, line++, "SYNCED", pk_clock_is_synced() ? "yes" : "no",
-               pk_clock_is_synced() ? COL_ONLINE : COL_WARN);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_TIME, buf, COL_VAL);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_SYNCED,
+                   pk_clock_is_synced() ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
+                   pk_clock_is_synced() ? COL_ONLINE : COL_WARN);
         break;
 
     case 7: {   /* SYS */
         int temp_c = 0;
         pk_soc_temp_get(&temp_c);
         snprintf(buf, sizeof(buf), "%d C", temp_c);
-        det_kv(fb, line++, "SOC TEMP", buf, temp_c >= 75 ? COL_WARN : COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_SOC_TEMP, buf,
+                  temp_c >= 75 ? COL_WARN : COL_VAL);
         const uint32_t sec = (uint32_t)(esp_timer_get_time() / 1000000);
         snprintf(buf, sizeof(buf), "%luh %lum %lus",
                  (unsigned long)(sec / 3600), (unsigned long)((sec % 3600) / 60),
                  (unsigned long)(sec % 60));
-        det_kv(fb, line++, "UPTIME", buf, COL_VAL);
-        static const char *const kRst2[] = {
-            "unknown", "power-on", "external", "software", "panic",
-            "int WDT", "task WDT", "other WDT", "deep sleep", "brownout",
-            "SDIO", "USB", "JTAG" };
+        det_kv_tr(fb, line++, PK_TR_DIAG_CARD_UPTIME, buf, COL_VAL);
         const esp_reset_reason_t rr = esp_reset_reason();
-        det_kv(fb, line++, "LAST RESET",
-               rr < (int)(sizeof(kRst2) / sizeof(kRst2[0])) ? kRst2[rr] : "?",
-               (rr == ESP_RST_POWERON) ? COL_VAL : COL_WARN);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_LAST_RESET, reset_reason_text(rr),
+                  (rr == ESP_RST_POWERON) ? COL_VAL : COL_WARN);
         break;
     }
 
     case 8: {   /* microSD */
         uint64_t total = 0, free_b = 0;
         const bool mounted = (pk_sdcard_state() == PK_SD_MOUNTED);
-        det_kv(fb, line++, "STATE", mounted ? "mounted" : "no card",
-               mounted ? COL_ONLINE : COL_ALERT);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATE,
+                   mounted ? PK_TR_DIAG_V_SD_MOUNTED : PK_TR_DIAG_V_SD_NO_CARD,
+                   mounted ? COL_ONLINE : COL_ALERT);
         if (mounted && pk_sdcard_info(&total, &free_b)) {
             snprintf(buf, sizeof(buf), "%.1f GB",
                      (double)total / (1024.0 * 1024.0 * 1024.0));
-            det_kv(fb, line++, "CAPACITY", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_CAPACITY, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%.1f GB",
                      (double)free_b / (1024.0 * 1024.0 * 1024.0));
-            det_kv(fb, line++, "FREE", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_FREE, buf, COL_VAL);
         }
         break;
     }
 
     case 9:     /* QNH */
         snprintf(buf, sizeof(buf), "%.2f hPa", (double)pk_qnh_get());
-        det_kv(fb, line++, "QNH", buf, COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_CARD_QNH, buf, COL_VAL);
         /* QNH 是**用户设定值**（设置页步进器 / NVS 持久化），不是 BMP388
          * 测出来的。写清楚来源是有意义的：读数不对时该去改设置，而不是
          * 怀疑气压计坏了。1013.25 是标准大气压，也是未设定时的默认。 */
-        det_kv(fb, line++, "SOURCE", "user setting (Settings page)", COL_VAL);
-        det_kv(fb, line++, "USED BY", "baro altitude calculation", COL_OFFLINE);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_SOURCE, PK_TR_DIAG_V_QNH_SOURCE,
+                   COL_VAL);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_USED_BY, PK_TR_DIAG_V_QNH_USED_BY,
+                   COL_OFFLINE);
         break;
 
     case 10: {  /* BATT */
@@ -1181,20 +1013,23 @@ static void draw_detail(uint16_t *fb, int which)
         pk_batt_get(&b);
         if (b.valid) {
             snprintf(buf, sizeof(buf), "%d %%", b.pct);
-            det_kv(fb, line++, "CHARGE", buf, b.pct >= 20 ? COL_ONLINE : COL_WARN);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
+                      b.pct >= 20 ? COL_ONLINE : COL_WARN);
             snprintf(buf, sizeof(buf), "%.3f V", b.batt_mv / 1000.0);
-            det_kv(fb, line++, "VOLTAGE", buf, COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_VOLTAGE, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%d mV", b.raw_mv);
-            det_kv(fb, line++, "ADC RAW", buf, COL_OFFLINE);
-            det_kv(fb, line++, "CHARGING", b.charging ? "yes" : "no",
-                   b.charging ? COL_ONLINE : COL_VAL);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_ADC_RAW, buf, COL_OFFLINE);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_CHARGING,
+                       b.charging ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
+                       b.charging ? COL_ONLINE : COL_VAL);
             /* 这块板的电池只接充电通路、没有 power path：拔掉 USB 是彻底
              * 断电再上电（实测复位原因为 power-on，不是 brownout）。这一行
              * 是给排查者的，不是给飞行员的——但它能省掉一轮"为什么会重启"。 */
-            det_kv(fb, line++, "ON UNPLUG", "device reboots (no power path)",
-                   COL_WARN);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_ON_UNPLUG,
+                       PK_TR_DIAG_V_ON_UNPLUG, COL_WARN);
         } else {
-            det_kv(fb, line++, "BATTERY", "not detected", COL_ALERT);
+            det_kv_tr2(fb, line++, PK_TR_DIAG_CARD_BATT,
+                       PK_TR_DIAG_V_NOT_DETECTED, COL_ALERT);
         }
         break;
     }
@@ -1204,14 +1039,15 @@ static void draw_detail(uint16_t *fb, int which)
         snprintf(buf, sizeof(buf), "%luh %lum %lus",
                  (unsigned long)(sec / 3600), (unsigned long)((sec % 3600) / 60),
                  (unsigned long)(sec % 60));
-        det_kv(fb, line++, "SINCE BOOT", buf, COL_VAL);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_SINCE_BOOT, buf, COL_VAL);
         snprintf(buf, sizeof(buf), "%lu s", (unsigned long)sec);
-        det_kv(fb, line++, "SECONDS", buf, COL_OFFLINE);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_SECONDS, buf, COL_OFFLINE);
         break;
     }
 
     default:
-        det_kv(fb, line++, "DETAIL", "no further data", COL_OFFLINE);
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_DETAIL, PK_TR_DIAG_V_NO_FURTHER,
+                   COL_OFFLINE);
         break;
     }
 }
@@ -1241,8 +1077,7 @@ static void draw_detail_header(uint16_t *fb, int which)
      */
     /* 与总览标题同字号同色：详情是总览的第二层，标题层级不该在下钻后变。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, DET_TITLE_TOP,
-               (which >= 0 && which < CARD_N) ? CARD_TITLE[which] : "DETAIL",
-               PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+               card_title(which), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 }
 
 /*

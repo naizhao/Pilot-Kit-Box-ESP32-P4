@@ -19,10 +19,10 @@ Pilot Kit Box 是态势感知和开发设备，不是经过适航认证的飞行
 | Key1 **RESET** | 重启 ESP32-P4 |
 | Key2 **BOOT** | 进入下载模式的维护按键，不是 UI 按键 |
 | H1 `USB TO UART` | P4 烧录、供电和串口日志 |
-| H2 `USB` | 原生 USB 2.0 HS OTG；RTL-SDR 接这里 |
+| H2 `USB` | 原生 USB 2.0 HS OTG，与 J3-27/25 同网。装载板时 RTL-SDR 插载板的 USB-A，H2 空置；裸板时 dongle 接这里 |
 | 触摸屏 | 全部页面导航和用户操作 |
 
-当前固件不启动旧 `button_task.c`。Rev1.2 板上没有 MODE、TARE、UP、
+旧 `button_task.c` 已不参与当前固件编译。Rev1.2 板上没有 MODE、TARE、UP、
 DOWN 四个应用按键。
 
 ## 2. 触摸导航
@@ -80,10 +80,12 @@ dock 只切换六个一级页面；详情页不会再出现第二套导航 dock�
 
 ## 5. 外接模块行为
 
-- **RTL-SDR：**通过合适的 USB-C OTG 转接头或有源 Hub 接 H2。H1 不是
-  SDR 数据口，P1 也不是 USB。
-- **BNO085：**当前驱动轮询地址 `0x4A`，INT 不接。
-- **BMP388：**当前驱动轮询地址 `0x76`；GPIO31 只是可选项目预留。
+- **RTL-SDR：**装上 Pilot Kit 载板时，dongle 插载板的 USB-A 插头
+  （J3-27/25），H2 保持空置；裸板时用合适的 USB-C OTG 转接头或有源
+  Hub 接 H2。两者同网，只能占用其中一个。H1 不是 SDR 数据口，P1 也不是
+  USB。
+- **BNO085：**当前驱动轮询地址 `0x4A`；INT 已接 GPIO34，但固件未使用。
+- **BMP388：**当前驱动轮询地址 `0x76`；INT 已接 GPIO31，但固件未使用。
 - **GPS：**UART1 使用 P4 TX GPIO49、P4 RX GPIO51，9600 8N1；时间来自
   NMEA RMC，当前固件不使用可选 GPIO50 PPS 接线。
 - **BLE：**新板需要经 P1 一次性烧录 C6 ESP-Hosted slave。参见
@@ -98,7 +100,7 @@ dock 只切换六个一级页面；详情页不会再出现第二套导航 dock�
 | 触摸旋转或偏移 | 确认日志为逻辑 800×480、PPA 顺时针 90° |
 | 航向响应错误 | 先核对 IMU 实际安装方向，再画 8 字校准并执行调平 |
 | 交通页没有本机位置 | 把 GPS 天线移到开阔天空下等待定位 |
-| RTL-SDR 不枚举 | 确认接 H2 而不是 H1/P1；必要时换有源 Hub |
+| RTL-SDR 不枚举 | 确认插在载板 USB-A（裸板则 H2）而不是 H1/P1，且两者只占用一个；必要时换有源 Hub |
 | MicroSD 仍提示重启 | 保持卡插入并重启；缺卡或坏卡会回退 LittleFS |
 | BLE 不广播 | 完成 C6 一次性烧录，并检查 ESP-Hosted 是否在 DSI 前启动 |
 

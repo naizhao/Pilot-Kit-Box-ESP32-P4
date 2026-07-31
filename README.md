@@ -179,9 +179,11 @@ current Rev1.2 4.3-inch board. Legacy EasyEDA sources:
 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Rev1.2 一体板：ESP32-P4NRW32、32 MB NOR、32 MB PSRAM、ESP32-C6、ST7701 和 GT911。<br>Rev1.2 integrated board with ESP32-P4NRW32, 32 MB NOR, 32 MB PSRAM, ESP32-C6, ST7701, and GT911. |
 | USB-C 数据线 | USB-C data cable | 用于 P4 烧录、串口监视和供电；必须是数据线。<br>Used for P4 flashing, serial monitoring, and power; it must support data, not charge-only. |
 | RTL-SDR FC0013 USB Dongle | RTL-SDR FC0013 USB dongle | 当前推荐 FC0013 tuner 版本，成本低，适合本项目 1090 MHz ADS-B 接收；固件按 1090 MHz / 2 MSPS 配置，并使用最大手动增益。<br>Currently recommended with the FC0013 tuner because it is inexpensive and suitable for this 1090 MHz ADS-B receiver; firmware defaults to 1090 MHz / 2 MSPS and max manual gain. |
-| USB-C OTG 转接头或有源 USB Hub | USB-C OTG adapter or powered USB hub | 把 RTL-SDR 接到 H2 原生 USB 2.0 HS Type-C；P1 是 C6 下载排针。<br>Connects RTL-SDR to H2 native USB 2.0 HS Type-C; P1 is the C6 download header. |
+| USB-C OTG 转接头或有源 USB Hub | USB-C OTG adapter or powered USB hub | 仅裸板需要：把 RTL-SDR 接到 H2 原生 USB 2.0 HS Type-C。装上载板时 dongle 直接插载板 USB-A（走 J3-27/25），H2 空置；P1 是 C6 下载排针。<br>Bare board only: connects RTL-SDR to the H2 native USB 2.0 HS Type-C. With the carrier fitted the dongle plugs into the carrier USB-A (J3-27/25) and H2 stays empty; P1 is the C6 download header. |
 | 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接 RTL-SDR；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the RTL-SDR; real-world range depends strongly on antenna placement and power noise. |
 | GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
+| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；PPS 接 GPIO50 但固件未使用。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; PPS is wired to GPIO50 but unused by firmware. |
+| BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
 
 ### 历史 BOM 成本参考 / Legacy BOM Cost Reference
 

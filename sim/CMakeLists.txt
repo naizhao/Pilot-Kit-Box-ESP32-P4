@@ -111,7 +111,6 @@ set(FW_DRAW_SRC
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c
-    ${FW}/text_font_cjk_ui.c
 )
 
 # 当前 4.3" 一体板的逻辑横屏分辨率；仍可用 -DPANEL=WxH 做兼容性预览。

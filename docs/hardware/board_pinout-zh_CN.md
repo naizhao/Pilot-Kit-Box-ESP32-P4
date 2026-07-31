@@ -16,6 +16,22 @@
 - **固件**：当前 Pilot Kit 构建已经实现的行为。
 - **项目**：Pilot Kit 外接模块的接线约定；变更时必须同步修改接线和固件。
 
+### UART 方向命名约定
+
+本文所有 UART 信号一律采用 **P4 视角**：「P4 UART1 TX」指 P4 向对端 RXD
+输出的那根线。
+
+Pilot Kit 载板 PCB（`docs/jlc/lcd-4.3in/`）的网络名采用**模块视角**，两者
+方向正好相反：
+
+| 载板 PCB 网络 | J3 脚 | P4 GPIO | 本文含义 |
+|---|---:|---:|---|
+| `GPS_RX` | 32 | 49 | **P4 UART1 TX** → GPS RXD |
+| `GPS_TX` | 36 | 51 | GPS TXD → **P4 UART1 RX** |
+
+固件常量同样是 P4 视角：`firmware/main/gps_task.c` 中
+`GPS_TX_PIN = 49`、`GPS_RX_PIN = 51`。
+
 > 不要把 `ESP32-P4-WIFI6-datasheet.pdf` 当成本板引脚依据。它虽然名为
 > datasheet，实际是另一款 ESP32-P4-WIFI6 板的原理图。本文只采用上面的
 > 4.3 寸 Rev1.2 原理图作为板级依据。
@@ -59,7 +75,7 @@ HAT 载板从对接面观察时会镜像，画 footprint 时必须再次核对�
 | **上排实际网络** | GND | GPIO52 | GPIO51 | GPIO50 | GPIO49 | GPIO35 | GPIO34 | GND | GPIO31 | GPIO30 | GPIO29 | ESP_3V3 | GPIO28 | GPIO4 | GPIO3 | GND | GPIO2 | GPIO8 | GPIO7 | ESP_3V3 |
 | **上排 J3 脚号** | 40 | 38 | 36 | 34 | 32 | 30 | 28 | 26 | 24 | 22 | 20 | 18 | 16 | 14 | 12 | 10 | 8 | 6 | 4 | 2 |
 | **下排丝印** | 48 | 47 | 46 | GND | 32 | GND | DP | DM | 25 | 24 | GND | 22 | 21 | GND | 5 | 38 | 37 | GND | 5V | 5V |
-| **下排实际网络** | GPIO48 | GPIO47 | GPIO46 | GND | GPIO32 | GND | `USBD_P` | `USBD_N` | GPIO25 | GPIO24 | GND | GPIO22 | GPIO21 | GND | GPIO5 | GPIO38 | GPIO37 | GND | VCC_5V | VCC_5V |
+| **下排实际网络** | GPIO48 | GPIO47 | GPIO46 | GND | GPIO32 | GND | `USBD_P` | `USBD_N` | GPIO25 | GPIO24 | GND | GPIO22 | GPIO21（BAT_STAT） | GND | GPIO5 | GPIO38 | GPIO37 | GND | VCC_5V | VCC_5V |
 | **下排 J3 脚号** | 39 | 37 | 35 | 33 | 31 | 29 | 27 | 25 | 23 | 21 | 19 | 17 | 15 | 13 | 11 | 9 | 7 | 5 | 3 | 1 |
 
 #### 逐列详细表：同一实物方向
@@ -68,17 +84,17 @@ HAT 载板从对接面观察时会镜像，画 footprint 时必须再次核对�
 |---:|---:|---|---:|---|
 | 1 | 40 | GND | 39 | GPIO48 |
 | 2 | 38 | GPIO52 | 37 | GPIO47 |
-| 3 | 36 | GPIO51 | 35 | GPIO46（空闲） |
-| 4 | 34 | GPIO50（GPS_PPS） | 33 | GND |
-| 5 | 32 | GPIO49（GPS_RX） | 31 | GPIO32（空闲） |
+| 3 | 36 | GPIO51（GPS TXD → P4 UART1 RX；载板网络 `GPS_TX`） | 35 | GPIO46（空闲） |
+| 4 | 34 | GPIO50（GPS PPS） | 33 | GND |
+| 5 | 32 | GPIO49（P4 UART1 TX → GPS；载板网络 `GPS_RX`） | 31 | GPIO32（空闲） |
 | 6 | 30 | GPIO35 / BOOT 与自动下载电路 | 29 | GND |
-| 7 | 28 | GPIO34 | 27 | `USBD_P`，原生 USB HS D+，丝印 `DP` |
+| 7 | 28 | GPIO34（IMU_INT） | 27 | `USBD_P`，原生 USB HS D+，丝印 `DP` |
 | 8 | 26 | GND | 25 | `USBD_N`，原生 USB HS D−，丝印 `DM` |
-| 9 | 24 | GPIO31 | 23 | GPIO25 / `USB1P1_P` |
+| 9 | 24 | GPIO31（BARO_INT） | 23 | GPIO25 / `USB1P1_P` |
 | 10 | 22 | GPIO30 | 21 | GPIO24 / `USB1P1_N` |
 | 11 | 20 | GPIO29 | 19 | GND |
 | 12 | 18 | ESP_3V3 | 17 | GPIO22 |
-| 13 | 16 | GPIO28（IMU_RST） | 15 | GPIO21（空闲） |
+| 13 | 16 | GPIO28（IMU_RST） | 15 | GPIO21（BAT_STAT，飞线自 TP1） |
 | 14 | 14 | GPIO4 | 13 | GND |
 | 15 | 12 | GPIO3 | 11 | GPIO5 |
 | 16 | 10 | GND | 9 | GPIO38 / P4 UART RX ← CH343P |
@@ -94,12 +110,16 @@ HAT 载板从对接面观察时会镜像，画 footprint 时必须再次核对�
       下排 J3-39 ───────────────────────────── J3-1
 ```
 
-因此新 HAT 载板上的原生 USB HS 应使用：
+因此 Pilot Kit 载板上的原生 USB HS 使用：
 
-- J3-27：`USBD_P` / `DP`
-- J3-25：`USBD_N` / `DM`
-- J3-29 或 J3-26：相邻 GND
-- J3-1/J3-3：`VCC_5V`，须先经过 USB Host 限流开关再接 dongle VBUS
+- J3-27：`USBD_P` / `DP`（载板网络 `USB_DP`）
+- J3-25：`USBD_N` / `DM`（载板网络 `USB_DM`）
+- J3-26：相邻 GND
+- J3-1/J3-3：`VCC_5V`（载板网络 `+5V_SYS`）→ USB-A VBUS
+
+**实际打样的载板**把 `+5V_SYS` 从 J3-1/J3-3 直接接到 USB-A pin 1，
+`docs/jlc/lcd-4.3in/` 里**没有任何限流开关器件**。加 500 mA USB Host
+限流开关属于后续改版的候选项，不是现有硬件。
 
 丝印 `25`/`24` 表示 GPIO25/GPIO24，对应另一组 Full-Speed
 `USB1P1_P/N`；它们不是丝印 `DP`/`DM` 的原生 USB HS 差分对。
@@ -118,17 +138,17 @@ HAT 载板从对接面观察时会镜像，画 footprint 时必须再次核对�
 | 9 | GPIO38 / P4 UART RX ← CH343P | 10 | GND |
 | 11 | GPIO5 | 12 | GPIO3 |
 | 13 | GND | 14 | GPIO4 |
-| 15 | GPIO21（空闲） | 16 | GPIO28（IMU_RST） |
+| 15 | GPIO21（BAT_STAT，飞线自 TP1） | 16 | GPIO28（IMU_RST） |
 | 17 | GPIO22 | 18 | ESP_3V3 |
 | 19 | GND | 20 | GPIO29 |
 | 21 | GPIO24 / USB1P1_N | 22 | GPIO30 |
-| 23 | GPIO25 / USB1P1_P | 24 | GPIO31 |
+| 23 | GPIO25 / USB1P1_P | 24 | GPIO31（BARO_INT） |
 | 25 | USBD_N，原生 USB HS D− | 26 | GND |
-| 27 | USBD_P，原生 USB HS D+ | 28 | GPIO34 |
+| 27 | USBD_P，原生 USB HS D+ | 28 | GPIO34（IMU_INT） |
 | 29 | GND | 30 | GPIO35 / BOOT 与自动下载电路 |
-| 31 | GPIO32（空闲） | 32 | GPIO49（GPS_RX） |
-| 33 | GND | 34 | GPIO50 |
-| 35 | GPIO46（空闲） | 36 | GPIO51（GPS_TX） |
+| 31 | GPIO32（空闲） | 32 | GPIO49（P4 UART1 TX → GPS；载板网络 `GPS_RX`） |
+| 33 | GND | 34 | GPIO50（GPS PPS） |
+| 35 | GPIO46（空闲） | 36 | GPIO51（GPS TXD → P4 UART1 RX；载板网络 `GPS_TX`） |
 | 37 | GPIO47 | 38 | GPIO52 |
 | 39 | GPIO48 | 40 | GND |
 
@@ -142,7 +162,7 @@ J3 **没有**引出 GPIO20、GPIO23、GPIO26、GPIO27 或 GPIO33。旧文档中
 重要注意事项：
 
 - J3 并不与完整的树莓派 40-pin 排针电气兼容。连接任何 HAT 前应逐脚核对。
-- J3-25/27 与 H2 共用原生 USB HS 数据网络；H2 与 HAT USB-A 只能二选一。
+- J3-25/27 与 H2 共用原生 USB HS 数据网络；H2 与载板 USB-A 只能二选一。
 - GPIO24/25 是另一组 Full-Speed USB Serial/JTAG，不是 H2 的原生 HS 信号。
 - GPIO35 是 BOOT，并受 CH343P 自动下载电路驱动。
 - GPIO37/38 与板载 CH343P 共用，外接 UART 可能与 H1 冲突。
@@ -154,22 +174,24 @@ J3 **没有**引出 GPIO20、GPIO23、GPIO26、GPIO27 或 GPIO33。旧文档中
 |---|---|---|
 | 共享 I²C SDA / SCL | GPIO7 / GPIO8 | **项目 + 固件** |
 | BNO085 复位 | GPIO28（因 PCB 走线从 GPIO21 迁移） | **项目 + 固件** |
-| BNO085 中断 | GPIO34（J3 pin 28，嘉立创 PCB 网络 IMU_INT） | HAT 已接线但固件轮询 |
-| BMP388 中断 | 可选 GPIO31 | 项目预留；当前驱动轮询 |
-| GPS UART1 TX / RX | GPIO49 / GPIO51（P4 TX 由 GPIO32 迁至 GPIO49；RX 留在 GPIO51；J3 pin 32/36） | **项目 + 固件**，9600 8N1 |
+| BNO085 中断 | GPIO34（J3 pin 28，载板网络 `IMU_INT`） | 载板已接线，但固件仍轮询 |
+| 充电状态（BAT_STAT） | GPIO21（J3 pin 15，飞线自 TP1） | **项目 + 固件** |
+| BMP388 中断 | GPIO31（J3 pin 24，载板网络 `BARO_INT`） | 载板已接线，但固件仍轮询 |
+| GPS UART1 TX / RX | P4 TX GPIO49（J3 pin 32）/ P4 RX GPIO51（J3 pin 36）；P4 TX 由 GPIO32 迁至 GPIO49 | **项目 + 固件**，9600 8N1 |
 | GPS PPS | 可选 GPIO50（因 PCB 走线从 GPIO46 迁移） | 仅预留接线；当前固件不读取 PPS |
-| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **新 HAT 载板**；H2 保持空置，VBUS 经限流开关取 J3 `VCC_5V` |
+| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **载板 USB-A 插头**；H2 保持空置。VBUS 直接取自 J3 `VCC_5V`，载板上没有限流开关 |
 
 不启用上述可选项目功能时，较适合作通用扩展的引脚有：
-GPIO5、GPIO21、GPIO22、GPIO29、GPIO30、GPIO32、GPIO34、GPIO46、GPIO47、GPIO48、
-GPIO51、GPIO52。
+GPIO5、GPIO22、GPIO29、GPIO30、GPIO32、GPIO46、GPIO47、GPIO48、GPIO52。
 
 下列引脚使用前必须评估副作用：
 
 - GPIO2/3/4 与默认 JTAG 功能重叠。
 - GPIO24/25 与 USB Serial/JTAG 重叠。
-- GPIO31 为可选 BMP388 中断预留。
-- GPIO49/51 是当前 GPS UART（RX 在 GPIO51；GPIO50 为 PPS）。
+- GPIO21 用于 BAT_STAT（TP1 飞线）；配置为输入上拉，ETA6098 充电时拉低。
+- GPIO31 上是载板 `BARO_INT` 网络（BMP388 中断）。
+- GPIO34 上是载板 `IMU_INT` 网络（BNO085 中断）。
+- GPIO49/51 是当前 GPS UART（P4 TX 在 GPIO49，P4 RX 在 GPIO51）。
 - GPIO50 为 GPS PPS 预留（GPIO46 现空闲）。
 - GPIO35、GPIO37/38 通常应留给启动和调试串口电路。
 
@@ -195,14 +217,14 @@ GPIO51、GPIO52。
 | 14–17 | P4↔C6 SDIO D0–D3 | 否 |
 | 18、19 | P4↔C6 SDIO CLK、CMD | 否 |
 | 20 | BAT_ADC，电池电压 1/3 分压 | 否 |
-| 21、22 | 扩展 | 15、17 |
+| 21、22 | 扩展（GPIO21 = BAT_STAT，TP1 飞线；IMU_RST 已迁至 GPIO28） | 15、17 |
 | 23 | GT911 TP_RST | 否 |
 | 24、25 | USB1P1_N/P，Full-Speed USB Serial/JTAG | 21、23 |
 | 26 | LCD_BL_PWM | 否 |
 | 27 | LCD RESET | 否 |
-| 28–32 | 扩展 | 16、20、22、24、31 |
+| 28–32 | 扩展（GPIO28 = IMU_RST，GPIO31 = BARO_INT） | 16、20、22、24、31 |
 | 33 | BL_EN，100 kΩ 上拉 | 否 |
-| 34 | 扩展 | 28 |
+| 34 | 扩展（GPIO34 = IMU_INT） | 28 |
 | 35 | BOOT 及 CH343P 自动下载 | 30 |
 | 36 | 仅 10 kΩ 上拉，未引出 | 否 |
 | 37 | P4 UART TX → CH343P RXD | 7 |
@@ -210,7 +232,7 @@ GPIO51、GPIO52。
 | 39–42 | microSD D0–D3 | 否 |
 | 43、44 | microSD CLK、CMD | 否 |
 | 45 | microSD 电源开关控制 | 否 |
-| 46–52 | 扩展 | 35、37、39、32、34、36、38 |
+| 46–52 | 扩展（GPIO49 = P4 UART1 TX → GPS，GPIO50 = GPS PPS，GPIO51 = GPS → P4 UART1 RX） | 35、37、39、32、34、36、38 |
 | 53 | NS4150B PA_CTRL | 否 |
 | 54 | 经 R34 0 Ω 连接 ESP32-C6 CHIP_PU/EN | 否 |
 
@@ -313,11 +335,18 @@ H4 是喇叭座，不是 C6 排针。
 | H1 `USB TO UART` | USB-C → CH343P → P4 GPIO38 RX / GPIO37 TX | P4 烧录及 `idf.py monitor` |
 | H2 `USB` | USB-C → 专用 USBD_N/P | 原生 USB 2.0 HS OTG；与 J3 HS 数据线同网 |
 | J3-21/23 | GPIO24/25，USB1P1_N/P | 另一组 Full-Speed USB Serial/JTAG |
-| J3-25/27 | 专用 USBD_N/P | 新 HAT 载板的 RTL-SDR USB HS 数据路径 |
+| J3-25/27 | 专用 USBD_N/P | Pilot Kit 载板的 RTL-SDR USB HS 数据路径 |
 
-新 HAT 载板应从 J3-27 `DP`、J3-25 `DM` 引到 USB-A 母座，H2 保持
-空置；USB-A VBUS 从 J3 `VCC_5V` 经 500 mA USB Host 限流开关供电。
-不要继续使用旧文档中的四针 P1/MX1.25 USB 线缆。
+**当前接法**：Pilot Kit 载板（`docs/jlc/lcd-4.3in/`，位号 `RTL-SDR`，
+4-pin USB Type-A 插头）把 J3-27 `DP`、J3-25 `DM` 引到该插头，VBUS 直接
+取自 J3-1/J3-3 `VCC_5V`。因此 dongle 插在载板上，**H2 必须保持空置**。
+
+没有载板时（台面上的裸 Waveshare 板），改用 H2 `USB` 加 USB-C OTG
+转接头或有源 Hub。H2 与 J3-25/27 是同一组网络，同一时刻只能占用其中一个。
+
+已知限制：载板 VBUS 上**没有限流开关**，dongle 直接吃板子的 5 V。
+加 500 mA USB Host 限流开关是载板后续改版的候选项。不要继续使用旧文档
+中的四针 P1/MX1.25 USB 线缆。
 
 ## 7. microSD
 
@@ -399,7 +428,7 @@ CSI_IO0 有 10 kΩ 上拉；CSI_IO1 的可选上拉未贴。原理图没有为 C
 | VCC / GND | J3 ESP_3V3 / GND |
 | SDA / SCL | GPIO7 / GPIO8 |
 | RST | GPIO28（因 60mm PCB 走线从 GPIO21 迁移） |
-| INT | 不连接；当前驱动轮询 |
+| INT | GPIO34（J3 pin 28，载板网络 `IMU_INT`）；已接线，但当前驱动仍轮询 |
 | AD0 / PS1 / PS0 | GND / GND / GND |
 | CS | ESP_3V3 |
 
@@ -418,9 +447,11 @@ CSI_IO0 有 10 kΩ 上拉；CSI_IO1 的可选上拉未贴。原理图没有为 C
 | VCC / GND | ESP_3V3 / GND |
 | SDA / SCL | GPIO7 / GPIO8 |
 | SDO / CSB | GND / ESP_3V3，对应地址 `0x76` |
-| INT | 可选 GPIO31；当前驱动轮询 |
+| INT | GPIO31（J3 pin 24，载板网络 `BARO_INT`）；已接线，但当前驱动仍轮询 |
 
 ### GPS
+
+下表左列是 **GPS 模块自身的引脚名**，GPIO 列是 P4 侧（方向约定见本文开头）。
 
 | GPS 引脚 | 连接 |
 |---|---|
@@ -437,10 +468,12 @@ GPIO 中断或授时纪律。
 1. P4 烧录和日志使用 H1；P1 只用于烧录 C6。
 2. 日志应出现 `ST7701 DSI ready: logical 800x480 -> PPA 90 CW`。
 3. 检查触摸覆盖全屏；除非有意补焊 R35，否则 TP_INT 应保持开路。
-4. 检查 BNO085 地址 `0x4A`、BMP388 地址 `0x76`、GPS RX GPIO51。
+4. 检查 BNO085 地址 `0x4A`、BMP388 地址 `0x76`，以及 NMEA 是否落在
+   P4 RX GPIO51 上。
 5. 确认 C6 ESP-Hosted 在 DSI 之前启动，且没有 SDIO CMD5 错误。
 6. 确认 microSD 通过 Slot 0 挂载，且没有重复初始化共享 SDMMC host。
-7. RTL-SDR 接新 HAT 载板的 USB-A，确认 J3 原生 USB HS 枚举；H2 保持空置。
+7. RTL-SDR 接载板的 USB-A 插头，确认 J3 原生 USB HS 枚举；H2 保持空置。
+   裸板时改接 H2。
 8. 修改接线后执行多次冷启动，确认启动稳定。
 
 ## 12. 旧硬件边界
@@ -448,3 +481,9 @@ GPIO 中断或授时纪律。
 旧 2.4 寸 SPI 屏与四按键载板仅是 `docs/jlc/` 下的历史材料。其
 GPIO28/29/30/31/50 显示连线、GPIO26/5/22/23 应用按键和旧接口名称，
 不得复制到 Rev1.2 4.3 寸构建。
+
+`firmware/main/button_task.c` 实现的正是这四个旧按键，因此已从
+`firmware/main/CMakeLists.txt` **移出编译**：它写死的 GPIO26、GPIO23 在
+Rev1.2 上是 LCD_BL_PWM 与 GT911 TP_RST，调用 `pk_button_init()` 会把背光
+和触摸复位脚配成输入上拉。保留该文件只是作为「按键 → 动作」路由的参考；
+重新映射引脚是重新加回编译的前提。

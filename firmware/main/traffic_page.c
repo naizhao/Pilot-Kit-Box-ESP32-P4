@@ -22,6 +22,7 @@
 #include "sdkconfig.h"
 
 #include "display.h"
+#include "i18n.h"
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
@@ -148,7 +149,7 @@ static int std_alt_ft_from_pa(float pa)
  */
 static void draw_own_aircraft(uint16_t *fb, float rot_deg, uint16_t col)
 {
-    const uint8_t *ac = pk_icon_bitmap[pk_aa_get_weight()]
+    const uint8_t *ac = pk_icon_bitmap
                       + (size_t)PK_ICON_OWNSHIP
                         * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
 
@@ -364,7 +365,7 @@ static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
     {
         const pk_icon_id_t id = (orient == PK_MAP_HEADING_UP)
                                   ? PK_ICON_NAV_HDG : PK_ICON_NAV_NORTH;
-        const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+        const uint8_t *ic = pk_icon_bitmap
                           + (size_t)id * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
         pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                         BTN_ORI_X + (BTN_D - PK_ICON_W) / 2,
@@ -572,7 +573,7 @@ void pk_traffic_page_render(uint16_t *fb)
      * 左缘原来硬编码 24，比同一页左下角朝向按钮的 BTN_M(16) 还往里缩——
      * 一页之内两个边距，切到 diag/list 更是差 8 px。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L, PK_UI_TITLE_Y,
-               "TRAFFIC", PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+               pk_i18n_text(PK_TR_TFC_TITLE), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
     if (hdg_valid) {
         snprintf(buf, sizeof(buf), "HDG %03d~", ((int)lroundf(own_heading) + 360) % 360);
         TFC_PUTS(fb, 200, TFC_HDR_TY, buf, COL_CYAN);
@@ -583,7 +584,7 @@ void pk_traffic_page_render(uint16_t *fb)
      * connecting_airports 表示 ADS-B 目标数，同一台设备上同一件事该用同一个
      * 符号。 */
     {
-        const uint8_t *ic = pk_icon_bitmap[pk_aa_get_weight()]
+        const uint8_t *ic = pk_icon_bitmap
                           + (size_t)PK_ICON_ADSB
                             * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
         /* 绿色取自 PFD 状态栏的 COL_GREEN——那里的星数、目标数都是这个绿。
@@ -605,11 +606,17 @@ void pk_traffic_page_render(uint16_t *fb)
      * 朝向用 S 档、量程用 M 档：量程是随时要读的数，朝向是确认一次就不看的
      * 状态，字号该分主次。 */
     {
-        const char *om = (orient == PK_MAP_HEADING_UP) ? "HDG UP" : "NORTH UP";
+        /* 朝向文案与设置页同一条词条：那里也是「地图朝向」这一项的两个选项，
+         * 两处各写一份就会出现设置里叫一个名、雷达页上叫另一个名。 */
+        const char *om = pk_i18n_text(orient == PK_MAP_HEADING_UP
+                                      ? PK_TR_MAP_ORIENT_HDG_UP
+                                      : PK_TR_MAP_ORIENT_NORTH_UP);
         snprintf(buf, sizeof(buf), "%dNM", range_nm);
 
-        const int nm_w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
-        const int om_w = (int)strlen(om)  * pk_aa_cell_w(PK_AA_S);
+        /* 这两个宽度是右对齐的依据，中文侧一个汉字 3 字节，strlen 会把
+         * 「机头朝上」算成 12 格，整块读数被推出屏幕右缘。 */
+        const int nm_w = pk_aa_text_width(buf, PK_AA_M);
+        const int om_w = pk_aa_text_width(om,  PK_AA_S);
         const int nm_x = PK_DISPLAY_W - 24 - nm_w;
 
         TFC_PUTS(fb, nm_x, TFC_HDR_TY, buf, COL_GREY);
@@ -685,8 +692,14 @@ void pk_traffic_page_render(uint16_t *fb)
     draw_buttons(fb, orient, range_nm);
 
     if (!own_valid) {
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                     CX - 30, CY - 4, "NO OWN POS", COL_AMBER, 1);
+        /* 必须走抗锯齿字体：pk_font_puts 是 5×7 位图，只有 ASCII 字形，
+         * 中文进去会整句渲染成空白——而这条恰恰是「整幅雷达图为什么是空的」
+         * 的唯一解释，丢了它这一页就成了没有说明的黑屏。
+         * 居中同理用实测宽度，原来的 CX-30 是按 10 个 ASCII 字符手算的。 */
+        const char *msg = pk_i18n_text(PK_TR_TFC_NO_OWN_POS);
+        const int w = pk_aa_text_width(msg, PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   CX - w / 2, CY - PK_AA_M_H / 2, msg, COL_AMBER, PK_AA_M);
     } else {
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;                /* 选中最后画(置顶) */

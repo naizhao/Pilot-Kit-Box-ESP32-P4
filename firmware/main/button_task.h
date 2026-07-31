@@ -1,12 +1,28 @@
 /*
- * button_task.h — Pilot Kit Box tact-button driver.
+ * button_task.h — Pilot Kit Box tact-button driver (LEGACY 2.4-inch only).
  *
- * Polls 4 active-low momentary switches on the Waveshare ESP32-P4-WIFI6
+ * ####################################################################
+ * # 只适用于旧 2.4 寸载板。button_task.c 已从                          #
+ * # firmware/main/CMakeLists.txt 的源文件列表中移出，不参与编译。       #
+ * #                                                                  #
+ * # 原因：本文件写死的引脚在 Rev1.2 4.3 寸一体板上另有归属——           #
+ * #   GPIO26 = LCD_BL_PWM（背光 PWM）                                 #
+ * #   GPIO23 = GT911 TP_RST（触摸复位）                                #
+ * # 一旦调用 pk_button_init()，这两个脚会被配成输入 + 内部上拉，        #
+ * # 直接打死背光和触摸。4.3 寸的交互全部走触摸 UI                       #
+ * #（见 docs/hardware/board_pinout-zh_CN.md §1、§12）。                #
+ * #                                                                  #
+ * # 保留本文件是作为「按键 → 动作」语义的历史参考。要在 4.3 寸上        #
+ * # 复用，必须先按 Rev1.2 的空闲 GPIO 重新映射引脚表，再加回 CMake。    #
+ * # 未加回 CMake 之前调用 pk_button_init() 会直接链接失败——这是有意的。 #
+ * ####################################################################
+ *
+ * Polls 4 active-low momentary switches on the legacy 2.4-inch carrier's
  * 2×20 user-facing header. Internal pull-ups are enabled by this
  * driver, so each switch only needs to short its GPIO to GND when
  * pressed — no external resistor required.
  *
- * Button layout (mirrors docs/hardware/board_pinout.md §3):
+ * Button layout on that legacy carrier:
  *
  *   PK_BTN_TARE  →  GPIO 26   "TARE"   tare snapshot / persist / factory reset
  *   PK_BTN_MODE  →  GPIO  5   "MODE"   PFD/list toggle + deep-sleep wake (LP_IO)
@@ -58,11 +74,13 @@
 
 #include "esp_err.h"
 
+/* 引脚号均为旧 2.4 寸载板；在 Rev1.2 4.3 寸上 GPIO26 是背光 PWM、
+ * GPIO23 是触摸复位，不可照搬。 */
 typedef enum {
-    PK_BTN_TARE = 0,    /* GPIO 26 — tare / persist / factory reset */
-    PK_BTN_MODE,        /* GPIO  5 — PFD/list toggle + deep-sleep wake (LP_IO) */
-    PK_BTN_UP,          /* GPIO 22 — list scroll up */
-    PK_BTN_DOWN,        /* GPIO 23 — list scroll down */
+    PK_BTN_TARE = 0,    /* legacy GPIO 26 — tare / persist / factory reset */
+    PK_BTN_MODE,        /* legacy GPIO  5 — PFD/list toggle + deep-sleep wake (LP_IO) */
+    PK_BTN_UP,          /* legacy GPIO 22 — list scroll up */
+    PK_BTN_DOWN,        /* legacy GPIO 23 — list scroll down */
     PK_BTN_COUNT,
 } pk_button_id_t;
 
@@ -84,5 +102,8 @@ typedef void (*pk_button_callback_t)(pk_button_id_t id,
  * `cb` may be NULL, in which case button events are silently swallowed
  * (useful for the first hardware bring-up to confirm the GPIOs work
  * before wiring application logic).
+ *
+ * ⚠️ 本函数的实现（button_task.c）当前不参与编译，调用它会链接失败。
+ *    在 Rev1.2 4.3 寸上重新映射引脚之前，不要把它加回 CMakeLists。
  */
 esp_err_t pk_button_init(pk_button_callback_t cb);

@@ -16,7 +16,7 @@ current Pilot Kit Box target.
 | Display | ST7701, 4.3-inch 480×800 IPS, 2-lane MIPI-DSI; 800×480 landscape UI |
 | Touch | GT911, I²C GPIO7/8, reset GPIO23, interrupt resistor not fitted |
 | P4 console | H1 USB-C `USB TO UART`, through CH343P |
-| Native USB HS | H2 USB-C `USB`; the RTL-SDR path |
+| Native USB HS | Same nets on H2 USB-C `USB` and J3-27/25; the RTL-SDR path |
 | C6 download | P1 1×4 header `TX RX IO9 GND` |
 | Expansion | J3 2×20 header; check the project pinout before wiring |
 
@@ -33,11 +33,11 @@ Official links:
 
 | Module | Connection | Firmware status |
 |---|---|---|
-| RTL-SDR FC0013 | H2 native USB 2.0 HS through a USB-C OTG adapter/hub | Integrated |
+| RTL-SDR FC0013 | Carrier USB-A plug on J3-27/25 (native USB 2.0 HS), H2 left empty; on a bare board use H2 with a USB-C OTG adapter/hub instead | Integrated |
 | ST7701 display | Board-fixed MIPI-DSI, 2 lanes at 500 Mbit/s | Integrated |
 | GT911 touch | Board-fixed GPIO7/8, reset GPIO23; polled | Integrated, first contact only |
 | BNO085 IMU | GPIO7/8, reset GPIO28, INT GPIO34, address 0x4A | Integrated, polled |
-| BMP388 | GPIO7/8, optional GPIO31 INT | Integrated, polled |
+| BMP388 | GPIO7/8, INT wired to GPIO31 (carrier net `BARO_INT`) | Integrated, polled |
 | GPS | P4 TX GPIO49, P4 RX GPIO51; optional PPS GPIO50 | UART/RMC integrated; PPS not implemented |
 | ESP32-C6 | P4 GPIO14–19 SDIO, GPIO54 EN | Wi-Fi/BLE transport integrated |
 | Audio / camera | Board hardware present | Not initialized by Pilot firmware |

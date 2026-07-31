@@ -11,51 +11,98 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def code_only(text: str) -> str:
+    """剥掉 C 注释后再断言。
+
+    这些反向断言要钉的是"符号不许回来"，而记录「为什么删」的注释里必然会
+    写出这些符号名——不剥注释就等于禁止解释历史，下一个人只会把注释也删掉。
+    """
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    return re.sub(r"//[^\n]*", " ", text)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 2026-07-30 的决定：legacy 渲染器与 UI 档字库整条链路删除，不许回潮。
+#
+# 背景（产品负责人拍板，「不复用了，硬件都已经更换了，不会再退回去」）：
+#   · settings_page.c / diag_page.c 里的 *_render_legacy() 是 320×240 时代的
+#     逐行版面，改成 8 项设置 + 2×4 诊断卡片后就挂上 __attribute__((unused))
+#     「留着供详情层复用」——详情层最终自己写了，legacy 一年零调用者。
+#   · 它们是 text.c 里 pk_text_puts_ui / pk_text_puts_page_title /
+#     pk_text_puts_page_body / pk_text_ui_width 的唯一调用者，而前三个又是
+#     21 px UI 变宽字库 text_font_cjk_ui.c（4143 行）的唯一使用者。
+#   · 硬件已从 2.4″ 换成 4.3″ 800×480 触摸屏，各页统一走 pfd_aa_text 的
+#     pk_aa_puts（中西文同一份 AA 字体、同一档 cell 高），不存在退回场景；
+#     当时 app 分区余量只剩 10%，留着纯属占地方。
+#
+# 所以下面这几个测试是**反向断言**：这些符号一旦重新出现，就说明有人在往回
+# 走，应当先回到这条决定本身，而不是让测试给死代码背书。
+# ══════════════════════════════════════════════════════════════════════
+
+# 已删除的 UI 档渲染链路：text.c 的渲染器 + 它们背后的字库。
+REMOVED_UI_FONT_SYMBOLS = (
+    "pk_text_puts_ui",
+    "pk_text_puts_page_title",
+    "pk_text_puts_page_body",
+    "pk_text_ui_width",
+    "pk_text_cjk_ui_glyph",
+    "text_font_cjk_ui",
+    "PK_TEXT_CJK_UI_CELL_H",
+)
+
+
 class UiPageTextRenderingTest(unittest.TestCase):
-    def test_settings_and_about_use_page_renderers(self) -> None:
-        settings = (ROOT / "main" / "settings_page.c").read_text(encoding="utf-8")
-        self.assertNotIn("pk_text_puts_title", settings)
-        self.assertIn("pk_text_puts_page_title", settings)
-        self.assertIn("pk_text_puts_page_body", settings)
+    def test_legacy_renderers_stay_deleted(self) -> None:
+        """两个 *_render_legacy() 及其专属辅助函数不许回来。"""
+        settings = code_only((ROOT / "main" / "settings_page.c").read_text(encoding="utf-8"))
+        diag = code_only((ROOT / "main" / "diag_page.c").read_text(encoding="utf-8"))
 
-        # 关于页 3afa39c 起改用 pfd_aa_text 的 pk_aa_puts（中西文同一份字体、
-        # 同一档 cell 高，不需要 page_* 那套垂直补偿）。老的 8×8
-        # pk_text_puts_title 仍然禁止——那套字在这块屏上只有 1.0 mm。
-        about = (ROOT / "main" / "about_page.c").read_text(encoding="utf-8")
-        self.assertNotIn("pk_text_puts_title", about)
-        self.assertIn("pk_aa_puts", about)
+        self.assertNotRegex(settings, r"static\s+void\s+settings_render_legacy\s*\(")
+        self.assertNotRegex(diag, r"static\s+void\s+diag_render_legacy\s*\(")
+        # legacy 专属辅助：settings 的 render_row/render_row_col、diag 的
+        # draw_diag_row。draw_snr_row / fmt_clock 不在此列——详情层还在用。
+        self.assertNotRegex(settings, r"static\s+void\s+render_row(_col)?\s*\(")
+        self.assertNotRegex(diag, r"static\s+void\s+draw_diag_row\s*\(")
+        # 整仓不许再出现 __attribute__((unused)) 的整页渲染器。
+        self.assertNotIn("__attribute__((unused))", settings)
+        self.assertNotIn("__attribute__((unused))", diag)
 
-    def test_settings_rows_use_unified_ui_font_and_vertical_centering(self) -> None:
-        text = (ROOT / "main" / "settings_page.c").read_text(encoding="utf-8")
-        self.assertIn("#define SETTINGS_HEADER_UI_Y", text)
-        self.assertIn("#define SETTINGS_ROW_TOP", text)
-        self.assertIn("#define SETTINGS_ROW_H", text)
-        self.assertIn("#define SETTINGS_ROW_GAP", text)
-        self.assertIn("#define SETTINGS_ROW_COUNT       6", text)
-        self.assertIn("pk_lang_t lang = pk_i18n_get_lang();", text)
-        self.assertIn("if (lang == PK_LANG_ZH)", text)
-        self.assertIn(
-            "int text_y_ui = row_y + (SETTINGS_ROW_H - 12) / 2;",
-            text,
-        )
-        self.assertRegex(
-            text,
-            r"pk_text_puts_page_title\([^;]+pk_i18n_text\(PK_TR_SETTINGS_TITLE\)",
-        )
-        self.assertRegex(
-            text,
-            r"pk_text_puts_ui\([^;]+SETTINGS_HEADER_UI_Y,[^;]+"
-            r"pk_i18n_text\(PK_TR_SETTINGS_TITLE\)",
-        )
-        self.assertIn("22, text_y_ui, key_str, COL_KEY", text)
-        self.assertIn("182, text_y_ui, val_str, val_col", text)
-        self.assertNotRegex(
-            text,
-            r"pk_text_puts_page_title\([^;]+PK_TR_SETTINGS_LANGUAGE",
-        )
-        self.assertEqual(text.count("pk_text_puts_page_title"), 1)
-        self.assertGreaterEqual(text.count("pk_text_puts_ui"), 3)
-        self.assertIn("pk_i18n_text(PK_TR_SETTINGS_FOOTER)", text)
+        # 详情层仍在用的那两个工具必须还在（防止"删过头"）。
+        self.assertRegex(diag, r"static\s+void\s+draw_snr_row\s*\(")
+        self.assertRegex(diag, r"static\s+void\s+fmt_clock\s*\(")
+
+    def test_ui_weight_font_stays_deleted(self) -> None:
+        """UI 档字库与它的三个渲染器不许回到任何固件源码里。"""
+        main_dir = ROOT / "main"
+        self.assertFalse((main_dir / "text_font_cjk_ui.c").exists())
+        self.assertFalse((main_dir / "text_font_cjk_ui.h").exists())
+
+        for path in sorted(main_dir.glob("*.[ch]")):
+            body = code_only(path.read_text(encoding="utf-8"))
+            for sym in REMOVED_UI_FONT_SYMBOLS:
+                with self.subTest(file=path.name, symbol=sym):
+                    self.assertNotIn(sym, body)
+
+        for cmake in (ROOT / "main" / "CMakeLists.txt",
+                      ROOT.parent / "sim" / "CMakeLists.txt"):
+            self.assertNotIn("text_font_cjk_ui", cmake.read_text(encoding="utf-8"))
+
+    def test_pages_render_through_aa_text(self) -> None:
+        """各页 render 入口仍在，且都走 pfd_aa_text 的 pk_aa_puts。"""
+        entries = {
+            "settings_draw.c": "void pk_settings_page_render(uint16_t *fb)",
+            "diag_page.c": "void pk_diag_page_render(uint16_t *fb)",
+            "about_page.c": "void pk_about_page_render(uint16_t *fb)",
+            "adsb_list.c": "void pk_adsb_list_render(uint16_t *fb)",
+            "traffic_page.c": "void pk_traffic_page_render(uint16_t *fb)",
+        }
+        for name, signature in entries.items():
+            body = (ROOT / "main" / name).read_text(encoding="utf-8")
+            with self.subTest(file=name):
+                self.assertIn(signature, body)
+                self.assertIn("pk_aa_puts", body)
+                # 老的 8×8 点阵标题在这块 217 PPI 屏上只有 1.0 mm，一直是禁的。
+                self.assertNotIn("pk_text_puts_title", body)
 
     def test_about_title_uses_shared_middle_ui_size(self) -> None:
         """标题字号仍是 M 档，但不再按语言分叉。
@@ -83,31 +130,25 @@ class UiPageTextRenderingTest(unittest.TestCase):
         self.assertIn("alpha4 < CJK_SOLID_ALPHA4_THRESHOLD", text)
         self.assertNotIn("ascii_scale <= 1);", text)
 
-    def test_page_renderers_keep_ascii_and_cjk_on_matching_ladders(self) -> None:
-        """两个 page_* 渲染器各自的拉丁档位必须配得上它取的 CJK 字库。
+    def test_remaining_text_renderers_keep_ascii_and_cjk_on_matching_ladders(self) -> None:
+        """text.c 剩下的两个渲染器，拉丁档位必须配得上它取的 CJK 字库。
 
-        旧断言盯的是 pk_font_putchar(..., 2) / (..., 1) 这套点阵缩放。拉丁侧
-        早已整体换成 AA 字体（aa_putc + PK_AA_*），点阵路径在 text.c 里不再
-        出现。配对关系本身没变，只是换了表达：
-          page_title → PK_AA_L 配大号 pk_text_cjk_glyph
-          page_body  → PK_AA_M 配 UI 号 pk_text_cjk_ui_glyph
+        page_title / page_body / puts_ui 那三档随 legacy 一起删了（见文件头的
+        决定说明），只剩校准向导在用的 pk_text_puts 与 pk_text_puts_title：
+          puts_title → PK_AA_L 配大号 pk_text_cjk_glyph
+          puts       → 按 ascii_scale 自适应挑档（aa_size_for_cjk）
         错配就会出现"汉字比旁边的字母矮一圈"。
         """
         text = (ROOT / "main" / "text.c").read_text(encoding="utf-8")
-        self.assertIn("int pk_text_puts_page_title", text)
-        self.assertIn("int pk_text_puts_page_body", text)
+        self.assertIn("int pk_text_puts_title", text)
+        self.assertIn("int pk_text_puts(", text)
         self.assertNotIn("pk_font_putchar", text)
 
-        title = text[text.index("int pk_text_puts_page_title"):
-                     text.index("int pk_text_puts_page_body")]
+        title = text[text.index("int pk_text_puts_title"):]
         self.assertIn("aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_L)", title)
         self.assertIn("pk_text_cjk_glyph(cp)", title)
-
-        body = text[text.index("int pk_text_puts_page_body"):]
-        self.assertIn("aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_M)", body)
-        self.assertIn("pk_text_cjk_ui_glyph(cp, &cw)", body)
         # solid=false：CJK 走真灰度混合，不压实成硬阶梯。
-        self.assertIn("PK_TEXT_CJK_UI_CELL_H, color, false", body)
+        self.assertIn("PK_TEXT_CJK_CELL_H, color, false", title)
 
     def test_antialiased_cjk_uses_raw_glyph_alpha(self) -> None:
         """4.3 寸屏上不再重映射 CJK 的 alpha 曲线。

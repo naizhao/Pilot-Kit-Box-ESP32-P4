@@ -15,7 +15,7 @@
 | 显示 | ST7701，4.3 寸 480×800 IPS，2-lane MIPI-DSI；横屏 UI 800×480 |
 | 触摸 | GT911，I²C GPIO7/8，复位 GPIO23，中断电阻默认未贴 |
 | P4 调试口 | H1 USB-C `USB TO UART`，经 CH343P |
-| 原生 USB HS | H2 USB-C `USB`；RTL-SDR 使用此口 |
+| 原生 USB HS | H2 USB-C `USB` 与 J3-27/25 同网；RTL-SDR 走这组信号 |
 | C6 下载口 | P1 1×4 排针 `TX RX IO9 GND` |
 | 扩展口 | J3 2×20 排针；接线前必须核对项目 pinout |
 
@@ -32,11 +32,11 @@ ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，�
 
 | 模块 | 连接 | 固件状态 |
 |---|---|---|
-| RTL-SDR FC0013 | H2 原生 USB 2.0 HS，经 USB-C OTG 转接头或 Hub | 已集成 |
+| RTL-SDR FC0013 | 载板 USB-A 插头走 J3-27/25（原生 USB 2.0 HS），H2 空置；裸板调试时改接 H2 加 USB-C OTG 转接头或 Hub | 已集成 |
 | ST7701 显示 | 板载固定 MIPI-DSI，2 lane @ 500 Mbit/s | 已集成 |
 | GT911 触摸 | 板载 GPIO7/8、复位 GPIO23；轮询 | 已集成，当前只取第一触点 |
 | BNO085 IMU | GPIO7/8、复位 GPIO28、INT GPIO34、地址 0x4A | 已集成，轮询 |
-| BMP388 | GPIO7/8、可选 GPIO31 INT | 已集成，轮询 |
+| BMP388 | GPIO7/8、INT 接 GPIO31（载板网络 `BARO_INT`） | 已集成，轮询 |
 | GPS | P4 TX GPIO49、P4 RX GPIO51；可选 PPS GPIO50 | UART/RMC 已集成；PPS 未实现 |
 | ESP32-C6 | P4 GPIO14–19 SDIO、GPIO54 EN | Wi-Fi/BLE 传输已集成 |
 | 音频 / 摄像头 | 板上硬件具备 | Pilot 固件未初始化 |

@@ -47,6 +47,7 @@
 #include "traffic_page.h"
 
 #include "display.h"
+#include "i18n.h"
 #include "pfd_attitude.h"
 #include "mock_runtime.h"
 #include "pfd_hsi.h"
@@ -194,13 +195,15 @@ static int run_headless(float at_sec, const char *out)
      * 里 backbar 那条就是空的——顶部三行的次序错了整整四轮没人看出来，正是因
      * 为截图上根本没有 backbar。这里补齐，让截图和真机是同一件事。
      *
-     * parent_title 抄 diag_page.c 里的 "DIAGNOSTICS"，不用 PK_SIM_SUB 那个
-     * 中文串：文案不一致的话，量出来的 backbar 宽度就不是真机的宽度。
+     * parent_title 与 diag_page.c 走**同一个词条**而不是抄一份英文字面量：
+     * 抄下来的那份不会跟着 PK_SIM_LANG 切，于是中文截图上顶着一条英文
+     * backbar，量出来的宽度也就不是中文真机的宽度——而中文比英文短得多，
+     * 正是要靠截图确认的那个差异。
      */
     {
         const char *pg = getenv("PK_SIM_PAGE");
         if (getenv("PK_SIM_DIAG_DETAIL") && pg && strcmp(pg, "diag") == 0)
-            pk_ui_nav_set_subpage(true, "DIAGNOSTICS");
+            pk_ui_nav_set_subpage(true, pk_i18n_text(PK_TR_DIAG_TITLE));
     }
     sim_state_t st = { .t = at_sec, .roll_bias = 0.0f, .paused = true };
 

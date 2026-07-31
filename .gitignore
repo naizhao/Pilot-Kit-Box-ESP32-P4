@@ -10,6 +10,24 @@ docs/kickstarter/
 docs/superpowers/
 .superpowers/
 
+# ── 本地密钥 ──────────────────────────────────────────────────────────
+# 任何真实密钥只许待在 .env 里。要提交的模板是 .env.example（只写占位符）。
+# 本仓库开源到外网，这几行是硬红线，任何时候都不要放开。
+.env
+.env.local
+.env.*.local
+
+# ── i18n 批量翻译工具（按要求本地保留，不进外网仓库）──────────────────
+# translate_catalog.py **本身不含任何密钥**：API key 一律从 .env / 环境变量
+# 读，脚本里连占位常量都没有。单就安全而言它可以开源；这条忽略是流程决定
+# （产品负责人要求翻译脚本不进外网仓库），不是安全决定。
+#
+# 日后若要开源 / 让团队共用（后续还有 5 种语言要补齐，这是团队活），
+# 删掉下面两行即可，脚本不用改。使用说明在 firmware/scripts/README.md，
+# 那份是提交的。
+firmware/scripts/translate_catalog.py
+firmware/scripts/.i18n_translate_cache/
+
 # Per-machine ESP-IDF Manager (eim) install path; each developer's tree
 # differs and bringing this into git churns on every machine switch.
 eim_config.toml

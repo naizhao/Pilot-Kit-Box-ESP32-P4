@@ -206,7 +206,9 @@ transform change and attitude revalidation; touch leveling is not a substitute.
 
 Rev1.2 has RESET, BOOT and POWER buttons, but no MODE/TARE/UP/DOWN
 application buttons. The legacy `button_task.c` remains in source for the
-former 2.4-inch carrier and is not started by the current `main.c`.
+former 2.4-inch carrier but is excluded from `firmware/main/CMakeLists.txt`,
+so it is not compiled at all — its hard-coded GPIO26/GPIO23 are LCD_BL_PWM
+and GT911 TP_RST on Rev1.2.
 
 The current UI uses GT911 touch:
 

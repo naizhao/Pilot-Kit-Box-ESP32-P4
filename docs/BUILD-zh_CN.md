@@ -29,7 +29,7 @@
 | 选配硬件 | 用途 | 对应功能 |
 |----------|------|-------------|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收；当前推荐 FC0013，主要因为成本低 | ADS-B 数据链路 |
-| USB-C OTG 转接头或有源 USB Hub | 把 H2 原生 USB HS Type-C 接口转成 USB-A 母座连接 RTL-SDR | ADS-B USB 数据链路 |
+| USB-C OTG 转接头或有源 USB Hub | 仅裸板需要：把 H2 原生 USB HS Type-C 转成 USB-A 母座接 RTL-SDR。Pilot Kit 载板自带 USB-A 插头（走 J3-27/25），不需要转接头 | ADS-B USB 数据链路 |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |
 
@@ -358,8 +358,9 @@ pilot_kit_box.bin binary size 0x989a40 bytes. Smallest app partition is 0xa00000
 把 USB-C 数据线一端接 H1、也就是丝印为 `USB TO UART` 的 Type-C 口，
 另一端接电脑。
 
-> H1 走 CH343P USB-UART 桥。RTL-SDR 使用另一个丝印为 `USB` 的 H2
-> Type-C 原生 USB 2.0 HS OTG 口；P1 是 C6 下载排针，不是 USB。
+> H1 走 CH343P USB-UART 桥。RTL-SDR 走 P4 原生 USB 2.0 HS：装上 Pilot Kit
+> 载板时插载板的 USB-A（J3-27/25），H2 保持空置；裸板时改插丝印为 `USB`
+> 的 H2 Type-C（同一组网络，二者只能占一个）。P1 是 C6 下载排针，不是 USB。
 
 ### 找串口
 
@@ -518,7 +519,7 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 
 | 操作 | 预期 |
 |------|------|
-| 通过 H2 USB-C OTG 转接头或 Hub 接 RTL-SDR dongle | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
+| RTL-SDR dongle 插载板 USB-A（裸板则经 H2 USB-C OTG 转接头或 Hub） | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
 | 给 4.3 寸一体板上电 | 800×480 全屏显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD |
 | 装 GT-U8 GPS | DIAG 更新 GPS/北斗卫星、SNR、天线状态和系统时间；定位后 TRAFFIC 获得本机位置 |
 | 装 BMP388 | PFD / DIAG 显示压力、QNH 修正高度和升降率 |

@@ -85,7 +85,7 @@ int pk_bar_icon_draw(uint16_t *fb, int x, int y,
     if (id >= PK_ICON_COUNT) return 0;
 
     /* 字重跟随文字设置，避免文字加粗而图标仍纤细的割裂感。 */
-    const uint8_t *bitmap = pk_icon_bitmap[pk_aa_get_weight()]
+    const uint8_t *bitmap = pk_icon_bitmap
                           + (size_t)id * ((PK_ICON_W * PK_ICON_H) / 2);
 
     pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, y,

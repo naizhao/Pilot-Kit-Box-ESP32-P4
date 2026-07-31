@@ -21,7 +21,7 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 | Item | Purpose |
 |---|---|
 | RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception. FC0013 is currently recommended because it keeps BOM cost low. |
-| USB-C OTG adapter or powered USB hub | Connects the H2 native USB HS port to a USB-A RTL-SDR dongle. |
+| USB-C OTG adapter or powered USB hub | Bare-board only: connects the H2 native USB HS port to a USB-A RTL-SDR dongle. The Pilot Kit carrier already carries a USB-A plug on J3-27/25 and needs no adapter. |
 | BNO085 / GY-BN008X IMU module | Attitude fusion for the PFD. |
 | USB-UART adapter | Required once per fresh board to flash the ESP32-C6 hosted slave firmware for BLE. |
 
@@ -198,8 +198,12 @@ Main build artifacts:
 Use H1, the Type-C port marked `USB TO UART`. It is the CH343P bridge for P4
 flashing and monitoring.
 
-The RTL-SDR data path is H2, the separate Type-C port marked `USB`, connected
-to the P4 native USB 2.0 HS PHY. P1 is the C6 UART download header.
+The RTL-SDR data path is the P4 native USB 2.0 HS PHY. With the Pilot Kit
+carrier fitted, that pair leaves the board on J3-27/25 and ends at the
+carrier's USB-A plug, so the dongle goes there and H2 stays empty. On a bare
+Waveshare board, use H2 — the separate Type-C port marked `USB` — which
+carries the same two nets. Never occupy both at once. P1 is the C6 UART
+download header, not USB.
 
 ### Find The Serial Port
 
@@ -266,7 +270,7 @@ Optional hardware expectations:
 
 | Action | Expected result |
 |---|---|
-| Attach RTL-SDR to H2 USB HS OTG | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
+| Attach RTL-SDR to the carrier USB-A plug (bare board: H2 USB HS OTG) | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
 | Power the integrated 4.3-inch display | 800x480 boot splash appears for at least 3 seconds, then the PFD renders |
 | Wire the BNO085 IMU | `imu: rpy = ... (acc=N ...)` logs update and PFD horizon follows motion |
 | Fit the GT-U8 module | GPS/BeiDou fix, satellite/SNR, antenna, and system-time rows update on DIAG |
@@ -335,7 +339,9 @@ Use DIAG to check card capacity and the active `LOG` backend.
 
 ### RTL-SDR does not enumerate
 
-Check the H2 USB HS OTG adapter and power budget. RTL-SDR dongles can draw a
+Check the USB HS connection (carrier USB-A plug, or the H2 OTG adapter on a
+bare board — never both at once) and the power budget. RTL-SDR dongles can
+draw a
 few hundred mA; use a powered hub or stable 5 V supply if necessary.
 
 ## Daily Development Loop

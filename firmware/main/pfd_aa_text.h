@@ -15,8 +15,10 @@
  *
  * 字重
  * ----
- * 生成时即产出 regular / bold 两套，运行时由设置项切换（见
- * pk_aa_set_weight）。半反半透屏反射态对比度低，加粗档为其预留。
+ * 只有一档。2026-07-30 去掉了 bold：它当初是给半反半透屏的反射态预留的，
+ * 而那块屏没上，设置页里从来没做出对应开关，pk_aa_set_weight() 全仓零调用
+ * 者——字重恒为 regular。可 bold 那 9 张字形表被下面的静态字体表静态引用，
+ * 链接期照单全收，实测占 app 分区约 347 KB。需要时重新加一档即可。
  */
 #pragma once
 
@@ -38,15 +40,6 @@ typedef enum {
     PK_AA_XL,       /* 43 px — PFD 当前值大数字          */
     PK_AA_SIZE_COUNT
 } pk_aa_size_t;
-
-typedef enum {
-    PK_AA_REGULAR = 0,
-    PK_AA_BOLD,
-} pk_aa_weight_t;
-
-/* 全局字重。设置页写入，渲染时读取；切换后下一帧生效。 */
-void           pk_aa_set_weight(pk_aa_weight_t w);
-pk_aa_weight_t pk_aa_get_weight(void);
 
 /* 单个字形的 cell 尺寸 —— 定宽，布局计算直接乘字符数即可。 */
 int pk_aa_cell_w(pk_aa_size_t size);

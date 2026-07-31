@@ -18,10 +18,14 @@ cockpit 那套是**手绘像素**的 12×16 单档字形，专为 320×240 小�
 
 字重
 ----
-用户可在设置中切换"正常 / 加粗"，故每档字号生成两套：
-    正常 = B612 Mono Regular + Noto Sans SC wght 500
-    加粗 = B612 Mono Bold    + Noto Sans SC wght 600
-Noto 是可变字重字体，用 fontTools 实例化到固定字重后再交给 magick。
+只有一档：B612 Mono Regular + Noto Sans SC wght 500（fontTools 把可变字重的
+Noto 实例化到 500 后再交给 magick）。
+
+2026-07-30 去掉了 bold 一档。它是给半反半透屏的反射态预留的，但那块屏最终
+没上，设置页里从来没做出对应的开关，pk_aa_set_weight() 全仓零调用者——字重
+恒为 regular。可 bold 那 9 张表被 pfd_aa_text.c 的静态字体表静态引用着，
+链接期照单全收，实测占 app 分区约 347 KB（当时余量只剩 10%）。要恢复的话
+是重新加一档，而不是留着半套死数据。
 
 CJK 字号补偿
 ------------
@@ -153,7 +157,9 @@ SIZES = {
     "xl": dict(pt=56, cell=(37, 64), last=0x3F),  # 43 px  PFD 当前值（仅数字与符号）
 }
 
-WEIGHTS = ("regular", "bold")
+# Noto Sans SC 的可变字重实例化点。500 而不是 400：400 在 217 PPI 的
+# 半反半透面板上笔画偏细，反射态下汉字会"发飘"。
+CJK_WGHT = 500
 
 
 def instantiate_cjk(src: Path, wght: int, out_dir: Path) -> Path:
@@ -180,35 +186,36 @@ def render_face(magick: str, fonts: list[Path], pt: int,
     return bytes(blob)
 
 
-def emit_c(path: Path, faces: dict[tuple[str, str], bytes],
-           cjk_faces: dict[tuple[str, str], bytes],
+def emit_c(path: Path, faces: dict[str, bytes],
+           cjk_faces: dict[str, bytes],
            cjk_codes: list[int]) -> None:
     lines = [
         "/* 由 firmware/scripts/gen_pfd_aa_font.py 生成，请勿手改。",
         " *",
         " * 拉丁 B612 Mono（Airbus/ENAC，SIL OFL）+ 中日文 Noto Sans SC。",
         " * 4bpp 灰度，固定 cell，每档字号独立渲染以保证抗锯齿质量。",
+        " * 只有一档字重（见脚本头「字重」一节）。",
         " */",
         '#include "pfd_aa_font.h"',
         "",
     ]
-    for (size, weight), blob in faces.items():
+    for size, blob in faces.items():
         w, h = SIZES[size]["cell"]
         n = SIZES[size]["last"] - FIRST_CODE + 1
-        lines.append(f"/* {size}/{weight}: cell {w}x{h}, "
+        lines.append(f"/* {size}: cell {w}x{h}, "
                      f"{n} glyphs (0x{FIRST_CODE:02X}..0x{SIZES[size]['last']:02X}), "
                      f"{len(blob)} bytes */")
-        lines.append(f"const uint8_t pk_aa_{size}_{weight}[] = {{")
+        lines.append(f"const uint8_t pk_aa_{size}[] = {{")
         for i in range(0, len(blob), 16):
             chunk = ", ".join(f"0x{b:02X}" for b in blob[i:i + 16])
             lines.append(f"    {chunk},")
         lines.append("};")
         lines.append("")
-    for (size, weight), blob in cjk_faces.items():
+    for size, blob in cjk_faces.items():
         w, h = cjk_cell(size)
-        lines.append(f"/* {size}/{weight} CJK: cell {w}x{h}, "
+        lines.append(f"/* {size} CJK: cell {w}x{h}, "
                      f"{len(cjk_codes)} glyphs, {len(blob)} bytes */")
-        lines.append(f"const uint8_t pk_aa_{size}_cjk_{weight}[] = {{")
+        lines.append(f"const uint8_t pk_aa_{size}_cjk[] = {{")
         for i in range(0, len(blob), 16):
             chunk = ", ".join(f"0x{b:02X}" for b in blob[i:i + 16])
             lines.append(f"    {chunk},")
@@ -245,8 +252,7 @@ def emit_h(path: Path, n_cjk: int) -> None:
         ]
     lines.append("")
     for size in SIZES:
-        for weight in WEIGHTS:
-            lines.append(f"extern const uint8_t pk_aa_{size}_{weight}[];")
+        lines.append(f"extern const uint8_t pk_aa_{size}[];")
     lines.append("")
     lines.append(f"#define PK_AA_CJK_COUNT  {n_cjk}")
     for size in CJK_SIZES:
@@ -257,8 +263,7 @@ def emit_h(path: Path, n_cjk: int) -> None:
     lines.append("")
     lines.append("extern const uint16_t pk_aa_cjk_codes[];")
     for size in CJK_SIZES:
-        for weight in WEIGHTS:
-            lines.append(f"extern const uint8_t pk_aa_{size}_cjk_{weight}[];")
+        lines.append(f"extern const uint8_t pk_aa_{size}_cjk[];")
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -267,7 +272,6 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--magick", default="magick")
     ap.add_argument("--latin-regular", type=Path, required=True)
-    ap.add_argument("--latin-bold", type=Path, required=True)
     ap.add_argument("--cjk", type=Path, required=True,
                     help="Noto Sans SC 可变字重 TTF")
     ap.add_argument("--out-c", type=Path, required=True)
@@ -276,39 +280,31 @@ def main() -> int:
     args = ap.parse_args()
 
     want = [s.strip() for s in args.sizes.split(",") if s.strip()]
-    faces: dict[tuple[str, str], bytes] = {}
-    cjk_faces: dict[tuple[str, str], bytes] = {}
+    faces: dict[str, bytes] = {}
+    cjk_faces: dict[str, bytes] = {}
     cjk_codes: list[int] = []
 
     with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        cjk_by_weight = {
-            "regular": instantiate_cjk(args.cjk, 500, tmp_dir),
-            "bold": instantiate_cjk(args.cjk, 600, tmp_dir),
-        }
-        latin_by_weight = {"regular": args.latin_regular, "bold": args.latin_bold}
+        cjk_font = instantiate_cjk(args.cjk, CJK_WGHT, Path(tmp))
 
         for size in want:
             spec = SIZES[size]
-            for weight in WEIGHTS:
-                chain = [latin_by_weight[weight], cjk_by_weight[weight]]
-                blob = render_face(args.magick, chain, spec["pt"],
-                                   spec["cell"], spec["last"])
-                faces[(size, weight)] = blob
-                print(f"  {size}/{weight}: {len(blob)} bytes "
-                      f"(cell {spec['cell'][0]}x{spec['cell'][1]}, pt {spec['pt']})")
+            blob = render_face(args.magick, [args.latin_regular, cjk_font],
+                               spec["pt"], spec["cell"], spec["last"])
+            faces[size] = blob
+            print(f"  {size}: {len(blob)} bytes "
+                  f"(cell {spec['cell'][0]}x{spec['cell'][1]}, pt {spec['pt']})")
 
         cjk_codes = collect_cjk_codes()
         for size in want:
             if size not in CJK_SIZES:
                 continue
-            for weight in WEIGHTS:
-                chain = [cjk_by_weight[weight], latin_by_weight[weight]]
-                blob = render_cjk_face(args.magick, chain, size, cjk_codes)
-                cjk_faces[(size, weight)] = blob
-                cw, ch = cjk_cell(size)
-                print(f"  {size}/{weight} CJK: {len(blob)} bytes "
-                      f"(cell {cw}x{ch}, {len(cjk_codes)} 字)")
+            blob = render_cjk_face(args.magick, [cjk_font, args.latin_regular],
+                                   size, cjk_codes)
+            cjk_faces[size] = blob
+            cw, ch = cjk_cell(size)
+            print(f"  {size} CJK: {len(blob)} bytes "
+                  f"(cell {cw}x{ch}, {len(cjk_codes)} 字)")
 
     emit_c(args.out_c, faces, cjk_faces, cjk_codes)
     emit_h(args.out_h, len(cjk_codes))
