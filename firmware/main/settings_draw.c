@@ -257,7 +257,7 @@ void pk_settings_page_render(uint16_t *fb)
       ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_BRIGHTNESS));
       /* AUTO 置灰：没有环境光传感器，选了也无从自动。摆出来是因为 spec 列了
        * 它，灰掉是因为不能假装能用——留一个点了没反应的选项更糟。 */
-      const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_level_get(), false);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 4, pk_backlight_step_get(), false);
       hit_set(row, 1, _x, seg_last_w(), 4, ROW_Y(row));
       row++; }
 

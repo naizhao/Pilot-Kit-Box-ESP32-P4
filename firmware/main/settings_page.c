@@ -305,9 +305,10 @@ void pk_settings_apply(int row, int v)
         pk_traffic_range_idx_set(v);
         break;
 
-    case 4:   /* 屏幕亮度。AUTO(=3) 暂不可用：没有环境光传感器，选了也无从
-               * 自动，点它保持原档而不是假装切过去。 */
-        if (v < 3) pk_display_set_brightness((uint8_t)v);
+    case 4:   /* 屏幕亮度。传的是段序号，不是占空比——档位到亮度值的映射在
+               * display.c 的 s_bl_step_duty[]。AUTO(=3) 暂不可用：没有环境光
+               * 传感器，选了也无从自动，step_set 会忽略它、保持原档。 */
+        pk_backlight_step_set((uint8_t)v);
         break;
 
     case 5:   /* 日间/夜间配色 —— 尚未接入，整行置灰，点击无动作 */

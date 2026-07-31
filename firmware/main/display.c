@@ -143,15 +143,40 @@ static esp_err_t backlight_init(void)
     return ledc_channel_config(&channel_config);
 }
 
+/*
+ * 档位 → PWM 亮度值。
+ *
+ * 表放在这里而不是设置页：占空比是硬件侧的语义，设置页只该知道"第几档"。
+ * 之前设置页把段序号 0/1/2 直接当亮度值传进 pk_display_set_brightness()，
+ * 点 LOW 就是 level=0 —— 而 0 正是 power.c 用来关屏的值，屏幕直接灭掉。
+ *
+ *   LOW  = 38  (~15%) 夜航用。取"还看得清"的下限，绝不能是 0；
+ *                      0 归 power.c 的软关机专用，不该被任何用户档位撞上。
+ *   MID  = 180 (~70%) 与开机 splash 沿用的实测值一致，换档不跳亮度。
+ *   HIGH = 255 (100%) 满占空比，白天直射光下用。
+ *
+ * AUTO 不在表内：没有环境光传感器，见 pk_settings_apply() 的说明。
+ */
+static const uint8_t s_bl_step_duty[PK_BL_STEP_COUNT] = { 38, 180, 255 };
+
 /* 当前亮度档。设置页要显示"现在选的是哪一档"，而硬件那侧只有 set 没有
- * get——PWM 占空比反推不出档位（档位到占空比不是线性的）。 */
-static uint8_t s_bl_level;
+ * get——PWM 占空比反推不出档位（档位到占空比不是线性的）。
+ * 默认 MID：main.c 点亮 splash 时就是这一档，开机进设置页高亮要对得上。 */
+static uint8_t s_bl_step = PK_BL_STEP_MID;
 
-uint8_t pk_backlight_level_get(void) { return s_bl_level; }
+uint8_t pk_backlight_step_get(void) { return s_bl_step; }
 
+void pk_backlight_step_set(uint8_t step)
+{
+    if (step >= PK_BL_STEP_COUNT) return;   /* AUTO 等越界档位保持原样 */
+    s_bl_step = step;
+    pk_display_set_brightness(s_bl_step_duty[step]);
+}
+
+/* 原始占空比入口。刻意不更新 s_bl_step：power.c 的关屏 (0) 和开机 splash
+ * 都不是"用户选的档"，写进去会让设置页高亮乱跳。 */
 void pk_display_set_brightness(uint8_t level)
 {
-    s_bl_level = level;
     const uint32_t duty = ((uint32_t)level * BL_LEDC_MAX_DUTY) / UINT8_MAX;
     if (ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, duty) == ESP_OK) {
         (void)ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
@@ -463,7 +488,7 @@ void pk_display_test_pattern(void)
         }
     }
     if (pk_display_flush_full() == ESP_OK) {
-        pk_display_set_brightness(180);
-        ESP_LOGI(TAG, "test pattern presented; backlight at 70%%");
+        pk_backlight_step_set(PK_BL_STEP_MID);
+        ESP_LOGI(TAG, "test pattern presented; backlight at MID");
     }
 }

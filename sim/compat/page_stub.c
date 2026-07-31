@@ -207,7 +207,8 @@ pk_log_store_t pk_log_store_get(void)
     return sim_env("PK_SIM_SET_STORE", 0) ? PK_LOG_STORE_SD : PK_LOG_STORE_FLASH;
 }
 
-uint8_t pk_backlight_level_get(void) { return (uint8_t)sim_env("PK_SIM_SET_BL", 1); }
+/* 默认 1 = MID，与真机开机档一致（display.c 的 s_bl_step）。 */
+uint8_t pk_backlight_step_get(void) { return (uint8_t)sim_env("PK_SIM_SET_BL", 1); }
 
 /* 默认 false：无卡时格式化按钮置灰、存储那行也置灰，这是出厂开机的样子，
  * 也是最容易被漏掉的一种版面。 */

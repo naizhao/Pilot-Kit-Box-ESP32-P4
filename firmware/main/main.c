@@ -392,7 +392,9 @@ void app_main(void)
     } else {
         pk_boot_splash_render(pk_display_framebuffer());
         (void)pk_display_flush_full();
-        pk_display_set_brightness(180);
+        /* 走档位而不是裸占空比：设置页的高亮读的是同一个 s_bl_step，
+         * 开机点亮就必须落在某一档上，否则第一次进设置页三段全不高亮。 */
+        pk_backlight_step_set(PK_BL_STEP_MID);
         splash_shown_us = esp_timer_get_time();
     }
 

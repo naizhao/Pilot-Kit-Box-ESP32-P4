@@ -49,11 +49,26 @@ static inline uint16_t pk_rgb565(uint8_t r, uint8_t g, uint8_t b)
 /* 初始化 DSI/DPI、ST7701、PPA、双缓冲与背光；仅在启动时调用一次。 */
 esp_err_t pk_display_init(void);
 
-/* 背光亮度：0（关闭）至 255（最亮）。 */
+/*
+ * 背光原始亮度：0（关闭）至 255（最亮），线性映射到 LEDC 占空比。
+ * 注意这**不是**设置页的档位序号——档位走 pk_backlight_step_set()。
+ * 0 是 power.c 软关机专用的"灭屏"值。
+ */
 void pk_display_set_brightness(uint8_t level);
 
-/* 当前亮度档（设置页显示用）。硬件侧只有 set，占空比反推不出档位。 */
-uint8_t pk_backlight_level_get(void);
+/* 设置页的亮度档位。AUTO 不在其中：没有环境光传感器，选了也无从自动。 */
+typedef enum {
+    PK_BL_STEP_LOW   = 0,
+    PK_BL_STEP_MID   = 1,
+    PK_BL_STEP_HIGH  = 2,
+    PK_BL_STEP_COUNT = 3,
+} pk_bl_step_t;
+
+/* 切到某一档；越界（含 AUTO=3）直接忽略，保持当前档。 */
+void pk_backlight_step_set(uint8_t step);
+
+/* 当前亮度档（设置页高亮用）。硬件侧只有 set，占空比反推不出档位。 */
+uint8_t pk_backlight_step_get(void);
 
 /* 发送 ST7701 display-off 命令。 */
 void pk_display_panel_off(void);
