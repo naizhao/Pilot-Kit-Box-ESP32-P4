@@ -244,7 +244,13 @@ static bool       s_sort_desc;
  * 说明文字右对齐排在它左边（起点由实测文本宽度算，不写死——中英文长度
  * 差得多，写死的那个数只对其中一种语言成立）。 */
 #define RESET_X1      (CONTENT_R + 8)
-#define RESET_X0      (RESET_X1 - 66)
+/* 按钮宽度按 header 统一字号（M）下的最宽文案算：英文 "RESET" 5×PK_AA_M_W
+ * = 75，中文「重置」2×PK_AA_M_CJK_W = 44，取大者 + 左右各 8 px 内边距 = 91，
+ * 进位到 92。原来是 66，那是 XS 档（"RESET" 只有 50 px）的尺寸——顶栏统一到
+ * M 之后 66 装不下英文，靠缩字号塞进去正是这次要消除的做法，所以放宽盒子。
+ * 命中区与按下高亮都从这两个数推出来，改这里三处一起跟着走。 */
+#define RESET_W       92
+#define RESET_X0      (RESET_X1 - RESET_W)
 #define HDR_HIT_RESET SORT_COUNT      /* s_hdr_down 里给 RESET 留的编号 */
 
 #define SORT_DEFAULT_KEY  SORT_DIST
@@ -529,17 +535,22 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
     /* 右对齐到 RESET 左边：这行的长度随排序列变（"SORT CALLSIGN↑" 比
      * "SORT DIST↑" 长 55 px），左对齐画就会在非默认排序时顶到 RESET 上。
      * 宽度必须问渲染器要——中文列名与箭头都不是一字节一格。 */
-    const int sw = pk_aa_text_width(sbuf, PK_AA_S);
-    LST_PUTS(fb, RESET_X0 - 10 - sw, (PFD_BAR_BOT - PK_AA_S_H) / 2, sbuf,
-             col_dim, PK_AA_S);
+    /* 字号跟标题/计数同档（PK_UI_TITLE_SIZE）。原来排序说明是 S、RESET 是 XS，
+     * 同一条 header 里三种字号——产品决策：header 内不分主次，视觉一致优先，
+     * 主次交给颜色（标题白 / 排序暗灰 / RESET 琥珀）去表达。 */
+    const int sw = pk_aa_text_width(sbuf, PK_UI_TITLE_SIZE);
+    LST_PUTS(fb, RESET_X0 - 10 - sw, PK_UI_TITLE_Y, sbuf,
+             col_dim, PK_UI_TITLE_SIZE);
 
     if (!sort_is_default()) {
         const uint16_t COL_RST = pk_rgb565(255, 210, 60);
-        const int ty2 = (PFD_BAR_BOT - PK_AA_XS_H) / 2;
+        const char *rst = pk_i18n_text(PK_TR_LIST_RESET);
+        /* 在按钮盒里水平居中：中英文宽度差 31 px，固定左内边距会让中文明显偏左。 */
+        const int rw = pk_aa_text_width(rst, PK_UI_TITLE_SIZE);
         if (s_hdr_down == HDR_HIT_RESET)
             pk_pfd_darken_rect(fb, RESET_X0, 4, RESET_X1, PFD_BAR_BOT - 4, 60);
-        LST_PUTS(fb, RESET_X0 + 8, ty2, pk_i18n_text(PK_TR_LIST_RESET),
-                 COL_RST, PK_AA_XS);
+        LST_PUTS(fb, RESET_X0 + (RESET_W - rw) / 2, PK_UI_TITLE_Y, rst,
+                 COL_RST, PK_UI_TITLE_SIZE);
     }
 }
 

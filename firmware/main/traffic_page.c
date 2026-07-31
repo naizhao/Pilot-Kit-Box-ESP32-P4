@@ -816,8 +816,10 @@ void pk_traffic_page_render(uint16_t *fb)
      * 「机头朝上、地图在转」还是「地图朝北不动、本机在转」。所以这里补一行
      * 文字把当前模式讲明白，与量程排在同一处，构成「这幅图是怎么画的」一栏。
      *
-     * 朝向用 S 档、量程用 M 档：量程是随时要读的数，朝向是确认一次就不看的
-     * 状态，字号该分主次。 */
+     * 字号：朝向与量程同为 PK_UI_TITLE_SIZE(M)，与本页标题、HDG、目标计数
+     * 全部同档。此前朝向刻意压到 S 档，理由是「量程随时要读、朝向确认一次就
+     * 不看，该分主次」——产品决策否决：同一条 header 内不分主次，视觉一致
+     * 优先，一行里冒出两种字号只会显得别扭。主次交给颜色（青/灰）去表达。 */
     {
         /* 朝向文案与设置页同一条词条：那里也是「地图朝向」这一项的两个选项，
          * 两处各写一份就会出现设置里叫一个名、雷达页上叫另一个名。 */
@@ -828,15 +830,15 @@ void pk_traffic_page_render(uint16_t *fb)
 
         /* 这两个宽度是右对齐的依据，中文侧一个汉字 3 字节，strlen 会把
          * 「机头朝上」算成 12 格，整块读数被推出屏幕右缘。 */
-        const int nm_w = pk_aa_text_width(buf, PK_AA_M);
-        const int om_w = pk_aa_text_width(om,  PK_AA_S);
+        const int nm_w = pk_aa_text_width(buf, PK_UI_TITLE_SIZE);
+        const int om_w = pk_aa_text_width(om,  PK_UI_TITLE_SIZE);
         const int nm_x = PK_DISPLAY_W - 24 - nm_w;
 
         TFC_PUTS(fb, nm_x, TFC_HDR_TY, buf, COL_GREY);
-        /* 两档字高不同，按各自 cell 高居中才不会一高一低。 */
+        /* 同档同高，与量程共用 TFC_HDR_TY(=PK_UI_TITLE_Y) 即可对齐基线。 */
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   nm_x - 16 - om_w, (PFD_BAR_BOT - PK_AA_S_H) / 2,
-                   om, COL_CYAN, PK_AA_S);
+                   nm_x - 16 - om_w, TFC_HDR_TY,
+                   om, COL_CYAN, PK_UI_TITLE_SIZE);
     }
 
     /* ── 距离环 ── */
