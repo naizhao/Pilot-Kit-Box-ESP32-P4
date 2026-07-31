@@ -3,20 +3,20 @@
  *
  * Scale-1 and normal scaled rendering use the public-domain "font5x7"
  * table that ships with the Adafruit GFX library and dozens of embedded
- * projects before it. PFD numeric readouts can explicitly opt into a
- * generated cockpit-style 12×16 glyph subset (`pfd_font_aa.c`). The
- * generated glyphs are true 1-bit masks with 2-pixel strokes, tuned for
- * crisp RGB565 instrument text rather than TTF antialiasing.
+ * projects before it.
+ *
+ * 2026-07-30：曾经还有第二条路径——12×16 的 cockpit 字形子集
+ * （pfd_font_aa.c / gen_pfd_cockpit_font.py），由 pk_font_puts_cockpit()
+ * 渲染。它只在 320×240 的版面里被用到，随小屏兼容预览一起删除，本文件从此
+ * 只剩 5×7 位图这一条路径。留下的这份仍有用武之地：雷达距离环标数、罗盘
+ * N/E/S/W 这类 1~2 个字符的极小标注，用它比抗锯齿字体更省也更锐。
  *
  * 0x7F is repurposed as the degree-symbol glyph; see PK_FONT_DEGREE.
  */
 
 #include "pfd_font.h"
 
-#include <stdbool.h>
-
 #include "pfd_draw.h"
-#include "pfd_font_aa.h"
 
 /* Glyph table: 96 printable ASCII (0x20..0x7F) + 8 compass arrows at
  * 0x80..0x87. Each glyph is 5 columns × 7 rows, packed column-major
@@ -199,29 +199,6 @@ static const uint8_t s_font[96 + 8][PK_FONT_W] = {
     {0x07, 0x0B, 0x15, 0x20, 0x40}, /* 0x87 ↖ */
 };
 
-static bool pk_font_putchar_generated2(uint16_t *fb, int fb_w, int fb_h,
-                                       int x, int y, char c, uint16_t color)
-{
-    const uint8_t *glyph = pk_font_aa_glyph((unsigned char)c);
-    if (!glyph) return false;
-
-    for (int row = 0; row < PK_FONT_AA_CELL_H; ++row) {
-        int yy = y + row;
-        if (yy < 0 || yy >= fb_h) continue;
-        for (int col = 0; col < PK_FONT_AA_CELL_W; ++col) {
-            int idx = row * PK_FONT_AA_CELL_W + col;
-            uint8_t packed = glyph[idx >> 1];
-            uint8_t alpha4 = (idx & 1) ? (packed & 0x0F) : (packed >> 4);
-            if (!alpha4) continue;
-
-            int xx = x + col;
-            if (xx < 0 || xx >= fb_w) continue;
-            pk_pfd_put_pixel(fb, xx, yy, color);
-        }
-    }
-    return true;
-}
-
 void pk_font_putchar(uint16_t *fb, int fb_w, int fb_h,
                      int x, int y, char c,
                      uint16_t color, int scale)
@@ -254,17 +231,6 @@ void pk_font_putchar(uint16_t *fb, int fb_w, int fb_h,
     }
 }
 
-static void pk_font_putchar_cockpit(uint16_t *fb, int fb_w, int fb_h,
-                                    int x, int y, char c, uint16_t color)
-{
-    unsigned u = (unsigned char)c;
-    if (u < 0x20 || u > 0x7F) u = 0x20;
-
-    if (!pk_font_putchar_generated2(fb, fb_w, fb_h, x, y, (char)u, color)) {
-        pk_font_putchar(fb, fb_w, fb_h, x, y, (char)u, color, 2);
-    }
-}
-
 int pk_font_puts(uint16_t *fb, int fb_w, int fb_h,
                  int x, int y, const char *s,
                  uint16_t color, int scale)
@@ -278,20 +244,6 @@ int pk_font_puts(uint16_t *fb, int fb_w, int fb_h,
         if ((unsigned char)c == 0xB0 || c == '~') c = PK_FONT_DEGREE;
         pk_font_putchar(fb, fb_w, fb_h, x, y, c, color, scale);
         x += cell_w;
-    }
-    return x - x0;
-}
-
-int pk_font_puts_cockpit(uint16_t *fb, int fb_w, int fb_h,
-                         int x, int y, const char *s,
-                         uint16_t color)
-{
-    int x0 = x;
-    for (; s && *s; ++s) {
-        char c = *s;
-        if ((unsigned char)c == 0xB0 || c == '~') c = PK_FONT_DEGREE;
-        pk_font_putchar_cockpit(fb, fb_w, fb_h, x, y, c, color);
-        x += PK_FONT_CELL_W(2);
     }
     return x - x0;
 }

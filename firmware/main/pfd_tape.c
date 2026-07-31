@@ -72,27 +72,18 @@
 #define VAL_PAD_X   4
 #define VAL_PAD_Y   3
 
-#if PK_DISPLAY_W >= 800
-#  define VAL_DIGITS  5
-#  define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
-#  define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
-#  define VAL_PUTS(fb, x, y, s, col) \
+/* 2026-07-30：这里原有一个 #else 的 320 档版本（cockpit 12×16 字形、框与带
+ * 同宽）。小屏兼容预览停止维护后，它引用的 pk_font_puts_cockpit() 已被删除，
+ * 分支一并清掉——只剩一条路径就不必再写 #if。 */
+#define VAL_DIGITS  5
+#define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
+#define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
+#define VAL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
-#  define LBL_PUTS(fb, x, y, s, col) \
+#define LBL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define LBL_W       PK_AA_M_W
-#  define LBL_CELL_H  PK_AA_M_H
-#else
-/* 320 档：cockpit 12×16 字形，框与带同宽（历史值，见文件头）。 */
-#  define BOX_W       (PFD_ALT_X1 - PFD_ALT_X0)
-#  define BOX_H       20
-#  define VAL_PUTS(fb, x, y, s, col) \
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
-#  define LBL_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define LBL_W       6
-#  define LBL_CELL_H  8
-#endif
+#define LBL_W       PK_AA_M_W
+#define LBL_CELL_H  PK_AA_M_H
 
 /* 右对齐贴住面板右缘；框高居中于带中线。 */
 #define BOX_X1   PFD_ALT_X1

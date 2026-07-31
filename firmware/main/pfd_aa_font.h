@@ -28,13 +28,13 @@ extern const uint8_t pk_aa_l[];
 extern const uint8_t pk_aa_xl[];
 
 #define PK_AA_CJK_COUNT  254
-#define PK_AA_XS_CJK_W  12
+#define PK_AA_XS_CJK_W  15
 #define PK_AA_XS_CJK_H  17
-#define PK_AA_S_CJK_W  14
+#define PK_AA_S_CJK_W  17
 #define PK_AA_S_CJK_H  20
-#define PK_AA_M_CJK_W  18
+#define PK_AA_M_CJK_W  22
 #define PK_AA_M_CJK_H  26
-#define PK_AA_L_CJK_W  26
+#define PK_AA_L_CJK_W  32
 #define PK_AA_L_CJK_H  37
 
 extern const uint16_t pk_aa_cjk_codes[];

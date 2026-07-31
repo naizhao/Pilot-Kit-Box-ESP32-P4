@@ -97,7 +97,7 @@
  * 八列的 x。宽度按各列**最长可能内容**算，间隙统一 16 px：
  *
  *   BRG 箭头26+3位45=71   CALL 8字符×15=120   FLAG 徽章 XS 5字符=50
- *   DIST "12.3"=60        ALT "34322"=75      V/S 箭头12+4位60=72
+ *   DIST "12.3"=60        ALT "34322"=75      V/S 箭头22+4位60=82
  *   GS "450"=45           TRK "355"=45        SEEN "47s" XS=30
  *
  * 加上 7 个间隙正好落在 716 内。加 SEEN 之前间隙是 23 px，看着更松快，但
@@ -113,8 +113,18 @@
  * 初版让它紧跟呼号，8 字符满宽呼号 + "NO RADIO" 直接压进了 DIST 列，把
  * 距离盖掉一半——表格里任何"跟着内容长度走"的元素迟早会撞上邻列。 */
 #define COL_FLAG_X    239
-#define COL_DIST_R    351                            /* 右对齐基准 */
-#define COL_ALT_R     442
+/* 2026-07-31：DIST/ALT 这两组基准与它们左侧的分隔线各左移 3 px。
+ *
+ * 起因不在本页：CJK cell 宽从 0.81 em 放到整 em 修「中文比英文偏小」，
+ * PK_AA_M_CJK_W 18 → 22，而 V/S 列的宽度 W_VS 拿它当 ↑ 箭头宽——于是
+ * 536 - 82 - 450 = 4，跌破 SEP_GAP=7，_Static_assert 直接编译失败。
+ *
+ * 把 4 px 的欠账往左摊：DIST 左侧原有 60 px 富余（徽章列到 DIST 之间），
+ * 挪 3 px 之后仍剩 57 px，四列间距全部回到 8 px 以上、V/S 左缘正好 7 px。
+ * 只动这四个数是因为右侧 GS/TRK/AGE 一路钉在 CONTENT_R 上，动它们要连
+ * 内容区右缘一起改。 */
+#define COL_DIST_R    348                            /* 右对齐基准 */
+#define COL_ALT_R     439
 #define COL_VS_R      536
 #define COL_GS_R      603
 #define COL_TRK_R     670
@@ -129,8 +139,8 @@
 #define SEP_CALL      95
 #define SEP_FLAG      231
 #define SEP_DIST      231      /* 徽章与 DIST 共用一个命中区，故与上面同值 */
-#define SEP_ALT       359
-#define SEP_VS        450
+#define SEP_ALT       356      /* 与 COL_DIST_R 一同左移 3，见上方说明 */
+#define SEP_VS        447
 #define SEP_GS        544
 #define SEP_TRK       611
 #define SEP_SEEN      678
@@ -823,9 +833,13 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
         LST_PUTS(fb, tx, DRAWER_TOP + 19, tag, pk_rgb565(255, 255, 255), PK_AA_S);
     }
 
-    /* 两列键值。键用 XS 暗色、值用 M——扫的时候眼睛只需要抓值。 */
-    const int col_x[2]  = { PAD_L + 8, 420 };
-    const int key_w     = 96;
+    /* 两列键值。键用 XS 暗色、值用 M——扫的时候眼睛只需要抓值。
+     *
+     * 右列起点从 420 挪到 404：两列的值不是一回事，左列最长是机型全称
+     * （"Boeing 737-8 MAX" 一类，本就短），右列是航司全称
+     * （"China Southern Airlines"），后者一路要靠截断才塞得进去。把 16 px
+     * 从宽裕的一侧还给紧张的一侧，两边同时变好。 */
+    const int col_x[2]  = { PAD_L + 8, 404 };
     const int y0        = DRAWER_TOP + 62;
     const int line_h    = 34;
 
@@ -837,6 +851,35 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
         { PK_TR_LIST_D_AIRLINE, PK_TR_LIST_D_COUNTRY, PK_TR_LIST_D_SQUAWK,
           PK_TR_LIST_D_LAST_SEEN },
     };
+    /*
+     * 键列宽按**本列最长的那条键**实测算，不写死。
+     *
+     * 原来两列共用一个 96：英文 "LAST SEEN" 在 XS 档实测 90 px，键与值之间只
+     * 剩 6 px，低于本文件自己给列间距定的 SEP_GAP=7；而中文「上次报文」只有
+     * 48 px，右边白白空出一大片。一个常量同时伺候两种语言、两列不同的词条，
+     * 必然在某一头翻车——加宽到能装下 "LAST SEEN" 又会连累左列（那边最长的
+     * "MODEL" 只有 50 px，凭什么也让出 96 px 的值宽）。
+     *
+     * 按列各算各的之后，左列省下来的宽度直接还给值，机型/型号那种长串少截
+     * 一截；右列则拿到刚好够用的键宽，间距不再低于标准。
+     *
+     * 宽度一律问 pk_aa_text_width：中文一个字三字节，strlen 会把「上次报文」
+     * 数成 12 格。
+     */
+    /* 键与值的最小间隙。取 10 而不是贴着 SEP_GAP=7：列与列之间隔的是一条
+     * 分隔线，键与值之间什么都没有，靠留白分组就得多给一点。 */
+    #define KEY_GAP  10
+    _Static_assert(KEY_GAP >= SEP_GAP, "键值间距不得低于本页列间距标准");
+    int key_w[2];
+    for (int c = 0; c < 2; ++c) {
+        int w = 0;
+        for (int i = 0; i < 4; ++i) {
+            const int kw = pk_aa_text_width(pk_i18n_text(keys[c][i]), PK_AA_XS);
+            if (kw > w) w = kw;
+        }
+        key_w[c] = w + KEY_GAP;
+    }
+
     char v[8][48];
 
     snprintf(v[0], sizeof(v[0]), "%06lX", (unsigned long)a->icao24);
@@ -869,10 +912,12 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
             LST_PUTS(fb, col_x[c], y + (PK_AA_M_H - PK_AA_XS_H) / 2,
                      pk_i18n_text(keys[c][i]), col_key, PK_AA_XS);
             const char *val = v[c * 4 + i];
-            const int avail = (c == 0 ? col_x[1] - 16 : CONTENT_R) - col_x[c] - key_w;
-            put_val(fb, col_x[c] + key_w, y, avail, val, col_val);
+            const int avail = (c == 0 ? col_x[1] - 16 : CONTENT_R)
+                            - col_x[c] - key_w[c];
+            put_val(fb, col_x[c] + key_w[c], y, avail, val, col_val);
             (void)col_dim;
         }
+    #undef KEY_GAP
 }
 
 void pk_adsb_list_render(uint16_t *fb)

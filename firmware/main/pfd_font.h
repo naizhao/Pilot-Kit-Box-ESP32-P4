@@ -2,14 +2,14 @@
  * pfd_font.h — PFD font helpers.
  *
  * Scale-1 and normal scaled rendering use a dependency-free 5×7 ASCII
- * bitmap. PFD numeric readouts can opt into a generated 1-bit cockpit
- * glyph subset in `pfd_font_aa.c`, preserving the fixed 12×16 cell
- * without gray antialiasing fringes or TTF hinting artifacts.
+ * bitmap.
  *
- * Any integer scale ≥ 1 is supported by the normal bitmap renderer. The
- * cockpit renderer is deliberately scale-2 only and should be used only
- * for compact avionics readouts, not for general UI text or future
- * UTF-8/CJK text.
+ * 2026-07-30：cockpit 12×16 字形子集（pfd_font_aa.c）连同
+ * pk_font_puts_cockpit() 一并删除——它只服务 320×240 版面，而小屏兼容预览
+ * 已停止维护。正文用字一律走 pfd_aa_text.c 的抗锯齿字体（含中日韩）；本文件
+ * 只留给 1~2 个字符的极小标注（距离环数字、罗盘 N/E/S/W）。
+ *
+ * Any integer scale ≥ 1 is supported by the bitmap renderer.
  *
  *   scale 1 →  5 ×  7 visible,  6 ×  8 cell
  *   scale 2 → 10 × 14 visible, 12 × 16 cell  (the workhorse for labels)
@@ -77,10 +77,3 @@ int pk_font_puts(uint16_t *fb, int fb_w, int fb_h,
                  int x, int y, const char *s,
                  uint16_t color, int scale);
 
-/* Render a null-terminated string with the generated 12×16 cockpit
- * glyphs. Characters missing from the generated subset fall back to
- * the normal scale-2 bitmap font. Returns the fixed 12 px per-glyph
- * advance. */
-int pk_font_puts_cockpit(uint16_t *fb, int fb_w, int fb_h,
-                         int x, int y, const char *s,
-                         uint16_t color);

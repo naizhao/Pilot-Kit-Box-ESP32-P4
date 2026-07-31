@@ -35,10 +35,6 @@
 #define STAPE_BOT  PFD_TAPE_BOT      /* tape band bottom */
 #define STAPE_CY   ((STAPE_TOP + STAPE_BOT) / 2)   /* 93 */
 
-/* Metric pad sits immediately below the tape band */
-#define METRIC_TOP  PFD_METRIC_TOP
-#define METRIC_BOT  PFD_METRIC_BOT
-
 /* ── 刻度密度 ──────────────────────────────────────────────────
  *
  * 与 pfd_tape.c 同理：标注间距必须大于标签的 cell 高，否则相邻标签叠在
@@ -69,32 +65,15 @@
 #define VAL_PAD_X   4
 #define VAL_PAD_Y   3
 
-#if PK_DISPLAY_W >= 800
-#  define VAL_DIGITS  3
-#  define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
-#  define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
-#  define VAL_PUTS(fb, x, y, s, col) \
+/* 2026-07-30：320 档的 #else 版本随小屏兼容预览一并删除，理由同 pfd_tape.c。 */
+#define VAL_DIGITS  3
+#define BOX_W       (VAL_DIGITS * PK_AA_XL_W + 2 * VAL_PAD_X + 2)
+#define BOX_H       (PK_AA_XL_H + 2 * VAL_PAD_Y + 2)
+#define VAL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_XL)
-#  define LBL_PUTS(fb, x, y, s, col) \
+#define LBL_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define LBL_CELL_H  PK_AA_M_H
-#  define MET_PUTS(fb, x, y, str, col) \
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), PK_AA_M)
-#  define MET_ROW_H   PK_AA_M_H
-#  define MET_PAD     2
-#else
-#  define BOX_W       (PFD_SPD_X1 - PFD_SPD_X0)
-#  define BOX_H       20
-#  define VAL_PUTS(fb, x, y, s, col) \
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
-#  define LBL_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define LBL_CELL_H  8
-#  define MET_PUTS(fb, x, y, str, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (str), (col), 1)
-#  define MET_ROW_H   10
-#  define MET_PAD     3
-#endif
+#define LBL_CELL_H  PK_AA_M_H
 
 #define BOX_X0   STAPE_X0
 #define BOX_X1   (BOX_X0 + BOX_W)
@@ -109,8 +88,6 @@
 #define COL_BOX_BRDR   pk_rgb565(255, 255, 255)
 #define COL_VALUE      pk_rgb565(255, 255, 255)
 #define COL_STALE      pk_rgb565(100, 100, 100)
-#define COL_METRIC     pk_rgb565(180, 180, 180)
-#define COL_METRIC_ST  pk_rgb565( 80,  80,  80)
 
 /* ── render ─────────────────────────────────────────────────────────── */
 void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
@@ -170,29 +147,8 @@ void pk_pfd_speed_tape_render(uint16_t *fb, const pk_pfd_speed_tape_t *s)
         VAL_PUTS(fb, BOX_X0 + VAL_PAD_X + 1, BOX_Y0 + VAL_PAD_Y + 1, "---", COL_STALE);
     }
 
-#if PK_DISPLAY_W < 800
-    /* ── Metric conversion pad ──────────────────────────────────────
-     * 仅 320 档保留。800 档的 km/h + mph 已并入左下角三行信息框
-     * （pfd_infobox.c），与右下角三行对称；挤在带宽 100 px 里只能用 6 px
-     * 位图，低于 spec §2 的 18 px 硬下限。 */
-    pk_pfd_darken_rect(fb, STAPE_X0, METRIC_TOP, PFD_METRIC_X1, METRIC_BOT, 128);
-
-    {
-        char l1[16], l2[16];
-        uint16_t col;
-        if (s->valid) {
-            int kmh = (int)(s->ground_speed_kt * 1.852f + 0.5f);
-            int mph = (int)(s->ground_speed_kt * 1.15078f + 0.5f);
-            snprintf(l1, sizeof(l1), "%d km/h", kmh);
-            snprintf(l2, sizeof(l2), "%d mph",  mph);
-            col = COL_METRIC;
-        } else {
-            snprintf(l1, sizeof(l1), "-- km/h");
-            snprintf(l2, sizeof(l2), "-- mph");
-            col = COL_METRIC_ST;
-        }
-        MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD, l1, col);
-        MET_PUTS(fb, STAPE_X0 + MET_PAD, METRIC_TOP + MET_PAD + MET_ROW_H, l2, col);
-    }
-#endif
+    /* 2026-07-30：这里原有一块 `#if PK_DISPLAY_W < 800` 的公制换算板（km/h +
+     * mph 两行，压在速度带下方）。800 档早就把这两个数并进了左下角三行信息框
+     * （pfd_infobox.c），与右下角三行对称；这块只在 320 档活着，用的是 6 px
+     * 位图，低于 spec §2 的 18 px 硬下限。随小屏兼容预览一并删除。 */
 }

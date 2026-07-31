@@ -282,6 +282,10 @@ text_font_cjk_body.c 18.6 KB   8×8   CJK 正文
 这**不是设计选择，是 320×240 逼出的妥协**（`pfd_font_aa.h` 注释即言明为规避
 "gray antialiasing fringes or TTF hinting artifacts"）。
 
+> **2026-07-30 进度**：`pfd_font_aa.c` 连同生成脚本 `gen_pfd_cockpit_font.py`
+> 及其测试已删除（小屏兼容预览一并停止维护），实测省下 4 784 B flash。
+> 上表其余四套仍在，重构继续。
+
 大字号下问题自然消失，但**必须重构为统一字体系统**，否则只是把 5 套小字体换成 5 套大字体。
 
 - 统一 `lv_font_conv` 生成，按字号阶梯出 5 档

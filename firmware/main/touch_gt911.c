@@ -33,6 +33,7 @@
 
 #include "display.h"
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
+#include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "settings_page.h"
@@ -87,16 +88,40 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
      * 雷达量程 +/−）。曾经规划过双指捏合切量程，2026-07-29 从 spec 取消——
      * 量程只有三四档，用不上捏合的连续性，而它恰恰是戴手套、颠簸时最难
      * 做对的手势。所以这里不打算扩多点。 */
-    uint16_t px = 0, py = 0;
+    /*
+     * 取点用 esp_lcd_touch_get_data() 而不是 esp_lcd_touch_get_coordinates()。
+     * 后者在 esp_lcd_touch 1.2.1 里已标 [[deprecated]]（见组件头
+     * esp_lcd_touch.h:316），声明 2.0.0 移除，是本工程唯一的编译告警。
+     *
+     * 两者**坐标语义完全相同**，不是换算口径的改动：
+     *   - 二者都直接调同一个 tp->get_xy()（esp_lcd_touch.c:73 与 :125），
+     *     GT911 那侧就是把 tp->data.coords[i].x/y 原样抄出来
+     *     （esp_lcd_touch_gt911.c 的 get_xy），仍是**面板原生**竖屏坐标；
+     *   - 之后两条路径跑的是同一段 process_coordinates 回调与同一段
+     *     mirror_x/mirror_y/swap_xy 软件校正。本工程 process_coordinates 为
+     *     NULL、三个 flag 全 0（见 pk_touch_init 的 tp_cfg），两边都不动坐标。
+     * 所以 native_to_logical() 那层旋转换算**不受影响**，一个数都不用改。
+     *
+     * 唯一要当心的是「没触摸」时的约定变了：旧 API 用返回值 false 表示没摸到；
+     * 新 API 返回 ESP_OK 并把点数置 0，**且提前 return、不 memset 出参**
+     * （esp_lcd_touch.c:127）。因此 cnt 必须先清零、且只有 cnt > 0 时才可以读
+     * pt 里的坐标。GT911 的 get_xy 每次都会写 *point_num（无触摸即 0），所以
+     * 「cnt > 0」与旧代码的「pressed && cnt > 0」判定完全等价。
+     */
+    esp_lcd_touch_point_data_t pt = { 0 };
     uint8_t  cnt = 0;
 
     if (esp_lcd_touch_read_data(s_tp) != ESP_OK) {
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
-    bool pressed = esp_lcd_touch_get_coordinates(s_tp, &px, &py, NULL, &cnt, 1);
+    if (esp_lcd_touch_get_data(s_tp, &pt, &cnt, 1) != ESP_OK) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
-    if (pressed && cnt > 0) {
+    if (cnt > 0) {
+        const uint16_t px = pt.x, py = pt.y;
         int lx, ly;
         native_to_logical(px, py, &lx, &ly);
         data->point.x = lx;
@@ -131,16 +156,21 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             pk_adsb_list_touch_cancel();
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
+            pk_about_page_touch_cancel();
         } else if (s_armed) {
             eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                  || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                  || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
-                 || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly));
+                 || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
+                 || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
             if (eaten) s_armed = false;
         } else if (m == PK_UI_MODE_DIAG) {
             eaten = pk_diag_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_SETTINGS) {
             eaten = pk_settings_page_drag(lx, ly);
+        } else if (m == PK_UI_MODE_ABOUT) {
+            /* 关于页正文比屏高，同样要按住不放地连续滚动，判定与 diag/settings 一致。 */
+            eaten = pk_about_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_ADSB_LIST) {
             /* 按住不放的后续帧交给列表做滚动。表格的滑动必须是连续的，
              * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
@@ -163,6 +193,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_adsb_list_touch_up();
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();
+        pk_about_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }

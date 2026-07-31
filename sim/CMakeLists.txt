@@ -79,7 +79,6 @@ set(FW ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/main)
 set(FW_DRAW_SRC
     ${FW}/pfd_draw.c
     ${FW}/pfd_font.c
-    ${FW}/pfd_font_aa.c
     ${FW}/pfd_aa_font.c
     ${FW}/pfd_icon_font.c
     ${FW}/pfd_aa_text.c
@@ -113,8 +112,22 @@ set(FW_DRAW_SRC
     ${FW}/text_font_cjk_body.c
 )
 
-# 当前 4.3" 一体板的逻辑横屏分辨率；仍可用 -DPANEL=WxH 做兼容性预览。
-set(PANEL "800x480" CACHE STRING "面板分辨率 WxH")
+# 当前 4.3" 一体板的逻辑横屏分辨率。
+#
+# 2026-07-30：**小屏（320×240）兼容预览已移除**，PANEL 只保留 800x480 一个有效
+# 取值。原因是那条路径的成本远大于收益——它需要一整套并行的字体与版面：
+# 12×16 的 cockpit 字形（pfd_font_aa.c 31.5 KB + gen_pfd_cockpit_font.py 及其
+# 测试）、pfd_tape / pfd_speed_tape / pfd_hsi 里各一份 #else 版面常量，而设备早已
+# 全面转到 800×480，那些分支在真机上一行都不会执行。留着的实际效果是：每改一次
+# 版面要同时维护两套数、生成脚本要同时喂两套字库，却没有任何人在看小屏的画面。
+# 产品负责人 2026-07-30 明确「删」。
+#
+# 变量保留只是为了让这条命令行不用改。**它其实早就不管用了**：
+# firmware/main/display.h 无条件 #define 了 PK_DISPLAY_W/H，包含它的翻译单元
+# 会把这里 -D 进来的值覆盖掉（值不同还会得到一条 -Wmacro-redefined）。真要换屏
+# 得改 display.h。写在这里是为了下一个人别再花半小时才发现 -DPANEL=800x360
+# 截出来的图仍然是 800×480。
+set(PANEL "800x480" CACHE STRING "面板分辨率 WxH（仅 800x480；实际由 display.h 钉死）")
 string(REPLACE "x" ";" PANEL_WH ${PANEL})
 list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)

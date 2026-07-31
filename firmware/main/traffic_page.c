@@ -197,31 +197,38 @@ static void callsign_of(const aircraft_t *a, char *out, size_t cap)
     snprintf(out, cap, "%06lX", (unsigned long)a->icao24);
 }
 
-static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
-                        int range_nm, bool selected)
+/* 目标在雷达上的落点。 */
+static void target_pos(const vis_t *v, pk_map_orient_t orient, int range_nm,
+                       int *tx, int *ty)
 {
-    const pk_traffic_rel_t *rel = &v->rel;
-    const float screen = (orient == PK_MAP_HEADING_UP) ? rel->rel_bearing
-                                                       : rel->abs_bearing;
-    int tx, ty;
-    polar(screen, rel->dist_nm / range_nm * RMAX, &tx, &ty);
+    const float screen = (orient == PK_MAP_HEADING_UP) ? v->rel.rel_bearing
+                                                       : v->rel.abs_bearing;
+    polar(screen, v->rel.dist_nm / range_nm * RMAX, tx, ty);
+}
 
-    /* 配色照搬 PFD 罗盘外圈那份（pfd_hsi_traffic.c）：颜色本身就是「威胁等级」
-     * ——同高度琥珀、高于青、低于蓝灰、无高度灰。飞行员在 PFD 上已经按这套
-     * 读了，交通页再换一套只会让人重新学。 */
+/* 配色照搬 PFD 罗盘外圈那份（pfd_hsi_traffic.c）：颜色本身就是「威胁等级」
+ * ——同高度琥珀、高于青、低于蓝灰、无高度灰。飞行员在 PFD 上已经按这套
+ * 读了，交通页再换一套只会让人重新学。 */
+#define TFC_COL_SEL  pk_rgb565(255, 210,  60)
+#define TFC_COL_LBL  pk_rgb565(207, 211, 220)
+
+static uint16_t target_color(const pk_traffic_rel_t *rel, bool selected)
+{
     const uint16_t COL_LEVEL = pk_rgb565(255, 176,   0);   /* ±1000 ft 内 */
     const uint16_t COL_ABOVE = pk_rgb565(  0, 210, 235);
     const uint16_t COL_BELOW = pk_rgb565( 95, 150, 190);
     const uint16_t COL_NOALT = pk_rgb565(150, 155, 165);
-    const uint16_t COL_SEL   = pk_rgb565(255, 210,  60);
-    const uint16_t COL_LBL   = pk_rgb565(207, 211, 220);
+    return selected                  ? TFC_COL_SEL
+         : !rel->rel_alt_valid       ? COL_NOALT
+         : (rel->rel_alt_ft >  1000) ? COL_ABOVE
+         : (rel->rel_alt_ft < -1000) ? COL_BELOW
+                                     : COL_LEVEL;
+}
 
-    const uint16_t col = selected ? COL_SEL
-                       : !rel->rel_alt_valid       ? COL_NOALT
-                       : (rel->rel_alt_ft >  1000) ? COL_ABOVE
-                       : (rel->rel_alt_ft < -1000) ? COL_BELOW
-                                                   : COL_LEVEL;
-
+static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
+                               pk_map_orient_t orient, bool selected,
+                               uint16_t col)
+{
     /*
      * 目标符号：**可旋转的飞机剪影**，不是菱形。
      *
@@ -230,32 +237,193 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
      * 于是迎面飞来的和同向飞离的长得一模一样，而这恰恰是防撞最要紧的信息
      * （spec §5.2 点名：「一眼可辨迎面/同向，此信息三角形无法表达」）。
      *
-     * 旋转角取目标自己的 ADS-B 航迹；机头朝上模式下要减去本机航向，因为整幅
-     * 图已经跟着本机转过了。无航迹数据就退回菱形——那表示「不知道朝向」，
-     * 画一个朝某方向的飞机等于编造信息。
+     * 旋转角取目标自己的 ADS-B 航迹。无航迹数据就退回菱形——那表示「不知道
+     * 朝向」，画一个朝某方向的飞机等于编造信息。
+     *
+     * ⚠ 已知未修：按理机头朝上模式该**减去本机航向**（整幅图已经跟着本机转过
+     * 了），原注释也是这么写的，但原代码写成
+     *     rot = heading_deg - (screen - rel_bearing)
+     * 而 screen 在该分支里恒等于 rel_bearing，那个减法是个恒为 0 的空操作，
+     * 两种朝向下实际都只用了 heading_deg。本次是「标签防遮挡」的重构，刻意
+     * **一像素不改**地保留这个行为：混进一个让所有目标机头整体转 82° 的改动，
+     * 会让这次的截图评审说不清是哪一处造成的。修它请单开一件事。
      */
     if (v->ac->have_velocity) {
-        const float rot = (orient == PK_MAP_HEADING_UP)
-                            ? v->ac->heading_deg - (screen - rel->rel_bearing)
-                            : v->ac->heading_deg;
-        pk_pfd_draw_aircraft(fb, tx, ty, rot, selected ? 15 : 11, col);
+        (void)orient;
+        pk_pfd_draw_aircraft(fb, tx, ty, v->ac->heading_deg,
+                             selected ? 15 : 11, col);
     } else {
         fill_diamond(fb, tx, ty, selected ? 6 : 5, col);
     }
+}
 
-    /* 标签：相对高度（百 ft）+ 方向箭头，格式与 PFD 一致。 */
-    char lab[16];   /* 同上 */
-    if (rel->rel_alt_valid) {
-        int hh = rel->rel_alt_ft / 100;
-        if (hh >  99) hh =  99;
-        if (hh < -99) hh = -99;
-        snprintf(lab, sizeof(lab), "%+d", hh);
-    } else {
-        snprintf(lab, sizeof(lab), "---");
+/* ── 标签防遮挡 ──────────────────────────────────────────────────
+ *
+ * 症状：目标扎堆时（mock 里 40°~52° 那三架就是专门压这个的）各自的高度差标签
+ * 互相压住，读者分不出 "+42" 到底是哪一架的。
+ *
+ * 解法是三件事叠起来：
+ *
+ *  1. **候选槽位**。每条标签有 8 个候选落点（右/左 × 中/上/下/更上更下），
+ *     依次试，取第一个不与已占矩形相撞的。
+ *  2. **按威胁排队占位**。顺序 = 选中 > 近 > 远（vis 已按距离升序）。近的先挑，
+ *     8 个槽都挑不到的必然是外围的远目标，它的标签**整条丢掉**、只留符号——
+ *     叠着画等于两条都读不出来，还不如明说「这架的高度差请去右栏读」。
+ *  3. **稳定性压倒最优解**。座舱里字在跳比字被压住更难读：同一架飞机上一帧
+ *     用了哪个槽，这一帧先复用哪个，只有真撞上了才重新找。每帧从 0 号槽重排的
+ *     写法在目标缓慢移动时会让标签在左右两侧来回弹。
+ *
+ * 偏离默认位置的槽位补一条引线：标签一旦不在符号正右方，「这条属于谁」就不再
+ * 不言自明，一条 1 px 的线是最省像素的答案。
+ */
+#define LBL_GAP    12                     /* 标签与符号的水平间隙 */
+#define LBL_STEP   (PK_AA_XS_H + 3)       /* 上下让位的步距 */
+#define LBL_SLOTS  14
+
+/* side: +1 = 符号右侧, -1 = 左侧；step: 纵向让位的步数。
+ *
+ * 顺序即偏好：先左右、后上下、再远。槽位数是实测出来的——只给 8 个时，中心区
+ * 那一簇（mock 里 2.4~6 NM 三四架挤在本机符号周围）会集体找不到落点而全部隐藏，
+ * 而它们恰恰是威胁最高、最该有标签的。 */
+static const struct { int8_t side; int8_t step; } kLblSlot[LBL_SLOTS] = {
+    { +1,  0 }, { -1,  0 },        /* 正右 / 正左：贴着符号，最易读，优先 */
+    { +1, -1 }, { -1, -1 },
+    { +1, +1 }, { -1, +1 },
+    { +1, -2 }, { -1, -2 },
+    { +1, +2 }, { -1, +2 },
+    { +1, -3 }, { -1, -3 },
+    { +1, +3 }, { -1, +3 },
+};
+
+typedef struct {
+    int      tx, ty;          /* 符号中心 */
+    int      w, h;            /* 标签整体尺寸（含箭头；选中时含呼号那一行） */
+    int      x0, y0;          /* 落位左上角，slot >= 0 时有效 */
+    int      slot;            /* -1 = 本帧放不下，只画符号 */
+    uint32_t icao;
+    bool     selected;
+    bool     climb;           /* 箭头朝上（决定绿/橙） */
+    char     lab[16];
+    const char *arrow;
+    char     cs[10];          /* 仅选中目标用 */
+} lbl_t;
+
+/* 上一帧每架飞机用过的槽位，按 ICAO 记。这份「记忆」就是防抖动的全部机制——
+ * 没有它，两架擦身而过时标签会在左右两侧反复横跳。 */
+static struct { uint32_t icao; int8_t slot; } s_lbl_mem[AIRCRAFT_TABLE_CAPACITY];
+static int s_lbl_mem_n;
+
+static int lbl_mem_get(uint32_t icao)
+{
+    for (int i = 0; i < s_lbl_mem_n; ++i)
+        if (s_lbl_mem[i].icao == icao) return s_lbl_mem[i].slot;
+    return -1;
+}
+
+/* 矩形相交（半开区间，双方已含各自的外扩边距）。 */
+static bool rect_hit(const int *a, const int *b)
+{
+    return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+}
+
+/* 槽位 slot 下这条标签占的矩形，含暗底那 2 px 外扩。 */
+static void lbl_rect(const lbl_t *e, int slot, int *r)
+{
+    const int x = (kLblSlot[slot].side > 0) ? e->tx + LBL_GAP
+                                            : e->tx - LBL_GAP - e->w;
+    const int y = e->ty - PK_AA_XS_H / 2 + kLblSlot[slot].step * LBL_STEP;
+    r[0] = x - 2;         r[1] = y - 1;
+    r[2] = x + e->w + 2;  r[3] = y + e->h + 1;
+}
+
+/*
+ * 占位求解。
+ *
+ * 占用表里**先放所有目标的符号**：标签盖住别人的飞机剪影和标签盖住标签一样是
+ * 在丢信息——剪影的朝向正是「迎面还是同向」那一眼。
+ */
+static void place_labels(lbl_t *L, int n, int sel_idx)
+{
+    static int occ[AIRCRAFT_TABLE_CAPACITY * 2][4];
+    const int occ_cap = (int)(sizeof(occ) / sizeof(occ[0]));
+    int nocc = 0;
+
+    /* 本机符号也要占位：中心那架白飞机被标签盖住时，「我在哪」这条最基本的
+     * 参照就没了。半宽按图标尺寸取。 */
+    occ[nocc][0] = CX - PK_ICON_W / 2;  occ[nocc][1] = CY - PK_ICON_H / 2;
+    occ[nocc][2] = CX + PK_ICON_W / 2;  occ[nocc][3] = CY + PK_ICON_H / 2;
+    nocc++;
+
+    for (int i = 0; i < n && nocc < occ_cap; ++i) {
+        /* 符号半宽取 9：剪影外接方框是 11（选中 15），但那是机头到翼尖的
+         * 对角极值，实际填充的是一个很瘦的三角。按外接框判撞会让中心区扎堆的
+         * 几架一个槽都找不到——而它们正是最近、最该有标签的那几架。 */
+        occ[nocc][0] = L[i].tx - 9;  occ[nocc][1] = L[i].ty - 9;
+        occ[nocc][2] = L[i].tx + 9;  occ[nocc][3] = L[i].ty + 9;
+        nocc++;
     }
 
-    /* 标签压一层暗底再写字：雷达上目标扎堆时，白字叠白字谁也读不出来。
-     * PFD 的交通标签同样这么做。 */
+    for (int k = 0; k < n; ++k) {
+        /* 选中的先占：那是用户此刻正盯着的一架，绝不能被别人挤掉。 */
+        const int i = (sel_idx < 0)  ? k
+                    : (k == 0)       ? sel_idx
+                    : (k <= sel_idx) ? k - 1
+                                     : k;
+        lbl_t *e = &L[i];
+        const int prev = lbl_mem_get(e->icao);
+        int chosen = -1;
+
+        /* t = -1 这一轮先试上一帧的槽——稳定压倒最优。 */
+        for (int t = -1; t < LBL_SLOTS && chosen < 0; ++t) {
+            const int s = (t < 0) ? prev : t;
+            if (s < 0 || s >= LBL_SLOTS) continue;
+            if (t >= 0 && s == prev) continue;     /* t=-1 已经试过了 */
+
+            int r[4];
+            lbl_rect(e, s, r);
+            /* 越出雷达区就不是候选：右栏是列表的地盘，标签压过去会和行文字
+             * 打架；顶栏同理。 */
+            if (r[0] < 2 || r[2] > TFC_RADAR_W - 2)            continue;
+            if (r[1] < TFC_TOP + 2 || r[3] > PK_DISPLAY_H - 2) continue;
+
+            bool clash = false;
+            for (int j = 0; j < nocc && !clash; ++j)
+                if (rect_hit(r, occ[j])) clash = true;
+            if (!clash) chosen = s;
+        }
+
+        /* 选中的那架永不隐藏：它是用户刚点过的目标，标签消失会被当成「点了没
+         * 反应」。宁可让它压住别人——它本来就该压在最上层（画的顺序也是最后）。 */
+        if (chosen < 0 && e->selected) chosen = 0;
+
+        e->slot = chosen;
+        if (chosen >= 0) {
+            int r[4];
+            lbl_rect(e, chosen, r);
+            e->x0 = r[0] + 2;
+            e->y0 = r[1] + 1;
+            if (nocc < occ_cap) {
+                occ[nocc][0] = r[0]; occ[nocc][1] = r[1];
+                occ[nocc][2] = r[2]; occ[nocc][3] = r[3];
+                nocc++;
+            }
+        }
+    }
+
+    /* 写回记忆表。放不下的记 -1，下一帧仍从 0 号槽重试——「这一帧藏起来」
+     * 不该固化成「永远藏起来」。 */
+    s_lbl_mem_n = 0;
+    for (int i = 0; i < n && s_lbl_mem_n < AIRCRAFT_TABLE_CAPACITY; ++i) {
+        s_lbl_mem[s_lbl_mem_n].icao = L[i].icao;
+        s_lbl_mem[s_lbl_mem_n].slot = (int8_t)L[i].slot;
+        s_lbl_mem_n++;
+    }
+}
+
+static void draw_label(uint16_t *fb, const lbl_t *e, uint16_t col_sym)
+{
+    if (e->slot < 0) return;
+
     /* 升降箭头单独着色：爬升绿、下降橙。
      *
      * 和高度差数字分开画，是因为两者说的是不同的事——数字是「差多少」（静态
@@ -264,29 +432,74 @@ static void draw_target(uint16_t *fb, const vis_t *v, pk_map_orient_t orient,
      * 语义一致：绿=正在离开、橙=需要留意。 */
     const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
     const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
+
+    /* 引线：只有落在 0 号槽（正右、贴着符号）才不需要——那时归属一目了然。
+     * 其余槽位一律连线，用目标自己的颜色，与符号同源。 */
+    if (e->slot != 0) {
+        const int ex = (kLblSlot[e->slot].side > 0) ? e->x0 - 2
+                                                    : e->x0 + e->w + 2;
+        pk_pfd_draw_line(fb, e->tx, e->ty, ex, e->y0 + PK_AA_XS_H / 2, col_sym);
+    }
+
+    /* 标签压一层暗底再写字：雷达上目标扎堆时，白字叠白字谁也读不出来。
+     * PFD 的交通标签同样这么做。 */
+    pk_pfd_darken_rect(fb, e->x0 - 2, e->y0 - 1,
+                       e->x0 + e->w + 2, e->y0 + e->h + 1, 120);
+
+    const int lw = pk_aa_text_width(e->lab, PK_AA_XS);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, e->x0, e->y0, e->lab,
+               e->selected ? TFC_COL_SEL : TFC_COL_LBL, PK_AA_XS);
+    if (e->arrow[0]) {
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, e->x0 + lw, e->y0, e->arrow,
+                   e->climb ? COL_UP : COL_DOWN, PK_AA_XS);
+    }
+    /* 呼号只给选中的那架：14 个目标每架都标呼号，雷达会糊成一片字。
+     * 想看全部就看右栏列表，那里一行一条排得整整齐齐。 */
+    if (e->selected && e->cs[0]) {
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   e->x0, e->y0 + PK_AA_XS_H + 2, e->cs, TFC_COL_SEL, PK_AA_XS);
+    }
+}
+
+/* 把一个目标铺成一条待落位的标签（只算尺寸与文案，不碰 framebuffer）。 */
+static void build_label(lbl_t *e, const vis_t *v, int tx, int ty, bool selected)
+{
+    const pk_traffic_rel_t *rel = &v->rel;
+
+    e->tx       = tx;
+    e->ty       = ty;
+    e->icao     = v->ac->icao24;
+    e->selected = selected;
+    e->slot     = -1;
+    e->cs[0]    = '\0';
+
+    /* 标签：相对高度（百 ft）+ 方向箭头，格式与 PFD 一致。 */
+    if (rel->rel_alt_valid) {
+        int hh = rel->rel_alt_ft / 100;
+        if (hh >  99) hh =  99;
+        if (hh < -99) hh = -99;
+        snprintf(e->lab, sizeof(e->lab), "%+d", hh);
+    } else {
+        snprintf(e->lab, sizeof(e->lab), "---");
+    }
+    e->climb = rel->vs_fpm > 0;
+
     const char *arrow = !rel->rel_alt_valid   ? ""
                       : rel->vs_fpm >  200    ? "\u2191"
                       : rel->vs_fpm < -200    ? "\u2193" : "";
-    const int lw = (int)strlen(lab) * pk_aa_cell_w(PK_AA_XS);
-    const int aw = arrow[0] ? PK_AA_XS_CJK_W : 0;
-    const int lx = tx + 12, ly = ty - PK_AA_XS_H / 2;
-    pk_pfd_darken_rect(fb, lx - 2, ly - 1, lx + lw + aw + 2, ly + PK_AA_XS_H + 1, 120);
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, ly, lab,
-               selected ? COL_SEL : COL_LBL, PK_AA_XS);
-    if (arrow[0]) {
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx + lw, ly, arrow,
-                   rel->vs_fpm > 0 ? COL_UP : COL_DOWN, PK_AA_XS);
-    }
+    e->arrow = arrow;
 
-    /* 呼号只给选中的那架：14 个目标每架都标呼号，雷达会糊成一片字。
-     * 想看全部就看右栏列表，那里一行一条排得整整齐齐。 */
+    /* 宽度一律问渲染器：箭头是 3 字节 UTF-8，strlen 会把它数成 3 格，
+     * 占位矩形就会宽出一截，扎堆时白白挤掉别人的槽位。 */
+    e->w = pk_aa_text_width(e->lab, PK_AA_XS)
+         + (arrow[0] ? pk_aa_text_width(arrow, PK_AA_XS) : 0);
+    e->h = PK_AA_XS_H;
+
     if (selected) {
-        char cs[10];
-        callsign_of(v->ac, cs, sizeof(cs));
-        const int cw = (int)strlen(cs) * pk_aa_cell_w(PK_AA_XS);
-        const int cy2 = ly + PK_AA_XS_H + 2;
-        pk_pfd_darken_rect(fb, lx - 2, cy2 - 1, lx + cw + 2, cy2 + PK_AA_XS_H + 1, 120);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, cy2, cs, COL_SEL, PK_AA_XS);
+        callsign_of(v->ac, e->cs, sizeof(e->cs));
+        const int cw = pk_aa_text_width(e->cs, PK_AA_XS);
+        if (cw > e->w) e->w = cw;
+        e->h += PK_AA_XS_H + 2;    /* 呼号另起一行，占位必须把它算进去 */
     }
 }
 
@@ -701,12 +914,35 @@ void pk_traffic_page_render(uint16_t *fb)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    CX - w / 2, CY - PK_AA_M_H / 2, msg, COL_AMBER, PK_AA_M);
     } else {
+        /* 先摆位再画：标签要互相避让，就必须在动笔之前知道所有目标的落点。
+         * 这也是符号与标签分成两趟画的原因——一趟画完，后画的会盖住先画的。 */
+        static lbl_t s_lbls[AIRCRAFT_TABLE_CAPACITY];
+        for (int k = 0; k < nv; k++) {
+            int tx, ty;
+            target_pos(&s_vis[k], orient, range_nm, &tx, &ty);
+            build_label(&s_lbls[k], &s_vis[k], tx, ty, k == sel_row);
+        }
+        place_labels(s_lbls, nv, (sel_row >= 0 && sel_row < nv) ? sel_row : -1);
+
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;                /* 选中最后画(置顶) */
-            draw_target(fb, &s_vis[k], orient, range_nm, false);
+            draw_target_symbol(fb, &s_vis[k], s_lbls[k].tx, s_lbls[k].ty,
+                               orient, false,
+                               target_color(&s_vis[k].rel, false));
         }
         if (nv > 0 && sel_row >= 0 && sel_row < nv)
-            draw_target(fb, &s_vis[sel_row], orient, range_nm, true);
+            draw_target_symbol(fb, &s_vis[sel_row],
+                               s_lbls[sel_row].tx, s_lbls[sel_row].ty,
+                               orient, true,
+                               target_color(&s_vis[sel_row].rel, true));
+
+        for (int k = 0; k < nv; k++) {
+            if (k == sel_row) continue;
+            draw_label(fb, &s_lbls[k], target_color(&s_vis[k].rel, false));
+        }
+        if (nv > 0 && sel_row >= 0 && sel_row < nv)
+            draw_label(fb, &s_lbls[sel_row],
+                       target_color(&s_vis[sel_row].rel, true));
     }
 
     /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ── */

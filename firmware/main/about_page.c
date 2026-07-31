@@ -71,6 +71,7 @@
 #define AB_VALUE_X      452               /* 数值起点：容得下最长的标签 */
 #define AB_ROW0_Y        64
 #define AB_ROW_H         40               /* M 档 26 px + 14 行距，九行铺满 */
+#define AB_ROWS           9               /* 右栏行数，见 pk_about_page_render */
 
 /* 网址跟在产品名之下，同属左栏的身份区。 */
 #define AB_URL_Y        (AB_NAME_Y + 44)
@@ -129,9 +130,36 @@ static pk_aa_size_t fit_size(const char *s, int avail)
     return PK_AA_XS;
 }
 
+/* ── 滚动 ────────────────────────────────────────────────────────
+ *
+ * 判定规则与 adsb_list / diag / settings 三页**一模一样**：按下只记起点，
+ * 位移超过 AB_DRAG_SLOP 才算拖动，松手时没拖过才算点击。四页手感必须一致——
+ * 同一台设备上"要按多久才算拖"如果各页不同，手指是学不会的。
+ *
+ * 这一页当前 9 行、内容高约 362 px，装得进 432 px 的视口，所以平时 max=0、
+ * 一动不动。滚动是为**内容长起来之后**准备的：版本号在正式产物里是
+ * "0.9.3-4.3in-127-g1a2b3c4d-dirty" 这种 git describe 串，右栏再加两行
+ * （许可证、序列号…）就会超屏。真到那天再补交互，就又是一次「点不到最后一行」
+ * 的现场事故。 */
+static int s_scroll_y;      /* 滚动偏移(px)，0 = 顶 */
+static int s_content_h;     /* 上一帧实际画出的内容高（含顶栏以下全部） */
+
+#define AB_VIEW_H     (PK_DISPLAY_H - AB_HEADER_H)
+#define AB_DRAG_SLOP  12
+
+/* 滚到底的最大偏移。内容装得下时恒为 0。 */
+static int ab_max_scroll(void)
+{
+    const int over = s_content_h - AB_VIEW_H;
+    return over > 0 ? over : 0;
+}
+
 static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
 {
-    const int y = AB_ROW0_Y + row * AB_ROW_H;
+    const int y = AB_ROW0_Y + row * AB_ROW_H - s_scroll_y;
+    /* 滚出视口的行直接不画：省一趟 blit，也免得字压到顶栏上（顶栏虽然最后补画
+     * 会盖住，但那是靠巧合，不该依赖）。 */
+    if (y + pk_aa_cell_h(PK_UI_ITEM_SIZE) < AB_HEADER_H || y >= PK_DISPLAY_H) return;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_UI_ITEM_SIZE);
 
@@ -206,27 +234,40 @@ void pk_about_page_render(uint16_t *fb)
 {
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
-    /* ── 顶栏 ───────────────────────────────────────────────── */
-    /* 标题的字号/颜色/垂直位置由 pfd_layout.h 统一给：这一页曾经是全设备唯一
-     * 用 L 档的，比其余四页大整整一档。 */
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               AB_LEFT_X, PK_UI_TITLE_Y,
-               pk_i18n_text(PK_TR_ABOUT_TITLE), PK_UI_TITLE_COL,
-               PK_UI_TITLE_SIZE);
-    fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
+    /*
+     * 内容高按两栏的**实际底边**取大值，不写死一个数。
+     *
+     * 写死的话，以后右栏加一行、logo 换个尺寸，滚动范围就悄悄错了，而错法是
+     * "最后一行永远够不到"——这种 bug 在真机上极难归因。放在画之前算，是因为
+     * 触摸的夹取要用它，而触摸可能在本帧画完之前就来了。
+     */
+    {
+        const int right_bot = AB_ROW0_Y + AB_ROWS * AB_ROW_H;
+        const int left_bot  = AB_URL_Y + pk_aa_cell_h(PK_AA_M);
+        const int bot = (right_bot > left_bot) ? right_bot : left_bot;
+        s_content_h = bot - AB_HEADER_H + 16;      /* 底部留一口气 */
+        /* 内容缩短（切语言、少一行）而 s_scroll_y 还停在旧底部时，这一夹把它
+         * 拉回来，否则整页看起来空掉一截。 */
+        const int max_y = ab_max_scroll();
+        if (s_scroll_y > max_y) s_scroll_y = max_y;
+    }
+#ifdef PK_SIM_BUILD
+    { void pk_about_sim_scroll(void); pk_about_sim_scroll(); }
+#endif
 
     /* ── 左栏：身份 ─────────────────────────────────────────── */
-    draw_logo(fb, AB_LEFT_X + (AB_LEFT_W - AB_LOGO_SIZE) / 2, AB_LOGO_Y,
-              AB_LOGO_SIZE);
+    draw_logo(fb, AB_LEFT_X + (AB_LEFT_W - AB_LOGO_SIZE) / 2,
+              AB_LOGO_Y - s_scroll_y, AB_LOGO_SIZE);
     {
         static const char kName[] = "PILOT KIT BOX";
         const int w = (int)(sizeof(kName) - 1) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_NAME_Y,
+                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_NAME_Y - s_scroll_y,
                    kName, COL_NAME, PK_AA_M);
     }
 
-    /* 分栏线 */
+    /* 分栏线：**不跟着滚**。它是版面的骨架而不是内容，跟着走反而会让人以为
+     * 整页在平移。上下端各留一点收口。 */
     fill_rect(fb, AB_RIGHT_X - 32, AB_HEADER_H + 16,
               AB_RIGHT_X - 31, PK_DISPLAY_H - 24, COL_DIVIDER);
 
@@ -279,7 +320,111 @@ void pk_about_page_render(uint16_t *fb)
         static const char kUrl[] = "https://air.club";
         const int w = (int)(sizeof(kUrl) - 1) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_URL_Y,
+                   AB_LEFT_X + (AB_LEFT_W - w) / 2, AB_URL_Y - s_scroll_y,
                    kUrl, COL_URL, PK_AA_M);
     }
+
+    /* 行数与 AB_ROWS 对不上就地兜住：滚动范围是拿 AB_ROWS 算的，加了一行却
+     * 忘了改常量，症状是"最后一行永远滚不到"，而现场根本看不出是常量的锅。 */
+    if (row != AB_ROWS) s_content_h += (row - AB_ROWS) * AB_ROW_H;
+
+    /* 滚动条：贴右缘，只在内容超出一屏时出现。样式照 diag_page.c。 */
+    if (s_content_h > AB_VIEW_H) {
+        const int tx = PK_DISPLAY_W - 6;
+        const int bar_h = AB_VIEW_H * AB_VIEW_H / s_content_h;
+        const int bar_y = AB_HEADER_H + s_scroll_y * AB_VIEW_H / s_content_h;
+        fill_rect(fb, tx, AB_HEADER_H, tx + 3, PK_DISPLAY_H,
+                  pk_rgb565(30, 38, 50));
+        fill_rect(fb, tx, bar_y, tx + 3, bar_y + bar_h,
+                  pk_rgb565(120, 135, 155));
+    }
+
+    /* ── 顶栏最后画：内容从它底下滑过去，而不是压在它上面 ───────── */
+    fill_rect(fb, 0, 0, PK_DISPLAY_W, AB_HEADER_H - 2, COL_BG);
+    /* 标题的字号/颜色/垂直位置由 pfd_layout.h 统一给：这一页曾经是全设备唯一
+     * 用 L 档的，比其余四页大整整一档。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               AB_LEFT_X, PK_UI_TITLE_Y,
+               pk_i18n_text(PK_TR_ABOUT_TITLE), PK_UI_TITLE_COL,
+               PK_UI_TITLE_SIZE);
+    fill_rect(fb, 0, AB_HEADER_H - 2, PK_DISPLAY_W, AB_HEADER_H, COL_DIVIDER);
 }
+
+/* ── 触摸：拖动滚动 ────────────────────────────────────────────────
+ *
+ * 与 adsb_list / diag / settings 同一套判定，连阈值都用同一个数：按下只记
+ * 起点，位移超 12 px 才算拖动，松手时没拖过才算点击。本页目前没有可点的
+ * 东西（网址还不是链接），但规则先立住——等网址变成可点的那天，判定不必
+ * 再写一遍，也不会写出第四种手感。
+ *
+ * 与 touch_gt911.c 的约定同其余三页：返回 true 表示这一下被本页消费。
+ */
+static int  s_press_x, s_press_y, s_press_scroll;
+static bool s_press_valid, s_moved;
+
+bool pk_about_page_touch(int x, int y)
+{
+    /* 右侧 FAB 那条竖带必须放行，否则关于页就切不走了——列表页正是栽在这里
+     * （整个数据区都当命中区，dock 页签的坐标先被页面吃掉）。 */
+    s_press_valid = (y >= AB_HEADER_H && x < PK_DISPLAY_W - 80);
+    if (!s_press_valid) return false;
+    s_press_x      = x;
+    s_press_y      = y;
+    s_press_scroll = s_scroll_y;
+    s_moved        = false;
+    return true;
+}
+
+bool pk_about_page_drag(int x, int y)
+{
+    if (!s_press_valid) return false;
+    (void)x;
+    const int dy = y - s_press_y;
+    if (!s_moved && (dy > AB_DRAG_SLOP || dy < -AB_DRAG_SLOP)) s_moved = true;
+    if (!s_moved) return true;
+
+    int sy = s_press_scroll - dy;      /* 方向与手指一致：手指上滑，内容上走 */
+    const int max_y = ab_max_scroll();
+    if (sy < 0)     sy = 0;
+    if (sy > max_y) sy = max_y;
+    s_scroll_y = sy;
+    return true;
+}
+
+void pk_about_page_touch_up(void)
+{
+    s_press_valid = false;
+    s_moved       = false;
+}
+
+void pk_about_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
+
+#ifdef PK_SIM_BUILD
+/*
+ * 截图用的两个旋钮。
+ *
+ * PK_SIM_ABOUT_PAD=<px>
+ *   在内容底部虚加一段高度。今天这一页只有 9 行、内容 392 px，装得进 432 px
+ *   的视口，于是滚动范围恒为 0、一张截图也拍不出来。**不能因为暂时用不上就
+ *   不验证**——那正是"等真用上了才发现是坏的"那条老路。这个旋钮只改高度、
+ *   不伪造任何内容，滚上去露出的就是真实的空白。
+ *
+ * PK_SIM_ABOUT_SCROLL=<px>
+ *   把版面滚到指定位置。刻意走**真实的按下-拖动**两步而不是直接写
+ *   s_scroll_y——要验证的正是那条判定链（12 px 阈值、方向、上下夹取），
+ *   绕过去就等于没验证。
+ */
+#include <stdlib.h>
+void pk_about_sim_scroll(void)
+{
+    const char *pad = getenv("PK_SIM_ABOUT_PAD");
+    if (pad) s_content_h += atoi(pad);
+
+    const char *e = getenv("PK_SIM_ABOUT_SCROLL");
+    if (!e) return;
+    const int px = atoi(e);
+    if (!pk_about_page_touch(200, 300)) return;
+    pk_about_page_drag(200, 300 - px);
+    pk_about_page_touch_up();
+}
+#endif

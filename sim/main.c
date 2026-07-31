@@ -259,7 +259,7 @@ static int run_headless(float at_sec, const char *out)
         pk_pfd_leftbox_render(fb, &lb);
     }
 
-page_done:
+page_done:;   /* 空语句：C17 里标签后面不能直接跟声明（-Wc23-extensions） */
     /* 多合成几帧：首帧 LVGL 只画屏幕底色，canvas 要到第二帧才落到 s_screen；
      * 而 dock 的滑出动画有 180 ms，两帧远不够，截出来会是它还在屏外的样子。
      * 12 帧 ≈ 400 ms，动画收敛且离 5 s 自动收起还远。 */

@@ -112,11 +112,9 @@ static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
     }
 }
 
-static inline void put_pixel(uint16_t *fb, int x, int y, uint16_t c)
-{
-    if (x < 0 || x >= PK_DISPLAY_W || y < 0 || y >= PK_DISPLAY_H) return;
-    fb[y * PK_DISPLAY_W + x] = c;
-}
+/* 曾经这里有个 put_pixel()。圆角改成按覆盖率混合（见下面 corner_cov）之后，
+ * 边缘那一圈不再是"画或不画"而是 blend，最后一个调用点也就没了；留着只会换来
+ * 一条 -Wunused-function。 */
 
 /* Filled rounded rectangle. Drawn as three rects (left strip, middle
  * body, right strip) for the straight portion + 4 quarter-circle

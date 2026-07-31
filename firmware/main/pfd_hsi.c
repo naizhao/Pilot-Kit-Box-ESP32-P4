@@ -61,27 +61,16 @@
  * 航向框取 M 而不是 XL：顶栏已有一份 HDG 读数，这里是重复信息，让它压过
  * 高度/空速会打乱主次。原框 120×40 是照 M 档尺寸开的，但里面填的还是
  * 48 px 宽的 cockpit 字，于是空出 72 px —— 框看着大得没道理，正是这个原因。 */
-#if PK_DISPLAY_W >= 800
-#  define ROSE_PUTS(fb, x, y, s, col) \
+/* 2026-07-30：320 档的 #else 版本随小屏兼容预览一并删除，理由同 pfd_tape.c。 */
+#define ROSE_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_M)
-#  define ROSE_LBL_W      PK_AA_M_W
-#  define ROSE_LBL_H      PK_AA_M_H
-#  define ROSE_LBL_INSET  ROSE_SC(15)
-#  define HDG_PUTS(fb, x, y, s, col) \
+#define ROSE_LBL_W      PK_AA_M_W
+#define ROSE_LBL_H      PK_AA_M_H
+#define ROSE_LBL_INSET  ROSE_SC(15)
+#define HDG_PUTS(fb, x, y, s, col) \
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), PK_AA_L)
-#  define HDGBOX_PAD_X    5
-#  define HDGBOX_PAD_Y    3
-#else
-#  define ROSE_PUTS(fb, x, y, s, col) \
-        pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col), 1)
-#  define ROSE_LBL_W      6
-#  define ROSE_LBL_H      6
-#  define ROSE_LBL_INSET  ROSE_SC(15)
-#  define HDG_PUTS(fb, x, y, s, col) \
-        pk_font_puts_cockpit(fb, PK_DISPLAY_W, PK_DISPLAY_H, (x), (y), (s), (col))
-#  define HDGBOX_PAD_X    3
-#  define HDGBOX_PAD_Y    2
-#endif
+#define HDGBOX_PAD_X    5
+#define HDGBOX_PAD_Y    3
 
 /* Aircraft symbol sits near the bottom of the visible rose, slightly
  * above the panel's bottom edge — the Garmin convention is to put it
@@ -190,7 +179,6 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
     {
         int cx = HSI_CX;
         int cy = AIRCRAFT_Y;
-#if PK_DISPLAY_W >= 800
         /* 用 Material Symbols 的 flight 字形，不再手拼矩形加三角。
          *
          * 手绘版是「机身条 + 机翼条 + 尾翼条」三个矩形拼的，在 30 px 尺度上
@@ -205,28 +193,9 @@ void pk_pfd_hsi_render(uint16_t *fb, const pk_pfd_hsi_t *h)
         pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                         cx - PK_ICON_W / 2, cy - PK_ICON_H / 2,
                         ac, PK_ICON_W, PK_ICON_H, COL_AIRCRAFT);
-#else
-        /* 320 档罗盘只有 R=65，30 px 的图标 cell 塞不进去，保留手绘。 */
-        const int fus_h = ROSE_SC(5);
-        const int nose  = ROSE_SC(7);
-        const int fus_w = ROSE_SC(1);
-        const int wing  = ROSE_SC(8);
-        const int wing_t= ROSE_SC(1);
-        const int tail  = ROSE_SC(4);
-        const int tail_y= ROSE_SC(4);
-
-        pk_pfd_fill_rect(fb, cx - fus_w, cy - fus_h, cx + fus_w + 1, cy + fus_h,
-                         COL_AIRCRAFT);
-        pk_pfd_draw_triangle(fb,
-                             cx,             cy - nose,
-                             cx - fus_w,     cy - fus_h,
-                             cx + fus_w + 1, cy - fus_h,
-                             COL_AIRCRAFT);
-        pk_pfd_fill_rect(fb, cx - wing, cy - wing_t, cx + wing + 1, cy + wing_t,
-                         COL_AIRCRAFT);
-        pk_pfd_fill_rect(fb, cx - tail, cy + tail_y, cx + tail + 1,
-                         cy + tail_y + ROSE_SC(2), COL_AIRCRAFT);
-#endif
+        /* 2026-07-30：此处原有一份 320 档的手绘剪影（机身/机翼/尾翼三个矩形
+         * 拼的），因为那时罗盘只有 R=65、30 px 的图标 cell 塞不进去。随小屏
+         * 兼容预览一并删除。 */
     }
 
     /* HDG box: dimmed translucent interior + 1 px white border +

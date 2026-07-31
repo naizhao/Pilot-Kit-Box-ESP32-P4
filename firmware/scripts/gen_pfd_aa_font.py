@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """从 TTF 生成 PFD 用的抗锯齿 ASCII 字形表（4bpp 灰度，固定 cell）。
 
-和 gen_pfd_cockpit_font.py 的分工
---------------------------------
-cockpit 那套是**手绘像素**的 12×16 单档字形，专为 320×240 小屏调过，
-在原始尺寸下最锐利。但它只有一档，整数倍放大后就是方块像素——这在
-800×480 / 217 PPI 上完全不能看（实测 scale-3 放大后锯齿明显）。
+唯一的 PFD 正文字体来源
+----------------------
+2026-07-30 之前还有一套 cockpit 字体（gen_pfd_cockpit_font.py → pfd_font_aa.c，
+手绘像素的 12×16 单档字形），专为 320×240 小屏调过。那套连同生成脚本、测试，
+以及 pfd_tape / pfd_speed_tape / pfd_hsi 里各自的 320×240 `#else` 分支一并删除：
+硬件已全面换到 4.3″ 800×480，不再保留小屏兼容预览，那些分支在真机上一行都不会
+执行，却要求每改一次版面同时维护两套版面常量、喂两套字库。
 
-本脚本走 TTF 派生路线，为每个目标字号单独渲染，因此任意字号都有正确
-的抗锯齿边缘。两套并存：小屏继续用 cockpit，大屏用这里生成的。
+留下本脚本这一条路，是因为 cockpit 只有一档，整数倍放大后就是方块像素——在
+800×480 / 217 PPI 上完全不能看（实测 scale-3 放大后锯齿明显）。本脚本走 TTF
+派生路线，为每个目标字号单独渲染，任意字号都有正确的抗锯齿边缘。
+（1~2 个字符的极小标注仍走 pfd_font.c 的 5×7 位图，见该文件头。）
 
 字体选型
 --------
@@ -27,11 +31,33 @@ Noto 实例化到 500 后再交给 magick）。
 链接期照单全收，实测占 app 分区约 347 KB（当时余量只剩 10%）。要恢复的话
 是重新加一档，而不是留着半套死数据。
 
-CJK 字号补偿
-------------
-实测 pointsize 21 时，B612 Mono 的「A」墨迹高 17 px，而 Noto Sans SC
-的「调」高 19 px —— 汉字字面更大。若同 pointsize 混排，汉字会显得比
-拉丁大一圈，故 CJK 侧乘 CJK_PT_RATIO 补偿。
+CJK 与拉丁的对齐口径
+--------------------
+结论：**同 pointsize，cell 宽取整一个 em**，对 CJK 不做任何缩小补偿。
+
+这里原先有个 CJK_PT_RATIO=0.92，理由是「pt 21 时 B612 的『A』墨迹高
+17 px，而 Noto 的『调』高 19 px，汉字字面更大，同 pointsize 混排会显得
+大一圈」。观察没错，推论反了：拉丁的 cap height 天生只有 ~0.78 em，汉字
+字面天生是 ~0.90 em，两者本就不该等高——这正是两款字体被设计成能按同一
+尺寸混排的方式。把汉字压到与 cap height 齐平，就等于让中文整体小一档。
+这与 backbar 那次踩的是同一个坑：**标称 px 在不同字体之间不可比**，必须
+量墨迹。
+
+实测（magick 同一条渲染路径，大画布量墨迹包围盒）：
+
+    档  拉丁pt  cap高  旧CJKpt 旧汉字高  新CJKpt 新汉字高  新汉字高/cap高
+    xs   15      13      14       12        15       13        1.00
+    s    17      14      16       14        17       15        1.07
+    m    22      17      20       18        22       20        1.18
+    l    32      25      29       26        32       29        1.16
+
+（xs/s 的比值偏低是 B612 在小 ppem 上被 hinting 撑高了 cap——pt15 的
+cap/pt 实测 0.867，到 pt32 才回落到 0.781。同 em 混排仍是正确口径。）
+
+cell 宽必须**正好一个 em**（即 pointsize）。Noto Sans SC 的汉字与箭头字面
+是按满 em 画的：254 字在 pt=20/21/22 下实测最大墨迹宽恒等于 pt。旧口径取
+round(拉丁pt × 0.81)，比 em 窄 10% 以上，结果 254 字里有 190~230 个被 cell
+左右各切掉 1~2 px —— 边框不闭合、笔画缺角，于是又"薄"又小。
 """
 from __future__ import annotations
 
@@ -48,9 +74,6 @@ from gen_i18n_assets import pack_4bpp, render_glyph_with_fallback  # noqa: E402
 FIRST_CODE = 0x20
 LAST_CODE = 0x7F
 DEGREE_SOURCE = 0xB0          # 渲染时用真正的 '°'，存储位置在 0x7F
-
-# ── CJK 相对拉丁的 pointsize 补偿（见文件头说明）──
-CJK_PT_RATIO = 0.92
 
 # ── CJK 字符集 ──
 #
@@ -102,22 +125,34 @@ def collect_cjk_codes() -> list[int]:
     return sorted(codes)
 
 
+def cjk_pt(size: str) -> int:
+    """CJK 的 pointsize —— 与同档拉丁**完全一致**，见文件头「对齐口径」。"""
+    return SIZES[size]["pt"]
+
+
 def cjk_cell(size: str) -> tuple[int, int]:
-    """CJK 的 cell：宽取字面（全角方块），高与同档拉丁一致。
+    """CJK 的 cell：宽取整一个 em（= pointsize），高与同档拉丁一致。
+
+    宽必须是整 em 而不是"估出来的字面宽"：Noto Sans SC 的汉字与箭头就是照
+    满 em 画的（实测数据见文件头），窄一个像素就切掉外框笔画。整 em 同时正
+    是这套字体自己的横向步进，中文因此排成规整方阵，字与字不再贴死。
 
     高度对齐是关键——两者同高，混排时基线天然对上，渲染端不必再做垂直补偿。
     在此之前中文走的是另一套位图，cell 高度与拉丁不同，每个调用点都得自己
     算偏移，错一处就是一行字浮起来。
+
+    垂直落点不另做补偿：实测汉字下缘落在拉丁基线下方 2/2/3/5 px（xs/s/m/l），
+    与 CJK 字体把表意 em 框压到基线下 ~0.12 em 的通行画法吻合，magick 的
+    gravity center 已经给出正确关系。
     """
-    lat_w, lat_h = SIZES[size]["cell"]
-    cap = round(SIZES[size]["pt"] * 0.81)     # 该档的字面高度
-    return (cap, lat_h)
+    _, lat_h = SIZES[size]["cell"]
+    return (cjk_pt(size), lat_h)
 
 
 def render_cjk_face(magick: str, fonts, size: str, codes: list[int]) -> bytes:
     """渲染整段 CJK，返回拼接好的 4bpp 数据（顺序同 codes）。"""
     w, h = cjk_cell(size)
-    pt = round(SIZES[size]["pt"] * CJK_PT_RATIO)
+    pt = cjk_pt(size)
     blob = bytearray()
     for cp in codes:
         gray = render_glyph_with_fallback(magick, fonts, pt, w, h, cp)
