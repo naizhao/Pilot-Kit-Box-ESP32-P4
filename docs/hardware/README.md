@@ -36,7 +36,7 @@ Official links:
 | RTL-SDR FC0013 | H2 native USB 2.0 HS through a USB-C OTG adapter/hub | Integrated |
 | ST7701 display | Board-fixed MIPI-DSI, 2 lanes at 500 Mbit/s | Integrated |
 | GT911 touch | Board-fixed GPIO7/8, reset GPIO23; polled | Integrated, first contact only |
-| BNO085 IMU | GPIO7/8, reset GPIO21, INT not connected, address 0x4A | Integrated, polled |
+| BNO085 IMU | GPIO7/8, reset GPIO28, INT GPIO34, address 0x4A | Integrated, polled |
 | BMP388 | GPIO7/8, optional GPIO31 INT | Integrated, polled |
 | GPS | P4 TX GPIO49, P4 RX GPIO51; optional PPS GPIO50 | UART/RMC integrated; PPS not implemented |
 | ESP32-C6 | P4 GPIO14–19 SDIO, GPIO54 EN | Wi-Fi/BLE transport integrated |

@@ -35,7 +35,7 @@ ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，�
 | RTL-SDR FC0013 | H2 原生 USB 2.0 HS，经 USB-C OTG 转接头或 Hub | 已集成 |
 | ST7701 显示 | 板载固定 MIPI-DSI，2 lane @ 500 Mbit/s | 已集成 |
 | GT911 触摸 | 板载 GPIO7/8、复位 GPIO23；轮询 | 已集成，当前只取第一触点 |
-| BNO085 IMU | GPIO7/8、复位 GPIO21、INT 不接、地址 0x4A | 已集成，轮询 |
+| BNO085 IMU | GPIO7/8、复位 GPIO28、INT GPIO34、地址 0x4A | 已集成，轮询 |
 | BMP388 | GPIO7/8、可选 GPIO31 INT | 已集成，轮询 |
 | GPS | P4 TX GPIO49、P4 RX GPIO51；可选 PPS GPIO50 | UART/RMC 已集成；PPS 未实现 |
 | ESP32-C6 | P4 GPIO14–19 SDIO、GPIO54 EN | Wi-Fi/BLE 传输已集成 |

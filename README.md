@@ -82,15 +82,22 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 
 ## 当前状态 / Current Status
 
-截至 **2026-06-11**，`v0.8.0` 主固件已经覆盖 ADS-B 接收与解码、BLE GDL90 分发、GPS/PPS 定位授时、BMP388 气压高度、LittleFS/MicroSD 记录、LCD PFD、交通雷达、ADS-B 列表、实时诊断、内置航空识别数据库、BNO085 姿态融合、四按钮交互、中英文 UI 和 MODE 长按深睡眠。
+截至 **2026-07-29**，当前 4.3 寸固件已经覆盖 ADS-B 接收与解码、BLE
+GDL90 分发、GPS 定位与 RMC 授时、BMP388 气压高度、LittleFS/MicroSD
+记录、ST7701 MIPI-DSI 横屏显示、GT911 触摸导航、交通雷达、ADS-B 列表、
+实时诊断、内置航空识别数据库和 BNO085 姿态融合。
 
-As of **2026-06-11**, the `v0.8.0` firmware includes ADS-B reception and decode, BLE GDL90 distribution, GPS/PPS positioning and time discipline, BMP388 barometric altitude, LittleFS/MicroSD recording, LCD PFD rendering, a traffic radar, ADS-B list, live diagnostics, embedded aviation identity databases, BNO085 attitude fusion, four-button interaction, English/Chinese UI pages, and MODE long-press deep sleep.
+As of **2026-07-29**, the current 4.3-inch firmware includes ADS-B reception
+and decode, BLE GDL90 distribution, GPS positioning and RMC time sync,
+BMP388 barometric altitude, LittleFS/MicroSD recording, an ST7701 MIPI-DSI
+landscape display, GT911 touch navigation, traffic radar, ADS-B list, live
+diagnostics, embedded aviation identity databases, and BNO085 attitude fusion.
 
 ### `v0.8.0` 发布重点 / Release Highlights
 
 - 新增 360° 交通雷达、PFD HSI 前方交通叠加和统一 own-ship 航向决策。<br>Adds the 360-degree traffic radar, forward-traffic HSI overlay, and unified own-ship heading selection.
 - 新增 BMP388 气压高度/升降率、可调 QNH，以及可滚动实时 DIAG 页面。<br>Adds BMP388 altitude/vertical speed, adjustable QNH, and the scrollable live DIAG page.
-- 增强 GT-U8 GPS/北斗诊断、RMC + PPS 授时，并通过 BLE 输出 GDL90 Ownship Report。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC + PPS time discipline, and BLE GDL90 Ownship Report output.
+- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 仍是未实现预留。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS remains an unimplemented reservation.
 - 新增 MicroSD 探测、Flash/MicroSD 日志切换、约 1 GiB 轮转保留和受保护格式化。<br>Adds MicroSD detection, Flash/MicroSD log selection, about 1 GiB rotation retention, and guarded formatting.
 - 完成 2.4 寸载板、板载 1090 MHz IFA 天线、3D 打印外壳和面板原型实物验证。<br>Documents the fabricated 2.4-inch carrier, on-board 1090 MHz IFA antenna, printed enclosure, and faceplate prototype.
 
@@ -106,19 +113,18 @@ As of **2026-06-11**, the `v0.8.0` firmware includes ADS-B reception and decode,
 | UART、LittleFS / MicroSD 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS/MicroSD files, and BLE raw ts-line output | 已实现 / Implemented |
 | BLE GATT：GDL90 Ownship、Traffic、Heartbeat、Raw、Time Sync | BLE GATT: GDL90 Ownship, Traffic, Heartbeat, Raw, and Time Sync | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
-| GT-U8 GPS / 北斗定位、PPS + RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, PPS + RMC time discipline, GPS own-ship fallback | 已实现 / Implemented |
+| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 未实现 / Implemented; PPS not implemented |
 | BMP388 气压高度和升降率，QNH 可调 | BMP388 barometric altitude and vertical speed with adjustable QNH | 已实现 / Implemented |
-| TK024F3036 / ST7789 320x240 SPI 屏幕，PFD 约 30 FPS | TK024F3036 / ST7789 320x240 SPI display, PFD around 30 FPS | 已实现 / Implemented |
+| ST7701 480×800 MIPI-DSI 面板，PPA 转为 800×480 横屏，双 DPI buffer | ST7701 480×800 MIPI-DSI panel, PPA-transformed to 800×480 landscape with dual DPI buffers | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |
 | 360° 交通雷达：航向朝上/北向上、2/5/10/20 NM、目标选择和相对高度 | 360° traffic radar: heading-up/north-up, 2/5/10/20 NM, target selection, relative altitude | 已实现 / Implemented |
 | PFD HSI 前方交通叠加和后方目标计数 | Forward-traffic overlay and aft-target count on the PFD HSI | 已实现 / Implemented |
 | ADS-B 列表页：ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE 和详情面板 | ADS-B list page: ICAO, callsign, country, ALT, SPD, HDG, VS, SQK, TYPE, and detail pane | 已实现 / Implemented |
 | 内置航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Embedded aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
-| TARE 在 ADS-B 列表中绑定 own-ship，PFD 可用本机 ADS-B 数据显示 ALT/GS/VS | TARE binds own-ship in ADS-B list; PFD can source ALT/GS/VS from bound ADS-B traffic | 已实现 / Implemented |
-| BNO085 100 Hz 姿态融合、校准向导、TARE 归零/持久化/工厂重置 | BNO085 100 Hz attitude fusion, calibration wizard, TARE zero/persist/factory reset | 已实现 / Implemented |
+| BNO085 100 Hz 姿态融合、校准向导和 dock 长按“调平”持久化 | BNO085 100 Hz attitude fusion, calibration wizard, and persistent dock Level action | 已实现 / Implemented |
 | Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
-| MODE 短按切换 PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG；长按进入深睡眠 | MODE cycles PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG; long-press sleeps | 已实现 / Implemented |
+| GT911 触摸 FAB/dock 直接切换六页面，FAB 可拖动记忆，详情页三路返回 | GT911 touch FAB/dock selects six pages directly, remembers FAB position, and provides three detail-page back paths | 已实现 / Implemented |
 | RTL-SDR IQ stall 触发软重连，多次失败后才重启整机 | RTL-SDR IQ-stall soft re-init before full restart fallback | 已实现 / Implemented |
 
 ## 硬件清单 / Hardware Bill of Materials
@@ -133,11 +139,16 @@ As of **2026-06-11**, the `v0.8.0` firmware includes ADS-B reception and decode,
 |---|---|
 | <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
 
-### 载板与外壳 / Carrier Board & Enclosure
+### 历史载板与外壳 / Legacy Carrier Board & Enclosure
 
-2.4 寸版载板（120×80 mm）把 ESP32-P4 模组、GPS（GT-U8）、IMU（BNO085）、气压计（BMP388）、RTL-SDR 接口和**板载 1090 MHz IFA 天线**集成到一块 PCB，配 3.7V 锂电 + 充电模块做便携供电；配套 3D 打印外壳带屏窗、四按钮孔和航空风格面板。立创EDA 工程见 [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/)（含完整 `.epro2` 工程、原理图/PCB 源码、3D 外壳）。
+以下 2.4 寸载板照片和设计只记录 v0.8.0 历史原型，不是当前 Rev1.2
+4.3 寸板的装配或接线指南。历史立创EDA 工程见
+[`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/)。
 
-The 2.4-inch carrier board (120×80 mm) integrates the ESP32-P4 module, GPS (GT-U8), IMU (BNO085), barometer (BMP388), RTL-SDR interface, and an **on-board 1090 MHz IFA antenna** on a single PCB, powered portably by a 3.7V Li-ion cell plus charger module; a matching 3D-printed enclosure provides a display window, four button holes, and an aviation-style faceplate. EasyEDA project: [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/) (full `.epro2` project, schematic/PCB sources, 3D shell).
+The following 2.4-inch carrier photos and design files document the legacy
+v0.8.0 prototype. They are not assembly or wiring instructions for the
+current Rev1.2 4.3-inch board. Legacy EasyEDA sources:
+[`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/).
 
 | 载板 3D · 正面 / PCB 3D Front | 载板 3D · 背面（电池面）/ PCB 3D Back (battery side) |
 |---|---|
@@ -165,20 +176,21 @@ The 2.4-inch carrier board (120×80 mm) integrates the ESP32-P4 module, GPS (GT-
 
 | 硬件 | Hardware | 说明 / Notes |
 |---|---|---|
-| Waveshare ESP32-P4-WIFI6 | Waveshare ESP32-P4-WIFI6 | ESP32-P4NRW32 主控，32 MB Nor Flash，32 MB PSRAM，板载 ESP32-C6-MINI-1 无线协处理器。<br>Main ESP32-P4NRW32 board with 32 MB Nor Flash, 32 MB PSRAM, and on-board ESP32-C6-MINI-1 radio co-processor. |
+| Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Rev1.2 一体板：ESP32-P4NRW32、32 MB NOR、32 MB PSRAM、ESP32-C6、ST7701 和 GT911。<br>Rev1.2 integrated board with ESP32-P4NRW32, 32 MB NOR, 32 MB PSRAM, ESP32-C6, ST7701, and GT911. |
 | USB-C 数据线 | USB-C data cable | 用于 P4 烧录、串口监视和供电；必须是数据线。<br>Used for P4 flashing, serial monitoring, and power; it must support data, not charge-only. |
 | RTL-SDR FC0013 USB Dongle | RTL-SDR FC0013 USB dongle | 当前推荐 FC0013 tuner 版本，成本低，适合本项目 1090 MHz ADS-B 接收；固件按 1090 MHz / 2 MSPS 配置，并使用最大手动增益。<br>Currently recommended with the FC0013 tuner because it is inexpensive and suitable for this 1090 MHz ADS-B receiver; firmware defaults to 1090 MHz / 2 MSPS and max manual gain. |
-| USB Type-A 母座到 MX1.25 4-pin OTG 线 | USB Type-A female to MX1.25 4-pin OTG cable | 接到板载 P1 USB HS OTG 口，给 RTL-SDR 走高速 USB 数据路径。<br>Connects the RTL-SDR to the board's P1 USB HS OTG port for the high-speed USB data path. |
+| USB-C OTG 转接头或有源 USB Hub | USB-C OTG adapter or powered USB hub | 把 RTL-SDR 接到 H2 原生 USB 2.0 HS Type-C；P1 是 C6 下载排针。<br>Connects RTL-SDR to H2 native USB 2.0 HS Type-C; P1 is the C6 download header. |
 | 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接 RTL-SDR；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the RTL-SDR; real-world range depends strongly on antenna placement and power noise. |
-| 2.4 寸 TK024F3036 / ST7789 半透反射 SPI 屏 + `TK024F304189-SPI` 转接板 | 2.4-inch TK024F3036 / ST7789 transflective SPI display with `TK024F304189-SPI` breakout | 已验证；SPI2 左排 GPIO 28/29/30/31，背光 GPIO50。<br>Verified; SPI2 is wired on the left header at GPIO 28/29/30/31 with backlight on GPIO50. |
-| GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；INT GPIO20、RST GPIO21。<br>I2C0 wiring: SDA GPIO7, SCL GPIO8, INT GPIO20, RST GPIO21. |
-| 4 个常开轻触按键 | Four normally-open tact buttons | TARE GPIO26，MODE GPIO5，UP GPIO22，DOWN GPIO23；按下接 GND。<br>TARE GPIO26, MODE GPIO5, UP GPIO22, DOWN GPIO23; each button shorts its GPIO to GND when pressed. |
+| GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
 
-### BOM 成本参考 / BOM Cost Reference
+### 历史 BOM 成本参考 / Legacy BOM Cost Reference
 
-以下为当前完整原型的人民币成本参考，实际价格会随采购渠道、数量、运费和替代料变化。美元价格按粗略汇率 **¥1 ≈ $0.15** 估算；反向参考 **$1 ≈ ¥6.78**。BMP388 和 GT-U8 已计入 `v0.8.0` 载板方案。
+以下成本表属于旧 2.4 寸 v0.8.0 原型，保留用于历史复盘，**不能**作为当前
+4.3 寸一体板的采购清单。价格、汇率和供应情况也没有更新。
 
-The following costs cover the complete current prototype and will vary with supplier, quantity, shipping, and substitutions. USD prices are rough estimates using **¥1 ≈ $0.15**; reverse reference is **$1 ≈ ¥6.78**. BMP388 and GT-U8 are included in the `v0.8.0` carrier-board baseline.
+The following costs belong to the legacy 2.4-inch v0.8.0 prototype and remain
+only for historical review. They are **not** a procurement list for the
+current 4.3-inch integrated board, and prices/exchange rates are not current.
 
 | 物料 | Part | 人民币参考 / RMB Reference | 美元估算 / USD Estimate | 备注 / Notes |
 |---|---|---:|---:|---|
@@ -203,7 +215,7 @@ The following costs cover the complete current prototype and will vary with supp
 | 硬件 | Hardware | 说明 / Notes |
 |---|---|---|
 | USB-UART 转接器 | USB-UART adapter | 每块新 Waveshare 板首次烧 ESP32-C6 hosted slave 固件时需要；详见 [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md)。<br>Required once per fresh Waveshare board to flash the ESP32-C6 hosted slave firmware; see [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md). |
-| 杜邦线 / 短接线 | Jumper wires / shorting wire | 连接 LCD、IMU、按钮，以及 C6 首次烧录时短接 IO9 到 GND。<br>Used for LCD, IMU, and button wiring, plus shorting C6 IO9 to GND during first-time C6 flashing. |
+| 杜邦线 / 短接线 | Jumper wires / shorting wire | 连接 IMU/GPS/BMP388，以及 C6 首次烧录时把 P1-3 IO9 短接到 GND。<br>Used for IMU/GPS/BMP388 wiring and shorting P1-3 IO9 to GND during first-time C6 flashing. |
 | 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | 电池供电版本使用；给系统提供稳定 5V 输入。<br>Used in battery-powered builds to provide a stable 5V system input. |
 | 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | 便携版本的电源选项；容量可按外壳和续航目标调整。<br>Portable power option; capacity can be adjusted for enclosure size and endurance target. |
 | 5 V 外部供电 | External 5 V power | RTL-SDR 功耗约数百 mA，电脑 USB 口供电不稳时建议使用更可靠供电。<br>RTL-SDR dongles can draw a few hundred mA; use a reliable 5V supply if a computer USB port is unstable. |
@@ -258,8 +270,8 @@ The firmware embeds three local identity databases so ICAO24 addresses and ADS-B
 | 调整 sdkconfig | Tune sdkconfig options | [`docs/configuration.md`](docs/configuration.md) | [`docs/configuration-zh_CN.md`](docs/configuration-zh_CN.md) |
 | 集成移动端 BLE | Integrate a mobile BLE client | [`docs/ble_protocol.md`](docs/ble_protocol.md) | [`docs/ble_protocol-zh_CN.md`](docs/ble_protocol-zh_CN.md) |
 | 维护内置航空识别数据库 | Maintain embedded aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
-| 使用四按钮和 PFD | Use the four buttons and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
-| 接 LCD、IMU、按钮、RTL-SDR | Wire LCD, IMU, buttons, and RTL-SDR | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
+| 使用 4.3 寸触摸 UI 和 PFD | Use the 4.3-inch touch UI and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
+| 接 IMU、GPS、BMP388、RTL-SDR 或 J3 扩展 | Wire IMU, GPS, BMP388, RTL-SDR, or J3 expansion | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |
 | 浏览全部文档语言覆盖 | Browse all docs and language coverage | [`docs/README.md`](docs/README.md) | [`docs/README-zh_CN.md`](docs/README-zh_CN.md) |
 
@@ -286,19 +298,21 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 
 ## 已知限制 / Known Limits
 
-- BLE pairing-window 手势已检测；移动端配对窗口 UI 尚未实现。
+- 当前 GT911 固件只使用第一个触点，未启用五点手势。
 - BLE Device Information Service 尚未暴露固件版本；版本目前显示在 boot splash 和 ABOUT 页。
 - GDL90 Heartbeat 的 `utc_ok` 位尚未随 GPS/BLE 校时状态更新；客户端应以时间戳值为准。
 - Wi-Fi 分发、BLE 配置写特征和 OTA A/B 分区仍是后续工作。
-- GDL90 Ownship Report 需要有效 GPS fix 或手动绑定的本机目标；无有效位置时不会发送可信本机位置。
-- ESP32-P4 v1.x 深睡眠 GPIO hold 有 silicon 限制，MODE 长按可进入深睡眠并唤醒，但背光残余电流仍受硬件版本影响。
+- GDL90 Ownship Report 需要有效 GPS fix 或编译期配置的本机 ICAO；无有效位置时不会发送可信本机位置。
+- GPIO50 PPS 只是接线预留；当前固件没有 PPS GPIO 中断或授时纪律。
+- 当前触摸 UI 没有旧 TARE 十秒工厂重置/DCD 擦除入口。
 
-- The BLE pairing-window gesture is detected; the mobile pairing-window UI is not implemented yet.
+- The current GT911 firmware consumes only the first contact; five-point gestures are not enabled.
 - BLE Device Information Service does not yet expose firmware version; the version is shown on the boot splash and ABOUT page.
 - The GDL90 Heartbeat `utc_ok` bit does not yet follow GPS/BLE clock discipline; clients should use the timestamp value.
 - Wi-Fi distribution, BLE configuration-write characteristics, and OTA A/B partitions remain future work.
-- GDL90 Ownship Report requires a valid GPS fix or a manually bound own-ship target; the firmware does not advertise a trustworthy own position without one.
-- ESP32-P4 v1.x has deep-sleep GPIO-hold limitations; MODE long-press sleep/wake works, but residual backlight current depends on hardware revision.
+- GDL90 Ownship Report requires a valid GPS fix or a compile-time own-ship ICAO; the firmware does not advertise a trustworthy own position without one.
+- GPIO50 PPS is only a wiring reservation; current firmware has no PPS GPIO interrupt or time discipline.
+- The touch UI has no equivalent of the former ten-second TARE factory-reset/DCD-wipe gesture.
 
 ## 致谢 / Credits
 
