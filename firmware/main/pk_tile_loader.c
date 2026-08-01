@@ -279,12 +279,35 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
      * FILE* 关掉的窗口，回来 fread 就是已关句柄。渲染线程不等这把锁，长持无害。 */
     xSemaphoreTake(s_io_lock, portMAX_DELAY);
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    bool idx_ok = pack_index < s_store.count;
+    size_t pack_count = s_store.count;
+    bool idx_ok = pack_index < pack_count;
     pack = idx_ok ? &s_store.packs[pack_index] : NULL;
     xSemaphoreGive(s_lock);          /* meta 校验完立刻放,I/O 只握 io_lock */
     (void)route_unused;
 
     bool found = idx_ok && pk_pmtiles_find_tile(&pack->pm, z, x, y, &loc);
+    if (!found) {
+        /* 路由只看包的 bounds/zoom 矩形范围，命中的包不一定真有这块瓦片：
+         * 边界那一列瓦片"贴着"包边界时会被判为覆盖，而出包渲染的是严格落在
+         * bounds 内的瓦片，于是那一列就是洞（罩哥 2026-08-01 实测：z9 x=415
+         * 整列空白——该列右边缘正好压在珠三角试点包的西边界 112.5°E 上）。
+         *
+         * 这种"声称覆盖、实际没有"的洞，降级到其它同样覆盖该瓦片的包去找，
+         * 通常就落回全球底图包。缓存 key 仍用路由选中的 pack_index（渲染线程
+         * 按同一套路由算 key），只是数据来源换了一个包，两边保持一致。 */
+        for (size_t i = 0; i < pack_count && !found; i++) {
+            if (i == pack_index) continue;
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            pk_map_pack_t *alt = (i < s_store.count) ? &s_store.packs[i] : NULL;
+            bool z_ok = alt && z >= alt->meta.min_zoom && z <= alt->meta.max_zoom;
+            xSemaphoreGive(s_lock);
+            if (!z_ok) continue;
+            if (pk_pmtiles_find_tile(&alt->pm, z, x, y, &loc)) {
+                pack = alt;
+                found = true;
+            }
+        }
+    }
     if (!found) {
         xSemaphoreGive(s_io_lock);
         return false;
