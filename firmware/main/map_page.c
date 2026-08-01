@@ -465,6 +465,20 @@ void pk_map_page_render(uint16_t *fb)
 /* ── 触摸 ─────────────────────────────────────────────────────────── */
 bool pk_map_page_touch(int x, int y)
 {
+    /* FAB 是浮在页面之上的 LVGL 控件，落在它身上的按下必须**不吃**、返回 false
+     * 让给 LVGL——touch_gt911 的分发是 `eaten = (mode==MAP && 本函数())` 的短路
+     * 契约，本函数以前无论点哪儿都返回 true，等于把 FAB 的点击全吞了（罩哥
+     * 2026-08-01：点过缩放后发现 dock FAB 点不动）。
+     *
+     * 只在"还没拿到这次按压"时让路：已经在拖地图的过程中手指划过 FAB，那次
+     * 拖动仍归本页面，不能中途易主。 */
+    if (!s_press_active) {
+        int fx, fy, fw, fh;
+        if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh) &&
+            x >= fx && x < fx + fw && y >= fy && y < fy + fh)
+            return false;
+    }
+
     if (!s_press_active) {
         int zin_y, zout_y, rc_y;
         btn_layout(&zin_y, &zout_y, &rc_y);
