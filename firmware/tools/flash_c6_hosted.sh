@@ -11,8 +11,8 @@ readonly SCRIPT_DIR
 FIRMWARE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly FIRMWARE_DIR
 readonly DEFAULT_IMAGE="${FIRMWARE_DIR}/network_adapter_esp32c6.bin"
-readonly DEFAULT_IDF_PATH="/Users/samwu/.espressif/v6.0.1/esp-idf"
-readonly DEFAULT_IDF_TOOLS_PATH="/Users/samwu/.espressif"
+readonly DEFAULT_IDF_PATH="${HOME}/.espressif/v6.0.1/esp-idf"
+readonly DEFAULT_IDF_TOOLS_PATH="${HOME}/.espressif"
 readonly PORT_POLL_SECONDS=1
 
 image_path="${DEFAULT_IMAGE}"

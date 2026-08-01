@@ -54,9 +54,9 @@ export ESP_IDF_VERSION
 # --- 2. Auto-discover ESP-IDF if env isn't already set up ---------------
 #
 # Honour the user's environment first; only paper over missing vars if
-# they haven't sourced export.sh. The fallback paths match this
-# machine's known install (`/Users/samwu/.espressif/...`); adapt
-# IDF_PATH and IDF_TOOLS_PATH if you move the install.
+# they haven't sourced export.sh. The fallback paths assume the
+# default installer layout under `$HOME/.espressif/`; adapt IDF_PATH
+# and IDF_TOOLS_PATH if you put the install somewhere else.
 
 DEFAULT_IDF_PATH="${HOME}/.espressif/v6.0.1/esp-idf"
 DEFAULT_IDF_TOOLS_PATH="${HOME}/.espressif/tools"

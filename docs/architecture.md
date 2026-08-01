@@ -263,8 +263,7 @@ discard them — the reference Pilot Kit app does.
 
 Pilot Kit connects a GT-U8 GPS over UART, a BMP388 barometer (I²C0,
 `0x76`), and uses the Rev1.2 board's microSD slot. GPIO50 may be reserved
-for future PPS work, but that path is not implemented. Design notes:
-[`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md).
+for future PPS work, but that path is not implemented.
 How each slots into the architecture:
 
 - **GPS time sync** (`gps_task.c`) — GPS UTC from RMC seeds `settimeofday()`. GPS is

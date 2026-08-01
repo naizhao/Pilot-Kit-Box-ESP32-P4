@@ -91,8 +91,8 @@ static button_t s_buttons[PK_BTN_COUNT] = {
         /* GPIO5 (left header) — LP_IO so the long-press handler can put
          * the device into deep sleep and a subsequent press can wake it.
          * GPIO27 (HP_IO) was the original wiring but can't survive
-         * deep-sleep power gating. See docs/superpowers/plans/
-         * 2026-05-21-power-button.md. */
+         * deep-sleep power gating: HP_IO pads are powered down in deep
+         * sleep, so a press on GPIO27 can never generate a wake event. */
         .id = PK_BTN_MODE, .gpio = 5,
         .combo_eligible = false,
         .emits_long_press = true, .emits_very_long_press = false,

@@ -23,10 +23,8 @@ i18n_catalog.py            词条唯一真源（KEY + 各语言译文）
 ## 1. 配 .env
 
 翻译脚本**不含任何密钥**，key 只从环境变量或仓库根 `.env` 读。
-**变量名和 5 级 provider fallback 与 ServBay 全家桶的翻译脚本同构**
-（`ServBay-Windows/translate_app_lang.py`、`ServBay-macOS/Scripts/translate_swiftui_strings.py`、
-`servbay-support/scripts/translate.py` …），同一份 `.env` 跨仓库通用，
-维护的人不用学两套。
+**变量名和 5 级 provider fallback 沿用我们其它项目里同类翻译脚本的既有约定**
+（不是这里临时发明的一套），同一份 `.env` 跨仓库通用，维护的人不用学两套。
 
 ```bash
 cp .env.example .env      # 在仓库根目录
@@ -172,9 +170,10 @@ python3 firmware/scripts/gen_i18n_assets.py
 收下之前还会先做一次清洗（`sanitize_value()`）：剥掉代码围栏 ` ```…``` ` 和
 首尾成对引号，这是模型最爱多加的两样东西。
 
-> 这一套「响应必须通过校验，否则视为失败」的思路来自
-> `~/hosts/servbay-support/scripts/translate_release_notes.py:295-310`
-> （那份校验 release note 必须以 `##` 开头、必须含版本号、只能有一个版本块）。
+> 这一套「响应必须通过校验，否则视为失败」的思路来自我们另一个项目里翻译
+> release note 的脚本（那份校验译文必须以 `##` 开头、必须含版本号、
+> 只能有一个版本块）——模型偶尔会返回结构正确但内容跑偏的东西，
+> 不校验就会静默污染产物。
 
 ---
 

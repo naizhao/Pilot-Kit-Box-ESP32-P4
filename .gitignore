@@ -51,6 +51,11 @@ firmware/dependencies.lock
 IMPLEMENTATION_PLAN.md
 __pycache__
 
+# 本地临时工作区：抓的串口日志、试编译出来的整棵 ESP-IDF 构建树等等。
+# 这些产物里带着本机绝对路径（$HOME/.espressif/...），一次 `git add -A`
+# 就会把上百个文件连同用户名一起提交到这个开源仓库。放什么随意，但不进 git。
+/tmp/
+
 # Object and compiler intermediate files
 *.o
 *.obj

@@ -133,9 +133,7 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 
 Pilot Kit 通过 UART 连接 GT-U8 GPS，通过 I²C0（`0x76`）连接 BMP388，
 并使用 Rev1.2 板载 microSD 卡槽。GPIO50 可为未来 PPS 预留，但当前路径
-未实现。设计背景见
-[`superpowers/specs/2026-05-31-gps-baro-timing-storage.md`](superpowers/specs/2026-05-31-gps-baro-timing-storage.md)。
-各能力如何接入上面的架构：
+未实现。各能力如何接入上面的架构：
 
 - **GPS 授时**（`gps_task.c`）：GPS RMC UTC 设置 `settimeofday()`。**GPS 优先**，
   BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可
