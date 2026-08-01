@@ -33,6 +33,7 @@
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
+#include "pk_aero_db.h"
 #include "pk_sdcard.h"
 #include "display.h"
 #include "imu_task.h"
@@ -317,6 +318,10 @@ void app_main(void)
     pk_config_storage_load();
     pk_batt_init();
     pk_sdcard_init();
+    /* SD 航空数据库懒加载：只创建后台任务、零 IO（开机不加载是定案）。
+     * 须晚于 pk_sdcard_init()——任务靠 pk_sdcard_is_mounted() 决定何时
+     * 开始分块加载 /sdcard/aero/pk_aero.bin。 */
+    pk_aero_db_init();
 
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {

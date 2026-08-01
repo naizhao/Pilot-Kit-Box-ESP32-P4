@@ -24,6 +24,8 @@ idf_component_register(
         "config_storage.c"
         "config_traffic.c"
         "pk_sdcard.c"
+        "pk_aero_reader.c"
+        "pk_aero_db.c"
         "display.c"
         "imu_task.c"
         "baro_task.c"
@@ -111,4 +113,5 @@ idf_component_register(
         fatfs                    # microSD FAT mount/format (pk_sdcard.c)
         esp_driver_sdmmc         # SDMMC host for the on-board TF1 slot
         sdmmc                    # sdmmc_card_t protocol layer
+        mbedtls                  # PSA Crypto：pk_aero_db 的 AES-CTR + SHA-256
 )

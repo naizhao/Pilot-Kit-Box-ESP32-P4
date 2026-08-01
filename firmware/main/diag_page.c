@@ -42,6 +42,7 @@
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
+#include "pk_aero_db.h"      /* pk_aero_db_status_get — SD 航空库状态 */
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
 #include <string.h>
 #include <sys/time.h>
@@ -613,7 +614,44 @@ void pk_diag_page_render(uint16_t *fb)
         draw_card(fb, 1, 5, card_title(11), buf, ST_OK);
     }
 
-    s_card_rows = 6;
+    /* ── AERO DB ──
+     * SD 航空数据库（/sdcard/aero/pk_aero.bin）的加载状态：周期 + 记录数 +
+     * 状态/错误。属于 microSD 那一类"卡上有什么"的信息，跟在存储区块后面。
+     *
+     * 追加在网格末尾而不是插到 SD 卡旁边：卡片的表序号 = 触摸分派与
+     * CARD_TITLE 的下标，往中间插一张会把后面所有卡的详情映射错位。
+     * 标题/文案用 ASCII 字面量、不走 catalog：新增词条要重跑字库生成
+     * 流程（gen_i18n_assets.py，见 project_i18n_onscreen_text_workflow），
+     * 本卡全部内容（周期、计数、状态词）本来就是 ASCII，先不动字库。
+     * 序号 12 ≥ CARD_N，触摸层自然不进详情页——本卡暂无详情。 */
+    {
+        pk_aero_db_status_t a;
+        pk_aero_db_status_get(&a);
+        card_state_t st;
+        switch (a.state) {
+        case PK_AERO_DB_READY:
+            snprintf(buf, sizeof(buf), "%s READY  %lu apt",
+                     a.cycle, (unsigned long)a.n_airports);
+            st = ST_OK;
+            break;
+        case PK_AERO_DB_LOADING:
+            snprintf(buf, sizeof(buf), "loading %u%%", (unsigned)a.load_pct);
+            st = ST_WARN;   /* 短暂过渡态（约 2 s），看见它就是"稍等" */
+            break;
+        case PK_AERO_DB_ERROR:
+            snprintf(buf, sizeof(buf), "ERR %s", a.err ? a.err : "?");
+            st = ST_BAD;
+            break;
+        default:
+            /* 无卡/无文件是正常用法（数据库是可选内容包），灰而不红 */
+            snprintf(buf, sizeof(buf), "no data");
+            st = ST_IDLE;
+            break;
+        }
+        draw_card(fb, 0, 6, "AERO DB", buf, st);
+    }
+
+    s_card_rows = 7;
 
     /* 滚动条：贴右缘，只在有内容超出一屏时出现。 */
     {
