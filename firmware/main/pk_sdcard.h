@@ -40,6 +40,23 @@ bool pk_sdcard_info(uint64_t *out_total, uint64_t *out_free);
  * 阻塞调用，耗时数秒；要求当前已挂载。完成后保持挂载状态。 */
 esp_err_t pk_sdcard_format(void);
 
+/* 注册「卸载前静默」回调（固定 4 槽，满了打 ERROR 丢弃）。
+ *
+ * 为什么需要它：IDF 的 esp_vfs_fat_sdcard_unmount() 会无条件 free 掉含所有
+ * 打开文件 FIL 数组的 fat_ctx（vfs_fat_sdmmc.c unmount_card_core，不检查
+ * 是否还有文件开着），卸载时系统里只要还有打开的 SD fd 或在途 SD I/O，
+ * 就是 use-after-free + 在途事务撞上 slot 注销/LDO 断电，SDMMC 驱动状态
+ * 被打坏后重插永远挂不上（2026-08-01 地图/航空模块引入的热插拔回归）。
+ *
+ * 契约：
+ *   - 回调在 sd_detect 任务上、持 pk_sdcard 内部锁的上下文中执行，此时
+ *     状态已翻成 PK_SD_NO_CARD；
+ *   - 回调内只允许拿各自模块自己的锁并关闭/静默自己的 SD I/O，禁止调用
+ *     会拿 pk_sdcard 锁的 API（pk_sdcard_format 等；pk_sdcard_is_mounted /
+ *     pk_sdcard_state 是 volatile 读，安全）；
+ *   - 回调返回时必须保证本模块无打开的 SD fd、无在途 SD I/O。 */
+void pk_sdcard_register_pre_unmount_cb(void (*cb)(void));
+
 #ifdef __cplusplus
 }
 #endif

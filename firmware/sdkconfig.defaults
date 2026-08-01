@@ -201,6 +201,13 @@ CONFIG_LV_FONT_MONTSERRAT_22=y
 # CONFIG_LV_BUILD_EXAMPLES is not set
 # CONFIG_LV_BUILD_DEMOS is not set
 
+# 地图页（pk_tile_loader.c）解码 PMTiles 里的 PNG 栅格瓦片要用。只调
+# lodepng_decode32() 这一个函数，不走 lv_image/lv_fs 那一整套。
+# LV_USE_LODEPNG 不开:瓦片 PNG 解码走 main/third_party/pk_lodepng(上游原版,
+# 纯 malloc 线程安全)。LVGL 那份被 patch 成 lv_draw_buf_t*+lv_malloc(非线程安全),
+# 且与 vendored 版同名符号,同开会链接冲突。
+# CONFIG_LV_USE_LODEPNG is not set
+
 # ── esp_hosted：BT feature gate ───────────────────────────────────
 #
 # 新版 esp_hosted 把蓝牙拆成了可选 feature（default n）；旧版没有这一层，

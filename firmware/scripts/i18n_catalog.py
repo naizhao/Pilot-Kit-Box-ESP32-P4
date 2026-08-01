@@ -244,6 +244,13 @@ STRINGS = [
         },
     ),
     (
+        "NAV_MAP",
+        {
+            "en": "Map",
+            "zh": "地图",
+        },
+    ),
+    (
         "NAV_LIST",
         {
             "en": "List",
@@ -877,4 +884,35 @@ STRINGS = [
     # 两行一个叫 B 一个叫 ALT，读不出「这行是米」——而中国空域用米制高度层，
     # 这一行对中国飞行员价值最高，标签却最含糊。
     ("PFD_IB_ALT_M", {"en": "ALT(M)", "zh": "米制"}),
+
+    # ══════════════════════════════════════════════════════════════════
+    # 地图页（map_page.c，SD 离线地图一期，
+    # docs/superpowers/specs/2026-08-01-sd-offline-map-design.md）
+    #
+    # 页签短名 NAV_MAP 已在导航区那一组里（挨着 NAV_TRAFFIC），这里是页面
+    # 自身要用的标题/错误态/按钮文案。
+    # ══════════════════════════════════════════════════════════════════
+    ("MAP_TITLE", {"en": "MAP", "zh": "地图"}),
+    # 无 SD / 无 maps 目录 / 无有效包——三种成因合并成一个标题,靠 HINT 那一行
+    # 区分（同 diag 页"同一症状、不同 HINT"的写法）。
+    ("MAP_NO_DATA_TITLE", {"en": "NO OFFLINE MAP", "zh": "无离线地图"}),
+    ("MAP_HINT_NO_CARD",  {"en": "INSERT A MICROSD WITH A /maps FOLDER",
+                           "zh": "请插入含 /maps 目录的 microSD 卡"}),
+    ("MAP_HINT_NO_PACK",  {"en": "NO VALID MAP PACKAGE IN /sdcard/maps",
+                           "zh": "/sdcard/maps 目录下没有有效地图包"}),
+    # 运行中拔卡：已缓存瓦片继续显示,这条只提示"新瓦片拿不到了"。
+    ("MAP_SD_REMOVED", {"en": "MICROSD REMOVED — SHOWING CACHED MAP",
+                        "zh": "SD 卡已拔出——显示缓存地图"}),
+    # 回中按钮：手动平移后出现,点击回到跟随本机+居中。短词,要塞进一个
+    # 56 px 圆按钮。
+    ("MAP_RECENTER", {"en": "CENTER", "zh": "回中"}),
+    # 越级放大（overzoom）提示：数据只到某个 zoom,继续放大时用父瓦片截取
+    # 放大显示,弱化提示"这不是真实精度"。%d 是放大倍数。
+    ("MAP_OVERZOOM_FMT", {"en": "OVERZOOM x%d", "zh": "越级放大 x%d"}),
+    # 底图署名——FlightMate 把这行画成黑底黑字看不见的教训,不能重蹈。
+    # 两种语言原样一致：地图数据版权声明不译（与 QNH/ICAO 那批术语同一原则）。
+    # 主署名 Pilot Kit Map（罩哥 2026-08-01 定）；OpenStreetMap 保留在后——
+    # 底图数据是 OSM(ODbL)，商用去掉 OSM 署名有合规风险，不可只留自家名。
+    ("MAP_ATTRIBUTION", {"en": "© Pilot Kit Map  © OpenStreetMap",
+                         "zh": "© Pilot Kit Map  © OpenStreetMap"}),
 ]

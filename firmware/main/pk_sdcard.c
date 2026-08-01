@@ -143,7 +143,7 @@ static bool sd_mount_locked(void)
 
     const esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
         .format_if_mount_failed = false,   /* 格式化只走用户显式操作 */
-        .max_files              = 4,
+        .max_files              = 8,       /* 原 4：地图页要同时开多个 .pmtiles 包 */
         .allocation_unit_size   = 16 * 1024,
     };
 
@@ -172,8 +172,34 @@ static bool sd_mount_locked(void)
     return true;
 }
 
+/* 「卸载前静默」回调表。固定槽位够用：目前只有 tile_loader 与 aero_db
+ * 两个 SD 消费方（record_sink_file 是上轮修复前就有的旧句柄，不在本轮
+ * 回归范围）。注册通常发生在 init 期，但探测任务已在跑，写表要持锁。 */
+#define SD_PRE_UNMOUNT_CB_MAX 4
+static void (*s_pre_unmount_cb[SD_PRE_UNMOUNT_CB_MAX])(void);
+static int s_pre_unmount_cb_n;
+
 static void sd_unmount_locked(void)
 {
+    /*
+     * 顺序要点：先翻状态，再让上层静默，最后才真正 unmount。
+     *
+     * 1) 状态先翻成 NO_CARD——aero 的分块加载每 64 KB 轮询一次
+     *    pk_sdcard_is_mounted()、loader 取件前也查，翻早一步它们立即停发
+     *    新 I/O。原先状态翻转在 unmount **之后**，上层看到的永远太晚。
+     * 2) 依次调回调：各模块以自己的锁为栅栏，等在途 SD 读退出并 fclose
+     *    自己的句柄。这一步之后系统里没有打开的 SD fd、没有在途 I/O，
+     *    esp_vfs_fat_sdcard_unmount() 的无条件 free(fat_ctx) 才不会变成
+     *    use-after-free（IDF 的 vfs_fat_close 即使卡已不在、f_close 报错
+     *    也会无条件释放 FIL 槽与 fd，所以「卸载前 fclose」能可靠清空句柄）。
+     */
+    s_state = PK_SD_NO_CARD;
+    s_total_bytes = 0;
+    s_free_bytes  = 0;
+    for (int i = 0; i < s_pre_unmount_cb_n; i++) {
+        s_pre_unmount_cb[i]();
+    }
+
     if (s_card != NULL) {
         /*
          * 必须检查返回值。
@@ -219,9 +245,6 @@ static void sd_unmount_locked(void)
         /* 断电，让下一张卡能从冷态开始。 */
         sd_power_off_locked();
     }
-    s_state = PK_SD_NO_CARD;
-    s_total_bytes = 0;
-    s_free_bytes  = 0;
 }
 
 /* --- 后台插拔探测 ------------------------------------------------------- */
@@ -321,6 +344,25 @@ bool pk_sdcard_info(uint64_t *out_total, uint64_t *out_free)
     if (out_total) *out_total = s_total_bytes;
     if (out_free)  *out_free  = s_free_bytes;
     return true;
+}
+
+void pk_sdcard_register_pre_unmount_cb(void (*cb)(void))
+{
+    if (cb == NULL) return;
+    /* 探测任务可能正持锁跑卸载序列，写表必须与之互斥；调用方按约定在
+     * pk_sdcard_init() 之后才注册，s_lock 此时必然已建。 */
+    if (s_lock == NULL) {
+        ESP_LOGE(TAG, "register_pre_unmount_cb before init — dropped");
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_pre_unmount_cb_n < SD_PRE_UNMOUNT_CB_MAX) {
+        s_pre_unmount_cb[s_pre_unmount_cb_n++] = cb;
+    } else {
+        ESP_LOGE(TAG, "pre-unmount cb table full (%d) — dropped",
+                 SD_PRE_UNMOUNT_CB_MAX);
+    }
+    xSemaphoreGive(s_lock);
 }
 
 esp_err_t pk_sdcard_format(void)

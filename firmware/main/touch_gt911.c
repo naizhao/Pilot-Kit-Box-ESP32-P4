@@ -40,6 +40,7 @@
 #include "settings_page.h"
 #include "pk_ui_nav.h"
 #include "traffic_page.h"
+#include "map_page.h"
 #include "ui_state.h"
 
 static const char *TAG = "touch";
@@ -165,6 +166,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * 看不见，它的命中表却还留着上一帧的几何——不挡掉的话，点
              * 「Q」会被判成点中了底下的某个分段控件。 */
             eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
+                 || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
                  || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                  || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
                  || (m == PK_UI_MODE_SETTINGS  && (pk_keyboard_page_active()
@@ -172,6 +174,11 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                         : pk_settings_page_touch(lx, ly)))
                  || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
             if (eaten) s_armed = false;
+        } else if (m == PK_UI_MODE_MAP) {
+            /* 地图页没有独立的 drag() 入口——单指拖动平移的每一帧都重复调
+             * pk_map_page_touch()，由它内部的按下/续行状态机区分"新按下"
+             * 还是"接着上一次拖"（见 map_page.h 顶部注释）。 */
+            eaten = pk_map_page_touch(lx, ly);
         } else if (m == PK_UI_MODE_DIAG) {
             eaten = pk_diag_page_drag(lx, ly);
         } else if (m == PK_UI_MODE_SETTINGS) {
@@ -201,6 +208,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 恢复，所有自绘按钮从此全部失灵。 */
         s_armed = true;
         pk_traffic_page_touch_up();
+        pk_map_page_touch_up();
         pk_adsb_list_touch_up();
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();

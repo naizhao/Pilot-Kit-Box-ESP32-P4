@@ -93,8 +93,10 @@ bool pk_ui_nav_dock_open(void) { return s_dock_open; }
  */
 static const pk_tr_id_t DOCK_TABS[] = {
     /* 顺序按「飞行中会看的 → 偶尔查的 → 几乎不动的」排：
-     * 前三个是飞行相关，诊断在出问题时查，设置与关于基本是一次性配置。 */
-    PK_TR_NAV_PFD, PK_TR_NAV_TRAFFIC, PK_TR_NAV_LIST,
+     * 前四个是飞行相关，诊断在出问题时查，设置与关于基本是一次性配置。
+     * MAP 紧跟 TRAFFIC——两者都是"叠了 ADS-B 目标的空间态势图"，只是底图
+     * 不同，放在一起符合用户心智模型。 */
+    PK_TR_NAV_PFD, PK_TR_NAV_TRAFFIC, PK_TR_NAV_MAP, PK_TR_NAV_LIST,
     PK_TR_NAV_DIAG, PK_TR_NAV_SETTINGS, PK_TR_NAV_ABOUT,
 };
 #define DOCK_TAB_CNT (sizeof(DOCK_TABS) / sizeof(DOCK_TABS[0]))
@@ -271,6 +273,20 @@ static int32_t dock_shown_x(void)
 static int32_t fab_x(void)
 {
     return s_fab_left ? FAB_MARGIN : PK_DISPLAY_W - FAB_MARGIN - FAB_D;
+}
+
+/* 供渲染/触摸线程做浮层避让——它们与 LVGL 任务并发,这里只读纯静态量
+ * (s_fab_left/s_fab_y/s_fab_hidden 由 LVGL 任务维护),绝不触碰 lv_obj_*。 */
+static bool s_fab_hidden_mirror;
+
+bool pk_ui_nav_fab_rect(int *out_x, int *out_y, int *out_w, int *out_h)
+{
+    if (s_fab == NULL || s_fab_hidden_mirror) return false;
+    if (out_x) *out_x = (int)fab_x();
+    if (out_y) *out_y = (int)s_fab_y;
+    if (out_w) *out_w = FAB_D;
+    if (out_h) *out_h = FAB_D;
+    return true;
 }
 
 static void fab_apply_pos(void)
@@ -629,6 +645,7 @@ void pk_ui_nav_init(void)
 void pk_ui_nav_set_fab_hidden(bool hidden)
 {
     if (s_fab == NULL) return;
+    s_fab_hidden_mirror = hidden;
     if (hidden) {
         /* 先收 dock 再藏 FAB：dock 的收起动画要飞回 FAB 那一侧的屏外，
          * 顺序反了它会从一个已经不存在的锚点开始滑。 */

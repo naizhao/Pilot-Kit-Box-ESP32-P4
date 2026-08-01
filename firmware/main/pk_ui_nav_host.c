@@ -33,6 +33,7 @@ static pk_ui_mode_t mode_for_tab(int tr_id)
     switch (tr_id) {
     case PK_TR_NAV_PFD:      return PK_UI_MODE_PFD;
     case PK_TR_NAV_TRAFFIC:  return PK_UI_MODE_TRAFFIC;
+    case PK_TR_NAV_MAP:      return PK_UI_MODE_MAP;
     case PK_TR_NAV_LIST:     return PK_UI_MODE_ADSB_LIST;
     case PK_TR_NAV_DIAG:     return PK_UI_MODE_DIAG;
     case PK_TR_NAV_SETTINGS: return PK_UI_MODE_SETTINGS;

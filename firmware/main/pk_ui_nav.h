@@ -39,6 +39,11 @@ bool pk_ui_nav_dock_open(void);
  */
 void pk_ui_nav_set_fab_hidden(bool hidden);
 
+/* FAB 当前占位（含拖动后的位置）。页面拿它做浮层避让——地图页的缩放钮
+ * 会被压在 FAB 底下就是没避让的后果。返回 false 表示 FAB 未创建/隐藏，
+ * 此时不需要避让。 */
+bool pk_ui_nav_fab_rect(int *out_x, int *out_y, int *out_w, int *out_h);
+
 /*
  * 显示 / 收起居中的瞬时提示。msg 为 NULL 或空串即收起。
  *

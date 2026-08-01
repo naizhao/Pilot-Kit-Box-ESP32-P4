@@ -53,6 +53,7 @@
 #include "keyboard_page.h"
 #include "settings_page.h"
 #include "traffic_page.h"
+#include "map_page.h"
 #include "ui_state.h"
 #include "i18n.h"
 
@@ -158,6 +159,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_TRAFFIC:
             pk_traffic_page_render(fb);
+            break;
+
+        case PK_UI_MODE_MAP:
+            pk_map_page_render(fb);
             break;
 
         case PK_UI_MODE_PFD:

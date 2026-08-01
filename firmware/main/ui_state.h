@@ -19,7 +19,7 @@
  * the next frame already shows the new view.
  *
  * MODE short-press cycles through the USER-visible modes:
- *     PFD → TRAFFIC → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
+ *     PFD → TRAFFIC → MAP → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
  * CAL_WIZARD is not in the cycle — it's auto-entered/auto-exited
  * based on IMU calibration state (see pk_ui_cal_wizard_tick below)
  * and the user can also dismiss it manually by pressing MODE.
@@ -43,6 +43,7 @@
 typedef enum {
     PK_UI_MODE_PFD = 0,
     PK_UI_MODE_TRAFFIC,     /* 360° 交通雷达页(本机居中,目标按方位/距离) */
+    PK_UI_MODE_MAP,         /* SD 离线地图页(PMTiles 栅格底图 + ADS-B 叠加) */
     PK_UI_MODE_ADSB_LIST,
     PK_UI_MODE_SETTINGS,
     PK_UI_MODE_ABOUT,
