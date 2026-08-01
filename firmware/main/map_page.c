@@ -461,20 +461,27 @@ bool pk_map_page_touch(int x, int y)
     if (!s_press_active) {
         int zin_y, zout_y, rc_y;
         btn_layout(&zin_y, &zout_y, &rc_y);
+        /* 命中按钮同样要把这次按压标记为 active：触摸驱动在手指按住期间会
+         * 持续上报，不置位的话每一帧都重新走一遍这里——一次点击涨好几级
+         * zoom（罩哥 2026-08-01 实测）。s_btn_down 之后充当"本次按压已归属
+         * 某个按钮"的凭据，下面的重复上报据此直接吃掉。 */
         if (hit_btn(x, y, BTN_ZIN_X, zin_y)) {
             s_btn_down = 1;
             if (s_zoom < MAP_ZOOM_MAX) { s_zoom++; pk_tile_loader_bump_view(); }
+            s_press_active = true;
             return true;
         }
         if (hit_btn(x, y, BTN_ZOUT_X, zout_y)) {
             s_btn_down = 2;
             if (s_zoom > MAP_ZOOM_MIN) { s_zoom--; pk_tile_loader_bump_view(); }
+            s_press_active = true;
             return true;
         }
         if (!s_follow && hit_btn(x, y, BTN_RECENTER_X, rc_y)) {
             s_btn_down = 0;
             s_follow = true;
             pk_tile_loader_bump_view();
+            s_press_active = true;
             return true;
         }
         s_press_active = true;
@@ -482,6 +489,10 @@ bool pk_map_page_touch(int x, int y)
         s_press_ly = y;
         return true;
     }
+
+    /* 本次按压归某个按钮所有：一次按压只算一次，手指赖在按钮上也不拖地图。
+     * 松手由 pk_map_page_touch_up() 清 s_btn_down/s_press_active。 */
+    if (s_btn_down >= 0) return true;
 
     const int dx = x - s_press_lx;
     const int dy = y - s_press_ly;
