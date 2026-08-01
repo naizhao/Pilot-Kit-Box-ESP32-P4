@@ -10,6 +10,12 @@
  *   cc -std=c11 -Wall -Wextra -O0 -g -I firmware/main -o /tmp/test_pmt_leaks \
  *      firmware/test/test_pk_pmtiles.c && leaks --atExit -- /tmp/test_pmt_leaks
  *
+ * 三个真实样本包（pk_map_prd_pilot / pk_map_global / pk_map_cn）都是几十 MB
+ * 到 1.4 GB 的地图数据，不进 git。默认到仓库内 tmp/sd-maps/ 下找（tmp/ 已在
+ * .gitignore 里），可用环境变量 PK_MAP_TEST_DATA_DIR 指到别处（例如直接指
+ * 向 SD 卡挂载点）。默认值是相对路径，所以上面那几行 cc 命令要在仓库根目录
+ * 下跑。样本包缺失时相关段落整段 SKIP，不计入失败。
+ *
  * 样本包 pk_map_prd_pilot.pmtiles（珠三角 z0-12，出包记录见
  * docs/superpowers/specs/2026-08-01-sd-offline-map-design.md）：
  *   852 addressed tiles / 740 root entries / 698 contents，
@@ -24,7 +30,9 @@
  * 量"，是"跑通了这个具体文件"这件事本身的证据。 */
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* pk_tinfl.c 直接把实现拉进本 TU（同 geo.c/traffic_geom.c 的惯例：test 文件
    负责把多个 .c 拼成一个翻译单元）。third_party/ 前缀相对 -I firmware/main。
@@ -33,11 +41,53 @@
 #include "../main/third_party/pk_tinfl.c"
 #include "../main/pk_pmtiles.c"
 
-#ifndef PK_PMTILES_TEST_SAMPLE
-#define PK_PMTILES_TEST_SAMPLE "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_prd_pilot.pmtiles"
+/* 样本包所在目录：默认仓库内 tmp/sd-maps/（相对仓库根目录），
+   PK_MAP_TEST_DATA_DIR 可覆盖。 */
+#ifndef PK_MAP_TEST_DATA_DIR_DEFAULT
+#define PK_MAP_TEST_DATA_DIR_DEFAULT "tmp/sd-maps"
 #endif
 
+/* 缺样本包时统一打这段，告诉别人怎么把它弄回来（唯一的 %s 是当前样本目录）。*/
+#define PK_MAP_TEST_HOWTO \
+    "      样本包不进 git（几十 MB~GB 级地图数据，tmp/ 已在 .gitignore 里）。\n" \
+    "      获取：按项目的 SD 离线地图出包链路（tileserver-gl 渲染 → MBTiles →\n" \
+    "      pmtiles convert）自己出包，或从已刷好的 SD 卡 maps/ 目录拷贝，放到\n" \
+    "      %s/ 下；也可用 PK_MAP_TEST_DATA_DIR 环境变量指向别处。\n"
+
+static char g_sample_prd[512];
+static char g_sample_global[512];
+static char g_sample_cn[512];
+
+static const char *test_data_dir(void)
+{
+    const char *dir = getenv("PK_MAP_TEST_DATA_DIR");
+    return (dir && dir[0]) ? dir : PK_MAP_TEST_DATA_DIR_DEFAULT;
+}
+
+static void init_sample_paths(void)
+{
+    const char *dir = test_data_dir();
+    snprintf(g_sample_prd, sizeof(g_sample_prd), "%s/pk_map_prd_pilot.pmtiles", dir);
+    snprintf(g_sample_global, sizeof(g_sample_global), "%s/pk_map_global.pmtiles", dir);
+    snprintf(g_sample_cn, sizeof(g_sample_cn), "%s/pk_map_cn.pmtiles", dir);
+}
+
 static int g_fail = 0;
+static int g_skip = 0;
+
+static bool file_exists(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+/* 样本包缺失 → 整段跳过：既不算失败，也不静默通过（末尾会汇总 skipped 数）。*/
+static void skip_missing_sample(const char *what, const char *path)
+{
+    g_skip++;
+    fprintf(stderr, "SKIP: %s 不存在——跳过%s，不计入失败\n", path, what);
+    fprintf(stderr, PK_MAP_TEST_HOWTO, test_data_dir());
+}
 
 static void chk_true(const char *what, bool cond)
 {
@@ -224,15 +274,16 @@ static void test_corrupt_input_no_crash(void)
 
 static void test_real_sample(void)
 {
-    printf("-- 真实样本包 %s --\n", PK_PMTILES_TEST_SAMPLE);
-    pk_pmtiles_t pm;
-    bool opened = pk_pmtiles_open_file(&pm, PK_PMTILES_TEST_SAMPLE);
-    chk_true("open_file", opened);
-    if (!opened) {
-        printf("  样本文件缺失，后续断言全部跳过——检查路径是否还在\n");
-        g_fail++;
+    printf("-- 真实样本包 %s --\n", g_sample_prd);
+    if (!file_exists(g_sample_prd)) {
+        skip_missing_sample("珠三角样本包相关的全部断言", g_sample_prd);
         return;
     }
+    pk_pmtiles_t pm;
+    /* 文件在却打不开 = 包坏了/解析器回归，这是真失败，不能当 skip 混过去。 */
+    bool opened = pk_pmtiles_open_file(&pm, g_sample_prd);
+    chk_true("open_file", opened);
+    if (!opened) return;
 
     printf("-- header 字段 --\n");
     chk_u64("version", pm.header.version, 3);
@@ -293,7 +344,7 @@ static void test_real_sample(void)
 /* ------------------------------------------------- 真实叶目录下潜测试 */
 
 /* pk_map_global.pmtiles（全球 z0-9，557MB）不进 git（tmp/ 已在 .gitignore
-   里），只存在于罩哥本机 /Users/samwu/hosts/.../tmp/sd-maps/。它跟珠三角
+   里），只在开发机本地的样本目录（默认 tmp/sd-maps/）下。它跟珠三角
    样本包（叶目录为空，740 条根目录一层装完）不同——header 里
    leaf_dirs_length=704863（>0），root 目录 58 条全部是 run_length==0 的叶
    目录指针，实测任何一次 find_tile 都会真的走一次 pk_pmtiles.c 里
@@ -308,10 +359,8 @@ static void test_real_sample(void)
        offset=286082008 length=1862——这是 PMTiles 构建期内容去重
        （identical content dedup），不是相邻 tile_id 的 runlength 合并，
        是更强的一种复用场景；
-     - z10（超出这个包 max_zoom=9）任意坐标必然查不到。 */
-#ifndef PK_PMTILES_TEST_SAMPLE_GLOBAL
-#define PK_PMTILES_TEST_SAMPLE_GLOBAL "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_global.pmtiles"
-#endif
+     - z10（超出这个包 max_zoom=9）任意坐标必然查不到。
+   路径见文件顶部的 g_sample_global（样本目录 + 固定文件名）。 */
 
 /* pk_map_cn.pmtiles（中国全域 z10-12，1.4GB，同样不进 git）：header
  * leaf_dirs_length=785286（>0），root 71 条全是叶目录指针，entry_count 固
@@ -322,22 +371,20 @@ static void test_real_sample(void)
  * 直接解这个包的根/叶目录）现场验证过的：
  *   - z10 (896,459)/(896,458)/(896,457) 三个不同瓦片落在同一张叶目录
  *     （leaf_dirs_offset+0）；
- *   - z10 (817,356) 落在另一张叶目录（leaf_dirs_offset+11541）。 */
-#ifndef PK_PMTILES_TEST_SAMPLE_CN
-#define PK_PMTILES_TEST_SAMPLE_CN "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_cn.pmtiles"
-#endif
+ *   - z10 (817,356) 落在另一张叶目录（leaf_dirs_offset+11541）。
+ * 路径见文件顶部的 g_sample_cn（样本目录 + 固定文件名）。 */
 
 static void test_global_leaf_directory(void)
 {
-    printf("-- 全球包叶目录下潜 (%s) --\n", PK_PMTILES_TEST_SAMPLE_GLOBAL);
-    pk_pmtiles_t pm;
-    if (!pk_pmtiles_open_file(&pm, PK_PMTILES_TEST_SAMPLE_GLOBAL)) {
-        fprintf(stderr,
-                "SKIP: %s 不存在（该文件不进 git，只在开发机 tmp/sd-maps/ 下）——"
-                "跳过叶目录下潜测试，不计入失败\n",
-                PK_PMTILES_TEST_SAMPLE_GLOBAL);
+    printf("-- 全球包叶目录下潜 (%s) --\n", g_sample_global);
+    if (!file_exists(g_sample_global)) {
+        skip_missing_sample("叶目录下潜测试", g_sample_global);
         return;
     }
+    pk_pmtiles_t pm;
+    bool opened = pk_pmtiles_open_file(&pm, g_sample_global);
+    chk_true("open_file (global)", opened);
+    if (!opened) return;
 
     chk_true("leaf_dirs_length > 0（确有叶目录，不是单层根目录）", pm.header.leaf_dirs_length > 0);
     chk_u64("min_zoom", pm.header.min_zoom, 0);
@@ -466,12 +513,10 @@ static int counting_read(void *ctx, uint64_t off, void *buf, size_t len)
    实现，读根目录+对应叶目录的 tile_id 范围）现场验证过的，不是猜的。 */
 static void test_leaf_cache_reduces_real_reads(void)
 {
-    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", PK_PMTILES_TEST_SAMPLE_GLOBAL);
-    FILE *f = fopen(PK_PMTILES_TEST_SAMPLE_GLOBAL, "rb");
+    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", g_sample_global);
+    FILE *f = fopen(g_sample_global, "rb");
     if (!f) {
-        fprintf(stderr,
-                "SKIP: %s 不存在——跳过读盘计数测试，不计入失败\n",
-                PK_PMTILES_TEST_SAMPLE_GLOBAL);
+        skip_missing_sample("全球包读盘计数测试", g_sample_global);
         return;
     }
     counting_ctx_t ctx = {f, 0};
@@ -522,12 +567,10 @@ static void test_leaf_cache_reduces_real_reads(void)
    不同，确认缓存逻辑不是只在 global 包上凑巧生效。 */
 static void test_leaf_cache_reduces_real_reads_cn(void)
 {
-    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", PK_PMTILES_TEST_SAMPLE_CN);
-    FILE *f = fopen(PK_PMTILES_TEST_SAMPLE_CN, "rb");
+    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", g_sample_cn);
+    FILE *f = fopen(g_sample_cn, "rb");
     if (!f) {
-        fprintf(stderr,
-                "SKIP: %s 不存在——跳过读盘计数测试，不计入失败\n",
-                PK_PMTILES_TEST_SAMPLE_CN);
+        skip_missing_sample("中国包读盘计数测试", g_sample_cn);
         return;
     }
     counting_ctx_t ctx = {f, 0};
@@ -569,6 +612,7 @@ static void test_leaf_cache_reduces_real_reads_cn(void)
 
 int main(void)
 {
+    init_sample_paths();
     test_hilbert_vectors();
     test_runlength_and_binary_search();
     test_corrupt_input_no_crash();
@@ -577,6 +621,6 @@ int main(void)
     test_leaf_cache_lru();
     test_leaf_cache_reduces_real_reads();
     test_leaf_cache_reduces_real_reads_cn();
-    printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
+    printf("%s (%d fail, %d skipped)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_skip);
     return g_fail ? 1 : 0;
 }

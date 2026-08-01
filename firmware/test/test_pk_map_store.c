@@ -7,13 +7,18 @@
  *   1) pk_map_route_find 纯路由——合成的 pk_map_pack_meta_t，不碰磁盘，覆盖
  *      设计文档「取瓦片…按 zoom 与 bounds 路由」那句话本身：多包重叠选
  *      maxzoom 最深者、overzoom 回退、无覆盖、min_zoom_floor 边界。
- *   2) pk_map_store_scan/get_tile 真实 I/O——用罩哥 SD 卡上的两个真实样本包
+ *   2) pk_map_store_scan/get_tile 真实 I/O——用 SD 卡上的两个真实样本包
  *      （pk_map_global.pmtiles 全球 z0-9、pk_map_prd_pilot.pmtiles 珠三角
  *      z0-12）+ 一个手造的坏包，验证坏包跳过、真实路由选包、拔卡/rescan。
- *      样本目录缺失时优雅 skip（不算失败），跟 test_pk_pmtiles.c 一致。
+ *      样本包缺失时优雅 skip（不算失败），跟 test_pk_pmtiles.c 一致。
+ *
+ * 样本包是几十 MB~GB 级地图数据，不进 git。默认到仓库内 tmp/sd-maps/ 下找
+ * （tmp/ 已在 .gitignore 里），可用环境变量 PK_MAP_TEST_DATA_DIR 指到别处。
+ * 默认值是相对路径，所以上面那行 cc 命令要在仓库根目录下跑。
  */
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -22,17 +27,44 @@
 #include "../main/pk_pmtiles.c"
 #include "../main/pk_map_store.c"
 
+/* 模拟 SD 卡 maps/ 目录的临时装配目录：两个样本包的软链 + 一个手造坏包。
+   自己建：mkdir -p /tmp/pk_map_test_dir && ln -sf <样本目录>/pk_map_*.pmtiles
+   到该目录，再 printf 一串垃圾字节到 pk_map_broken.pmtiles。 */
 #ifndef PK_MAP_TEST_DIR
 #define PK_MAP_TEST_DIR "/tmp/pk_map_test_dir"
 #endif
-#ifndef PK_MAP_TEST_GLOBAL
-#define PK_MAP_TEST_GLOBAL "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_global.pmtiles"
-#endif
-#ifndef PK_MAP_TEST_PRD
-#define PK_MAP_TEST_PRD "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_prd_pilot.pmtiles"
+
+/* 样本包所在目录：默认仓库内 tmp/sd-maps/（相对仓库根目录），
+   PK_MAP_TEST_DATA_DIR 可覆盖。 */
+#ifndef PK_MAP_TEST_DATA_DIR_DEFAULT
+#define PK_MAP_TEST_DATA_DIR_DEFAULT "tmp/sd-maps"
 #endif
 
+/* 缺样本包时统一打这段，告诉别人怎么把它弄回来（唯一的 %s 是当前样本目录）。*/
+#define PK_MAP_TEST_HOWTO \
+    "      样本包不进 git（几十 MB~GB 级地图数据，tmp/ 已在 .gitignore 里）。\n" \
+    "      获取：按项目的 SD 离线地图出包链路（tileserver-gl 渲染 → MBTiles →\n" \
+    "      pmtiles convert）自己出包，或从已刷好的 SD 卡 maps/ 目录拷贝，放到\n" \
+    "      %s/ 下；也可用 PK_MAP_TEST_DATA_DIR 环境变量指向别处。\n"
+
+static char g_sample_global[512];
+static char g_sample_prd[512];
+
+static const char *test_data_dir(void)
+{
+    const char *dir = getenv("PK_MAP_TEST_DATA_DIR");
+    return (dir && dir[0]) ? dir : PK_MAP_TEST_DATA_DIR_DEFAULT;
+}
+
+static void init_sample_paths(void)
+{
+    const char *dir = test_data_dir();
+    snprintf(g_sample_global, sizeof(g_sample_global), "%s/pk_map_global.pmtiles", dir);
+    snprintf(g_sample_prd, sizeof(g_sample_prd), "%s/pk_map_prd_pilot.pmtiles", dir);
+}
+
 static int g_fail = 0;
+static int g_skip = 0;
 
 static void chk_true(const char *what, bool cond)
 {
@@ -170,19 +202,33 @@ static bool file_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+/* 样本包/装配目录缺失 → 整段跳过：既不算失败，也不静默通过
+   （末尾会汇总 skipped 数）。 */
+static void skip_missing(const char *what, const char *path, bool print_howto)
+{
+    g_skip++;
+    fprintf(stderr, "SKIP: %s 不存在——跳过%s，不计入失败\n", path, what);
+    if (print_howto) fprintf(stderr, PK_MAP_TEST_HOWTO, test_data_dir());
+}
+
+/* 段 2/3 共用的前置检查：两个样本包 + 装配目录都在才跑。 */
+static bool real_io_prereq_ok(const char *what)
+{
+    if (!file_exists(g_sample_global)) { skip_missing(what, g_sample_global, true); return false; }
+    if (!file_exists(g_sample_prd))    { skip_missing(what, g_sample_prd, true); return false; }
+    if (!file_exists(PK_MAP_TEST_DIR)) {
+        skip_missing(what, PK_MAP_TEST_DIR, false);
+        fprintf(stderr, "      该目录应含两个样本包的软链 + 一个手造坏包，建法见文件顶部注释。\n");
+        return false;
+    }
+    return true;
+}
+
 static void test_real_store(void)
 {
     printf("-- pk_map_store_scan/get_tile: 真实样本包 (%s) --\n", PK_MAP_TEST_DIR);
 
-    if (!file_exists(PK_MAP_TEST_GLOBAL) || !file_exists(PK_MAP_TEST_PRD)) {
-        printf("  样本文件缺失，段 2 全部跳过——检查 %s / %s 是否还在\n",
-               PK_MAP_TEST_GLOBAL, PK_MAP_TEST_PRD);
-        return;
-    }
-    if (!file_exists(PK_MAP_TEST_DIR)) {
-        printf("  测试目录 %s 缺失（应含两个样本包软链 + 一个坏包），跳过\n", PK_MAP_TEST_DIR);
-        return;
-    }
+    if (!real_io_prereq_ok("段 2（scan/get_tile 真实 I/O）")) return;
 
     pk_map_store_t store;
     memset(&store, 0, sizeof(store));
@@ -256,11 +302,7 @@ static void test_close_files_hot_unplug(void)
 {
     printf("-- pk_map_store_close_files: 拔卡前关句柄、保清单 --\n");
 
-    if (!file_exists(PK_MAP_TEST_GLOBAL) || !file_exists(PK_MAP_TEST_PRD) ||
-        !file_exists(PK_MAP_TEST_DIR)) {
-        printf("  样本文件/测试目录缺失，段 3 全部跳过\n");
-        return;
-    }
+    if (!real_io_prereq_ok("段 3（close_files 拔卡预卸载）")) return;
 
     pk_map_store_t store;
     memset(&store, 0, sizeof(store));
@@ -312,12 +354,13 @@ static void test_close_files_hot_unplug(void)
 
 int main(void)
 {
+    init_sample_paths();
     test_route_multi_pack_overlap();
     test_route_overzoom_fallback();
     test_route_no_coverage();
     test_route_min_zoom_floor();
     test_real_store();
     test_close_files_hot_unplug();
-    printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
+    printf("%s (%d fail, %d skipped)\n", g_fail ? "FAILED" : "PASSED", g_fail, g_skip);
     return g_fail ? 1 : 0;
 }
