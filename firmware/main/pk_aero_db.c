@@ -20,6 +20,12 @@
  *     也要先拿锁再 free——查询进行中缓冲绝不会被释放。
  *   - 不用引用计数：查询最长 ~16 ms（nearest 东京最坏），拔卡路径多等
  *     这点时间毫无影响；计数方案要多一个"等归零"的握手，换不来收益。
+ *   - s_io_lock 单独罩住 fopen→fread→fclose 的 I/O 会话（与 s_lock 无嵌套，
+ *     锁序天然无环）：pk_sdcard 卸载序列的 pre-unmount 回调拿它当栅栏，
+ *     保证 esp_vfs_fat_sdcard_unmount() 跑的时候本模块没有打开的 SD fd
+ *     ——IDF 的 unmount 会无条件 free 含 FIL 数组的 fat_ctx，开着文件卸载
+ *     就是 use-after-free（2026-08-01 热插拔回归的根因之一）。栅栏等待是
+ *     毫秒级：状态先翻 NO_CARD，加载在一个 64 KB 块内就会自行中止。
  *   - 诊断快照（状态/周期/计数）另存无锁字段，渲染路径读它不进锁，
  *     免得被后台 nearest 的持锁窗口卡一帧。
  *   - reader 的查询会写 db->stats 计数器——也被同一把锁串行化，无竞态。
@@ -77,6 +83,9 @@ static const char *TAG = "pk_aero";
 /* ---- 状态（发布/卸载都在 s_lock 内完成） ------------------------------ */
 
 static SemaphoreHandle_t s_lock;
+/* I/O 会话锁：只罩 fopen→分块 fread→fclose 区间，和 s_lock 从不嵌套持有。
+ * 唯二使用者：aero_task 的加载路径 + pk_sdcard 的 pre-unmount 回调（纯栅栏）。 */
+static SemaphoreHandle_t s_io_lock;
 static volatile pk_aero_db_state_t s_state = PK_AERO_DB_ABSENT;
 static uint8_t      *s_buf;        /* PSRAM 整文件缓冲（含明文 header） */
 static pk_aero_db_t  s_db;         /* reader 解析态（指进 s_buf） */
@@ -86,6 +95,8 @@ static char              s_cycle[9];
 static volatile uint32_t s_n_airports, s_n_navaids, s_n_fixes;
 static volatile uint8_t  s_load_pct;
 static const char *volatile s_err;   /* ERROR 原因（静态串） */
+/* 进 ERROR 时的 SD 挂载代数；与当前代数不等即说明卡被重插过，该重试了。 */
+static volatile uint32_t s_err_generation;
 
 /* ---- dev key -----------------------------------------------------------
  * AES-128 开发密钥（devkey，与导出脚本 --key-env PK_AERO_KEY 一致，
@@ -109,7 +120,9 @@ static void aero_key_assemble(uint8_t out[16])
 /* ---- 加载 -------------------------------------------------------------- */
 
 /* 读入 + 流式解密。成功返回 true；失败把原因写进 *why（静态串）。
- * 全程不持 s_lock——缓冲尚未发布，没人看得见。 */
+ * 全程不持 s_lock——缓冲尚未发布，没人看得见。调用方（aero_load_once）
+ * 持着 s_io_lock：拔卡时 pk_sdcard 的卸载序列以这把锁为栅栏等本函数退出
+ * （状态已先翻 NO_CARD，下面的分块检查会让我们在一个 64 KB 块内中止）。 */
 static bool aero_read_decrypt(FILE *f, uint8_t *buf, size_t len,
                               const char **why)
 {
@@ -253,6 +266,10 @@ static bool aero_load_once(void)
     }
 
     const char *why = "?";
+    /* I/O 会话整段持 s_io_lock（fopen→分块 fread→fclose）：卸载序列的
+     * pre-unmount 回调 take 这把锁即等到"文件已关、无在途读"才放行
+     * unmount。fclose 后立刻释放——后面的解析/SHA 全在 PSRAM，不碰 SD。 */
+    xSemaphoreTake(s_io_lock, portMAX_DELAY);
     FILE *f = fopen(AERO_BIN_PATH, "rb");   /* SD 只读红线：只 "rb" */
     bool ok = false;
     if (f == NULL) {
@@ -261,6 +278,7 @@ static bool aero_load_once(void)
         ok = aero_read_decrypt(f, buf, len, &why);
         fclose(f);
     }
+    xSemaphoreGive(s_io_lock);
 
     pk_aero_db_t db;
     if (ok) {
@@ -285,6 +303,9 @@ static bool aero_load_once(void)
             ESP_LOGW(TAG, "load aborted (%s) — card gone, back to ABSENT",
                      why);
         } else {
+            /* 记下进 ERROR 时的挂载代数：退出条件靠它判「卡被重插过」，
+             * 而不是去采样 is_mounted 的电平（见下面 ERROR 分支）。 */
+            s_err_generation = pk_sdcard_mount_generation();
             s_state = PK_AERO_DB_ERROR;
             s_err   = why;
             ESP_LOGE(TAG, "load failed: %s (re-insert card to retry)", why);
@@ -370,7 +391,8 @@ static void aero_smoke_check(void)
 
 /* ---- 后台任务 ----------------------------------------------------------
  * 与 sd_detect_task 同构的两态轮询：未就绪 → 试加载；READY/ERROR →
- * 盯着拔卡。不订阅回调——pk_sdcard 本来就没有回调，轮询周期与它对齐。 */
+ * 盯着拔卡。状态迁移只靠轮询，周期与 pk_sdcard 对齐；pre-unmount 回调
+ * （sd_io_barrier_cb）只是卸载时序的 I/O 栅栏，不驱动状态机。 */
 static void aero_task(void *arg)
 {
     (void)arg;
@@ -397,9 +419,23 @@ static void aero_task(void *arg)
             break;
 
         case PK_AERO_DB_ERROR:
-            /* 坏文件不反复重读；拔卡（= 用户来处理了）才回 ABSENT */
+            /*
+             * 坏文件不反复重读；卡被重插过（= 用户来处理了）才回 ABSENT。
+             *
+             * 判据是挂载代数变了，不是采样到 !is_mounted。原先那样写会漏：
+             * 2026-08-01 实测连续插拔，卡离开的窗口只有 3.5 s，而本分支的
+             * 两个检查点一个还在 delay 里、一个落在卡已经回来之后，整段窗口
+             * 被跳过，于是 aero 一直卡在 ERROR，要等下一次拔卡才恢复——正是
+             * 「频繁插拔就不读 aero」的成因。
+             *
+             * 还有一层：short read 本来多半就是「读到一半被拔卡」，但 pk_sd
+             * 的探活有 2 s 周期，比 aero 自己撞上读失败晚了几百 ms，于是上面
+             * 那个 if 看到的 is_mounted 还是 true，把拔卡误判成文件损坏进了
+             * 这里。代数比较对这种误判同样有效：卡一旦重挂就重试。
+             */
             vTaskDelay(pdMS_TO_TICKS(AERO_WATCH_MS));
-            if (!pk_sdcard_is_mounted()) {
+            if (!pk_sdcard_is_mounted() ||
+                pk_sdcard_mount_generation() != s_err_generation) {
                 s_state = PK_AERO_DB_ABSENT;
                 s_err   = NULL;
             }
@@ -414,10 +450,22 @@ static void aero_task(void *arg)
 
 /* ---- 公共 API ----------------------------------------------------------- */
 
+/* pk_sdcard 卸载前回调：纯栅栏。take 到手即说明加载路径的 fopen→fclose
+ * 会话已退出（或根本没在跑）——状态已被卸载序列先翻成 NO_CARD，
+ * aero_read_decrypt 的分块检查会在一个 64 KB 块内中止并 fclose，等待是
+ * 毫秒级。本模块没有常开句柄，无需真正"关"什么。 */
+static void sd_io_barrier_cb(void)
+{
+    xSemaphoreTake(s_io_lock, portMAX_DELAY);
+    xSemaphoreGive(s_io_lock);
+}
+
 void pk_aero_db_init(void)
 {
     if (s_lock != NULL) return;   /* 幂等 */
-    s_lock = xSemaphoreCreateMutex();
+    s_lock    = xSemaphoreCreateMutex();
+    s_io_lock = xSemaphoreCreateMutex();
+    pk_sdcard_register_pre_unmount_cb(sd_io_barrier_cb);
 
     /* 只创建任务，不做任何 IO——开机路径零阻塞。 */
     BaseType_t ok = xTaskCreatePinnedToCore(aero_task, "aero_db",

@@ -52,6 +52,8 @@ static volatile pk_sd_state_t s_state = PK_SD_NO_CARD;
 /* 累计挂载尝试次数。诊断页用它区分"没插卡"与"插了但挂不上"——两者在
  * 状态上都是 PK_SD_NO_CARD，但前者计数不动、后者每 3 s 涨一次。 */
 static volatile uint32_t s_mount_attempts;
+/* 成功挂载次数（挂载代数），拔插检测用。见 pk_sdcard.h 的说明。 */
+static volatile uint32_t s_mount_generation;
 static SemaphoreHandle_t      s_lock;
 
 /* 容量缓存 — 由挂载点/探测任务刷新；pk_sdcard_info 只读缓存，
@@ -110,6 +112,12 @@ static bool sd_power_on_locked(void)
         s_pwr_ctrl = NULL;
         return false;
     }
+    /* 上电后给卡一段稳定时间再发命令。sd_pwr_ctrl_new_on_chip_ldo 里
+     * esp_ldo_acquire_channel 只是把 LDO 使能位打开就返回（ref_cnt 0→1 时
+     * ldo_ll_enable(true)），轨压建立和卡自身的上电复位都还没走完；SD 规范
+     * 要求上电到首条命令之间留出电源爬升时间。20 ms 相对 3 s 的重试周期
+     * 可以忽略，却能让"插回来的卡"稳稳走完 POR。 */
+    vTaskDelay(pdMS_TO_TICKS(20));
     return true;
 }
 
@@ -160,10 +168,64 @@ static bool sd_mount_locked(void)
         ESP_LOGW(TAG, "mount attempt #%lu failed: %s",
                  (unsigned long)s_mount_attempts, esp_err_to_name(err));
         s_card = NULL;
+
+        /*
+         * 补上 IDF 在挂载失败路径上漏掉的 slot 注销——热插拔「插回去也认不出，
+         * 只能重启」的真因。
+         *
+         * esp_vfs_fat_sdmmc_sdcard_init()（fatfs/vfs/vfs_fat_sdmmc.c:230-266）
+         * 的顺序是：host_config->init() → sdmmc_host_init_slot()（**slot 在这里
+         * 就注册好了**）→ sdmmc_card_init()（探卡协商）。无卡时前两步都成功、
+         * 第三步失败，而它的 cleanup 只有一句 call_host_deinit()。IDF 自己在
+         * 那段代码上留了注释直说这事没做完：
+         *     "If this failed …, slot deinit needs to called()
+         *      … though slot deinit not implemented yet."
+         * 官方路径下 host.deinit 是真的 sdmmc_host_deinit()，它会顺手把所有
+         * slot 一起拆掉，所以缺陷被掩盖；而本板的 deinit 是 dummy（不能真拆
+         * ESP-Hosted 共用的控制器，见上面 sdmmc_host_deinit_dummy 的说明），
+         * 于是**每一次无卡的挂载重试都会泄漏一个已注册的 slot**。
+         *
+         * 后果链：拔卡后探测任务 3 s 试一次 → 第一次无卡重试就泄漏 slot →
+         * 下一次 sdmmc_host_init_slot 被 sd_host_sdmmc.c:156 的
+         * `slot_available` 挡下返回 ESP_ERR_INVALID_STATE → 此后卡插回来也
+         * 一样，只有重启能清。实测日志里那串连续的
+         * "mount attempt #27..#36 failed: ESP_ERR_INVALID_STATE" 就是它。
+         *
+         * 放在失败分支里无条件调一次，两种失败都被覆盖且幂等：
+         *   - 卡协商失败 → 注销刚注册的 slot，不留泄漏；
+         *   - slot 已被泄漏占着（init_slot 就返回 INVALID_STATE）→ 这次注销把
+         *     它清掉，下一轮重试即可自愈，不必重启。
+         * INVALID_STATE 是「本来就没注册」的正常回报，不算错。
+         */
+        esp_err_t derr = sdmmc_host_deinit_slot(SD_SLOT);
+        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE)
+            ESP_LOGW(TAG, "post-fail deinit_slot(%d): %s",
+                     SD_SLOT, esp_err_to_name(derr));
+
+        /*
+         * 失败后也要断电——否则插槽在两次重试之间一直带电，而**带电插入的卡
+         * 不会执行上电复位（POR）**。
+         *
+         * 2026-08-01 实测：开机无卡→插入，识别成功；随后拔出（此时卡正在被
+         * pk_aero 读取，状态机停在中途）→ 再插回，就一直
+         * "mount attempt #7..#16 failed: ESP_ERR_TIMEOUT"，且间隔精确 5.01 s
+         * （3 s 轮询 + 2.01 s 固定超时）= 卡对 CMD0 完全无响应，不是在协商。
+         * 两次插入的唯一差别就是卡有没有"通电运行中被拔走"这段历史：干净的
+         * 卡带电插入也能认，被中途拔走的卡则必须靠断电走一遍 POR 才能回到
+         * idle。
+         *
+         * cd0ddc9 当初就是为这件事在 unmount 路径加的断电，但漏了这条挂载
+         * 失败路径：拔卡后第一次重试上电，之后 s_pwr_ctrl 非空，
+         * sd_power_on_locked() 直接短路返回，于是插槽长期带电，用户插回来的
+         * 那一下正好落在带电窗口里。这里补齐后，插槽只在每次重试的短暂
+         * 尝试期间带电，其余时间断电。
+         */
+        sd_power_off_locked();
         return false;
     }
 
     s_state = PK_SD_MOUNTED;
+    s_mount_generation++;   /* 契约见 pk_sdcard.h：只增不减的「卡换过了」凭据 */
     sd_refresh_info_locked();
     ESP_LOGI(TAG, "microSD mounted at %s: %s %.1f GB",
              SD_MOUNT_POINT, s_card->cid.name,
@@ -295,17 +357,27 @@ void pk_sdcard_init(void)
     esp_log_level_set("sdmmc_req", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_cmd", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_common", ESP_LOG_DEBUG);
-    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_DEBUG);
-    esp_log_level_set("SD_HOST", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_periph", ESP_LOG_DEBUG);
+    /* SD_HOST 是**共享** tag：ESP-Hosted 的 SDIO（slot 1）与本卡（slot 0）
+     * 都用它，而 hosted 每笔传输都打一条 DEBUG。开到 DEBUG 会以每秒上百行
+     * 淹掉串口——2026-08-01 实测一次 4 分钟抓包里 SD_HOST 占了 16765/17391
+     * 行，把要看的 SD 事件全挤掉，PFD 也从 12 FPS 掉到 9。留在 WARN：
+     * 真正的 slot/控制器错误照样报，hosted 的流水账不进来。 */
+    esp_log_level_set("SD_HOST", ESP_LOG_WARN);
 #else
     esp_log_level_set("sdmmc_req", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_cmd", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_common", ESP_LOG_NONE);
-    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
     esp_log_level_set("SD_HOST", ESP_LOG_NONE);
     esp_log_level_set("sdmmc_periph", ESP_LOG_NONE);
 #endif
+    /* vfs_fat_sdmmc 不跟随上面的开关静音：它的 CHECK_EXECUTE_RESULT 宏用
+     * ESP_LOGE 报「挂载失败在哪一步」（sdcard_init = slot/控制器层，
+     * mount_initialized = VFS 层），是热插拔排障唯一能区分这两层的线索。
+     * 之前设成 NONE，等于把最关键的一句话堵死，出事只能重烧诊断固件。
+     * 留在 ERROR：正常运行不吭声，失败时每次重试多一行,频率与本模块自己的
+     * 3 s 一条相当。 */
+    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_ERROR);
 
     /* SLOT_0 IO 供电：P4 片上 LDO 通道 4。失败则 SD 永远探测不到，
      * 打 ERROR 但不崩 —— 其余固件功能不受影响。 */
@@ -330,6 +402,11 @@ pk_sd_state_t pk_sdcard_state(void)
 bool pk_sdcard_is_mounted(void)
 {
     return s_state == PK_SD_MOUNTED;
+}
+
+uint32_t pk_sdcard_mount_generation(void)
+{
+    return s_mount_generation;
 }
 
 const char *pk_sdcard_mount_point(void)

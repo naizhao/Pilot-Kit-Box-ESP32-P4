@@ -40,6 +40,16 @@ bool pk_sdcard_info(uint64_t *out_total, uint64_t *out_free);
  * 阻塞调用，耗时数秒；要求当前已挂载。完成后保持挂载状态。 */
 esp_err_t pk_sdcard_format(void);
 
+/* 挂载代数：每成功挂载一次 +1，只增不减。
+ *
+ * 给「卡是不是被换过/重插过」这个问题一个不会丢失的答案。轮询
+ * pk_sdcard_is_mounted() 的电平做边沿检测是不可靠的——卡不在的窗口
+ * 可能比调用方的轮询周期还短，整段就被跳过。2026-08-01 实测：pk_aero
+ * 读到一半被拔卡进了 ERROR 态，而卡只离开 3.5 s，它两个检查点一个落在
+ * 延时里、一个落在卡已回来之后，于是一直卡在 ERROR，直到下一次拔卡才
+ * 恢复。比较代数就没有这个问题：只要值变了，中间一定发生过重新挂载。 */
+uint32_t pk_sdcard_mount_generation(void);
+
 /* 注册「卸载前静默」回调（固定 4 槽，满了打 ERROR 丢弃）。
  *
  * 为什么需要它：IDF 的 esp_vfs_fat_sdcard_unmount() 会无条件 free 掉含所有
