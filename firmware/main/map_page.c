@@ -346,8 +346,15 @@ void pk_map_page_render(uint16_t *fb)
                                                   fb, dst_x0, dst_y0, now_ms, &neg);
                 if (!blitted && !neg) pk_tile_loader_request(&route);
             }
-            if (!blitted) draw_missing_tile(fb, dst_x0, dst_y0, (uint8_t)s_zoom,
-                                            (uint32_t)tx, (uint32_t)ty);
+            if (!blitted) {
+                /* 真瓦片还没到：先拿缓存里的上级瓦片放大顶上，画面不留空洞；
+                 * 一级都找不到才退回网格占位。 */
+                if (!pk_tile_loader_try_blit_ancestor((uint8_t)s_zoom, (uint32_t)tx,
+                                                      (uint32_t)ty, fb, dst_x0, dst_y0,
+                                                      now_ms, 4))
+                    draw_missing_tile(fb, dst_x0, dst_y0, (uint8_t)s_zoom,
+                                      (uint32_t)tx, (uint32_t)ty);
+            }
         }
     }
 

@@ -26,7 +26,13 @@
 extern "C" {
 #endif
 
-#define PK_TILE_CACHE_SLOTS       24
+/* 96 槽 × 128KB = 12MB 上限（缓冲区按需分配，装不满就不占）。
+ *
+ * 24 槽为什么不够：800×480 一屏最多要 15 张瓦片，换一级 zoom 就是另外 15 张
+ * ——24 槽连两级都装不下，来回缩放必然把上一级全挤掉，表现为"每次缩放都在
+ * 重新加载"（罩哥 2026-08-01 实测反馈）。96 槽能存下四五级视口加平移历史。
+ * PSRAM 32MB 里帧缓冲等只用了约 3MB，这 12MB 花得起。 */
+#define PK_TILE_CACHE_SLOTS       96
 #define PK_TILE_PIXELS            256
 #define PK_TILE_BUF_PIXELS        (PK_TILE_PIXELS * PK_TILE_PIXELS)
 #define PK_TILE_BUF_BYTES         (PK_TILE_BUF_PIXELS * (int)sizeof(uint16_t))

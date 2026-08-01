@@ -194,6 +194,41 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
     return true;
 }
 
+bool pk_tile_loader_try_blit_ancestor(uint8_t z, uint32_t x, uint32_t y,
+                                      uint16_t *fb, int dst_x0, int dst_y0,
+                                      uint32_t now_ms, int max_levels_up)
+{
+    for (int k = 1; k <= max_levels_up && k <= z; k++) {
+        uint8_t  az = (uint8_t)(z - k);
+        uint32_t ax = x >> k, ay = y >> k;
+
+        pk_map_route_result_t route;
+        if (!pk_tile_loader_route(az, ax, ay, &route)) continue;
+        /* 只认精确命中的祖先：route 自己还在 overzoom 说明那一级也没数据，
+           继续往上找更粗的，别在这里叠两层放大。 */
+        if (route.scale != 1) continue;
+
+        pk_tile_key_t key = { .pack_id = (uint32_t)route.pack_index,
+                              .z = az, .x = ax, .y = ay };
+        uint32_t scale = 1u << k;
+        if (scale > PK_TILE_PIXELS) break;      /* 再往上子块不足 1 像素，没意义 */
+        uint32_t crop = PK_TILE_PIXELS / scale;
+        uint32_t crop_x0 = (x & (scale - 1)) * crop;
+        uint32_t crop_y0 = (y & (scale - 1)) * crop;
+
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        bool neg = false;
+        const uint16_t *data = pk_tile_cache_get(&s_cache, key, now_ms, &neg);
+        if (data != NULL) {
+            blit_tile_scaled(data, scale, crop_x0, crop_y0, crop, fb, dst_x0, dst_y0);
+            xSemaphoreGive(s_lock);
+            return true;
+        }
+        xSemaphoreGive(s_lock);
+    }
+    return false;
+}
+
 void pk_tile_loader_request(const pk_map_route_result_t *route)
 {
     if (!route->found || s_queue == NULL) return;

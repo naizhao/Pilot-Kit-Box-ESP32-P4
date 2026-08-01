@@ -75,6 +75,17 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
                              uint16_t *fb, int dst_x0, int dst_y0,
                              uint32_t now_ms, bool *out_negative);
 
+/* 未命中时的兜底：从缓存里找**已有的上级瓦片**（z-1、z-2…最多 max_levels_up
+ * 级），裁出对应子块放大填满目标区域。
+ *
+ * 为什么需要：放大一级时新一级的瓦片全是未命中，若直接画网格占位，用户看到的
+ * 就是"整屏重新加载"；而上一级的瓦片明明还在缓存里，放大 2 倍顶上去虽然糊，
+ * 但画面连续、且真瓦片一到就自然替换——所有滑动地图都是这么做的。
+ * 命中返回 true（已画），没有任何可用祖先返回 false（调用方再画占位）。 */
+bool pk_tile_loader_try_blit_ancestor(uint8_t z, uint32_t x, uint32_t y,
+                                      uint16_t *fb, int dst_x0, int dst_y0,
+                                      uint32_t now_ms, int max_levels_up);
+
 /* 发起加载请求（对应 route 里的实际瓦片 pack_index/actual_z/actual_x/actual_y）。
  * 已在队列中或已缓存的重复请求被去重丢弃；队满时静默丢弃——map_page 每帧都会
  * 为可见的缺瓦片重新调用一次，下一帧自然重试。 */
