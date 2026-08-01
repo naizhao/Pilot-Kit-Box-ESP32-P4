@@ -230,6 +230,65 @@ static bool load_directory(pk_pmtiles_t *pm, uint64_t off, uint64_t len,
     return ok;
 }
 
+/* ------------------------------------------------------ 叶目录 LRU 缓存 */
+
+/* 动机：CN 包（华南分省）根目录 71 条、全球包根目录 58 条，全是 run_length
+ * ==0 的叶目录指针——每次 find_tile 下潜都要重新读盘+重新 gzip 解压同一张
+ * 叶目录（相邻瓦片大概率落同一叶，之前旧实现每次都在 depth 循环末尾把它
+ * free 掉）。这是真机地图页加载慢的主因之一。
+ *
+ * 内存预算：实测 pk_map_cn.pmtiles / pk_map_global.pmtiles 两个样本包的叶
+ * 目录 entry_count 都固定是 4096（pmtiles 构建工具的目录分页大小）：
+ *   sizeof(pk_pmtiles_dir_entry_t) = 24B（tile_id u64 + run_length u32 +
+ *     length u32 + offset u64，无隐藏 padding）
+ *   4096 entry × 24B = 98304B ≈ 96KB /叶目录
+ *   × PK_PMTILES_LEAF_CACHE_SLOTS(4) 槽 ≈ 384KB /包
+ * 真机地图页同时打开的 pmtiles 实例通常只有 1~2 个（当前选中的地图包），
+ * 合计几百 KB，在预算内。entry 数组分配走 parse_directory() 里已有的
+ * calloc 路径，跟 root_entries 一样——ESP32-P4 外挂 PSRAM 场景下，heap
+ * allocator 对大块分配（这个量级远超 malloc_caps 的内部 SRAM 优先阈值）
+ * 自动路由到 PSRAM，不需要本文件额外处理。 */
+
+/* 缓存查找：命中返回 entries 指针并把 *out_count 填好，同时把这一槽标记为
+ * "最近用过"；不命中返回 NULL（*out_count 不改）。 */
+static pk_pmtiles_dir_entry_t *leaf_cache_find(pk_pmtiles_t *pm, uint64_t offset, size_t *out_count)
+{
+    for (int i = 0; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        pk_pmtiles_leaf_cache_slot_t *slot = &pm->leaf_cache[i];
+        if (slot->valid && slot->offset == offset) {
+            slot->lru_seq = ++pm->leaf_cache_seq;
+            *out_count = slot->count;
+            return slot->entries;
+        }
+    }
+    return NULL;
+}
+
+/* 缓存插入：优先挑空槽；槽满了淘汰 lru_seq 最小（最久没被命中/插入）的那
+ * 个，释放它原来持有的 entries。插入后本槽即为"最近用过"。entries 的所有
+ * 权转移给缓存——调用方之后不用也不该再 free 它。 */
+static void leaf_cache_insert(pk_pmtiles_t *pm, uint64_t offset, pk_pmtiles_dir_entry_t *entries, size_t count)
+{
+    int victim = -1;
+    uint32_t victim_seq = 0;
+    for (int i = 0; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        pk_pmtiles_leaf_cache_slot_t *slot = &pm->leaf_cache[i];
+        if (!slot->valid) { victim = i; break; } /* 空槽优先，不用挑 */
+        if (victim < 0 || slot->lru_seq < victim_seq) {
+            victim = i;
+            victim_seq = slot->lru_seq;
+        }
+    }
+
+    pk_pmtiles_leaf_cache_slot_t *slot = &pm->leaf_cache[victim];
+    free(slot->entries);
+    slot->valid   = true;
+    slot->offset  = offset;
+    slot->entries = entries;
+    slot->count   = count;
+    slot->lru_seq = ++pm->leaf_cache_seq;
+}
+
 /* ------------------------------------------------------------ header */
 
 static bool parse_header(const uint8_t *b, pk_pmtiles_header_t *h)
@@ -349,6 +408,9 @@ void pk_pmtiles_close(pk_pmtiles_t *pm)
 {
     if (!pm) return;
     free(pm->root_entries);
+    for (int i = 0; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        free(pm->leaf_cache[i].entries);
+    }
     if (pm->owned_file) fclose((FILE *)pm->owned_file);
     memset(pm, 0, sizeof(*pm));
 }
@@ -427,7 +489,6 @@ bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, p
 
     const pk_pmtiles_dir_entry_t *entries = pm->root_entries;
     size_t count = pm->root_count;
-    pk_pmtiles_dir_entry_t *leaf_owned = NULL; /* 当前这层若是叶目录，需要自己 free */
 
     bool found = false;
     for (int depth = 0; depth < PK_PMTILES_MAX_DIR_DEPTH; depth++) {
@@ -442,20 +503,22 @@ bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, p
             break;
         }
 
-        /* run_length==0：下钻叶目录。offset/length 是相对 leaf_dirs_offset 的。 */
-        pk_pmtiles_dir_entry_t *next_entries = NULL;
+        /* run_length==0：下钻叶目录。offset/length 是相对 leaf_dirs_offset 的。
+         * 先查 LRU 缓存（key = 叶目录绝对 offset）；命中就省掉一次读盘+解压。
+         * 缓存 miss 才真的读盘，读出来的 entries 所有权立刻转给缓存（不在
+         * 本函数里 free——它要么被后续命中复用，要么被缓存淘汰时释放，要么
+         * 活到 pk_pmtiles_close）。 */
+        uint64_t leaf_off = pm->header.leaf_dirs_offset + e->offset;
         size_t next_count = 0;
-        bool ok = load_directory(pm, pm->header.leaf_dirs_offset + e->offset, e->length,
-                                  &next_entries, &next_count);
-        free(leaf_owned);
-        leaf_owned = NULL;
-        if (!ok) break;
+        pk_pmtiles_dir_entry_t *next_entries = leaf_cache_find(pm, leaf_off, &next_count);
+        if (!next_entries) {
+            if (!load_directory(pm, leaf_off, e->length, &next_entries, &next_count)) break;
+            leaf_cache_insert(pm, leaf_off, next_entries, next_count);
+        }
 
-        entries    = next_entries;
-        count      = next_count;
-        leaf_owned = next_entries;
+        entries = next_entries;
+        count   = next_count;
     }
 
-    free(leaf_owned);
     return found;
 }

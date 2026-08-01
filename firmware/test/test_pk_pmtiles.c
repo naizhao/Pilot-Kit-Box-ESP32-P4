@@ -2,6 +2,14 @@
  *   cc -std=c11 -Wall -Wextra -O2 -I firmware/main -o /tmp/test_pmt \
  *      firmware/test/test_pk_pmtiles.c && /tmp/test_pmt
  *
+ *   ASan（叶目录 LRU 缓存的读写/淘汰/close 释放路径用这个把关）：
+ *   cc -std=c11 -Wall -Wextra -O0 -g -fsanitize=address -I firmware/main \
+ *      -o /tmp/test_pmt_asan firmware/test/test_pk_pmtiles.c && /tmp/test_pmt_asan
+ *
+ *   leaks（macOS，另一条独立的泄漏证据）：
+ *   cc -std=c11 -Wall -Wextra -O0 -g -I firmware/main -o /tmp/test_pmt_leaks \
+ *      firmware/test/test_pk_pmtiles.c && leaks --atExit -- /tmp/test_pmt_leaks
+ *
  * 样本包 pk_map_prd_pilot.pmtiles（珠三角 z0-12，出包记录见
  * docs/superpowers/specs/2026-08-01-sd-offline-map-design.md）：
  *   852 addressed tiles / 740 root entries / 698 contents，
@@ -19,7 +27,9 @@
 #include <string.h>
 
 /* pk_tinfl.c 直接把实现拉进本 TU（同 geo.c/traffic_geom.c 的惯例：test 文件
-   负责把多个 .c 拼成一个翻译单元）。third_party/ 前缀相对 -I firmware/main。 */
+   负责把多个 .c 拼成一个翻译单元）。third_party/ 前缀相对 -I firmware/main。
+   同一 TU 也意味着 leaf_cache_find/leaf_cache_insert 这些 static 函数对本
+   文件可见，白盒测 LRU 逻辑不用绕 API。 */
 #include "../main/third_party/pk_tinfl.c"
 #include "../main/pk_pmtiles.c"
 
@@ -303,6 +313,20 @@ static void test_real_sample(void)
 #define PK_PMTILES_TEST_SAMPLE_GLOBAL "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_global.pmtiles"
 #endif
 
+/* pk_map_cn.pmtiles（中国全域 z10-12，1.4GB，同样不进 git）：header
+ * leaf_dirs_length=785286（>0），root 71 条全是叶目录指针，entry_count 固
+ * 定 4096（跟全球包一样是 pmtiles 构建工具的目录分页大小，见 pk_pmtiles.c
+ * leaf_cache_find/leaf_cache_insert 上方的内存预算注释）。下面几组
+ * (z,x,y)/leaf offset 关系同样是用 /tmp/pmtiles_probe_cache.py（本地一次
+ * 性脚本，跟 pmtiles_probe_global.py 同一种做法：独立 Python 实现 + zlib
+ * 直接解这个包的根/叶目录）现场验证过的：
+ *   - z10 (896,459)/(896,458)/(896,457) 三个不同瓦片落在同一张叶目录
+ *     （leaf_dirs_offset+0）；
+ *   - z10 (817,356) 落在另一张叶目录（leaf_dirs_offset+11541）。 */
+#ifndef PK_PMTILES_TEST_SAMPLE_CN
+#define PK_PMTILES_TEST_SAMPLE_CN "/Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/tmp/sd-maps/pk_map_cn.pmtiles"
+#endif
+
 static void test_global_leaf_directory(void)
 {
     printf("-- 全球包叶目录下潜 (%s) --\n", PK_PMTILES_TEST_SAMPLE_GLOBAL);
@@ -360,6 +384,189 @@ static void test_global_leaf_directory(void)
     pk_pmtiles_close(&pm);
 }
 
+/* -------------------------------------------- 叶目录 LRU 缓存：白盒单测 */
+
+/* 造一份只用来在测试里"认出是哪个槽的数据"的假 entries——leaf_cache_find/
+   leaf_cache_insert 本身不看 entries 内容，只搬指针和 count，所以 1 条假
+   entry 足够验证缓存逻辑，不需要真实目录二进制。 */
+static pk_pmtiles_dir_entry_t *make_dummy_entries(uint64_t tag)
+{
+    pk_pmtiles_dir_entry_t *e = calloc(1, sizeof(*e));
+    e->tile_id = tag;
+    return e;
+}
+
+static void test_leaf_cache_lru(void)
+{
+    printf("-- 叶目录 LRU 缓存（白盒，PK_PMTILES_LEAF_CACHE_SLOTS=%d） --\n", PK_PMTILES_LEAF_CACHE_SLOTS);
+    pk_pmtiles_t pm;
+    memset(&pm, 0, sizeof(pm));
+
+    size_t got_count;
+    chk_true("空缓存查找 miss", leaf_cache_find(&pm, 1000, &got_count) == NULL);
+
+    /* 灌满 PK_PMTILES_LEAF_CACHE_SLOTS 个不同 offset，全部应该能查到。 */
+    for (int i = 0; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        uint64_t off = 1000 + (uint64_t)i;
+        leaf_cache_insert(&pm, off, make_dummy_entries(off), 1);
+    }
+    for (int i = 0; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        uint64_t off = 1000 + (uint64_t)i;
+        pk_pmtiles_dir_entry_t *e = leaf_cache_find(&pm, off, &got_count);
+        char label[48];
+        snprintf(label, sizeof(label), "灌满后 offset=%llu 命中", (unsigned long long)off);
+        chk_true(label, e != NULL && e->tile_id == off && got_count == 1);
+    }
+
+    /* 命中 offset=1001..1003（不碰 1000），让 1000 变成全槽里最久没被用过
+       的那个——下一次插入满槽淘汰，应该精确淘汰它。 */
+    for (int i = 1; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        leaf_cache_find(&pm, 1000 + (uint64_t)i, &got_count);
+    }
+    uint64_t new_off = 2000;
+    leaf_cache_insert(&pm, new_off, make_dummy_entries(new_off), 1);
+
+    chk_true("淘汰后 offset=1000 查不到了", leaf_cache_find(&pm, 1000, &got_count) == NULL);
+    chk_true("新 offset=2000 能查到", leaf_cache_find(&pm, new_off, &got_count) != NULL);
+    for (int i = 1; i < PK_PMTILES_LEAF_CACHE_SLOTS; i++) {
+        uint64_t off = 1000 + (uint64_t)i;
+        char label[64];
+        snprintf(label, sizeof(label), "未被淘汰的 offset=%llu 仍在", (unsigned long long)off);
+        chk_true(label, leaf_cache_find(&pm, off, &got_count) != NULL);
+    }
+
+    /* close 应该把剩下的槽全释放（用 ASan/leaks 跑这个二进制来验证"全释放"
+       这件事本身；这里额外断言一下 close 之后的可观察状态确实清零了）。 */
+    pk_pmtiles_close(&pm);
+    chk_true("close 后 leaf_cache[0] 清零",
+             pm.leaf_cache[0].valid == false && pm.leaf_cache[0].entries == NULL);
+}
+
+/* ------------------------------------------ 缓存降低真实读盘次数（真实包） */
+
+typedef struct {
+    FILE *f;
+    int   read_calls;
+} counting_ctx_t;
+
+static int counting_read(void *ctx, uint64_t off, void *buf, size_t len)
+{
+    counting_ctx_t *c = (counting_ctx_t *)ctx;
+    c->read_calls++;
+    if (fseeko(c->f, (off_t)off, SEEK_SET) != 0) return -1;
+    if (fread(buf, 1, len, c->f) != len) return -1;
+    return 0;
+}
+
+/* 用 counting_read 包一层，验证同一叶目录第二次查找不再触发 read 回调——
+   这是本次改动要解决的真实问题（CN/全球包根目录几十条全是叶指针，相邻
+   瓦片高概率落同一叶目录）。z9 (419,222) 陆地瓦片单独一张叶目录；
+   (29,239)/(29,230)/(29,227) 三个太平洋海面瓦片共享同一张叶目录——两组
+   关系都是用 /tmp/pmtiles_probe_cache.py（本地一次性脚本，独立 Python
+   实现，读根目录+对应叶目录的 tile_id 范围）现场验证过的，不是猜的。 */
+static void test_leaf_cache_reduces_real_reads(void)
+{
+    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", PK_PMTILES_TEST_SAMPLE_GLOBAL);
+    FILE *f = fopen(PK_PMTILES_TEST_SAMPLE_GLOBAL, "rb");
+    if (!f) {
+        fprintf(stderr,
+                "SKIP: %s 不存在——跳过读盘计数测试，不计入失败\n",
+                PK_PMTILES_TEST_SAMPLE_GLOBAL);
+        return;
+    }
+    counting_ctx_t ctx = {f, 0};
+    pk_pmtiles_t pm;
+    bool opened = pk_pmtiles_open(&pm, counting_read, &ctx);
+    chk_true("open (counting reader)", opened);
+    if (!opened) {
+        fclose(f);
+        g_fail++;
+        return;
+    }
+    int after_open = ctx.read_calls; /* header 1 次 + root 目录 1 次，与叶目录缓存无关 */
+
+    pk_pmtiles_tile_loc_t loc;
+    bool hit = pk_pmtiles_find_tile(&pm, 9, 419, 222, &loc);
+    chk_true("land 第一次命中", hit);
+    int after_land_1 = ctx.read_calls;
+    chk_true("land 第一次查找触发一次叶目录读盘", after_land_1 == after_open + 1);
+
+    hit = pk_pmtiles_find_tile(&pm, 9, 419, 222, &loc);
+    chk_true("land 第二次命中", hit);
+    int after_land_2 = ctx.read_calls;
+    chk_true("land 第二次查找命中缓存，read 次数不再增加", after_land_2 == after_land_1);
+
+    hit = pk_pmtiles_find_tile(&pm, 9, 29, 239, &loc);
+    chk_true("sea[0] 命中", hit);
+    int after_sea_1 = ctx.read_calls;
+    chk_true("sea[0] 落在另一张叶目录，触发一次新读盘", after_sea_1 == after_land_2 + 1);
+
+    hit = pk_pmtiles_find_tile(&pm, 9, 29, 230, &loc);
+    chk_true("sea[1] 命中", hit);
+    hit = pk_pmtiles_find_tile(&pm, 9, 29, 227, &loc);
+    chk_true("sea[2] 命中", hit);
+    int after_sea_3 = ctx.read_calls;
+    chk_true("sea[1]/sea[2] 与 sea[0] 同一叶目录，命中缓存不再读盘", after_sea_3 == after_sea_1);
+
+    printf("  read_calls: open=%d land_first=%d land_repeat=%d sea_first=%d sea_repeat_x2=%d"
+           "  —— 5 次 find_tile 只触发了 %d 次叶目录读盘（无缓存时本应是 5 次）\n",
+           after_open, after_land_1, after_land_2, after_sea_1, after_sea_3,
+           after_sea_3 - after_open);
+
+    pk_pmtiles_close(&pm);
+    fclose(f);
+}
+
+/* 同一套验证，换成 pk_map_cn.pmtiles——两个包的目录分页大小、叶目录层级结
+   构都一样（71/58 条根目录、entry_count 4096），但坐标空间、zoom 范围完全
+   不同，确认缓存逻辑不是只在 global 包上凑巧生效。 */
+static void test_leaf_cache_reduces_real_reads_cn(void)
+{
+    printf("-- 叶目录缓存降低真实读盘次数 (%s) --\n", PK_PMTILES_TEST_SAMPLE_CN);
+    FILE *f = fopen(PK_PMTILES_TEST_SAMPLE_CN, "rb");
+    if (!f) {
+        fprintf(stderr,
+                "SKIP: %s 不存在——跳过读盘计数测试，不计入失败\n",
+                PK_PMTILES_TEST_SAMPLE_CN);
+        return;
+    }
+    counting_ctx_t ctx = {f, 0};
+    pk_pmtiles_t pm;
+    bool opened = pk_pmtiles_open(&pm, counting_read, &ctx);
+    chk_true("open (counting reader)", opened);
+    if (!opened) {
+        fclose(f);
+        g_fail++;
+        return;
+    }
+    int after_open = ctx.read_calls;
+
+    pk_pmtiles_tile_loc_t loc;
+    bool hit = pk_pmtiles_find_tile(&pm, 10, 896, 459, &loc);
+    chk_true("tile A 第一次命中", hit);
+    int after_a1 = ctx.read_calls;
+    chk_true("tile A 第一次查找触发一次叶目录读盘", after_a1 == after_open + 1);
+
+    hit = pk_pmtiles_find_tile(&pm, 10, 896, 458, &loc);
+    chk_true("同叶目录 tile B 命中", hit);
+    hit = pk_pmtiles_find_tile(&pm, 10, 896, 457, &loc);
+    chk_true("同叶目录 tile C 命中", hit);
+    int after_bc = ctx.read_calls;
+    chk_true("同叶目录的 B/C 命中缓存，read 次数不变", after_bc == after_a1);
+
+    hit = pk_pmtiles_find_tile(&pm, 10, 817, 356, &loc);
+    chk_true("另一张叶目录 tile D 命中", hit);
+    int after_d = ctx.read_calls;
+    chk_true("tile D 落在不同叶目录，触发一次新读盘", after_d == after_bc + 1);
+
+    printf("  read_calls: open=%d A=%d B/C=%d D=%d"
+           "  —— 4 次 find_tile 只触发了 %d 次叶目录读盘（无缓存时本应是 4 次）\n",
+           after_open, after_a1, after_bc, after_d, after_d - after_open);
+
+    pk_pmtiles_close(&pm);
+    fclose(f);
+}
+
 int main(void)
 {
     test_hilbert_vectors();
@@ -367,6 +574,9 @@ int main(void)
     test_corrupt_input_no_crash();
     test_real_sample();
     test_global_leaf_directory();
+    test_leaf_cache_lru();
+    test_leaf_cache_reduces_real_reads();
+    test_leaf_cache_reduces_real_reads_cn();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -121,3 +121,10 @@ idf_component_register(
         sdmmc                    # sdmmc_card_t protocol layer
         mbedtls                  # PSA Crypto：pk_aero_db 的 AES-CTR + SHA-256
 )
+
+# 瓦片解码热路径单独 -O2：全工程默认 -Os，lodepng 的 inflate/unfilter 与
+# pmtiles 目录解析是地图页加载耗时大头，换 -O2 立省 30% 上下,只多几 KB flash。
+set_source_files_properties(
+    "third_party/pk_lodepng.c" "pk_pmtiles.c" "pk_tile_loader.c"
+    PROPERTIES COMPILE_OPTIONS "-O2")
+

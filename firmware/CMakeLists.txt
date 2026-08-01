@@ -24,3 +24,11 @@ endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(pilot_kit_box)
+
+# 构建期护栏：调度器启动前那段内部堆窗口只有 ~65KB，余量已不足 2KB，再往
+# 内部 .bss 加静态数据就会开机 boot loop（机理见脚本头注释，2026-08-01 实测）。
+idf_build_get_property(python PYTHON)
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
+    COMMAND ${python} "${CMAKE_CURRENT_LIST_DIR}/scripts/check_early_heap.py"
+            "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>"
+    VERBATIM)

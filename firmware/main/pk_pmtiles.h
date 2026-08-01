@@ -76,6 +76,23 @@ typedef struct {
                                run_length==0: 相对 leaf_dirs_offset */
 } pk_pmtiles_dir_entry_t;
 
+/* 叶目录 LRU 缓存槽数（每个 pk_pmtiles_t 实例一份）。内存预算见 pk_pmtiles.c
+ * leaf_cache_find/leaf_cache_insert 上方注释——改这个数直接影响内存占用，
+ * 别只改这里不看那份预算。 */
+#define PK_PMTILES_LEAF_CACHE_SLOTS 4
+
+/* 一个已解析并驻留的叶目录：key 是它在文件中的绝对 offset
+ * （header.leaf_dirs_offset + 目录 entry 里的相对 offset），value 是解压+
+ * parse_directory 之后的 entry 数组，与 root_entries 同一种内存形态。 */
+typedef struct {
+    bool     valid;    /* false=空槽；不能用 offset==0 当"空"判据——0 是合法的
+                           第一张叶目录绝对 offset（== leaf_dirs_offset）。 */
+    uint64_t offset;
+    pk_pmtiles_dir_entry_t *entries;
+    size_t                  count;
+    uint32_t lru_seq;  /* 命中/插入时打的递增序号，淘汰选全槽最小的那个 */
+} pk_pmtiles_leaf_cache_slot_t;
+
 typedef struct {
     pk_pmtiles_read_fn   read;
     void                 *read_ctx;
@@ -84,6 +101,11 @@ typedef struct {
     /* 根目录常驻内存（open 时解出一次，随实例存活）。 */
     pk_pmtiles_dir_entry_t *root_entries;
     size_t                  root_count;
+
+    /* 叶目录 LRU 缓存：find_tile 下潜前先查这里，命中就免掉一次盘读+一次
+     * gzip 解压。root 目录常驻不受影响（上面 root_entries 那份逻辑不变）。 */
+    pk_pmtiles_leaf_cache_slot_t leaf_cache[PK_PMTILES_LEAF_CACHE_SLOTS];
+    uint32_t                     leaf_cache_seq;
 
     /* pk_pmtiles_open_file 内部持有的 FILE*；pk_pmtiles_open 打开的实例为
      * NULL，close 时不去动调用方自己的 read_ctx。 */
@@ -119,7 +141,11 @@ void pk_pmtiles_close(pk_pmtiles_t *pm);
 uint64_t pk_pmtiles_zxy_to_tileid(uint8_t z, uint32_t x, uint32_t y);
 
 /* 查找 (z,x,y) 对应瓦片，命中写 *out（tile_data 段内 offset+length）并返回
- * true；越界/未命中（含目录里干脆没有这个 tile_id）返回 false。 */
+ * true；越界/未命中（含目录里干脆没有这个 tile_id）返回 false。
+ *
+ * 线程模型：本模块不加锁，pm->leaf_cache 的读写（含 LRU 淘汰）与其余状态
+ * 一样由调用方自己的锁保护——真机 fetch/scan 路径都在 pk_tile_loader.c 的
+ * io_lock 临界区内调用本函数，同一 pm 实例不会有并发调用。 */
 bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y,
                            pk_pmtiles_tile_loc_t *out);
 

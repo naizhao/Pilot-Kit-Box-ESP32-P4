@@ -18,6 +18,7 @@
  * 任何 LVGL API。 */
 #include "third_party/pk_lodepng.h"
 
+#include "esp_attr.h"
 #include "pk_sdcard.h"
 #include "pk_tile_cache.h"
 #include "display.h"               /* pk_rgb565 */
@@ -42,8 +43,20 @@ typedef struct {
     uint32_t view_gen;
 } loader_req_t;
 
-static pk_map_store_t  s_store;
-static pk_tile_cache_t s_cache;
+/* 本模块的大静态一律放 PSRAM .bss，不占内部 RAM——这不是优化，是硬约束。
+ *
+ * ESP32-P4 rev<v3 的内存布局（heap/port/esp32p4/memory_layout.c）里，高位那
+ * 两段（日志中的 18KiB + 224KiB）标着 startup_stack，**调度器启动之前不可
+ * 分配**；那段窗口里系统能用的只有 [_heap_start_low, 0x4ff3afc0) 这一段，
+ * 本工程实测仅 65KB 且已被 dsp_task 等吃到只剩约 1.5KB 余量。往内部 .bss
+ * 里再加 2KB，vTaskStartScheduler 里 2KB 的定时器任务栈就分配不出来，直接
+ * assert boot loop（2026-08-01：加 2KB 无意义填充同样必崩，与改动语义无关）。
+ *
+ * s_store 是 16 包 × (pk_pmtiles_t + path[]) 的冷结构，s_cache/s_inflight 同理
+ * ——都只在 loader 任务与渲染线程里访问，不做 DMA，PSRAM 完全够快。
+ * 三者合计曾占 dram0 约 11KB，正是压垮那 65KB 窗口的主因。 */
+EXT_RAM_BSS_ATTR static pk_map_store_t s_store;
+EXT_RAM_BSS_ATTR static pk_tile_cache_t s_cache;
 static SemaphoreHandle_t s_lock;          /* 保护 s_store 的 meta 快照 + s_cache。
                                              绝不横跨 SD I/O 持有——渲染线程在
                                              try_blit/route 里等它,I/O 挪进 s_io_lock */
@@ -57,7 +70,7 @@ static bool               s_sd_was_mounted;
 /* 去重表:记录已入队/正在处理、尚未有结果的瓦片,避免 map_page 每帧重复请求
  * 同一块缺失瓦片把队列灌满。 */
 typedef struct { bool used; size_t pack_index; uint8_t z; uint32_t x, y; } inflight_t;
-static inflight_t s_inflight[LOADER_INFLIGHT_MAX];
+EXT_RAM_BSS_ATTR static inflight_t s_inflight[LOADER_INFLIGHT_MAX];
 
 static bool key_eq(size_t pi, uint8_t z, uint32_t x, uint32_t y,
                    size_t pi2, uint8_t z2, uint32_t x2, uint32_t y2)
@@ -210,8 +223,14 @@ void pk_tile_loader_bump_view(void)
 
 /* ── loader 任务：唯一碰 SD 卡的地方 ──────────────────────────────── */
 
+/* 前 N 张瓦片打 INFO 级分段耗时(find/read/decode),之后降 DEBUG——
+ * 优化对比要数据不要体感,又不能让稳态刷屏。 */
+static volatile uint32_t s_timing_logged;
+#define TIMING_LOG_FIRST_N 20
+
 static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
 {
+    int64_t t0 = esp_timer_get_time();
     pk_map_pack_t *pack;
     pk_pmtiles_tile_loc_t loc;
     pk_map_route_result_t route_unused;
@@ -249,10 +268,12 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
         return false;
     }
 
+    int64_t t_find = esp_timer_get_time();
     bool ok = pack->pm.read(pack->pm.read_ctx,
                             pack->pm.header.tile_data_offset + loc.offset,
                             png, loc.length) == 0;
     xSemaphoreGive(s_io_lock);
+    int64_t t_read = esp_timer_get_time();
     if (!ok) {
         free(png);
         ESP_LOGW(TAG, "读瓦片 z%u(%u,%u) 失败", z, x, y);
@@ -291,6 +312,17 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     pk_tile_cache_put(&s_cache, key, buf);
     xSemaphoreGive(s_lock);
+
+    int64_t t_done = esp_timer_get_time();
+    uint32_t n = s_timing_logged++;
+    if (n < TIMING_LOG_FIRST_N) {
+        ESP_LOGI(TAG, "tile z%u(%u,%u) %uB: find=%dms read=%dms decode=%dms total=%dms",
+                 z, x, y, (unsigned)loc.length,
+                 (int)((t_find - t0) / 1000), (int)((t_read - t_find) / 1000),
+                 (int)((t_done - t_read) / 1000), (int)((t_done - t0) / 1000));
+    } else {
+        ESP_LOGD(TAG, "tile z%u(%u,%u) total=%dms", z, x, y, (int)((t_done - t0) / 1000));
+    }
     return true;
 }
 
@@ -379,7 +411,13 @@ void pk_tile_loader_init(void)
     }
     s_sd_was_mounted = pk_sdcard_is_mounted();
 
-    BaseType_t ok = xTaskCreatePinnedToCore(loader_task, "tile_loader",
-                                            LOADER_TASK_STACK, NULL, 3, NULL, 0);
-    if (ok != pdTRUE) ESP_LOGE(TAG, "loader task create failed");
+    /* 双 worker 各钉一核:SD I/O 被 s_io_lock 串行化(SDMMC 本就串行),
+       但 PNG 解码是纯 CPU——两核并行解码,首屏 12 张的解码墙钟近乎减半。
+       handle_sd_transition 在两个任务里都会跑,幂等(状态翻转有 s_sd_was_mounted
+       守卫,重扫在 io+s 双锁内)。 */
+    BaseType_t ok0 = xTaskCreatePinnedToCore(loader_task, "tile_ld0",
+                                             LOADER_TASK_STACK, NULL, 3, NULL, 0);
+    BaseType_t ok1 = xTaskCreatePinnedToCore(loader_task, "tile_ld1",
+                                             LOADER_TASK_STACK, NULL, 3, NULL, 1);
+    if (ok0 != pdTRUE || ok1 != pdTRUE) ESP_LOGE(TAG, "loader task create failed");
 }
