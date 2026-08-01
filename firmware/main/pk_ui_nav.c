@@ -499,10 +499,32 @@ static void fab_event_cb(lv_event_t *e)
         break;
 
     case LV_EVENT_LONG_PRESSED:
-        /* 进入拖动态：微放大 + 半透明，让人看出「它现在跟手了」。 */
+        /*
+         * 进入拖动态：半透明 + 一圈亮边 + 阴影加重，让人看出「它现在跟手了」。
+         *
+         * **不能用 transform_scale 做微放大**，哪怕它是最自然的表达。踩坑记录
+         * （罩哥 2026-08-02 真机实测「一长按 FAB 就死机」）：
+         *
+         *   lv_obj_style.c:1090  transform_scale != 256 → LV_LAYER_TYPE_TRANSFORM
+         *   TRANSFORM layer 必须**一次性**拿到整块 buffer，不像 SIMPLE layer 那样
+         *   能受 LV_DRAW_LAYER_SIMPLE_BUF_SIZE 限制分块渲染；
+         *   而本工程 LVGL 池只有 CONFIG_LV_MEM_SIZE_KILOBYTES=64，分配不出来。
+         *   分配失败时 lv_draw.c:506 只是 "Try later" 返回 NULL，随后
+         *   lv_draw.c:302 在 LV_OS_NONE 下是**裸忙等** `while(!dispatch_req);`——
+         *   整个 LVGL 都跑在 pfd 这一个任务里，没有第二个线程能释放内存或发请求，
+         *   于是永久占满 CPU0，IDLE0 饿死，看门狗每 15 s 报一次 `CPU 0: pfd`。
+         *
+         * 换句话说：这个架构（单线程 LVGL + 64 KB 池）下 TRANSFORM layer 一律
+         * 不可用。要改这里，先确认 lv_obj_style.c 的 calculate_layer_type() 不会
+         * 把新写法判成 TRANSFORM——bg_opa / border / shadow 都安全（只有
+         * opa_layered、bitmap_mask、blend_mode 会退到可分块的 SIMPLE layer）。
+         */
         s_dragging = true;
         s_drag_happened = true;
-        lv_obj_set_style_transform_scale(s_fab, 280, 0);   /* 256 = 1.0×，即 1.09× */
+        lv_obj_set_style_border_width(s_fab, 3, 0);
+        lv_obj_set_style_border_color(s_fab, lv_color_white(), 0);
+        lv_obj_set_style_border_opa(s_fab, LV_OPA_90, 0);
+        lv_obj_set_style_shadow_width(s_fab, 20, 0);
         lv_obj_set_style_bg_opa(s_fab, LV_OPA_60, 0);
         /* 拖动期间 dock 必须收起：它锚在 FAB 上，跟着乱跑没有意义。 */
         pk_ui_nav_set_dock_open(false);
@@ -518,7 +540,13 @@ static void fab_event_cb(lv_event_t *e)
         /* 只跟垂直分量；水平方向松手才吸附，拖动中也让它跟手，否则手感发滞。 */
         int nx = lv_obj_get_x(s_fab) + v.x;
         int ny = lv_obj_get_y(s_fab) + v.y;
-        /* 夹在屏内：顶栏之下、屏底之上，别拖到看不见的地方。 */
+        /* 夹在屏内：顶栏之下、屏底之上，别拖到看不见的地方。
+         *
+         * 横向同样要夹，且理由与纵向一样实在：手指按住 FAB 中心往边上拖，
+         * FAB 与手指的相对偏移是保持的，手指到 x=0 时 FAB 左缘已经是 -28，
+         * 一半圆钮滑出屏外。松手会吸附回来，但拖的过程中它是缺一块的。 */
+        if (nx < 0) nx = 0;
+        if (nx > PK_DISPLAY_W - FAB_D) nx = PK_DISPLAY_W - FAB_D;
         if (ny < PFD_BAR_BOT) ny = PFD_BAR_BOT;
         if (ny > PK_DISPLAY_H - FAB_D) ny = PK_DISPLAY_H - FAB_D;
         lv_obj_set_pos(s_fab, nx, ny);
@@ -528,7 +556,10 @@ static void fab_event_cb(lv_event_t *e)
     case LV_EVENT_RELEASED:
         if (!s_dragging) break;
         s_dragging = false;
-        lv_obj_set_style_transform_scale(s_fab, 256, 0);
+        /* 复原拖动态的三样，与 LONG_PRESSED 一一对应；数值取 pk_ui_nav_init()
+         * 里建 FAB 时设的那一套，别在这里另起一份。 */
+        lv_obj_set_style_border_width(s_fab, 0, 0);
+        lv_obj_set_style_shadow_width(s_fab, 12, 0);
         lv_obj_set_style_bg_opa(s_fab, LV_OPA_80, 0);
 
         /* 吸附到更近的一侧，按 FAB 中心判定。 */

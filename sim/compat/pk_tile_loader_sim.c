@@ -229,6 +229,43 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
     return true;
 }
 
+/* 同真机 pk_tile_loader.c 的同名函数：未命中时从**已解码的上级瓦片**里裁子块
+ * 放大顶上，让放大一级时画面保持连续。
+ *
+ * 与真机一样只认已在缓存里的祖先，不在这里触发解码：它是"缓存里恰好还有"
+ * 的兜底，顺手把没画过的祖先也解出来，等于把 overzoom 变成一条正常加载路径，
+ * 与真机行为就对不上了（真机那侧缓存没有就返回 false，由调用方画占位）。 */
+bool pk_tile_loader_try_blit_ancestor(uint8_t z, uint32_t x, uint32_t y,
+                                      uint16_t *fb, int dst_x0, int dst_y0,
+                                      uint32_t now_ms, int max_levels_up)
+{
+    (void)now_ms;   /* 同步实现没有负缓存 TTL，同 try_blit */
+
+    for (int k = 1; k <= max_levels_up && k <= (int)z; k++) {
+        const uint8_t  az = (uint8_t)(z - k);
+        const uint32_t ax = x >> k, ay = y >> k;
+
+        pk_map_route_result_t route;
+        if (!pk_tile_loader_route(az, ax, ay, &route)) continue;
+        /* 只认精确命中的祖先：route 自己还在 overzoom 说明那一级也没数据，
+           继续往上找更粗的，别在这里叠两层放大。（同真机版） */
+        if (route.scale != 1) continue;
+
+        uint32_t scale = 1u << k;
+        if (scale > PK_TILE_PIXELS) break;   /* 再往上子块不足 1 像素，没意义 */
+
+        const sim_tile_slot_t *slot = cache_find(route.pack_index, az, ax, ay);
+        if (slot == NULL || slot->negative || slot->data == NULL) continue;
+
+        const uint32_t crop = PK_TILE_PIXELS / scale;
+        blit_tile_scaled(slot->data, scale,
+                         (x & (scale - 1)) * crop, (y & (scale - 1)) * crop,
+                         fb, dst_x0, dst_y0);
+        return true;
+    }
+    return false;
+}
+
 void pk_tile_loader_request(const pk_map_route_result_t *route)
 {
     /* 空实现：见文件头——try_blit 已经在未命中时同步把瓦片加载进缓存，

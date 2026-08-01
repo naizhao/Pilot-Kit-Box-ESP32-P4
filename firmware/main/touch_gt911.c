@@ -39,6 +39,7 @@
 #include "keyboard_page.h"
 #include "settings_page.h"
 #include "pk_ui_nav.h"
+#include "pk_touch_arbiter.h"
 #include "traffic_page.h"
 #include "map_page.h"
 #include "ui_state.h"
@@ -54,8 +55,12 @@ static const char *TAG = "touch";
 
 static esp_lcd_touch_handle_t s_tp;
 
-/* 自绘按钮的「一次按下只触发一次」闸门，松手时重新装弹。 */
-static bool s_armed = true;
+/* 这一次按压归谁：自绘页面还是 LVGL 控件。归属在按下那一刻定死，松手才作废。
+ *
+ * 取代原来那个 s_armed 布尔量。s_armed 只记「命中判定还没用掉」，没记「这次
+ * 按压已经归了 LVGL」——于是按在 FAB 上的拖动，手指划进列表区时会被列表反手
+ * 抢走。规则与踩坑过程见 pk_touch_arbiter.h。 */
+static pk_touch_arbiter_t s_arb;
 
 /*
  * 原生触摸坐标 → 逻辑屏坐标。
@@ -134,8 +139,8 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 命中判定只能在这里做——落在按钮上就把这一下吃掉，报成 RELEASED，
          * 否则手指同时会点到底下的 FAB。
          *
-         * 只在按下的那一瞬间触发一次：用 s_armed 记住上一帧的按压状态，
-         * 否则手指停在按钮上不动，每帧都会切一次朝向。 */
+         * 只在按下的那一瞬间触发一次：命中判定归 s_arb 管（HITTEST 只在按压的
+         * 第一帧出现），否则手指停在按钮上不动，每帧都会切一次朝向。 */
         /*
          * dock 展开时，页面的自绘命中一律让路。
          *
@@ -154,13 +159,18 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         if (pk_ui_nav_dock_open()) {
             /* 让路期间把页面的手势状态**取消**掉（不是 touch_up）：否则
              * dock 展开前落在列表上的那次按下会被当成一次完整点击提交，
-             * 手指还没松抽屉就自己开了。 */
+             * 手指还没松抽屉就自己开了。
+             *
+             * 同时把这次按压钉给 LVGL 直到松手：dock 中途收起（5 s 自动收）
+             * 时页面不该突然把手指接管过去——那一下的起点早就不在页面上了。 */
+            pk_touch_arbiter_force_lvgl(&s_arb);
             pk_adsb_list_touch_cancel();
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
             pk_keyboard_page_touch_cancel();
             pk_about_page_touch_cancel();
-        } else if (s_armed) {
+        } else switch (pk_touch_arbiter_press(&s_arb)) {
+        case PK_TOUCH_ACTION_HITTEST:
             /* 设置页那一条要先问键盘：编辑器是浮在设置页之上的模态层
              * （渲染那侧同样是这个次序，见 pfd.c），设置页此刻在屏上根本
              * 看不见，它的命中表却还留着上一帧的几何——不挡掉的话，点
@@ -173,27 +183,39 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                         ? pk_keyboard_page_touch(lx, ly)
                         : pk_settings_page_touch(lx, ly)))
                  || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
-            if (eaten) s_armed = false;
-        } else if (m == PK_UI_MODE_MAP) {
-            /* 地图页没有独立的 drag() 入口——单指拖动平移的每一帧都重复调
-             * pk_map_page_touch()，由它内部的按下/续行状态机区分"新按下"
-             * 还是"接着上一次拖"（见 map_page.h 顶部注释）。 */
-            eaten = pk_map_page_touch(lx, ly);
-        } else if (m == PK_UI_MODE_DIAG) {
-            eaten = pk_diag_page_drag(lx, ly);
-        } else if (m == PK_UI_MODE_SETTINGS) {
-            /* 键盘不滚动，按住不放的后续帧没有它要做的事——但仍然要**吃掉**：
-             * 不吃就会落到设置页的滚动上（编辑器底下那一页会被悄悄滚走），
-             * 或者漏给底下的 LVGL 控件。 */
-            eaten = pk_keyboard_page_active() || pk_settings_page_drag(lx, ly);
-        } else if (m == PK_UI_MODE_ABOUT) {
-            /* 关于页正文比屏高，同样要按住不放地连续滚动，判定与 diag/settings 一致。 */
-            eaten = pk_about_page_drag(lx, ly);
-        } else if (m == PK_UI_MODE_ADSB_LIST) {
-            /* 按住不放的后续帧交给列表做滚动。表格的滑动必须是连续的，
-             * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
-             * 不能沿用交通页那种「一次按下只处理一次」的写法。 */
-            eaten = pk_adsb_list_drag(lx, ly);
+            /* 归属就此定死，松手前不再回头问——这一行是「拖 FAB 拖到一半
+             * 被列表抢走」那个 bug 的闸门，别改成每帧重判。 */
+            pk_touch_arbiter_settle(&s_arb, eaten);
+            break;
+
+        case PK_TOUCH_ACTION_DRAG:
+            if (m == PK_UI_MODE_MAP) {
+                /* 地图页没有独立的 drag() 入口——单指拖动平移的每一帧都重复调
+                 * pk_map_page_touch()，由它内部的按下/续行状态机区分"新按下"
+                 * 还是"接着上一次拖"（见 map_page.h 顶部注释）。 */
+                eaten = pk_map_page_touch(lx, ly);
+            } else if (m == PK_UI_MODE_DIAG) {
+                eaten = pk_diag_page_drag(lx, ly);
+            } else if (m == PK_UI_MODE_SETTINGS) {
+                /* 键盘不滚动，按住不放的后续帧没有它要做的事——但仍然要**吃掉**：
+                 * 不吃就会落到设置页的滚动上（编辑器底下那一页会被悄悄滚走），
+                 * 或者漏给底下的 LVGL 控件。 */
+                eaten = pk_keyboard_page_active() || pk_settings_page_drag(lx, ly);
+            } else if (m == PK_UI_MODE_ABOUT) {
+                /* 关于页正文比屏高，同样要按住不放地连续滚动，判定与 diag/settings 一致。 */
+                eaten = pk_about_page_drag(lx, ly);
+            } else if (m == PK_UI_MODE_ADSB_LIST) {
+                /* 按住不放的后续帧交给列表做滚动。表格的滑动必须是连续的，
+                 * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
+                 * 不能沿用交通页那种「一次按下只处理一次」的写法。 */
+                eaten = pk_adsb_list_drag(lx, ly);
+            }
+            break;
+
+        case PK_TOUCH_ACTION_YIELD:
+            /* 这次按压在按下那一刻就归了 LVGL（比如落在 FAB 上）。手指之后
+             * 划到哪儿都不关页面的事，eaten 保持 false，原样交给 LVGL。 */
+            break;
         }
 
         if (eaten) data->state = LV_INDEV_STATE_RELEASED;
@@ -204,9 +226,9 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         /* 松手才重新装弹。
          *
          * 上一版把这行写在 pressed 分支**内部**（if (!pressed) s_armed = true;），
-         * 那里 !pressed 恒假——于是第一次点击把 s_armed 置 false 之后再也没机会
-         * 恢复，所有自绘按钮从此全部失灵。 */
-        s_armed = true;
+         * 那里 !pressed 恒假——于是第一次点击把闸门关上之后再也没机会恢复，
+         * 所有自绘按钮从此全部失灵。 */
+        pk_touch_arbiter_release(&s_arb);
         pk_traffic_page_touch_up();
         pk_map_page_touch_up();
         pk_adsb_list_touch_up();

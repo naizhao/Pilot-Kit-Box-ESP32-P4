@@ -101,3 +101,39 @@ void pk_sim_lv_attach_mouse(int zoom)
     lv_indev_set_read_cb(indev, mouse_read_cb);
     lv_indev_set_display(indev, lv_display_get_default());
 }
+
+/* ── 脚本化指针 → LVGL 指针输入 ───────────────────────────────────
+ *
+ * 与 mouse_read_cb 并列的第二种指针来源：坐标不问 SDL，由调用方逐帧写死。
+ *
+ * 为什么非要它不可：交互类的 bug（「拖 FAB 把整个屏幕一起拖走了」）只能在
+ * **真实的 indev 流程**里复现——LVGL 的滚动判定跑在 indev 读取之后、控件
+ * 事件之前（lv_indev_scroll.c 的 lv_indev_find_scroll_obj），直接去调控件的
+ * event_cb 正好把它绕过去，测出来永远是绿的。而 SDL 鼠标要人手动操作，进不
+ * 了自动化。夹在中间的这一层，是唯一能既走全流程又能脚本驱动的地方。
+ */
+static lv_point_t s_script_pt;
+static bool       s_script_pressed;
+
+static void script_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    data->point = s_script_pt;
+    data->state = s_script_pressed ? LV_INDEV_STATE_PRESSED
+                                   : LV_INDEV_STATE_RELEASED;
+}
+
+void pk_sim_lv_attach_script_pointer(void)
+{
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, script_read_cb);
+    lv_indev_set_display(indev, lv_display_get_default());
+}
+
+void pk_sim_lv_pointer_set(int x, int y, bool pressed)
+{
+    s_script_pt.x = x;
+    s_script_pt.y = y;
+    s_script_pressed = pressed;
+}

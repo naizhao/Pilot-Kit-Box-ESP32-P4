@@ -73,6 +73,7 @@ idf_component_register(
         "pk_ui_nav.c"
         "pk_ui_nav_host.c"
         "touch_gt911.c"
+        "pk_touch_arbiter.c"
         "battery.c"
         "soc_temp.c"
         "config_fab.c"

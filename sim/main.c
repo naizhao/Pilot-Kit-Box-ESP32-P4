@@ -70,6 +70,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lvgl.h"          /* --drag-test 要直接问 screen 的滚动偏移 */
+/* lv_obj_get_layer_type() 只在私有头里导出。测试要问的正是"这个对象会不会被
+ * 判成 TRANSFORM layer"，而那是 LVGL 的内部概念，没有公开 API 能问——用私有头
+ * 比在测试里照抄一份 calculate_layer_type() 的判定条件可靠（照抄的那份会随
+ * LVGL 升级悄悄失真）。sim 的 include 路径已含 lvgl 的 src/。 */
+#include "core/lv_obj_draw_private.h"
+
 #include "lv_backend.h"
 #include "pk_ui_nav.h"
 #include "about_page.h"
@@ -436,6 +443,173 @@ page_done:;   /* 空语句：C17 里标签后面不能直接跟声明（-Wc23-ex
     return 0;
 }
 
+/*
+ * --drag-test：把 FAB 从右缘往左拖一趟，断言**屏幕自己没有跟着滚**。
+ *
+ * 这条测试对应罩哥真机实测的一个 bug：按住右侧 FAB 想拉到左边，结果整个屏幕
+ * 的内容被一起拖走，下方还凭空冒出一条滚动条。
+ *
+ * 根因不在 FAB，在屏幕根对象：LVGL 里每个 lv_obj 默认都带 LV_OBJ_FLAG_SCROLLABLE
+ * （lv_obj.c 的构造函数），screen 也不例外；而 pk_ui_nav.c 给 backbar / dock /
+ * toast / demo 那几个容器都显式摘掉了这个 flag，唯独 screen 漏了。FAB 自身是
+ * lv_button（构造时已不可滚），但它保留着 SCROLL_CHAIN，于是 LVGL 的
+ * lv_indev_find_scroll_obj() 沿父链一路找到 screen，认定"这个能滚"。
+ *
+ * screen 之所以真的滚得动，是因为 dock 收起时藏在屏外（dock_hidden_x() 返回
+ * PK_DISPLAY_W 或 -dock_width()），滚动区永远比屏幕宽出一整个 dock。
+ *
+ * 为什么必须走 indev 而不是直接调 fab_event_cb：滚动判定跑在 indev 读取之后、
+ * 控件事件之前，绕开 indev 就把要测的那一段跳过去了。
+ *
+ * 判据取 lv_obj_get_scroll_x/y(screen) 恒为 0——滚动条只是滚动的显示结果，
+ * 盯着偏移量比盯着滚动条可靠。顺带把 FAB 是否被拖出屏外也一并断言了：那是
+ * 同一段代码里的第二个洞（PRESSING 分支只夹了 ny，nx 没夹）。
+ */
+static int run_drag_test(void)
+{
+    pk_sim_lv_init();
+    pk_ui_nav_init();
+    pk_sim_lv_attach_script_pointer();
+
+    lv_obj_t *scr = lv_screen_active();
+    int fails = 0;
+
+    /* 先空跑几帧，让 dock 的收起动画落位到屏外——正是它把 screen 的滚动区
+     * 撑得比屏幕宽，不等它到位就测，等于把前提条件抽掉了。 */
+    for (int i = 0; i < 12; ++i) pk_sim_lv_render(33);
+
+    int fx, fy, fw, fh;
+    if (!pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh)) {
+        fprintf(stderr, "FAB 不可见，测试无从谈起\n");
+        return 2;
+    }
+    printf("FAB 起始位置 x=%d y=%d %dx%d\n", fx, fy, fw, fh);
+
+    int px = fx + fw / 2;
+    const int py = fy + fh / 2;
+
+    /* 按住不动 ~660 ms：FAB 要 LONG_PRESSED（默认 400 ms）才进拖动态。 */
+    for (int i = 0; i < 20; ++i) {
+        pk_sim_lv_pointer_set(px, py, true);
+        pk_sim_lv_render(33);
+    }
+
+    /*
+     * 拖动态**不许**把 FAB 变成 TRANSFORM layer。
+     *
+     * 2026-08-02 真机「一长按 FAB 就死机」的根因：TRANSFORM layer 必须一次性拿到
+     * 整块 buffer（SIMPLE layer 才能受 LV_DRAW_LAYER_SIMPLE_BUF_SIZE 限制分块），
+     * 而真机 LVGL 池只有 CONFIG_LV_MEM_SIZE_KILOBYTES=64，分配不出来；失败后
+     * lv_draw.c:506 只是 "Try later"，紧接着 lv_draw.c:302 在 LV_OS_NONE 下是裸忙等
+     * `while(!dispatch_req);`——整个 LVGL 都在 pfd 一个任务里，没有第二个线程能
+     * 释放内存或发请求，于是永久占满 CPU0，看门狗每 15 s 报一次 `CPU 0: pfd`。
+     *
+     * 判据直接问 lv_obj_get_layer_type()，**不去量 LVGL 堆用量**：layer buffer 是
+     * 渲染那一瞬间分配、画完立刻释放的，隔几帧采样一次根本撞不上峰值——试过，
+     * 把 transform_scale 加回去堆增量也只有 72 B，测试照样全绿（假绿）。
+     *
+     * 模拟器 LV_MEM_SIZE 是 8 MB，永远不会 OOM，所以这里只能查"会不会走上那条
+     * 路"，查不了"内存够不够"。真机那口池子有多小，见上面那行 CONFIG。
+     */
+    {
+        lv_obj_t *fab = NULL;
+        const uint32_t nch = lv_obj_get_child_count(scr);
+        for (uint32_t i = 0; i < nch; ++i) {
+            lv_obj_t *c = lv_obj_get_child(scr, i);
+            if (lv_obj_get_width(c) == fw && lv_obj_get_height(c) == fh) { fab = c; break; }
+        }
+        if (fab == NULL) {
+            printf("  [FAIL] 找不到 FAB 对象，layer 类型没验成\n");
+            fails++;
+        } else if (lv_obj_get_layer_type(fab) == LV_LAYER_TYPE_TRANSFORM) {
+            printf("  [FAIL] 拖动态把 FAB 变成了 TRANSFORM layer："
+                   "真机 64 KB 池分配不出整块 buffer，pfd 任务会卡死在忙等里\n");
+            fails++;
+        } else {
+            printf("拖动态 FAB layer 类型 = %d（0=NONE，安全）\n",
+                   (int)lv_obj_get_layer_type(fab));
+        }
+    }
+
+    /* 一路拖到屏幕最左边（手指最多到 x=0，GT911 的坐标被 native_to_logical
+     * 夹在屏内）。每帧 20 px，中途逐帧检查，不能只看终点——滚动是过程量，
+     * LVGL 松手时会把它弹回去，只验终点会漏掉。 */
+    for (int step = 0; px > 0; ++step) {
+        px -= 20;
+        if (px < 0) px = 0;
+        pk_sim_lv_pointer_set(px, py, true);
+        pk_sim_lv_render(33);
+
+        const int32_t sx = lv_obj_get_scroll_x(scr);
+        const int32_t sy = lv_obj_get_scroll_y(scr);
+        if (sx != 0 || sy != 0) {
+            printf("  [FAIL] 第 %2d 步 指针 x=%4d：屏幕被滚动了 scroll=(%d,%d)\n",
+                   step, px, (int)sx, (int)sy);
+            fails++;
+        }
+        /* 这里**测不到** FAB 拖动中有没有滑出屏外：pk_ui_nav_fab_rect() 返回的
+         * 是 fab_x() 算出的吸附位，不是 lv_obj 的实时坐标，拖动期间它恒等于
+         * 左/右缘那两个值。曾经在这里写过一条 fx<0 的断言，看着绿，其实什么
+         * 都没验——留这段话，免得下次又有人照着补一条同样无效的。 */
+    }
+
+    /* 松手，再跑几帧让吸附动画走完。 */
+    pk_sim_lv_pointer_set(px, py, false);
+    for (int i = 0; i < 12; ++i) pk_sim_lv_render(33);
+
+    const int32_t sx = lv_obj_get_scroll_x(scr);
+    const int32_t sy = lv_obj_get_scroll_y(scr);
+    if (sx != 0 || sy != 0) {
+        printf("  [FAIL] 松手后屏幕仍是滚动的 scroll=(%d,%d)\n", (int)sx, (int)sy);
+        fails++;
+    }
+
+    if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh))
+        printf("FAB 落点 x=%d y=%d（预期吸附到左缘）\n", fx, fy);
+
+    /*
+     * 各页面必须把 FAB 头上的触摸放行。
+     *
+     * 这些页面的命中区是自绘的，判定不经过 LVGL；哪个页面把 FAB 那块吃掉了，
+     * LVGL 就一次按下都收不到，FAB 当场变成死钮——点不动也拖不动。列表页
+     * 2026-08-02 正是这么坏的：内容右缘从 724 放到 784 之后 FAB 落进了命中区。
+     *
+     * 左右两个落点都要试：FAB 可以吸在任一侧，而页面的命中区左右并不对称。
+     */
+    for (int side = 0; side < 2; ++side) {
+        pk_ui_nav_set_fab_side(side == 0);
+        for (int i = 0; i < 4; ++i) pk_sim_lv_render(33);
+        if (!pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh)) continue;
+
+        const int cx = fx + fw / 2, cy = fy + fh / 2;
+        const char *where = (side == 0) ? "左缘" : "右缘";
+
+        if (pk_adsb_list_touch(cx, cy)) {
+            printf("  [FAIL] FAB 吸在%s (%d,%d)：列表页吃掉了它的按下\n",
+                   where, cx, cy);
+            fails++;
+        }
+        pk_adsb_list_touch_cancel();
+
+        if (pk_traffic_page_touch(cx, cy)) {
+            printf("  [FAIL] FAB 吸在%s (%d,%d)：交通页吃掉了它的按下\n",
+                   where, cx, cy);
+            fails++;
+        }
+        pk_traffic_page_touch_up();
+
+        if (pk_map_page_touch(cx, cy)) {
+            printf("  [FAIL] FAB 吸在%s (%d,%d)：地图页吃掉了它的按下\n",
+                   where, cx, cy);
+            fails++;
+        }
+        pk_map_page_touch_up();
+    }
+
+    printf(fails ? "\n拖动测试 FAIL（%d 处）\n" : "\n拖动测试 PASS\n", fails);
+    return fails ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
     /* headless 分支要在 SDL_Init(VIDEO) 之前判掉：存 BMP 只需要
@@ -445,6 +619,9 @@ int main(int argc, char **argv)
         const char *out = (argc >= 4) ? argv[3] : "shot.bmp";
         return run_headless(at, out);
     }
+
+    /* 同样不需要视频后端：纯事件流 + 断言，无窗口。 */
+    if (argc >= 2 && strcmp(argv[1], "--drag-test") == 0) return run_drag_test();
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());

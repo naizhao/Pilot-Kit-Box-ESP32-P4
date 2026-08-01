@@ -53,6 +53,7 @@
 #include "pfd_icon_font.h"
 #include "pfd_layout.h"
 #include "pfd_statusbar.h"   /* pk_ui_topbar_right_limit —— 给 DEMO 徽标让位 */
+#include "pk_ui_nav.h"       /* pk_ui_nav_fab_rect —— FAB 头上的触摸要放行 */
 #include "traffic_geom.h"
 #include "ui_state.h"
 
@@ -84,51 +85,61 @@
  *   BRG   CALL        DIST     ALT      V/S      GS     TRK
  *   ↗045  CES2116W    12.3    16700    ↑1500    395    011°
  */
-/* 右缘退到 FAB 之外：FAB 直径 56、右边距 16（pk_ui_nav.c），左缘落在 728。
- * 初版把 TRK 列右对齐到 784，结果 FAB 正好盖住那一行的航向——七列信息密度
- * 这么高的表格，最右列被遮掉一个数就得靠猜。
+/* 内容右缘与左边距对称，铺满整屏；**不给 FAB 让位**。
  *
- * 不做「FAB 在哪边表格就往另一边让」的动态版面：FAB 可拖动，版面会跟着跳，
- * 而表格列位一旦会动，纵向对齐这个唯一的好处就没了。 */
-#define FAB_LEFT_EDGE (PK_DISPLAY_W - 16 - 56)       /* 728 */
-#define CONTENT_R     (FAB_LEFT_EDGE - 12)           /* 716 */
+ * 上一版退到 716（FAB 左缘 728 再让 12），理由是「FAB 会盖住最右列」。代价
+ * 却是整页右侧空出 76 px 的竖带、左 8 右 76 的不对称版面——而 FAB 只有
+ * 56×56，纵向只压得住一行，为它牺牲的却是全屏高度 × 76 px。
+ *
+ * 产品决策（罩哥 2026-08-02）：FAB 就是浮在内容之上的，全局 UI 都这么设计，
+ * 不为它调整任何页面的版面。它落点那一行的最右列被圆钮压住是可接受的——
+ * 手指把它拖开就看得见，而右侧那条常驻空白是每一帧都在的。
+ *
+ * 同样不做「FAB 在哪边表格就往另一边让」的动态版面：FAB 可拖动，版面会跟着
+ * 跳，而表格列位一旦会动，纵向对齐这个唯一的好处就没了。 */
+#define CONTENT_R     (PK_DISPLAY_W - PAD_L)         /* 784 */
 
 /*
- * 八列的 x。宽度按各列**最长可能内容**算，间隙统一 16 px：
+ * 八列的 x。宽度按各列**最长可能内容**算：
  *
- *   BRG 箭头26+3位45=71   CALL 8字符×15=120   FLAG 徽章 XS 5字符=50
+ *   BRG 箭头26+3位45=71   CALL 8字符×15=120   FLAG 徽章 XS 3字符=30
  *   DIST "12.3"=60        ALT "34322"=75      V/S 箭头22+4位60=82
  *   GS "450"=45           TRK "355"=45        SEEN "47s" XS=30
  *
- * 加上 7 个间隙正好落在 716 内。加 SEEN 之前间隙是 23 px，看着更松快，但
- * 「刚才还在、现在多久没消息了」比那点呼吸感值钱——尤其它是判断一条数据
- * 还能不能信的唯一依据。
+ * 内容宽合计 558，摊在 16..784 这 768 px 里，余下的全是列间距。加 SEEN 这一
+ * 列时曾把间距从 23 px 压到 8 px，理由是「刚才还在、现在多久没消息了」比呼吸
+ * 感值钱——它是判断一条数据还能不能信的唯一依据。现在右缘放开到 784，那笔
+ * 被压掉的呼吸感又还回来了，两样都要得到。
  *
  * SEEN 用 XS 档：它是元数据（这行有多新），不是飞行数据，不该和高度速度
  * 抢同一个视觉层级。
  */
 #define COL_BRG_X     PAD_L                          /*  16 */
-#define COL_CALL_X    103
+#define COL_CALL_X    111
 /* 紧急码徽章自成一列，不跟在呼号后面浮动。
  * 初版让它紧跟呼号，8 字符满宽呼号 + "NO RADIO" 直接压进了 DIST 列，把
  * 距离盖掉一半——表格里任何"跟着内容长度走"的元素迟早会撞上邻列。 */
-#define COL_FLAG_X    239
-/* 2026-07-31：DIST/ALT 这两组基准与它们左侧的分隔线各左移 3 px。
+#define COL_FLAG_X    255
+/* 2026-08-02：内容右缘从 716 放到 784（不再给 FAB 让位，见上方），多出来的
+ * 68 px 均摊给八个格子——每格 +8，最后一格 +12。列的**相对**关系原样不动，
+ * 只是整张表横向摊开，所以下面那组 _Static_assert 的账仍按同一套算法核对。
  *
- * 起因不在本页：CJK cell 宽从 0.81 em 放到整 em 修「中文比英文偏小」，
- * PK_AA_M_CJK_W 18 → 22，而 V/S 列的宽度 W_VS 拿它当 ↑ 箭头宽——于是
- * 536 - 82 - 450 = 4，跌破 SEP_GAP=7，_Static_assert 直接编译失败。
+ * 为什么均摊而不是只加宽某几列：这八列的宽度是各自「最长可能内容」定死的
+ * （见上面的宽度表），谁也不缺内容宽度，缺的是列与列之间的呼吸——原来间距
+ * 只有 8 px，"0 340 270" 这种数字串眼睛容易串列。均摊之后最窄的间距也有
+ * 8 px、多数到了 15~22 px，纵向扫读明显轻松。
  *
- * 把 4 px 的欠账往左摊：DIST 左侧原有 60 px 富余（徽章列到 DIST 之间），
- * 挪 3 px 之后仍剩 57 px，四列间距全部回到 8 px 以上、V/S 左缘正好 7 px。
- * 只动这四个数是因为右侧 GS/TRK/AGE 一路钉在 CONTENT_R 上，动它们要连
- * 内容区右缘一起改。 */
-#define COL_DIST_R    348                            /* 右对齐基准 */
-#define COL_ALT_R     439
-#define COL_VS_R      536
-#define COL_GS_R      603
-#define COL_TRK_R     670
-#define COL_SEEN_R    CONTENT_R                      /* 716 */
+ * 历史（保留，因为它解释了 DIST/ALT 这两组数为什么不是整齐的倍数）：
+ * 2026-07-31 CJK cell 宽从 0.81 em 放到整 em 修「中文比英文偏小」，
+ * PK_AA_M_CJK_W 18 → 22，而 V/S 列的宽度 W_VS 拿它当 ↑ 箭头宽，于是当时
+ * V/S 左缘只剩 4 px、跌破 SEP_GAP=7，靠把 DIST/ALT 两组基准各左移 3 px 把
+ * 欠账摊掉。那 3 px 的偏移一直留在这组数里。 */
+#define COL_DIST_R    372                            /* 右对齐基准 */
+#define COL_ALT_R     471
+#define COL_VS_R      576
+#define COL_GS_R      651
+#define COL_TRK_R     726
+#define COL_SEEN_R    CONTENT_R                      /* 784 */
 
 /*
  * 分隔线 x（同时是右侧那一列的命中区起点）。COLS[] 直接引用这些宏，不再
@@ -136,14 +147,14 @@
  * 改列位时只改了其中一份，数据右对齐到旧位置、线画在新位置，字被穿过去，
  * 而缩略图上完全看不出来。
  */
-#define SEP_CALL      95
-#define SEP_FLAG      231
-#define SEP_DIST      231      /* 徽章与 DIST 共用一个命中区，故与上面同值 */
-#define SEP_ALT       356      /* 与 COL_DIST_R 一同左移 3，见上方说明 */
-#define SEP_VS        447
-#define SEP_GS        544
-#define SEP_TRK       611
-#define SEP_SEEN      678
+#define SEP_CALL      103
+#define SEP_FLAG      247
+#define SEP_DIST      247      /* 徽章与 DIST 共用一个命中区，故与上面同值 */
+#define SEP_ALT       380
+#define SEP_VS        479
+#define SEP_GS        584
+#define SEP_TRK       659
+#define SEP_SEEN      734
 
 /* 各列最长内容宽度。改任何列位之前，先对着这张表把账算平。 */
 #define W_BRG   (26 + 3 * PK_AA_M_W)              /* 箭头 + 三位方位 */
@@ -1123,6 +1134,27 @@ void pk_adsb_list_render(uint16_t *fb)
  * FAB 那一块必须放行，否则列表页就切不走了。 */
 static bool in_list_area(int x, int y)
 {
+    /*
+     * FAB 头上的那一块必须先放行，否则列表页就切不走了。
+     *
+     * 以前这里什么都不用做：内容区右缘是 724、FAB 在 728 起，两者刚好不重叠。
+     * touch_gt911.c 那条注释早就点名过这是**巧合**、不能依赖——2026-08-02 把
+     * 内容右缘放到 784（不再给 FAB 让位）之后，FAB 整个落进了下面那个矩形，
+     * 于是按在它身上的手指被列表吃掉，报成 RELEASED，LVGL 那侧一次按下都收
+     * 不到：FAB 既点不动也拖不动。
+     *
+     * 判定问 pk_ui_nav_fab_rect() 要 FAB 的真实矩形，不写坐标常量——FAB 可以
+     * 被拖到左缘、也可以被藏起来（二级页/演示模式），写死的数字只对其中一种
+     * 状态成立。地图页早一步踩过同一个坑，修法见 1ec5fc7 与 pk_map_page_touch。
+     *
+     * 只判按下那一刻就够：归属一旦定给 LVGL，touch_gt911.c 的仲裁器会保证
+     * 整个按压期间列表都不再插手，手指跟着 FAB 拖到哪儿都不会被抢回来。
+     */
+    int fx, fy, fw, fh;
+    if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh) &&
+        x >= fx && x < fx + fw && y >= fy && y < fy + fh)
+        return false;
+
     if (s_drawer_icao && y >= DRAWER_TOP) return true;
     if (y >= HDR_HIT_TOP && y < LIST_BOT && x >= PAD_L - 8 && x < CONTENT_R + 8)
         return true;

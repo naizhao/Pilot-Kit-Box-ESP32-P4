@@ -20,6 +20,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /*
@@ -42,3 +43,18 @@ uint16_t *pk_sim_lv_render(uint32_t dt_ms);
  * 窗口按 ZOOM 放大过，坐标要除回去才对得上面板像素。
  */
 void pk_sim_lv_attach_mouse(int zoom);
+
+/*
+ * 脚本化的指针输入：坐标由调用方逐帧给定，走的是与鼠标、与真机 GT911 完全
+ * 相同的 indev 通路（同为 LV_INDEV_TYPE_POINTER）。
+ *
+ * 用于自动化复现交互 bug——LVGL 的滚动判定在 indev 读取之后、控件事件之前
+ * 就跑完了，绕开 indev 直接调控件回调是测不到它的。详见 lv_backend.c 里
+ * script_read_cb 上方的说明。
+ *
+ * 与 attach_mouse 互斥使用：两个 indev 同时挂着会互相覆盖按压状态。
+ */
+void pk_sim_lv_attach_script_pointer(void);
+
+/* 设定下一次 indev 读取时的指针位置与按压状态（面板坐标，不缩放）。 */
+void pk_sim_lv_pointer_set(int x, int y, bool pressed);
