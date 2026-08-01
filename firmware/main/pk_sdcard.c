@@ -292,11 +292,6 @@ void pk_sdcard_init(void)
      * 线索来源（卡的 CID/CSD、命令超时、时钟协商都在这里报），所以留一个
      * 编译开关：排障时打开重烧一次即可，不必回头翻代码找是哪几个 tag。 */
 #if CONFIG_PK_SDMMC_VERBOSE
-    /* 开着它跑正常业务 = 自废武功：115200 波特下这些 DEBUG 行能占满串口，
-     * ESP_LOG 在 TX 满时阻塞调用方，SD 驱动被自己的日志堵死——2026-08-01
-     * 实测地图瓦片一次 28KB 读盘要 23 秒（94% 的串口流量是 SD_HOST）。
-     * 排障完务必关回去，所以这里响一声，别再让它悄悄留在 sdkconfig 里。 */
-    ESP_LOGW(TAG, "PK_SDMMC_VERBOSE 已开启：SD 吞吐会塌到几乎不可用，仅供排障！");
     esp_log_level_set("sdmmc_req", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_cmd", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_common", ESP_LOG_DEBUG);
