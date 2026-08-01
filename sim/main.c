@@ -44,6 +44,14 @@
  *     PK_SIM_NO_APPDESC=1   读不到 app 描述符（关于页版本显示 "?"）
  *     PK_SIM_DIAG_OK=1      反向开关：把诊断页整体切成「一切正常」
  *
+ * 演示模式
+ * --------
+ *     PK_SIM_DEMO=1         打开真机的「演示模式」标识（红色 DEMO 徽标 + 红框）
+ *
+ * 注意模拟器**本来就在**喂合成数据，这个开关只影响标识与顶栏让位，不影响数据
+ * 本身。它存在的意义是：那两块标识画在控件层、压在所有页面之上，必须能逐页
+ * 截图确认「每一页都在」——这是演示模式的安全底线，不能只靠肉眼在真机上翻页。
+ *
  * 版面位置类（与空态常配合用）：
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
  *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
@@ -73,6 +81,8 @@
 #include "boot_splash.h"
 #include "traffic_page.h"
 
+#include "config_demo.h"
+#include "demo_data.h"
 #include "display.h"
 #include "i18n.h"
 #include "pfd_attitude.h"
@@ -139,20 +149,24 @@ static void mock_fill(const sim_state_t *st,
 {
     const float t = st->t;
     const sim_lack_t k = sim_lack();
+    /* 动画时间。合成曲线全部搬到了 firmware/main/demo_data.c——真机的"演示模式"
+     * 用的就是同一批数值，两边各写一份的话，模拟器上验过的版面在真机上未必压
+     * 得到同样的极值。 */
+    const int64_t anim_us = (int64_t)((double)t * 1000000.0);
 
     /* 三个周期互质，避免动作同步显得假 */
     imu->valid     = !k.no_imu;
-    imu->roll_deg  = 25.0f * sinf(t * 0.37f) + st->roll_bias;
-    imu->pitch_deg = 10.0f * sinf(t * 0.23f);
+    imu->roll_deg  = pk_demo_roll_deg(anim_us) + st->roll_bias;
+    imu->pitch_deg = pk_demo_pitch_deg(anim_us);
 
     hsi->imu_valid = !k.no_imu;
-    hsi->yaw_deg   = fmodf(t * 6.0f, 360.0f);
+    hsi->yaw_deg   = pk_demo_yaw_deg(anim_us);
 
     alt->valid       = !k.no_own;
-    alt->altitude_ft = 23225 + (int)(1200.0f * sinf(t * 0.11f));
+    alt->altitude_ft = pk_demo_own_alt_ft(anim_us);
 
     spd->valid           = !k.no_own;
-    spd->ground_speed_kt = 378 + (int)(60.0f * sinf(t * 0.17f));
+    spd->ground_speed_kt = pk_demo_own_gs_kt(anim_us);
 
     stat->imu_valid      = !k.no_imu;
     stat->yaw_deg        = hsi->yaw_deg;
@@ -172,7 +186,7 @@ static void mock_fill(const sim_state_t *st,
     stat->uptime_ms      = (uint32_t)(t * 1000.0f);
 
     /* 把本帧姿态推给运行时桩，交通目标才会随航向绕罗盘转。 */
-    pk_mock_update(hsi->yaw_deg, alt->altitude_ft);
+    pk_mock_update(hsi->yaw_deg, alt->altitude_ft, anim_us);
     stat->temp_warn      = !k.empty;
     stat->temp_c         = k.empty ? 42 : 78;
 }
@@ -267,6 +281,9 @@ static int run_headless(float at_sec, const char *out)
      * 之后**的画面，将来叠上 FAB / dock 才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
     pk_ui_nav_init();
+    /* 演示模式标识。放在这里、在页面渲染**之前**，是为了让它像真机一样压在
+     * 任何一页之上——真机由 pfd.c 每帧同步，模拟器一帧就够。 */
+    pk_ui_nav_set_demo(pk_demo_enabled());
     /* 截图时展开 dock：它默认收起，否则评审看不到这一屏最占地方的状态。 */
     /* PK_SIM_FAB=left 把 FAB 吸到左缘，用来核对 dock 是否跟着反向铺开。 */
     {
@@ -428,6 +445,7 @@ int main(int argc, char **argv)
     uint16_t *fb = pk_sim_lv_init();
     pk_sim_lv_attach_mouse(ZOOM);   /* 鼠标当触摸用，验证 FAB / dock 的交互 */
     pk_ui_nav_init();
+    pk_ui_nav_set_demo(pk_demo_enabled());
     const uint16_t *screen = fb;
 
     sim_state_t st = { .t = 0.0f, .roll_bias = 0.0f, .paused = false };

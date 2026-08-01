@@ -47,7 +47,9 @@
 #include "esp_app_desc.h"
 #include "esp_idf_version.h"
 
+#include "config_demo.h"
 #include "display.h"
+#include "i18n.h"
 #include "logo_blob.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
@@ -99,6 +101,10 @@ extern const uint8_t pk_logo_end[]   asm("_binary_pk_logo_rgb565_end");
  * 存了数字和符号），只能靠对比度把它们推到视觉后景。开机时真正要看的是产品名
  * 与版本号，日期和 IDF 版本属于「需要时才找得到」的层级。 */
 #define VERSION_COLOR        pk_rgb565( 96, 102, 122)
+/* 演示模式横幅。红底白字，与运行时那枚徽标同色系——两处是同一件事的两种呈现，
+ * 换了颜色用户就得重新学一遍"红色代表什么"。 */
+#define DEMO_BANNER_COLOR    pk_rgb565(208,  24,  32)
+#define DEMO_TEXT_COLOR      pk_rgb565(255, 255, 255)
 
 static void fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
 {
@@ -252,5 +258,31 @@ void pk_boot_splash_render(uint16_t *fb)
         const int w = (int)strlen(line) * pk_aa_cell_w(PK_AA_M);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    (PK_DISPLAY_W - w) / 2, y, line, VERSION_COLOR, PK_AA_M);
+    }
+
+    /*
+     * 演示模式横幅。
+     *
+     * 为什么开机画面要单独画一遍：演示模式**跨重启存活**（存在 NVS，否则每次
+     * 上电都要重开，便利性就没了），而运行时那枚常驻徽标画在 LVGL 控件层——
+     * splash 早于 LVGL 初始化，控件层此刻还不存在，盖不到这一屏。于是「上一次
+     * 谁把它打开了」这件事，如果不在这里说一句，用户重新上电后要等到 PFD 起来
+     * 才知道。开机这几秒恰恰是人最认真看屏幕的时候。
+     *
+     * 满宽红条而不是一枚小徽标：这一屏没有别的内容跟它抢注意力，能做多醒目就
+     * 做多醒目。位置在三行构建信息之下、屏底之上那片空白里（实测末行结束于
+     * y≈424，屏高 480）。
+     */
+    if (pk_demo_enabled()) {
+        const int bh = 40;
+        const int by = PK_DISPLAY_H - bh - 8;
+        fill_rect(fb, 0, by, PK_DISPLAY_W, by + bh, DEMO_BANNER_COLOR);
+        const char *msg = pk_i18n_text(PK_TR_DEMO_SPLASH);
+        /* 宽度走 pk_aa_text_width：这一句是中文，按 strlen×cell 算出来的是字节
+         * 数，横幅会整体左偏三分之一。 */
+        const int w = pk_aa_text_width(msg, PK_AA_M);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, by + (bh - PK_AA_M_H) / 2,
+                   msg, DEMO_TEXT_COLOR, PK_AA_M);
     }
 }

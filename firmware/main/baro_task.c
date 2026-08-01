@@ -21,6 +21,8 @@
 #include "esp_log.h"
 #include "imu_task.h"   /* pk_i2c0_bus_get */
 #include "config_qnh.h" /* pk_qnh_get() — 动态 QNH(修正海压) */
+#include "config_demo.h"
+#include "demo_data.h"
 
 static const char *TAG = "baro";
 
@@ -343,6 +345,10 @@ void pk_baro_start(void)
 
 bool pk_baro_get(pk_baro_state_t *out)
 {
+    if (out == NULL) return false;
+    /* 演示模式接管点，理由同 pk_imu_sample_get()。放在 s_mutex 判空之前：
+     * BMP388 没焊时 baro_task 根本没起来，s_mutex 恒为 NULL。 */
+    if (pk_demo_enabled()) return pk_demo_baro(esp_timer_get_time(), out);
     if (s_mutex == NULL) {
         memset(out, 0, sizeof(*out));
         return false;

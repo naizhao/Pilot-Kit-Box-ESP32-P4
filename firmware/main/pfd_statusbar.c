@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config_demo.h"   /* pk_demo_enabled —— 中段要给 DEMO 徽标让宽度 */
 #include "display.h"
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
@@ -51,6 +52,13 @@
 #define BAR_RIGHT_W     (pk_bar_icon_width(PK_BAR_ICON_BLE) \
                        + pk_bar_icon_width(PK_BAR_ICON_BATT) \
                        + BAR_TEXT_W(4) + PFD_BAR_GAP_LABEL)
+
+int pk_ui_topbar_right_limit(int dflt)
+{
+    if (!pk_demo_enabled()) return dflt;
+    const int lim = PK_UI_DEMO_BADGE_X - PFD_BAR_GAP_WORD;
+    return dflt < lim ? dflt : lim;
+}
 
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 {
@@ -135,8 +143,11 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
 
         /* 中段可用区间：左端 HDG 之后、右端设备状态之前，各留一个词距。 */
         int left_end   = PFD_BAR_MARGIN_L + BAR_TEXT_W(3 + 4) + PFD_BAR_GAP_LABEL;
-        int right_start= PK_DISPLAY_W - PFD_BAR_MARGIN_R - BAR_RIGHT_W
-                         - PFD_BAR_GAP_WORD;
+        /* 右段自身在演示模式下已经整体左移（见下面那段），中段跟着一起退——
+         * 顶栏本来就有一套「装不下就按优先级丢」的机制，把新的可用宽度告诉它
+         * 就够了，不必另写一套避让。 */
+        int right_start= pk_ui_topbar_right_limit(PK_DISPLAY_W - PFD_BAR_MARGIN_R)
+                         - BAR_RIGHT_W - PFD_BAR_GAP_WORD;
         int avail      = right_start - left_end - 2 * PFD_BAR_GAP_WORD;
 
         /* 从低优先级端逐个丢弃，直到装得下。items 已按优先级升序排列。 */
@@ -171,7 +182,9 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
      * 之间凭空多出一个字宽的缝。电量位数一次飞行里最多跨位两次，整组平移
      * 那点位移远比缝隙忽宽忽窄自然。 */
     {
-        int rx = PK_DISPLAY_W - PFD_BAR_MARGIN_R;
+        /* 演示模式下整组左移，把最右端让给常驻的 DEMO 徽标——它画在控件层，
+         * 不让位的话被盖住的正好是电量百分比。 */
+        int rx = pk_ui_topbar_right_limit(PK_DISPLAY_W - PFD_BAR_MARGIN_R);
 
         if (s->batt_valid) {
             snprintf(buf, sizeof(buf), "%u%%", (unsigned)s->batt_pct);

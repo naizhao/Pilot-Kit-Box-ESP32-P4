@@ -252,6 +252,16 @@ bool record_sink_file_uses_sd(void) { return sim_env("PK_SIM_SET_LOGSD", 0) != 0
 bool pk_ble_enabled_get(void) { return sim_env("PK_SIM_SET_BLE", 1) != 0; }
 
 /*
+ * 演示模式开关（config_demo）。固件那份存 NVS，PC 上走环境变量。
+ *
+ * 默认 **0**，与固件的默认值一致——这不是随手挑的：设置页那一行、顶栏让位、
+ * 常驻徽标三处都读它，桩要是默认开了，「关掉演示模式时长什么样」这一态就再
+ * 也截不到，而那才是设备 99.9% 时间里的样子。
+ */
+bool pk_demo_enabled(void) { return sim_env("PK_SIM_DEMO", 0) != 0; }
+void pk_demo_set_enabled(bool on) { (void)on; }   /* 写操作不进模拟器，同 pk_settings_apply */
+
+/*
  * BLE 广播名（ble_gatt.c）。设置页那一行显示的就是它。
  *
  * 默认给**最长**的那个值，不是好看的短名，也不是出厂默认名：自定义名不再拼

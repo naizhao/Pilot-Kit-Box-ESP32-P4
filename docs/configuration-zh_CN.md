@@ -216,6 +216,33 @@ ICAO 时使用编译期 `CONFIG_PK_OWN_ICAO`；否则由 GPS 提供本机位置�
 | `CONFIG_PK_OWN_ICAO` | `0x000000` | 24-bit ICAO 地址。非 0 时，PFD 会把匹配飞机的 ADS-B 高度、地速、垂直速度用于 ALT / GS / VS 显示。0 表示禁用编译期默认绑定 |
 | `CONFIG_PK_OWN_STALE_AGE_MS` | `5000` | own-ship ADS-B 数据过期阈值。超过这个时间未收到匹配飞机的新数据后，PFD 对应读数回到 `---` |
 
+### 演示模式（运行期开关，NVS）
+
+设置页倒数第二行「演示模式」。**编译期没有对应的 Kconfig 选项**——它是纯运行期
+状态，存在 NVS 里：
+
+| 命名空间 | 键 | 类型 | 默认 |
+|---|---|---|---|
+| `pk_demo` | `demo_on` | `u8` | `0`（关） |
+
+打开后，下面四个数据源 getter 直接返回 `demo_data.c` 的合成值，与硬件在不在
+无关。接管点选在数据层而不是各页面，所以任何一页都不需要知道演示模式的存在：
+
+| 入口 | 文件 |
+|---|---|
+| `pk_imu_sample_get()` | `imu_task.c` |
+| `pk_gps_get()` | `gps_task.c`（本机解算 `pk_own_ship_resolve()` 因此一并被接管） |
+| `pk_baro_get()` | `baro_task.c` |
+| `aircraft_state_snapshot()` / `aircraft_state_get_own()` | `aircraft_state.c` |
+
+合成目标**不进**真实融合表，因此不会流进 record_sink（落盘的 ts 日志仍然只有
+真实报文），也不会污染 CPR 解码。GDL90 那一路在 `ble_gatt.c` 的发射任务里被
+显式掐掉，理由见 [`ble_protocol-zh_CN.md`](ble_protocol-zh_CN.md) §6.5。
+
+安全约束（三条，代码里都有对应断言性的注释）：默认关、只能从设置页显式打开、
+开着时常驻标识不可关闭（顶栏红色 DEMO 徽标 + 整屏红框 + 开机横幅）。**不做
+超时自动退出**——模式在用户不知情时自己变回去，比一直保持演示态更危险。
+
 ---
 
 ## 6. 存储 / LittleFS / MicroSD

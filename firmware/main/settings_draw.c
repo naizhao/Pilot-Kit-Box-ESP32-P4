@@ -17,6 +17,7 @@
 
 #include "ble_gatt.h"          /* pk_ble_device_name —— 设备名那行显示完整广播名 */
 #include "config_ble.h"
+#include "config_demo.h"
 #include "config_devname.h"    /* PK_DEVNAME_MAX_LEN —— 值框宽度按它定 */
 #include "config_qnh.h"
 #include "config_storage.h"
@@ -50,14 +51,15 @@
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 
-#define SET_ROWS      10
+#define SET_ROWS      11
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
 
-/* 滚动偏移(px)。10 行 × 64 = 640 > 可视的 432，最后一行"格式化 SD"必须滚
- * 才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动可见）"），把最危险
- * 的操作放在需要多一个动作才能够到的地方。 */
+/* 滚动偏移(px)。11 行 × 64 = 704 > 可视的 432，最后两行"演示模式 / 格式化 SD"
+ * 必须滚才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动可见）"），把最
+ * 危险的操作放在需要多一个动作才能够到的地方。演示模式同样落在这一档：假数据
+ * 在航空设备上和误格式化是同一量级的风险。 */
 static int s_set_scroll;
 
 /* 触摸手势：与列表页/诊断页同一套——按下只记起点，位移超阈值才算拖动，
@@ -346,7 +348,32 @@ void pk_settings_page_render(uint16_t *fb)
       hit_set(row, 3, x0, w, 0, y_mid);
       row++; }
 
-    /* 10 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 10 演示模式 —— 排在倒数第二行，仅次于格式化 SD 的位置。
+     *
+     * 为什么放这么靠后：它和格式化一样属于「不该被顺手点到」的一类。假数据在
+     * 航空设备上是会害人的，所以入口必须要多滚一屏才够得到——与 spec §5.4 把
+     * 危险按钮放在需要滚动才可见处是同一条理由。同时它**必须**留在设置页里、
+     * 由用户显式打开，不设任何快捷手势或组合键。 */
+    { const char *o[] = { pk_i18n_text(PK_TR_SWITCH_OFF),
+                          pk_i18n_text(PK_TR_SWITCH_ON) };
+      const char *label = pk_i18n_text(PK_TR_SETTINGS_DEMO);
+      ROW_LABEL(row, label);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2, pk_demo_enabled() ? 1 : 0, false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
+      /* 「数据为模拟」这句小字与蓝牙那行的「重启生效」同一个位置、同一个档，
+       * 但配色不同：那句是中性说明，这句是警告，开关旁边就得让人看见代价。 */
+      { const int _y = ROW_Y(row);
+        if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                       SET_PAD + pk_aa_text_width(label, PK_UI_ITEM_SIZE) + 16,
+                       _y - PK_AA_XS_H / 2,
+                       pk_i18n_text(PK_TR_SETTINGS_DEMO_HINT),
+                       pk_demo_enabled() ? pk_rgb565(255, 90, 80)
+                                         : pk_rgb565(120, 130, 145),
+                       PK_AA_XS); }
+      row++; }
+
+    /* 11 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;

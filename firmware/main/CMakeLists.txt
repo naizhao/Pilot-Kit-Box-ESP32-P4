@@ -41,6 +41,8 @@ idf_component_register(
         "settings_draw.c"
         "keyboard_page.c"
         "config_ble.c"
+        "config_demo.c"
+        "demo_data.c"
         "config_devname.c"
         "traffic_page.c"
         "about_page.c"

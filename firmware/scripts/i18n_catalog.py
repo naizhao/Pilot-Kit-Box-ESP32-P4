@@ -465,6 +465,56 @@ STRINGS = [
         },
     ),
     (
+        "SETTINGS_DEMO",
+        {
+            # 设置页倒数第二行的行标签（最后一行留给格式化 SD 那个危险按钮）。
+            "en": "DEMO MODE",
+            "zh": "演示模式",
+        },
+    ),
+    (
+        "SETTINGS_DEMO_HINT",
+        {
+            # 跟在行标签后面的小字。必须写「模拟」两个字而不是「测试」——
+            # 「测试模式」听起来像是在测真实传感器，而这里的数据根本不来自
+            # 传感器。开关旁边就说清楚，别让人点开才发现。
+            "en": "(simulated data)",
+            "zh": "(数据为模拟)",
+        },
+    ),
+    (
+        "DEMO_BADGE",
+        {
+            # 常驻徽标。中英文都要短：它挤在顶栏右段与中段之间的固定槽位里，
+            # 长了就会压住状态位。中文两字最紧凑，英文用通行的 DEMO。
+            "en": "DEMO",
+            "zh": "演示",
+        },
+    ),
+    (
+        "DEMO_SPLASH",
+        {
+            # 开机画面上的红字。splash 早于 LVGL，控件层那枚徽标盖不到它，
+            # 而演示模式会跨重启存活，用户重新上电时必须被单独告知一次。
+            "en": "DEMO MODE - ALL FLIGHT DATA IS SIMULATED",
+            "zh": "演示模式：全部飞行数据均为模拟",
+        },
+    ),
+    (
+        "TOAST_DEMO_ON",
+        {
+            "en": "Demo mode ON - data is simulated",
+            "zh": "演示模式已开启，数据为模拟",
+        },
+    ),
+    (
+        "TOAST_DEMO_OFF",
+        {
+            "en": "Demo mode OFF - real sensors",
+            "zh": "演示模式已关闭，恢复真实数据",
+        },
+    ),
+    (
         "DEVNAME_DEFAULT",
         {
             # 从没改过名字时显示的占位。不写空串：空控件看着像是坏了。

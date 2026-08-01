@@ -39,6 +39,7 @@
 #include "baro.h"
 #include "battery.h"
 #include "config_ble.h"
+#include "config_demo.h"
 #include "config_devname.h"
 #include "i18n.h"
 #include "pfd.h"
@@ -389,6 +390,19 @@ void app_main(void)
      * quickly. Init work (IMU/UI/buttons/BLE/SDR) happens during the
      * visible splash window and counts against the hold, so we only
      * sleep if init was faster than the target. */
+    /* 演示模式开关与语言都必须在 splash 之前读出来：splash 上要画那条红色的
+     * 「演示模式：数据均为模拟」横幅，而横幅文案走 i18n。
+     *
+     * i18n_init 原本排在下面（PFD 启动前），于是 splash 恒用默认语言英文——中文
+     * 用户开机第一屏是英文，这条安全提示的效果先打了个折。两者都只读 NVS，
+     * 此刻 NVS 早已由 config_storage / config_ble 初始化过，提前无副作用。 */
+    esp_err_t i18n_err = pk_i18n_init();
+    if (i18n_err != ESP_OK) {
+        ESP_LOGW(TAG, "i18n init failed (%s) — default language remains English",
+                 esp_err_to_name(i18n_err));
+    }
+    pk_config_demo_load();
+
     esp_err_t lcd_err = pk_display_init();
     int64_t splash_shown_us = 0;
     if (lcd_err != ESP_OK) {
@@ -425,11 +439,7 @@ void app_main(void)
         ESP_LOGW(TAG, "ui_state init failed (%s)", esp_err_to_name(ui_err));
     }
 
-    esp_err_t i18n_err = pk_i18n_init();
-    if (i18n_err != ESP_OK) {
-        ESP_LOGW(TAG, "i18n init failed (%s) — default language remains English",
-                 esp_err_to_name(i18n_err));
-    }
+    /* pk_i18n_init() 已提前到 splash 之前，见那里的注释。 */
 
     /*
      * 4.3 寸一体板以触摸为唯一 UI 输入。button_task.c 已从 CMakeLists 移出

@@ -18,6 +18,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "config_demo.h"  /* pk_demo_enabled —— 演示模式接管目标表快照 */
+#include "demo_data.h"
 #include "mode-s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
 #include "ui_state.h" /* pk_ui_get_own_icao() — pin the bound own-ship
                        * slot against LRU eviction (see lookup_or_claim) */
@@ -367,6 +369,34 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
                                int64_t max_age_us)
 {
     if (out == NULL || cap == 0) return 0;
+
+    /*
+     * 演示模式接管点。
+     *
+     * 选在这里而不是"往 s_table 里灌假飞机"，是一条安全边界：合成目标**永远
+     * 不进真实融合表**，因此不会流进 record_sink（落盘的 ts 日志仍然只有真实
+     * 报文），也不会污染 CPR 解码与 own-ship 绑定。屏幕上看到的假目标与硬盘里
+     * 记下的真数据是两条独立的路径，事后回放不会把演示当成一次真实飞行。
+     *
+     * GDL90 那一路虽然也调本函数，但在 ble_gatt.c 的发射任务里被**显式**掐掉，
+     * 见那里的注释——手机 App 分不出真假，只能不发。
+     */
+    if (pk_demo_enabled()) {
+        size_t n = pk_demo_traffic(out, cap, now_us, /*anim_us=*/now_us,
+                                   pk_demo_yaw_deg(now_us),
+                                   pk_demo_own_alt_ft(now_us),
+                                   0.0f, false);
+        /* 新鲜度窗口照样生效：调用方传 60 s 与传 30 min 拿到的必须是不同的集合，
+         * 否则看板的 SEEN 列与"过期消失"这条行为在演示模式下就试不出来。 */
+        size_t k = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if ((int64_t)(now_us - out[i].last_seen_us) > max_age_us) continue;
+            if (k != i) out[k] = out[i];
+            ++k;
+        }
+        return k;
+    }
+
     size_t n = 0;
     take_lock();
     for (size_t i = 0; i < AIRCRAFT_TABLE_CAPACITY && n < cap; ++i) {
@@ -384,6 +414,13 @@ bool aircraft_state_get_own(uint32_t icao24, int64_t now_us,
                             int64_t max_age_us, aircraft_t *out)
 {
     if (icao24 == 0 || out == NULL) return false;
+    /* 演示模式下一律"没有绑定的本机"，于是 pk_own_ship_resolve() 退到 GPS，
+     * 而 GPS 那侧已经是合成数据。
+     *
+     * 不这么做的话会出现最糟的一种混合：真的 SDR 收到了用户此前绑定的那架
+     * 飞机，本机位置/高度是**真的**，而周围的目标全是假的——屏上没有任何东西
+     * 能提示这一半真一半假。要么全真，要么全假。 */
+    if (pk_demo_enabled()) return false;
     bool fresh = false;
     take_lock();
     for (size_t i = 0; i < AIRCRAFT_TABLE_CAPACITY; ++i) {

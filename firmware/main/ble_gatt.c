@@ -43,6 +43,7 @@
 
 #include "aircraft_state.h"
 #include "config_devname.h"           /* 用户自定义的广播名前半段 */
+#include "config_demo.h"   /* pk_demo_enabled —— 演示模式下停发 GDL90 目标 */
 #include "gdl90.h"
 #include "gps.h"
 #include "own_ship.h"
@@ -638,6 +639,27 @@ static void emitter_task(void *arg)
             pk_gps_state_t gps; bool gps_fix = pk_gps_get(&gps);
             (void)own_src;
 
+            /*
+             * ═══ 演示模式：只发心跳，不发任何位置/目标 ═══
+             *
+             * GDL90 的线上格式里**没有**"这是模拟数据"这一位（FAA 560-1058-00
+             * 全篇没有 simulation flag），EFB 也没有任何一款会去渲染这种标记。
+             * 所以手机上收到的假目标与真目标在像素级别完全一致——盒子屏上那枚
+             * DEMO 徽标救不了 ForeFlight 里凭空多出来的一架迎头飞机。
+             *
+             * 既然接收机没有办法把数据标成假的，那就不能把它送出去。具体：
+             *   - Ownship(0x0A) / Traffic(0x14)：**一条都不发**。
+             *   - Heartbeat(0x00)：照发，但 gps_valid 强制为 0。发是为了让 App
+             *     知道盒子还活着（多数 EFB 超过 5 s 收不到心跳就判定链路断开，
+             *     会弹一个"接收机丢失"的告警，那是个假故障）；gps_valid 清零
+             *     则让 App 显示"无 GPS"，与"没有任何目标"互相印证，用户一眼就
+             *     知道这台盒子当前不提供可用数据。
+             *   - Raw ts-line(0x…0003)：不受影响。演示数据从来没进过解码器，
+             *     那条队列里只可能有真实报文，天然是空的。
+             */
+            const bool demo = pk_demo_enabled();
+            if (demo) gps_fix = false;
+
             /* Heartbeat — required by ForeFlight-style EFB apps. */
             if (s_sub_hb) {
                 struct timeval tv; gettimeofday(&tv, NULL);
@@ -654,7 +676,7 @@ static void emitter_task(void *arg)
             }
 
             /* Traffic Report per aircraft. */
-            if (s_sub_traffic) {
+            if (s_sub_traffic && !demo) {
                 /* Ownship Report (msg 0x0A) — sent before other traffic. */
                 if (own_valid) {
                     size_t no = gdl90_encode_traffic(frame, sizeof(frame),
@@ -708,6 +730,12 @@ static void emitter_task(void *arg)
                          (unsigned long)hb_count,
                          (unsigned long)traffic_count,
                          (unsigned long)raw_count);
+                /* traffic=0 在演示模式下不是故障。不说清楚的话，"屏上 17 架、
+                 * BLE 发 0 架"会被当成 GDL90 编码器坏了去查。 */
+                if (demo)
+                    ESP_LOGW(TAG, "DEMO MODE — GDL90 ownship/traffic suppressed "
+                                  "on purpose (simulated data must not leave "
+                                  "the box)");
                 hb_count = traffic_count = raw_count = 0;
                 summary_ticks = 0;
             }

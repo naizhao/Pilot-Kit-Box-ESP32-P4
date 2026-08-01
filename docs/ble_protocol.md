@@ -349,6 +349,40 @@ ATT errors returned on WRITE:
 | `0x0D` `Invalid Attribute Value Length` | The write was not exactly 8 bytes |
 | `0x13` `Value Not Allowed` | The epoch is older than the minimum |
 
+### 6.5. Demo mode — what the client sees
+
+Since firmware v0.9.5 the box has a user-selectable **demo mode**
+(Setup → DEMO MODE). While it is on, every on-screen reading — attitude,
+GPS, barometer, ADS-B traffic — comes from a synthetic data set built into
+the firmware instead of the real sensors. It is meant for demonstrating and
+reviewing the UI on hardware that has no peripherals attached.
+
+**The wire behaviour is deliberately restrictive:**
+
+| Characteristic | Behaviour while demo mode is on |
+|---|---|
+| Traffic Report (`…0001`) | **Nothing is sent.** No Ownship (`0x0A`), no Traffic (`0x14`). |
+| Heartbeat (`…0002`) | Sent as usual at 1 Hz, but **`gps_valid` (Status Byte 1, bit 7) is forced to 0**. |
+| Raw ts-line (`…0003`) | Unaffected. Synthetic targets never reach the decoder, so this stream simply carries whatever real Mode-S frames are received (none, if no SDR is attached). |
+| Time Sync (`…0004`) | Unaffected. The system clock is never set from demo data. |
+
+**Why not send the simulated traffic with a flag instead?** Because GDL90
+(FAA 560-1058-00 Rev A) has no "simulated data" indication anywhere in the
+Heartbeat, Ownship or Traffic payloads, and no EFB renders one. A phantom
+head-on target in ForeFlight is pixel-for-pixel identical to a real one —
+the red `DEMO` badge on the box's own screen cannot help a pilot looking at
+a phone. Since the receiver has no way to mark the data as fake, it must not
+put it on the wire at all.
+
+**What a client should do:** nothing special. The state is indistinguishable
+from "receiver connected, no GPS fix, no contacts", which every EFB already
+handles. Clients **MUST NOT** try to detect demo mode — there is no field
+for it, and inventing a heuristic (e.g. "heartbeat but never any traffic")
+would misfire on a perfectly normal box sitting indoors with no antenna.
+
+If a first-party app wants to surface the state, add it as a new optional
+characteristic in a future protocol revision (§8) rather than inferring it.
+
 ## 7. Sample integration
 
 The snippet below uses [`flutter_blue_plus`](https://pub.dev/packages/flutter_blue_plus)

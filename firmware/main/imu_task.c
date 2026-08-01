@@ -29,6 +29,9 @@
 
 #include "imu_task.h"
 
+#include "config_demo.h"   /* pk_demo_enabled —— 演示模式接管姿态数据源 */
+#include "demo_data.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -606,7 +609,13 @@ static void imu_task(void *arg)
 /* --- Public init ----------------------------------------------------- */
 bool pk_imu_sample_get(pk_imu_sample_t *out)
 {
-    if (out == NULL || s_sample_lock == NULL) return false;
+    if (out == NULL) return false;
+    /* 演示模式在**数据源**这一层接管，而不是在每个页面里加分支：姿态的消费者
+     * 有 PFD、交通页、看板、诊断页、调平向导五处，逐处加 if 迟早漏一处，而漏
+     * 掉的那一处就是"半真半假"的画面。接管点选在锁之外、最前面，硬件没接时
+     * s_sample_lock 还是 NULL，照样能出数据。 */
+    if (pk_demo_enabled()) return pk_demo_imu_sample(esp_timer_get_time(), out);
+    if (s_sample_lock == NULL) return false;
     xSemaphoreTake(s_sample_lock, portMAX_DELAY);
     *out = s_sample;
     bool valid = s_sample.valid;

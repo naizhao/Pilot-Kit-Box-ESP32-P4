@@ -25,6 +25,7 @@
 #include "display.h"
 #include "i18n.h"
 #include "config_ble.h"
+#include "config_demo.h"
 #include "config_devname.h"
 #include "config_qnh.h"
 #include "config_storage.h"
@@ -32,6 +33,7 @@
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
+#include "ui_state.h"      /* pk_ui_toast_show —— 演示模式开关的即时反馈 */
 
 /*
  * 行数必须与 settings_draw.c 的 SET_ROWS 一致——那边才是版面的真源。
@@ -39,7 +41,7 @@
  * 10 行），于是 cursor_next() 转到第 6 行就绕回去了，后面几项按键根本选不到。
  * 触摸上线后这条路径没人走，问题才一直没被发现。
  */
-#define SETTINGS_ROW_COUNT       10
+#define SETTINGS_ROW_COUNT       11
 
 /* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
  * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后
@@ -206,7 +208,21 @@ void pk_settings_apply(int row, int v)
                                 PK_DEVNAME_MAX_LEN); }
         break;
 
-    case 9:   /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 9:   /* 演示模式（安全件，见 config_demo.h）。
+               *
+               * 立即生效，不像蓝牙那行要等重启：各数据源 getter 每次调用都重新
+               * 问一遍 pk_demo_enabled()，没有缓存，所以"退出演示模式"能立刻恢复
+               * 真实传感器——这是安全要求，不是实现上的顺手。
+               *
+               * 两个方向都弹 toast：开启时要让人知道自己刚做了什么，关闭时要让
+               * 人确认真的关掉了（不给反馈的话，屏上那枚徽标消失会被当成 UI
+               * 抽风而不是操作生效）。 */
+        pk_demo_set_enabled(v == 1);
+        pk_ui_toast_show(v == 1 ? PK_TR_TOAST_DEMO_ON : PK_TR_TOAST_DEMO_OFF,
+                         v == 1);
+        break;
+
+    case 10:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

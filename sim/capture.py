@@ -80,6 +80,60 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     ("empty-4.3-settings",  {"PK_SIM_PAGE": "settings",
                              "PK_SIM_EMPTY": "1",
                              "PK_SIM_SET_SCROLL": "400"},         "设置页无卡：存储行与格式化按钮置灰"),
+
+    # ── 正常态（演示模式关）─────────────────────────────────────────
+    #
+    # 上面两组一组压极值、一组压全空，唯独「有数据、一切正常」这一档从来没有
+    # 基线图——而演示模式的全部意义就是把这一档搬到没接外设的桌面上。开与关
+    # 两版必须成对存在，否则没法一眼比出「多出来的只有那两块标识」。
+    ("ui-4.3-traffic",      {"PK_SIM_PAGE": "traffic"},           "交通页正常态"),
+    ("ui-4.3-list",         {"PK_SIM_PAGE": "list"},              "看板正常态"),
+    ("ui-4.3-diag",         {"PK_SIM_PAGE": "diag",
+                             "PK_SIM_DIAG_OK": "1"},              "诊断总览正常态"),
+    ("ui-4.3-settings",     {"PK_SIM_PAGE": "settings",
+                             "PK_SIM_SET_SCROLL": "400"},         "设置页底部：演示模式那一行（关）"),
+
+    # ── 演示模式开 ──────────────────────────────────────────────────
+    #
+    # 逐页各截一张，中英各一版。**这不是为了好看**：演示模式的安全底线是
+    # 「开着就一定看得见」，而那枚徽标与红框画在控件层、与各页的绘制代码互不
+    # 相干——唯一能证明「每一页都在」的办法就是每一页都截一张。少截一页，就是
+    # 那一页可能没有标识而没人知道。
+    ("demo-4.3-pfd",        {"PK_SIM_DEMO": "1"},                 "演示模式 · PFD"),
+    ("demo-4.3-pfd-en",     {"PK_SIM_DEMO": "1",
+                             "PK_SIM_LANG": "en"},                "演示模式 · PFD（英文）"),
+    ("demo-4.3-traffic",    {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "traffic"},           "演示模式 · 交通页"),
+    ("demo-4.3-traffic-en", {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "traffic",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 交通页（英文）"),
+    ("demo-4.3-list",       {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "list"},              "演示模式 · 看板"),
+    ("demo-4.3-list-en",    {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "list",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 看板（英文）"),
+    ("demo-4.3-diag",       {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "diag",
+                             "PK_SIM_DIAG_OK": "1"},              "演示模式 · 诊断总览"),
+    ("demo-4.3-diag-en",    {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "diag",
+                             "PK_SIM_DIAG_OK": "1",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 诊断总览（英文）"),
+    ("demo-4.3-settings",   {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "settings",
+                             "PK_SIM_SET_SCROLL": "400"},         "演示模式 · 设置页（开关已打开）"),
+    ("demo-4.3-settings-en",{"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "settings",
+                             "PK_SIM_SET_SCROLL": "400",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 设置页（英文）"),
+    # 开机画面单独一张：它早于 LVGL，控件层那枚徽标盖不到，横幅是另画的一份。
+    # 演示模式跨重启存活，这一屏是用户重新上电后第一个知情点。
+    ("demo-4.3-splash",     {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "splash"},            "演示模式 · 开机画面横幅"),
+    ("demo-4.3-splash-en",  {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "splash",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 开机画面横幅（英文）"),
+    ("ui-4.3-splash",       {"PK_SIM_PAGE": "splash"},            "开机画面（演示模式关）"),
 ]
 
 

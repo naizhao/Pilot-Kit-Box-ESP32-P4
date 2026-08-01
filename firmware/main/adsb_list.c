@@ -52,6 +52,7 @@
 #include "pfd_draw.h"
 #include "pfd_icon_font.h"
 #include "pfd_layout.h"
+#include "pfd_statusbar.h"   /* pk_ui_topbar_right_limit —— 给 DEMO 徽标让位 */
 #include "traffic_geom.h"
 #include "ui_state.h"
 
@@ -242,7 +243,11 @@ static bool       s_sort_desc;
 /* 顶栏右上角：排序说明 + RESET 按钮的位置。RESET 贴 CONTENT_R 右缘，
  * 说明文字右对齐排在它左边（起点由实测文本宽度算，不写死——中英文长度
  * 差得多，写死的那个数只对其中一种语言成立）。 */
-#define RESET_X1      (CONTENT_R + 8)
+/* 右界不是常量：演示模式下顶栏右侧多一枚常驻 DEMO 徽标（画在控件层、压在本页
+ * 之上），RESET 与它左边那行排序说明必须整体左移，否则被盖住的正好是「现在按
+ * 什么排的」这句话。做成函数而不是 #define 是因为它每帧都可能变——用户在设置页
+ * 一开演示模式，回到本页就得是新的位置。 */
+#define RESET_X1      pk_ui_topbar_right_limit(CONTENT_R + 8)
 /* 按钮宽度按 header 统一字号（M）下的最宽文案算：英文 "RESET" 5×PK_AA_M_W
  * = 75，中文「重置」2×PK_AA_M_CJK_W = 44，取大者 + 左右各 8 px 内边距 = 91，
  * 进位到 92。原来是 66，那是 XS 档（"RESET" 只有 50 px）的尺寸——顶栏统一到

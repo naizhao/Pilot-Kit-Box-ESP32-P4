@@ -32,6 +32,7 @@
 #include "gps.h"
 #include "own_ship.h"
 #include "cal_wizard.h"
+#include "config_demo.h"
 #include "display.h"
 #include "imu_task.h"
 #include "pfd_attitude.h"
@@ -379,6 +380,13 @@ static void pfd_task(void *arg)
         /* 瞬时提示叠加在任意页面之上(TARE 保存 / own 绑定·取消反馈)。 */
         sync_toast();
 
+        /* 演示模式的常驻标识。放在这里——**switch 之外**——是它能覆盖每一页的
+         * 原因：上面那个 switch 每一支都只画自己那一页，谁都不知道演示模式的
+         * 存在；标识画在控件层且每帧无条件同步一次，就不存在"某一页忘了加"。
+         * 每帧调一次而不是只在开关时调：切语言、进出键盘页、调平向导都会重排
+         * 控件层，漏同步一次就是一段无标识的窗口。 */
+        pk_ui_nav_set_demo(pk_demo_enabled());
+
         /* 交给 LVGL 合成并推屏：它会把 canvas 与其上的控件混合到 display
          * 缓冲，再经 lv_port 的 flush_cb 调 pk_display_flush_full()。
          * 直接调 flush_full 会跳过控件层，只推 PFD。 */
@@ -433,6 +441,12 @@ static void pfd_task(void *arg)
                          (unsigned long)flush_cnt);
                 acc_draw_us = 0; acc_lvgl_us = 0;
             }
+            /* 每秒一条 WARN。串口是排障时第一眼看的地方，"数据是假的"必须在
+             * 这里也藏不住——屏上有徽标、手机上没数据、日志里有这条，三处互相
+             * 印证，任何一条渠道单独看都能发现。 */
+            if (pk_demo_enabled())
+                ESP_LOGW(TAG, "DEMO MODE ACTIVE — attitude/GPS/baro/traffic "
+                              "below are SIMULATED");
             ESP_LOGI(TAG, "%s %lu FPS  | roll=%+6.2f pitch=%+6.2f yaw=%6.2f"
                           "  imu_valid=%d",
                      mode_label,

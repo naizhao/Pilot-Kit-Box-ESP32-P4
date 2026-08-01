@@ -20,6 +20,7 @@
 #include "i18n.h"
 #include "lv_font_zh.h"
 #include "pfd_layout.h"
+#include "pfd_statusbar.h"   /* DEMO 徽标的槽位几何，与顶栏共用同一份 */
 
 /* spec 视觉稿的调色板。 */
 #define COL_FAB       lv_color_hex(0x2E6DF0)   /* --sel  主操作色 */
@@ -775,4 +776,90 @@ void pk_ui_nav_toast(const char *msg, bool is_error)
 
 __attribute__((weak)) void pk_ui_nav_on_back(void)
 {
+}
+
+/* ── 演示模式常驻标识 ──────────────────────────────────────────────
+ *
+ * 见 pk_ui_nav.h 里那段说明。这里只补两个实现上的取舍：
+ *
+ *   1. **不做闪烁**。航电惯例里闪烁留给需要立刻处置的 warning（着火、失速），
+ *      演示模式不是那类——它是一个持续存在的状态（caution），常亮红更贴切，
+ *      而且闪烁的标识会有半个周期是「看不见」的，正好违背了"永远看得见"。
+ *   2. 红框走 border 而不是四条 lv_obj。一个全屏透明底 + 3 px 边框的对象，
+ *      LVGL 只重绘边框那四条窄带；拆成四个对象反而多三次 draw task。
+ *
+ * 两个对象都 remove CLICKABLE：它们铺在最上层，留着可点会把 FAB、dock 以及
+ * 各页自绘的命中区全部吞掉。LVGL 的命中测试跳过非 clickable 对象。
+ */
+static lv_obj_t *s_demo_badge;
+static lv_obj_t *s_demo_frame;
+
+#define COL_DEMO      lv_color_hex(0xD01820)   /* 与 toast 的错误红同族但更饱和 */
+#define COL_DEMO_EDGE lv_color_hex(0xFF3A32)
+
+static void demo_ensure(void)
+{
+    if (s_demo_badge) return;
+    lv_obj_t *scr = lv_screen_active();
+
+    s_demo_frame = lv_obj_create(scr);
+    lv_obj_set_size(s_demo_frame, PK_DISPLAY_W, PK_DISPLAY_H);
+    lv_obj_set_pos(s_demo_frame, 0, 0);
+    lv_obj_set_style_bg_opa(s_demo_frame, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(s_demo_frame, 0, 0);
+    lv_obj_set_style_pad_all(s_demo_frame, 0, 0);
+    lv_obj_set_style_border_width(s_demo_frame, 3, 0);
+    lv_obj_set_style_border_color(s_demo_frame, COL_DEMO_EDGE, 0);
+    lv_obj_set_style_border_opa(s_demo_frame, LV_OPA_90, 0);
+    lv_obj_remove_flag(s_demo_frame, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_demo_frame, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_demo_frame, LV_OBJ_FLAG_HIDDEN);
+
+    s_demo_badge = lv_obj_create(scr);
+    lv_obj_set_size(s_demo_badge, PK_UI_DEMO_BADGE_W, PK_UI_DEMO_BADGE_H);
+    /* 槽位来自 pfd_statusbar —— 各页顶栏按同一个数让开宽度，两处不能各写各的。 */
+    lv_obj_set_pos(s_demo_badge, PK_UI_DEMO_BADGE_X, PK_UI_DEMO_BADGE_Y);
+    lv_obj_set_style_bg_color(s_demo_badge, COL_DEMO, 0);
+    lv_obj_set_style_bg_opa(s_demo_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_demo_badge, 1, 0);
+    lv_obj_set_style_border_color(s_demo_badge, COL_DEMO_EDGE, 0);
+    lv_obj_set_style_radius(s_demo_badge, 6, 0);
+    lv_obj_set_style_pad_all(s_demo_badge, 0, 0);
+    lv_obj_remove_flag(s_demo_badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_demo_badge, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *l = lv_label_create(s_demo_badge);
+    lv_obj_set_style_text_font(l, s_font_zh_title, 0);
+    lv_obj_set_style_text_color(l, lv_color_white(), 0);
+    lv_obj_center(l);
+
+    lv_obj_add_flag(s_demo_badge, LV_OBJ_FLAG_HIDDEN);
+}
+
+void pk_ui_nav_set_demo(bool on)
+{
+    demo_ensure();
+
+    if (!on) {
+        lv_obj_add_flag(s_demo_badge, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_demo_frame, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    /* 文案每次都重设：语言可以在设置页当场切，而这枚徽标在切语言的那一瞬间
+     * 也必须是对的——它是安全件，不能有"下一次进演示模式才更新"的窗口。
+     * 前缀用 LV_SYMBOL_WARNING（经 Montserrat 回退取字形），符号本身跨语言。 */
+    lv_obj_t *l = lv_obj_get_child(s_demo_badge, 0);
+    if (l) {
+        char buf[32];
+        lv_snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %s",
+                    pk_i18n_text(PK_TR_DEMO_BADGE));
+        lv_label_set_text(l, buf);
+    }
+    lv_obj_remove_flag(s_demo_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_demo_frame, LV_OBJ_FLAG_HIDDEN);
+    /* 压在 dock / FAB / toast 之上。toast 是瞬时的，被盖住一两秒无所谓；
+     * 演示标识被盖住哪怕一帧都不行。 */
+    lv_obj_move_foreground(s_demo_frame);
+    lv_obj_move_foreground(s_demo_badge);
 }

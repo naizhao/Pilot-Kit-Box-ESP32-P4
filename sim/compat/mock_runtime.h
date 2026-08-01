@@ -15,9 +15,14 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
-/* 把当前帧的姿态与位置推给桩。yaw 单位度，alt 单位 ft。 */
-void pk_mock_update(float yaw_deg, int own_alt_ft);
+/* 把当前帧的姿态与位置推给桩。yaw 单位度，alt 单位 ft。
+ *
+ * now_us 是**动画时间**（--shot 的那个秒数换成微秒），不是墙钟。合成数据里凡
+ * 是随时间演进的量都按它算，同一条 --shot 命令才能反复跑出同一张图；桩里那个
+ * esp_timer 返回的是进程启动至今的真实时间，两者不能混。 */
+void pk_mock_update(float yaw_deg, int own_alt_ft, int64_t now_us);
 
 /* 是否生成本机与交通目标。关掉可验证「无数据」时各渲染器的降级表现。 */
 void pk_mock_set_enabled(bool own_valid, bool traffic_valid);

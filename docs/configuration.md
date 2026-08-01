@@ -113,6 +113,38 @@ binding is active.
 The current 4.3-inch touch UI does not expose the former TARE-button runtime
 binding gesture. Use the build-time ICAO option or GPS own-position.
 
+## Demo Mode (runtime switch, NVS)
+
+Setup page, second-from-last row. There is **no build-time Kconfig option** —
+it is pure runtime state kept in NVS:
+
+| Namespace | Key | Type | Default |
+|---|---|---|---|
+| `pk_demo` | `demo_on` | `u8` | `0` (off) |
+
+When enabled, the four data-source getters below return synthetic values from
+`demo_data.c` regardless of whether the hardware is present. The takeover
+happens in the data layer, not in the pages, so no page needs to know demo
+mode exists:
+
+| Entry point | File |
+|---|---|
+| `pk_imu_sample_get()` | `imu_task.c` |
+| `pk_gps_get()` | `gps_task.c` (this also covers `pk_own_ship_resolve()`, which falls back to GPS) |
+| `pk_baro_get()` | `baro_task.c` |
+| `aircraft_state_snapshot()` / `aircraft_state_get_own()` | `aircraft_state.c` |
+
+Synthetic targets never enter the real fusion table, so they never reach
+`record_sink` (on-disk ts logs still contain only real frames) and never
+pollute CPR decoding. The GDL90 path is suppressed explicitly in the
+`ble_gatt.c` emitter task — see [`ble_protocol.md`](ble_protocol.md) §6.5.
+
+Safety constraints: off by default, only enabled explicitly from the Setup
+page, and the annunciator cannot be turned off while it is on (red DEMO
+badge in the top bar, red frame around the screen, red banner on the boot
+splash). There is deliberately **no auto-exit timeout** — a mode changing
+back without the user noticing is more dangerous than staying in demo mode.
+
 ## Storage / LittleFS / MicroSD
 
 At boot, the file sink reads its NVS setting. It writes `/sdcard` when

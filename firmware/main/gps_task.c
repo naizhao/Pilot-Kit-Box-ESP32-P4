@@ -9,6 +9,8 @@
 #include "esp_timer.h"
 #include <sys/time.h>
 #include "pk_clock.h"
+#include "config_demo.h"
+#include "demo_data.h"
 
 static const char *TAG = "gps";
 
@@ -32,6 +34,13 @@ static volatile uint32_t s_rx_bytes;    /* 累计从 UART RX 收到的原始字�
 static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
 
 bool pk_gps_get(pk_gps_state_t *out){
+    if(!out) return false;
+    /* 演示模式接管点，理由同 pk_imu_sample_get()。
+     *
+     * 接管 GPS 一并把**本机**解算也接管了：pk_own_ship_resolve() 在没有绑定
+     * ADS-B 本机时就是退到 GPS 的，于是高度带、速度带、交通页的距离/方位全部
+     * 跟着有了数据，不必再单独去桩 own_ship。 */
+    if(pk_demo_enabled()) return pk_demo_gps(esp_timer_get_time(), out);
     if(!s_lock) return false;
     take(); *out = s_gps; give();
     return out->have_fix;
@@ -230,7 +239,10 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
-            pk_gps_state_t g = {0}; pk_gps_get(&g);
+            /* 直接读快照而不是走 pk_gps_get()：那个入口在演示模式下会返回合成
+             * 数据，于是没插 GPS 板卡时串口上照样印着 "fix=1 sats=11"——这条
+             * 心跳存在的唯一目的就是排查真实模块，绝不能被演示数据污染。 */
+            pk_gps_state_t g; take(); g = s_gps; give();
             /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
              * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "

@@ -24,6 +24,7 @@
 #include "display.h"
 #include "i18n.h"
 #include "pfd_layout.h"
+#include "pfd_statusbar.h"   /* pk_ui_topbar_right_limit —— 给 DEMO 徽标让位 */
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
 #include "pfd_icon_font.h"
@@ -881,7 +882,10 @@ void pk_traffic_page_render(uint16_t *fb)
          * 「机头朝上」算成 12 格，整块读数被推出屏幕右缘。 */
         const int nm_w = pk_aa_text_width(buf, PK_UI_TITLE_SIZE);
         const int om_w = pk_aa_text_width(om,  PK_UI_TITLE_SIZE);
-        const int nm_x = PK_DISPLAY_W - 24 - nm_w;
+        /* 右界走 pk_ui_topbar_right_limit：演示模式下顶栏右侧多了一枚常驻的
+         * DEMO 徽标，它画在控件层、压在本页之上，不退让的话「北向朝上」会被
+         * 盖掉一半。 */
+        const int nm_x = pk_ui_topbar_right_limit(PK_DISPLAY_W - 24) - nm_w;
 
         TFC_PUTS(fb, nm_x, TFC_HDR_TY, buf, COL_GREY);
         /* 同档同高，与量程共用 TFC_HDR_TY(=PK_UI_TITLE_Y) 即可对齐基线。 */

@@ -46,6 +46,7 @@
 #include "pilot_kit.h"
 #include "cpr_decode.h"
 #include "aircraft_state.h"
+#include "config_demo.h"
 #include "record_sink.h"
 #include "dsp_task.h"
 
@@ -311,6 +312,10 @@ static void aircraft_summary_emit(int64_t now_us)
      * heartbeat lines. */
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "==================== AIRCRAFT SUMMARY ====================");
+    /* 演示模式下这张表来自 demo_data.c 而不是空中收到的报文。不标出来的话，
+     * 一份串口日志里既有"SDR 没插"又有 17 架飞机，看的人只会认为解码坏了。 */
+    if (pk_demo_enabled())
+        ESP_LOGW(TAG, "  *** DEMO MODE — the contacts below are SIMULATED ***");
 
     if (n == 0) {
         ESP_LOGI(TAG, "  (no contacts in the last 30 min)");

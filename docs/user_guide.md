@@ -78,7 +78,7 @@ and verified; leveling alone cannot correct a wrong axis mapping.
 | **PFD** | Attitude, pitch and bank, heading/HSI, ground speed, barometric altitude/vertical speed, GPS and traffic status |
 | **Traffic** | 360° traffic radar; touch range/orientation controls and targets for selection/detail |
 | **List** | Tracked-aircraft table; tap headers to sort, drag to scroll and tap a row to open its detail drawer |
-| **Setup** | Language, QNH, map orientation, range, log backend and MicroSD formatting controls |
+| **Setup** | Language, QNH, map orientation, range, log backend, demo mode and MicroSD formatting controls |
 | **About** | Project version, build information and hardware summary |
 | **Diag** | Live SDR/DSP, BLE, GPS, IMU, barometer, storage, temperature and other subsystem cards; tap a card for detail |
 
@@ -91,6 +91,49 @@ Selecting MicroSD as the log backend takes effect at the next boot. If no
 usable card is present, logging falls back to LittleFS for that boot.
 Formatting uses a two-step, five-second confirmation and is refused while
 the active logger is writing to the card.
+
+### Demo mode (all data is simulated)
+
+**Setup → DEMO MODE → ON**. While it is on, attitude, GPS, barometer and
+ADS-B traffic are **all** replaced by a synthetic data set built into the
+firmware, whether or not the real sensors are attached. Turning it off
+restores the real sensors immediately — no reboot needed.
+
+It exists so the normal-state layout and interactions can be reviewed on a
+real unit with no peripherals attached. Out of the box the IMU, barometer,
+GPS and SDR are all absent, so every page renders its degraded state and the
+normal-state layout is never visible on hardware.
+
+> ⚠️ **Nothing on screen is real.** Demo mode has no in-flight use. Never
+> turn it on in flight.
+
+**How you can tell it is on** (three places, none of them defeatable):
+
+| Where | What you see |
+|---|---|
+| Top-right of every page | A red **⚠ DEMO** badge |
+| Screen edge | A red frame around the whole display |
+| Boot splash | A red banner: "DEMO MODE - ALL FLIGHT DATA IS SIMULATED" |
+
+The badge is drawn on the widget layer above every page and has no separate
+switch — there is **no state in which you get the fake data without the
+marking**. The boot banner is drawn separately because demo mode survives a
+reboot (it is stored in NVS) and the splash runs before the widget layer
+exists, so the user must be told again on every power-up.
+
+**GDL90 output**: while demo mode is on the box **stops sending** all
+Ownship / Traffic reports and emits only the heartbeat, with the GPS-valid
+bit forced to 0. On the phone this reads as "receiver online, no GPS, no
+traffic". The reasoning is in [`ble_protocol.md`](ble_protocol.md) §6.5:
+GDL90 has no "this is simulated" bit on the wire, so an EFB cannot tell fake
+traffic from real traffic, and the only safe option is not to send it.
+On-disk ADS-B recordings are unaffected — synthetic targets never enter the
+decoder or the fusion table.
+
+**No auto-exit**: there is no timeout. Having the mode change back without
+the user noticing is more dangerous than staying in demo mode (classic mode
+confusion). Running all day at a trade show is a legitimate use. To leave,
+turn it off in Setup.
 
 ## 5. External-module behavior
 
