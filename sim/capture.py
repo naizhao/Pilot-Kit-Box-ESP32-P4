@@ -134,6 +134,54 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_PAGE": "splash",
                              "PK_SIM_LANG": "en"},                "演示模式 · 开机画面横幅（英文）"),
     ("ui-4.3-splash",       {"PK_SIM_PAGE": "splash"},            "开机画面（演示模式关）"),
+
+    # ── SD 离线地图页 ────────────────────────────────────────────────
+    #
+    # PK_SIM_SET_SD=1：地图页第一步就检查 pk_sdcard_is_mounted()，不给这个
+    # 开关整页只会是"插入 microSD"提示（page_stub.c 里 SD 默认不挂载，与真机
+    # 出厂开机一致，见该文件注释）。
+    #
+    # PK_SIM_MAPS_DIR：sim/compat/pk_tile_loader_sim.c 同步实现读的目录，
+    # 默认 tmp/sd-maps（4 个真实 pmtiles 包：global z0-9、cn/us_conus
+    # z10-12、prd_pilot 珠三角试点包 z0-12，全球+珠三角都覆盖）。这里显式
+    # 写出绝对路径而不是依赖默认值，避免 capture.py 的 cwd 假设跟 sim 二进制
+    # 的默认值悄悄脱节。
+    #
+    # own_ship 落在 prd_pilot 试点包范围内（22.54N,113.90E，见
+    # sim/compat/mock_runtime.c 的 MAP_DEMO_OWN_LAT/LON 注释），Z10 正好是
+    # 该包的高清区间，默认场景应该是清晰底图，不是 overzoom 马赛克。
+    ("ui-4.3-map",          {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps")},
+                                                                   "地图页正常态：底图 + 本机 + 5 个 ADS-B 目标"),
+    ("ui-4.3-map-clump",    {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_MAP_CLUMP": "1"},
+                                                                   "地图页目标扎堆：验证标签防遮挡（只留一个标签）"),
+    ("ui-4.3-map-no-gps",   {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_NO_OWN": "1"},
+                                                                   "地图页无 GPS：无本机符号，视口停在上次/默认中心"),
+    # 目录存在与否都行——pk_map_store_scan 对 opendir 失败只是记一条警告后
+    # 返回 0 个包，跟"目录存在但没有 .pmtiles"是同一个降级结果，不用真的
+    # mkdir 一个空目录出来。
+    ("ui-4.3-map-no-pack",  {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(BUILD / "no-such-maps-dir")},
+                                                                   "地图页无有效包：SD 有卡但 /maps 下没有 pmtiles"),
+    # 悉尼：四个真实包里只有 global（z0-9）覆盖，cn/us_conus/prd_pilot 都够
+    # 不到。Z10 请求会从 global 的 z9 回退，触发 route.scale=2 的"越级放大"
+    # 提示——这与「缩放拉到超出包数据」是同一件事：不是 UI 缩放挡位超限
+    # （挡位上限 12，见 map_page.c 的 MAP_ZOOM_MAX），而是当前位置的底图精度
+    # 不够深，provider 只能用更粗的父瓦片放大凑数。
+    ("ui-4.3-map-overzoom", {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_MAP_OWN_LAT": "-33.9",
+                             "PK_SIM_MAP_OWN_LON": "151.2"},
+                                                                   "地图页 overzoom：只有全球包覆盖，父瓦片放大 + 提示徽标"),
 ]
 
 

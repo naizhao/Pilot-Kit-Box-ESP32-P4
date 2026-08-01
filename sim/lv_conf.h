@@ -68,8 +68,16 @@
 #define LV_STDARG_INCLUDE       <stdarg.h>
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    #define LV_MEM_SIZE (256 * 1024U)          /**< [bytes] */
+    /** Size of memory available for `lv_malloc()` in bytes (>= 2kB)
+     *
+     * 从 256 KB 提到 8 MB：地图页打开 LV_USE_LODEPNG 之后，
+     * compat/pk_tile_loader_sim.c 解码 256×256 PNG 瓦片时，lodepng 内部的
+     * Huffman 树/inflate 缓冲全部走 lv_malloc（与固件同一路径，"与 lodepng
+     * 内部 lv_malloc 配对" 那条注释）。256 KB 这个池子是照真机的 PSRAM 预算
+     * 收紧的，desktop 上没有那个约束，解码单张瓦片就把它挤爆，
+     * lodepng_decode32 返回 err=83（内部 malloc 失败）。8 MB 在桌面上可忽略
+     * 不计，只是 sim 专用的这份配置，不影响固件侧的真实预算。 */
+    #define LV_MEM_SIZE (8U * 1024U * 1024U)   /**< [bytes] */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -979,7 +987,11 @@
 #endif
 
 /** LODEPNG decoder library */
-#define LV_USE_LODEPNG 0
+/* 打开给 sim/compat/pk_tile_loader_sim.c 用：地图页瓦片是 PNG，真机走
+ * firmware/main/pk_tile_loader.c 里同一个 LVGL lodepng 模块解码（component
+ * 里 "libs/lodepng/lodepng.h"），这里打开同一个开关，两边解码路径一致，
+ * 不用另外 vendor 一份 PNG 解码器。 */
+#define LV_USE_LODEPNG 1
 
 /** PNG decoder(libpng) library */
 #define LV_USE_LIBPNG 0

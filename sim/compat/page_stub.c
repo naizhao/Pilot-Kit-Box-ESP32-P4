@@ -291,6 +291,7 @@ void pk_settings_apply(int row, int v) { (void)row; (void)v; }
 #include "dsp_task.h"
 #include "gps.h"
 #include "pilot_kit.h"
+#include "pk_aero_db.h"
 #include "pk_clock.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
@@ -364,6 +365,29 @@ bool record_sink_file_stats(uint32_t *written, uint32_t *dropped)
     if (written) *written = diag_ok() ? 5120 : 0;
     if (dropped) *dropped = 0;
     return true;
+}
+
+/*
+ * pk_aero_db_status_get：SD 航空数据库（AERO DB 卡片，diag_page.c 末尾那张）
+ * 的状态查询。真机实现 pk_aero_db.c 依赖 FreeRTOS 任务 + PSA crypto，跟
+ * pk_tile_loader.c 是同一类"host 编不了、需要桩"的模块，但它不属于本次
+ * 地图页任务的范围——这里只桩到刚好能让 diag_page.c 链接通过、给出与其它
+ * 诊断卡片一致的"最糟情况"默认值（ABSENT），不实现真实的加载/查询逻辑。
+ * PK_SIM_DIAG_OK=1 时给一个合理的 READY 态，跟同一屏其它卡片的降级/正常
+ * 两态保持一致，不会出现"七张卡跟着开关变、单单这张卡纹丝不动"的违和。 */
+void pk_aero_db_status_get(pk_aero_db_status_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (diag_ok()) {
+        out->state = PK_AERO_DB_READY;
+        snprintf(out->cycle, sizeof(out->cycle), "2026-02");
+        out->n_airports = 9327;
+        out->n_navaids  = 4118;
+        out->n_fixes    = 61240;
+    } else {
+        out->state = PK_AERO_DB_ABSENT;
+    }
 }
 
 /* PK_SIM_DIAG_DETAIL=<卡片序号> 直接打开该子系统的详情页，用来截图核对

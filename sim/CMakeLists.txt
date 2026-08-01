@@ -116,6 +116,18 @@ set(FW_DRAW_SRC
     ${FW}/text.c
     ${FW}/text_font_cjk.c
     ${FW}/text_font_cjk_body.c
+    # SD 离线地图页。map_page.c 本身只依赖 pk_tile_loader.h 这个纯函数式
+    # 接口（route/try_blit/request/bump_view），不直接碰 pk_map_store /
+    # pk_pmtiles——那两个是 pk_tile_loader 的实现细节。真机的
+    # pk_tile_loader.c 依赖 FreeRTOS 任务+队列，host 没有，换成
+    # compat/pk_tile_loader_sim.c（同步实现，见该文件文件头）。
+    # pk_map_store.c / pk_pmtiles.c / third_party/pk_tinfl.c 三个是纯 I/O +
+    # 计算，无 FreeRTOS 依赖，host 单测已经在编（firmware/test/），直接编
+    # 进来，与固件是同一份实现。
+    ${FW}/map_page.c
+    ${FW}/pk_map_store.c
+    ${FW}/pk_pmtiles.c
+    ${FW}/third_party/pk_tinfl.c
 )
 
 # 当前 4.3" 一体板的逻辑横屏分辨率。
@@ -139,7 +151,9 @@ list(GET PANEL_WH 0 PANEL_W)
 list(GET PANEL_WH 1 PANEL_H)
 message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
-add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c compat/page_stub.c ${FW_DRAW_SRC})
+add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c compat/page_stub.c
+    compat/pk_tile_loader_sim.c
+    ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}
@@ -150,6 +164,12 @@ target_compile_definitions(pkbox_sim PRIVATE
 target_include_directories(pkbox_sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/compat   # 必须排在 FW 前面，桩头优先
     ${FW}
+    # compat/pk_tile_loader_sim.c 要 #include "libs/lodepng/lodepng.h"——
+    # 与固件那份完全同一行 include（pk_tile_loader.c 里也是这么写的）。
+    # ESP-IDF 那边的 lvgl 组件把 src/ 也加进了 INCLUDE_DIRS（见
+    # env_support/cmake/esp.cmake），FetchContent 拉下来的 lvgl target
+    # 默认只公开仓库根目录，这里补上 src/ 让两边路径一致。
+    ${lvgl_SOURCE_DIR}/src
 )
 
 target_compile_options(pkbox_sim PRIVATE

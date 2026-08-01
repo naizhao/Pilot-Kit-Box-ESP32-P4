@@ -80,6 +80,7 @@
 #include "settings_page.h"
 #include "boot_splash.h"
 #include "traffic_page.h"
+#include "map_page.h"
 
 #include "config_demo.h"
 #include "demo_data.h"
@@ -335,6 +336,39 @@ static int run_headless(float at_sec, const char *out)
         } else if (strcmp(page, "settings") == 0) {
             pk_settings_page_render(fb);
 
+        } else if (strcmp(page, "map") == 0) {
+            /*
+             * PK_SIM_MAP_ZOOM_STEPS=<n>：地图页的 zoom 是内部静态状态
+             * （map_page.c 里的 s_zoom），没有对外的"直接设值"入口——跟
+             * PK_SIM_DIAG_SCROLL 那类"页面自己读环境变量"的桩不一样，因为
+             * map_page.c 是不可改的固件源码。这里改用它已经导出的
+             * pk_map_page_touch() 公开触摸接口，照真实用户点 +/− 按钮的
+             * 路径走：n>0 连点 n 下缩小览过大（放大 n 级），n<0 连点 |n| 下
+             * 缩小。按钮坐标照抄 map_page.c 的常量算式（FOOTER_H/BTN_D/
+             * BTN_M/BTN_GAP_ABOVE_FOOTER/BTN_ZIN_Y 那几行），因为它们是
+             * static #define，没有导出——固定在 800×480 面板上，PANEL 只有
+             * 这一个有效取值（见 CMakeLists.txt 对 PANEL 的说明），不会漂。
+             */
+            {
+                const char *zs = getenv("PK_SIM_MAP_ZOOM_STEPS");
+                const int steps = zs ? atoi(zs) : 0;
+                if (steps != 0) {
+                    const int footer_y0 = PK_DISPLAY_H - 18;              /* FOOTER_H */
+                    const int btn_zout_y = footer_y0 - 8 - 56;            /* -BTN_GAP_ABOVE_FOOTER -BTN_D */
+                    const int btn_zin_y  = btn_zout_y - 56 - 10;          /* -BTN_D -10 */
+                    const int btn_x      = PK_DISPLAY_W - 16 - 56;        /* -BTN_M -BTN_D */
+                    const int cx = btn_x + 28;                            /* +BTN_D/2 */
+                    const int cy_in  = btn_zin_y + 28;
+                    const int cy_out = btn_zout_y + 28;
+                    const int n = steps > 0 ? steps : -steps;
+                    const int cy = steps > 0 ? cy_in : cy_out;
+                    for (int i = 0; i < n; i++) {
+                        pk_map_page_touch(cx, cy);
+                        pk_map_page_touch_up();
+                    }
+                }
+            }
+            pk_map_page_render(fb);
         } else if (strcmp(page, "keyboard") == 0) {
             /* 键盘编辑器。真机上它由设置页那一行点开（pk_settings_apply
              * 的 case 8），模拟器直接调 open() —— 这与诊断详情页那边用

@@ -74,6 +74,22 @@ bool pk_imu_sample_get(pk_imu_sample_t *out)
     return s_own_ok;
 }
 
+/*
+ * 地图页专用的本机位置：珠三角试点包（tmp/sd-maps/pk_map_prd_pilot.pmtiles，
+ * 见 firmware/test/test_pk_map_store.c 打印的 bounds 112.5,21.5,114.6,23.5，
+ * z0-12）覆盖范围内取一点。demo_data.c 的 DEMO_OWN_LAT/LON 钉在北京
+ * （40,116.6），那是给 PFD/交通页历史场景用的基线，不能改——地图页需要一个
+ * 落在有真实瓦片数据的包里的位置，所以只在 PK_SIM_PAGE=map 时换成这一点，
+ * 不影响其它页面的既有截图基线。 */
+#define MAP_DEMO_OWN_LAT  22.54
+#define MAP_DEMO_OWN_LON  113.90
+
+static bool sim_is_map_page(void)
+{
+    const char *page = getenv("PK_SIM_PAGE");
+    return page != NULL && strcmp(page, "map") == 0;
+}
+
 /* ── 本机 ─────────────────────────────────────────────────────────── */
 bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
                          aircraft_t *out, pk_own_src_t *src)
@@ -88,7 +104,18 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
         memset(out, 0, sizeof(*out));
         out->icao24        = 0x780ABC;
         out->have_position = true;
-        pk_demo_own_pos(&out->lat, &out->lon);
+        if (sim_is_map_page()) {
+            /* PK_SIM_MAP_OWN_LAT/LON：挪出珠三角试点包覆盖范围，用来压
+             * overzoom 场景——global 包只到 z9，本机落在只有 global 覆盖
+             * 的地方，把 zoom 拉到 10+ 就会触发"越级放大"（见 map_page.c
+             * 里 route.scale>1 那段提示）。不给就用默认的珠三角坐标。 */
+            const char *lat_e = getenv("PK_SIM_MAP_OWN_LAT");
+            const char *lon_e = getenv("PK_SIM_MAP_OWN_LON");
+            out->lat = lat_e ? atof(lat_e) : MAP_DEMO_OWN_LAT;
+            out->lon = lon_e ? atof(lon_e) : MAP_DEMO_OWN_LON;
+        } else {
+            pk_demo_own_pos(&out->lat, &out->lon);
+        }
         out->have_altitude = true;
         out->altitude_ft   = s_own_alt;
         out->have_velocity = true;
@@ -114,6 +141,70 @@ bool pk_baro_get(pk_baro_state_t *out)
     return true;
 }
 
+/*
+ * 地图页专用的目标表：pk_demo_traffic() 按"本机方位+距离"合成，内部又调
+ * pk_demo_own_pos() 算基准点——那是北京，与地图页覆盖范围内的本机位置
+ * （MAP_DEMO_OWN_LAT/LON，珠三角）对不上，两者一叠加，目标会画在离本机
+ * 几千公里外。所以地图页不能复用 pk_demo_traffic，这里另起一份直接产
+ * 绝对经纬度的合成数据，同样只在 PK_SIM_PAGE=map 时启用。
+ *
+ * PK_SIM_MAP_CLUMP=1：把目标全部挤进一小片区域（呼号扎堆），用来验证
+ * map_page.c 的标签防遮挡规则（见其文件头注释「按距屏幕中心近→远占位，
+ * 碰撞就只画符号不画标签」）。
+ */
+static size_t map_demo_traffic(aircraft_t *out, size_t cap, int64_t now_us)
+{
+    static const struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } kSpread[] = {
+        {  0.06,  0.02, 3200,  90, "CES2158" },
+        { -0.05,  0.08, 1800, 270, "CSN3341" },
+        {  0.10, -0.06, 5400, 135, "CQH8802" },
+        { -0.08, -0.04,  900,  45, "HXA1205" },
+        {  0.02,  0.14, 7600, 180, ""        },  /* 无呼号：兜底显示 ICAO */
+    };
+    /* 扎堆态：五个目标挤在同一小片天空（约 1~2 NM 见方），呼号故意选得
+     * 一样长，逼防遮挡规则在这五个里挑一个画标签、其余四个只画符号。 */
+    static const struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } kClump[] = {
+        {  0.010,  0.006, 4200,  60, "CES2158" },
+        {  0.012,  0.010, 4300,  65, "CSN3341" },
+        {  0.008,  0.012, 4100,  55, "CQH8802" },
+        {  0.014,  0.004, 4400,  70, "HXA1205" },
+        {  0.006,  0.008, 4000,  50, "CBJ5567" },
+    };
+    const bool clump = pk_sim_flag("PK_SIM_MAP_CLUMP");
+    const void *tbl = clump ? (const void *)kClump : (const void *)kSpread;
+    const size_t n = clump ? sizeof(kClump) / sizeof(kClump[0])
+                           : sizeof(kSpread) / sizeof(kSpread[0]);
+    typedef struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } row_t;
+    const row_t *rows = (const row_t *)tbl;
+
+    /* 与 pk_own_ship_resolve() 同一份 PK_SIM_MAP_OWN_LAT/LON 覆盖：目标始终
+     * 散布在本机周围，overzoom 场景挪本机位置时目标跟着挪，不会散到画面外。 */
+    const char *lat_e = getenv("PK_SIM_MAP_OWN_LAT");
+    const char *lon_e = getenv("PK_SIM_MAP_OWN_LON");
+    const double base_lat = lat_e ? atof(lat_e) : MAP_DEMO_OWN_LAT;
+    const double base_lon = lon_e ? atof(lon_e) : MAP_DEMO_OWN_LON;
+
+    size_t i = 0;
+    for (; i < n && i < cap; i++) {
+        aircraft_t *a = &out[i];
+        memset(a, 0, sizeof(*a));
+        a->icao24        = 0x780B00u + (uint32_t)i;
+        a->have_position = true;
+        a->lat = base_lat + rows[i].dlat;
+        a->lon = base_lon + rows[i].dlon;
+        a->have_altitude = true;
+        a->altitude_ft   = rows[i].alt_ft;
+        a->have_velocity = true;
+        a->heading_deg   = rows[i].hdg;
+        a->ground_speed_kt = 140 + (int)(i * 20);
+        if (rows[i].cs[0]) snprintf(a->callsign, sizeof(a->callsign), "%s", rows[i].cs);
+        a->have_callsign = rows[i].cs[0] != '\0';
+        a->last_seen_us  = now_us;
+        a->position_us   = now_us;
+    }
+    return i;
+}
+
 /* ── 目标表 ───────────────────────────────────────────────────────── */
 size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
                                int64_t max_age_us)
@@ -123,6 +214,8 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     /* PK_SIM_NO_TRAFFIC=1 → 空快照。空列表是必须验证的一种状态：留白屏会被
      * 当成页面没画出来，得有明确的「当前无目标」文案。 */
     if (pk_sim_flag("PK_SIM_NO_TRAFFIC")) return 0;
+
+    if (sim_is_map_page()) return map_demo_traffic(out, cap, now_us);
 
     /* PK_SIM_TFC_FAR=1 → 目标全部推到量程外（+40 NM，超过最大档 20 NM）。
      * 这是「有数据但屏上一架都画不出」的那一种空：顶栏计数不为 0，雷达却是
