@@ -125,6 +125,11 @@ set(FW_DRAW_SRC
     # 计算，无 FreeRTOS 依赖，host 单测已经在编（firmware/test/），直接编
     # 进来，与固件是同一份实现。
     ${FW}/map_page.c
+    # 地图页的航空叠加层（机场/导航台/FIX）。它的 LOD 过滤、快照结构、配色与
+    # 标签避让都要在模拟器上评审，所以原样编进来；host 上跑不起来的只有数据源
+    # （SD + 加密 bin + FreeRTOS 加载任务），由 compat/pk_aero_layer_sim.c 把
+    # pk_aero_db_* 换成内存常量表。-DPK_AERO_LAYER_SIM_IMPL 见下方 defs。
+    ${FW}/pk_aero_layer.c
     ${FW}/pk_map_store.c
     ${FW}/pk_pmtiles.c
     ${FW}/third_party/pk_tinfl.c
@@ -153,12 +158,17 @@ message(STATUS "面板: ${PANEL_W}x${PANEL_H}")
 
 add_executable(pkbox_sim main.c lv_backend.c compat/mock_runtime.c compat/i18n_stub.c compat/page_stub.c
     compat/pk_tile_loader_sim.c
+    compat/pk_aero_layer_sim.c
     ${FW_DRAW_SRC})
 
 target_compile_definitions(pkbox_sim PRIVATE
     PK_DISPLAY_W=${PANEL_W}
     PK_DISPLAY_H=${PANEL_H}
     PK_SIM_BUILD=1        # 让页面里少数「只为截图」的钩子编进来（如列表排序覆盖）
+    # 航空叠加层：不开这个宏，pk_aero_layer.h 在 PK_SIM_BUILD 下是一组 inline
+    # 空实现（模拟器看不到这一层）。开了就走真实实现 + 同步查询，数据由
+    # compat/pk_aero_layer_sim.c 提供，运行期还要 PK_SIM_AERO=1 才真出数据。
+    PK_AERO_LAYER_SIM_IMPL=1
 )
 
 target_include_directories(pkbox_sim PRIVATE

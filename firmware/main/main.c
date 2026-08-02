@@ -34,6 +34,7 @@
 #include "config_storage.h"
 #include "config_traffic.h"
 #include "pk_aero_db.h"
+#include "pk_aero_layer.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
 #include "display.h"
@@ -324,6 +325,9 @@ void app_main(void)
      * 须晚于 pk_sdcard_init()——任务靠 pk_sdcard_is_mounted() 决定何时
      * 开始分块加载 /sdcard/aero/pk_aero.bin。 */
     pk_aero_db_init();
+    /* 地图页的航空数据叠加层：只创建后台快照任务，等地图页第一次渲染
+     * 报出视图才开始查（pk_aero_layer.h）。须晚于 pk_aero_db_init()。 */
+    pk_aero_layer_init();
 
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {

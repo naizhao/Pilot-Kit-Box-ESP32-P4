@@ -26,6 +26,7 @@ idf_component_register(
         "pk_sdcard.c"
         "pk_aero_reader.c"
         "pk_aero_db.c"
+        "pk_aero_layer.c"
         "display.c"
         "imu_task.c"
         "baro_task.c"

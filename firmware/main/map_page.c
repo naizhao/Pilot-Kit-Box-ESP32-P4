@@ -36,6 +36,7 @@
 
 #include "aircraft_state.h"
 #include "own_ship.h"
+#include "pk_aero_layer.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
 #include "pk_ui_nav.h"
@@ -280,7 +281,9 @@ static void draw_chrome(uint16_t *fb, double meters_per_px)
  * 帧间记忆的完整解法（那套是为雷达上密集扎堆调的），地图上目标本来就按
  * 地理位置分散，这条更轻量的规则已经能保证"标签之间不重叠"这条底线。 ── */
 #define MAP_LBL_MAX  AIRCRAFT_TABLE_CAPACITY
-typedef struct { int x0, y0, x1, y1; } rect_t;
+/* 与航空叠加层共用同一个占位池，所以矩形类型也共用一个（定义在
+ * pk_aero_layer.h）——两个图层各画各的标签、共享一份"这块已经被占了"。 */
+typedef pk_aero_rect_t rect_t;
 
 static bool rect_overlap(const rect_t *a, const rect_t *b)
 {
@@ -319,6 +322,9 @@ void pk_map_page_render(uint16_t *fb)
 
     double cwx, cwy;
     lonlat_to_world(s_center_lon, s_center_lat, s_zoom, &cwx, &cwy);
+
+    /* 告知航空叠加层当前视图（只存值+置 dirty，查库在它自己的后台任务里）。 */
+    pk_aero_layer_notify_view(s_center_lat, s_center_lon, s_zoom);
 
     /* ── 底图：可见范围内的瓦片 blit（含缺瓦片占位）── */
     const int32_t ntiles = (int32_t)1 << s_zoom;
@@ -381,8 +387,11 @@ void pk_map_page_render(uint16_t *fb)
     static aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
     size_t n = aircraft_state_snapshot(s_scratch, AIRCRAFT_TABLE_CAPACITY,
                                        now_us, AIRCRAFT_STALE_AGE_US);
-    static rect_t s_occ[MAP_LBL_MAX + 1];
+    static rect_t s_occ[MAP_LBL_MAX + 1 + PK_AERO_LAYER_OCC_MAX];
     int nocc = 0;
+    /* 航空叠加层分两趟夹住 ADS-B：符号垫在飞机之下，标签排在呼号之后
+     * （交通信息优先于机场位置，见 pk_aero_layer.h）。 */
+    pk_aero_layer_render_symbols(fb, s_center_lat, s_center_lon, s_zoom);
     const uint16_t col_ac  = pk_rgb565(0, 210, 235);
     const uint16_t col_lbl = pk_rgb565(207, 211, 220);
     for (size_t i = 0; i < n && i < MAP_LBL_MAX; i++) {
@@ -413,12 +422,14 @@ void pk_map_page_render(uint16_t *fb)
         bool clash = false;
         for (int j = 0; j < nocc && !clash; j++) if (rect_overlap(&r, &s_occ[j])) clash = true;
         if (!clash) {
-            if (nocc <= MAP_LBL_MAX) s_occ[nocc++] = r;
+            if (nocc < (int)(sizeof(s_occ) / sizeof(s_occ[0]))) s_occ[nocc++] = r;
             pk_pfd_darken_rect(fb, r.x0 - 2, r.y0, r.x1, r.y1, 120);
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, sx + 10, sy - PK_AA_XS_H / 2,
                       cs, col_lbl, PK_AA_XS);
         }
     }
+    pk_aero_layer_render_labels(fb, s_center_lat, s_center_lon, s_zoom,
+                                s_occ, &nocc, (int)(sizeof(s_occ) / sizeof(s_occ[0])));
 
     /* ── 本机符号：跟随模式画在视口中心；手动平移模式画在它真实的地理投影位置
      * （可能滚出视口之外，此时自然不画——离开可见范围本来就不该出现）。
