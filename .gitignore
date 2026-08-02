@@ -81,3 +81,9 @@ __pycache__
 sim/build*/
 sim/*.bmp
 sim/frame_*.bmp
+
+# KiCad 10 自带 Local History（嵌套 git 仓库，会挡住父仓库提交）
+hardware/**/.history/
+# KiCad 备份与缓存
+hardware/**/*-backups/
+hardware/**/fp-info-cache
