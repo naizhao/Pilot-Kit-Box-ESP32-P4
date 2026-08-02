@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>          /* gettimeofday：墙钟冻结，见下方诊断页那一段 */
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
@@ -337,6 +338,42 @@ bool pk_batt_get(pk_batt_t *out)
 
 bool pk_clock_is_synced(void) { return diag_ok(); }
 const char *pk_clock_source(void) { return diag_ok() ? "gps" : "none"; }
+
+/* 冻结墙钟。
+ *
+ * 上面那两个桩只伪造了「校时过、来源是 GPS」这层元信息，时间**值**没桩：
+ * 诊断页 CLK 卡走 diag_page.c 的 fmt_clock()，那里直接调 libc 的
+ * gettimeofday() 读墙钟。于是同一份二进制连跑两次，ui-4.3-diag.png 的秒位
+ * 就不一样（实测 14:25:02Z → 14:25:08Z，差异区 9×13 px @ (112,435)）——
+ * capture.py 的 git diff 永远带着噪音，而「哪些图变了」正是那个脚本存在的
+ * 理由之一（见其文件头）。桩了元信息不桩值，是这个桩本来就没写完。
+ *
+ * 做法是在链接期用本文件的定义盖掉 libc 的同名符号。影响面精确到一张卡：
+ * 整个 pkbox_sim 里引用 gettimeofday 的目标文件只有 diag_page.c.o 一个
+ * （ble_gatt / gps_task / dsp_task / pk_clock 那几个调用方都不进模拟器，
+ * 由本文件桩掉；LVGL 侧只有 thorvg 用它，而 lv_conf.h 里 THORVG 是关的）。
+ * 加了新调用方要重新想一遍——用
+ *   find sim/build-capture -name '*.o' -exec nm -u {} + | grep _gettimeofday
+ * 复核（当前只有 diag_page.c.o 一个）。
+ *
+ * 默认 1785565513 = 2026-08-01 06:25:13 UTC，比桩出来的构建日期
+ * （esp_app_get_description 里的 "Jul 28 2026"）晚几天，是个说得通的开机
+ * 时刻。选这个点还因为它两栏数字明显不同：fmt_clock 里本地固定 UTC+8，
+ * 这一秒渲染成 "06:25:13Z  14:25 L (GPS)"——要是挑了个 UTC 与本地看起来
+ * 相近的时刻，「同一个时区被抄了两遍」这种 bug 就藏得住。
+ *
+ * PK_SIM_EPOCH=<Unix 秒> 可改（比如验跨零点、跨日期的排版）。用 strtoll
+ * 而不是本文件的 sim_env()：epoch 秒到 2038 年就顶破 int，atoi 会截断。
+ */
+int gettimeofday(struct timeval *__restrict tv, void *__restrict tz)
+{
+    (void)tz;
+    if (!tv) return 0;
+    const char *e = getenv("PK_SIM_EPOCH");
+    tv->tv_sec  = (time_t)(e && e[0] ? strtoll(e, NULL, 10) : 1785565513LL);
+    tv->tv_usec = 0;
+    return 0;
+}
 
 void pk_dsp_get_stats(pk_dsp_stats_t *o)
 {
