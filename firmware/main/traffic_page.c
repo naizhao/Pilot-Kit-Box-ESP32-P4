@@ -609,18 +609,10 @@ static void draw_buttons(uint16_t *fb, pk_map_orient_t orient, int range_nm)
  * 路径（码位见 gen_pfd_aa_font.py 的 ARROW_CODES）。
  *
  * 箭头指的是**目标在本机的哪个方向**，机头朝上时正前方就是 ↑。
+ *
+ * 实现搬到了 traffic_geom.h 的 pk_bearing_arrow()：本页、ADS-B 列表页、
+ * 搜索页原先各存一份一模一样的表，改一份漏一份就是同一方位在两页画得不同。
  */
-static const char *bearing_arrow(float rel_deg)
-{
-    static const char *kArrow[8] = {
-        "\u2191", "\u2197", "\u2192", "\u2198",
-        "\u2193", "\u2199", "\u2190", "\u2196",
-    };
-    float d = rel_deg;
-    while (d < 0.0f)    d += 360.0f;
-    while (d >= 360.0f) d -= 360.0f;
-    return kArrow[((int)((d + 22.5f) / 45.0f)) & 7];
-}
 
 /*
  * 右栏目标列表（spec §5.2：方位 + 呼号 + 距离 + 高度带升降率 + 速度）。
@@ -658,7 +650,7 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
 
         /* ── 主行：方位 + 呼号 …… 高度差 ── */
         x += pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, ty1,
-                        bearing_arrow(v->rel.rel_bearing),
+                        pk_bearing_arrow(v->rel.rel_bearing),
                         sel ? COL_SEL : COL_ARROW, PK_AA_M);
         x += 4;
         char cs[9];

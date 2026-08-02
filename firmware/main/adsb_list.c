@@ -373,18 +373,8 @@ static void puts_right(uint16_t *fb, int right_x, int y, const char *s,
     LST_PUTS(fb, right_x - w, y, s, col, sz);
 }
 
-/* 八向箭头，与交通页同一张表——同一个方位在两页必须长得一样。 */
-static const char *bearing_arrow(float rel_deg)
-{
-    static const char *kArrow[8] = {
-        "↑", "↗", "→", "↘",
-        "↓", "↙", "←", "↖",
-    };
-    float d = rel_deg;
-    while (d < 0.0f)    d += 360.0f;
-    while (d >= 360.0f) d -= 360.0f;
-    return kArrow[((int)((d + 22.5f) / 45.0f)) & 7];
-}
+/* 八向箭头见 traffic_geom.h 的 pk_bearing_arrow()——交通页、本页、搜索页
+ * 共用同一张表，同一个方位在三页必须长得一样。 */
 
 /*
  * 紧急应答机码 → 短标签。无则返回 NULL。
@@ -671,7 +661,7 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
      * 箭头给「大概哪个方向」，数字给「精确多少度」。只给数字要在脑子里换算，
      * 只给箭头则 8 个方向不够用来引导目视搜索。 */
     if (r->rel.valid) {
-        LST_PUTS(fb, COL_BRG_X, ty, bearing_arrow(r->rel.rel_bearing),
+        LST_PUTS(fb, COL_BRG_X, ty, pk_bearing_arrow(r->rel.rel_bearing),
                  sel ? COL_SEL : COL_ARR, PK_AA_M);
         snprintf(buf, sizeof(buf), "%03d",
                  ((int)lroundf(r->rel.abs_bearing) % 360 + 360) % 360);

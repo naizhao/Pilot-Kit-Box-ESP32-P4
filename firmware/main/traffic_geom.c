@@ -45,3 +45,15 @@ float pk_traffic_symbol_rot_deg(bool heading_up, float tgt_track_true_deg,
     if(heading_up) rot -= own_heading_deg;
     return norm360(rot);
 }
+
+const char *pk_bearing_arrow(float rel_deg)
+{
+    /* 顺序 = 从正前开始顺时针每 45° 一格，右边注掉方位名是为了改表时能一眼
+     * 核对——这张表错一格，屏上所有方向就整体偏 45°，而画面本身看不出毛病。 */
+    static const char *kArrow[8] = {
+        "↑", "↗", "→", "↘",   /* 正前 右前 正右 右后 */
+        "↓", "↙", "←", "↖",   /* 正后 左后 正左 左前 */
+    };
+    /* 22.5° 是半个扇区：加上它再整除 45，等价于「四舍五入到最近的八方位」。 */
+    return kArrow[((int)((norm360(rel_deg) + 22.5f) / 45.0f)) & 7];
+}

@@ -48,3 +48,19 @@ pk_traffic_rel_t pk_traffic_rel_calc(
  */
 float pk_traffic_symbol_rot_deg(bool heading_up, float tgt_track_true_deg,
                                 float mag_var_deg, float own_heading_deg);
+
+/*
+ * 相对方位 → 八向箭头（UTF-8 字面量，↑ 为正前）。
+ *
+ * 为什么放在这里而不是各页面自己写一份：交通页、ADS-B 列表页、搜索页在屏上
+ * 画的是同一个语义——「那个东西在本机的哪个方向」。它曾经是两份一模一样的
+ * static 表（traffic_page.c / adsb_list.c），只要有人改了其中一份，同一个方位
+ * 在两页就会长得不一样，而用户会把"长得不一样"读成"含义不一样"。
+ *
+ * 字形不是随手挑的 Unicode：这 8 个码位在 gen_pfd_aa_font.py 的 ARROW_CODES
+ * 里显式烘进了 pk_aa 字库的 xs/s/m/l 四档（见 pfd_aa_font.h 的
+ * pk_aa_cjk_codes），不走 i18n catalog 子集，所以直接写字面量是安全的。
+ *
+ * 返回的是静态常量串，调用方不得修改；宽度按 CJK 全角算（PK_AA_*_CJK_W）。
+ */
+const char *pk_bearing_arrow(float rel_deg);
