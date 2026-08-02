@@ -46,6 +46,8 @@ idf_component_register(
         "keyboard_page.c"
         "search_page.c"
         "apt_detail_page.c"
+        "nav_grid_page.c"
+        "nav_icon_font.c"
         "config_ble.c"
         "config_demo.c"
         "demo_data.c"
