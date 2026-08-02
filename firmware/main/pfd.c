@@ -50,6 +50,7 @@
 #include "pfd_tape.h"
 #include "baro.h"
 #include "sdkconfig.h"
+#include "apt_detail_page.h"
 #include "keyboard_page.h"
 #include "search_page.h"
 #include "settings_page.h"
@@ -152,11 +153,19 @@ static void pfd_task(void *arg)
          * 那条 case 就再也覆盖不到。提到 switch 之前，与 touch_gt911.c 的
          * 分派次序对齐（两处次序一致是"看得见的就是点得中的"的前提）。
          *
-         * 键盘在搜索页之上：它可以从搜索页里打开，反过来不成立。
+         * 2026-08-02：次序本身收进了 pk_ui_modal_top()（apt_detail_page.h），
+         * 两处分派共用同一个纯函数，不再靠注释互相提醒。次序 键盘 > 详情 >
+         * 搜索 的依据与"关掉最上层就回到来时的地方"这条推论都写在那边。
          */
-        if (pk_keyboard_page_active()) {
+        const pk_ui_modal_t modal = pk_ui_modal_top(false,
+                                                    pk_keyboard_page_active(),
+                                                    pk_apt_detail_page_active(),
+                                                    pk_search_page_active());
+        if (modal == PK_UI_MODAL_KEYBOARD) {
             pk_keyboard_page_render(fb);
-        } else if (pk_search_page_active()) {
+        } else if (modal == PK_UI_MODAL_DETAIL) {
+            pk_apt_detail_page_render(fb);
+        } else if (modal == PK_UI_MODAL_SEARCH) {
             pk_search_page_render(fb);
         } else switch (mode) {
         case PK_UI_MODE_CAL_WIZARD:

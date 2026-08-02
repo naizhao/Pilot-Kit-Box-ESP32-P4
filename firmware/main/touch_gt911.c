@@ -36,6 +36,7 @@
 #include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
+#include "apt_detail_page.h"
 #include "keyboard_page.h"
 #include "search_page.h"
 #include "settings_page.h"
@@ -169,6 +170,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
             pk_keyboard_page_touch_cancel();
+            pk_apt_detail_page_touch_cancel();
             pk_search_page_touch_cancel();
             pk_about_page_touch_cancel();
         } else switch (pk_touch_arbiter_press(&s_arb)) {
@@ -185,18 +187,33 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * 「键盘只可能从设置页打开」这个当时的事实钉进了分派表；搜索页从
              * 地图页打开，键盘又能从搜索页打开，那条 case 就再也覆盖不到。
              * 模态层的归属只该由它自己的 active() 决定，与当前是哪一页无关。
+             *
+             * 2026-08-02 加了机场详情页（第三层）之后，次序收进
+             * pk_ui_modal_top()（apt_detail_page.h），与 pfd.c 共用同一个
+             * 纯函数——"看得见的就是点得中的"从此不再依赖两处注释对齐。
              */
-            if (pk_keyboard_page_active()) {
+            switch (pk_ui_modal_top(false,
+                                    pk_keyboard_page_active(),
+                                    pk_apt_detail_page_active(),
+                                    pk_search_page_active())) {
+            case PK_UI_MODAL_KEYBOARD:
                 eaten = pk_keyboard_page_touch(lx, ly);
-            } else if (pk_search_page_active()) {
+                break;
+            case PK_UI_MODAL_DETAIL:
+                eaten = pk_apt_detail_page_touch(lx, ly);
+                break;
+            case PK_UI_MODAL_SEARCH:
                 eaten = pk_search_page_touch(lx, ly);
-            } else {
+                break;
+            case PK_UI_MODAL_NONE:
+            default:
                 eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                      || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                      || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
                      || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
+                break;
             }
             /* 归属就此定死，松手前不再回头问——这一行是「拖 FAB 拖到一半
              * 被列表抢走」那个 bug 的闸门，别改成每帧重判。 */
@@ -207,11 +224,23 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             /* 模态层同样排在最前，理由同上：这次按压归了模态层，后续帧就不能
              * 落到底下那一页的滚动上。键盘不滚动但仍然要吃掉（不吃就漏给
              * LVGL 或底下的页面），搜索页要滚。 */
-            if (pk_keyboard_page_active()) {
-                eaten = true;
-            } else if (pk_search_page_active()) {
-                eaten = pk_search_page_drag(lx, ly);
-            } else if (m == PK_UI_MODE_MAP) {
+            {
+                const pk_ui_modal_t modal =
+                    pk_ui_modal_top(false,
+                                    pk_keyboard_page_active(),
+                                    pk_apt_detail_page_active(),
+                                    pk_search_page_active());
+                if (modal == PK_UI_MODAL_KEYBOARD) { eaten = true; break; }
+                if (modal == PK_UI_MODAL_DETAIL) {
+                    eaten = pk_apt_detail_page_drag(lx, ly);
+                    break;
+                }
+                if (modal == PK_UI_MODAL_SEARCH) {
+                    eaten = pk_search_page_drag(lx, ly);
+                    break;
+                }
+            }
+            if (m == PK_UI_MODE_MAP) {
                 /* 地图页没有独立的 drag() 入口——单指拖动平移的每一帧都重复调
                  * pk_map_page_touch()，由它内部的按下/续行状态机区分"新按下"
                  * 还是"接着上一次拖"（见 map_page.h 顶部注释）。 */
@@ -254,6 +283,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();
         pk_keyboard_page_touch_up();
+        pk_apt_detail_page_touch_up();
         pk_search_page_touch_up();
         pk_about_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
