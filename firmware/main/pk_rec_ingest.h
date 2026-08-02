@@ -58,16 +58,24 @@ void pk_rec_ingest_init(void);
  *   have_alt    false 时 alt_d25 写 PK_REC_ALT_INVALID
  *   alt_ft      气压高度，ft（25 ft 的整数倍——ADS-B ac12/ac13 解码本就是
  *               25 ft 步进，见 spec「高度必须用 25 ft 单位」一节）
- *   have_vel    false 时 gs_kt/track_deg10/vs_fpm_d64 三个都写各自的
- *               PK_REC_*_INVALID —— 位置帧本身不带速度（来自 metype 19），
- *               这仨要么来自 aircraft_state 融合表的当前已知值，要么无效
- *   gs_kt/track_deg/vs_fpm  只在 have_vel=true 时读取
- *   on_ground   PK_TRK_FLAG_ON_GROUND；本阶段地面 CPR 未接入，恒为 false
+ *   have_gs/have_track/have_vs  各自独立——地面 CPR（阶段 4b）接入后，
+ *               surface 报文只带地速+航迹、不带垂速（那几个比特被
+ *               MOV/TRK 复用掉了），三者不再总是同生共死；false 时对应
+ *               字段写各自的 PK_REC_*_INVALID。空中位置帧（metype 9-18）
+ *               三者仍是一起来自 aircraft_state 融合表的当前已知值（来自
+ *               metype 19），调用方直接把同一个 have_velocity 传三次即可。
+ *   gs_kt/track_deg/vs_fpm  只在对应 have_*=true 时读取
+ *   on_ground   PK_TRK_FLAG_ON_GROUND
+ *   from_surface_cpr  PK_TRK_FLAG_SURFACE_CPR——位置是否由
+ *               cpr_decode_surface_local() 解出（阶段 4b）；空中位置帧
+ *               恒传 false
  */
 void pk_rec_ingest_position(uint32_t icao24, int64_t ts_ms, double lat, double lon,
                              bool have_alt, int alt_ft,
-                             bool have_vel, int gs_kt, int track_deg, int vs_fpm,
-                             bool on_ground);
+                             bool have_gs, int gs_kt,
+                             bool have_track, int track_deg,
+                             bool have_vs, int vs_fpm,
+                             bool on_ground, bool from_surface_cpr);
 
 /*
  * 写一条 traffic.trk 身份记录（rec_type=1）。callsign 可以短于 8 字节

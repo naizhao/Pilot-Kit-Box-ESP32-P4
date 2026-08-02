@@ -222,10 +222,31 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
             if (w != PK_WAKE_NONE) a->wake = w;
         } else if (mm->metype >= 5 && mm->metype <= 8) {
             /* Surface position — aircraft is on the ground (taxi /
-             * runway / apron). Don't try to decode the CPR here; the
-             * surface CPR encoding is different from airborne and not
-             * yet wired through cpr_decode.c. We just flag the state. */
+             * runway / apron). The CPR itself is decoded separately in
+             * dsp_task.c via cpr_decode_surface_local() (local/
+             * single-frame decode — ground targets squitter too
+             * infrequently once stationary for the global odd+even
+             * pairing window in cpr_decode.c to stay useful). Here we
+             * just flag ground state and ingest the ground speed/track
+             * this message type itself carries: a surface target NEVER
+             * sends metype 19 (airborne-velocity-only), so this is the
+             * ONLY source of speed/heading while taxiing — don't wait
+             * for a metype 19 that will never arrive. */
             a->on_ground = true;
+            if (mm->surface_ground_speed >= 0.0) {
+                a->ground_speed_kt = (int)lround(mm->surface_ground_speed);
+                a->have_velocity   = true;
+            }
+            if (mm->surface_track_valid) {
+                a->heading_deg   = (int)lround(mm->surface_track);
+                a->have_velocity = true;
+            }
+            /* Surface frames carry no vertical rate field (those bits
+             * are reused for MOV/TRK) and a grounded target isn't
+             * climbing/descending — pin vrate at the "not available"
+             * sentinel (0, same convention as the metype==19 branch
+             * below) rather than let a stale pre-landing value linger. */
+            a->vert_rate_fpm = 0;
         } else if (mm->metype >= 9 && mm->metype <= 18) {
             /* Airborne position — altitude only (position arrives via CPR
              * path, see aircraft_state_update_position).

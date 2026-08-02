@@ -89,24 +89,26 @@ bool pk_rec_ingest_stats(uint32_t *out_written, uint32_t *out_dropped)
 
 void pk_rec_ingest_position(uint32_t icao24, int64_t ts_ms, double lat, double lon,
                              bool have_alt, int alt_ft,
-                             bool have_vel, int gs_kt, int track_deg, int vs_fpm,
-                             bool on_ground)
+                             bool have_gs, int gs_kt,
+                             bool have_track, int track_deg,
+                             bool have_vs, int vs_fpm,
+                             bool on_ground, bool from_surface_cpr)
 {
     pk_trk_pos_t rec = {0};
     rec.ts_ms = (uint64_t)ts_ms;
     icao_to_bytes(icao24, rec.icao24);
     rec.lat_e7 = (int32_t)lround(lat * 1e7);
     rec.lon_e7 = (int32_t)lround(lon * 1e7);
-    rec.alt_d25     = have_alt ? (int16_t)(alt_ft / 25) : PK_REC_ALT_INVALID;
-    rec.gs_kt       = have_vel ? (uint16_t)gs_kt : PK_REC_GS_INVALID;
-    rec.track_deg10 = have_vel ? (uint16_t)(track_deg * 10) : PK_REC_TRACK_INVALID;
-    rec.vs_fpm_d64  = have_vel ? (int16_t)(vs_fpm / 64) : PK_REC_VS_INVALID;
+    rec.alt_d25     = have_alt   ? (int16_t)(alt_ft / 25)      : PK_REC_ALT_INVALID;
+    rec.gs_kt       = have_gs    ? (uint16_t)gs_kt              : PK_REC_GS_INVALID;
+    rec.track_deg10 = have_track ? (uint16_t)(track_deg * 10)   : PK_REC_TRACK_INVALID;
+    rec.vs_fpm_d64  = have_vs    ? (int16_t)(vs_fpm / 64)       : PK_REC_VS_INVALID;
 
     rec.flags = 0;
     if (pk_clock_is_synced()) rec.flags |= PK_TRK_FLAG_TIME_SYNCED;
     if (on_ground)            rec.flags |= PK_TRK_FLAG_ON_GROUND;
-    /* ALT_GEOMETRIC / SURFACE_CPR：本阶段只有气压高度、只有空中 CPR，
-     * 两位都不置。 */
+    if (from_surface_cpr)     rec.flags |= PK_TRK_FLAG_SURFACE_CPR;
+    /* ALT_GEOMETRIC：本阶段只有气压高度，不置。 */
 
     uint8_t buf[PK_TRK_RECORD_LEN];
     pk_trk_pos_encode(&rec, buf);

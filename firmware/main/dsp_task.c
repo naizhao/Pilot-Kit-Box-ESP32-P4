@@ -28,6 +28,7 @@
  */
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
@@ -50,6 +51,7 @@
 #include "record_sink.h"
 #include "dsp_task.h"
 #include "pk_rec_ingest.h"   /* traffic.trk 位置/身份记录落盘（阶段 3b） */
+#include "gps.h"             /* pk_gps_get() —— 地面 CPR 局部解码的参考位置（阶段 4b） */
 
 static const char *TAG      = "dsp";
 static const char *TAG_ADSB = "adsb";
@@ -219,7 +221,7 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
         } else if (mm->metype >= 9 && mm->metype <= 18) {
             s_msgs_df17_pos++;
             cpr_position_t pos = { .valid = false };
-            bool fresh = cpr_decode_position(icao24, mm->fflag,
+            bool fresh = cpr_decode_position(icao24, mm->fflag, /*is_surface=*/false,
                                              mm->raw_latitude,
                                              mm->raw_longitude,
                                              now_us, &pos);
@@ -234,23 +236,26 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
                      * 记录——不能用 pos.valid，那个在缓存命中时也是 true，
                      * 会重复写同一个位置（spec「写入时机」节点名的这条）。
                      * gs/track/vs 这三个不在本消息里（来自 metype 19），从
-                     * aircraft_state 融合表取当前已知值；altitude 就是本消息
-                     * 自己的（ingest 已经在上面把它写进了 aircraft_state，
-                     * 这里复用同一份转换结果，不用再重算一次 m→ft）。 */
+                     * aircraft_state 融合表取当前已知值——空中位置帧里这
+                     * 三者总是同生共死，一个 have_velocity 传三次即可；
+                     * altitude 就是本消息自己的（ingest 已经在上面把它写
+                     * 进了 aircraft_state，这里复用同一份转换结果，不用
+                     * 再重算一次 m→ft）。 */
                     aircraft_t cur_ac;
                     bool have_cur = aircraft_state_get_own(icao24, now_us,
                                                            PK_REC_LOOKUP_MAX_AGE_US, &cur_ac);
+                    bool have_vel = have_cur && cur_ac.have_velocity;
                     struct timeval tv_pos;
                     gettimeofday(&tv_pos, NULL);
                     int64_t ts_ms = (int64_t)tv_pos.tv_sec * 1000LL + tv_pos.tv_usec / 1000LL;
                     pk_rec_ingest_position(icao24, ts_ms, pos.lat, pos.lon,
                                            have_cur && cur_ac.have_altitude,
                                            have_cur ? cur_ac.altitude_ft : 0,
-                                           have_cur && cur_ac.have_velocity,
-                                           have_cur ? cur_ac.ground_speed_kt : 0,
-                                           have_cur ? cur_ac.heading_deg : 0,
-                                           have_cur ? cur_ac.vert_rate_fpm : 0,
-                                           have_cur && cur_ac.on_ground);
+                                           have_vel, have_cur ? cur_ac.ground_speed_kt : 0,
+                                           have_vel, have_cur ? cur_ac.heading_deg : 0,
+                                           have_vel, have_cur ? cur_ac.vert_rate_fpm : 0,
+                                           have_cur && cur_ac.on_ground,
+                                           /*from_surface_cpr=*/false);
                 }
 
                 ESP_LOGI(TAG_ADSB,
@@ -264,6 +269,82 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
                          icao24, mm->altitude, unit_str,
                          mm->fflag ? "odd" : "even",
                          mm->fflag ? "even" : "odd");
+            }
+        } else if (mm->metype >= 5 && mm->metype <= 8) {
+            /* Surface position (阶段 4b). Local (single-frame) CPR decode
+             * per DO-260B A.1.7.3 — see cpr_decode.h's header comment for
+             * why global odd+even pairing doesn't work well for ground
+             * targets (squitter rate drops to ~5s once stationary,
+             * routinely exceeding CPR_PAIR_MAX_AGE_US).
+             *
+             * Reference position priority: own-ship GPS fix first (most
+             * accurate, always near the receiver so always within the
+             * ±45 NM local-decode radius of any traffic close enough to
+             * be picked up on 1090ES anyway); falling back to this
+             * aircraft's own last known position (airborne or surface —
+             * whichever is freshest in aircraft_state) when GPS has no
+             * fix. No reference at all → reject; a "close enough" guess
+             * risks a wrong-but-plausible-looking position, which is
+             * worse than pos=pending. */
+            s_msgs_df17_pos++;
+
+            double ref_lat = 0.0, ref_lon = 0.0;
+            bool have_ref = false;
+            const char *ref_src = "none";
+
+            pk_gps_state_t gps;
+            if (pk_gps_get(&gps) && gps.have_fix) {
+                ref_lat  = gps.lat;
+                ref_lon  = gps.lon;
+                have_ref = true;
+                ref_src  = "gps";
+            } else {
+                aircraft_t last_ac;
+                if (aircraft_state_get_own(icao24, now_us, PK_REC_LOOKUP_MAX_AGE_US,
+                                           &last_ac) && last_ac.have_position) {
+                    ref_lat  = last_ac.lat;
+                    ref_lon  = last_ac.lon;
+                    have_ref = true;
+                    ref_src  = "last-known";
+                }
+            }
+
+            cpr_position_t pos = { .valid = false };
+            if (have_ref) {
+                cpr_decode_surface_local(mm->fflag, mm->raw_latitude, mm->raw_longitude,
+                                         ref_lat, ref_lon, &pos);
+            }
+
+            if (pos.valid) {
+                s_pos_decoded++;
+                aircraft_state_update_position(icao24, pos.lat, pos.lon, now_us);
+
+                /* 落盘：局部解码单帧即出结果，没有"缓存命中重复写"这回
+                 * 事（不像空中 CPR 的全局配对那样 pos.valid 在缓存命中时
+                 * 也为 true），每个成功解码都是新位置，直接写。gs/track
+                 * 直接取本消息自身字段——地面目标不发 metype 19，等不到
+                 * 也不该等 aircraft_state 融合表（那边可能还是起飞前最
+                 * 后一次空中速度的陈旧值）。vs 地面帧没有这个字段，恒
+                 * 无效。 */
+                struct timeval tv_pos;
+                gettimeofday(&tv_pos, NULL);
+                int64_t ts_ms = (int64_t)tv_pos.tv_sec * 1000LL + tv_pos.tv_usec / 1000LL;
+                bool have_gs = mm->surface_ground_speed >= 0.0;
+                pk_rec_ingest_position(icao24, ts_ms, pos.lat, pos.lon,
+                                       /*have_alt=*/false, 0,
+                                       have_gs, have_gs ? (int)lround(mm->surface_ground_speed) : 0,
+                                       mm->surface_track_valid,
+                                       mm->surface_track_valid ? (int)lround(mm->surface_track) : 0,
+                                       /*have_vs=*/false, 0,
+                                       /*on_ground=*/true, /*from_surface_cpr=*/true);
+
+                ESP_LOGI(TAG_ADSB,
+                         "[%06" PRIX32 "] DF17 surf-pos pos=%.5f,%.5f (ref=%s)",
+                         icao24, pos.lat, pos.lon, ref_src);
+            } else {
+                ESP_LOGI(TAG_ADSB,
+                         "[%06" PRIX32 "] DF17 surf-pos pos=pending (ref=%s)",
+                         icao24, ref_src);
             }
         } else if (mm->metype == 19) {
             s_msgs_df17_vel++;

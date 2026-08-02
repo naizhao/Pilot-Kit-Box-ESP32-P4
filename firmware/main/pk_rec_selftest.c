@@ -112,12 +112,16 @@ static void selftest_task(void *arg)
 
     pk_rec_ingest_position(SELFTEST_ICAO_A, ts_ms, 31.230416, 121.473701,
                             /*have_alt=*/true, /*alt_ft=*/3500,
-                            /*have_vel=*/true, /*gs_kt=*/120, /*track_deg=*/90,
-                            /*vs_fpm=*/512, /*on_ground=*/false);
+                            /*have_gs=*/true, /*gs_kt=*/120,
+                            /*have_track=*/true, /*track_deg=*/90,
+                            /*have_vs=*/true, /*vs_fpm=*/512,
+                            /*on_ground=*/false, /*from_surface_cpr=*/false);
     pk_rec_ingest_identity(SELFTEST_ICAO_A, ts_ms, "SELFTST1", /*PK_WAKE_LARGE=*/3);
     pk_rec_ingest_position(SELFTEST_ICAO_B, ts_ms + 1000, 31.240000, 121.480000,
-                            /*have_alt=*/false, 0, /*have_vel=*/false, 0, 0, 0,
-                            /*on_ground=*/false);
+                            /*have_alt=*/false, 0,
+                            /*have_gs=*/false, 0, /*have_track=*/false, 0,
+                            /*have_vs=*/false, 0,
+                            /*on_ground=*/false, /*from_surface_cpr=*/false);
 
     uint32_t written_after = written_before;
     for (int i = 0; i < 50; i++) {   /* 最多等 50*20 = 1000 ms */
