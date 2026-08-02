@@ -1,5 +1,9 @@
 /*
- * pk_ui_nav.h — 触摸导航层：FAB + dock。
+ * pk_ui_nav.h — 触摸导航层：FAB + 二级页返回栏 + Toast + 演示模式标识。
+ *
+ * 主菜单**不在这里**：它是全屏导航网格（nav_grid_page.h），自绘在
+ * framebuffer 上。此前这一层还带一条横向 dock，7 个页签算出来 761 px 而可用
+ * 宽度只有 720，溢出 41 px，2026-08-02 由网格取代后整段删除。
  *
  * 与 PFD 绘制模块同样的定位：**平台无关**，只依赖 LVGL 与 i18n，因此固件与
  * 模拟器编译同一份源码。平台相关的部分（显示器初始化、flush 去向）分别在
@@ -14,11 +18,8 @@
 
 #include <stdbool.h>
 
-/* 在当前活动屏幕上创建 FAB 与 dock。须在 LVGL 初始化、canvas 建立之后调用。 */
+/* 在当前活动屏幕上创建 FAB。须在 LVGL 初始化、canvas 建立之后调用。 */
 void pk_ui_nav_init(void);
-
-/* 展开 / 收起 dock。 */
-void pk_ui_nav_set_dock_open(bool open);
 
 /* 设定 FAB 吸附在哪一侧。宿主开机时用它恢复 NVS 里的 fab_side。 */
 void pk_ui_nav_set_fab_side(bool left);
@@ -26,16 +27,15 @@ void pk_ui_nav_set_fab_side(bool left);
 /* 设定 FAB 的垂直位置，与 pk_ui_nav_on_fab_moved() 回出去的 y_pct 同一单位。
  * 侧与高度是两个正交的量，分开设——只想换边时不必先把高度读出来再写回去。 */
 void pk_ui_nav_set_fab_y_pct(int y_pct);
-bool pk_ui_nav_dock_open(void);
 
 /*
  * 整个藏掉 / 放出 FAB。
  *
- * 给**模态**页面用（当前只有键盘编辑器）。与 set_subpage 不同：那个只是把
- * 图标换成「←」，FAB 本身还在，仍然压在页面之上；模态编辑器铺满全屏且自绘
- * 命中区排在 LVGL 之前（见 touch_gt911.c），FAB 留着的结果是它自己点不动、
- * 又盖住底下的键。藏起来的同时收掉 dock —— dock 锚在 FAB 上，FAB 没了它就
- * 会浮在半空。
+ * 给**模态**页面用（导航网格 / 键盘编辑器 / 搜索页 / 机场详情页）。与
+ * set_subpage 不同：那个只是把图标换成「←」，FAB 本身还在，仍然压在页面
+ * 之上；模态层铺满全屏且自绘命中区排在 LVGL 之前（见 touch_gt911.c），
+ * FAB 留着的结果是它自己点不动、又盖住底下的内容——而且它可拖动，挡住哪
+ * 一块还不可预测。出口一律写在模态层自己的屏上。
  */
 void pk_ui_nav_set_fab_hidden(bool hidden);
 
@@ -55,10 +55,9 @@ void pk_ui_nav_toast(const char *msg, bool is_error);
 
 /* ── 由导航层回调出去的动作 ──────────────────────────────────────
  *
- * 导航层只管「点了哪个」，不管「切页要做什么」——后者在固件里是
- * pk_ui_set_mode()，在模拟器里只是打印一行。弱符号默认实现放在
- * pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
-void pk_ui_nav_on_tab(int tr_id);
+ * 导航层只管「用户做了哪个动作」，不管「这在宿主里意味着什么」——后者在固件
+ * 里是打开网格 / 写 NVS / 弹 toast，在模拟器里只是打印一行。弱符号默认实现
+ * 放在 pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
 
 /* 一级页面点了 FAB —— 宿主应打开主菜单（固件里是全屏导航网格
  * pk_nav_grid_page_open()）。
@@ -84,7 +83,7 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct);
 /* ── 二级页面（spec §4.2）───────────────────────────────────────
  *
  * 进入 / 退出全屏子页。on=true 时：顶栏出现「← <parent_title>」、FAB 图标
- * 变 ←、dock 收起且不再可展开。三条退路（顶栏按钮 / FAB / 右滑）同时可用——
+ * 变 ←（不再是菜单键）。三条退路（顶栏按钮 / FAB / 右滑）同时可用——
  * 无物理按键的设备上，任何一条失效都不能让用户困在里面。
  *
  * 层级最多两层、不做返回栈：子页只能从诊断进入，返回目标唯一确定。

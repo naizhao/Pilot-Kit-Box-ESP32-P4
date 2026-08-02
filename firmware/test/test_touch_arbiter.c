@@ -53,7 +53,7 @@ int main(void)
     /* ── 用例 2：按在列表上拖，全程归页面 ────────────────────────
      *
      * 反向对称：一次归了页面的按压，手指划到 FAB 上也不许被 LVGL 抢走，
-     * 否则滚列表滚到右边就会突然把 dock 拉出来。 */
+     * 否则滚列表滚到右边就会突然把主菜单拉出来。 */
     {
         pk_touch_arbiter_t a = {0};
         chk("列表按下首帧做命中判定",
@@ -96,15 +96,17 @@ int main(void)
         chk("归属定了之后 settle 无效", a.owner, PK_TOUCH_OWNER_LVGL);
     }
 
-    /* ── 用例 5：dock 展开强制让路 ──────────────────────────────
-     * dock 浮在页面之上，展开期间页面的命中一律作废（否则点 dock 页签的
-     * 坐标会被列表先吃掉，表现是「进了 list 就切不走页」——bc1d625 修过）。 */
+    /* ── 用例 5：LVGL 浮层强制让路 ──────────────────────────────
+     * 浮层盖在页面之上时，页面的命中一律作废（历史场景是横向 dock：不让路
+     * 的话点页签的坐标会被列表先吃掉，表现是「进了 list 就切不走页」——
+     * bc1d625 修过）。dock 已删，但这条规则本身跟着 force_lvgl 一起留着，
+     * 见 pk_touch_arbiter.h 那段说明。 */
     {
         pk_touch_arbiter_t a = {0};
         pk_touch_arbiter_press(&a);
         pk_touch_arbiter_settle(&a, true);           /* 本来归了页面 */
         pk_touch_arbiter_force_lvgl(&a);
-        chk("dock 展开后强制归 LVGL", a.owner, PK_TOUCH_OWNER_LVGL);
+        chk("浮层让路后强制归 LVGL", a.owner, PK_TOUCH_OWNER_LVGL);
         chk("此后一路让路",
             pk_touch_arbiter_press(&a), PK_TOUCH_ACTION_YIELD);
     }

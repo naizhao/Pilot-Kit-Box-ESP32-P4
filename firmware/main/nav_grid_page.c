@@ -159,8 +159,9 @@ _Static_assert(PK_NAV_COLS * PK_NAV_CELL_W == PK_DISPLAY_W,
 _Static_assert(PK_NAV_ACT_TOP + PK_NAV_ACT_H == PK_DISPLAY_H,
                "动作条没有贴着屏底");
 
-/* ── 调色板：逐值照抄 pk_ui_nav.c（dock 用的就是这几个色号），网格与它
- * 同源，切换形态时颜色不跳。COL_SEL_BG / COL_OFF 是 dock 没有的两档，
+/* ── 调色板：逐值照抄 spec 视觉稿（docs/ux/box-4.3-ux-spec.html 的 --sel /
+ * --bar / --dim / --txt / --line / --warn），与 pk_ui_nav.c 的 FAB、返回栏
+ * 同源，两层叠在一起颜色不跳。COL_SEL_BG / COL_OFF 是视觉稿里没有的两档，
  * 出处见下面各自的注释。 ── */
 #define COL_FAB     pk_rgb565(0x2E, 0x6D, 0xF0)   /* --sel  主操作色 */
 #define COL_BG      pk_rgb565(0x0A, 0x0F, 0x1C)   /* --bar  顶/底栏底色 */
@@ -169,9 +170,9 @@ _Static_assert(PK_NAV_ACT_TOP + PK_NAV_ACT_H == PK_DISPLAY_H,
 #define COL_LINE    pk_rgb565(0x1C, 0x27, 0x40)   /* --line 分隔 */
 #define COL_ACT     pk_rgb565(0xFF, 0xB4, 0x3F)   /* --warn 动作区 */
 #define COL_WHITE   pk_rgb565(0xFF, 0xFF, 0xFF)
-/* 选中格的底色。不在 dock 那份调色板里——那份只有边框色，没有"选中卡片的
- * 底"这一档。取 --sel 主色压到约 20% 明度：与深色背景拉得开，又不会亮到把
- * 图标标签压下去。 */
+/* 选中格的底色。视觉稿里没有这一档——那份只给了边框色，没有"选中卡片的
+ * 底"。取 --sel 主色压到约 20% 明度：与深色背景拉得开，又不会亮到把图标
+ * 标签压下去。 */
 #define COL_SEL_BG  pk_rgb565(0x12, 0x22, 0x44)
 /* 置灰项（记录 / 工具，页面还没写）。比 COL_DIM 再暗一档，与"能点的"一眼
  * 分得开；同时**不画选中框**，双重信号。 */
@@ -232,7 +233,7 @@ _Static_assert(sizeof(ITEMS) / sizeof(ITEMS[0]) == PK_NAV_ITEM_CNT,
 /* ── 动作条与亮度 pop 的文案（全部走 i18n catalog）────────────────
  *
  * 三条都是**借用现成词条**，不在本页另立一份：
- *   ACT_LEVEL  → PK_TR_ACT_LEVEL，dock 的动作页签用的就是它，同词同动作；
+ *   ACT_LEVEL  → PK_TR_ACT_LEVEL，dock 的动作页签当年用的就是它，同词同动作；
  *   ACT_BRIGHT → PK_TR_SETTINGS_BRIGHTNESS（"屏幕亮度" / "BRIGHTNESS"），
  *                设置页那一行的标题，指的是同一个东西；catalog 里没有更短
  *                的「亮度」，而屏上任何硬编码中文都会绕过 catalog——切英文
@@ -389,10 +390,10 @@ static void draw_bright_pop(uint16_t *fb)
  * 5 s 无操作自动收起——三条退路的第三条（另两条是动作条的「关闭」与第 0 页
  * 右滑）。飞行中忘记收起是常态，不能让菜单一直盖着 PFD。
  *
- * 5000 的来历是 dock 的 DOCK_IDLE_MS（pk_ui_nav.c），沿用它是为了不打破用户
- * 已经养成的手感。**不直接引用那个宏**：Task 6 要连 dock 一起删掉，引用过去
- * 只会让删除时多一处返工，而且网格的内容比 dock 多（两页十项），上机后这个
- * 值多半要往上调——那时它该是本模块自己的参数，不是 dock 的遗产。
+ * 5000 的来历是 dock 的 DOCK_IDLE_MS，沿用它是为了不打破用户已经养成的手感。
+ * 当初刻意**没有**去引用那个宏，而是在这里另立一份——dock 随后就被整段删掉
+ * 了（pk_ui_nav.c），引用过去等于多一处返工。而且网格的内容比 dock 多
+ * （两页十项），上机后这个值多半要往上调，它本来就该是本模块自己的参数。
  */
 #define NAV_IDLE_MS   5000
 
@@ -512,6 +513,10 @@ void pk_nav_grid_page_init(void)
     press_reset();
 }
 
+#ifdef PK_SIM_BUILD
+static void sim_setup(void);
+#endif
+
 void pk_nav_grid_page_open(void)
 {
     /* 每次都从第 1 页、pop 收起开始：菜单是个瞬时动作，上次翻到第 2 页不代表
@@ -531,7 +536,39 @@ void pk_nav_grid_page_open(void)
      * 出口写在屏上：动作条右边那枚「关闭」。
      */
     pk_ui_nav_set_fab_hidden(true);
+#ifdef PK_SIM_BUILD
+    sim_setup();
+#endif
 }
+
+#ifdef PK_SIM_BUILD
+/*
+ * 截图钩子（同 search_page.c 的 sim_setup_once、settings_draw.c 的
+ * pk_settings_sim_scroll 那条先例）：
+ *
+ *   PK_SIM_MENU=1         打开菜单，其余取默认（第 1 页、亮度 pop 收起）
+ *   PK_SIM_MENU_PAGE=<n>  打开后翻到第 n 页（0 起，=1 就是第 2 页那一屏：
+ *                         3 项 + 5 格空位，验"末页不居中"）
+ *   PK_SIM_MENU_BRIGHT=1  打开后展开亮度快调 pop（网格再压一档 + 三档面板）
+ *
+ * 摆的是本模块自己那两个状态量，**不导出 setter**：内部状态一旦对外可写，
+ * 真机那侧就多了一条绕过触摸状态机的路。入口仍是正规的 open()，所以截出来
+ * 的就是用户点 FAB 之后看到的那一屏，连"藏掉 FAB"这个副作用都一并带上。
+ */
+#include <stdlib.h>
+
+static void sim_setup(void)
+{
+    const char *pg = getenv("PK_SIM_MENU_PAGE");
+    if (pg != NULL) {
+        int p = atoi(pg);
+        if (p < 0) p = 0;
+        if (p >= PK_NAV_PAGES) p = PK_NAV_PAGES - 1;
+        s_page = p;
+    }
+    if (getenv("PK_SIM_MENU_BRIGHT") != NULL) s_pop_open = true;
+}
+#endif /* PK_SIM_BUILD */
 
 bool pk_nav_grid_page_active(void) { return s_active; }
 
@@ -546,7 +583,7 @@ void pk_nav_grid_page_close(void)
 /* ── 触摸状态机 ──────────────────────────────────────────────────
  *
  * 「调平」必须长按 1 s 才生效：误触把地平线归零，飞行中是要命的。四个状态
- * 与 dock 那枚调平键逐条对齐（pk_ui_nav.c 的 act_event_cb）：
+ * 与 dock 那枚调平键（已随 dock 删除）逐条对齐，规矩不变：
  *
  *     按下       记下时刻
  *     满 1 s     pk_ui_nav_on_level()，真正执行
@@ -675,8 +712,8 @@ bool pk_nav_grid_page_drag(int x, int y)
             pk_ui_nav_on_level_hint();
         } else if (esp_timer_get_time() - s_press_us
                        >= (int64_t)NAV_LEVEL_HOLD_MS * 1000) {
-            /* 满 1 s 当场执行（提示随即弹出，手感与 dock 一致），网格留到
-             * 松手再关——理由见本节开头。 */
+            /* 满 1 s 当场执行（提示随即弹出），网格留到松手再关——理由见
+             * 本节开头。 */
             s_press_valid = false;      /* 已消费，松手不再重复结算 */
             s_close_on_up = true;
             pk_ui_nav_on_level();

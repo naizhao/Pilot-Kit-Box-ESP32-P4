@@ -92,6 +92,12 @@ set(FW_DRAW_SRC
     ${FW}/lv_font_zh.c
     ${FW}/i18n_catalog.c
     ${FW}/pk_ui_nav.c
+    # 全屏导航网格（点 FAB 打开的主菜单，取代了原来的横向 dock）。版面、
+    # 分页、置灰占位、亮度快调都要在模拟器上评审，所以渲染与命中判定原样
+    # 编进来；host 上跑不起来的只有「切到哪一页 / 亮度档位」这两个数据接口，
+    # 由 compat/page_stub.c 桩掉。图标位图是纯数据表，直接编。
+    ${FW}/nav_grid_page.c
+    ${FW}/nav_icon_font.c
     ${FW}/pfd_hsi_traffic.c
     # 演示模式的合成数据。它同时是模拟器的 mock 源——两边共用一份，模拟器上
     # 压出来的极值真机演示时才压得到同一批（见 demo_data.h 的文件头）。

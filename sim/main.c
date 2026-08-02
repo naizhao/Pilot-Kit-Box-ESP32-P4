@@ -22,8 +22,9 @@
  *     ESC / Q   退出
  *     空格      暂停 / 继续动画（方便盯住某一帧看细节）
  *     S         把当前帧存成 BMP，用于和设计稿逐像素比对
- *     T         切换一条 toast 提示（验证它压在 dock / FAB 之上）
+ *     T         切换一条 toast 提示（验证它压在 FAB / 菜单之上）
  *     B         进出二级页面（验证返回栏与 FAB 变 ←）
+ *     M         开 / 关全屏导航网格（真机上点 FAB 打开的主菜单）
  *     ← →      手动步进 roll，观察极限姿态
  *
  * 「极端无数据」开关
@@ -52,6 +53,14 @@
  * 本身。它存在的意义是：那两块标识画在控件层、压在所有页面之上，必须能逐页
  * 截图确认「每一页都在」——这是演示模式的安全底线，不能只靠肉眼在真机上翻页。
  *
+ * 全屏导航网格（点 FAB 打开的主菜单，取代了原来的横向 dock）
+ * ----------------------------------------------------------
+ *     PK_SIM_MENU=1          打开菜单（第 1 页 7 项 + 1 格余量 + 动作条）
+ *     PK_SIM_MENU_PAGE=<n>   打开并翻到第 n 页（0 起；=1 就是第 2 页那 3 项）
+ *     PK_SIM_MENU_BRIGHT=1   打开并展开亮度快调 pop
+ *     PK_SIM_UI_MODE=<n>     当前在哪一页（pk_ui_mode_t 序号），决定哪一格
+ *                            画选中框；默认 0=PFD，第 2 页可给 6=DIAG
+ *
  * 版面位置类（与空态常配合用）：
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
  *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
@@ -79,6 +88,7 @@
 
 #include "lv_backend.h"
 #include "pk_ui_nav.h"
+#include "nav_grid_page.h"
 #include "about_page.h"
 #include "adsb_list.h"
 #include "config_devname.h"   /* PK_DEVNAME_MAX_LEN —— 键盘页的上限跟真机同一个数 */
@@ -288,19 +298,30 @@ static void save_bmp(const uint16_t *fb, int seq)
 static int run_headless(float at_sec, const char *out)
 {
     /* 经 LVGL 走一遍，而不是直接看 PFD 写的那块缓冲：截图要反映的是**合成
-     * 之后**的画面，将来叠上 FAB / dock 才不会漏掉图层间的相互影响。 */
+     * 之后**的画面，叠上 FAB / toast / DEMO 标识才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
     pk_ui_nav_init();
     /* 演示模式标识。放在这里、在页面渲染**之前**，是为了让它像真机一样压在
      * 任何一页之上——真机由 pfd.c 每帧同步，模拟器一帧就够。 */
     pk_ui_nav_set_demo(pk_demo_enabled());
-    /* 截图时展开 dock：它默认收起，否则评审看不到这一屏最占地方的状态。 */
-    /* PK_SIM_FAB=left 把 FAB 吸到左缘，用来核对 dock 是否跟着反向铺开。 */
+    /* PK_SIM_FAB=left 把 FAB 吸到左缘，用来核对各页的浮层避让两侧都对。 */
     {
         const char *side = getenv("PK_SIM_FAB");
         if (side && side[0] == 'l') pk_ui_nav_set_fab_side(true);
     }
-    if (getenv("PK_SIM_DOCK")) pk_ui_nav_set_dock_open(true);
+    /*
+     * 全屏导航网格 = 真机上点 FAB 打开的主菜单。三个开关都会把它打开，后两个
+     * 再摆到具体的一态（第几页 / 亮度 pop 开着没）——摆法写在 nav_grid_page.c
+     * 的截图钩子里，走的是与真机同一条 open()，同 search_page.c 的
+     * sim_setup_once。
+     *
+     * 这里**没有** PK_SIM_FAB=left 的对应场景：网格是全屏的，不像 dock 那样
+     * 锚在 FAB 上、随吸附边缘反向铺开，所以 ui-4.3-dock-left 那一格截图在这
+     * 一版没有对应物，已从 capture.py 删除。
+     */
+    if (getenv("PK_SIM_MENU") || getenv("PK_SIM_MENU_PAGE") ||
+        getenv("PK_SIM_MENU_BRIGHT"))
+        pk_nav_grid_page_open();
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
     /* PK_SIM_SUB=1 进入二级页，核对返回栏与 FAB 图标是否都切到「←」。 */
     if (getenv("PK_SIM_SUB")) pk_ui_nav_set_subpage(true, "诊断");
@@ -329,7 +350,7 @@ static int run_headless(float at_sec, const char *out)
     mock_fill(&st, &imu, &hsi, &alt, &spd, &stat);
 
     /* PK_SIM_PAGE=<name> 渲染整页视图而不是 PFD——那几页正在从 2.4″ 迁到
-     * 800×480，需要能截图比对。名字与 dock 页签一一对应。 */
+     * 800×480，需要能截图比对。名字与导航网格的项一一对应。 */
     const char *page = getenv("PK_SIM_PAGE");
     if (page != NULL && page[0] != '\0') {
         if (strcmp(page, "about") == 0) {
@@ -493,9 +514,12 @@ static int run_headless(float at_sec, const char *out)
     }
 
 page_done:;   /* 空语句：C17 里标签后面不能直接跟声明（-Wc23-extensions） */
-    /* 多合成几帧：首帧 LVGL 只画屏幕底色，canvas 要到第二帧才落到 s_screen；
-     * 而 dock 的滑出动画有 180 ms，两帧远不够，截出来会是它还在屏外的样子。
-     * 12 帧 ≈ 400 ms，动画收敛且离 5 s 自动收起还远。 */
+    /* 导航网格是**半透明**覆盖层：底页照常画完再把它叠上去，次序与真机的
+     * pfd.c 一致（它不进那条模态 if/else 链，理由见 nav_grid_page.h）。 */
+    if (pk_nav_grid_page_active()) pk_nav_grid_page_render(fb);
+    /* 多合成几帧：首帧 LVGL 只画屏幕底色，canvas 要到第二帧才落到 s_screen，
+     * 两帧不够；FAB 的显隐与 toast 的排版也要一两帧才落位。
+     * 12 帧 ≈ 400 ms，离网格 5 s 无操作自动收起还远。 */
     const uint16_t *shot = NULL;
     /* PK_SIM_FRAMES 可加长合成帧数，用来验证「5 s 无操作自动收起」这类
      * 靠定时器触发的行为——默认 12 帧只够动画收敛。 */
@@ -533,13 +557,14 @@ page_done:;   /* 空语句：C17 里标签后面不能直接跟声明（-Wc23-ex
  * 的内容被一起拖走，下方还凭空冒出一条滚动条。
  *
  * 根因不在 FAB，在屏幕根对象：LVGL 里每个 lv_obj 默认都带 LV_OBJ_FLAG_SCROLLABLE
- * （lv_obj.c 的构造函数），screen 也不例外；而 pk_ui_nav.c 给 backbar / dock /
+ * （lv_obj.c 的构造函数），screen 也不例外；而 pk_ui_nav.c 给 backbar /
  * toast / demo 那几个容器都显式摘掉了这个 flag，唯独 screen 漏了。FAB 自身是
  * lv_button（构造时已不可滚），但它保留着 SCROLL_CHAIN，于是 LVGL 的
  * lv_indev_find_scroll_obj() 沿父链一路找到 screen，认定"这个能滚"。
  *
- * screen 之所以真的滚得动，是因为 dock 收起时藏在屏外（dock_hidden_x() 返回
- * PK_DISPLAY_W 或 -dock_width()），滚动区永远比屏幕宽出一整个 dock。
+ * screen 当年之所以真的滚得动，是因为横向 dock 收起时被停在屏外，滚动区永远
+ * 比屏幕宽出一整个 dock。dock 已删，这个触发源随之消失，但断言留着：只要哪
+ * 天又有人往 screen 上挂一个越出屏幕的子对象，这条就会立刻红。
  *
  * 为什么必须走 indev 而不是直接调 fab_event_cb：滚动判定跑在 indev 读取之后、
  * 控件事件之前，绕开 indev 就把要测的那一段跳过去了。
@@ -557,8 +582,7 @@ static int run_drag_test(void)
     lv_obj_t *scr = lv_screen_active();
     int fails = 0;
 
-    /* 先空跑几帧，让 dock 的收起动画落位到屏外——正是它把 screen 的滚动区
-     * 撑得比屏幕宽，不等它到位就测，等于把前提条件抽掉了。 */
+    /* 先空跑几帧让控件层落位（首帧 LVGL 只画底色）。 */
     for (int i = 0; i < 12; ++i) pk_sim_lv_render(33);
 
     int fx, fy, fw, fh;
@@ -735,9 +759,9 @@ int main(int argc, char **argv)
     if (!tex) { fprintf(stderr, "CreateTexture: %s\n", SDL_GetError()); return 1; }
 
     /* PFD 写入的是 LVGL canvas 的缓冲；窗口上显示的是 LVGL 合成之后的结果。
-     * 两者分开，将来叠上 FAB / dock 才看得出图层间的相互影响。 */
+     * 两者分开，叠上 FAB / toast / DEMO 标识才看得出图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
-    pk_sim_lv_attach_mouse(ZOOM);   /* 鼠标当触摸用，验证 FAB / dock 的交互 */
+    pk_sim_lv_attach_mouse(ZOOM);   /* 鼠标当触摸用，验证 FAB 的点击与拖动 */
     pk_ui_nav_init();
     pk_ui_nav_set_demo(pk_demo_enabled());
     const uint16_t *screen = fb;
@@ -763,12 +787,27 @@ int main(int argc, char **argv)
                 case SDLK_q:     running = false;              break;
                 case SDLK_SPACE: st.paused = !st.paused;       break;
                 case SDLK_s:     save_bmp(screen, shot_seq++);  break;
-                /* T 键弹一次 toast：验证它压在 dock / FAB 之上。真机上由
+                /* T 键弹一次 toast：验证它压在 FAB / 菜单之上。真机上由
                  * 调平、绑定本机等动作触发。 */
                 /* B 键进出二级页：核对三条退路都能返回。 */
                 case SDLK_b:
                     sub_on = !sub_on;
                     pk_ui_nav_set_subpage(sub_on, "诊断");
+                    break;
+                /*
+                 * M 键开 / 关全屏导航网格。真机上它由点 FAB 触发，走
+                 * pk_ui_nav_on_menu() 这个弱符号回调；模拟器不编译
+                 * pk_ui_nav_host.c（那份强实现在那儿），所以这里用一个按键
+                 * 代替，只为了让评审能在窗口里看到这一层压在各页之上的样子。
+                 *
+                 * **网格内部的触摸没有接进来**：真机那条路在 touch_gt911.c
+                 * 里（模态优先级 + 触摸仲裁），模拟器没有那个文件。所以窗口
+                 * 里只能看、不能点，再按一次 M 关掉。要验交互仍以真机为准，
+                 * 要验版面用 capture.py 的 ui-4.3-menu* 四张。
+                 */
+                case SDLK_m:
+                    if (pk_nav_grid_page_active()) pk_nav_grid_page_close();
+                    else                           pk_nav_grid_page_open();
                     break;
                 case SDLK_t:
                     toast_on = !toast_on;
@@ -807,6 +846,9 @@ int main(int argc, char **argv)
         pk_pfd_infobox_render(fb, &ib);
         pk_pfd_leftbox_render(fb, &lb);
     }
+
+        /* 半透明覆盖层，叠在画完的底页之上，次序同真机的 pfd.c。 */
+        if (pk_nav_grid_page_active()) pk_nav_grid_page_render(fb);
 
         /* 让 LVGL 把 canvas（以及将来的控件）合成到最终画面。 */
         screen = pk_sim_lv_render((uint32_t)(dt * 1000.0f));

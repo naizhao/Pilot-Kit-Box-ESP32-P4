@@ -8,7 +8,7 @@
  *   - **自绘页面**（交通页的量程钮、列表页的表头与数据区、诊断/设置/关于的
  *     滚动）——它们不是 LVGL 对象，命中判定只能在 indev 的 read_cb 里手工做，
  *     吃掉时把上报状态改成 RELEASED，LVGL 那侧就什么都收不到。
- *   - **LVGL 控件**（FAB、dock 页签、键盘）——正常走 LVGL 自己的事件通路。
+ *   - **LVGL 控件**（FAB、二级页返回栏）——正常走 LVGL 自己的事件通路。
  *
  * 判定本身写在 touch_gt911.c 里没问题，出问题的是**判定的时机**：原先每一帧
  * 都重新判一次，于是一次按压可以中途易主。真机实测到的表现（罩哥 2026-08-01）：
@@ -68,6 +68,11 @@ void pk_touch_arbiter_settle(pk_touch_arbiter_t *a, bool eaten);
 /* 松手。归属作废，下一次按下重新仲裁。 */
 void pk_touch_arbiter_release(pk_touch_arbiter_t *a);
 
-/* dock 展开这类「页面必须整体让路」的场合：把本次按压强制判给 LVGL，
- * 且在松手之前不再回头。 */
+/* 「页面必须整体让路给某个 LVGL 浮层」的场合：把本次按压强制判给 LVGL，
+ * 且在松手之前不再回头。
+ *
+ * 2026-08-02 起**暂无生产调用点**：唯一的用户是横向 dock（它是覆盖屏幕中部
+ * 的 LVGL 控件，展开时要把列表页的整片命中区顶掉），dock 已由自绘的全屏
+ * 导航网格取代，模态层的优先级改走 pk_ui_modal_top()。函数与其单测保留：
+ * 「浮层要整体让路」这条规则本身没变，下一个 LVGL 浮层还会需要它。 */
 void pk_touch_arbiter_force_lvgl(pk_touch_arbiter_t *a);

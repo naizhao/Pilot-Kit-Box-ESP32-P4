@@ -62,6 +62,26 @@ int     pk_ui_about_scroll_y(void)          { return 0; }
 int     pk_ui_diag_scroll_y(void)           { return 0; }
 uint8_t pk_ui_cal_wizard_last_accuracy(void){ return 3; }   /* 3 = 已校准 */
 
+/*
+ * 当前是哪一页。导航网格拿它反查「当前在哪一格」，画出那一格的选中框
+ * （nav_grid_page.c 的 selected_index）。
+ *
+ * 固件里的真值在 ui_state.c（带互斥锁，多个任务读写），模拟器没有页面切换
+ * 这回事——PK_SIM_PAGE 决定截哪一页，是另一套机制。所以这里做成一个环境
+ * 变量旋钮：PK_SIM_UI_MODE=<pk_ui_mode_t 序号>，默认 0（PFD），正好让第 1 页
+ * 的第 1 格带上选中框。截第 2 页时给 6（DIAG），选中态在两页上都验得到。
+ */
+#include "ui_state.h"
+
+pk_ui_mode_t pk_ui_get_mode(void)
+{
+    return (pk_ui_mode_t)sim_env("PK_SIM_UI_MODE", PK_UI_MODE_PFD);
+}
+
+/* 写操作不进模拟器，同 pk_settings_apply / pk_demo_set_enabled：截图是
+ * 定格的一帧，"点完格子跳到哪一页"由 PK_SIM_PAGE 摆，不由这里改。 */
+void pk_ui_set_mode(pk_ui_mode_t mode) { (void)mode; }
+
 /* ── logo ───────────────────────────────────────────────────────
  * 固件里这张图由 EMBED_FILES 链进 .rodata，模拟器没有那套机制，直接从源文件
  * 读同一份数据——保证两边显示的是同一张图，而不是各画各的占位。 */
@@ -239,6 +259,10 @@ pk_log_store_t pk_log_store_get(void)
 
 /* 默认 1 = MID，与真机开机档一致（display.c 的 s_bl_step）。 */
 uint8_t pk_backlight_step_get(void) { return (uint8_t)sim_env("PK_SIM_SET_BL", 1); }
+
+/* 设置页与导航网格的亮度快调都会写它。PC 上没有背光，写操作丢掉——要截
+ * 「选中的是哪一档」用 PK_SIM_SET_BL 摆，与上面那个 getter 同一个旋钮。 */
+void pk_backlight_step_set(uint8_t step) { (void)step; }
 
 /* 默认 false：无卡时格式化按钮置灰、存储那行也置灰，这是出厂开机的样子，
  * 也是最容易被漏掉的一种版面。 */

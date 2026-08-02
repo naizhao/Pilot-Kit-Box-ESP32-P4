@@ -31,17 +31,30 @@ OUT = REPO / "images"
 # 俯仰正负刻度同时可见——是最能说明问题的一帧。换值会让所有图一起变。
 AT_SEC = "13.7"
 
-# name → 环境变量。空 dict = 默认态（PFD 主页，中文，dock 收起）。
+# name → 环境变量。空 dict = 默认态（PFD 主页，中文，菜单未打开）。
 SCENES: list[tuple[str, dict[str, str], str]] = [
     # PFD 主页**没有**中英两版：这一屏全是国际通用的符号、数字与固定缩写
     # （HDG / KM/H / ALT / VS），一个 i18n 词条都没有，两种语言渲染逐字节相同。
     # 这与 ICAO 标准仪表不做本地化是一致的——语言只影响导航与设置这类文字界面。
     ("ui-4.3-pfd",          {},                                   "PFD 主页"),
-    ("ui-4.3-dock",         {"PK_SIM_DOCK": "1"},                 "dock 展开：六页签 + 调平"),
-    ("ui-4.3-dock-en",      {"PK_SIM_DOCK": "1",
-                             "PK_SIM_LANG": "en"},                "dock 展开（英文，页签最宽的一版）"),
-    ("ui-4.3-dock-left",    {"PK_SIM_DOCK": "1",
-                             "PK_SIM_FAB": "left"},               "FAB 吸左缘，dock 反向铺开"),
+
+    # ── 全屏导航网格（主菜单）──────────────────────────────────────
+    #
+    # 取代了原来的横向 dock（ui-4.3-dock / -dock-en / -dock-left 三张，
+    # 2026-08-02 随 dock 一起删）。**没有 -left 的对应物**：dock 锚在 FAB 上、
+    # 随吸附边缘反向铺开，网格是全屏的，FAB 在哪一侧它都长一个样。
+    #
+    # 四张各压一件事：默认那一屏、英文（标签最宽的一版）、第 2 页（3 项 +
+    # 5 格空位，验"末页不居中"这条产品决定）、亮度快调 pop（网格再压一档）。
+    ("ui-4.3-menu",         {"PK_SIM_MENU": "1"},                 "主菜单第 1 页：7 项 + 1 格余量 + 动作条"),
+    ("ui-4.3-menu-en",      {"PK_SIM_MENU": "1",
+                             "PK_SIM_LANG": "en"},                "主菜单第 1 页（英文，标签最宽的一版）"),
+    # PK_SIM_UI_MODE=6 = PK_UI_MODE_DIAG：让第 2 页也带一个选中框，
+    # 否则选中态只在第 1 页验得到。
+    ("ui-4.3-menu-page2",   {"PK_SIM_MENU_PAGE": "1",
+                             "PK_SIM_UI_MODE": "6"},              "主菜单第 2 页：3 项从左上角起排，不居中"),
+    ("ui-4.3-menu-bright",  {"PK_SIM_MENU_BRIGHT": "1"},          "主菜单 + 亮度快调 pop：网格再压一档"),
+
     ("ui-4.3-subpage",      {"PK_SIM_SUB": "1"},                  "二级页面：返回栏 + FAB 变 ←"),
     ("ui-4.3-toast",        {"PK_SIM_TOAST": "1"},                "Toast 提示压在最上层"),
     ("ui-4.3-battery-low",  {"PK_SIM_BATT": "3"},                 "低电量：电池转 alert 图标并变红"),

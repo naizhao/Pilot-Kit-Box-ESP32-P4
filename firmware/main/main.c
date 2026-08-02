@@ -36,6 +36,7 @@
 #include "pk_aero_db.h"
 #include "pk_aero_layer.h"
 #include "apt_detail_page.h"
+#include "nav_grid_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
@@ -337,6 +338,10 @@ void app_main(void)
     /* 搜索页的后台查询任务 + 从 NVS 读回最近搜索。同样只建任务、零 IO，
      * 须晚于 pk_aero_db_init()（它是那边的消费者）。 */
     pk_search_page_init();
+    /* 全屏导航网格（点 FAB 打开的主菜单）。它没有后台任务也没有 NVS，init()
+     * 只是把「开着没 / 在第几页 / 亮度 pop 开着没」摆回初值——静态量零初始化
+     * 本来就与它写的一致，但生命周期得走全，不留「这一个例外不用 init」。 */
+    pk_nav_grid_page_init();
     /* 机场详情页**没有**初始化：它没有后台任务也没有 NVS，打开那一刻同步
      * 取数就够（89 条记录读全是 µs 级，见 apt_detail_page.h）。这里只挂一个
      * 默认关闭的自检钩子——PK_APT_DETAIL_SMOKE=0 时它是个空函数。 */

@@ -1,7 +1,7 @@
 /*
  * touch_gt911.c — GT911 电容触摸 → LVGL 输入设备。
  *
- * 没有它，dock、FAB、二级页面的三条退路全都点不动：pk_ui_nav.c 里那些
+ * 没有它，FAB、二级页面的三条退路全都点不动：pk_ui_nav.c 里那些
  * lv_indev_active() / lv_indev_get_vect() 取的是「当前正在上报的输入设备」，
  * 而在本文件出现之前，这台机器一个输入设备都没注册过。
  *
@@ -41,7 +41,8 @@
 #include "nav_grid_page.h"
 #include "search_page.h"
 #include "settings_page.h"
-#include "pk_ui_nav.h"
+/* pk_ui_nav.h 已不需要：本文件唯一用到它的地方是 dock 展开时的整体让路，
+ * 随 dock 一起删了。FAB 的事件走 LVGL 自己的通路，不经过这里。 */
 #include "pk_touch_arbiter.h"
 #include "traffic_page.h"
 #include "map_page.h"
@@ -145,37 +146,16 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 只在按下的那一瞬间触发一次：命中判定归 s_arb 管（HITTEST 只在按压的
          * 第一帧出现），否则手指停在按钮上不动，每帧都会切一次朝向。 */
         /*
-         * dock 展开时，页面的自绘命中一律让路。
-         *
-         * dock 是浮在页面之上的 LVGL 控件，覆盖屏幕中部——正好压在列表页的
-         * 数据区上。而列表把**整个数据区**都当命中区（不像交通页只有三个小
-         * 按钮），于是点 dock 页签的坐标先被列表吃掉，dock 永远收不到，
-         * 表现就是「进了 list 就切不走页」。
-         *
-         * FAB 之所以不受影响，纯属巧合：它在 x >= 728，刚好落在列表内容区
-         * 右缘（724）之外。这种靠坐标碰巧不重叠的"安全"不能依赖，所以这里
-         * 按状态显式让路。
+         * 2026-08-02：这里曾有一段「dock 展开时页面的自绘命中一律让路」——
+         * dock 是浮在页面之上的 LVGL 控件、正好压在列表页的数据区上，而列表
+         * 把**整个数据区**都当命中区，于是点 dock 页签的坐标先被列表吃掉。
+         * dock 已由全屏导航网格取代，网格是自绘模态层，走下面 pk_ui_modal_top()
+         * 那条正规的模态优先级，不再需要这条特例。
          */
         const pk_ui_mode_t m = pk_ui_get_mode();
         bool eaten = false;
 
-        if (pk_ui_nav_dock_open()) {
-            /* 让路期间把页面的手势状态**取消**掉（不是 touch_up）：否则
-             * dock 展开前落在列表上的那次按下会被当成一次完整点击提交，
-             * 手指还没松抽屉就自己开了。
-             *
-             * 同时把这次按压钉给 LVGL 直到松手：dock 中途收起（5 s 自动收）
-             * 时页面不该突然把手指接管过去——那一下的起点早就不在页面上了。 */
-            pk_touch_arbiter_force_lvgl(&s_arb);
-            pk_nav_grid_page_touch_cancel();
-            pk_adsb_list_touch_cancel();
-            pk_diag_page_touch_cancel();
-            pk_settings_page_touch_cancel();
-            pk_keyboard_page_touch_cancel();
-            pk_apt_detail_page_touch_cancel();
-            pk_search_page_touch_cancel();
-            pk_about_page_touch_cancel();
-        } else switch (pk_touch_arbiter_press(&s_arb)) {
+        switch (pk_touch_arbiter_press(&s_arb)) {
         case PK_TOUCH_ACTION_HITTEST:
             /*
              * 模态层先问，且与 mode 无关。

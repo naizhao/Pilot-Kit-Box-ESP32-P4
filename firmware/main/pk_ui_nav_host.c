@@ -1,9 +1,9 @@
 /*
  * pk_ui_nav_host.c — 把导航层的动作接到固件上。
  *
- * pk_ui_nav.c 是平台无关的（固件与模拟器编同一份），它只报告「用户点了哪个
- * 页签」「长按了调平」，不知道这些在固件里意味着什么。那些弱符号回调的强符号
- * 实现就落在这里。
+ * pk_ui_nav.c 是平台无关的（固件与模拟器编同一份），它只报告「用户点了 FAB」
+ * 「拖动了 FAB」「要返回上一级」，不知道这些在固件里意味着什么。那些弱符号
+ * 回调的强符号实现就落在这里。
  *
  * 单独一个文件而不是塞进 pfd.c：pfd.c 的职责是画 PFD 那一页，让它顺带管全局
  * 页面切换与 NVS，下次找「点了设置为什么没反应」时不会有人想到去翻它。
@@ -26,35 +26,12 @@
 
 static const char *TAG = "nav_host";
 
-/* 页签 → 页面。
- *
- * 导航层回出来的是 i18n 词条 id 而不是数组下标：下标会随 DOCK_TABS 的排序
- * 变化而变（这一版就刚调过顺序），词条 id 不会。用 id 做键，改排版不会悄悄
- * 把「关于」接到「诊断」上去。
- */
-static pk_ui_mode_t mode_for_tab(int tr_id)
-{
-    switch (tr_id) {
-    case PK_TR_NAV_PFD:      return PK_UI_MODE_PFD;
-    case PK_TR_NAV_TRAFFIC:  return PK_UI_MODE_TRAFFIC;
-    case PK_TR_NAV_MAP:      return PK_UI_MODE_MAP;
-    case PK_TR_NAV_LIST:     return PK_UI_MODE_ADSB_LIST;
-    case PK_TR_NAV_DIAG:     return PK_UI_MODE_DIAG;
-    case PK_TR_NAV_SETTINGS: return PK_UI_MODE_SETTINGS;
-    case PK_TR_NAV_ABOUT:    return PK_UI_MODE_ABOUT;
-    default:                 return PK_UI_MODE_PFD;
-    }
-}
-
-void pk_ui_nav_on_tab(int tr_id)
-{
-    pk_ui_mode_t m = mode_for_tab(tr_id);
-    ESP_LOGI(TAG, "tab -> mode %d", (int)m);
-    pk_ui_set_mode(m);
-}
-
 /*
  * 点 FAB 打开主菜单 = 全屏导航网格。
+ *
+ * 这里**没有**「页签 → 页面」的映射表了：dock 时代它回出来的是 i18n 词条
+ * id，宿主查表切页；网格自己就握着项表（nav_grid_page.c 的 ITEMS），项与
+ * 目标 mode 写在同一行，反而不会走偏。
  *
  * 网格自己会藏掉 FAB 并在关闭时放回来（pk_nav_grid_page_open 里那段），
  * 所以这里只管开，不必再操心浮层避让。
@@ -71,8 +48,8 @@ void pk_ui_nav_on_menu(void)
  * 语义与 TARE 键长按完全一致（见 main.c 的按键分发），照抄那一段——同一个
  * 动作在两个入口上行为必须一样，否则「我按键调过了，怎么屏上又要调一次」。
  *
- * 用 persist 而不是 tare_now：这个入口在 dock 里，用户要按满 1 s 才会走到
- * 这儿，那是明确的「就按现在这个姿态定下来」，理应活过重启。
+ * 用 persist 而不是 tare_now：这个入口在导航网格的动作条里，用户要按满 1 s
+ * 才会走到这儿，那是明确的「就按现在这个姿态定下来」，理应活过重启。
  */
 void pk_ui_nav_on_level(void)
 {
