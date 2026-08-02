@@ -41,6 +41,7 @@
 #include "mag_var.h"
 #include "aircraft_db.h"
 #include "ui_state.h"
+#include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 
 /* ── 布局（800×480，spec §5.2）───────────────────────────────
  *
@@ -217,26 +218,58 @@ static void target_pos(const vis_t *v, pk_map_orient_t orient, int range_nm,
 
 /* 配色照搬 PFD 罗盘外圈那份（pfd_hsi_traffic.c）：颜色本身就是「威胁等级」
  * ——同高度琥珀、高于青、低于蓝灰、无高度灰。飞行员在 PFD 上已经按这套
- * 读了，交通页再换一套只会让人重新学。 */
-#define TFC_COL_SEL  pk_rgb565(255, 210,  60)
-#define TFC_COL_LBL  pk_rgb565(207, 211, 220)
+ * 读了，交通页再换一套只会让人重新学。
+ *
+ * 阶段 4d：地面目标退出这套威胁色板（它恒无气压高度，参与相对高度分档
+ * 本就是编造信息，同 adsb_list.c is_threat() 头注的约定），改用独立色相
+ * ——具体色值、与道路橙/威胁琥珀的可分辨性验证见 map_page.c 同名常量的
+ * 注释（两页用同一套数值，避免同一架滑行中的飞机在两页上颜色不一致）。 */
+#define TFC_COL_SEL         pk_rgb565(255, 210,  60)
+#define TFC_COL_LBL         pk_rgb565(207, 211, 220)
+#define TFC_COL_GROUND      pk_rgb565(150, 190,  70)
+#define TFC_COL_GROUND_HALO pk_rgb565( 22,  20,   8)
 
-static uint16_t target_color(const pk_traffic_rel_t *rel, bool selected)
+/* saliency_pct：显著性跟随本机相位的压暗系数（100=正常，见
+ * pk_traffic_page_render() 里 own_phase 的计算与头注）。选中目标不参与
+ * 压暗——用户正盯着它看，压暗反而是干扰。 */
+static uint16_t target_color(const pk_traffic_rel_t *rel, bool selected,
+                             bool on_ground, uint8_t saliency_pct)
 {
-    const uint16_t COL_LEVEL = pk_rgb565(255, 176,   0);   /* ±1000 ft 内 */
-    const uint16_t COL_ABOVE = pk_rgb565(  0, 210, 235);
-    const uint16_t COL_BELOW = pk_rgb565( 95, 150, 190);
-    const uint16_t COL_NOALT = pk_rgb565(150, 155, 165);
-    return selected                  ? TFC_COL_SEL
-         : !rel->rel_alt_valid       ? COL_NOALT
-         : (rel->rel_alt_ft >  1000) ? COL_ABOVE
-         : (rel->rel_alt_ft < -1000) ? COL_BELOW
-                                     : COL_LEVEL;
+    if (selected) return TFC_COL_SEL;
+
+    uint16_t base;
+    if (on_ground) {
+        base = TFC_COL_GROUND;
+    } else {
+        const uint16_t COL_LEVEL = pk_rgb565(255, 176,   0);   /* ±1000 ft 内 */
+        const uint16_t COL_ABOVE = pk_rgb565(  0, 210, 235);
+        const uint16_t COL_BELOW = pk_rgb565( 95, 150, 190);
+        const uint16_t COL_NOALT = pk_rgb565(150, 155, 165);
+        base = !rel->rel_alt_valid       ? COL_NOALT
+             : (rel->rel_alt_ft >  1000) ? COL_ABOVE
+             : (rel->rel_alt_ft < -1000) ? COL_BELOW
+                                         : COL_LEVEL;
+    }
+    return pk_pfd_scale_rgb565(base, saliency_pct);
+}
+
+/* 显著性跟随本机相位（阶段 4d）：数值与判定逻辑跟 map_page.c 是同一套
+ * （45% 亮度、unknown 两侧都不压暗），头注见该文件对应处，这里不重复。 */
+#define TFC_SALIENCY_DIM_PCT 45
+
+static uint8_t own_saliency_pct(pk_flight_phase_t own_phase, bool target_on_ground)
+{
+    const bool own_on_ground = pk_flight_phase_is_ground_family(own_phase);
+    const bool own_airborne  = (own_phase == PK_PHASE_AIRBORNE);
+    if (own_on_ground && !target_on_ground) return TFC_SALIENCY_DIM_PCT; /* 本机在地面：压暗空中目标 */
+    if (own_airborne  &&  target_on_ground) return TFC_SALIENCY_DIM_PCT; /* 本机在空中：压暗地面目标 */
+    return 100;
 }
 
 static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
                                pk_map_orient_t orient, float own_heading,
-                               float mag_var, bool selected, uint16_t col)
+                               float mag_var, bool selected, uint16_t col,
+                               uint8_t saliency_pct)
 {
     /*
      * 目标符号：**可旋转的飞机剪影**，不是菱形。
@@ -258,13 +291,18 @@ static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
      * 是对的，同一架飞机在两个页面上机头差了一个 mag_var + 本机航向。
      */
     /* 地面目标画空心剪影/空心菱形——与空中实心目标一眼可辨（阶段 4c，见
-     * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。 */
+     * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。阶段 4d 起地面目标额外
+     * 加一圈深色描边（TFC_COL_GROUND_HALO，随显著性一起压暗），把符号从雷达
+     * 背景/其它元素上"抬起来"——与 map_page.c 同一处理，那边的注释里有对着
+     * 实拍道路像素量出来的色相分离依据。 */
+    const uint16_t halo = pk_pfd_scale_rgb565(TFC_COL_GROUND_HALO, saliency_pct);
     if (v->ac->have_velocity) {
         const float rot = pk_traffic_symbol_rot_deg(
             orient == PK_MAP_HEADING_UP, (float)v->ac->heading_deg,
             mag_var, own_heading);
         const int sz = selected ? 15 : 11;
         if (v->ac->on_ground) {
+            pk_pfd_draw_aircraft_outline(fb, tx, ty, rot, sz + 2, halo);
             pk_pfd_draw_aircraft_outline(fb, tx, ty, rot, sz, col);
         } else {
             pk_pfd_draw_aircraft(fb, tx, ty, rot, sz, col);
@@ -272,6 +310,7 @@ static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
     } else {
         const int sz = selected ? 6 : 5;
         if (v->ac->on_ground) {
+            outline_diamond(fb, tx, ty, sz + 2, halo);
             outline_diamond(fb, tx, ty, sz, col);
         } else {
             fill_diamond(fb, tx, ty, sz, col);
@@ -792,6 +831,10 @@ void pk_traffic_page_render(uint16_t *fb)
     pk_baro_state_t baro;
     bool baro_ok = pk_baro_get(&baro);
 
+    /* 显著性跟随本机相位（阶段 4d）：一帧只读一次，见 own_saliency_pct() 与
+     * pk_own_sampler_get_phase() 头注（unknown 时两侧都不压暗，安全默认）。 */
+    const pk_flight_phase_t own_phase = pk_own_sampler_get_phase();
+
     /* 本机航向 + 磁偏角：绑定 ADS-B own 且有速度时,优先用 own 的地速航向
      * (真北参考,与 pfd.c 一致,不再减磁偏角);否则回退 IMU 磁航向(磁北系,
      * 减查表磁偏角)。 */
@@ -1026,23 +1069,33 @@ void pk_traffic_page_render(uint16_t *fb)
 
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;                /* 选中最后画(置顶) */
+            const bool og = s_vis[k].ac->on_ground;
+            const uint8_t sp = own_saliency_pct(own_phase, og);
             draw_target_symbol(fb, &s_vis[k], s_lbls[k].tx, s_lbls[k].ty,
                                orient_eff, own_heading, mag_var, false,
-                               target_color(&s_vis[k].rel, false));
+                               target_color(&s_vis[k].rel, false, og, sp), sp);
         }
-        if (nv > 0 && sel_row >= 0 && sel_row < nv)
+        if (nv > 0 && sel_row >= 0 && sel_row < nv) {
+            const bool og = s_vis[sel_row].ac->on_ground;
+            const uint8_t sp = own_saliency_pct(own_phase, og);
             draw_target_symbol(fb, &s_vis[sel_row],
                                s_lbls[sel_row].tx, s_lbls[sel_row].ty,
                                orient_eff, own_heading, mag_var, true,
-                               target_color(&s_vis[sel_row].rel, true));
+                               target_color(&s_vis[sel_row].rel, true, og, sp), sp);
+        }
 
         for (int k = 0; k < nv; k++) {
             if (k == sel_row) continue;
-            draw_label(fb, &s_lbls[k], target_color(&s_vis[k].rel, false));
+            const bool og = s_vis[k].ac->on_ground;
+            const uint8_t sp = own_saliency_pct(own_phase, og);
+            draw_label(fb, &s_lbls[k], target_color(&s_vis[k].rel, false, og, sp));
         }
-        if (nv > 0 && sel_row >= 0 && sel_row < nv)
+        if (nv > 0 && sel_row >= 0 && sel_row < nv) {
+            const bool og = s_vis[sel_row].ac->on_ground;
+            const uint8_t sp = own_saliency_pct(own_phase, og);
             draw_label(fb, &s_lbls[sel_row],
-                       target_color(&s_vis[sel_row].rel, true));
+                       target_color(&s_vis[sel_row].rel, true, og, sp));
+        }
     }
 
     /* ── 本机飞机符号：HEADING-UP 机头朝上；NORTH-UP 按航向旋转标朝向 ──

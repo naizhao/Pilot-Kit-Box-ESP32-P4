@@ -212,7 +212,25 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1"},
-                                                                   "地图页地面目标：空心剪影(地面) 与 实心剪影(空中) 混排对照"),
+                                                                   "地图页地面目标：空心剪影(地面) 与 实心剪影(空中) 混排对照，"
+                                                                   "本机相位 unknown(默认)——两侧都不压暗，同时验地面目标的"
+                                                                   "独立色相在这片有真实道路的底图上是否与路网混淆"),
+
+    # 阶段 4d：显著性跟随本机相位。同一份地面态数据（三架地面+两架空中）分别
+    # 用本机在地面 / 在空中两种相位截图，只对比压暗方向对不对——数据、镜头
+    # 位置全部与 ui-4.3-map-ground 一致，唯一变量是 PK_SIM_OWN_PHASE。
+    ("ui-4.3-map-phase-ground", {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_MAP_GROUND": "1",
+                             "PK_SIM_OWN_PHASE": "ground"},
+                                                                   "地图页显著性：本机在地面——地面目标全亮，空中目标压暗 45%"),
+    ("ui-4.3-map-phase-air",    {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_MAP_GROUND": "1",
+                             "PK_SIM_OWN_PHASE": "airborne"},
+                                                                   "地图页显著性：本机在空中——空中目标全亮，地面目标压暗 45%"),
 ]
 
 

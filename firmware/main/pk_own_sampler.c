@@ -65,6 +65,11 @@ static QueueHandle_t s_queue;
 static volatile uint32_t s_dropped;
 static volatile uint32_t s_written;
 
+/* 渲染层读的"当前相位"快照。单一写者(own_sample_task)/多读者，见
+ * pk_own_sampler_get_phase() 头注的线程安全说明。默认 unknown——采样任务
+ * 第一拍算出真实相位之前，读者必须看到"不压暗任何一侧"这个安全值。 */
+static volatile pk_flight_phase_t s_current_phase = PK_PHASE_UNKNOWN;
+
 /* 60 s @ 1Hz 位移窗口环形缓冲（PK_FLIGHT_PHASE_RING_CAP=64 槽 × 16 B ≈ 1 KB）
  * ——按内存红线一律 EXT_RAM_BSS_ATTR，别让它挤内部 .bss（见
  * check_early_heap.py 的 66000 B 阈值）。 */
@@ -136,6 +141,7 @@ static void own_sample_task(void *arg)
 
         pk_flight_phase_debug_t dbg = {0};
         pk_flight_phase_t phase = pk_flight_phase_update(&s_phase_state, &in, &dbg);
+        s_current_phase = phase;   /* 渲染层的读快照，见头文件线程安全说明 */
 
         pk_own_sample_t rec = {0};
         rec.ts_ms  = (uint64_t)ts_ms;
@@ -219,4 +225,9 @@ bool pk_own_sampler_stats(uint32_t *out_written, uint32_t *out_dropped)
     if (out_written) *out_written = s_written;
     if (out_dropped) *out_dropped = s_dropped;
     return true;
+}
+
+pk_flight_phase_t pk_own_sampler_get_phase(void)
+{
+    return s_current_phase;
 }

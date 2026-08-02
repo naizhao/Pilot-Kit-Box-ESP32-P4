@@ -356,6 +356,19 @@ void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
     pk_pfd_draw_triangle(fb, px[0], py[0], px[2], py[2], px[3], py[3], c);
 }
 
+uint16_t pk_pfd_scale_rgb565(uint16_t c, uint8_t pct)
+{
+    if (pct >= 100) return c;
+    uint16_t v = rgb565_to_native(c);
+    int r = (v >> 11) & 0x1F;
+    int g = (v >>  5) & 0x3F;
+    int b =  v         & 0x1F;
+    r = (r * pct + 50) / 100;
+    g = (g * pct + 50) / 100;
+    b = (b * pct + 50) / 100;
+    return native_to_rgb565((uint16_t)((r << 11) | (g << 5) | b));
+}
+
 void pk_pfd_draw_aircraft_outline(uint16_t *fb, int cx, int cy,
                                   float rot_deg, int size, uint16_t c)
 {

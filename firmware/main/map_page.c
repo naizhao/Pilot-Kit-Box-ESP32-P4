@@ -38,6 +38,7 @@
 #include "aircraft_state.h"
 #include "own_ship.h"
 #include "pk_aero_layer.h"
+#include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
 #include "pk_ui_nav.h"
@@ -505,6 +506,34 @@ void pk_map_page_render(uint16_t *fb)
     pk_aero_layer_render_symbols(fb, s_center_lat, s_center_lon, s_zoom);
     const uint16_t col_ac  = pk_rgb565(0, 210, 235);
     const uint16_t col_lbl = pk_rgb565(207, 211, 220);
+    /*
+     * 地面目标独立色相（阶段 4d）：土黄偏黄绿，不进威胁色板（本机没有气压
+     * 高度，参与威胁配色本身就是编造信息，见 pfd_draw.h pk_pfd_draw_aircraft_outline
+     * 头注）。色值是量出来的，不是随手取的——底图 aviation-dark 样式的道路
+     * 是 (150,115,74)（HSV 32°/51%/59%，实测像素，见 sim/capture.py
+     * ui-4.3-map-ground），威胁琥珀是 (255,176,0)（35°）；两者都挤在
+     * 30°~40° 的橙区。选 (150,190,70)（80°/63%/75%）偏黄绿而非偏橙，与
+     * 道路拉开约 48°、与威胁琥珀拉开约 45°，公路密集区实测仍能一眼分辨
+     * （见截图 ui-4.3-map-ground.png 肉眼核对结论）。再加一圈深色描边把
+     * 符号从路网线条上"抬起来"，双保险。 */
+    const uint16_t COL_GROUND      = pk_rgb565(150, 190, 70);
+    const uint16_t COL_GROUND_HALO = pk_rgb565(22, 20, 8);
+
+    /*
+     * 显著性跟随本机相位（阶段 4d，spec：安全性而非美观——本机在地面时地面
+     * 交通才是主要碰撞风险，在空中时反过来）。压暗不隐藏：五边进近时跑道
+     * 上的目标正是要看的，隐藏=误导性缺失。45% 亮度是折中——暗到一眼看出
+     * "次要"，又不会暗到看不见。
+     *
+     * 相位 unknown（开机瞬间/IMU 未接/GPS 丢失/状态机没判出来）时两侧都不
+     * 压暗：宁可信息多，也不能因为状态机猜错方向而在错误时刻把该看的目标
+     * 压暗——那比不做这个功能更危险，见 pk_own_sampler_get_phase() 头注。
+     */
+    const uint8_t MAP_SALIENCY_DIM_PCT = 45;
+    const pk_flight_phase_t own_phase = pk_own_sampler_get_phase();
+    const bool own_on_ground = pk_flight_phase_is_ground_family(own_phase);
+    const bool own_airborne  = (own_phase == PK_PHASE_AIRBORNE);
+
     for (size_t i = 0; i < n && i < MAP_LBL_MAX; i++) {
         aircraft_t *a = &s_scratch[i];
         if (!a->have_position) continue;
@@ -516,13 +545,22 @@ void pk_map_page_render(uint16_t *fb)
         if (sx < -20 || sx > PK_DISPLAY_W + 20 || sy < MAP_TOP - 20 || sy > PK_DISPLAY_H + 20)
             continue;
 
+        uint8_t sal_pct = 100;
+        if (own_on_ground && !a->on_ground) sal_pct = MAP_SALIENCY_DIM_PCT; /* 本机在地面：压暗空中目标 */
+        else if (own_airborne && a->on_ground) sal_pct = MAP_SALIENCY_DIM_PCT; /* 本机在空中：压暗地面目标 */
+
         const float rot = a->have_velocity ? (float)a->heading_deg : 0.0f;
         /* 地面目标画空心剪影——与空中实心目标一眼可辨（阶段 4c，见
-         * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。 */
+         * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。阶段 4d 起颜色也
+         * 独立成一套（COL_GROUND），不再借用空中目标的青色。 */
         if (a->on_ground) {
-            pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 9, col_ac);
+            const uint16_t gcol = pk_pfd_scale_rgb565(COL_GROUND, sal_pct);
+            const uint16_t hcol = pk_pfd_scale_rgb565(COL_GROUND_HALO, sal_pct);
+            pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 11, hcol);
+            pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 9, gcol);
         } else {
-            pk_pfd_draw_aircraft(fb, sx, sy, rot, 9, col_ac);
+            const uint16_t acol = pk_pfd_scale_rgb565(col_ac, sal_pct);
+            pk_pfd_draw_aircraft(fb, sx, sy, rot, 9, acol);
         }
 
         char cs[10];
@@ -541,8 +579,10 @@ void pk_map_page_render(uint16_t *fb)
         if (!clash) {
             if (nocc < (int)(sizeof(s_occ) / sizeof(s_occ[0]))) s_occ[nocc++] = r;
             pk_pfd_darken_rect(fb, r.x0 - 2, r.y0, r.x1, r.y1, 120);
+            /* 标签颜色跟着符号一起压暗——符号暗、标签亮的组合看着像"标签更
+             * 重要"，与显著性想传达的信息相反。 */
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, sx + 10, sy - PK_AA_XS_H / 2,
-                      cs, col_lbl, PK_AA_XS);
+                      cs, pk_pfd_scale_rgb565(col_lbl, sal_pct), PK_AA_XS);
         }
     }
     pk_aero_layer_render_labels(fb, s_center_lat, s_center_lon, s_zoom,

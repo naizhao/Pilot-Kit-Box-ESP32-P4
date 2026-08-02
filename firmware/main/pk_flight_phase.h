@@ -46,6 +46,16 @@ typedef enum {
     PK_PHASE_LANDING_ROLLOUT = 5,
 } pk_flight_phase_t;
 
+/* 本机是否处于"地面族"相位（停场/滑行/起飞滑跑/着陆滑跑）——渲染层拿它
+ * 判定"目标显著性该往哪一侧压暗"用（阶段 4d，地图页/交通页）。unknown
+ * 不算进任一族，调用方按"不压暗任何一侧"处理（安全默认，见本文件顶部
+ * "相位只是标记，判错可重算"）。纯函数、无状态，host/固件通用。 */
+static inline bool pk_flight_phase_is_ground_family(pk_flight_phase_t p)
+{
+    return p == PK_PHASE_GROUND_STOPPED || p == PK_PHASE_TAXI ||
+           p == PK_PHASE_TAKEOFF_ROLL   || p == PK_PHASE_LANDING_ROLLOUT;
+}
+
 /* ------------------------------------------------------------ 机型分类 */
 
 /* 「机型分类阈值」表，罩哥拍板：设置页存 u8，默认 PK_AC_CAT_PISTON_LIGHT。

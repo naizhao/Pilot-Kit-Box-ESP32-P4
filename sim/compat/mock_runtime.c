@@ -24,6 +24,7 @@
 #include "demo_data.h"
 #include "imu_task.h"
 #include "own_ship.h"
+#include "pk_own_sampler.h"
 
 static float s_yaw_deg   = 0.0f;
 static int   s_own_alt   = 23000;
@@ -290,4 +291,24 @@ size_t aircraft_state_snapshot(aircraft_t *out, size_t cap, int64_t now_us,
     return pk_demo_traffic(out, cap, now_us, /*anim_us=*/s_now_us,
                            s_yaw_deg, s_own_alt,
                            far ? 40.0f : 0.0f, bare);
+}
+
+/* ── 本机相位（阶段 4d）────────────────────────────────────────────
+ *
+ * 真机上这个值来自 pk_own_sampler.c 的 1 Hz 采样任务（own_sample_task 内
+ * 嵌的 pk_flight_phase 状态机），那个任务在 PC 上不存在，所以这里另起一份
+ * 桩——与 pk_own_ship_resolve() 等其它数据接口同一个模式：符号顶掉真实
+ * 实现，渲染代码（map_page.c / traffic_page.c）原样编译。
+ *
+ * PK_SIM_OWN_PHASE=ground|taxi|airborne|unknown，缺省 unknown——与固件侧
+ * "开机瞬间/状态机没判出来时不压暗任何一侧"的安全默认保持一致，不给的话
+ * 已有截图基线不受这次改动影响。 */
+pk_flight_phase_t pk_own_sampler_get_phase(void)
+{
+    const char *e = getenv("PK_SIM_OWN_PHASE");
+    if (!e) return PK_PHASE_UNKNOWN;
+    if (strcmp(e, "ground")   == 0) return PK_PHASE_GROUND_STOPPED;
+    if (strcmp(e, "taxi")     == 0) return PK_PHASE_TAXI;
+    if (strcmp(e, "airborne") == 0) return PK_PHASE_AIRBORNE;
+    return PK_PHASE_UNKNOWN;
 }
