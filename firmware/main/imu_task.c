@@ -31,6 +31,7 @@
 
 #include "config_demo.h"   /* pk_demo_enabled —— 演示模式接管姿态数据源 */
 #include "demo_data.h"
+#include "pk_vib.h"        /* vib_level：加速度模长滑动窗口 RMS */
 
 #include <math.h>
 #include <string.h>
@@ -38,6 +39,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "esp_attr.h"      /* EXT_RAM_BSS_ATTR */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/i2c_master.h"
@@ -66,7 +68,8 @@ static const char *TAG = "imu";
 
 #define SH2_CMD_SET_FEATURE      0xFD
 #define SH2_CMD_REQUEST          0xF2
-#define SH2_REPORT_ROTATION_VECTOR  0x05
+#define SH2_REPORT_ROTATION_VECTOR      0x05
+#define SH2_REPORT_LINEAR_ACCELERATION  0x04  /* gravity already removed by SH-2 */
 
 /* SH-2 Command Request codes (sent inside a 0xF2 report on the
  * control channel). See SH-2 Reference Manual §6.4. */
@@ -112,6 +115,14 @@ static pk_imu_sample_t            s_sample;
 static uint8_t                    s_tx_seq[6];   /* per-channel SHTP sequence */
 static uint8_t                    s_cmd_seq;     /* SH-2 Command Request sequence */
 static bool                       s_imu_ready;   /* true after pk_imu_init() succeeds */
+
+/* Vibration-RMS sliding window — fed from parse_linear_acceleration(),
+ * consumed via pk_vib_level() into s_sample.vib_level. Only the 50
+ * floats actually used cost anything at runtime, but the struct itself
+ * (PK_VIB_BUF_CAP=64 floats + bookkeeping, ~264 B) still goes to PSRAM:
+ * internal DRAM headroom on this target is thin (see aircraft_state.c /
+ * aircraft_db.c for the same convention). */
+static EXT_RAM_BSS_ATTR pk_vib_state_t s_vib;
 
 /* Last raw quaternion from the BNO — stashed for the 1 Hz diagnostic
  * log only. Volatile because the 1 Hz logger reads it from the imu
@@ -280,6 +291,27 @@ static esp_err_t bno_enable_rotation_vector(void)
     return shtp_send(SHTP_CH_CONTROL, (const uint8_t *)&cmd, sizeof(cmd));
 }
 
+/* --- Set Feature: Linear Acceleration at 50 Hz ----------------------- *
+ *
+ * 50 Hz (not 100 Hz to match Rotation Vector): this feed is destined for
+ * a vibration-RMS window (next step, not this change), which doesn't
+ * need 100 Hz resolution — halving the rate here halves the extra SHTP
+ * traffic and I²C polling load this feature adds on top of the existing
+ * Rotation Vector stream. */
+static esp_err_t bno_enable_linear_acceleration(void)
+{
+    sh2_set_feature_t cmd = {
+        .report_id           = SH2_CMD_SET_FEATURE,
+        .feature_id          = SH2_REPORT_LINEAR_ACCELERATION,
+        .feature_flags       = 0,
+        .change_sensitivity  = 0,
+        .report_interval_us  = 20000,    /* 50 Hz */
+        .batch_interval_us   = 0,
+        .sensor_specific     = 0,
+    };
+    return shtp_send(SHTP_CH_CONTROL, (const uint8_t *)&cmd, sizeof(cmd));
+}
+
 /* --- Hamilton quaternion product: out = a · b ----------------------- *
  *
  * Used to apply a constant mounting rotation to the BNO085's Rotation
@@ -298,6 +330,45 @@ static inline void quat_mul(float aw, float ax, float ay, float az,
     *ox = aw * bx + ax * bw + ay * bz - az * by;
     *oy = aw * by - ax * bz + ay * bw + az * bx;
     *oz = aw * bz + ax * by - ay * bx + az * bw;
+}
+
+/* --- Rotate a body-frame vector chip→aircraft ------------------------ *
+ *
+ * Linear Acceleration is a vector in the BNO's chip body frame, NOT a
+ * world-referenced orientation — so unlike parse_rotation_vector()'s
+ * quaternion sandwich, only the body-frame remap applies here
+ * (PK_IMU_MOUNT_QUAT_*); PK_IMU_WORLD_FIX_* (ENU→NED) is irrelevant to
+ * a body-frame vector and must NOT be applied.
+ *
+ * PK_IMU_MOUNT_QUAT_* is defined (see imu_task.h) as q_body_fix =
+ * R_aircraft→chip, i.e. it rotates AIRCRAFT vectors into the CHIP
+ * frame. We need the inverse direction (chip→aircraft), which for a
+ * unit quaternion is the conjugate: v_aircraft = q* · v_chip · q,
+ * where q* = conj(q_body_fix) = (W, -X, -Y, -Z).
+ *
+ * Standard vector-rotation-by-quaternion formula: treat v as a pure
+ * quaternion (0, vx, vy, vz) and compute p · v · conj(p) with
+ * p = conj(q_body_fix). Verified against the worked "chip +X →
+ * aircraft up" example in imu_task.h: rotating chip vector (1,0,0)
+ * through this function with the current PK_IMU_MOUNT_QUAT_* yields
+ * (0,0,-1) = aircraft up in NED, matching that example exactly. */
+static inline void quat_rotate_vec_body_fix(float vx, float vy, float vz,
+                                            float *ox, float *oy, float *oz)
+{
+    const float pw =  PK_IMU_MOUNT_QUAT_W;
+    const float px = -PK_IMU_MOUNT_QUAT_X;
+    const float py = -PK_IMU_MOUNT_QUAT_Y;
+    const float pz = -PK_IMU_MOUNT_QUAT_Z;
+
+    float tw, tx, ty, tz;
+    quat_mul(pw, px, py, pz, 0.0f, vx, vy, vz, &tw, &tx, &ty, &tz);
+
+    float rw, rx, ry, rz;
+    quat_mul(tw, tx, ty, tz, pw, -px, -py, -pz, &rw, &rx, &ry, &rz);
+    (void)rw;
+    *ox = rx;
+    *oy = ry;
+    *oz = rz;
 }
 
 /* --- Quaternion → Euler (ZYX Tait-Bryan, aerospace convention) ------ */
@@ -466,12 +537,74 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     return true;
 }
 
+/* --- Linear Acceleration report parser -------------------------------- *
+ *
+ * Same 5-byte timestamp-ref preamble handling as parse_rotation_vector()
+ * (see its comment). For Linear Acceleration (0x04) the SH-2 3-axis
+ * report layout (SH-2 Reference Manual §6.5.9) is:
+ *
+ *   Byte 0:  reportID = 0x04
+ *   Byte 1:  sequence
+ *   Byte 2:  status (bits 0-1 = accuracy)
+ *   Byte 3:  delay
+ *   Byte 4-5:  x (Q8 LE)
+ *   Byte 6-7:  y (Q8 LE)
+ *   Byte 8-9:  z (Q8 LE)
+ *
+ * Q8 fixed point (1 LSB = 1/256 m/s²) — NOT Q14 like Rotation Vector;
+ * different SH-2 reports use different Q points per §5.1. Gravity is
+ * already subtracted by the SH-2 fusion engine, so this is genuine
+ * linear (dynamic) acceleration, chip body frame. */
+static bool parse_linear_acceleration(const uint8_t *cargo, size_t cargo_len)
+{
+    const uint8_t *p = cargo;
+    size_t remaining = cargo_len;
+
+    if (remaining >= 5 && p[0] == 0xFB) {
+        p += 5;
+        remaining -= 5;
+    }
+    if (remaining < 10) return false;
+    if (p[0] != SH2_REPORT_LINEAR_ACCELERATION) return false;
+
+    int16_t ax_raw = (int16_t)((uint16_t)p[5] << 8 | p[4]);
+    int16_t ay_raw = (int16_t)((uint16_t)p[7] << 8 | p[6]);
+    int16_t az_raw = (int16_t)((uint16_t)p[9] << 8 | p[8]);
+
+    const float Q8 = 1.0f / (float)(1 << 8);
+    float ax = (float)ax_raw * Q8;
+    float ay = (float)ay_raw * Q8;
+    float az = (float)az_raw * Q8;
+
+    /* Chip→aircraft body-frame rotation — see quat_rotate_vec_body_fix()
+     * for why this uses only the mount (body) quaternion, not the
+     * world fix used by parse_rotation_vector(). */
+    float bx, by, bz;
+    quat_rotate_vec_body_fix(ax, ay, az, &bx, &by, &bz);
+
+    /* Feed the vibration-RMS window before taking s_sample_lock — pk_vib
+     * is its own module, doesn't touch s_sample, no reason to hold the
+     * mutex across it. */
+    pk_vib_push(&s_vib, bx, by, bz);
+    uint8_t vib = pk_vib_level(&s_vib);
+
+    xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+    s_sample.accel_x_mps2 = bx;
+    s_sample.accel_y_mps2 = by;
+    s_sample.accel_z_mps2 = bz;
+    s_sample.have_accel   = true;
+    s_sample.vib_level    = vib;
+    xSemaphoreGive(s_sample_lock);
+    return true;
+}
+
 /* --- Bring-up sequence (used both at boot and by the watchdog) ------- *
  *
  * Pulses RST, drains the boot-time SHTP advertisement, and re-enables
- * the Rotation Vector report. Safe to call from any task. Resets the
- * SHTP per-channel sequence counters too — BNO085 starts back at seq=0
- * after a reset and would reject our frames if our side kept counting. */
+ * the Rotation Vector and Linear Acceleration reports. Safe to call
+ * from any task. Resets the SHTP per-channel sequence counters too —
+ * BNO085 starts back at seq=0 after a reset and would reject our
+ * frames if our side kept counting. */
 static esp_err_t bno_bring_up(void)
 {
     bno_reset_pulse();
@@ -494,7 +627,9 @@ static esp_err_t bno_bring_up(void)
         }
     }
 
-    return bno_enable_rotation_vector();
+    esp_err_t err = bno_enable_rotation_vector();
+    if (err != ESP_OK) return err;
+    return bno_enable_linear_acceleration();
 }
 
 /* --- IMU polling task ------------------------------------------------ *
@@ -536,9 +671,15 @@ static void imu_task(void *arg)
         esp_err_t err = shtp_recv(cargo, sizeof(cargo), &channel, &cargo_len);
         if (err == ESP_OK) {
             if (channel == SHTP_CH_SENSORHUB) {
+                /* Channel 3 carries both report types we've enabled;
+                 * each parser checks the report ID and returns false
+                 * (no side effects) if it's not the one it handles. */
                 if (parse_rotation_vector(cargo, cargo_len)) {
                     valid_count++;
                     last_valid_us = esp_timer_get_time();
+                } else if (parse_linear_acceleration(cargo, cargo_len)) {
+                    /* Only feeds have_accel/accel_*; doesn't count toward
+                     * the attitude-stream watchdog's last_valid_us. */
                 } else {
                     parse_fail++;
                 }
@@ -564,6 +705,7 @@ static void imu_task(void *arg)
             /* Mark sample invalid so PFD knows we lost the stream. */
             xSemaphoreTake(s_sample_lock, portMAX_DELAY);
             s_sample.valid = false;
+            s_sample.have_accel = false;
             xSemaphoreGive(s_sample_lock);
 
             esp_err_t bu = bno_bring_up();
@@ -627,6 +769,7 @@ esp_err_t pk_imu_init(void)
 {
     s_sample_lock = xSemaphoreCreateMutex();
     if (s_sample_lock == NULL) return ESP_ERR_NO_MEM;
+    pk_vib_reset(&s_vib);
 
     /* NVS bring-up. Idempotent: returns ESP_ERR_INVALID_STATE if some
      * other subsystem (BLE / esp_hosted) already initialised it, which
@@ -678,7 +821,7 @@ esp_err_t pk_imu_init(void)
         ESP_LOGE(TAG, "bno_bring_up: %s", esp_err_to_name(err));
         return err;
     }
-    ESP_LOGI(TAG, "BNO085 rotation vector enabled @ 100 Hz");
+    ESP_LOGI(TAG, "BNO085 rotation vector @ 100 Hz + linear accel @ 50 Hz enabled");
 
     BaseType_t ok = xTaskCreatePinnedToCore(
         imu_task, "imu", 4096, NULL, 5, NULL, 0);

@@ -153,7 +153,10 @@ static bool sd_mount_locked(void)
 
     const esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
         .format_if_mount_failed = false,   /* 格式化只走用户显式操作 */
-        .max_files              = 8,       /* 原 4：地图页要同时开多个 .pmtiles 包 */
+        .max_files              = 16,      /* 原 8：ADS-B/本机落盘（pk_rec_store）峰值
+                                             * 句柄预算算到 10（地图包上限 16 那条更紧），
+                                             * 详见 docs/internal/2026-08-02-adsb-data-
+                                             * persistence-design-zh_CN.md「文件句柄预算」 */
         .allocation_unit_size   = 16 * 1024,
     };
 
@@ -254,7 +257,11 @@ static bool sd_mount_locked(void)
 /* 「卸载前静默」回调表。固定槽位够用：目前只有 tile_loader 与 aero_db
  * 两个 SD 消费方（record_sink_file 是上轮修复前就有的旧句柄，不在本轮
  * 回归范围）。注册通常发生在 init 期，但探测任务已在跑，写表要持锁。 */
-#define SD_PRE_UNMOUNT_CB_MAX 4
+/* 4 → 8：地图/航空库/航空DB/日志四家已把 4 槽占满，ADS-B 落盘(pk_rec_store)
+ * 再来就注册不上了。曾试过挂在 record_sink_file 的回调里转调，但那个注册是
+ * `if (s_on_sdcard)` 有条件的、而日志后端默认是 flash——默认配置下转调根本
+ * 不会发生，拔卡即 use-after-free。扩槽位是唯一干净的解法。 */
+#define SD_PRE_UNMOUNT_CB_MAX 8
 static void (*s_pre_unmount_cb[SD_PRE_UNMOUNT_CB_MAX])(void);
 static int s_pre_unmount_cb_n;
 

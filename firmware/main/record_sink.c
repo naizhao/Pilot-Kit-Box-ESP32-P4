@@ -13,7 +13,10 @@
 
 #include "esp_log.h"
 
-#define RECORD_SINK_MAX  4   /* uart, file (LittleFS or SD), BLE, +1 spare */
+#define RECORD_SINK_MAX  4   /* uart, ble, file (LittleFS or SD), rec_store —
+                               * all 4 slots used, no spare left (2026-08-02
+                               * ADS-B persistence design's session-scoped
+                               * sink took the last one). */
 
 static const char *TAG = "record_sink";
 
@@ -57,9 +60,20 @@ const char *record_sinks_install_defaults(void)
     }
 
     record_sink_t *file = record_sink_file_create();
+    const char *file_mount = NULL;
     if (file != NULL) {
         record_sink_register(file);
-        return (const char *)file->priv;  /* mount point or NULL */
+        file_mount = (const char *)file->priv;  /* mount point or NULL */
     }
-    return NULL;
+
+    /* 4th (last) slot: session-scoped falls under /sdcard/rec/<seq>/ via
+     * pk_rec_store — see record_sink_rec_store.c. Registered last so the
+     * uart/ble/file sinks above keep working even if this one fails to
+     * spin up its queue+task (SD not ready yet, alloc failure, ...). */
+    record_sink_t *rec_store = record_sink_rec_store_create();
+    if (rec_store != NULL) {
+        record_sink_register(rec_store);
+    }
+
+    return file_mount;
 }

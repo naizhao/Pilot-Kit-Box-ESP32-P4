@@ -16,6 +16,9 @@ static const char *TAG = "clock";
 static volatile bool  s_synced;
 static const char    *s_source = "none";
 static int64_t        s_last_gps_us;   /* 最近一次 "gps" 精校的单调时刻；0 = 从未 */
+static pk_clock_sync_cb_t s_sync_cb;
+
+void pk_clock_register_sync_cb(pk_clock_sync_cb_t cb) { s_sync_cb = cb; }
 
 bool pk_clock_apply_epoch_ms(int64_t epoch_ms, const char *source)
 {
@@ -50,6 +53,8 @@ bool pk_clock_apply_epoch_ms(int64_t epoch_ms, const char *source)
 
     ESP_LOGI(TAG, "clock set via %s: epoch_ms=%lld (delta vs prior=%+lld ms)",
              source, (long long)epoch_ms, (long long)(epoch_ms - before_ms));
+
+    if (s_sync_cb != NULL) s_sync_cb(epoch_ms, before_ms, source);
     return true;
 }
 

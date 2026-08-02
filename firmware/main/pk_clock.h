@@ -29,3 +29,16 @@ const char *pk_clock_source(void);
  * frac256 为 1/256 秒的小数部分（无小数传 0）。GPS 与 BLE-CTS 解析时间共用。*/
 int64_t pk_clock_civil_utc_to_epoch_ms(int yr, int mo, int dy,
                                        int hr, int mi, int se, int frac256);
+
+/*
+ * 校时回调（ADS-B/本机数据落盘设计「时间可信度」节：校时瞬间要向 own.trk
+ * 写一条时间修正记录）。epoch_ms 是本次写入的新时间；prev_ms 是写入前的
+ * 时钟读数（gettimeofday 快照，用于回放端做相对时间平移）；source 与
+ * pk_clock_apply_epoch_ms() 的入参同一个指针，不拷贝。
+ *
+ * 单槽（当前唯一消费者是 pk_own_sampler）；重复注册直接覆盖。传 NULL 清除。
+ * 回调在触发校时的调用方任务上下文里同步执行（GPS/BLE 任务），必须快返回，
+ * 不能做阻塞 I/O——pk_own_sampler 的实现里这条走的是 pk_rec_store 的直接
+ * 落盘调用，校时本身是低频事件，可以接受。 */
+typedef void (*pk_clock_sync_cb_t)(int64_t epoch_ms, int64_t prev_ms, const char *source);
+void pk_clock_register_sync_cb(pk_clock_sync_cb_t cb);

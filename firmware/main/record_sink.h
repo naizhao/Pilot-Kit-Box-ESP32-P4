@@ -111,3 +111,23 @@ bool record_sink_file_stats(uint32_t *out_written, uint32_t *out_dropped);
  * the sink is silently inert (its writes return false but never block).
  */
 record_sink_t *record_sink_ble_create(void);
+
+/*
+ * rec_store_sink formats the same "<ts_ms> *<HEX>;\n" ts-line and hands it
+ * to pk_rec_store_append_adsb_line() (session-scoped adsb-NNN.tsl under
+ * /sdcard/rec/<seq>/ — see pk_rec_store.h). Also mirrors lines whose
+ * icao24 matches the current own-ship binding (pk_ui_get_own_icao()) into
+ * pk_rec_store_append_own_adsb_line().
+ *
+ * write() is non-blocking (enqueues into its own 256-deep queue, drops +
+ * counts on full — same "never back-pressure the DSP task" contract as
+ * every other sink here); a dedicated writer task does the actual
+ * pk_rec_store_* calls, which may block briefly on SD I/O.
+ *
+ * This is the 4th (and last) slot in RECORD_SINK_MAX — see record_sink.c.
+ */
+record_sink_t *record_sink_rec_store_create(void);
+
+/* Written/dropped counters since boot, for the diagnostics page. Returns
+ * false if the sink never came up (queue/task create failed). */
+bool record_sink_rec_store_stats(uint32_t *out_written, uint32_t *out_dropped);

@@ -4,17 +4,26 @@
  * Talks SH-2 / SHTP over the on-board I²C0 bus (shared with the ES8311
  * codec, no address conflict — codec is 0x18, BNO085 default is 0x4A).
  *
- * The driver does the bare-minimum to deliver a single fused attitude
- * report at 100 Hz to the rest of the firmware: it doesn't expose
- * accelerometer, gyro, or magnetometer streams; it doesn't run
- * calibration commands; it doesn't speak the executable channel for
- * firmware updates. Add those only when a concrete firmware feature
- * needs them.
+ * The driver delivers a fused attitude report at 100 Hz plus a
+ * gravity-subtracted linear-acceleration report at 50 Hz to the rest
+ * of the firmware. It still doesn't expose raw accelerometer, gyro, or
+ * magnetometer streams; it doesn't run calibration commands; it
+ * doesn't speak the executable channel for firmware updates. Add those
+ * only when a concrete firmware feature needs them.
  *
  *   Reset → drain SHTP advertisement → enable "Rotation Vector" report
- *   (Sensor Report ID 0x05) at 10 ms interval → poll input reports on
- *   channel 3 → quaternion → ZYX Tait-Bryan Euler angles → stash latest
- *   under a mutex for the display task to consume.
+ *   (Sensor Report ID 0x05) at 10 ms interval + "Linear Acceleration"
+ *   report (Sensor Report ID 0x04) at 20 ms interval → poll input
+ *   reports on channel 3 → quaternion → ZYX Tait-Bryan Euler angles
+ *   (+ accel vector rotated chip→aircraft) → stash latest under a
+ *   mutex for the display task to consume.
+ *
+ * Linear Acceleration (0x04) was chosen over the plain Accelerometer
+ * report (0x01): SH-2 already subtracts gravity for us, so we don't
+ * have to do it in firmware (and don't have to trust our own gravity
+ * estimate while the aircraft is maneuvering). 50 Hz is plenty for an
+ * RMS-window vibration metric downstream and keeps I²C/SHTP bandwidth
+ * headroom for the 100 Hz Rotation Vector stream.
  *
  * Convention exposed to callers (pk_imu_sample_t below):
  *   roll  = rotation about the sensor's X axis  (right-wing-down +)
@@ -134,6 +143,26 @@ typedef struct {
     float    yaw_deg;      /* 0 .. 360 */
     uint8_t  accuracy;     /* 0=unreliable, 3=high */
     bool     valid;
+    /* Gravity-subtracted linear acceleration, aircraft body frame
+     * (+X forward, +Y right, +Z down), m/s². Rotated chip→aircraft
+     * with the same PK_IMU_MOUNT_QUAT_* used for attitude — NOT the
+     * world-frame fix, since this is a body-frame vector, not a
+     * world-referenced orientation. have_accel is false until the
+     * first Linear Acceleration (0x04) report parses successfully
+     * (e.g. sensor absent, or still booting); consumers must check it
+     * before reading accel_x/y/z. */
+    float    accel_x_mps2;
+    float    accel_y_mps2;
+    float    accel_z_mps2;
+    bool     have_accel;
+    /* Vibration intensity 0-255 from a 1 s RMS window over the
+     * accel-magnitude, see pk_vib.h. 0 = unavailable (have_accel is
+     * false, or the window hasn't filled since boot/reset yet) — NOT
+     * "zero vibration"; a genuinely still aircraft reads as a small
+     * nonzero value once the window is full. Never conflate the two:
+     * pk_flight_phase.c's phase state machine keys off this exact
+     * distinction. */
+    uint8_t  vib_level;
 } pk_imu_sample_t;
 
 /*

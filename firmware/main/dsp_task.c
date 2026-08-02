@@ -49,6 +49,7 @@
 #include "config_demo.h"
 #include "record_sink.h"
 #include "dsp_task.h"
+#include "pk_rec_ingest.h"   /* traffic.trk 位置/身份记录落盘（阶段 3b） */
 
 static const char *TAG      = "dsp";
 static const char *TAG_ADSB = "adsb";
@@ -97,6 +98,12 @@ static volatile uint32_t s_iq_drop_total   = 0;   /* cumulative IQ bytes dropped
  * 1024 slots × 4 bytes = 4 KiB; collisions just under-count, which is
  * fine for a dashboard.
  */
+/* aircraft_state_get_own() 的"旧值/当前值"快照查询用——大到覆盖任何合理
+ * 的两帧间隔（呼号变化探测），小到不会真的匹配上一次开机遗留的陈旧数据
+ * （s_table 每次 aircraft_state_init() 都会清空，同一次开机内不存在这个
+ * 问题）。 */
+#define PK_REC_LOOKUP_MAX_AGE_US (24LL * 3600 * 1000000)
+
 #define ICAO_SEEN_CAPACITY  1024
 static uint32_t          s_icao_seen[ICAO_SEEN_CAPACITY];
 static volatile uint32_t s_icao_unique = 0;
@@ -138,10 +145,23 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
     s_msgs_total++;
     icao_seen_insert(icao24);
 
+    /* 落盘：呼号是否变化要在 ingest 覆盖 aircraft_state 之前判断——ingest
+     * 一跑完，表里就只剩新呼号了。只有 DF17/18 metype 1-4（身份帧）才需要
+     * 这份"旧值"快照，其它消息类型不必为此多付一次带锁查表的开销。 */
+    const int64_t now_us = esp_timer_get_time();
+    const bool is_ident_msg = (mm->msgtype == 17 || mm->msgtype == 18) &&
+                              mm->metype >= 1 && mm->metype <= 4;
+    aircraft_t prev_ac = {0};
+    bool had_prev_callsign = false;
+    if (is_ident_msg) {
+        had_prev_callsign = aircraft_state_get_own(icao24, now_us,
+                                                    PK_REC_LOOKUP_MAX_AGE_US, &prev_ac)
+                            && prev_ac.have_callsign;
+    }
+
     /* Update the per-aircraft fusion table (callsign / altitude /
      * velocity). The CPR position is fed in separately further down,
      * once the global decoder has both even+odd frames. */
-    const int64_t now_us = esp_timer_get_time();
     aircraft_state_ingest(mm, now_us);
 
     /* Fan-out to record sinks (UART debug + file storage + BLE raw).
@@ -178,6 +198,24 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
             s_msgs_df17_id++;
             ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF17 ident   callsign=\"%s\"",
                      icao24, mm->flight);
+
+            /* 落盘：呼号变化时写一条 traffic.trk 身份记录（rec_type=1）。
+             * 用 ingest 前后的快照比较——aircraft_state 已经把 dump1090 的
+             * 尾部下划线/空格去掉了，cur_ac.callsign 就是要落盘的干净值。 */
+            aircraft_t cur_ac;
+            if (aircraft_state_get_own(icao24, now_us, PK_REC_LOOKUP_MAX_AGE_US, &cur_ac) &&
+                cur_ac.have_callsign) {
+                bool changed = !had_prev_callsign ||
+                              strncmp(prev_ac.callsign, cur_ac.callsign,
+                                      AIRCRAFT_CALLSIGN_LEN) != 0;
+                if (changed) {
+                    struct timeval tv_id;
+                    gettimeofday(&tv_id, NULL);
+                    int64_t ts_ms = (int64_t)tv_id.tv_sec * 1000LL + tv_id.tv_usec / 1000LL;
+                    pk_rec_ingest_identity(icao24, ts_ms, cur_ac.callsign,
+                                           (uint8_t)cur_ac.wake);
+                }
+            }
         } else if (mm->metype >= 9 && mm->metype <= 18) {
             s_msgs_df17_pos++;
             cpr_position_t pos = { .valid = false };
@@ -190,6 +228,31 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
                 /* Mirror the freshly decoded position into aircraft_state
                  * so the GDL90 Traffic Report can carry real lat/lon. */
                 aircraft_state_update_position(icao24, pos.lat, pos.lon, now_us);
+
+                if (fresh) {
+                    /* 落盘：只在 CPR 解出**新**位置时写一条 traffic.trk 位置
+                     * 记录——不能用 pos.valid，那个在缓存命中时也是 true，
+                     * 会重复写同一个位置（spec「写入时机」节点名的这条）。
+                     * gs/track/vs 这三个不在本消息里（来自 metype 19），从
+                     * aircraft_state 融合表取当前已知值；altitude 就是本消息
+                     * 自己的（ingest 已经在上面把它写进了 aircraft_state，
+                     * 这里复用同一份转换结果，不用再重算一次 m→ft）。 */
+                    aircraft_t cur_ac;
+                    bool have_cur = aircraft_state_get_own(icao24, now_us,
+                                                           PK_REC_LOOKUP_MAX_AGE_US, &cur_ac);
+                    struct timeval tv_pos;
+                    gettimeofday(&tv_pos, NULL);
+                    int64_t ts_ms = (int64_t)tv_pos.tv_sec * 1000LL + tv_pos.tv_usec / 1000LL;
+                    pk_rec_ingest_position(icao24, ts_ms, pos.lat, pos.lon,
+                                           have_cur && cur_ac.have_altitude,
+                                           have_cur ? cur_ac.altitude_ft : 0,
+                                           have_cur && cur_ac.have_velocity,
+                                           have_cur ? cur_ac.ground_speed_kt : 0,
+                                           have_cur ? cur_ac.heading_deg : 0,
+                                           have_cur ? cur_ac.vert_rate_fpm : 0,
+                                           have_cur && cur_ac.on_ground);
+                }
+
                 ESP_LOGI(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 air-pos alt=%d%s  pos=%.5f,%.5f%s",
                          icao24, mm->altitude, unit_str, pos.lat, pos.lon,

@@ -39,6 +39,10 @@
 #include "nav_grid_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
+#include "pk_rec_store.h"
+#include "pk_rec_ingest.h"
+#include "pk_own_sampler.h"
+#include "pk_rec_selftest.h"
 #include "pk_tile_loader.h"
 #include "display.h"
 #include "imu_task.h"
@@ -323,6 +327,21 @@ void app_main(void)
     pk_config_storage_load();
     pk_batt_init();
     pk_sdcard_init();
+    /* ADS-B / 本机数据落盘的 session 目录管理，须晚于 pk_sdcard_init()。
+     * 阶段 3a：只建目录/开文件，不接数据源（dsp_task / own_ship / 相位
+     * 状态机是 3b 的事）。pre-unmount 静默复用 record_sink_file.c 的
+     * sd_close_log_cb 转调，不额外占 pk_sdcard 的回调槽位。 */
+    pk_rec_store_init();
+    /* traffic.trk 生产端的非阻塞入队 + 独立写任务，须晚于 pk_rec_store_init()
+     * （写任务要调 pk_rec_store_append_traffic_record()）、早于 dsp_task
+     * 起跑（下面 sdr_task/dsp_task 创建之前）——dsp_task 的 Mode-S 解码热
+     * 路径调 pk_rec_ingest_position/identity()，队列必须已经建好，否则
+     * enqueue_or_drop() 会因 s_queue==NULL 直接丢数据（见 pk_rec_ingest.h）。 */
+    pk_rec_ingest_init();
+    /* 本机 1 Hz 航迹采样（own.trk 生产者），阶段 3b。不要求 GPS/IMU/baro
+     * 已就绪——它们分别在下面才 start（GPS 已在 aircraft_state_init() 之后
+     * 起了，IMU/baro 还要再等一两百行），采样器每 tick best-effort 取值。 */
+    pk_own_sampler_start();
     pk_tile_loader_init();   /* 地图页瓦片加载任务，须晚于 pk_sdcard_init() */
     /* SD 航空数据库懒加载：只创建后台任务、零 IO（开机不加载是定案）。
      * 须晚于 pk_sdcard_init()——任务靠 pk_sdcard_is_mounted() 决定何时
@@ -353,6 +372,10 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "ADS-B file sink unavailable — UART sink only");
     }
+    /* 落盘全链路的注入式自检——默认关（PK_REC_SELFTEST=0 时是空函数）。
+     * 打开后需要 record_sinks_install_defaults() 已经把 record_sink_rec_store
+     * 注册好，所以排在它后面。见 pk_rec_selftest.h。 */
+    pk_rec_selftest_init();
 
     ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
     assert(ok == pdTRUE);
