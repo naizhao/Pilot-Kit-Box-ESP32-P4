@@ -3,10 +3,92 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import gen_i18n_assets as gen
 import i18n_catalog
+
+
+class I18nIdLedgerTest(unittest.TestCase):
+    """守住「ID 一经分配终身不变」。
+
+    2026-08 的事故：当时 ID 按词条在 STRINGS 里的出现顺序分配，有人插了一条在中
+    间，PK_TR_DEMO_BADGE 62→63，一个陈旧的 .o 仍按 62 取文案，屏上把演示徽章画
+    成了「(数据为模」。下面这些测试就是不让那件事重演。
+    """
+
+    def setUp(self) -> None:
+        self.doc, self.ids = gen.load_ledger()
+
+    def test_every_catalog_key_already_has_a_permanent_id(self) -> None:
+        for key, _ in i18n_catalog.STRINGS:
+            with self.subTest(key=key):
+                self.assertIn(key, self.ids, f"{key} 不在台账里，请重跑 gen_i18n_assets.py")
+
+    def test_ledger_ids_are_unique(self) -> None:
+        self.assertEqual(len(set(self.ids.values())), len(self.ids))
+
+    def test_new_key_gets_max_plus_one_and_moves_nothing(self) -> None:
+        before = dict(self.ids)
+        strings = (list(i18n_catalog.STRINGS)[:5]
+                   + [("ZZ_UNIT_TEST_KEY", {lang: "x" for lang in i18n_catalog.LANGS})]
+                   + list(i18n_catalog.STRINGS)[5:])
+        added = gen.assign_new_ids(self.ids, strings)
+        self.assertEqual(added, [("ZZ_UNIT_TEST_KEY", max(before.values()) + 1)])
+        for key, text_id in before.items():
+            self.assertEqual(self.ids[key], text_id, f"{key} 的 ID 被挪动了")
+
+    def test_deleted_key_leaves_a_reserved_hole(self) -> None:
+        ids = dict(self.ids)
+        ids["ZZ_RETIRED_KEY"] = max(ids.values()) + 1
+        hole = ids["ZZ_RETIRED_KEY"]
+        slots = gen.build_slots(ids, i18n_catalog.STRINGS)
+        self.assertEqual(len(slots), hole + 1, "PK_TR_COUNT 必须覆盖到空洞")
+        self.assertEqual(slots[hole], ("ZZ_RETIRED_KEY", None))
+        self.assertEqual(gen.slot_label(hole, slots[hole]), f"PK_TR_RESERVED_{hole}")
+
+    def test_hole_is_emitted_as_empty_string_not_null(self) -> None:
+        """pk_i18n_text() 的调用方直接把返回值喂给 pfd_aa_puts，NULL 会崩。"""
+        ids = dict(self.ids)
+        ids["ZZ_RETIRED_KEY"] = max(ids.values()) + 1
+        hole = ids["ZZ_RETIRED_KEY"]
+        slots = gen.build_slots(ids, i18n_catalog.STRINGS)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "i18n_catalog.c"
+            gen.emit_i18n_source(path, slots)
+            body = path.read_text(encoding="utf-8")
+        self.assertIn(f'[PK_TR_RESERVED_{hole}] = "",', body)
+        self.assertNotIn("= NULL,", body)
+
+    def test_missing_or_corrupt_ledger_raises_instead_of_renumbering(self) -> None:
+        """绝不允许静默回退到「按顺序分配」——那等于这次修复白做。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "absent.json"
+            with self.assertRaises(gen.LedgerError):
+                gen.load_ledger(missing)
+
+            broken = Path(tmp) / "broken.json"
+            broken.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(gen.LedgerError):
+                gen.load_ledger(broken)
+
+            empty = Path(tmp) / "empty.json"
+            empty.write_text(json.dumps({"ids": {}}), encoding="utf-8")
+            with self.assertRaises(gen.LedgerError):
+                gen.load_ledger(empty)
+
+            dup = Path(tmp) / "dup.json"
+            dup.write_text(json.dumps({"ids": {"A": 1, "B": 1}}), encoding="utf-8")
+            with self.assertRaises(gen.LedgerError):
+                gen.load_ledger(dup)
+
+    def test_demo_badge_id_is_pinned(self) -> None:
+        """事故当事人，钉死。改这两个数字之前先读 i18n_ids.json 顶部的说明。"""
+        self.assertEqual(self.ids["DEMO_BADGE"], 65)
+        self.assertEqual(self.ids["SETTINGS_DEMO_HINT"], 64)
 
 
 class I18nAssetGeneratorTest(unittest.TestCase):

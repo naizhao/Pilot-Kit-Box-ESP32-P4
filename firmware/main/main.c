@@ -55,6 +55,11 @@
 
 static const char *TAG = "pilot_kit";
 
+/* 开机把几条关键词条的 ID 和实际文案打到串口，用来验证「ID 指向的还是那句话」。
+ * 平时关着（编译期整段消失）；怀疑文案错位时改成 1 重烧一次即可。
+ * 背景见 firmware/scripts/i18n_ids.json 顶部的事故说明。 */
+#define PK_I18N_ID_SELFTEST 0
+
 RingbufHandle_t g_iq_ringbuf = NULL;
 
 /* --- Button → action routing ----------------------------------------- *
@@ -420,6 +425,26 @@ void app_main(void)
         ESP_LOGW(TAG, "i18n init failed (%s) — default language remains English",
                  esp_err_to_name(i18n_err));
     }
+#if PK_I18N_ID_SELFTEST
+    /* 词条 ID ↔ 文案的开机自检（默认关，把上面的宏改成 1 才编进来）。
+     *
+     * 由来：2026-08 徽章显示成「(数据为模」——ID 平移 + 陈旧 .o，编译零警告、
+     * 烧录校验通过、串口日志正常，完全静默。ID 现在由 scripts/i18n_ids.json
+     * 钉死（见那里的说明），但下次再怀疑「屏上这句话不对」时，这段能在串口上
+     * 直接给出「本固件里 ID N 到底是哪句」，不用去猜。 */
+    ESP_LOGW(TAG, "i18n selftest: DEMO_BADGE id=%d text=\"%s\"",
+             (int)PK_TR_DEMO_BADGE, pk_i18n_text(PK_TR_DEMO_BADGE));
+    ESP_LOGW(TAG, "i18n selftest: SETTINGS_DEMO_HINT id=%d text=\"%s\"",
+             (int)PK_TR_SETTINGS_DEMO_HINT, pk_i18n_text(PK_TR_SETTINGS_DEMO_HINT));
+    ESP_LOGW(TAG, "i18n selftest: SETTINGS_TITLE id=%d text=\"%s\"",
+             (int)PK_TR_SETTINGS_TITLE, pk_i18n_text(PK_TR_SETTINGS_TITLE));
+    ESP_LOGW(TAG, "i18n selftest: ABOUT_TITLE id=%d text=\"%s\"",
+             (int)PK_TR_ABOUT_TITLE, pk_i18n_text(PK_TR_ABOUT_TITLE));
+    ESP_LOGW(TAG, "i18n selftest: last id=%d PK_TR_COUNT=%d text=\"%s\"",
+             (int)PK_TR_COUNT - 1, (int)PK_TR_COUNT,
+             pk_i18n_text((pk_tr_id_t)(PK_TR_COUNT - 1)));
+#endif
+
     pk_config_demo_load();
 
     esp_err_t lcd_err = pk_display_init();

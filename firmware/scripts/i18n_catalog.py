@@ -4,6 +4,24 @@
 The firmware keeps this catalog embedded for now, while the generated
 interfaces are shaped so a future LittleFS/microSD language-pack backend can
 replace the lookup implementation without touching render callers.
+
+────────────────────────────────────────────────────────────────────────
+词条 ID 的规矩（重要，别绕过）
+────────────────────────────────────────────────────────────────────────
+PK_TR_* 的枚举值**不由本文件的词条顺序决定**，而由 i18n_ids.json 台账固定。
+
+  • 新增词条：直接加，位置随意（放到同类词条旁边最好读）。跑一次
+    gen_i18n_assets.py，它会自动在台账末尾追加 max(id)+1，不碰任何旧 ID。
+  • 删除词条：从这里删掉即可。台账里的条目**保留不删**，那个 ID 变成空洞、
+    永不复用，生成的枚举里以 PK_TR_RESERVED_<id> 占位。
+  • 绝对禁止手工改 i18n_ids.json 里已有 key 的 ID，也禁止删行或重排。
+
+为什么这么严：2026-08 真机上演示模式徽章显示成「(数据为模」。当时生成器按出现
+顺序发 ID，有人把新词条插在中间，后面所有 ID 整体后移一位（DEMO_BADGE 62→63）；
+恰好一个陈旧的 pk_ui_nav.c.o 没重编、仍按旧 ID 62 取文案，而字符串表已是新的，
+62 号换成了另一条。编译零警告、烧录校验通过、串口日志正常——完全静默，而它偏偏
+是提示「当前数据是模拟的」的安全件。ID 钉死后，最坏只退化成「新词条缺失」，那是
+链接期就报错的显性故障。
 """
 
 from __future__ import annotations
