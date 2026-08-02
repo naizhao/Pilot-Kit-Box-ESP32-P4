@@ -6,14 +6,18 @@
  * 直接拉进来，用 PK_NAV_GRID_HOST_TEST 切掉要 IDF 的渲染与触摸状态机两段
  * （本任务尚未实现那两段，纯函数区先落地）。
  *
- * 五段，每一段都对着一个"版面评审拍板过、代码里不能悄悄改回去"的坑：
+ * 六段，每一段都对着一个"版面评审拍板过、代码里不能悄悄改回去"的坑：
  *   1) 分页切分——第 1 页 7 项、第 2 页 3 项，不是塞满 8 个换页；
  *   2) 格子位置跨页对齐——同一坐标在两页上必须落到"首格"这同一个语义位，
  *      不许因为项数不同就重新居中（产品负责人 2026-08-02 明确否掉过这条）；
  *   3) 空格不可点——第 2 页第 4 格没有内容，点它不能算出越界的 index；
  *   4) 动作条三分——调平/亮度/关闭三等分 800 px 宽；
  *   5) pop 打开时网格整层吞掉触摸——压暗的东西不能被点中，pop 自己的三个
- *      档位按钮要能精确命中。
+ *      档位按钮要能精确命中；
+ *   6) x 越界——触摸驱动理论上不给越界坐标，但 Task 5 的拖动会算出相对
+ *      坐标，负值不是不可能：C 的整数除法向零取整，x=-250 会算出
+ *      col=-1、slot=-1，`slot >= count` 挡不住负数，调用方拿 -1 去索引
+ *      items 数组就是越界读。x 偏大同理会算出 col>=COLS，误命中不存在的格。
  */
 #include <stdio.h>
 
@@ -81,6 +85,43 @@ static void test_pop_swallows_grid(void)
     chk_int("「高」= 档 2", pk_nav_hit_test(530, 340, 0, true).index, 2);
 }
 
+/* ── 6) x 越界 ────────────────────────────────────────────────────
+ * 触摸驱动理论上不给越界坐标，但 Task 5 的拖动逻辑会算出相对坐标，
+ * 负值不是不可能。y 方向已经挡住了（PK_NAV_BAR_BOT 与网格区下沿两条），
+ * x 方向必须对齐同一语义：越界一律 PK_NAV_HIT_NONE。 */
+static void test_x_out_of_bounds(void)
+{
+    const int y = PK_NAV_BAR_BOT + 40;   /* 落在第 1 行 */
+
+    /* 右侧屏幕外：x=850 时 col = 850/200 = 4，若不挡会被当成第 5 列，
+     * slot = 0*4+4 = 4，「4 >= 7」为假，误命中第 5 项（index=4）。 */
+    chk_int("x=850 右侧越界不命中",
+            pk_nav_hit_test(850, y, 0, false).kind, PK_NAV_HIT_NONE);
+
+    /* 左侧越界：C 整数除法向零取整，x=-250 → col = -1 → slot = -1，
+     * 「-1 >= 7」为假，会返回 index = -1（越界读的源头）。 */
+    chk_int("x=-250 左侧越界不命中",
+            pk_nav_hit_test(-250, y, 0, false).kind, PK_NAV_HIT_NONE);
+
+    /* 合法边界必须仍然命中，不能被越界修复误伤。 */
+    chk_int("x=0 最左合法边界命中第一格",
+            pk_nav_hit_test(0, y, 0, false).kind, PK_NAV_HIT_CELL);
+    chk_int("x=0 命中 index 0",
+            pk_nav_hit_test(0, y, 0, false).index, 0);
+    chk_int("x=799 最右合法边界命中最后一列",
+            pk_nav_hit_test(799, y, 0, false).kind, PK_NAV_HIT_CELL);
+    chk_int("x=799 命中 index 3（第 1 行第 4 列）",
+            pk_nav_hit_test(799, y, 0, false).index, 3);
+
+    /* 动作条那段同样要挡：x=850 落进「x < third*2 之外」分支，若不挡会被
+     * 误判成 CLOSE；x=-250 落进「x < third」分支，会被误判成 LEVEL。 */
+    const int ay = PK_NAV_ACT_TOP + 40;
+    chk_int("动作条 x=850 越界不命中",
+            pk_nav_hit_test(850, ay, 0, false).kind, PK_NAV_HIT_NONE);
+    chk_int("动作条 x=-250 越界不命中",
+            pk_nav_hit_test(-250, ay, 0, false).kind, PK_NAV_HIT_NONE);
+}
+
 int main(void)
 {
     test_paging();
@@ -88,6 +129,7 @@ int main(void)
     test_empty_cell();
     test_action_bar();
     test_pop_swallows_grid();
+    test_x_out_of_bounds();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

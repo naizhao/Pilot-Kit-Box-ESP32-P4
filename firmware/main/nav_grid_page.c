@@ -46,6 +46,12 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
         return r;   /* 点别处 = 收起 pop，由调用方处理 */
     }
 
+    /* x 越界（<0 或 >=800）在网格与动作条两段都要挡：C 的整数除法向零
+     * 取整，负 x 会算出负 col/负 slot，`slot >= count` 这类上界检查挡不住
+     * 负数；x 偏大则会算出 col>=COLS，落进不存在的列。两段用同一条判据，
+     * 与 y 方向已有的边界检查（PK_NAV_BAR_BOT / 网格区下沿）对齐。 */
+    if (x < 0 || x >= 800) return r;
+
     if (y >= PK_NAV_ACT_TOP) {
         const int third = 800 / 3;
         r.kind = (x < third) ? PK_NAV_HIT_LEVEL
