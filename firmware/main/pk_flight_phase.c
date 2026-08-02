@@ -23,11 +23,33 @@
 #define PK_PHASE_MOVE_THRESHOLD_M 20.0   /* > 此值：算移动（UC1 推出 1-3kt） */
 #define PK_PHASE_STOP_THRESHOLD_M 10.0   /* < 此值：算静止（UC2 GPS 抖动） */
 
-/* IMU 振动强度阈值：<= 此值视为"没有活动迹象"，用来把静止判定的置信
- * 窗口从 STOP_THRESHOLD_M 扩到 MOVE_THRESHOLD_M（UC2 关键：振动为零 +
- * 位移落在抖动带 → 仍判 parked）。vib_level==0 是"不可用"哨兵，不参与
- * 判定（既不确认也不否认静止）。 */
-#define PK_PHASE_VIB_LOW_MAX 20u
+/* 振动判据：相对"这架飞机自己的安静地板"，不用绝对阈值——不同机型振动
+ * 差一个数量级（直升机 vs 滑翔机），同一架机吸风挡还是放腿板测到的也完
+ * 全不同（罩哥 2026-08-03）。地板是 pk_flight_phase_state_t.vib_floor，
+ * 本次飞行观测到的振动滚动最小值，见 pk_flight_phase_update 里的自学
+ * 逻辑；这里只放倍数/收敛判据的常量。vib_level==0 是"不可用"哨兵，不参
+ * 与判定（既不确认也不否认静止），这条契约不变。 */
+
+/* 当前 vib_level 超过地板的倍数——超过视为"有活动"。选 3x 而非更紧的
+ * 1.x-2x：vib_level 是加速度模长 RMS 的量化值，从"静止噪声底"跨进"任何
+ * 持续机械运动"（怠速抖动、滑行颠簸）通常是几倍量级的跳变，不是几十%的
+ * 抖动；3x 在活塞/涡桨/喷气这些常见机型上都能把"仍是噪声"和"确有活动"
+ * 分开，同时给 GPS/IMU 采样噪声留出余量，不会被 1.2x 这种过紧倍数动辄
+ * 越界触发误判。 */
+#define PK_PHASE_VIB_FLOOR_MULT 3u
+
+/* 地板"收敛"（可信）的两个必要条件，任一不满足都退化为 GPS 位移兜底：
+ *   1) 已经过去至少这么久——开机头几秒/几十秒地板可能还停在机型初值或
+ *      刚被第一条（可能偏高的）真实样本播种，给它一点时间观测到更安静
+ *      的时刻；
+ *   2) 地板数值已经降到这条"合理安静"天花板以下——如果地板还停留在一
+ *      个明显偏高的值（比如开机就带着发动机已运转的样本播种），说明还
+ *      没见过真正安静的时刻，不该拿它当"安静"的参照系。
+ * 天花板选 40：略高于旧的全局绝对阈值 20（约 0.157 m/s² RMS，见
+ * pk_vib.h），给活塞/涡桨/直升机等基线略高的机型一点余量，但仍明显低于
+ * 滑行/怠速的典型读数，不会把"从没见过安静"误判成"已经收敛"。 */
+#define PK_PHASE_VIB_FLOOR_WARMUP_MS        30000ULL
+#define PK_PHASE_VIB_FLOOR_CONVERGE_CEILING 40u
 
 #define PK_PHASE_VS_CLIMB_FPM    300   /* 持续爬升视为"在飞" */
 #define PK_PHASE_VS_DESCEND_FPM  -300  /* 持续下降视为"在降" */
@@ -56,6 +78,36 @@ static const pk_ac_thresholds_t *thresholds_for(pk_ac_category_t cat)
 {
     if ((unsigned)cat >= PK_AC_CAT_COUNT) cat = PK_AC_CAT_UNKNOWN;
     return &PK_AC_THRESHOLDS[cat];
+}
+
+/* ------------------------------------------------------------ 机型振动地板初值表 */
+
+/* 只是"还没学到东西时"的占位初值——真正的判据是 vib_floor 的滚动最小值
+ * （见 pk_flight_phase_update）。取值刻意跨数量级，量级依据 pk_vib.h 顶部
+ * 的 0-255 量化说明（满量程 2.0 m/s²）：
+ *   - 滑翔机/超轻：多数时间无动力（绞车/拖曳期才有外部振动源），地面停
+ *     机时振动接近真实噪声底，给全表最低值；
+ *   - 直升机：旋翼哪怕地面怠速/悬停，基线振动也显著高于固定翼，给全表
+ *     最高值——不这样直升机永远学不到"安静"，会被固定翼式的低地板判成
+ *     "一直在动"；
+ *   - 活塞：延续原来的全局绝对阈值 20（改造前 PK_PHASE_VIB_LOW_MAX），
+ *     旧行为在这一档保持不变；
+ *   - 涡桨/公务机、喷气运输：涡轮发动机比活塞更平顺，且机体越重、地面
+ *     振动传导越弱，依次给更低的初值。
+ * unknown 兜底同活塞，与 PK_AC_THRESHOLDS 的兜底策略一致。 */
+static const uint8_t PK_AC_VIB_FLOOR_INIT[PK_AC_CAT_COUNT] = {
+    [PK_AC_CAT_UNKNOWN]           = 20,
+    [PK_AC_CAT_GLIDER_ULTRALIGHT] = 6,
+    [PK_AC_CAT_HELICOPTER]        = 70,
+    [PK_AC_CAT_PISTON_LIGHT]      = 20,
+    [PK_AC_CAT_TURBOPROP_BIZ]     = 14,
+    [PK_AC_CAT_JET_TRANSPORT]     = 10,
+};
+
+static uint8_t vib_floor_init_for(pk_ac_category_t cat)
+{
+    if ((unsigned)cat >= PK_AC_CAT_COUNT) cat = PK_AC_CAT_UNKNOWN;
+    return PK_AC_VIB_FLOOR_INIT[cat];
 }
 
 /* ------------------------------------------------------------ 60s 位移窗口 */
@@ -99,6 +151,8 @@ void pk_flight_phase_reset(pk_flight_phase_state_t *st, pk_ac_category_t categor
     memset(st, 0, sizeof(*st));
     st->phase = PK_PHASE_UNKNOWN;
     st->ac_category = category;
+    st->vib_floor = vib_floor_init_for(category); /* 占位，直到第一条真实样本 */
+    st->vib_floor_seeded = false;
 }
 
 pk_flight_phase_t pk_flight_phase_update(pk_flight_phase_state_t *st,
@@ -114,6 +168,10 @@ pk_flight_phase_t pk_flight_phase_update(pk_flight_phase_state_t *st,
         if (out_debug) {
             out_debug->disp_m_60s = st->last_disp_m_60s;
             out_debug->bound_trusted = false;
+            out_debug->vib_floor = st->vib_floor;
+            out_debug->vib_floor_converged = st->vib_floor_seeded &&
+                (in->ts_ms - st->vib_floor_seed_ts_ms >= PK_PHASE_VIB_FLOOR_WARMUP_MS) &&
+                (st->vib_floor <= PK_PHASE_VIB_FLOOR_CONVERGE_CEILING);
         }
         return st->phase;
     }
@@ -125,15 +183,47 @@ pk_flight_phase_t pk_flight_phase_update(pk_flight_phase_state_t *st,
     st->last_disp_m_60s = disp_m;
 
     bool vib_available = (in->vib_level != 0);
-    bool vib_says_quiet = vib_available && in->vib_level <= PK_PHASE_VIB_LOW_MAX;
+
+    /* ------------------------------------------------ 自学振动地板 */
+    /* 滚动最小值，只降不升——不是"首次采样即锁定"：哪怕开机时发动机已经
+     * 在转、第一条真实样本把地板"学高"了，只要飞行中之后出现更安静的
+     * 时刻，地板会在那一 tick 立刻下修，不会卡在高位（任务书 2026-08-03
+     * 明确要求的场景：地板初值被学高 → 停下来 → 地板下修）。 */
+    if (vib_available) {
+        if (!st->vib_floor_seeded) {
+            st->vib_floor = in->vib_level;
+            st->vib_floor_seeded = true;
+            st->vib_floor_seed_ts_ms = in->ts_ms;
+        } else if (in->vib_level < st->vib_floor) {
+            st->vib_floor = in->vib_level;
+        }
+    }
+
+    bool floor_converged = st->vib_floor_seeded &&
+                            (in->ts_ms - st->vib_floor_seed_ts_ms >= PK_PHASE_VIB_FLOOR_WARMUP_MS) &&
+                            (st->vib_floor <= PK_PHASE_VIB_FLOOR_CONVERGE_CEILING);
 
     /* "动了"：位移超过移动阈值——UC1/UC3 的核心判据，不掺瞬时速度。 */
     bool is_moving = disp_m > PK_PHASE_MOVE_THRESHOLD_M;
+
     /* "没动"：位移低于静止阈值；或位移落在两阈值之间的抖动带，但振动
-     * 数据明确说"没有活动迹象"——UC2 关键：振动为零 + 位移小 → parked，
-     * 哪怕 GPS 噪声把净位移推到抖动带里。 */
-    bool is_stopped = (disp_m < PK_PHASE_STOP_THRESHOLD_M) ||
-                       (vib_says_quiet && disp_m <= PK_PHASE_MOVE_THRESHOLD_M);
+     * 数据明确说"没有活动迹象"——判据是相对地板的（PK_PHASE_VIB_FLOOR_MULT
+     * 倍），不是绝对阈值（UC2 关键：振动处于地板附近 + 位移小 → parked，
+     * 哪怕 GPS 噪声把净位移推到抖动带里）。
+     * 地板尚未收敛时不敢拿它当主力：退化为「GPS 位移严格达标 + （若有
+     * 振动数据）当前值恰好是目前观测到的最低点」的交叉验证兜底，不做
+     * 抖动带的窗口放宽。 */
+    bool is_stopped;
+    if (floor_converged) {
+        bool vib_says_quiet = vib_available &&
+            (uint32_t)in->vib_level < (uint32_t)st->vib_floor * PK_PHASE_VIB_FLOOR_MULT;
+        is_stopped = (disp_m < PK_PHASE_STOP_THRESHOLD_M) ||
+                     (vib_says_quiet && disp_m <= PK_PHASE_MOVE_THRESHOLD_M);
+    } else {
+        bool vib_confirms_floor = vib_available && (in->vib_level <= st->vib_floor);
+        is_stopped = (disp_m < PK_PHASE_STOP_THRESHOLD_M) &&
+                     (!vib_available || vib_confirms_floor);
+    }
 
     bool vs_climb   = in->baro_valid && in->vs_fpm > PK_PHASE_VS_CLIMB_FPM;
     bool vs_descend = in->baro_valid && in->vs_fpm < PK_PHASE_VS_DESCEND_FPM;
@@ -231,6 +321,8 @@ pk_flight_phase_t pk_flight_phase_update(pk_flight_phase_state_t *st,
     if (out_debug) {
         out_debug->disp_m_60s = disp_m;
         out_debug->bound_trusted = trust_bound;
+        out_debug->vib_floor = st->vib_floor;
+        out_debug->vib_floor_converged = floor_converged;
     }
     return phase;
 }

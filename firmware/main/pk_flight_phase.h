@@ -95,8 +95,14 @@ typedef struct {
 /* 每 tick 输出的诊断量，供调用方落进 own.trk 的 disp_m_60s 字段
  * （spec：「存证据，不只存结论」，回放端可用更好算法重新推导相位）。 */
 typedef struct {
-    double disp_m_60s;     /* 60 s 窗口净位移，米；GPS 无效时保持上次值 */
-    bool   bound_trusted;  /* 本 tick 是否采信了绑定机 ADS-B on_ground 位 */
+    double  disp_m_60s;        /* 60 s 窗口净位移，米；GPS 无效时保持上次值 */
+    bool    bound_trusted;     /* 本 tick 是否采信了绑定机 ADS-B on_ground 位 */
+    uint8_t vib_floor;         /* 本次飞行自学到的"安静地板"（滚动最小值，未
+                                   收到真实样本前是机型初值，见 pk_flight_phase.c
+                                   的 vib_floor_init_for） */
+    bool    vib_floor_converged; /* 地板是否已经可信（见 PK_PHASE_VIB_FLOOR_WARMUP_MS
+                                     / PK_PHASE_VIB_FLOOR_CONVERGE_CEILING）；未收敛时
+                                     判据退化为 GPS 位移兜底，不拿地板当主力 */
 } pk_flight_phase_debug_t;
 
 /* ------------------------------------------------------------ 状态 */
@@ -121,6 +127,18 @@ typedef struct {
     size_t   ring_count;  /* 已有多少条有效样本（<= CAP） */
 
     double   last_disp_m_60s; /* GPS 丢失时（UC9）原样保留，供回放端参考 */
+
+    /* 自学"安静地板"——本次飞行观测到的振动最小值（滚动最小值），判据
+     * 用它代替绝对阈值（不同机型振动差一个数量级，同一架机贴风挡/放腿板
+     * 测到的也完全不同，绝对阈值本质是错的，见任务书 2026-08-03）。状态
+     * 放在这里而不是 pk_vib：pk_vib 只认识加速度，不该知道 GPS 位移这些
+     * 交叉验证要用的东西；本状态机已经在管"60 s 位移窗口"这类跨 tick 的
+     * 判据状态，地板放这儿内聚，且天然继承本文件 host 可测、可重入的
+     * reset/update 惯例。 */
+    uint8_t  vib_floor;           /* 滚动最小值；首个真实样本到来前是机型
+                                      初值占位（vib_floor_init_for） */
+    bool     vib_floor_seeded;    /* 是否已经喂过至少一个真实（非 0）样本 */
+    uint64_t vib_floor_seed_ts_ms; /* 首个真实样本的时间戳，判"收敛"用 */
 } pk_flight_phase_state_t;
 
 /* 显式状态版本（reentrant）：调用方持有自己的 state，可以并行跑多份

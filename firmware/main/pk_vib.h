@@ -22,21 +22,20 @@
  * confused with "no data" (0). pk_flight_phase.c's phase state machine
  * depends on this distinction: it gates on `vib_level != 0` to decide
  * whether vibration is available evidence at all, separately from
- * gating on the value being low (see PK_PHASE_VIB_LOW_MAX in
- * pk_flight_phase.c). Collapsing the two would make "IMU absent"
- * indistinguishable from "engine off, dead calm" and corrupt the
- * ground/taxi/airborne classification.
+ * gating on the value being low relative to this flight's self-learned
+ * "quiet floor" (pk_flight_phase_state_t.vib_floor — a per-flight
+ * rolling minimum, not a fixed threshold here; see the floor-learning
+ * comment block in pk_flight_phase.c for why absolute thresholds don't
+ * work across airframes). Collapsing the availability bit into the
+ * value would make "IMU absent" indistinguishable from "engine off,
+ * dead calm" and corrupt the ground/taxi/airborne classification.
  *
  * Quantization scale: full scale is RMS_FULL_SCALE_MPS2 = 2.0 m/s²,
  * mapped to 255, saturating above that. 2.0 m/s² RMS is comfortably
  * above rough taxiway / gravel-strip bumps and turbulence-shaken cruise
  * on a light GA airframe, so normal flight uses the low-to-mid part of
  * the range with headroom to spare for hard landings / rough water
- * ditching without instantly pegging the gauge. At the low end, the
- * flight-phase state machine's "quiet" threshold (PK_PHASE_VIB_LOW_MAX
- * = 20/255) corresponds to ~0.157 m/s² RMS — comfortably above the
- * near-zero true-stationary noise floor but well below idle-engine
- * buzz and taxi roll, giving that threshold a real gap to sit in.
+ * ditching without instantly pegging the gauge.
  */
 #pragma once
 

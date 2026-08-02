@@ -440,7 +440,201 @@ static void test_uc9_gps_loss_freeze(void)
     CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
 }
 
+/* =============================================================== UC10-12 */
+/* 振动判据从绝对阈值改为「自学相对地板」（罩哥 2026-08-03）：不同机型振动
+ * 差一个数量级，绝对阈值对某一档机型合适就必然对另一档不合适。下面三组
+ * 用例专门证明相对地板做到了绝对阈值做不到的事：低振动机型不会把真实
+ * 扰动误判成安静，高振动机型的地板能从"开机就学高"自动下修，且地板未
+ * 收敛前退化为 GPS 位移兜底，不敢拿它当主力。 */
+
+/* ---------------------------------------------------------------- UC10 */
+/* 低振动机型（滑翔机，地板初值 6）：把"真实扰动"的振动读数钉在
+ * 3x地板与旧全局绝对阈值 20 之间（19：18<=19<=20）——旧的绝对阈值算法
+ * 会把它误判成"安静"（19<=20），导致 60 s 位移窗口一进入抖动带（10-20 m）
+ * 就假死回 GROUND_STOPPED，把仍在进行的真实运动切断；新的相对地板算法
+ * 正确识别出 19 相对这架飞机的地板（6）而言明显偏高（>=3x），必须继续
+ * 停留在 TAXI，直到位移真正收敛到 0 才承认停下。 */
+static void test_uc10_low_floor_airframe_detects_real_motion_in_jitter_band(void)
+{
+    pk_flight_phase_state_t st;
+    pk_flight_phase_reset(&st, PK_AC_CAT_GLIDER_ULTRALIGHT);
+
+    /* t=0：首个真实样本，播种地板＝机型初值本身（假装刚开机就是真安静）。 */
+    pk_flight_phase_input_t in0 = mk_input(0, 0.0, 0, false, 0, 6, PK_AC_CAT_GLIDER_ULTRALIGHT);
+    pk_flight_phase_t p = pk_flight_phase_update(&st, &in0, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+    CHECK(st.vib_floor == 6);
+    CHECK(st.vib_floor_seeded == true);
+
+    /* t=1..30：熬满 PK_PHASE_VIB_FLOOR_WARMUP_MS（30 s）让地板收敛，期间
+     * 保持静止、振动等于地板（不引入新的最小值，地板应保持 6 不变）。 */
+    for (int t = 1; t <= 30; t++) {
+        pk_flight_phase_input_t in = mk_input((uint64_t)t * 1000, 0.0, 0, false, 0, 6,
+                                               PK_AC_CAT_GLIDER_ULTRALIGHT);
+        pk_flight_phase_debug_t dbg;
+        p = pk_flight_phase_update(&st, &in, &dbg);
+        CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+        if (t == 30) {
+            CHECK(dbg.vib_floor == 6);
+            CHECK(dbg.vib_floor_converged == true); /* 30s 已到，6 <= 收敛天花板 40 */
+        }
+    }
+
+    /* 直接摆到 TAXI：怎么进入 TAXI 已经被 UC1/UC5 覆盖过，这里只想单独
+     * 隔离测试 is_stopped 的振动判据分支，不想再靠位移凑一次真实起滑。 */
+    st.phase = PK_PHASE_TAXI;
+
+    /* t=31..90：位置钉在离原点 15 m 处不动（60 s 窗口的参照点仍是 t=0
+     * 那批 disp=0 的样本，尚未滑出窗口），净位移落在抖动带 10-20 m；
+     * 振动读数 19（>=3x 地板 18）表示"仍有真实扰动"。 */
+    for (int t = 31; t <= 90; t++) {
+        pk_flight_phase_input_t in = mk_input((uint64_t)t * 1000, 15.0, 0, false, 0, 19,
+                                               PK_AC_CAT_GLIDER_ULTRALIGHT);
+        pk_flight_phase_debug_t dbg;
+        p = pk_flight_phase_update(&st, &in, &dbg);
+        CHECK(dbg.disp_m_60s >= 10.0 && dbg.disp_m_60s <= 20.0);
+        CHECK_PHASE(p, PK_PHASE_TAXI); /* 没有被误判"安静"而假死回地面 */
+    }
+
+    /* t=91：t=0 那批参照样本终于全部滑出 60 s 窗口，位移收敛到 0——此时
+     * 不管振动多大都该承认"真的停下来了"。 */
+    pk_flight_phase_input_t in91 = mk_input(91000, 15.0, 0, false, 0, 19, PK_AC_CAT_GLIDER_ULTRALIGHT);
+    p = pk_flight_phase_update(&st, &in91, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+}
+
+/* ---------------------------------------------------------------- UC11 */
+/* 高振动机型（直升机，地板初值 70）：开机时旋翼已经在转，第一条真实样本
+ * 直接把地板"学高"到 70（未收敛，因为 70 超过收敛天花板 40）；随后观测到
+ * 一次真正安静的怠速读数 35，地板应在那一 tick 立刻下修到 35，熬满
+ * 30 s 后收敛。收敛之后用两组探针验证：明显高于 3x 地板的读数仍判"在
+ * 动"（不能因为直升机基线高就把真实运动误判成安静），贴着地板的读数能
+ * 立刻确认"真停着"——这正是全局绝对阈值 20 永远做不到的事：直升机怠速
+ * 本身就远超 20，绝对阈值下这架机型永远拿不到振动这条证据。 */
+static void test_uc11a_helicopter_floor_learns_high_then_detects_real_motion(void)
+{
+    pk_flight_phase_state_t st;
+    pk_flight_phase_reset(&st, PK_AC_CAT_HELICOPTER);
+
+    /* t=0：开机即旋翼已经在转，首个真实样本＝70——地板被"学高"。 */
+    pk_flight_phase_input_t in0 = mk_input(0, 0.0, 0, false, 0, 70, PK_AC_CAT_HELICOPTER);
+    pk_flight_phase_t p = pk_flight_phase_update(&st, &in0, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+    CHECK(st.vib_floor == 70);
+
+    /* t=1：观测到一次真正安静的怠速（35，<= 收敛天花板 40）——地板必须
+     * 立刻下修，不是"锁死在首个样本"。 */
+    pk_flight_phase_input_t in1 = mk_input(1000, 0.0, 0, false, 0, 35, PK_AC_CAT_HELICOPTER);
+    p = pk_flight_phase_update(&st, &in1, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+    CHECK(st.vib_floor == 35); /* 下修生效 */
+
+    /* t=2..30：继续熬够 30 s warmup（以 t=0 播种时刻起算），期间保持在
+     * 35（不再引入更低的值，地板应稳定在 35）。 */
+    pk_flight_phase_debug_t dbg = {0};
+    for (int t = 2; t <= 30; t++) {
+        pk_flight_phase_input_t in = mk_input((uint64_t)t * 1000, 0.0, 0, false, 0, 35,
+                                               PK_AC_CAT_HELICOPTER);
+        p = pk_flight_phase_update(&st, &in, &dbg);
+        CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+    }
+    CHECK(dbg.vib_floor == 35);
+    CHECK(dbg.vib_floor_converged == true);
+
+    st.phase = PK_PHASE_TAXI; /* 同 UC10：只隔离测试 is_stopped 的振动分支 */
+
+    /* t=31..90：位置钉在 15 m（抖动带），振动 122（>= 3x 35 = 105）——
+     * 明显是"仍在动"，不能因为直升机基线高就放过。 */
+    for (int t = 31; t <= 90; t++) {
+        pk_flight_phase_input_t in = mk_input((uint64_t)t * 1000, 15.0, 0, false, 0, 122,
+                                               PK_AC_CAT_HELICOPTER);
+        p = pk_flight_phase_update(&st, &in, NULL);
+        CHECK_PHASE(p, PK_PHASE_TAXI);
+    }
+}
+
+static void test_uc11b_helicopter_floor_correction_confirms_stopped_early(void)
+{
+    pk_flight_phase_state_t st;
+    pk_flight_phase_reset(&st, PK_AC_CAT_HELICOPTER);
+
+    pk_flight_phase_input_t in0 = mk_input(0, 0.0, 0, false, 0, 70, PK_AC_CAT_HELICOPTER);
+    pk_flight_phase_update(&st, &in0, NULL);
+
+    pk_flight_phase_input_t in1 = mk_input(1000, 0.0, 0, false, 0, 35, PK_AC_CAT_HELICOPTER);
+    pk_flight_phase_update(&st, &in1, NULL);
+    CHECK(st.vib_floor == 35);
+
+    for (int t = 2; t <= 30; t++) {
+        pk_flight_phase_input_t in = mk_input((uint64_t)t * 1000, 0.0, 0, false, 0, 35,
+                                               PK_AC_CAT_HELICOPTER);
+        pk_flight_phase_update(&st, &in, NULL);
+    }
+
+    st.phase = PK_PHASE_TAXI;
+
+    /* t=31：位置同样钉在 15 m 抖动带，但探针振动 40（< 3x 35 = 105，贴着
+     * 地板）——地板已经收敛，必须立刻（不用等位移收敛到 0）确认"真停着"，
+     * 和 UC10/UC11a 里"仍在动"的探针（19 / 122）形成对照。 */
+    pk_flight_phase_input_t in31 = mk_input(31000, 15.0, 0, false, 0, 40, PK_AC_CAT_HELICOPTER);
+    pk_flight_phase_t p = pk_flight_phase_update(&st, &in31, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+}
+
+/* ---------------------------------------------------------------- UC12 */
+/* 地板尚未收敛（开机头 30 s 内）：不敢拿地板当判据主力，退化为「GPS 位移
+ * 严格达标（<10 m，不是抖动带）+（若有振动数据）当前值恰好是目前观测到
+ * 的最低点」的交叉验证兜底——两个条件必须同时成立，位移落在抖动带、或
+ * 振动没有贴着地板，都不能单独认定"真停着"。 */
+static void test_uc12_floor_unconverged_uses_gps_crosscheck_fallback(void)
+{
+    pk_flight_phase_state_t st;
+    pk_flight_phase_reset(&st, PK_AC_CAT_PISTON_LIGHT);
+
+    /* t=0：播种地板＝20（机型初值本身），随即直接摆到 TAXI（同 UC10 的
+     * 理由：这里只想单独测 is_stopped 的地板未收敛分支）。 */
+    pk_flight_phase_input_t in0 = mk_input(0, 0.0, 0, false, 0, 20, PK_AC_CAT_PISTON_LIGHT);
+    pk_flight_phase_t p = pk_flight_phase_update(&st, &in0, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+    st.phase = PK_PHASE_TAXI;
+
+    /* t=1（ts=1000ms，远早于 30 s warmup）：位移落在抖动带（15 m），振动
+     * 贴着地板（20，"全程最低"）——但位移没有"为零"，不能单独靠振动兜
+     * 底放宽窗口，必须仍是 TAXI。 */
+    pk_flight_phase_input_t in1 = mk_input(1000, 15.0, 0, false, 0, 20, PK_AC_CAT_PISTON_LIGHT);
+    p = pk_flight_phase_update(&st, &in1, NULL);
+    CHECK_PHASE(p, PK_PHASE_TAXI);
+
+    /* t=2：位移已经严格达标（5 m < STOP_THRESHOLD 10 m），但振动 25 明显
+     * 高于地板（不是"全程最低"）——按 spec「位移为零 且 振动处于全程最
+     * 低，才认定真停着」，两者必须同时成立，这里振动那一半不成立，仍要
+     * 停留 TAXI。 */
+    pk_flight_phase_input_t in2 = mk_input(2000, 5.0, 0, false, 0, 25, PK_AC_CAT_PISTON_LIGHT);
+    p = pk_flight_phase_update(&st, &in2, NULL);
+    CHECK_PHASE(p, PK_PHASE_TAXI);
+
+    /* t=3：位移严格达标（5 m）+ 振动贴着地板（20）——两个条件都成立，
+     * 哪怕地板还没收敛，也该认定"真停着"。 */
+    pk_flight_phase_input_t in3 = mk_input(3000, 5.0, 0, false, 0, 20, PK_AC_CAT_PISTON_LIGHT);
+    p = pk_flight_phase_update(&st, &in3, NULL);
+    CHECK_PHASE(p, PK_PHASE_GROUND_STOPPED);
+
+    CHECK(st.vib_floor == 20); /* 探针全程 >= 20，地板没被意外拉低 */
+}
+
 /* ================================================================ 杂项 */
+
+static void test_vib_floor_reset_uses_category_init(void)
+{
+    pk_flight_phase_state_t st;
+    pk_flight_phase_reset(&st, PK_AC_CAT_HELICOPTER);
+    CHECK(st.vib_floor == 70);        /* 机型初值占位，直到第一条真实样本 */
+    CHECK(st.vib_floor_seeded == false);
+
+    pk_flight_phase_reset(&st, PK_AC_CAT_GLIDER_ULTRALIGHT);
+    CHECK(st.vib_floor == 6);
+    CHECK(st.vib_floor_seeded == false);
+}
 
 static void test_initial_state_is_unknown(void)
 {
@@ -470,6 +664,11 @@ int main(void)
     test_uc7_runway_queue();
     test_uc8_touch_and_go();
     test_uc9_gps_loss_freeze();
+    test_uc10_low_floor_airframe_detects_real_motion_in_jitter_band();
+    test_uc11a_helicopter_floor_learns_high_then_detects_real_motion();
+    test_uc11b_helicopter_floor_correction_confirms_stopped_early();
+    test_uc12_floor_unconverged_uses_gps_crosscheck_fallback();
+    test_vib_floor_reset_uses_category_init();
     test_singleton_api_wraps_reentrant();
 
     if (g_fail == 0) {
