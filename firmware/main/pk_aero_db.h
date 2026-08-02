@@ -48,6 +48,8 @@ typedef enum {
 typedef struct {
     pk_aero_db_state_t state;
     char     cycle[9];       /* AIRAC 周期，如 "2026-02"；未 READY 为 "" */
+    uint16_t version;        /* bin 格式版本 2/3；未 READY 为 0。用户换卡后
+                              * 靠它确认新库生效（v3 才有搜索索引） */
     uint32_t n_airports;
     uint32_t n_navaids;
     uint32_t n_fixes;
@@ -97,6 +99,28 @@ int pk_aero_db_nearest_fixes(double lat, double lon,
 /* FIX ident 精确查找：命中下标写入 out[]（最多 max 个），返回同名总条数
  * （可能 > max）；未命中/未就绪 0。 */
 int pk_aero_db_fix_by_ident(const char *ident, uint32_t *out, int max);
+
+/* 导航台 ident 精确查找（v3 索引）。语义同 fix_by_ident。
+ * ！**v2 卡上恒返回 0**（v2 的导航台第二索引是空表）。 */
+int pk_aero_db_navaid_by_ident(const char *ident, uint32_t *out, int max);
+
+/* ---- 前缀枚举（µs 级，随便用；写满 max 就停，返回写入条数）---------
+ * 三个都走定长键排序表二分 + 线性扫，实测 P4 上与 by_icao 同量级。
+ * 版本差异（换卡窗口期必须能忍）：
+ *   - airports_by_prefix：v3 的机场全量 key 索引 → **v2 卡返回 0**；
+ *   - navaids_by_prefix ：v3 才填的导航台 ident 索引 → **v2 卡返回 0**；
+ *   - fixes_by_prefix   ：吃的是 v2 就有的 FIX ident 索引 → 两版都正常。
+ * 想知道当前是哪版看 pk_aero_db_status_get().version。 */
+int pk_aero_db_airports_by_prefix(const char *prefix, uint32_t *out, int max);
+int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max);
+int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max);
+
+/* 子串搜索（pk_aero_search_substring）**本轮不对外暴露**：它要顺扫 2.2 MB
+ * 字符串池，P4 外推 40–120 ms，用现在这套"查询全程持 s_lock"的并发方案会
+ * 把地图图层的后台快照查询和拔卡卸载一起堵住那么久。正确做法是分段让渡
+ * （每扫若干 KB give/take 锁 + 每段复检 state/代数），但本轮没有搜索页 UI，
+ * 没有消费者的并发代码无法被真实验证——等 P2 做搜索页时连同分段让渡一起
+ * 落地。reader 侧的 pk_aero_search_substring 已就位，届时只补封装。 */
 
 #ifdef __cplusplus
 }

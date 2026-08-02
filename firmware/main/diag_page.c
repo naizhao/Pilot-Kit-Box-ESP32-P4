@@ -630,8 +630,11 @@ void pk_diag_page_render(uint16_t *fb)
         card_state_t st;
         switch (a.state) {
         case PK_AERO_DB_READY:
-            snprintf(buf, sizeof(buf), "%s READY  %lu apt",
-                     a.cycle, (unsigned long)a.n_airports);
+            /* 带上 bin 版本：用户换 v3 卡后靠它确认新库生效（v2 上搜索
+             * 索引缺席，按名/按码搜索会是空的——不是坏了，是数据旧）。 */
+            snprintf(buf, sizeof(buf), "%s v%u  %lu apt",
+                     a.cycle, (unsigned)a.version,
+                     (unsigned long)a.n_airports);
             st = ST_OK;
             break;
         case PK_AERO_DB_LOADING:

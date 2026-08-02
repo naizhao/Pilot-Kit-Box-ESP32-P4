@@ -5,8 +5,10 @@
  * 差别只在"分块流水线"）：
  *   stat → heap_caps_malloc(SPIRAM) → 64 KB 分块 fread + PSA 流式
  *   AES-128-CTR 就地解密（读一块解一块，不等整读完；块间 vTaskDelay(1)
- *   让渡）→ SHA-256 分块校验 → pk_aero_init（校验 magic/version==2/段表）
+ *   让渡）→ SHA-256 分块校验 → pk_aero_init（校验 magic/version∈{2,3}/段表）
  *   → 发布 READY。任何失败释放缓冲，按卡还在不在分流 ERROR / ABSENT。
+ *   v2/v3 两种 bin 都收（用户换卡有窗口期）：记录段逐字节相同，v3 只是多了
+ *   搜索索引；缺索引的查询各自退化为返回 0，READY 日志会打出实际版本。
  *
  * SD 驱动完全复用 pk_sdcard.c（唯一一套挂载/探活/热插拔状态机）：本模块
  * 只看 pk_sdcard_is_mounted()，自己绝不碰 sdmmc。挂载重试（IDF #10531
@@ -92,6 +94,7 @@ static pk_aero_db_t  s_db;         /* reader 解析态（指进 s_buf） */
 
 /* 诊断快照：只在发布/卸载瞬间写，诊断页无锁读。 */
 static char              s_cycle[9];
+static volatile uint16_t s_version;   /* 2 或 3；未 READY 为 0 */
 static volatile uint32_t s_n_airports, s_n_navaids, s_n_fixes;
 static volatile uint8_t  s_load_pct;
 static const char *volatile s_err;   /* ERROR 原因（静态串） */
@@ -282,7 +285,7 @@ static bool aero_load_once(void)
 
     pk_aero_db_t db;
     if (ok) {
-        int rc = pk_aero_init(&db, buf, len, true);   /* magic/version==2/段表 */
+        int rc = pk_aero_init(&db, buf, len, true);   /* magic/version 2|3/段表 */
         if (rc != PK_AERO_OK) {
             ok = false;
             why = rc == PK_AERO_ERR_MAGIC   ? "bad magic"
@@ -319,6 +322,7 @@ static bool aero_load_once(void)
     s_buf = buf;
     s_db  = db;
     memcpy(s_cycle, db.cycle, sizeof(s_cycle));
+    s_version    = db.version;
     s_n_airports = db.sec_airport.n;
     s_n_navaids  = db.sec_navaid.n;
     s_n_fixes    = db.sec_fix.n;
@@ -327,15 +331,25 @@ static bool aero_load_once(void)
     s_state      = PK_AERO_DB_READY;
     xSemaphoreGive(s_lock);
 
-    ESP_LOGI(TAG, "aero DB ready (cycle %s): %lu airports, %lu rwy-dirs, "
-                  "%lu freqs, %lu navaids, %lu fixes — %.2f s, "
+    /* 版本进日志：用户换卡后一眼看出 v3 生效没有（v2 上搜索索引缺席，
+     * airports/navaids 前缀与子串搜索会返回空——不是坏了，是数据旧）。 */
+    ESP_LOGI(TAG, "aero DB ready (bin v%u, cycle %s): %lu airports, "
+                  "%lu rwy-dirs, %lu freqs, %lu navaids, %lu fixes — %.2f s, "
                   "SPIRAM free %u B",
-             s_cycle,
+             (unsigned)db.version, s_cycle,
              (unsigned long)db.sec_airport.n, (unsigned long)db.sec_rwy.n,
              (unsigned long)db.sec_freq.n, (unsigned long)db.sec_navaid.n,
              (unsigned long)db.sec_fix.n,
              (esp_timer_get_time() - t0) / 1e6,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG, "search indexes: apt_key=%lu apt_name=%lu nav_name=%lu "
+                  "fix_name=%lu nav_ident=%lu%s",
+             (unsigned long)db.sec_idx_apt_key.n,
+             (unsigned long)db.sec_idx_apt_name.n,
+             (unsigned long)db.sec_idx_nav_name.n,
+             (unsigned long)db.sec_idx_fix_name.n,
+             (unsigned long)db.nav_idx.n_second,
+             db.version >= 3 ? "" : "  (v2 bin: 搜索索引缺席，相关查询返回空)");
     return true;
 }
 
@@ -347,6 +361,7 @@ static void aero_unload(void)
     s_buf = NULL;
     memset(&s_db, 0, sizeof(s_db));
     s_cycle[0]   = '\0';
+    s_version    = 0;
     s_n_airports = s_n_navaids = s_n_fixes = 0;
     s_err        = NULL;
     s_state      = PK_AERO_DB_ABSENT;
@@ -386,6 +401,20 @@ static void aero_smoke_check(void)
     if (fn > 0 && pk_aero_db_freq_get(ff, &fq))
         ESP_LOGI(TAG, "smoke: ZGGG freq[0]=%lu kHz \"%s\"",
                  (unsigned long)fq.freq_khz, fq.callsign);
+
+    /* v3 前缀/ident 查询：v2 卡上 airports/navaids 两项预期就是 0（索引缺席），
+     * FIX 前缀两版都该有结果。2026-02 全量库 v3 真值：机场 "ZG" 28、
+     * 导航台 ident "GG" 5。打日志不断言——真值随 cycle 变。 */
+    uint32_t ids[32];
+    int64_t t1 = esp_timer_get_time();
+    int n_apt = pk_aero_db_airports_by_prefix("ZG", ids, 32);
+    int64_t dt_apt = esp_timer_get_time() - t1;
+    int n_nav = pk_aero_db_navaid_by_ident("GG", ids, 32);
+    int n_fix = pk_aero_db_fixes_by_prefix("VM", ids, 32);
+    ESP_LOGI(TAG, "smoke: prefix ZG(apt)=%d (v3 truth 28, %lld us) "
+                  "ident GG(nav)=%d (v3 truth 5) prefix VM(fix)=%d [%s]",
+             n_apt, (long long)dt_apt, n_nav, n_fix,
+             s_version >= 3 ? "v3" : "v2 — 搜索索引缺席，前两项应为 0");
 }
 #endif /* PK_AERO_DB_SMOKE */
 
@@ -492,6 +521,7 @@ void pk_aero_db_status_get(pk_aero_db_status_t *out)
     out->state      = s_state;
     memcpy(out->cycle, s_cycle, sizeof(out->cycle));
     out->cycle[sizeof(out->cycle) - 1] = '\0';
+    out->version    = s_version;
     out->n_airports = s_n_airports;
     out->n_navaids  = s_n_navaids;
     out->n_fixes    = s_n_fixes;
@@ -585,4 +615,32 @@ int pk_aero_db_fix_by_ident(const char *ident, uint32_t *out, int max)
           ? pk_aero_fix_by_ident(&s_db, ident, out, max) : 0;
     xSemaphoreGive(s_lock);
     return n > 0 ? n : 0;
+}
+
+int pk_aero_db_navaid_by_ident(const char *ident, uint32_t *out, int max)
+{
+    if (s_state != PK_AERO_DB_READY) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = (s_state == PK_AERO_DB_READY)
+          ? pk_aero_navaid_by_ident(&s_db, ident, out, max) : 0;
+    xSemaphoreGive(s_lock);
+    return n > 0 ? n : 0;   /* v2 卡上索引空表 → reader 直接给 0 */
+}
+
+/* 前缀枚举：µs 级（P4 上与 by_icao 同量级），沿用 AERO_QUERY 全程持锁即可
+ * ——持锁窗口比 nearest 的毫秒级还短一两个数量级，不用分段让渡。
+ * reader 侧参数非法/索引缺席都已经返回 0，这里无需再收敛。 */
+int pk_aero_db_airports_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    AERO_QUERY(0, pk_aero_airports_by_prefix(&s_db, prefix, out, max));
+}
+
+int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    AERO_QUERY(0, pk_aero_navaids_by_prefix(&s_db, prefix, out, max));
+}
+
+int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    AERO_QUERY(0, pk_aero_fixes_by_prefix(&s_db, prefix, out, max));
 }
