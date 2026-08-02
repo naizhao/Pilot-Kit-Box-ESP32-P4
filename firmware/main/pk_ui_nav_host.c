@@ -14,6 +14,7 @@
 
 #include "esp_log.h"
 
+#include "apt_detail_page.h"
 #include "config_fab.h"
 #include "i18n_catalog.h"
 #include "imu_task.h"
@@ -109,6 +110,18 @@ void pk_ui_nav_on_back(void)
 void pk_map_page_on_search(void)
 {
     pk_search_page_open();
+}
+
+/*
+ * 地图上点中机场符号 —— map_page.c 里弱符号 pk_map_page_on_apt_detail 的强实现。
+ *
+ * 落在这里的理由同上：页面之间怎么跳归导航宿主。命中测试本身在
+ * pk_aero_layer（它握着屏上要素的快照），map_page 只负责"把这一下判成点击"，
+ * 三者各管一段，谁都不需要知道另外两个的内部。
+ */
+void pk_map_page_on_apt_detail(uint32_t apt_idx)
+{
+    pk_apt_detail_page_open(apt_idx, PK_APT_DETAIL_FROM_MAP);
 }
 
 void pk_ui_nav_host_init(void)

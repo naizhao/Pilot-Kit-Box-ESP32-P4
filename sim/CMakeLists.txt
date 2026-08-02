@@ -115,6 +115,10 @@ set(FW_DRAW_SRC
     # 下退化成"同步查 + 内存里的历史"（见 search_page.c 尾部）。数据源同样
     # 由 compat/pk_aero_layer_sim.c 桩掉。
     ${FW}/search_page.c
+    # 机场详情页。跑道/频率的版面、业务序排序、缺字段的降级都要在模拟器上
+    # 评审，所以原样编进来；它没有后台任务也没有 NVS，唯一的外部依赖是
+    # pk_aero_db_*，同样由 compat/pk_aero_layer_sim.c 桩掉。
+    ${FW}/apt_detail_page.c
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c
     ${FW}/icao_country.c

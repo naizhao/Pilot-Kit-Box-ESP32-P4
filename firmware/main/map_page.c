@@ -680,14 +680,41 @@ bool pk_map_page_touch(int x, int y)
 void pk_map_page_touch_up(void)
 {
     /*
-     * 空白处点一下清掉 PIN。
+     * 一次「落在地图上、没按到按钮、也没拖动过」的点击有两种去处：
      *
-     * PIN 的清除时机必须是用户能想到的动作，而不是某个定时器：定时消失会让
-     * 人以为"刚才那个机场没找到"。判据取"落在地图上、没按到任何按钮、也没
-     * 拖动过"——平移途中手指自然会停一下，把那当成清除就成了"一拖就没"。
-     * 另一条清除路径是再搜一次（set_pin 直接覆盖）。
+     *   ① 点中了某个航空要素   → 机场进详情页，导航台/FIX 落一枚 PIN；
+     *   ② 点在空白处           → 清掉 PIN。
+     *
+     * 判定顺序不能反：先问命中，没命中才当空白。判据里的"没拖动过"是必须的
+     * ——平移途中手指自然会停一下，把那当成点击就成了"一拖就弹详情"。
+     *
+     * 命中测试放在 touch_up 而不是 touch：**按压归属完全不受影响**。按下那
+     * 一刻这里照旧返回 true（地图区归本页），FAB / 三枚按钮 / 拖动平移的分支
+     * 一行都没动——map_page.c 那两处历史 bug（FAB 被吞、按住每帧重复触发）
+     * 的闸门（s_press_active / s_btn_down）都在 touch() 里，这里够不着。
      */
-    if (s_press_active && s_btn_down < 0 && !s_press_moved) s_pin_valid = false;
+    const bool tap = s_press_active && s_btn_down < 0 && !s_press_moved;
+    if (tap) {
+        pk_aero_layer_hit_t hit;
+        /* 投影参数用本页当前的视图状态，与刚画完的那一帧完全一致——
+         * 看得见的就是点得中的。 */
+        if (pk_aero_layer_hit_test(s_press_lx, s_press_ly, s_center_lat,
+                                   s_center_lon, s_zoom, &hit)) {
+            if (hit.kind == PK_AERO_LAYER_KIND_AIRPORT) {
+                pk_map_page_on_apt_detail(hit.idx);
+            } else {
+                /* 导航台 / FIX 没有详情可看（数据包里只有 ident+坐标+频率），
+                 * 但"这个三角是什么"是个真实的问题——落一枚带 ident 的 PIN
+                 * 就地回答它，与搜索结果点导航台落到的是同一个终态。 */
+                pk_map_page_set_pin(hit.lat, hit.lon, hit.code);
+            }
+        } else {
+            /* PIN 的清除时机必须是用户能想到的动作，而不是某个定时器：定时
+             * 消失会让人以为"刚才那个机场没找到"。另一条清除路径是再搜一次
+             * （set_pin 直接覆盖）。 */
+            s_pin_valid = false;
+        }
+    }
     s_press_active = false;
     s_press_moved  = false;
     s_btn_down = -1;
@@ -726,4 +753,9 @@ void pk_map_page_clear_pin(void)
  * 各个 on_* 回调）。固件侧由 pfd.c 提供强符号。 */
 __attribute__((weak)) void pk_map_page_on_search(void)
 {
+}
+
+__attribute__((weak)) void pk_map_page_on_apt_detail(uint32_t apt_idx)
+{
+    (void)apt_idx;
 }

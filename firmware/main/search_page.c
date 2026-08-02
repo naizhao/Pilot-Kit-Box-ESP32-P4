@@ -119,10 +119,13 @@ void pk_search_hist_push(pk_search_hist_t *h, const char *q)
  * 平台区：后台查询任务 + NVS 历史 + 渲染 + 触摸
  * ═══════════════════════════════════════════════════════════════════ */
 
+#include "apt_detail_page.h"
 #include "display.h"
 #include "geo.h"
 #include "i18n.h"
+#include "imu_task.h"
 #include "keyboard_page.h"
+#include "mag_var.h"
 #include "map_page.h"
 #include "own_ship.h"
 #include "pfd_aa_font.h"
@@ -131,6 +134,7 @@ void pk_search_hist_push(pk_search_hist_t *h, const char *q)
 #include "pfd_layout.h"
 #include "pk_aero_db.h"
 #include "pk_ui_nav.h"
+#include "traffic_geom.h"
 
 #include "esp_attr.h"
 #include "esp_timer.h"
@@ -201,6 +205,9 @@ _Static_assert(SRCH_VIEW_H % SRCH_ROW_H == 0, "可视区不是结果行高的整
 #define SRCH_BADGE_W     60
 #define SRCH_BADGE_H     28
 #define SRCH_TEXT_X      (SRCH_PAD + SRCH_BADGE_W + 16)   /* 92 */
+/* 方位箭头与距离数字之间的间隙。箭头按 CJK 全角出（PK_AA_S_CJK_W = 17），
+ * 贴太近会读成一个词。 */
+#define SRCH_ARROW_GAP   6
 
 /* 跳地图时用哪一档 zoom。11 在 800×480 上约 1.4 NM/屏宽（中纬度），
  * 机场跑道与滑行道都看得见，又不至于一屏只剩一块灰。地图页的上限是 12，
@@ -310,6 +317,9 @@ static uint16_t col_sub(void)    { return pk_rgb565(170, 182, 200); }
 static uint16_t col_accent(void) { return pk_rgb565(  0, 110, 200); }
 static uint16_t col_line(void)   { return pk_rgb565( 26,  33,  44); }
 static uint16_t col_amber(void)  { return pk_rgb565(255, 176,   0); }
+/* 方位箭头。与交通页 / ADS-B 列表页同一个青色——三处画的是同一个语义，
+ * 颜色一变，用户就会去找"这个青的和那个白的有什么不同"。 */
+static uint16_t col_arrow(void)  { return pk_rgb565(  0, 210, 235); }
 
 static uint16_t col_kind(uint8_t kind)
 {
@@ -784,7 +794,8 @@ static int draw_empty(uint16_t *fb, int y, const char *title, const char *hint,
     return h;
 }
 
-static void draw_item_row(uint16_t *fb, int y, int h, const pk_search_item_t *it)
+static void draw_item_row(uint16_t *fb, int y, int h,
+                          const pk_search_item_t *it, float hdg_ref_true)
 {
     if (y <= SRCH_LIST_TOP - h || y >= PK_DISPLAY_H) return;
 
@@ -818,6 +829,20 @@ static void draw_item_row(uint16_t *fb, int y, int h, const pk_search_item_t *it
         const int dw = pk_aa_text_width(d, PK_AA_S);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SRCH_R - dw, y + 14, d,
                    col_txt(), PK_AA_S);
+
+        /* 八向箭头，与交通页 / ADS-B 列表页同一个 pk_bearing_arrow()。
+         *
+         * 放在数字左边而不是右边：视线从左往右先接到"大概哪个方向"，再落到
+         * 精确度数，与 ADS-B 列表页 BRG 列的次序一致。放右边则要先读完
+         * "12.3NM 045" 才看到方向，箭头那点"扫一眼就知道"的价值就没了。
+         *
+         * 只挤在第一行（代码那一行）：名称在 y+42 的第二行，两者不同行，
+         * 多占的 17+6 px 不会压到名字。 */
+        const char *ar = pk_bearing_arrow((float)it->brg_deg - hdg_ref_true);
+        const int aw = pk_aa_text_width(ar, PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   SRCH_R - dw - SRCH_ARROW_GAP - aw, y + 14, ar,
+                   col_arrow(), PK_AA_S);
     }
 
     pk_pfd_fill_rect(fb, SRCH_PAD, y + h - 1, SRCH_R, y + h, col_line());
@@ -832,6 +857,37 @@ static void draw_hist_row(uint16_t *fb, int y, int h, const char *q)
                            col_panel());
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, SRCH_TEXT_X - 40,
                y + (h - PK_AA_M_H) / 2, q, col_txt(), PK_AA_M);
+}
+
+/*
+ * 本帧的「箭头参考方向」——真北系下的本机机头朝向。箭头角 = 目标真方位 − 它。
+ *
+ * 为什么每帧算而不是塞进后台查询作业：航向一直在变，而查询作业几百毫秒才跑
+ * 一次；算在那边箭头会明显滞后。距离/方位（dist_nm/brg_deg）正相反——它们只
+ * 随位置变，作业里算一次就够，还能与地图叠加层保证是同一个数。
+ *
+ * 口径照抄 adsb_list.c 里同一段：pk_own_heading_resolve 给出的角度，ADS-B /
+ * GPS 来源是真北参考，IMU 来源是磁北参考，后者要加回磁偏角（东偏为正）才回到
+ * 真北系——brg_deg 是 geo_dist_brg 算的真方位，两边必须同系。
+ *
+ * 没有有效航向时返回 0，箭头退化成「正北朝上」：ADS-B 列表页在同一情形下也是
+ * 这个表现（那边 own_heading 保持 0，rel_bearing 恒等于 abs_bearing），三页
+ * 一致比在这里另发明一个"方向不可用"的空态更重要。
+ */
+static float arrow_ref_true_deg(bool own_ok, pk_own_src_t own_src,
+                                const aircraft_t *own)
+{
+    pk_imu_sample_t imu;
+    const bool have_imu = pk_imu_sample_get(&imu);
+
+    float hdg = 0.0f;
+    pk_hdg_src_t hsrc;
+    if (!pk_own_heading_resolve(own_ok, own_src, own, have_imu,
+                                have_imu ? imu.yaw_deg : 0.0f, &hdg, &hsrc))
+        return 0.0f;
+    if (hsrc == PK_HDG_SRC_IMU && own_ok)
+        hdg += pk_mag_var_lookup(own->lat, own->lon);
+    return hdg;
 }
 
 /* 库未就绪时的提示分因（照 diag 页 AERO DB 卡片的口径）。 */
@@ -855,6 +911,13 @@ void pk_search_page_render(uint16_t *fb)
     const status_t st = (status_t)s_status;
     const bool default_view = (s_query[0] == '\0');
 
+    aircraft_t own = {0};
+    pk_own_src_t own_src;
+    const bool own_ok = pk_own_ship_resolve(
+        esp_timer_get_time(), (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL,
+        &own, &own_src);
+    const float hdg_ref = arrow_ref_true_deg(own_ok, own_src, &own);
+
     int y = SRCH_LIST_TOP - s_scroll;
 
     if (default_view) {
@@ -869,7 +932,7 @@ void pk_search_page_render(uint16_t *fb)
             y += draw_empty(fb, y, TXT_NO_NEARBY, NULL, col_dim());
         } else {
             for (int i = 0; i < nres; ++i) {
-                draw_item_row(fb, y, SRCH_BIG_ROW_H, &res[i]);
+                draw_item_row(fb, y, SRCH_BIG_ROW_H, &res[i], hdg_ref);
                 hit_push(y, SRCH_BIG_ROW_H, 1, i);
                 y += SRCH_BIG_ROW_H;
             }
@@ -899,7 +962,7 @@ void pk_search_page_render(uint16_t *fb)
             break;
         case ST_OK:
             for (int i = 0; i < nres; ++i) {
-                draw_item_row(fb, y, SRCH_ROW_H, &res[i]);
+                draw_item_row(fb, y, SRCH_ROW_H, &res[i], hdg_ref);
                 hit_push(y, SRCH_ROW_H, 1, i);
                 y += SRCH_ROW_H;
             }
@@ -1065,9 +1128,27 @@ static void open_keyboard(void)
                           kbd_commit, kbd_cancel);
 }
 
-/* 点一条结果：关页 → 地图挪过去 → 落 PIN。设计文档 D3 定案的主路径。 */
+/*
+ * 点一条结果，按类型分两条路（2026-08-02 改，设计文档 D3 的"详情二期"）。
+ *
+ * **机场 → 详情页**：跑道、频率、标高、管制与否，全是飞行员点进一个机场时
+ * 真正要的东西；"跳到地图"只回答了"它在哪"。详情页里有一枚「在地图上显示」，
+ * 原来那条路一步都没少，只是从默认动作变成了显式动作。
+ *
+ * **导航台 / FIX → 维持跳地图**：它们在数据包里只有 ident、类型、频率、
+ * 坐标——没有跑道、没有频率表，一整页详情摆出来只有两行，而这两行搜索结果
+ * 那一行已经写着了（add_navaid 就把频率拼进了名称列）。为它们各开一页是在
+ * 用一次额外点击换零信息。真到了要显示航路/进近程序那一天再谈。
+ *
+ * 详情页是模态层，**不关搜索页**：关掉详情就自然回到这一屏（见
+ * apt_detail_page.h 的「三层导航是怎么解决的」）。
+ */
 static void goto_item(const pk_search_item_t *it)
 {
+    if (it->kind == PK_SEARCH_KIND_AIRPORT) {
+        pk_apt_detail_page_open(it->idx, PK_APT_DETAIL_FROM_SEARCH);
+        return;
+    }
     pk_map_page_set_pin(it->lat, it->lon, it->code);
     pk_map_page_goto(it->lat, it->lon, SRCH_GOTO_ZOOM);
     pk_search_page_close();

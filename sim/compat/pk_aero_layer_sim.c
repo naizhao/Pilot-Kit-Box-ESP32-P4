@@ -31,7 +31,7 @@
 #include <string.h>
 
 /* 与 sim/compat/mock_runtime.c 的 MAP_DEMO_OWN_LAT/LON 同值（珠三角，落在
- * tmp/sd-maps 的 prd_pilot 试点包高清区间内）。那两个是它的 static 宏，这里
+ * datafiles/maps 的 prd_pilot 试点包高清区间内）。那两个是它的 static 宏，这里
  * 照抄一份而不是导出——桩与桩之间互不依赖，改一处要记得改两处。 */
 #define AERO_SIM_BASE_LAT  22.54
 #define AERO_SIM_BASE_LON  113.90
@@ -398,5 +398,166 @@ bool pk_aero_db_fix_get(uint32_t idx, pk_aero_fix_t *out)
     /* LOD 在 zoom≤11 只放航路 FIX（fix_enroute_only），全填 ENROUTE 才画得出来。 */
     out->scope = PK_AERO_FIX_SCOPE_ENROUTE;
     out->name = "";
+    return true;
+}
+
+/* ── 机场详情页要用的聚簇区间与两种子记录（2026-08-02 补）───────────
+ *
+ * 桩的仍然是**数据源**：业务序排序、哨兵处置、版面与滚动都在
+ * apt_detail_page.c 那份真实代码里跑，这里只负责"给出符合语义的记录"。
+ *
+ * 数据按"最糟情况优先"摆（见 ~/.claude 记忆 feedback_ui_worst_case_first）：
+ *   - ZGGG（idx 1）= 真库实测的量：**10 条跑道方向 + 63 条频率**，用来验
+ *     滚动条、长列表到底、以及业务序把 TWR 从第 40 条提到第 1 条；
+ *   - 缺字段全都真的缺：约 81% 的跑道方向没有入口坐标、部分没有磁航向，
+ *     还有宽度为 0、道面未知、服务类型未知这几种；
+ *   - ZGOW（idx 2）= 有跑道但**一条频率都没有**；
+ *   - 直升机坪 ZG12（idx 4）= 跑道与频率**两段都空**；
+ *   - 其余机场各给两条方向 + 三条频率，够看"正常"长什么样。
+ *
+ * 聚簇区间用 idx×100 编码：真库里跑道/频率是按机场物理聚簇的连续区间，
+ * 这里只要保证"区间不重叠、能从全局下标反解回机场"即可，×100 比维护一张
+ * 前缀和表短得多，也不会因为改了某个机场的条数就要重算后面所有人的 first。
+ */
+#define APT_CLUSTER_STRIDE 100
+
+typedef struct { const char *desig; uint16_t len_ft, wid_ft; uint8_t surface;
+                 uint16_t brg_dd; bool coord; } sim_rwy_t;
+
+/* ZGGG：5 条跑道 = 10 个方向。刻意混进各种缺失。 */
+static const sim_rwy_t kRwyZGGG[] = {
+    { "02L", 12467, 197, 1, 232,    true  },
+    { "20R", 12467, 197, 1, 2032,   true  },
+    { "02R", 12467, 197, 1, 232,    false },   /* 无入口坐标（真库多数如此）*/
+    { "20L", 12467, 197, 1, 2032,   false },
+    { "01",  11811, 148, 2, 0xFFFF, false },   /* 无磁航向 */
+    { "19",  11811, 148, 2, 0xFFFF, false },
+    { "03",   9186,   0, 0, 315,    false },   /* 无宽度 + 道面未知 */
+    { "21",   9186,   0, 0, 2115,   false },
+    { "18L",     0,   0, 3, 1800,   true  },   /* 连长度都没有 */
+    { "36R",     0,   0, 3, 3600,   true  },   /* 360.0° → 必须显示 000 */
+};
+
+/* ZGOW：两条方向，齐全。频率一条都没有。 */
+static const sim_rwy_t kRwyZGOW[] = {
+    { "04", 4600, 148, 3, 435,  true  },
+    { "22", 4600, 148, 3, 2235, false },
+};
+
+/* 通用两条（其余机场共用）。 */
+static const sim_rwy_t kRwyGeneric[] = {
+    { "09", 8530, 148, 1, 895,  true  },
+    { "27", 8530, 148, 1, 2695, false },
+};
+
+static void sim_rwy_table(uint32_t apt, const sim_rwy_t **rows, uint32_t *n)
+{
+    switch (apt) {
+    case 1: *rows = kRwyZGGG;    *n = 10; break;
+    case 2: *rows = kRwyZGOW;    *n = 2;  break;
+    case 4: *rows = NULL;        *n = 0;  break;   /* 直升机坪：无跑道段 */
+    case 5: *rows = NULL;        *n = 0;  break;
+    case 9: *rows = NULL;        *n = 0;  break;   /* 水上机场 */
+    default: *rows = kRwyGeneric; *n = 2; break;
+    }
+}
+
+/* ZGGG 的 63 条频率是**生成**的，不是手抄 63 行：真库里那 63 条本来就是
+ * "同一个服务分好几个扇区"的重复结构，手抄只会抄出一堆看不出规律的噪音。
+ * 关键是**存储序刻意把 TWR 摆在很后面**（第 40 条），这样截图上 TWR 出现在
+ * 第一行就直接证明了业务序排序真的跑了。 */
+static void sim_freq_row(uint32_t apt, uint32_t k, pk_aero_freq_t *out)
+{
+    /* 服务枚举同 export_box_bin.py 的 SERVICE_ENUM。 */
+    static const uint8_t kSvcOrder[] = {
+        9, 7, 6, 3, 3, 4, 14, 12, 5, 10, 0, 13, 8, 2, 1, 11,
+    };
+    static const char *kCall[] = {
+        "GUANGZHOU AWOS", "UNICOM", "CTAF",
+        "GUANGZHOU APPROACH SECTOR 3", "GUANGZHOU APPROACH",
+        "GUANGZHOU DEPARTURE", "GUANGZHOU RADAR", "",
+        "GUANGZHOU ATIS", "GUANGZHOU RADIO", "", "FLIGHT SERVICE",
+        "GUANGZHOU DELIVERY", "GUANGZHOU GROUND", "GUANGZHOU TOWER",
+        "AERODROME INFORMATION",
+    };
+    const uint32_t n = (uint32_t)(sizeof(kSvcOrder) / sizeof(kSvcOrder[0]));
+    /* 让 TWR（表内下标 14）落在第 40 条附近：k 直接取模即可，16 条一轮，
+     * 第 40 条 = 40 % 16 = 8 … 这里改成从后往前排更直观——k 越大越接近
+     * 表尾，于是 TWR/GND 天然落在后段。 */
+    const uint32_t i = (k * 7u + apt) % n;
+    memset(out, 0, sizeof(*out));
+    out->service  = kSvcOrder[i];
+    out->callsign = kCall[i];
+    /* 频率覆盖三种格式：常规 25 kHz、8.33 kHz 间隔、带前导零的小数。 */
+    static const uint32_t kBase[] = { 118250, 118275, 121005, 127350, 135075 };
+    out->freq_khz = kBase[k % 5] + (k / 5) * 25;
+}
+
+static uint32_t sim_freq_count(uint32_t apt)
+{
+    switch (apt) {
+    case 1: return 63;    /* ZGGG 真库实测 */
+    case 2: return 0;     /* 有跑道、无频率 */
+    case 4: return 0;
+    case 5: return 0;
+    case 9: return 0;
+    default: return 3;
+    }
+}
+
+bool pk_aero_db_airport_runways(uint32_t apt_idx, uint32_t *first, uint32_t *count)
+{
+    if (!aero_on() || apt_idx >= (uint32_t)NAPT) return false;
+    const sim_rwy_t *rows; uint32_t n;
+    sim_rwy_table(apt_idx, &rows, &n);
+    (void)rows;
+    if (first) *first = apt_idx * APT_CLUSTER_STRIDE;
+    if (count) *count = n;
+    return true;
+}
+
+bool pk_aero_db_airport_freqs(uint32_t apt_idx, uint32_t *first, uint32_t *count)
+{
+    if (!aero_on() || apt_idx >= (uint32_t)NAPT) return false;
+    if (first) *first = apt_idx * APT_CLUSTER_STRIDE;
+    if (count) *count = sim_freq_count(apt_idx);
+    return true;
+}
+
+bool pk_aero_db_rwy_dir_get(uint32_t idx, pk_aero_rwy_dir_t *out)
+{
+    if (!aero_on() || out == NULL) return false;
+    const uint32_t apt = idx / APT_CLUSTER_STRIDE, k = idx % APT_CLUSTER_STRIDE;
+    if (apt >= (uint32_t)NAPT) return false;
+    const sim_rwy_t *rows; uint32_t n;
+    sim_rwy_table(apt, &rows, &n);
+    if (rows == NULL || k >= n) return false;
+
+    memset(out, 0, sizeof(*out));
+    snprintf(out->designator, sizeof(out->designator), "%s", rows[k].desig);
+    out->length_ft = rows[k].len_ft;
+    out->width_ft  = rows[k].wid_ft;
+    out->surface   = rows[k].surface;
+    /* 哨兵的解码语义与 pk_aero_reader.c:821-827 一致：0xFFFF 磁航向、
+     * 0x7FFFFFFF 坐标 → has_* 为 false。桩这一层必须照做，否则详情页那条
+     * "缺字段不显示"的分支在模拟器上根本走不到。 */
+    out->has_bearing    = (rows[k].brg_dd != PK_AERO_BEARING_NONE);
+    out->mag_bearing_dd = rows[k].brg_dd;
+    out->has_coord      = rows[k].coord;
+    if (out->has_coord) {
+        double blat, blon;
+        base_pos(&blat, &blon);
+        out->lat = blat + kApt[apt].dlat;
+        out->lon = blon + kApt[apt].dlon;
+    }
+    return true;
+}
+
+bool pk_aero_db_freq_get(uint32_t idx, pk_aero_freq_t *out)
+{
+    if (!aero_on() || out == NULL) return false;
+    const uint32_t apt = idx / APT_CLUSTER_STRIDE, k = idx % APT_CLUSTER_STRIDE;
+    if (apt >= (uint32_t)NAPT || k >= sim_freq_count(apt)) return false;
+    sim_freq_row(apt, k, out);
     return true;
 }

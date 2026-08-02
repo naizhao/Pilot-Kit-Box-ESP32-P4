@@ -199,6 +199,28 @@ bool pk_aero_label_place(int sx, int sy, int sym_r, int lw, int lh,
     return true;
 }
 
+int pk_aero_hit_pick(const pk_aero_hit_cand_t *cands, int n, int x, int y, int tol)
+{
+    if (cands == NULL || n <= 0 || tol <= 0) return -1;
+    const int tol2 = tol * tol;
+    int best_apt = -1, best_apt_d2 = 0;
+    int best_any = -1, best_any_d2 = 0;
+    for (int i = 0; i < n; i++) {
+        const int dx = (int)cands[i].sx - x;
+        const int dy = (int)cands[i].sy - y;
+        const int d2 = dx * dx + dy * dy;
+        if (d2 > tol2) continue;
+        if (cands[i].kind == PK_AERO_LAYER_KIND_AIRPORT) {
+            if (best_apt < 0 || d2 < best_apt_d2) { best_apt = i; best_apt_d2 = d2; }
+        }
+        /* 非机场的那一路照样要挑最近的：机场一个都不在容差内时它才出场。
+         * 平手（同一像素上两个 FIX）保留先到的那个——快照顺序即距本机由近
+         * 及远，稳定优于随机。 */
+        if (best_any < 0 || d2 < best_any_d2) { best_any = i; best_any_d2 = d2; }
+    }
+    return (best_apt >= 0) ? best_apt : best_any;
+}
+
 /* 机场名在标签里的显示预算（字节）。**不是**快照 name[28] 的大小——那是存储，
  * 这两个是排版，取值靠屏宽算：
  *   PK_AA_XS 一个 ASCII 字宽 10 px（pfd_aa_font.h:8），put_label 左右各 2 px
@@ -300,8 +322,12 @@ static const char *TAG = "aero_layer";
 
 #define SNAP_MAX  PK_AERO_NEAR_MAX    /* 32；LOD 的 limit 也都收在这个数以内 */
 
+/* idx = 段内记录下标。存它是为了让点击命中之后能回查跑道/频率（详情页）——
+ * 快照本身只需要画图用的那几个字段，但"点了这个圆圈是哪条记录"这个信息
+ * 只有查询那一刻知道，丢了就得在触摸回调里重查一次库（毫秒级，不许）。 */
 typedef struct {
     double   lat, lon;
+    uint32_t idx;
     char     code[8];              /* ICAO；无 ICAO 时退 IATA，再无则 "" */
     char     name[28];
     uint8_t  type, ctrl;
@@ -310,14 +336,16 @@ typedef struct {
 } apt_ent_t;
 
 typedef struct {
-    double  lat, lon;
-    char    ident[8];
-    uint8_t type;
+    double   lat, lon;
+    uint32_t idx;
+    char     ident[8];
+    uint8_t  type;
 } nav_ent_t;
 
 typedef struct {
-    double lat, lon;
-    char   ident[8];
+    double   lat, lon;
+    uint32_t idx;
+    char     ident[8];
 } fix_ent_t;
 
 typedef struct {
@@ -388,7 +416,7 @@ static void fill_airports(snapshot_t *s, const pk_aero_lod_t *lod,
                                       a.icao[0] != '\0'))
             continue;
         apt_ent_t *e = &s->apt[s->n_apt++];
-        e->lat = a.lat;  e->lon = a.lon;
+        e->lat = a.lat;  e->lon = a.lon;  e->idx = near[i].idx;
         e->type = a.type; e->ctrl = a.ctrl;
         e->longest_rwy_ft = a.longest_rwy_ft;
         e->elev_ft = a.elev_ft;
@@ -410,7 +438,7 @@ static void fill_navaids(snapshot_t *s, const pk_aero_lod_t *lod,
         if (!pk_aero_db_navaid_get(near[i].idx, &v)) continue;
         if (!pk_aero_lod_navaid_pass(lod, v.type)) continue;
         nav_ent_t *e = &s->nav[s->n_nav++];
-        e->lat = v.lat;  e->lon = v.lon;  e->type = v.type;
+        e->lat = v.lat;  e->lon = v.lon;  e->type = v.type;  e->idx = near[i].idx;
         snprintf(e->ident, sizeof(e->ident), "%s", v.ident);
     }
 }
@@ -425,7 +453,7 @@ static void fill_fixes(snapshot_t *s, const pk_aero_lod_t *lod,
         if (!pk_aero_db_fix_get(near[i].idx, &f)) continue;
         if (!pk_aero_lod_fix_pass(lod, f.scope)) continue;
         fix_ent_t *e = &s->fix[s->n_fix++];
-        e->lat = f.lat;  e->lon = f.lon;
+        e->lat = f.lat;  e->lon = f.lon;  e->idx = near[i].idx;
         snprintf(e->ident, sizeof(e->ident), "%s", f.ident);
     }
 }
@@ -541,7 +569,7 @@ void pk_aero_layer_notify_view(double center_lat, double center_lon, uint8_t zoo
  *      飞机呼号，四种完全不同的东西长得一模一样。符号那一层本来是按类型分色
  *      的，标签却把这份信息全丢了。
  *   2) 上一版这段注释写的"底图是 OSM 栅格，整体偏亮，深色符号才咬得住"
- *      **与出厂的底图包不符**：tmp/sd-maps 那 4 个 pmtiles（真机同一批）是
+ *      **与出厂的底图包不符**：datafiles/maps 那 4 个 pmtiles（真机同一批）是
  *      深色主题，截图里深青导航台糊在深绿植被上、深紫 FIX 几乎看不见。
  *
  * 现在的规则（按航图/座舱显示惯例）：
@@ -1052,6 +1080,105 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
             put_label(fb, sx, sy, R_FIX, s->fix[i].ident, COL_LBL_FIX,
                       occ, nocc, occ_max);
     }
+}
+
+/* ══ 4. 命中测试（触摸线程 = 渲染线程，见 touch_gt911.c）════════════════
+ *
+ * 三条约束决定了这个函数长什么样：
+ *   1) **不查库**。候选全部来自已发布的快照（≤96 条），投影一遍就是几十次
+ *      三角函数——与标签趟每帧都要做的那次重投影同量级，一次点击付得起。
+ *   2) 读快照用**一次** s_active，全程用同一份：跟符号趟/标签趟一样，中途
+ *      重读会拿到后台刚翻过去的另一代数据，点中的和看见的就不是一个东西。
+ *      后台两次发布至少隔 LAYER_MIN_REQUERY_MS(500 ms)，而这个函数是微秒级，
+ *      窗口宽了三个数量级（论证同 s_active 那段注释）。
+ *   3) 用**当前帧**的投影参数（调用方传进来的 center/zoom），不是快照里那份
+ *      ——符号画在哪就该点在哪，刚平移完的 200 ms 里符号是跟手的。
+ *
+ * 候选顺序：机场 → 导航台 → FIX。pk_aero_hit_pick 内部按类优先，与这里的
+ * 顺序无关，排这个序只是让"同类平手取先到"落在离本机更近的那一个上。
+ */
+bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
+                            uint8_t zoom, pk_aero_layer_hit_t *out)
+{
+    if (out == NULL) return false;
+    const int act = s_active;
+    if (act < 0 || act > 1) return false;
+    const snapshot_t *s = &s_snap[act];
+
+    double cwx, cwy;
+    pk_aero_lonlat_to_world(center_lon, center_lat, zoom, &cwx, &cwy);
+
+    /* 栈预算是硬的：本函数跑在触摸 read_cb 里，而那是 pfd 任务
+     * （xTaskCreate "pfd", 6 KB，pfd.c:503）的 lv_timer_handler 内层调用。
+     * 所以候选表只存**屏幕坐标 + 类别 + 快照槽位**，一共 3×32×7 = 672 B；
+     * 经纬度/idx/代码一律等挑中之后再回快照里取一条。
+     * 第一版把这些字段也塞进了一张并行表，96 项 × 32 B ≈ 3 KB —— 一半的
+     * 任务栈，为了省一次数组回读。 */
+    pk_aero_hit_cand_t cand[3 * SNAP_MAX];
+    uint8_t slot[3 * SNAP_MAX];        /* 候选 i 在它自己那一类数组里的下标 */
+    _Static_assert(SNAP_MAX <= 256, "快照槽位放不进 uint8_t");
+    const int cap = (int)(sizeof(cand) / sizeof(cand[0]));
+    int n = 0;
+
+    /* 三类各投影一遍。顺序机场 → 导航台 → FIX，见函数头。 */
+    for (int i = 0; i < s->n_apt && n < cap; i++) {
+        double wx, wy;
+        pk_aero_lonlat_to_world(s->apt[i].lon, s->apt[i].lat, zoom, &wx, &wy);
+        const int sx = AERO_MCX + (int)lround(wx - cwx);
+        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        if (!on_screen(sx, sy)) continue;
+        cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
+                                        PK_AERO_LAYER_KIND_AIRPORT };
+        slot[n++] = (uint8_t)i;
+    }
+    for (int i = 0; i < s->n_nav && n < cap; i++) {
+        double wx, wy;
+        pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
+        const int sx = AERO_MCX + (int)lround(wx - cwx);
+        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        if (!on_screen(sx, sy)) continue;
+        cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
+                                        PK_AERO_LAYER_KIND_NAVAID };
+        slot[n++] = (uint8_t)i;
+    }
+    for (int i = 0; i < s->n_fix && n < cap; i++) {
+        double wx, wy;
+        pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
+        const int sx = AERO_MCX + (int)lround(wx - cwx);
+        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        if (!on_screen(sx, sy)) continue;
+        cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
+                                        PK_AERO_LAYER_KIND_FIX };
+        slot[n++] = (uint8_t)i;
+    }
+
+    const int k = pk_aero_hit_pick(cand, n, x, y, PK_AERO_HIT_TOL_PX);
+    if (k < 0) return false;
+
+    /* 回快照取那一条。用的仍是 act（本函数开头读的那一次），不重读 s_active
+     * ——中途后台翻了缓冲的话，挑中的坐标与取出的记录就不是同一代数据。 */
+    const int j = slot[k];
+    out->kind = cand[k].kind;
+    switch (cand[k].kind) {
+    case PK_AERO_LAYER_KIND_AIRPORT:
+        out->idx = s->apt[j].idx;  out->lat = s->apt[j].lat;
+        out->lon = s->apt[j].lon;
+        /* 快照里的 code 本身就是拷贝，这里仍然再拷一次：调用方拿到 out 之后
+         * 可能跨帧留着（详情页的 PIN 标签就是），而快照缓冲会被后台覆盖。 */
+        snprintf(out->code, sizeof(out->code), "%s", s->apt[j].code);
+        break;
+    case PK_AERO_LAYER_KIND_NAVAID:
+        out->idx = s->nav[j].idx;  out->lat = s->nav[j].lat;
+        out->lon = s->nav[j].lon;
+        snprintf(out->code, sizeof(out->code), "%s", s->nav[j].ident);
+        break;
+    default:
+        out->idx = s->fix[j].idx;  out->lat = s->fix[j].lat;
+        out->lon = s->fix[j].lon;
+        snprintf(out->code, sizeof(out->code), "%s", s->fix[j].ident);
+        break;
+    }
+    return true;
 }
 
 #endif /* !PK_AERO_LAYER_HOST_TEST */

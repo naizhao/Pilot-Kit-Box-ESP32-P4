@@ -84,6 +84,7 @@
 #include "config_devname.h"   /* PK_DEVNAME_MAX_LEN —— 键盘页的上限跟真机同一个数 */
 #include "diag_page.h"
 #include "keyboard_page.h"
+#include "apt_detail_page.h"
 #include "search_page.h"
 #include "settings_page.h"
 #include "boot_splash.h"
@@ -394,6 +395,24 @@ static int run_headless(float at_sec, const char *out)
                 }
             }
             pk_map_page_render(fb);
+            /*
+             * PK_SIM_MAP_TAP=<x>,<y>：在地图上点一下，走**真机同一条**触摸
+             * 路径（touch → touch_up），用来验"点机场符号进详情页"这条新链路
+             * ——命中测试、快照里的记录下标、详情页取数三段一次跑通。
+             * 没命中的话它就是"点空白清 PIN"，同样是真机行为。
+             */
+            {
+                const char *t = getenv("PK_SIM_MAP_TAP");
+                int tx = 0, ty = 0;
+                if (t != NULL && sscanf(t, "%d,%d", &tx, &ty) == 2) {
+                    pk_map_page_touch(tx, ty);
+                    pk_map_page_touch_up();
+                    if (pk_apt_detail_page_active())
+                        pk_apt_detail_page_render(fb);   /* 分派次序同 pfd.c */
+                    else
+                        pk_map_page_render(fb);          /* PIN 变化要重画 */
+                }
+            }
         } else if (strcmp(page, "search") == 0) {
             /* 航空数据搜索页。真机上由地图页右侧那枚放大镜打开，这里直接调
              * open()——与诊断详情页用 PK_SIM_DIAG_DETAIL 跳进去是同一个套路。
@@ -403,6 +422,42 @@ static int run_headless(float at_sec, const char *out)
              * 环境变量决定：PK_SIM_SEARCH / _HIST / _SCROLL，见那边的注释。 */
             pk_search_page_open();
             pk_search_page_render(fb);
+        } else if (strcmp(page, "aptdetail") == 0) {
+            /*
+             * 机场详情页。真机上有两个入口（搜索结果点机场、地图上点机场
+             * 符号），两条路最后都落到同一个 pk_apt_detail_page_open()，
+             * 所以这里直接调它——同 PK_SIM_DIAG_DETAIL / search 那两处的套路。
+             *
+             *   PK_SIM_APT=<下标>      看哪个机场（桩表里 1=ZGGG 10 跑道
+             *                          63 频率、2=ZGOW 有跑道无频率、
+             *                          4=直升机坪两段皆空）
+             *   PK_SIM_APT_FROM=search 摆成"从搜索进来"（关页要回搜索，
+             *                          FAB 得继续藏着）
+             *   PK_SIM_APT_SCROLL=<px> 滚到指定位置，好截到长列表的尾巴
+             *
+             * 数据同样要 PK_SIM_AERO=1；不给就能截到"机场数据不可用"那一屏。
+             */
+            {
+                const char *f = getenv("PK_SIM_APT_FROM");
+                const char *a = getenv("PK_SIM_APT");
+                const bool from_search = (f != NULL && strcmp(f, "search") == 0);
+                if (from_search) pk_search_page_open();
+                pk_apt_detail_page_open(a ? (uint32_t)atoi(a) : 1u,
+                                        from_search ? PK_APT_DETAIL_FROM_SEARCH
+                                                    : PK_APT_DETAIL_FROM_MAP);
+                const char *sc = getenv("PK_SIM_APT_SCROLL");
+                if (sc != NULL) {
+                    /* 滚动位置是页面的内部状态，没有 setter——照 map 那边用
+                     * 公开触摸接口的做法，这里用一次真实的拖动把它滚下去：
+                     * 先渲一帧让 s_content_h 有值（钳位要它），再拖。 */
+                    const int px = atoi(sc);
+                    pk_apt_detail_page_render(fb);
+                    pk_apt_detail_page_touch(400, 400);
+                    pk_apt_detail_page_drag(400, 400 - px);
+                    pk_apt_detail_page_touch_cancel();
+                }
+            }
+            pk_apt_detail_page_render(fb);
         } else if (strcmp(page, "keyboard") == 0) {
             /* 键盘编辑器。真机上它由设置页那一行点开（pk_settings_apply
              * 的 case 8），模拟器直接调 open() —— 这与诊断详情页那边用
@@ -769,4 +824,16 @@ int main(int argc, char **argv)
     SDL_DestroyWindow(win);
     SDL_Quit();
     return 0;
+}
+
+/*
+ * map_page.c 里弱符号 pk_map_page_on_apt_detail 的模拟器强实现。
+ *
+ * 固件那份在 pk_ui_nav_host.c（"页面之间怎么跳"归导航宿主），模拟器没有那个
+ * 文件，于是这里补一份**语义完全相同**的——不是另写一套逻辑，只是把同一个
+ * 调用接上，好让 PK_SIM_MAP_TAP 走的是真机那条链路。
+ */
+void pk_map_page_on_apt_detail(uint32_t apt_idx)
+{
+    pk_apt_detail_page_open(apt_idx, PK_APT_DETAIL_FROM_MAP);
 }

@@ -351,6 +351,81 @@ static void test_name_ellipsize(void)
     chk_int("硬切退回字符起始", (int)strlen(b), 9 + 3);   /* 3 个完整汉字 + "..." */
 }
 
+/* ── 5) 命中测试的挑选规则（点地图上的机场符号）───────────────────
+ *
+ * 两条规则各钉死一组：**机场优先**（哪怕它比 FIX 远）与**同类取最近**。
+ * 容差用产品值 PK_AERO_HIT_TOL_PX(28)，边界上下各测一格——28 是从 App 的
+ * 20–28 里取的上限，改这个数会直接改变"点得中点不中"，必须有测试挡着。 */
+static void test_hit_pick(void)
+{
+    const int T = PK_AERO_HIT_TOL_PX;
+
+    /* 空集 / 非法参数：返回 -1，调用方据此走"没命中"那条路（不许吞事件）。*/
+    chk_int("空候选无命中", pk_aero_hit_pick(NULL, 0, 100, 100, T), -1);
+    {
+        pk_aero_hit_cand_t one = { 100, 100, PK_AERO_LAYER_KIND_AIRPORT };
+        chk_int("n=0 无命中",  pk_aero_hit_pick(&one, 0, 100, 100, T), -1);
+        chk_int("tol=0 无命中", pk_aero_hit_pick(&one, 1, 100, 100, 0), -1);
+    }
+
+    /* 容差边界：正好 28 px 命中，29 px 不命中。 */
+    {
+        pk_aero_hit_cand_t c[1] = { { 100, 100, PK_AERO_LAYER_KIND_AIRPORT } };
+        chk_int("容差内命中",   pk_aero_hit_pick(c, 1, 100 + T, 100, T), 0);
+        chk_int("容差外不命中", pk_aero_hit_pick(c, 1, 100 + T + 1, 100, T), -1);
+    }
+
+    /* 机场优先：FIX 就压在手指上（0 px），机场在 20 px 外，仍然选机场。
+     * 这正是设计文档 §1.4「长按 20 px 容差命中最近实体、机场优先」要的
+     * ——密集区里 8 px 的 FIX 三角常常压在机场圆盘边上。 */
+    {
+        pk_aero_hit_cand_t c[2] = {
+            { 120, 100, PK_AERO_LAYER_KIND_AIRPORT },
+            { 100, 100, PK_AERO_LAYER_KIND_FIX     },
+        };
+        chk_int("机场优先于更近的 FIX", pk_aero_hit_pick(c, 2, 100, 100, T), 0);
+        /* 顺序反过来结论不变——优先级不能依赖候选表的排列。 */
+        pk_aero_hit_cand_t d[2] = {
+            { 100, 100, PK_AERO_LAYER_KIND_FIX     },
+            { 120, 100, PK_AERO_LAYER_KIND_AIRPORT },
+        };
+        chk_int("候选顺序不影响机场优先", pk_aero_hit_pick(d, 2, 100, 100, T), 1);
+    }
+
+    /* 机场在容差外时才轮到别人；此时非机场之间按最近取。 */
+    {
+        pk_aero_hit_cand_t c[3] = {
+            { 200, 200, PK_AERO_LAYER_KIND_AIRPORT },   /* 远在天边 */
+            { 110, 100, PK_AERO_LAYER_KIND_NAVAID  },   /* 10 px */
+            { 105, 100, PK_AERO_LAYER_KIND_FIX     },   /* 5 px，最近 */
+        };
+        chk_int("机场够不着时取最近的非机场",
+                pk_aero_hit_pick(c, 3, 100, 100, T), 2);
+    }
+
+    /* 两个机场都在容差内：取最近的那个。 */
+    {
+        pk_aero_hit_cand_t c[2] = {
+            { 118, 100, PK_AERO_LAYER_KIND_AIRPORT },
+            { 104, 100, PK_AERO_LAYER_KIND_AIRPORT },
+        };
+        chk_int("同类取最近", pk_aero_hit_pick(c, 2, 100, 100, T), 1);
+    }
+
+    /* 平手（同一像素上两个 FIX）取先到的：快照顺序即距本机由近及远，
+     * 稳定优于随机。 */
+    {
+        pk_aero_hit_cand_t c[2] = {
+            { 100, 100, PK_AERO_LAYER_KIND_FIX },
+            { 100, 100, PK_AERO_LAYER_KIND_FIX },
+        };
+        chk_int("平手取先到", pk_aero_hit_pick(c, 2, 100, 100, T), 0);
+    }
+
+    /* 容差取的是 App 区间 20–28 的上限（盒子触摸精度更差），钉住这个决定。 */
+    chk_true("容差取 App 区间上限", PK_AERO_HIT_TOL_PX == 28);
+}
+
 int main(void)
 {
     test_lod_table();
@@ -361,6 +436,7 @@ int main(void)
     test_mercator();
     test_label_place();
     test_name_ellipsize();
+    test_hit_pick();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

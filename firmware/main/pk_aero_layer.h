@@ -41,6 +41,25 @@ typedef struct { int x0, y0, x1, y1; } pk_aero_rect_t;
  * limit（那才是把 96 这个数摆上来的源头），不是省避让的正确性。 */
 #define PK_AERO_LAYER_OCC_MAX  192
 
+/* ── 点击地理要素（2026-08-02 加）────────────────────────────────────
+ *
+ * 命中判定的**候选只能来自本层已发布的快照**，绝不能在触摸回调里查库：
+ * pk_aero_db 的 nearest 系列最坏 16 ms（pk_aero_db.h:16-18），而触摸回调
+ * 跑在 pfd 渲染任务里，一次点击掉半帧还算轻的。快照里本来就存着"这一屏
+ * 画了哪些要素"，正是命中测试要的那份候选集。 */
+typedef enum {
+    PK_AERO_LAYER_KIND_AIRPORT = 0,
+    PK_AERO_LAYER_KIND_NAVAID,
+    PK_AERO_LAYER_KIND_FIX,
+} pk_aero_layer_kind_t;
+
+typedef struct {
+    uint8_t  kind;        /* pk_aero_layer_kind_t */
+    uint32_t idx;         /* 段内记录下标，供详情页回查跑道/频率 */
+    double   lat, lon;
+    char     code[8];     /* ICAO / ident；机场无码时为 ""（快照里就是空的）*/
+} pk_aero_layer_hit_t;
+
 /* PK_AERO_LAYER_SIM_IMPL：sim 也要真的画这一层（配色评审用）。由
  * sim/CMakeLists.txt 定义，数据来自 sim/compat/pk_aero_layer_sim.c 桩掉的
  * pk_aero_db_*。固件侧两个宏都没有定义，走的还是原来那条路，行为不变。 */
@@ -77,6 +96,15 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
                                  uint8_t zoom, pk_aero_rect_t *occ, int *nocc,
                                  int occ_max);
 
+/* 屏幕坐标 → 当前快照里最近的那个要素。命中返回 true 并写 *out。
+ *
+ * 投影参数必须与**本帧渲染用的那一份**一致（地图页把它自己的 s_center_* /
+ * s_zoom 传进来），否则"看得见的"与"点得中的"会错位。
+ * 容差与优先级见 pk_aero_hit_pick 的注释。未 READY / 无快照时返回 false，
+ * 调用方据此走原来的空白点击路径——**绝不能把没命中的点击吞掉**。 */
+bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
+                            uint8_t zoom, pk_aero_layer_hit_t *out);
+
 #else  /* PK_SIM_BUILD 且未开 PK_AERO_LAYER_SIM_IMPL */
 
 /* host 预览（sim/）没有 SD、没有 FreeRTOS，本层整体空转。做成 inline 空实现
@@ -93,6 +121,9 @@ static inline void pk_aero_layer_render_labels(uint16_t *fb, double lat, double 
                                                uint8_t z, pk_aero_rect_t *occ,
                                                int *nocc, int occ_max)
 { (void)fb; (void)lat; (void)lon; (void)z; (void)occ; (void)nocc; (void)occ_max; }
+static inline bool pk_aero_layer_hit_test(int x, int y, double lat, double lon,
+                                          uint8_t z, pk_aero_layer_hit_t *out)
+{ (void)x; (void)y; (void)lat; (void)lon; (void)z; (void)out; return false; }
 
 #endif /* PK_SIM_BUILD */
 
@@ -145,6 +176,28 @@ void pk_aero_lonlat_to_world(double lon, double lat, uint8_t z,
 bool pk_aero_label_place(int sx, int sy, int sym_r, int lw, int lh,
                          const pk_aero_rect_t *occ, int nocc,
                          pk_aero_rect_t *out);
+
+/* 命中测试候选：只有"在屏幕上的哪个点"与"是什么类"，不带任何数据库信息，
+ * 所以这一段是纯的，host 单测直接跑（test_pk_aero_layer.c）。 */
+typedef struct {
+    int16_t sx, sy;
+    uint8_t kind;      /* pk_aero_layer_kind_t */
+} pk_aero_hit_cand_t;
+
+/* 触摸容差（px）。App 用 20–28，盒子取**上限 28**：GT911 单点电容屏的定位
+ * 抖动比手机大，且座舱里戴手套/颠簸时手指落点更散。28 px ≈ 3.3 mm，仍远小于
+ * 9 mm 的触摸目标下限，不会让两个相邻机场互相抢。 */
+#define PK_AERO_HIT_TOL_PX  28
+
+/*
+ * 在候选里挑一个：**机场优先，其次距离最近**。返回下标，无命中返回 -1。
+ *
+ * 两级规则而不是单纯"取最近"：密集区（珠三角 Z11 一屏能有十几个 FIX）里
+ * FIX 三角形只有 8 px，常常压在机场圆盘边上；纯取最近的话，对准 ZGGG 点下去
+ * 十有八九弹出旁边那个 FIX。机场是这一层里唯一有详情可看的东西，让它赢。
+ * 同类之间比的是**平方距离**（不开方，整数运算，结果与比距离等价）。
+ */
+int pk_aero_hit_pick(const pk_aero_hit_cand_t *cands, int n, int x, int y, int tol);
 
 #ifdef __cplusplus
 }

@@ -53,3 +53,8 @@ void pk_map_page_clear_pin(void);
  * 宿主接到就 pk_search_page_open()。做成弱符号（同 pk_ui_nav 的做法）是
  * 为了让模拟器与 host 单测不必把整个搜索页链进来。 */
 void pk_map_page_on_search(void);
+
+/* 点中了地图上的机场符号，宿主接到就 pk_apt_detail_page_open()。
+ * apt_idx = 机场段内记录下标（由 pk_aero_layer 的命中测试给出）。
+ * 弱符号，理由同上。 */
+void pk_map_page_on_apt_detail(uint32_t apt_idx);
