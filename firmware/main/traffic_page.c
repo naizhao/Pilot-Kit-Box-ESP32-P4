@@ -128,6 +128,16 @@ static void fill_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
     pk_pfd_draw_triangle(fb, x - s, y, x + s, y, x, y + s, c);
 }
 
+/* 无航迹数据的地面目标：菱形也要走"空心"这条约定，否则同样是无航迹目标，
+ * 地面/空中又混成一种画法（阶段 4c）。 */
+static void outline_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
+{
+    pk_pfd_draw_line(fb, x,     y - s, x + s, y,     c);
+    pk_pfd_draw_line(fb, x + s, y,     x,     y + s, c);
+    pk_pfd_draw_line(fb, x,     y + s, x - s, y,     c);
+    pk_pfd_draw_line(fb, x - s, y,     x,     y - s, c);
+}
+
 /* 气压 → 1013.25 标准气压高度(ft)，与目标 Mode-C 同基准。 */
 static int std_alt_ft_from_pa(float pa)
 {
@@ -247,13 +257,25 @@ static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
      * 迎面与同向画出来一模一样，而 PFD 罗盘外圈那份（pfd_hsi_traffic.c）算的
      * 是对的，同一架飞机在两个页面上机头差了一个 mag_var + 本机航向。
      */
+    /* 地面目标画空心剪影/空心菱形——与空中实心目标一眼可辨（阶段 4c，见
+     * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。 */
     if (v->ac->have_velocity) {
         const float rot = pk_traffic_symbol_rot_deg(
             orient == PK_MAP_HEADING_UP, (float)v->ac->heading_deg,
             mag_var, own_heading);
-        pk_pfd_draw_aircraft(fb, tx, ty, rot, selected ? 15 : 11, col);
+        const int sz = selected ? 15 : 11;
+        if (v->ac->on_ground) {
+            pk_pfd_draw_aircraft_outline(fb, tx, ty, rot, sz, col);
+        } else {
+            pk_pfd_draw_aircraft(fb, tx, ty, rot, sz, col);
+        }
     } else {
-        fill_diamond(fb, tx, ty, selected ? 6 : 5, col);
+        const int sz = selected ? 6 : 5;
+        if (v->ac->on_ground) {
+            outline_diamond(fb, tx, ty, sz, col);
+        } else {
+            fill_diamond(fb, tx, ty, sz, col);
+        }
     }
 }
 

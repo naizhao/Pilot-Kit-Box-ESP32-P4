@@ -44,6 +44,19 @@ void pk_pfd_draw_triangle(uint16_t *fb,
 void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
                           float rot_deg, int size, uint16_t c);
 
+/*
+ * 同一副剪影的空心（仅描边）版本——地面目标专用。
+ *
+ * 航电惯例：地面目标用扁平/空心符号或异色，与空中目标一眼可辨（本机若把
+ * 滑行道上的飞机与低空进近的飞机混画成同一种实心符号，飞行员会把两者
+ * 当同一种威胁读，这是安全问题不是美化）。选空心而非纯异色的理由：颜色
+ * 在本项目里已经承载「威胁等级」语义（见 traffic_page.c target_color /
+ * pfd_hsi_traffic.c 同高度琥珀/高于青/低于蓝灰/无高度灰），再抢一种颜色
+ * 表示地面会和这套编码冲突；形状是唯一没被占用的维度。
+ */
+void pk_pfd_draw_aircraft_outline(uint16_t *fb, int cx, int cy,
+                                  float rot_deg, int size, uint16_t c);
+
 uint16_t pk_pfd_rgb565_dither(uint8_t r, uint8_t g, uint8_t b, int x, int y);
 
 /*

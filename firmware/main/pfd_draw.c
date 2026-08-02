@@ -318,13 +318,14 @@ void pk_pfd_draw_triangle(uint16_t *fb,
     }
 }
 
-void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
-                          float rot_deg, int size, uint16_t c)
+/* 机体坐标 → 旋转后的屏幕坐标，供实心/空心两个变体共享。
+ * 机体坐标：y 轴向上为负（与屏幕一致），机头在 (0, -size)。
+ * 后掠翼 + 收窄的尾部，四个点就够表达朝向，再多在 10 px 尺度上也糊。
+ * 翼展 : 机长 ≈ 1.24 : 1.37，贴近真机俯视的比例（客机大致 1:1）。
+ * 初版取 1.7 : 1.15，又扁又胖，像个回旋镖而不是飞机。 */
+static void aircraft_silhouette_pts(int cx, int cy, float rot_deg, int size,
+                                    int px[4], int py[4])
 {
-    /* 机体坐标：y 轴向上为负（与屏幕一致），机头在 (0, -size)。
-     * 后掠翼 + 收窄的尾部，四个点就够表达朝向，再多在 10 px 尺度上也糊。 */
-    /* 翼展 : 机长 ≈ 1.24 : 1.37，贴近真机俯视的比例（客机大致 1:1）。
-     * 初版取 1.7 : 1.15，又扁又胖，像个回旋镖而不是飞机。 */
     const float pts[4][2] = {
         {  0.00f, -0.95f },   /* 机头   */
         {  0.62f,  0.42f },   /* 右翼尖 */
@@ -335,7 +336,6 @@ void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
     const float rad = rot_deg * (float)M_PI / 180.0f;
     const float cs = cosf(rad), sn = sinf(rad);
 
-    int px[4], py[4];
     for (int i = 0; i < 4; ++i) {
         float x = pts[i][0] * (float)size;
         float y = pts[i][1] * (float)size;
@@ -343,8 +343,32 @@ void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
         px[i] = cx + (int)lroundf(x * cs - y * sn);
         py[i] = cy + (int)lroundf(x * sn + y * cs);
     }
+}
+
+void pk_pfd_draw_aircraft(uint16_t *fb, int cx, int cy,
+                          float rot_deg, int size, uint16_t c)
+{
+    int px[4], py[4];
+    aircraft_silhouette_pts(cx, cy, rot_deg, size, px, py);
 
     /* 拆成两个三角形填充——箭头是凹多边形，一次三角形填不出那个尾部凹口。 */
     pk_pfd_draw_triangle(fb, px[0], py[0], px[1], py[1], px[2], py[2], c);
     pk_pfd_draw_triangle(fb, px[0], py[0], px[2], py[2], px[3], py[3], c);
+}
+
+void pk_pfd_draw_aircraft_outline(uint16_t *fb, int cx, int cy,
+                                  float rot_deg, int size, uint16_t c)
+{
+    /* 地面目标：同一副剪影，只描边不填充——航电惯例的「空心」符号。
+     * 用 pk_pfd_draw_line（非 AA）而非 draw_line_aa：本项目实测
+     * draw_line_aa 每条约 0.14ms，交通目标可能同屏十几个，AA 描边
+     * 4 条边就是 50+ 次调用，非 AA 版本在这个尺寸(<=15px)下肉眼分不出
+     * 差别，换来的是可忽略的每帧开销（见 pk_aero_layer.c 头部教训）。 */
+    int px[4], py[4];
+    aircraft_silhouette_pts(cx, cy, rot_deg, size, px, py);
+
+    for (int i = 0; i < 4; ++i) {
+        int j = (i + 1) % 4;
+        pk_pfd_draw_line(fb, px[i], py[i], px[j], py[j], c);
+    }
 }

@@ -164,7 +164,13 @@ bool pk_baro_get(pk_baro_state_t *out)
  * PK_SIM_MAP_CLUMP=1：把目标全部挤进一小片区域（呼号扎堆），用来验证
  * map_page.c 的标签防遮挡规则（见其文件头注释「按距屏幕中心近→远占位，
  * 碰撞就只画符号不画标签」）。
- */
+ *
+ * PK_SIM_MAP_GROUND=1：一半目标标 on_ground（阶段 4c）。地面目标没有气压
+ * 高度（v3 评审固化的约定，见 adsb_list.c is_threat() 头注），所以这里故意
+ * 不给它们的 have_altitude 置位——如果哪天有人在渲染路径上瞎猜「地面目标
+ * 也有 altitude_ft」，这份合成数据会先露出破绽而不是留到真机上才发现。
+ * 地速取滑行量级（个位数~二十节），与空中目标的巡航速度拉开数量级，符号之
+ * 外再给一层佐证。 */
 static size_t map_demo_traffic(aircraft_t *out, size_t cap, int64_t now_us)
 {
     static const struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } kSpread[] = {
@@ -183,12 +189,48 @@ static size_t map_demo_traffic(aircraft_t *out, size_t cap, int64_t now_us)
         {  0.014,  0.004, 4400,  70, "HXA1205" },
         {  0.006,  0.008, 4000,  50, "CBJ5567" },
     };
-    const bool clump = pk_sim_flag("PK_SIM_MAP_CLUMP");
-    const void *tbl = clump ? (const void *)kClump : (const void *)kSpread;
-    const size_t n = clump ? sizeof(kClump) / sizeof(kClump[0])
-                           : sizeof(kSpread) / sizeof(kSpread[0]);
-    typedef struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } row_t;
-    const row_t *rows = (const row_t *)tbl;
+    /* 地面态：三架贴着停机坪/滑行道（离本机很近、低速、无航迹或慢速滑行）
+     * 与两架正常空中目标混排——一屏内同时出现两种符号才叫得上"一眼可辨"，
+     * 分开两张图各截一种反而验不出对比度。 */
+    /* 偏移量取 0.03~0.04°（Z10 下约 20~28 px，三点两两间隔都 >20 px）：既让
+     * 三个地面符号彼此分得开也不挤成一团，也离本机符号够远不被压住。试过
+     * 两版更小的偏移——0.0006° 时 Z10 一像素都不到，三个地面目标全糊在本机
+     * 图标底下；0.01~0.02° 时符号没叠但标签互相碰撞只剩一个显示。图上什么
+     * 都验证不了，故加大到这一档（2026-08-03 实测教训）。 */
+    static const struct {
+        double dlat, dlon; int alt_ft; int hdg; const char *cs; bool ground; int gs_kt;
+    } kGround[] = {
+        {  0.030,  0.014, 0,   140, "CSN5501", true,  12 },  /* 滑行中 */
+        {  0.006,  0.034, 0,     0, "CES9982", true,   0 },  /* 静止（无航迹） */
+        {  0.034, -0.012, 0,   250, "CQH2201", true,   6 },  /* 滑行中 */
+        {  0.08,   0.05, 3200,  90, "HXA1205", false, 160 },  /* 空中，作对照 */
+        { -0.06,   0.08, 5400, 270, "CBJ5567", false, 180 },  /* 空中，作对照 */
+    };
+    const bool clump  = pk_sim_flag("PK_SIM_MAP_CLUMP");
+    const bool ground = pk_sim_flag("PK_SIM_MAP_GROUND");
+    typedef struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; bool ground; int gs_kt; } row_t;
+    row_t rows[5];
+    size_t n;
+    if (ground) {
+        n = sizeof(kGround) / sizeof(kGround[0]);
+        for (size_t i = 0; i < n; i++) {
+            rows[i].dlat = kGround[i].dlat; rows[i].dlon = kGround[i].dlon;
+            rows[i].alt_ft = kGround[i].alt_ft; rows[i].hdg = kGround[i].hdg;
+            rows[i].cs = kGround[i].cs; rows[i].ground = kGround[i].ground;
+            rows[i].gs_kt = kGround[i].gs_kt;
+        }
+    } else {
+        const void *tbl = clump ? (const void *)kClump : (const void *)kSpread;
+        n = clump ? sizeof(kClump) / sizeof(kClump[0])
+                  : sizeof(kSpread) / sizeof(kSpread[0]);
+        typedef struct { double dlat, dlon; int alt_ft; int hdg; const char *cs; } src_row_t;
+        const src_row_t *src = (const src_row_t *)tbl;
+        for (size_t i = 0; i < n; i++) {
+            rows[i].dlat = src[i].dlat; rows[i].dlon = src[i].dlon;
+            rows[i].alt_ft = src[i].alt_ft; rows[i].hdg = src[i].hdg;
+            rows[i].cs = src[i].cs; rows[i].ground = false; rows[i].gs_kt = 140 + (int)(i * 20);
+        }
+    }
 
     /* 与 pk_own_ship_resolve() 同一份 PK_SIM_MAP_OWN_LAT/LON 覆盖：目标始终
      * 散布在本机周围，overzoom 场景挪本机位置时目标跟着挪，不会散到画面外。 */
@@ -205,11 +247,12 @@ static size_t map_demo_traffic(aircraft_t *out, size_t cap, int64_t now_us)
         a->have_position = true;
         a->lat = base_lat + rows[i].dlat;
         a->lon = base_lon + rows[i].dlon;
-        a->have_altitude = true;
+        a->on_ground     = rows[i].ground;
+        a->have_altitude = !rows[i].ground;
         a->altitude_ft   = rows[i].alt_ft;
-        a->have_velocity = true;
+        a->have_velocity = rows[i].ground ? (rows[i].gs_kt > 0) : true;
         a->heading_deg   = rows[i].hdg;
-        a->ground_speed_kt = 140 + (int)(i * 20);
+        a->ground_speed_kt = rows[i].gs_kt;
         if (rows[i].cs[0]) snprintf(a->callsign, sizeof(a->callsign), "%s", rows[i].cs);
         a->have_callsign = rows[i].cs[0] != '\0';
         a->last_seen_us  = now_us;

@@ -517,7 +517,13 @@ void pk_map_page_render(uint16_t *fb)
             continue;
 
         const float rot = a->have_velocity ? (float)a->heading_deg : 0.0f;
-        pk_pfd_draw_aircraft(fb, sx, sy, rot, 9, col_ac);
+        /* 地面目标画空心剪影——与空中实心目标一眼可辨（阶段 4c，见
+         * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。 */
+        if (a->on_ground) {
+            pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 9, col_ac);
+        } else {
+            pk_pfd_draw_aircraft(fb, sx, sy, rot, 9, col_ac);
+        }
 
         char cs[10];
         if (a->have_callsign && a->callsign[0]) {

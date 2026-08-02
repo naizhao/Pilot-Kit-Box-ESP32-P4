@@ -204,6 +204,15 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_MAP_OWN_LAT": "-33.9",
                              "PK_SIM_MAP_OWN_LON": "151.2"},
                                                                    "地图页 overzoom：只有全球包覆盖，父瓦片放大 + 提示徽标"),
+    # 阶段 4c：地面目标符号（本机内引擎）。三架贴着停机坪/滑行道（空心剪影，
+    # 无气压高度）与两架空中目标（实心剪影）混排在同一屏，验证"一眼可辨"——
+    # 分开两张各截一种反而验不出对比度，见 mock_runtime.c map_demo_traffic()
+    # 的 PK_SIM_MAP_GROUND 分支注释。
+    ("ui-4.3-map-ground",   {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_MAP_GROUND": "1"},
+                                                                   "地图页地面目标：空心剪影(地面) 与 实心剪影(空中) 混排对照"),
 ]
 
 

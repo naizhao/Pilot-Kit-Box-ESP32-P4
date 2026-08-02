@@ -192,6 +192,12 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
     for (size_t i = 0; i < n; i++) {
         aircraft_t *t = &s_scratch[i];
         if (own.icao24 != 0 && t->icao24 == own.icao24) continue;
+        /* 地面目标在这里不画（阶段 4c）：罗盘外圈是固定半径的方位盘，只编码
+         * 相对方位，不编码真实距离——地图页/交通页才有真实径向距离。给滑
+         * 行道上的目标在这个固定半径上安一个位置没有几何意义，反而会被读
+         * 成"某个方向、某个距离上有威胁"，这是编造信息。地面目标的可见性
+         * 由地图页与交通页承担。 */
+        if (t->on_ground) continue;
 
         pk_traffic_rel_t rel = pk_traffic_rel_calc(
             true, own.lat, own.lon, yaw, mag_var, own_palt,
