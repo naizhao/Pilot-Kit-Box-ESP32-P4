@@ -117,6 +117,7 @@
 #include "pfd_speed_tape.h"
 #include "pfd_statusbar.h"
 #include "pfd_tape.h"
+#include "pk_sdcard.h"
 
 /* 窗口放大倍数。真机 320×240 在 Retina 上太小看不清细节，放大 3 倍
  * 观察；改到 800×480 之后可以调成 1~2。 */
@@ -208,6 +209,13 @@ static void mock_fill(const sim_state_t *st,
     stat->batt_pct       = batt_env ? (uint8_t)atoi(batt_env) : 100;
     stat->batt_charging  = getenv("PK_SIM_CHARGING") != NULL;
     stat->uptime_ms      = (uint32_t)(t * 1000.0f);
+    /* SD 卡状态：走真实的 pk_sdcard_is_mounted()（sim/compat/page_stub.c 里
+     * 由 PK_SIM_SET_SD 环境变量摆），而不是塞进 sim_lack_t 再造一路假数据——
+     * map_page.c 已经在用它判「有没有卡」，两边共用同一个桩才不会一个说有
+     * 一个说没有。闪烁相位与 pfd.c 用同一条算式（600 ms 半周期），uptime_ms
+     * 已经是同一单调时钟，直接复用而不是再引入 esp_timer_get_time()。 */
+    stat->sd_mounted       = pk_sdcard_is_mounted();
+    stat->sd_alert_blink_on = ((stat->uptime_ms / 600) & 1) != 0;
 
     /* 把本帧姿态推给运行时桩，交通目标才会随航向绕罗盘转。 */
     pk_mock_update(hsi->yaw_deg, alt->altitude_ft, anim_us);

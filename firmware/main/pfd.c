@@ -45,6 +45,7 @@
 #include "pk_ui_nav_host.h"
 #include "touch_gt911.h"
 #include "soc_temp.h"
+#include "pk_sdcard.h"
 #include "pfd_statusbar.h"
 #include "pfd_speed_tape.h"
 #include "pfd_tape.h"
@@ -302,6 +303,11 @@ static void pfd_task(void *arg)
                 .gps_have_fix   = gps.have_fix,
                 .gps_sats       = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats)),
                 .ble_connected  = ble_gatt_is_connected(),
+                .sd_mounted     = pk_sdcard_is_mounted(),
+                /* 1.2 s 周期（600 ms 半周期），比 400 ms 的 ADS-B LOST 慢——
+                 * 没插卡不是需要立刻处置的飞行告警，用与它相同的急促闪烁会
+                 * 抢错注意力。 */
+                .sd_alert_blink_on = ((now_us / 600000) & 1) != 0,
                 /* 顶栏动效（充电动画）的相位基准，必须是单调时钟而非帧计数。 */
                 .uptime_ms      = (uint32_t)(now_us / 1000),
             };

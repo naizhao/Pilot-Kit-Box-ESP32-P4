@@ -28,6 +28,10 @@ typedef struct {
     bool    batt_charging;      /* 外部供电中，图标改播充电动画   */
     bool    temp_warn;          /* 芯片超温告警，优先级高于电量   */
     int     temp_c;
+    bool    sd_mounted;         /* TF 卡已挂载：绿色 sd_card 常亮  */
+    /* 未插卡 / 挂不上时红色闪烁的相位，由调用方（渲染侧）每帧算好传入——
+     * 本模块只管画，不存状态（见 pfd.c 里 alert_blink_on 的同款做法）。 */
+    bool    sd_alert_blink_on;
 
     /* 单调时钟。动效（充电动画等）的相位由它算，而不是数渲染帧数——
      * 固件与模拟器帧率不同，数帧会让同一段动画快慢不一。 */

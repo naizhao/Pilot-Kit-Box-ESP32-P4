@@ -52,6 +52,10 @@ ICONS = [
     ("TEMP",      "thermometer_alert",   0xFFFFB, 1),
     ("BLE",       "bluetooth",           0xE1A7, 1),
     ("SD",        "sd_card",             0xE1C2, 1),
+    # 没插卡 / 挂不上的告警态。sd_card_alert 与罩哥给的 U+E624 是同一字形
+    # （Material Symbols 别名，fontTools 轮廓 md5 比对确认一致），这里取
+    # U+F057 这枚码位。
+    ("SD_ALERT",  "sd_card_alert",       0xF057, 1),
     # ADS-B 目标数的前缀。取 connecting_airports（画的是**两架**飞机）而不是
     # plane_contrails（单机 + 尾迹）：后面跟着的是目标计数，"周围有 N 架"要
     # 的是复数语义，尾迹说的是航迹，对不上。

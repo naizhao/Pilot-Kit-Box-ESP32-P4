@@ -66,6 +66,7 @@ static pk_icon_id_t icon_id_for(pk_bar_icon_t kind, const pk_bar_batt_t *batt)
     case PK_BAR_ICON_SAT:  return PK_ICON_SAT;
     case PK_BAR_ICON_BLE:  return PK_ICON_BLE;
     case PK_BAR_ICON_SD:   return PK_ICON_SD;
+    case PK_BAR_ICON_SD_ALERT: return PK_ICON_SD_ALERT;
     case PK_BAR_ICON_ADSB: return PK_ICON_ADSB;
     case PK_BAR_ICON_BATT: return batt ? batt_icon_for(batt) : PK_ICON_COUNT;
     default:               return PK_ICON_COUNT;      /* 无图标 */

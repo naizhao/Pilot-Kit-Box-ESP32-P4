@@ -49,7 +49,8 @@
  *
  * 若按实际内容算，蓝牙一断开中段就会整排平移 —— 顶栏元素的位置必须稳定，
  * 否则每次扫视都要重新找目标在哪。最坏情况是两个图标 + "100%" 四字符。 */
-#define BAR_RIGHT_W     (pk_bar_icon_width(PK_BAR_ICON_BLE) \
+#define BAR_RIGHT_W     (pk_bar_icon_width(PK_BAR_ICON_SD) \
+                       + pk_bar_icon_width(PK_BAR_ICON_BLE) \
                        + pk_bar_icon_width(PK_BAR_ICON_BATT) \
                        + BAR_TEXT_W(4) + PFD_BAR_GAP_LABEL)
 
@@ -224,6 +225,27 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
         if (s->ble_connected) {       /* 蓝牙符号本身即可表意，无需文字 */
             rx -= pk_bar_icon_width(PK_BAR_ICON_BLE);
             pk_bar_icon_draw(fb, rx, BAR_ICON_Y, PK_BAR_ICON_BLE, NULL, COL_LABEL);
+
+            rx -= PFD_BAR_GAP_LABEL;
+        }
+
+        /* SD 卡。与蓝牙/电量同属"设备自身状态"组，常驻不参与中段的降级——
+         * 插没插卡、能不能写，用户任何时候都该知道，不该因为 GPS/ADSB 抢
+         * 位置就被挤掉。 */
+        {
+            rx -= pk_bar_icon_width(PK_BAR_ICON_SD);
+            if (s->sd_mounted) {
+                pk_bar_icon_draw(fb, rx, BAR_ICON_Y, PK_BAR_ICON_SD, NULL, COL_GREEN);
+            } else {
+                /* 闪烁不做「画/不画」的有无切换，而是亮红↔暗红——理由同
+                 * ADS-B LOST（pfd_infobox.c）：静态截图也能截出告警配色，
+                 * 图标不会在灭的那半周期里凭空消失、占位跟着跳动。相位由
+                 * 调用方（pfd.c/sim）算好放进 s->sd_alert_blink_on，本函数
+                 * 只管按位取色，不存状态。 */
+                uint16_t col = s->sd_alert_blink_on ? COL_RED
+                                                     : pk_rgb565(110, 34, 26);
+                pk_bar_icon_draw(fb, rx, BAR_ICON_Y, PK_BAR_ICON_SD_ALERT, NULL, col);
+            }
         }
     }
 }

@@ -20,6 +20,7 @@ typedef enum {
     PK_BAR_ICON_SAT,
     PK_BAR_ICON_BLE,
     PK_BAR_ICON_SD,
+    PK_BAR_ICON_SD_ALERT,   /* 没插卡 / 挂不上，红色闪烁 */
     PK_BAR_ICON_ADSB,   /* ADS-B 目标数前缀，替代原来的 "ADSB" 四字母 */
 } pk_bar_icon_t;
 
