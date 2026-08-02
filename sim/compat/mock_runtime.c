@@ -75,7 +75,7 @@ bool pk_imu_sample_get(pk_imu_sample_t *out)
 }
 
 /*
- * 地图页专用的本机位置：珠三角试点包（tmp/sd-maps/pk_map_prd_pilot.pmtiles，
+ * 地图页专用的本机位置：珠三角试点包（datafiles/maps/pk_map_prd_pilot.pmtiles，
  * 见 firmware/test/test_pk_map_store.c 打印的 bounds 112.5,21.5,114.6,23.5，
  * z0-12）覆盖范围内取一点。demo_data.c 的 DEMO_OWN_LAT/LON 钉在北京
  * （40,116.6），那是给 PFD/交通页历史场景用的基线，不能改——地图页需要一个

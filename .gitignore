@@ -56,6 +56,14 @@ __pycache__
 # 就会把上百个文件连同用户名一起提交到这个开源仓库。放什么随意，但不进 git。
 /tmp/
 
+# ── 数据文件工作区（datafiles/）─────────────────────────────────────
+# 盒子要用的离线数据：机型库/航空数据 .bin（各 8~17 MB）、离线底图 .pmtiles
+# （单包最大 1.4 GB，四个包合计 3.4 GB）。全部是脚本可再生的产物，体积也远
+# 超任何仓库该扛的量级，只忽略内容物、保留目录结构与说明。
+# 每个文件从哪来、怎么重新生成、拷到 SD 卡的什么位置，见 datafiles/README.md。
+/datafiles/**/*.bin
+/datafiles/**/*.pmtiles
+
 # Object and compiler intermediate files
 *.o
 *.obj

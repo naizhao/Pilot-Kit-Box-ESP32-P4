@@ -142,7 +142,7 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 出厂开机一致，见该文件注释）。
     #
     # PK_SIM_MAPS_DIR：sim/compat/pk_tile_loader_sim.c 同步实现读的目录，
-    # 默认 tmp/sd-maps（4 个真实 pmtiles 包：global z0-9、cn/us_conus
+    # 默认 datafiles/maps（4 个真实 pmtiles 包：global z0-9、cn/us_conus
     # z10-12、prd_pilot 珠三角试点包 z0-12，全球+珠三角都覆盖）。这里显式
     # 写出绝对路径而不是依赖默认值，避免 capture.py 的 cwd 假设跟 sim 二进制
     # 的默认值悄悄脱节。
@@ -152,16 +152,16 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 该包的高清区间，默认场景应该是清晰底图，不是 overzoom 马赛克。
     ("ui-4.3-map",          {"PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
-                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps")},
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps")},
                                                                    "地图页正常态：底图 + 本机 + 5 个 ADS-B 目标"),
     ("ui-4.3-map-clump",    {"PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
-                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_CLUMP": "1"},
                                                                    "地图页目标扎堆：验证标签防遮挡（只留一个标签）"),
     ("ui-4.3-map-no-gps",   {"PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
-                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_NO_OWN": "1"},
                                                                    "地图页无 GPS：无本机符号，视口停在上次/默认中心"),
     # 目录存在与否都行——pk_map_store_scan 对 opendir 失败只是记一条警告后
@@ -178,7 +178,7 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 不够深，provider 只能用更粗的父瓦片放大凑数。
     ("ui-4.3-map-overzoom", {"PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
-                             "PK_SIM_MAPS_DIR": str(REPO / "tmp" / "sd-maps"),
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_OWN_LAT": "-33.9",
                              "PK_SIM_MAP_OWN_LON": "151.2"},
                                                                    "地图页 overzoom：只有全球包覆盖，父瓦片放大 + 提示徽标"),

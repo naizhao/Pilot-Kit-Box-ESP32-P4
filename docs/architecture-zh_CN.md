@@ -91,7 +91,7 @@ flowchart LR
 | file sink queue | 约 10 KiB | 256 × `file_record_t` |
 | BLE raw queue | 约 5 KiB | 64 × 80 B raw ts-line |
 | NimBLE host | 约 30 KiB | GATT DB、连接状态、事件循环等 |
-| aircraft DB blob | 约 8.16 MiB flash | `aircraft_db.bin`，通过 `EMBED_FILES` 嵌入，用于 ICAO24 -> 机型/型号/注册号查询 |
+| aircraft DB blob | 约 8.21 MiB PSRAM | `/sdcard/aero/pk_actdb.bin`，由 `aircraft_db.c` 懒加载进 PSRAM，用于 ICAO24 -> 机型/型号/注册号查询。已不再嵌入 flash；无卡时查询为空，拔卡即释放缓冲 |
 | 航司/国家表 | 约 230 KiB + 小型 flash 表 | `airline_codes.c` 和 `icao_country.c`，生成式查找数据，用于呼号和国家显示 |
 
 大块缓冲尽量放入 PSRAM，内部 768 KiB SRAM 留给 DMA-capable 分配、FreeRTOS 栈、ESP-Hosted 队列和 USB host descriptor。

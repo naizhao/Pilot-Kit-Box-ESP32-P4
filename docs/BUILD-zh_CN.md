@@ -341,13 +341,13 @@ or
 or
  ...
 
-pilot_kit_box.bin binary size 0x989a40 bytes. Smallest app partition is 0xa00000 bytes. 0x765c0 bytes (5%) free.
+pilot_kit_box.bin binary size 0x2c93b0 bytes. Smallest app partition is 0xc00000 bytes. 0x936c50 bytes (76%) free.
 ```
 
 产物位于 `firmware/build/`：
 - `bootloader/bootloader.bin` — 二级 bootloader (~23 KiB)
 - `partition_table/partition-table.bin` — 分区表 (~3 KiB)
-- `pilot_kit_box.bin` — 主固件 (~960 KiB)
+- `pilot_kit_box.bin` — 主固件 (~2.9 MB；8 MB 机型库搬到 SD 卡之前是 ~11.5 MB)
 
 ---
 

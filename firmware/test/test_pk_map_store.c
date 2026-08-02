@@ -12,8 +12,9 @@
  *      z0-12）+ 一个手造的坏包，验证坏包跳过、真实路由选包、拔卡/rescan。
  *      样本包缺失时优雅 skip（不算失败），跟 test_pk_pmtiles.c 一致。
  *
- * 样本包是几十 MB~GB 级地图数据，不进 git。默认到仓库内 tmp/sd-maps/ 下找
- * （tmp/ 已在 .gitignore 里），可用环境变量 PK_MAP_TEST_DATA_DIR 指到别处。
+ * 样本包是几十 MB~GB 级地图数据，不进 git。默认到仓库内 datafiles/maps/ 下找
+ * （该目录下的 *.pmtiles 已在 .gitignore 里，见 datafiles/README.md），
+ * 可用环境变量 PK_MAP_TEST_DATA_DIR 指到别处。
  * 默认值是相对路径，所以上面那行 cc 命令要在仓库根目录下跑。
  */
 #include <stdbool.h>
@@ -34,15 +35,15 @@
 #define PK_MAP_TEST_DIR "/tmp/pk_map_test_dir"
 #endif
 
-/* 样本包所在目录：默认仓库内 tmp/sd-maps/（相对仓库根目录），
+/* 样本包所在目录：默认仓库内 datafiles/maps/（相对仓库根目录），
    PK_MAP_TEST_DATA_DIR 可覆盖。 */
 #ifndef PK_MAP_TEST_DATA_DIR_DEFAULT
-#define PK_MAP_TEST_DATA_DIR_DEFAULT "tmp/sd-maps"
+#define PK_MAP_TEST_DATA_DIR_DEFAULT "datafiles/maps"
 #endif
 
 /* 缺样本包时统一打这段，告诉别人怎么把它弄回来（唯一的 %s 是当前样本目录）。*/
 #define PK_MAP_TEST_HOWTO \
-    "      样本包不进 git（几十 MB~GB 级地图数据，tmp/ 已在 .gitignore 里）。\n" \
+    "      样本包不进 git（几十 MB~GB 级地图数据，见 datafiles/README.md）。\n" \
     "      获取：按项目的 SD 离线地图出包链路（tileserver-gl 渲染 → MBTiles →\n" \
     "      pmtiles convert）自己出包，或从已刷好的 SD 卡 maps/ 目录拷贝，放到\n" \
     "      %s/ 下；也可用 PK_MAP_TEST_DATA_DIR 环境变量指向别处。\n"

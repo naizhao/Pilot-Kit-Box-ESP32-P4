@@ -85,13 +85,13 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 截至 **2026-07-29**，当前 4.3 寸固件已经覆盖 ADS-B 接收与解码、BLE
 GDL90 分发、GPS 定位与 RMC 授时、BMP388 气压高度、LittleFS/MicroSD
 记录、ST7701 MIPI-DSI 横屏显示、GT911 触摸导航、交通雷达、ADS-B 列表、
-实时诊断、内置航空识别数据库和 BNO085 姿态融合。
+实时诊断、本地航空识别数据库和 BNO085 姿态融合。
 
 As of **2026-07-29**, the current 4.3-inch firmware includes ADS-B reception
 and decode, BLE GDL90 distribution, GPS positioning and RMC time sync,
 BMP388 barometric altitude, LittleFS/MicroSD recording, an ST7701 MIPI-DSI
 landscape display, GT911 touch navigation, traffic radar, ADS-B list, live
-diagnostics, embedded aviation identity databases, and BNO085 attitude fusion.
+diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 ### `v0.8.0` 发布重点 / Release Highlights
 
@@ -120,7 +120,7 @@ diagnostics, embedded aviation identity databases, and BNO085 attitude fusion.
 | 360° 交通雷达：航向朝上/北向上、2/5/10/20 NM、目标选择和相对高度 | 360° traffic radar: heading-up/north-up, 2/5/10/20 NM, target selection, relative altitude | 已实现 / Implemented |
 | PFD HSI 前方交通叠加和后方目标计数 | Forward-traffic overlay and aft-target count on the PFD HSI | 已实现 / Implemented |
 | ADS-B 列表页：ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE 和详情面板 | ADS-B list page: ICAO, callsign, country, ALT, SPD, HDG, VS, SQK, TYPE, and detail pane | 已实现 / Implemented |
-| 内置航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Embedded aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
+| 本地航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Local aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
 | BNO085 100 Hz 姿态融合、校准向导和 dock 长按“调平”持久化 | BNO085 100 Hz attitude fusion, calibration wizard, and persistent dock Level action | 已实现 / Implemented |
 | Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
@@ -240,22 +240,23 @@ current 4.3-inch integrated board, and prices/exchange rates are not current.
 | 路径 | Path | 内容 / Contents |
 |---|---|---|
 | `firmware/` | `firmware/` | ESP-IDF v6.0.1 固件工程 / ESP-IDF v6.0.1 firmware project |
-| `firmware/main/` | `firmware/main/` | 应用层 C 源码和内置航空识别数据库 / Application C sources and embedded aviation identity databases |
+| `firmware/main/` | `firmware/main/` | 应用层 C 源码和编进固件的识别数据表（航司代码、ICAO24 国家段） / Application C sources and the identity tables compiled into the firmware (airline codes, ICAO24 countries) |
 | `firmware/components/esp32-rtl-sdr/` | `firmware/components/esp32-rtl-sdr/` | RTL-SDR USB/SDR 组件 / RTL-SDR USB/SDR component |
 | `firmware/scripts/` | `firmware/scripts/` | 字体、数据库和测试脚本 / Font, database, and test scripts |
+| `datafiles/` | `datafiles/` | SD 卡离线数据工作区：`data/` 机型库与航空数据 bin、`maps/` 底图包（内容不进 git，见 `datafiles/README.md`） / microSD offline data workspace: `data/` aircraft and aeronautical binaries, `maps/` basemap packs (contents gitignored, see `datafiles/README.md`) |
 | `docs/` | `docs/` | 构建、协议、架构、用户和硬件文档 / Build, protocol, architecture, user, and hardware docs |
 | `web/flasher/` | `web/flasher/` | ESP Web Tools 网页刷机页面 / ESP Web Tools web flasher |
 | `tools/firmware_release/` | `tools/firmware_release/` | 固件发布打包工具 / Firmware release packaging tools |
 
-## 内置航空识别数据库 / Embedded Aviation Identity Databases
+## 航空识别数据库 / Aviation Identity Databases
 
-固件内置三类本地识别数据库，用于把 ADS-B / Mode-S 中收到的 ICAO24 地址和呼号显示为更容易核对的航空信息。它们不是航班计划、航线、时刻表或实时联网数据；终端用户通过更新完整固件获得新的数据库快照。
+盒子用三类本地识别数据库，把 ADS-B / Mode-S 中收到的 ICAO24 地址和呼号显示为更容易核对的航空信息。它们不是航班计划、航线、时刻表或实时联网数据。机型库放在 microSD 卡上（`/sdcard/aero/pk_actdb.bin`），更新只需把新文件拷进卡里，不用刷固件；航司代码表和 ICAO24 国家地址段仍编进固件镜像，随固件更新。
 
-The firmware embeds three local identity databases so ICAO24 addresses and ADS-B callsigns can be rendered as operationally useful aviation information. These are not flight-plan, route, timetable, or live network databases; end users receive refreshed snapshots through full firmware updates.
+The box uses three local identity databases so ICAO24 addresses and ADS-B callsigns can be rendered as operationally useful aviation information. These are not flight-plan, route, timetable, or live network databases. The aircraft database lives on the microSD card (`/sdcard/aero/pk_actdb.bin`) and is refreshed by copying a new file onto the card — no reflash. The airline code table and ICAO24 country ranges are still compiled into the firmware image and ship with firmware updates.
 
 | 数据库 | Database | 用途 / Purpose | 仓库位置 / Repository Location | 更新脚本 / Update Script |
 |---|---|---|---|---|
-| 飞机 ICAO24 数据库 | Aircraft ICAO24 database | ICAO24 -> 注册号、ICAO 机型代码、型号名称、Doc 8643 技术描述；当前快照约 570k 条记录、8.16 MiB。<br>ICAO24 -> registration, ICAO type code, model name, and Doc 8643 descriptor; the current snapshot is about 570k records / 8.16 MiB. | `firmware/main/aircraft_db.bin`, `firmware/main/aircraft_db.c`, `firmware/main/aircraft_db.h` | `firmware/scripts/gen_aircraft_db.py` |
+| 飞机 ICAO24 数据库 | Aircraft ICAO24 database | ICAO24 -> 注册号、ICAO 机型代码、型号名称、Doc 8643 技术描述；当前快照约 574k 条记录、8.21 MB，随 SD 卡分发（`/sdcard/aero/pk_actdb.bin`），不再嵌入固件，开机后懒加载进 PSRAM，无卡时相关字段显示 `---`。<br>ICAO24 -> registration, ICAO type code, model name, and Doc 8643 descriptor; the current snapshot is about 574k records / 8.21 MB, shipped on the SD card (`/sdcard/aero/pk_actdb.bin`) rather than embedded in the firmware, and lazily loaded into PSRAM after boot; without a card those fields render as `---`. | `datafiles/data/pk_actdb.bin`（见 `datafiles/README.md`）, `firmware/main/aircraft_db.c`, `firmware/main/aircraft_db_reader.c`, `firmware/main/aircraft_db.h` | `firmware/scripts/gen_aircraft_db.py` |
 | 航司代码表 | Airline code table | ADS-B 呼号前三位 ICAO 航司代码 -> IATA 代码和运营人名称，用于把 `CSN1234` 等显示为更常见的航班号形式。<br>ADS-B callsign ICAO prefix -> IATA code and operator name, used to render callsigns such as `CSN1234` in a more familiar form. | `firmware/main/airline_codes.c`, `firmware/main/airline_codes.h` | `firmware/scripts/gen_airline_codes.py --update-source` |
 | ICAO24 国家地址段 | ICAO24 country ranges | ICAO24 地址段 -> ISO 3166-1 alpha-2 国家/地区代码和名称，用于 ADS-B LIST 的 CT 列和详情面板。<br>ICAO24 address range -> ISO 3166-1 alpha-2 country/region code and name for the ADS-B LIST CT column and detail pane. | `firmware/main/icao_country.c`, `firmware/main/icao_country.h` | `firmware/scripts/gen_icao_country.py` |
 
@@ -271,7 +272,7 @@ The firmware embeds three local identity databases so ICAO24 addresses and ADS-B
 | 看运行时任务和数据流 | Understand runtime tasks and data flow | [`docs/architecture.md`](docs/architecture.md) | [`docs/architecture-zh_CN.md`](docs/architecture-zh_CN.md) |
 | 调整 sdkconfig | Tune sdkconfig options | [`docs/configuration.md`](docs/configuration.md) | [`docs/configuration-zh_CN.md`](docs/configuration-zh_CN.md) |
 | 集成移动端 BLE | Integrate a mobile BLE client | [`docs/ble_protocol.md`](docs/ble_protocol.md) | [`docs/ble_protocol-zh_CN.md`](docs/ble_protocol-zh_CN.md) |
-| 维护内置航空识别数据库 | Maintain embedded aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
+| 维护航空识别数据库 | Maintain the aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
 | 使用 4.3 寸触摸 UI 和 PFD | Use the 4.3-inch touch UI and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
 | 接 IMU、GPS、BMP388、RTL-SDR 或 J3 扩展 | Wire IMU, GPS, BMP388, RTL-SDR, or J3 expansion | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |

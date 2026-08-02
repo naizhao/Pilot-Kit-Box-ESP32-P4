@@ -29,7 +29,7 @@
 #include "pk_tile_cache.h"  /* PK_TILE_PIXELS / PK_TILE_BUF_PIXELS / PK_TILE_BUF_BYTES */
 
 #ifndef PK_SIM_MAPS_DIR_DEFAULT
-#define PK_SIM_MAPS_DIR_DEFAULT "tmp/sd-maps"
+#define PK_SIM_MAPS_DIR_DEFAULT "datafiles/maps"
 #endif
 
 /* 一次性截图跑批，一次进程里碰到的不同瓦片数量远够不到这个上限（可见范围
@@ -137,7 +137,7 @@ void pk_tile_loader_init(void)
     memset(&s_store, 0, sizeof(s_store));
 
     /* PK_SIM_MAPS_DIR：测试数据目录（4 个真实 pmtiles 包，见
-     * tmp/sd-maps/README 或任务交付说明）。指向空目录/不存在的目录时
+     * datafiles/README.md）。指向空目录/不存在的目录时
      * pk_map_store_scan 直接返回 0，走"无有效包"降级态——这正是
      * ui-4.3-map-no-pack 场景要的效果，不用另外分支处理。 */
     const char *dir = getenv("PK_SIM_MAPS_DIR");

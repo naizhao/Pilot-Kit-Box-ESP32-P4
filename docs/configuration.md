@@ -37,11 +37,13 @@ Current `partitions.csv` layout:
 ```text
 nvs,       data, nvs,      0x9000,    0x6000
 phy_init,  data, phy,      0xf000,    0x1000
-factory,   app,  factory,  0x10000,   0xa00000
+factory,   app,  factory,  0x10000,   0xc00000
 storage,   data, spiffs,   ,          0xa00000
 ```
 
-The `storage` partition is mounted through LittleFS and currently stores rotating ADS-B raw ts-line logs. This layout uses about 20.5 MiB of the 32 MiB flash and reserves the remaining space for future expansion.
+The `storage` partition is mounted through LittleFS and currently stores rotating ADS-B raw ts-line logs. This layout uses about 22.5 MiB of the 32 MiB flash and reserves the remaining ~9.5 MiB for future expansion.
+
+The 12 MiB `factory` partition is now mostly headroom: the 8 MiB aircraft database moved to the microSD card, so the app image is about 2.9 MB and occupies roughly 23% of the partition.
 
 ## USB Host And RTL-SDR
 

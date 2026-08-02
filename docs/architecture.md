@@ -171,7 +171,7 @@ flowchart LR
 | file_sink queue| ~10 KiB | 256 × 40 B `file_record_t` items |
 | ble_raw queue  | ~5 KiB  | 64 × 80 B ts-line strings for the BLE Raw characteristic |
 | NimBLE host    | ~30 KiB | event loop, GATT DB, peer connection state (typical IDF v6 footprint) |
-| aircraft DB blob | ~8.16 MiB flash | `aircraft_db.bin`, embedded by `EMBED_FILES` for ICAO24 -> type/model/registration lookup |
+| aircraft DB blob | ~8.21 MiB PSRAM | `/sdcard/aero/pk_actdb.bin`, lazily loaded into PSRAM by `aircraft_db.c` for ICAO24 -> type/model/registration lookup. No longer embedded in flash; without the card the lookup simply stays empty and the buffer is freed on card removal |
 | airline/country tables | ~230 KiB + small table in flash | `airline_codes.c` and `icao_country.c`, generated lookup data for callsign and country display |
 
 Large bulk buffers now live in PSRAM where practical, preserving the

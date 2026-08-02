@@ -71,11 +71,13 @@ Chip type:          ESP32-P4 (revision v1.3)
 # Name,    Type, SubType,  Offset,    Size,    Flags
 nvs,       data, nvs,      0x9000,    0x6000,            ← 24 KiB Wi-Fi/BLE 配置
 phy_init,  data, phy,      0xf000,    0x1000,            ← 4 KiB RF 校准
-factory,   app,  factory,  0x10000,   0xa00000,          ← 10 MiB 主固件
+factory,   app,  factory,  0x10000,   0xc00000,          ← 12 MiB 主固件
 storage,   data, spiffs,   ,          0xa00000,          ← 10 MiB LittleFS
 ```
 
-总占用 ~20 MB / 32 MB，**剩余 12 MB 预留给未来 OTA pair**（A/B 分区双备份升级）。
+总占用 ~22.5 MB / 32 MB，**剩余 ~9.5 MB 预留给未来 OTA pair**（A/B 分区双备份升级）。
+
+12 MiB 的 `factory` 分区现在大半是余量：8 MB 的机型库已经搬到 microSD 卡上，app 镜像约 2.9 MB，只占分区的 23% 左右。
 
 ### 想加 OTA？
 
