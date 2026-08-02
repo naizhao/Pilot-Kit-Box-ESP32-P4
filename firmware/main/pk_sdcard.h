@@ -50,6 +50,17 @@ esp_err_t pk_sdcard_format(void);
  * 恢复。比较代数就没有这个问题：只要值变了，中间一定发生过重新挂载。 */
 uint32_t pk_sdcard_mount_generation(void);
 
+/* 「卡在位，但文件系统挂不上」——即上一次挂载尝试是**卡层协商成功、FAT
+ * 挂载失败**（分区不是 FAT / 已损坏）。
+ *
+ * 板上没有卡检测脚，"没插卡"和"插了张读不出的卡"在 pk_sdcard_state() 上都是
+ * PK_SD_NO_CARD。这个 flag 是唯一能区分两者的信号，取自挂载错误码的来源层，
+ * 判据见 pk_sdcard.c 里 sd_mount_locked() 失败分支的注释。
+ *
+ * 语义是「当前结论」而非事件：无卡时恒为 false，挂上后清零。调用方要提示
+ * 用户的话自己做边沿检测（探测任务每 3 s 会重算一次，值不会抖）。 */
+bool pk_sdcard_media_error(void);
+
 /* 注册「卸载前静默」回调（固定 4 槽，满了打 ERROR 丢弃）。
  *
  * 为什么需要它：IDF 的 esp_vfs_fat_sdcard_unmount() 会无条件 free 掉含所有

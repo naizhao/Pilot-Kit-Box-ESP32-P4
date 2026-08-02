@@ -66,6 +66,9 @@ static SemaphoreHandle_t s_io_lock;       /* 串行化 pmtiles 文件 I/O(fetch/
 static QueueHandle_t     s_queue;
 static volatile uint32_t s_view_gen;
 static bool               s_sd_was_mounted;
+/* 上一轮看到的 pk_sdcard_media_error()，「卡在位但读不出」的边沿判定用。
+ * 两个 worker 共享，读改写走 claim_edge() 的 CAS。 */
+static bool               s_sd_media_err_seen;
 
 /* 去重表:记录已入队/正在处理、尚未有结果的瓦片,避免 map_page 每帧重复请求
  * 同一块缺失瓦片把队列灌满。 */
@@ -384,28 +387,67 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
     return true;
 }
 
+/* 认领一次布尔跳变：*flag（上一轮观测值）与 now（本轮观测值）不同时，把 *flag
+ * 更新为 now 并返回 true；相同则返回 false。跳变的方向由调用方看 now 判断。
+ *
+ * 为什么要 CAS：handle_sd_transition() 同时跑在 tile_ld0/tile_ld1 两个 worker
+ * 上，两者的轮询周期相同（LOADER_POLL_MS），"读 flag → 判断 → 写 flag"这段
+ * 若不原子，两个任务可能都看到同一次跳变，于是重扫跑两遍、toast 弹两次。
+ * 单条 CAS 保证一次跳变只被一个 worker 认领。 */
+static bool claim_edge(bool *flag, bool now)
+{
+    bool expected = !now;
+    return __atomic_compare_exchange_n(flag, &expected, now, false,
+                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
 static void handle_sd_transition(void)
 {
-    bool mounted = pk_sdcard_is_mounted();
-    if (mounted && !s_sd_was_mounted) {
-        xSemaphoreTake(s_io_lock, portMAX_DELAY);   /* 锁序 io→s */
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        pk_map_store_invalidate(&s_store);
-        size_t n = pk_map_store_scan(&s_store, MAP_DIR);
-        pk_tile_cache_bump_generation(&s_cache);
-        xSemaphoreGive(s_lock);
-        xSemaphoreGive(s_io_lock);
-        ESP_LOGI(TAG, "SD (重新)挂载，重扫 %s：%u 个有效包", MAP_DIR, (unsigned)n);
-    } else if (!mounted && s_sd_was_mounted) {
-        /* 文件句柄已由 pre-unmount 回调（sd_close_files_cb，在 pk_sdcard
-         * 卸载序列里同步跑）关掉，这里只负责 toast/日志。包清单 meta 与
-         * 缓存原样保留，已缓存瓦片继续显示（spec 错误态「运行中拔卡」）
-         * 的行为不变——只是不会再有新瓦片进来，直到卡回来触发上面那支
-         * 重扫。 */
-        ESP_LOGW(TAG, "SD 卡被拔出——地图降级，已缓存瓦片继续显示");
-        pk_ui_toast_show(PK_TR_MAP_SD_REMOVED, true);
+    pk_sd_state_t st = pk_sdcard_state();
+
+    /* 格式化期间 is_mounted() 为假，但那是用户在设置页显式发起的操作、不是
+     * 插拔事件。不跳过的话每次格式化都会误弹一对"已拔出 / 已挂载"。 */
+    if (st == PK_SD_FORMATTING) return;
+
+    bool mounted = (st == PK_SD_MOUNTED);
+
+    /* 挂载态跳变。开机就插着卡的情况**不会**在这里响：pk_tile_loader_init()
+     * 已按真实状态给 s_sd_was_mounted 播种，首轮轮询看到的是"没变化"。
+     * 常态不是事件，不该弹提示。 */
+    if (claim_edge(&s_sd_was_mounted, mounted)) {
+        if (mounted) {
+            xSemaphoreTake(s_io_lock, portMAX_DELAY);   /* 锁序 io→s */
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            pk_map_store_invalidate(&s_store);
+            size_t n = pk_map_store_scan(&s_store, MAP_DIR);
+            pk_tile_cache_bump_generation(&s_cache);
+            xSemaphoreGive(s_lock);
+            xSemaphoreGive(s_io_lock);
+            ESP_LOGI(TAG, "SD (重新)挂载，重扫 %s：%u 个有效包", MAP_DIR, (unsigned)n);
+            /* 报挂载**结果**而不是"卡插进来了"——后者用户自己看得见。扫出包
+             * 才是绿的好消息；卡认了但 /maps 下没有有效包，对地图页来说和没卡
+             * 一样用不了，按错误态提示，省得用户以为插上就好了。 */
+            pk_ui_toast_show(n > 0 ? PK_TR_MAP_SD_MOUNTED : PK_TR_MAP_SD_NO_PACKS,
+                             n == 0);
+        } else {
+            /* 文件句柄已由 pre-unmount 回调（sd_close_files_cb，在 pk_sdcard
+             * 卸载序列里同步跑）关掉，这里只负责 toast/日志。包清单 meta 与
+             * 缓存原样保留，已缓存瓦片继续显示（spec 错误态「运行中拔卡」）
+             * 的行为不变——只是不会再有新瓦片进来，直到卡回来触发上面那支
+             * 重扫。 */
+            ESP_LOGW(TAG, "SD 卡被拔出——地图降级，已缓存瓦片继续显示");
+            pk_ui_toast_show(PK_TR_MAP_SD_REMOVED, true);
+        }
     }
-    s_sd_was_mounted = mounted;
+
+    /* 「插了张读不出的卡」是独立于挂载状态的一条线：这种卡永远挂不上，
+     * mounted 一直是 false，上面两支边沿都不会响。同样只在跳变时提示一次，
+     * 否则 3 s 一轮的重试会把 toast 一直顶在屏上。 */
+    bool media_err = pk_sdcard_media_error();
+    if (claim_edge(&s_sd_media_err_seen, media_err) && media_err) {
+        ESP_LOGW(TAG, "SD 卡在位但文件系统挂不上");
+        pk_ui_toast_show(PK_TR_MAP_SD_UNREADABLE, true);
+    }
 }
 
 static void loader_task(void *arg)
@@ -467,7 +509,11 @@ void pk_tile_loader_init(void)
         size_t n = pk_map_store_scan(&s_store, MAP_DIR);
         ESP_LOGI(TAG, "启动扫描 %s：%u 个有效包", MAP_DIR, (unsigned)n);
     }
-    s_sd_was_mounted = pk_sdcard_is_mounted();
+    /* 按真实状态播种，两条边沿都从"当前即常态"起步：开机就插着卡不弹
+     * "已挂载"，开机就插着一张坏卡也不弹"读不出"——那是启动状态，不是
+     * 用户刚做的动作，日志里已经有记录。 */
+    s_sd_was_mounted     = pk_sdcard_is_mounted();
+    s_sd_media_err_seen  = pk_sdcard_media_error();
 
     /* 双 worker 各钉一核:SD I/O 被 s_io_lock 串行化(SDMMC 本就串行),
        但 PNG 解码是纯 CPU——两核并行解码,首屏 12 张的解码墙钟近乎减半。

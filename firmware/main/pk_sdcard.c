@@ -54,6 +54,8 @@ static volatile pk_sd_state_t s_state = PK_SD_NO_CARD;
 static volatile uint32_t s_mount_attempts;
 /* 成功挂载次数（挂载代数），拔插检测用。见 pk_sdcard.h 的说明。 */
 static volatile uint32_t s_mount_generation;
+/* 「卡在位，但文件系统挂不上」。契约见 pk_sdcard.h。 */
+static volatile bool     s_media_error;
 static SemaphoreHandle_t      s_lock;
 
 /* 容量缓存 — 由挂载点/探测任务刷新；pk_sdcard_info 只读缓存，
@@ -170,6 +172,20 @@ static bool sd_mount_locked(void)
         s_card = NULL;
 
         /*
+         * 板上没有 CD 脚，"没插卡"和"插了卡但读不出"在状态上都是 PK_SD_NO_CARD。
+         * 唯一能把两者分开的线索是错误码的**来源层**：
+         * esp_vfs_fat_sdmmc_mount() 先走 esp_vfs_fat_sdmmc_sdcard_init()（卡层
+         * 协商，卡不在/接触不良 → ESP_ERR_TIMEOUT / ESP_ERR_NOT_FOUND），协商
+         * 成功后才走 mount_to_vfs_fat()，而它只在 f_mount 失败时返回 ESP_FAIL。
+         * 所以 ESP_FAIL 等价于「卡确实在位、CMD0/CMD8 都谈成了，但分区上不是
+         * 能挂的 FAT」——值得单独提示用户去格式化，而不是笼统地说"没有卡"。
+         *
+         * 只在这里赋值、不做累加：探测任务每 3 s 重试一次，卡不动的话每轮结论
+         * 相同，边沿判定交给上层（pk_tile_loader 的 handle_sd_transition）。
+         */
+        s_media_error = (err == ESP_FAIL);
+
+        /*
          * 补上 IDF 在挂载失败路径上漏掉的 slot 注销——热插拔「插回去也认不出，
          * 只能重启」的真因。
          *
@@ -225,6 +241,7 @@ static bool sd_mount_locked(void)
     }
 
     s_state = PK_SD_MOUNTED;
+    s_media_error = false;  /* 挂上了，之前那张读不出的卡已经被换掉 */
     s_mount_generation++;   /* 契约见 pk_sdcard.h：只增不减的「卡换过了」凭据 */
     sd_refresh_info_locked();
     ESP_LOGI(TAG, "microSD mounted at %s: %s %.1f GB",
@@ -407,6 +424,11 @@ bool pk_sdcard_is_mounted(void)
 uint32_t pk_sdcard_mount_generation(void)
 {
     return s_mount_generation;
+}
+
+bool pk_sdcard_media_error(void)
+{
+    return s_media_error;
 }
 
 const char *pk_sdcard_mount_point(void)

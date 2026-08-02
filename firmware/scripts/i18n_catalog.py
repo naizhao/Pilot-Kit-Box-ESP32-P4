@@ -281,6 +281,15 @@ STRINGS = [
             "zh": "诊断",
         },
     ),
+    (
+        # 全屏导航网格新增的一格。dock 时代放不下第 8 个页签（8×94+100 > 800，
+        # 见 search_page.h 文件头），网格没有这个限制。
+        "NAV_TOOLS",
+        {
+            "en": "Tools",
+            "zh": "工具",
+        },
+    ),
 
     # dock 右侧的动作区。「调平」是把当前姿态归零，与 TARE 是同一件事，
     # 但对飞行员说「调平」比说「TARE」直白。
@@ -903,6 +912,20 @@ STRINGS = [
     # 运行中拔卡：已缓存瓦片继续显示,这条只提示"新瓦片拿不到了"。
     ("MAP_SD_REMOVED", {"en": "MICROSD REMOVED — SHOWING CACHED MAP",
                         "zh": "SD 卡已拔出——显示缓存地图"}),
+    # 运行中插卡（与上面那条对称）。报的是**挂载结果**而不是"卡插进来了"
+    # ——插卡这个动作用户自己看得见，他要知道的是能不能用。分两条：
+    #   MOUNTED   → 认卡且扫到了地图包，绿色；
+    #   NO_PACKS  → 卡认了但 /maps 下没有有效包，对地图页等于没卡，红色。
+    # 开机就插着卡不弹这两条（那是常态不是事件），判定在
+    # pk_tile_loader.c handle_sd_transition()。
+    ("MAP_SD_MOUNTED", {"en": "MICROSD MOUNTED — MAP PACKS RELOADED",
+                        "zh": "SD 卡已挂载——地图包已重新载入"}),
+    ("MAP_SD_NO_PACKS", {"en": "MICROSD MOUNTED — NO MAP PACKS FOUND",
+                         "zh": "SD 卡已挂载——未找到地图包"}),
+    # 卡在位但 FAT 挂不上（分区不是 FAT / 已损坏）。与"没插卡"是两回事，
+    # 给用户可执行的下一步，别让他反复插拔一张坏卡。
+    ("MAP_SD_UNREADABLE", {"en": "MICROSD UNREADABLE — FORMAT IT AS FAT32",
+                           "zh": "SD 卡读不出——请格式化为 FAT32"}),
     # 回中按钮：手动平移后出现,点击回到跟随本机+居中。短词,要塞进一个
     # 56 px 圆按钮。
     ("MAP_RECENTER", {"en": "CENTER", "zh": "回中"}),
@@ -980,4 +1003,51 @@ STRINGS = [
     # 不同：那一种要等定位，这一种等也没用。
     ("SEARCH_NO_NEARBY", {"en": "NO AIRPORT IN RANGE OF THIS POSITION",
                           "zh": "该位置附近没有机场"}),
+    # ══════════════════════════════════════════════════════════════════
+    # 机场详情页（apt_detail_page.c）
+    #
+    # 两个入口：搜索结果点机场、地图上点机场符号。屏上的**数据**（ICAO 码、
+    # 机场名、跑道号 06L/24R、频率数字）一律不进表——那是数据包里的原文。
+    #
+    # 三类缩写刻意不立词条，直接写 ASCII 字面量（同 APT / NAV / FIX 徽章的
+    # 先例，也同 HDG / QNH / ICAO 那一条原则）：
+    #   · 服务类型 TWR / GND / ATIS / APP / DEP / CTAF / UNICOM / AWOS …
+    #     ——ICAO 通用缩写，无线电里就这么念，译成"塔台"反而对不上耳朵；
+    #   · 道面 ASPH / CONC / GRASS …——航图上就印这几个词；
+    #   · MAG（磁航向）、THR（跑道入口）、ft、NM——航图/仪表通用单位与缩写。
+    #
+    # 宽度账（可用宽 = 784 − 16 = 768；XS 档 ASCII 10 / 汉字 15，
+    # S 档 ASCII 11 / 汉字 17）：
+    #   APTD_SHOW_ON_MAP (S ) 11 拉丁 121 ≤ 按钮内宽 190−24=166；
+    #                          中文 6 汉字 102 ≤ 166
+    #   APTD_BACK        (S )  4 拉丁  44 ≤ 按钮内宽 110−24=86；中文 2 字 34
+    #   APTD_UNCTRL      (XS) 12 拉丁 120 ≤ 胶囊上限 200；中文 3 字 45
+    #   APTD_NO_FREQ     (S ) 20 拉丁 220 ≤ 768；中文 5 字 85
+    # 圆括号一律不用（AA 字库里 '(' ')' 与方括号几乎同形，同搜索页那一条）。
+    # ══════════════════════════════════════════════════════════════════
+    # 返回上一层。写"返回"而不是"关闭"：这一页有来路——从搜索进来就回搜索、
+    # 从地图进来就回地图，"关闭"会让人以为回到的是某个固定的地方。
+    ("APTD_BACK", {"en": "BACK", "zh": "返回"}),
+    # 把视口挪到这个机场并落一枚 PIN。动词打头，说清楚点下去会发生什么。
+    ("APTD_SHOW_ON_MAP", {"en": "SHOW ON MAP", "zh": "在地图上显示"}),
+    ("APTD_SEC_RUNWAYS", {"en": "RUNWAYS", "zh": "跑道"}),
+    ("APTD_SEC_FREQ",    {"en": "FREQUENCIES", "zh": "频率"}),
+    # 头部那三枚胶囊。ELEV 在英文侧保留航图缩写，中文侧用"标高"——这是
+    # 航图中文版的标准译法，不是自造词。
+    ("APTD_ELEV", {"en": "ELEV", "zh": "标高"}),
+    # 是否管制。三态分开报：库里 ctrl 有"未知"这一档（CTRL_ENUM 未命中→0），
+    # 把未知并进"无管制"是在替飞行员做一个他没授权的判断。
+    ("APTD_CTRL",         {"en": "CONTROLLED",      "zh": "有管制"}),
+    ("APTD_UNCTRL",       {"en": "UNCONTROLLED",    "zh": "无管制"}),
+    ("APTD_CTRL_UNKNOWN", {"en": "CONTROL UNKNOWN", "zh": "管制情况未知"}),
+    # 两种空段。跑道/频率各自为空的成因相同——这个机场在数据包里就没有那一段，
+    # 所以不再分 HINT；说清楚"是数据没有"而不是"页面坏了"即可。
+    ("APTD_NO_RUNWAY", {"en": "NO RUNWAY DATA IN THIS PACK",
+                        "zh": "本数据包内无跑道数据"}),
+    ("APTD_NO_FREQ",   {"en": "NO FREQUENCY DATA IN THIS PACK",
+                        "zh": "本数据包内无频率数据"}),
+    # 整页取不到数据：拔卡、库还没加载完、或下标越界。仍然把页面打开并显示
+    # 这一句，而不是静默不开——静默会让用户以为自己没点中那个圆圈。
+    ("APTD_UNAVAILABLE", {"en": "AIRPORT DATA UNAVAILABLE",
+                          "zh": "机场数据不可用"}),
 ]
