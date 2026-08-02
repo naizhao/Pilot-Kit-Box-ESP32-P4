@@ -40,5 +40,7 @@
 			(xy -6.75 -7.673) (xy 36.25 -7.673) (xy 36.25 -1.976) (xy -6.75 -1.976)
 		))
 	)
+	(fp_rect (start -0.812 -0.812) (end 0.812 0.812) (stroke (width 0) (type default)) (fill yes) (layer "F.Mask"))
+	(fp_rect (start -5.8 -0.835) (end -4.176 0.789) (stroke (width 0) (type default)) (fill yes) (layer "F.Mask"))
 	(fp_rect (start -5.75 -6.738) (end 35.25 0.762) (stroke (width 0.1) (type default)) (fill no) (layer "F.Fab"))
 )
