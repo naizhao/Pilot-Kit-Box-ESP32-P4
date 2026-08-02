@@ -26,13 +26,36 @@
 extern "C" {
 #endif
 
-/* 96 槽 × 128KB = 12MB 上限（缓冲区按需分配，装不满就不占）。
+/* 48 槽 × 128KB = 6MB 硬上限（缓冲区按需分配，装不满就不占）。
  *
  * 24 槽为什么不够：800×480 一屏最多要 15 张瓦片，换一级 zoom 就是另外 15 张
  * ——24 槽连两级都装不下，来回缩放必然把上一级全挤掉，表现为"每次缩放都在
- * 重新加载"（罩哥 2026-08-01 实测反馈）。96 槽能存下四五级视口加平移历史。
- * PSRAM 32MB 里帧缓冲等只用了约 3MB，这 12MB 花得起。 */
-#define PK_TILE_CACHE_SLOTS       96
+ * 重新加载"（罩哥 2026-08-01 实测反馈）。48 槽 ≈ 三级视口（15×3=45），来回
+ * 缩放不会被挤掉。
+ *
+ * 96 槽为什么必须降回来（2026-08-02 真机自检，见下面的实测数字）：a14c529
+ * 定 96 槽时机型库还在 flash EMBED、不占 PSRAM。机型库搬到 SD 之后，稳态
+ * PSRAM 余量只剩 **9.15 MB**（pk_aero.bin 10.92MB + pk_actdb.bin 8.21MB +
+ * 帧缓冲约 2.9MB 之后的剩余），而 96 槽的上限是 12MB——**缓存上限比可用
+ * PSRAM 还大 2.85MB，数学上必然把内存吃穿**。吃穿之后不是"少一张瓦片"，
+ * 是整条链路一起垮：
+ *   - lodepng 分配 256KB RGBA 失败 → `PNG 解码失败 … err=83`
+ *   - SD 读回 `sdmmc_read_blocks failed (0x106)`(ESP_ERR_NO_MEM)
+ *   - pmtiles 目录读不出来 → 被记成 `所有包目录均未命中`（误判成数据缺失）
+ * 三者都走 put_negative()，负缓存条目再把正常瓦片从 LRU 里挤出去，缓存清空
+ * → PSRAM 又空出来 → 30 s 负缓存 TTL 到期 → 重新灌满 → 再撞墙。实测这个
+ * 循环周期约 35 s，屏上就是"整片瓦片缺失、过一阵自己好、再过一阵又没了"。 */
+#define PK_TILE_CACHE_SLOTS       48
+
+/* PSRAM 水位线：瓦片缓存永远不把 PSRAM 压到这条线以下，宁可先淘汰最久未用
+ * 的瓦片。硬上限管不了未来——v4 航空库（16.63MB，比 v3 多 5.71MB）上卡后
+ * 稳态余量还要再掉 5.71MB，写死的槽数到那天又会重演一遍。
+ *
+ * 3MB 的依据：解一张瓦片同时要 png scratch（≤1MB）+ lodepng 的 RGBA8888
+ * 256KB + inflate 中间缓冲，两个 worker 并行约 2MB 峰值；余下 1MB 留给
+ * 航空图层查询/LVGL/BLE 的零散分配。实测把余量压到 1.1MB、最大连续块
+ * 256KB 时，上面那三条失败全部出现。 */
+#define PK_TILE_CACHE_PSRAM_FLOOR_BYTES (3u * 1024u * 1024u)
 #define PK_TILE_PIXELS            256
 #define PK_TILE_BUF_PIXELS        (PK_TILE_PIXELS * PK_TILE_PIXELS)
 #define PK_TILE_BUF_BYTES         (PK_TILE_BUF_PIXELS * (int)sizeof(uint16_t))
@@ -71,8 +94,21 @@ void pk_tile_cache_init(pk_tile_cache_t *cache);
 void pk_tile_cache_deinit(pk_tile_cache_t *cache);
 
 /* 按当前分配后端申请一块 PK_TILE_BUF_BYTES 字节的瓦片缓冲区，供调用方解码
- * 进去后 pk_tile_cache_put()。失败返回 NULL。 */
+ * 进去后 pk_tile_cache_put()。失败返回 NULL。
+ * 裸分配，不看水位线、不淘汰——固件请走 pk_tile_cache_acquire_buffer()。 */
 uint16_t *pk_tile_cache_alloc_tile_buffer(void);
+
+/* 取一块瓦片缓冲区，必要时先让路（这是固件该用的那个）：
+ *   1. PSRAM 余量低于 PK_TILE_CACHE_PSRAM_FLOOR_BYTES + 一张瓦片时，先淘汰
+ *      最久未用的瓦片，直到回到水位线之上或无可淘汰；
+ *   2. 分配仍失败就再淘汰一条重试，直到缓存让干净为止。
+ * 全部让完还是拿不到才返回 NULL（此时 alloc_fail_count 加一）。
+ * 调用方必须持有保护 cache 的锁。 */
+uint16_t *pk_tile_cache_acquire_buffer(pk_tile_cache_t *cache);
+
+/* 淘汰一条最久未用、且真正占着瓦片缓冲区的条目并释放其内存。
+ * 空槽和负缓存不占瓦片内存，不算候选。没有可淘汰的返回 false。 */
+bool pk_tile_cache_evict_lru(pk_tile_cache_t *cache);
 
 /* 拔卡/rescan 时整体作废：所有已缓存条目（含负缓存）立即释放并清空，
  * generation 计数器递增。旧 generation 缓存的数据不会污染重扫后的结果。 */
@@ -99,6 +135,20 @@ void pk_tile_cache_put(pk_tile_cache_t *cache, pk_tile_key_t key, uint16_t *data
 /* 标记 key 为"确认缺失"（例如包路由/查目录未命中，或 PNG 解码失败）。
  * 同样参与 LRU 淘汰（满槽时可能挤掉最久未用的条目，含负缓存）。 */
 void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
+
+/* ── 诊断 ────────────────────────────────────────────────────────────
+ * 「地图整片瓦片缺失」这类问题里，光看屏幕分不清是"没请求""读失败"还是
+ * "内存不够装不下"。这两个口子让排查方能直接读到缓存的真实占用与分配失败
+ * 累计次数，不用再猜。 */
+
+/* out_used：装着真实瓦片的槽数；out_negative：负缓存槽数；
+ * out_bytes：瓦片缓冲区实际占用字节（= out_used × PK_TILE_BUF_BYTES）。
+ * 任一 out 指针可为 NULL。只统计当前 generation 的条目。 */
+void pk_tile_cache_stats(const pk_tile_cache_t *cache, int *out_used,
+                         int *out_negative, size_t *out_bytes);
+
+/* pk_tile_cache_alloc_tile_buffer() 返回 NULL 的累计次数（模块级，非按实例）。 */
+uint32_t pk_tile_cache_alloc_fail_count(void);
 
 #ifdef __cplusplus
 }

@@ -110,6 +110,14 @@ typedef struct {
     /* pk_pmtiles_open_file 内部持有的 FILE*；pk_pmtiles_open 打开的实例为
      * NULL，close 时不去动调用方自己的 read_ctx。 */
     void *owned_file;
+
+    /* 读盘出过错的粘滞标记。存在的理由（2026-08-02 真机实测）：FatFs 的 FIL
+     * 一旦碰上一次 disk_read 失败就把 fp->err 钉死，此后这个句柄上的每次
+     * f_read 都直接返回错误、不再真去读卡——一次瞬时的 sdmmc 0x106
+     * (ESP_ERR_NO_MEM) 会让整个包从此一张瓦片都读不出来，屏上就是"整片地图
+     * 缺失且再也不自愈"。调用方看到这个标记就该 pk_pmtiles_reopen_file()，
+     * 并且**不要**把这次失败当成"数据不存在"记进负缓存。 */
+    bool io_error;
 } pk_pmtiles_t;
 
 typedef struct {
@@ -125,6 +133,12 @@ bool pk_pmtiles_open(pk_pmtiles_t *pm, pk_pmtiles_read_fn read_fn, void *read_ct
 /* POSIX 便捷封装：内部 fopen(path)，读回调用 fseek+fread 实现。host 单测
  * 与固件本地文件场景（若用 fopen("/sdcard/...")）都能直接用。 */
 bool pk_pmtiles_open_file(pk_pmtiles_t *pm, const char *path);
+
+/* 重开 pk_pmtiles_open_file 打开过的句柄，清掉 io_error。header/根目录/叶
+ * 目录缓存都在内存里，不重新解析——这是 FatFs 粘滞错误（见 io_error 注释）
+ * 唯一能就地复活的办法。fopen 失败返回 false，read_ctx 置 NULL，之后的读
+ * 干净失败而不是拿着已关句柄乱来。 */
+bool pk_pmtiles_reopen_file(pk_pmtiles_t *pm, const char *path);
 
 /* 只关内部持有的 FILE*（拔卡预卸载用）：header/根目录驻留内存原样保留，
  * 之后的 pm->read 一律干净返回失败（posix 读回调对 NULL ctx 返回 -1）。

@@ -219,6 +219,83 @@ static void test_generation_bump_clears_all(void)
     pk_tile_cache_deinit(&c);
 }
 
+/* ------------------------------------------------------- 主动淘汰（PSRAM 让路） */
+
+static void test_evict_lru(void)
+{
+    printf("-- evict_lru：按 LRU 主动让出瓦片内存 --\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+
+    for (int i = 0; i < 5; i++) {
+        pk_tile_cache_put(&c, mk_key(1, 9, (uint32_t)i, 0), mk_tile((uint16_t)i));
+    }
+    /* get key0 把它提为最近使用 → 真正最久未用的是 key1。 */
+    bool neg;
+    chk_true("提升前 key0 命中", pk_tile_cache_get(&c, mk_key(1, 9, 0, 0), 0, &neg) != NULL);
+
+    chk_true("evict 成功", pk_tile_cache_evict_lru(&c));
+    chk_true("被淘汰的是 key1（最久未用）",
+             pk_tile_cache_get(&c, mk_key(1, 9, 1, 0), 0, &neg) == NULL);
+    chk_true("key0 仍在", pk_tile_cache_get(&c, mk_key(1, 9, 0, 0), 0, &neg) != NULL);
+
+    int used = -1, negc = -1;
+    size_t bytes = 0;
+    pk_tile_cache_stats(&c, &used, &negc, &bytes);
+    chk_u32("淘汰后 used 槽数", (uint32_t)used, 4);
+    chk_u32("淘汰后占用字节", (uint32_t)bytes, 4u * PK_TILE_BUF_BYTES);
+
+    /* 把剩下 4 条全让完，第 5 次没得让 → false。 */
+    for (int i = 0; i < 4; i++) chk_true("继续 evict", pk_tile_cache_evict_lru(&c));
+    chk_true("空缓存 evict 返回 false", !pk_tile_cache_evict_lru(&c));
+
+    pk_tile_cache_deinit(&c);
+}
+
+static void test_evict_skips_negative(void)
+{
+    printf("-- evict_lru 不动负缓存（它不占瓦片内存） --\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+
+    /* 负缓存先进（最久未用），真瓦片后进。 */
+    pk_tile_cache_put_negative(&c, mk_key(4, 7, 1, 1), 0);
+    pk_tile_cache_put(&c, mk_key(4, 7, 2, 2), mk_tile(0x5555));
+
+    chk_true("evict 成功", pk_tile_cache_evict_lru(&c));
+
+    bool neg = false;
+    chk_true("真瓦片被淘汰（哪怕它更新）",
+             pk_tile_cache_get(&c, mk_key(4, 7, 2, 2), 0, &neg) == NULL);
+    (void)pk_tile_cache_get(&c, mk_key(4, 7, 1, 1), 0, &neg);
+    chk_true("负缓存条目原样留着", neg);
+    chk_true("只剩负缓存时 evict 返回 false", !pk_tile_cache_evict_lru(&c));
+
+    pk_tile_cache_deinit(&c);
+}
+
+static void test_acquire_buffer(void)
+{
+    printf("-- acquire_buffer：host 侧内存充裕时不误淘汰 --\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+
+    for (int i = 0; i < 3; i++) {
+        pk_tile_cache_put(&c, mk_key(5, 8, (uint32_t)i, 0), mk_tile((uint16_t)i));
+    }
+    uint32_t fails_before = pk_tile_cache_alloc_fail_count();
+    uint16_t *buf = pk_tile_cache_acquire_buffer(&c);
+    chk_true("acquire 拿到缓冲区", buf != NULL);
+    chk_u32("acquire 成功不计失败数", pk_tile_cache_alloc_fail_count(), fails_before);
+
+    int used = -1;
+    pk_tile_cache_stats(&c, &used, NULL, NULL);
+    chk_u32("内存充裕时一条都没淘汰", (uint32_t)used, 3);
+
+    pk_tile_cache_put(&c, mk_key(5, 8, 99, 0), buf);
+    pk_tile_cache_deinit(&c);
+}
+
 int main(void)
 {
     test_basic_put_get();
@@ -227,6 +304,9 @@ int main(void)
     test_negative_cache_and_expiry();
     test_put_overwrites_same_key();
     test_generation_bump_clears_all();
+    test_evict_lru();
+    test_evict_skips_negative();
+    test_acquire_buffer();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

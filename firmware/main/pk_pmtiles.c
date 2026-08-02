@@ -207,6 +207,9 @@ static bool load_directory(pk_pmtiles_t *pm, uint64_t off, uint64_t len,
     if (!raw) return false;
     if (!read_at(pm, off, raw, (size_t)len)) {
         PK_PM_LOGE("dir: read failed off=%llu len=%llu", (unsigned long long)off, (unsigned long long)len);
+        /* 目录读不出来是 I/O 故障，不是"这块瓦片不存在"——打上标记，别让
+         * 上层把整片区域记成确认缺失（详见 pk_pmtiles_t::io_error）。 */
+        pm->io_error = true;
         free(raw);
         return false;
     }
@@ -389,6 +392,26 @@ bool pk_pmtiles_open_file(pk_pmtiles_t *pm, const char *path)
         return false;
     }
     pm->owned_file = f;
+    return true;
+}
+
+bool pk_pmtiles_reopen_file(pk_pmtiles_t *pm, const char *path)
+{
+    if (!pm || !path) return false;
+    if (pm->owned_file) {
+        fclose((FILE *)pm->owned_file);
+        pm->owned_file = NULL;
+    }
+    FILE *f = fopen(path, "rb");   /* SD 只读红线：只 "rb" */
+    if (!f) {
+        PK_PM_LOGE("reopen_file: fopen(%s) failed", path);
+        pm->read_ctx = NULL;
+        return false;
+    }
+    pm->owned_file = f;
+    pm->read       = posix_file_read;
+    pm->read_ctx   = f;
+    pm->io_error   = false;
     return true;
 }
 

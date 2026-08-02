@@ -7,15 +7,19 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 static const char *TAG = "pk_tile_cache";
-#define PK_TC_LOGD(fmt, ...) ESP_LOGD(TAG, fmt, ##__VA_ARGS__)
+#define PK_TC_LOGW(fmt, ...) ESP_LOGW(TAG, fmt, ##__VA_ARGS__)
 static uint16_t *tile_alloc(void) { return heap_caps_malloc(PK_TILE_BUF_BYTES, MALLOC_CAP_SPIRAM); }
 static void      tile_free(void *p) { heap_caps_free(p); }
+static size_t    psram_free(void) { return heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
 #else
 #include <stdio.h>
 #include <stdlib.h>
-#define PK_TC_LOGD(fmt, ...) ((void)0)
+#define PK_TC_LOGW(fmt, ...) ((void)0)
 static uint16_t *tile_alloc(void) { return (uint16_t *)malloc(PK_TILE_BUF_BYTES); }
 static void      tile_free(void *p) { free(p); }
+/* host 侧没有 PSRAM 这个概念，返回"要多少有多少"让水位线判断恒不触发——
+ * 淘汰逻辑本身仍可用 pk_tile_cache_evict_lru() 单独测。 */
+static size_t    psram_free(void) { return (size_t)-1; }
 #endif
 
 static bool key_eq(pk_tile_key_t a, pk_tile_key_t b)
@@ -44,9 +48,69 @@ void pk_tile_cache_deinit(pk_tile_cache_t *cache)
     memset(cache, 0, sizeof(*cache));
 }
 
+/* 分配失败累计。模块级而非按实例：全工程只有一个 s_cache，按实例反而要把
+ * 指针传进 alloc 才能记账，不值当。 */
+static uint32_t s_alloc_fails;
+
+uint32_t pk_tile_cache_alloc_fail_count(void)
+{
+    return s_alloc_fails;
+}
+
+void pk_tile_cache_stats(const pk_tile_cache_t *cache, int *out_used,
+                         int *out_negative, size_t *out_bytes)
+{
+    int used = 0, neg = 0;
+    for (int i = 0; i < PK_TILE_CACHE_SLOTS; i++) {
+        const pk_tile_cache_slot_t *s = &cache->slots[i];
+        if (!s->used || s->generation != cache->generation) continue;
+        if (s->negative) neg++;
+        else             used++;
+    }
+    if (out_used)     *out_used = used;
+    if (out_negative) *out_negative = neg;
+    if (out_bytes)    *out_bytes = (size_t)used * (size_t)PK_TILE_BUF_BYTES;
+}
+
 uint16_t *pk_tile_cache_alloc_tile_buffer(void)
 {
-    return tile_alloc();
+    uint16_t *p = tile_alloc();
+    if (p == NULL) s_alloc_fails++;
+    return p;
+}
+
+bool pk_tile_cache_evict_lru(pk_tile_cache_t *cache)
+{
+    pk_tile_cache_slot_t *victim = NULL;
+    for (int i = 0; i < PK_TILE_CACHE_SLOTS; i++) {
+        pk_tile_cache_slot_t *s = &cache->slots[i];
+        if (!s->used || s->data == NULL) continue;   /* 空槽/负缓存不占瓦片内存 */
+        if (victim == NULL || s->last_used_seq < victim->last_used_seq) victim = s;
+    }
+    if (victim == NULL) return false;
+    slot_free_data(victim);
+    memset(victim, 0, sizeof(*victim));
+    return true;
+}
+
+uint16_t *pk_tile_cache_acquire_buffer(pk_tile_cache_t *cache)
+{
+    /* 先按水位线让路。「宁可丢最久未用的瓦片，也不能把 PSRAM 压到解码路径
+     * 分配不出来的地步」——后者不是丢一张，是把 SD 读/PNG 解码/目录解析
+     * 一起打垮，代价大得多。 */
+    while (psram_free() < PK_TILE_CACHE_PSRAM_FLOOR_BYTES + (size_t)PK_TILE_BUF_BYTES) {
+        if (!pk_tile_cache_evict_lru(cache)) break;
+    }
+    /* 水位线之外的兜底：真分配不出来就再让一条重试，直到缓存让干净。 */
+    for (int retry = 0; retry <= PK_TILE_CACHE_SLOTS; retry++) {
+        uint16_t *p = tile_alloc();
+        if (p != NULL) return p;
+        if (!pk_tile_cache_evict_lru(cache)) break;
+    }
+    s_alloc_fails++;
+    PK_TC_LOGW("瓦片缓冲区分配失败：缓存已全部让出，PSRAM 仍只剩 %u B",
+               (unsigned)psram_free());
+    return NULL;
 }
 
 void pk_tile_cache_bump_generation(pk_tile_cache_t *cache)

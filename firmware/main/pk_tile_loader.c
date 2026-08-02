@@ -18,6 +18,10 @@
  * 任何 LVGL API。 */
 #include "third_party/pk_lodepng.h"
 
+/* lodepng 的错误码表里 83 = "memory allocation failed"（pk_lodepng.c:6991，
+ * 上游没给这些码起名字，这里补一个，别在业务代码里写裸 83）。 */
+#define LODEPNG_ERR_OUT_OF_MEMORY 83u
+
 #include "esp_attr.h"
 #include "pk_sdcard.h"
 #include "pk_tile_cache.h"
@@ -266,7 +270,38 @@ void pk_tile_loader_bump_view(void)
 static volatile uint32_t s_timing_logged;
 #define TIMING_LOG_FIRST_N 20
 
-static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
+/* 把所有打了 io_error 的包句柄重开一遍，返回是否至少有一个包出过 I/O 故障。
+ * 必须在持 s_io_lock 时调用（要碰 FILE*，与 sd_close_files_cb 互斥）。
+ *
+ * 为什么要整包重开而不是重试一次读：FatFs 的 FIL 在 disk_read 失败后把
+ * fp->err 钉死，同一个句柄再读多少次都直接返回错误，不会真去碰卡。
+ * 卡已经拔掉时 fopen 会失败，io_error 保持置位，下一轮插卡重扫会整体重来。 */
+static bool reopen_faulted_packs(size_t pack_count)
+{
+    bool any = false;
+    for (size_t i = 0; i < pack_count && i < PK_MAP_STORE_MAX_PACKS; i++) {
+        pk_map_pack_t *p = &s_store.packs[i];
+        if (!p->pm.io_error) continue;
+        any = true;
+        bool ok = pk_pmtiles_reopen_file(&p->pm, p->path);
+        ESP_LOGW(TAG, "包 %s 读盘出错（FatFs 句柄已钉死），重开句柄：%s",
+                 p->path, ok ? "成功" : "失败");
+    }
+    return any;
+}
+
+/* fetch_and_decode 的三态结果。为什么不能只用 bool（2026-08-02 真机自检）：
+ * 老代码"失败即 put_negative"，把「这块瓦片确实不存在」和「这次内存/IO 不
+ * 凑手」混为一谈。PSRAM 被吃穿时后者成片出现，负缓存 30 s TTL 把整屏钉成
+ * 占位网格，且负缓存条目还会把正常瓦片从 LRU 里挤掉——一次瞬时抖动放大成
+ * 半分钟的全屏缺图。瞬时失败必须原样退回，让下一帧重试。 */
+typedef enum {
+    FETCH_OK = 0,
+    FETCH_MISSING,      /* 数据本身不存在/不可用 → 该进负缓存 */
+    FETCH_TRANSIENT,    /* 内存不足、SD 读失败等 → 不进负缓存，下一帧重试 */
+} fetch_result_t;
+
+static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
 {
     int64_t t0 = esp_timer_get_time();
     pk_map_pack_t *pack;
@@ -312,21 +347,32 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
         }
     }
     if (!found) {
+        /* 先分清"目录里确实没有"和"目录压根读不出来"。后者会被 io_error 标
+         * 出来：FatFs 一次 disk_read 失败就把句柄钉死，之后整个包每次读都失败
+         * ——这时候把整片区域记成"确认缺失"是彻头彻尾的误判（2026-08-02 实测：
+         * 一次 sdmmc 0x106 之后，剩下 120 s 里该包一张瓦片都没能读出来）。 */
+        bool io_fault = reopen_faulted_packs(pack_count);
         xSemaphoreGive(s_io_lock);
-        return false;
+        if (io_fault) return FETCH_TRANSIENT;
+        /* 这条曾经是整条链路上唯一一个「静默失败」：目录没命中就直接进负缓存，
+         * 屏上表现为网格占位，但串口里一个字都没有——排查时分不清瓦片到底是
+         * 「没请求」「读失败」还是「解码失败」，三者修法完全不同。补一条 W。 */
+        ESP_LOGW(TAG, "瓦片 z%u(%u,%u) 所有包目录均未命中（稀疏空洞），pack=%u/%u",
+                 z, x, y, (unsigned)pack_index, (unsigned)pack_count);
+        return FETCH_MISSING;
     }
     if (loc.length == 0 || loc.length > LOADER_PNG_MAX_BYTES) {
         xSemaphoreGive(s_io_lock);
         ESP_LOGW(TAG, "tile z%u(%u,%u) 长度异常 %u,当失败处理", z, x, y,
                 (unsigned)loc.length);
-        return false;
+        return FETCH_MISSING;
     }
 
     uint8_t *png = malloc(loc.length);
     if (png == NULL) {
         xSemaphoreGive(s_io_lock);
         ESP_LOGW(TAG, "png scratch alloc 失败 (%u B)", (unsigned)loc.length);
-        return false;
+        return FETCH_TRANSIENT;
     }
 
     int64_t t_find = esp_timer_get_time();
@@ -337,8 +383,14 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
     int64_t t_read = esp_timer_get_time();
     if (!ok) {
         free(png);
+        /* SD 读失败是环境问题（卡忙、内存不够 → sdmmc 回 ESP_ERR_NO_MEM），
+         * 不是"这块瓦片不存在"。句柄多半已被 FatFs 钉死，重开它。 */
         ESP_LOGW(TAG, "读瓦片 z%u(%u,%u) 失败", z, x, y);
-        return false;
+        xSemaphoreTake(s_io_lock, portMAX_DELAY);
+        pack->pm.io_error = true;
+        reopen_faulted_packs(pack_count);
+        xSemaphoreGive(s_io_lock);
+        return FETCH_TRANSIENT;
     }
 
     unsigned char *rgba = NULL;
@@ -348,20 +400,25 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
     if (err != 0 || rgba == NULL) {
         ESP_LOGW(TAG, "PNG 解码失败 z%u(%u,%u): lodepng err=%u", z, x, y, err);
         free(rgba);
-        return false;
+        /* lodepng 的 83 = "memory allocation failed"（它自己的错误码表）。
+         * 这条是内存紧张的信号，不是 PNG 坏了，绝不能记成"确认缺失"。 */
+        return (err == LODEPNG_ERR_OUT_OF_MEMORY) ? FETCH_TRANSIENT : FETCH_MISSING;
     }
     if (pw != PK_TILE_PIXELS || ph != PK_TILE_PIXELS) {
         ESP_LOGW(TAG, "瓦片尺寸异常 z%u(%u,%u): %ux%u（期望 %dx%d）",
                 z, x, y, pw, ph, PK_TILE_PIXELS, PK_TILE_PIXELS);
         free(rgba);
-        return false;
+        return FETCH_MISSING;
     }
 
-    uint16_t *buf = pk_tile_cache_alloc_tile_buffer();
+    /* acquire 会在 PSRAM 触及水位线时先淘汰最久未用的瓦片——缓存自己把
+     * 内存让出来，而不是把内存耗光再让别人失败。持锁调用是它的契约。 */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint16_t *buf = pk_tile_cache_acquire_buffer(&s_cache);
+    xSemaphoreGive(s_lock);
     if (buf == NULL) {
         free(rgba);
-        ESP_LOGW(TAG, "瓦片缓冲区分配失败（PSRAM 不足?）");
-        return false;
+        return FETCH_TRANSIENT;
     }
     for (int i = 0; i < PK_TILE_BUF_PIXELS; i++) {
         const unsigned char *p = &rgba[(size_t)i * 4];
@@ -384,7 +441,7 @@ static bool fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t 
     } else {
         ESP_LOGD(TAG, "tile z%u(%u,%u) total=%dms", z, x, y, (int)((t_done - t0) / 1000));
     }
-    return true;
+    return FETCH_OK;
 }
 
 /* 认领一次布尔跳变：*flag（上一轮观测值）与 now（本轮观测值）不同时，把 *flag
@@ -464,14 +521,16 @@ static void loader_task(void *arg)
         bool mounted = pk_sdcard_is_mounted();
 
         if (!stale && mounted) {
-            bool ok = fetch_and_decode(req.pack_index, req.z, req.x, req.y);
-            if (!ok) {
+            fetch_result_t r = fetch_and_decode(req.pack_index, req.z, req.x, req.y);
+            if (r == FETCH_MISSING) {
                 pk_tile_key_t key = { .pack_id = (uint32_t)req.pack_index,
                                       .z = req.z, .x = req.x, .y = req.y };
                 xSemaphoreTake(s_lock, portMAX_DELAY);
                 pk_tile_cache_put_negative(&s_cache, key, (uint32_t)(esp_timer_get_time() / 1000));
                 xSemaphoreGive(s_lock);
             }
+            /* FETCH_TRANSIENT：不进负缓存。inflight 标记在下面清掉后，下一帧
+             * map_page 还会再请求一次——瞬时失败该重试，不该被钉 30 s。 */
         }
         /* stale（视图已经翻页）或未挂载：直接丢弃，不入负缓存——那不是
          * "这块瓦片确认缺失"，只是这次请求已经过时/暂时拿不到卡。 */
@@ -493,6 +552,76 @@ static void sd_close_files_cb(void)
     pk_map_store_close_files(&s_store);
     xSemaphoreGive(s_io_lock);
 }
+
+/* ── PSRAM 自检（默认关闭）────────────────────────────────────────────
+ * 「Z7 连续一片瓦片缺失」的怀疑对象之一是 PSRAM 被机型库/航空库吃光，
+ * pk_tile_cache_alloc_tile_buffer() 分配不出来 → 进负缓存 → 屏上一片占位。
+ * 手滑屏幕复现慢且不可量化，这里用程序化请求把缓存灌满，每 N 张打一次
+ * PSRAM 余量 / 最大连续块 / 缓存槽数 / 分配失败数，直接给出曲线。
+ *
+ * 只在排查时临时改成 1 编译，不进常规固件——它会持续占满瓦片缓存。 */
+#define PK_TILE_LOADER_SELFTEST 0
+
+#if PK_TILE_LOADER_SELFTEST
+#include "esp_heap_caps.h"
+
+/* 华北（北京 39.9°N,116.4°E）在 z7 的瓦片坐标，其余 zoom 由位移得到。 */
+#define SELFTEST_BASE_Z 7
+#define SELFTEST_BASE_X 105
+#define SELFTEST_BASE_Y 48
+#define SELFTEST_RADIUS 6      /* 每级扫 (2r+1)^2 = 169 张，远超一屏 15 张 */
+
+static void selftest_log(const char *phase, unsigned requested)
+{
+    int used = 0, neg = 0;
+    size_t bytes = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    pk_tile_cache_stats(&s_cache, &used, &neg, &bytes);
+    xSemaphoreGive(s_lock);
+    ESP_LOGW(TAG, "SELFTEST %s req=%u cache=%d槽/%uKB neg=%d allocfail=%u "
+                  "psram_free=%uKB psram_largest=%uKB",
+             phase, requested, used, (unsigned)(bytes / 1024), neg,
+             (unsigned)pk_tile_cache_alloc_fail_count(),
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+}
+
+static void selftest_task(void *arg)
+{
+    (void)arg;
+    /* 等航空库/机型库在后台把 PSRAM 吃到稳态——自检要量的是稳态余量。 */
+    vTaskDelay(pdMS_TO_TICKS(45000));
+    selftest_log("baseline", 0);
+
+    unsigned requested = 0;
+    for (int pass = 0; pass < 3; pass++) {
+        for (uint8_t z = 5; z <= 10; z++) {
+            int32_t cx = SELFTEST_BASE_X, cy = SELFTEST_BASE_Y;
+            if (z >= SELFTEST_BASE_Z) { cx <<= (z - SELFTEST_BASE_Z); cy <<= (z - SELFTEST_BASE_Z); }
+            else                      { cx >>= (SELFTEST_BASE_Z - z); cy >>= (SELFTEST_BASE_Z - z); }
+            for (int dy = -SELFTEST_RADIUS; dy <= SELFTEST_RADIUS; dy++) {
+                for (int dx = -SELFTEST_RADIUS; dx <= SELFTEST_RADIUS; dx++) {
+                    int32_t tx = cx + dx, ty = cy + dy;
+                    int32_t n = (int32_t)1 << z;
+                    if (tx < 0 || ty < 0 || tx >= n || ty >= n) continue;
+
+                    pk_map_route_result_t route;
+                    if (pk_tile_loader_route(z, (uint32_t)tx, (uint32_t)ty, &route))
+                        pk_tile_loader_request(&route);
+                    requested++;
+                    /* 给两个 worker 留出解码时间；太快只会把队列打满被丢弃，
+                     * 量不出真实的缓存增长速度。 */
+                    vTaskDelay(pdMS_TO_TICKS(40));
+                    if (requested % 16 == 0) selftest_log("scan", requested);
+                }
+            }
+        }
+        selftest_log("pass-done", requested);
+    }
+    selftest_log("final", requested);
+    vTaskDelete(NULL);
+}
+#endif /* PK_TILE_LOADER_SELFTEST */
 
 void pk_tile_loader_init(void)
 {
@@ -524,4 +653,8 @@ void pk_tile_loader_init(void)
     BaseType_t ok1 = xTaskCreatePinnedToCore(loader_task, "tile_ld1",
                                              LOADER_TASK_STACK, NULL, 3, NULL, 1);
     if (ok0 != pdTRUE || ok1 != pdTRUE) ESP_LOGE(TAG, "loader task create failed");
+
+#if PK_TILE_LOADER_SELFTEST
+    xTaskCreate(selftest_task, "tile_st", 4096, NULL, 2, NULL);
+#endif
 }
