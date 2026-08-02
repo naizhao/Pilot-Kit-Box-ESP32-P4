@@ -33,6 +33,7 @@
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
+#include "config_ac_category.h"
 #include "pk_aero_db.h"
 #include "pk_aero_layer.h"
 #include "apt_detail_page.h"
@@ -338,6 +339,10 @@ void app_main(void)
      * 路径调 pk_rec_ingest_position/identity()，队列必须已经建好，否则
      * enqueue_or_drop() 会因 s_queue==NULL 直接丢数据（见 pk_rec_ingest.h）。 */
     pk_rec_ingest_init();
+    /* 机型分类须先于 own_sampler_start()：采样任务第一拍就调
+     * pk_flight_phase_reset() 用它算振动地板初值，若晚于 start() 才 load，
+     * 开机头几秒会用编译期默认值而不是用户在设置页选的档位。 */
+    pk_config_ac_category_load();
     /* 本机 1 Hz 航迹采样（own.trk 生产者），阶段 3b。不要求 GPS/IMU/baro
      * 已就绪——它们分别在下面才 start（GPS 已在 aircraft_state_init() 之后
      * 起了，IMU/baro 还要再等一两百行），采样器每 tick best-effort 取值。 */

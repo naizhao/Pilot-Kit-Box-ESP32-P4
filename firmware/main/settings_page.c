@@ -30,6 +30,7 @@
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
+#include "config_ac_category.h"
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
@@ -38,10 +39,11 @@
 /*
  * 行数必须与 settings_draw.c 的 SET_ROWS 一致——那边才是版面的真源。
  * 这里原来写着 6，是 320×240 时代六项版面的遗留：4.3″ 上早已是 9 行（现在
- * 10 行），于是 cursor_next() 转到第 6 行就绕回去了，后面几项按键根本选不到。
- * 触摸上线后这条路径没人走，问题才一直没被发现。
+ * 12 行，阶段 5a 插入机型分类后 +1），于是 cursor_next() 转到第 6 行就绕
+ * 回去了，后面几项按键根本选不到。触摸上线后这条路径没人走，问题才一直
+ * 没被发现。
  */
-#define SETTINGS_ROW_COUNT       11
+#define SETTINGS_ROW_COUNT       12
 
 /* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
  * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后
@@ -241,7 +243,14 @@ void pk_settings_apply(int row, int v)
                          v == 1);
         break;
 
-    case 10:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 10:  /* 机型分类（阶段 5a）—— 分段序号 0..4，枚举从 1 开始（0=unknown
+               * 保留），与 settings_draw.c 渲染时"减 1 取当前档"对称地加回去。
+               * 立即生效：own_sampler 每 tick 都重新问一遍 pk_ac_category_get()，
+               * 没有缓存，改了设置本次飞行剩余部分立刻用新阈值。 */
+        pk_ac_category_set((pk_ac_category_t)(v + 1));
+        break;
+
+    case 11:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

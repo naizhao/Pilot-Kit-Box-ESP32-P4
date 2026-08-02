@@ -24,6 +24,7 @@ idf_component_register(
         "config_qnh.c"
         "config_storage.c"
         "config_traffic.c"
+        "config_ac_category.c"
         "pk_sdcard.c"
         "pk_rec_format.c"
         "pk_rec_idx.c"

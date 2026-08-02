@@ -282,6 +282,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_APTD_NO_RUNWAY] = "NO RUNWAY DATA IN THIS PACK",
         [PK_TR_APTD_NO_FREQ] = "NO FREQUENCY DATA IN THIS PACK",
         [PK_TR_APTD_UNAVAILABLE] = "AIRPORT DATA UNAVAILABLE",
+        [PK_TR_SETTINGS_AC_CATEGORY] = "AC CATEGORY",
+        [PK_TR_AC_CAT_GLIDER] = "GLIDER",
+        [PK_TR_AC_CAT_HELI] = "HELI",
+        [PK_TR_AC_CAT_PISTON] = "PISTON",
+        [PK_TR_AC_CAT_TURBOPROP] = "TURBO",
+        [PK_TR_AC_CAT_JET] = "JET",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -560,6 +566,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_APTD_NO_RUNWAY] = "本数据包内无跑道数据",
         [PK_TR_APTD_NO_FREQ] = "本数据包内无频率数据",
         [PK_TR_APTD_UNAVAILABLE] = "机场数据不可用",
+        [PK_TR_SETTINGS_AC_CATEGORY] = "机型分类",
+        [PK_TR_AC_CAT_GLIDER] = "滑翔",
+        [PK_TR_AC_CAT_HELI] = "直升",
+        [PK_TR_AC_CAT_PISTON] = "活塞",
+        [PK_TR_AC_CAT_TURBOPROP] = "涡桨",
+        [PK_TR_AC_CAT_JET] = "喷气",
     },
 };
 

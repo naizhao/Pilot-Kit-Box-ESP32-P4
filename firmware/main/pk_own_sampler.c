@@ -19,12 +19,11 @@
  * 时间修正记录，不经队列——调用方是触发校时的那个任务（GPS/BLE），不是
  * 本模块的任务，硬塞进 s_queue 反而要多一层跨任务同步，收益不大。
  *
- * 机型分类（ac_category）与"机场范围内"（near_airport）两个输入本阶段
- * 都是占位：设置页机型分类是阶段 5 的范围（本次任务书明确排除），近机场
- * 判定需要航空数据库距离查询，同样不在本阶段范围内。用安全默认值
- * （PISTON_LIGHT / near_airport=false）不会导致相位判定错误地放宽，只是
- * 少享受 UC7"不封段"的优待——按 pk_flight_phase.h 的说明，这两个都是
- * "缺省 false/默认档位是安全值"的设计。
+ * 机型分类（ac_category）阶段 5a 起已接上设置页：每 tick 读一次
+ * pk_ac_category_get()（config_ac_category.c，volatile + portMUX，热路径
+ * 可放心调）。"机场范围内"（near_airport）仍是占位——需要航空数据库距离
+ * 查询，不在本阶段范围内。缺省 false 不会导致相位判定错误地放宽，只是少
+ * 享受 UC7"不封段"的优待，按 pk_flight_phase.h 的说明是安全默认。
  */
 #include "pk_own_sampler.h"
 
@@ -46,6 +45,7 @@
 #include "pk_rec_format.h"
 #include "pk_rec_store.h"
 #include "pk_clock.h"
+#include "config_ac_category.h"
 #include "ui_state.h"       /* pk_ui_get_own_icao() */
 #include "aircraft_state.h" /* aircraft_state_get_own() —— 绑定机 on_ground 位 */
 
@@ -98,7 +98,7 @@ static void on_clock_sync(int64_t epoch_ms, int64_t prev_ms, const char *source)
 static void own_sample_task(void *arg)
 {
     (void)arg;
-    pk_flight_phase_reset(&s_phase_state, PK_AC_CAT_PISTON_LIGHT);
+    pk_flight_phase_reset(&s_phase_state, pk_ac_category_get());
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(OWN_SAMPLE_PERIOD_MS));
@@ -136,8 +136,9 @@ static void own_sample_task(void *arg)
         in.vib_level        = imu_ok ? imu.vib_level : 0;
         in.bound_valid      = bound_valid;
         in.bound_on_ground  = bound_valid && own_ac.on_ground;
-        in.near_airport     = false;                /* 见文件头说明 */
-        in.ac_category      = PK_AC_CAT_PISTON_LIGHT;  /* 见文件头说明 */
+        in.near_airport     = false;                    /* 见文件头说明 */
+        pk_ac_category_t ac_cat = pk_ac_category_get();
+        in.ac_category      = ac_cat;
 
         pk_flight_phase_debug_t dbg = {0};
         pk_flight_phase_t phase = pk_flight_phase_update(&s_phase_state, &in, &dbg);
@@ -173,7 +174,9 @@ static void own_sample_task(void *arg)
         double disp = dbg.disp_m_60s;
         if (disp < 0.0) disp = 0.0;
         rec.disp_m_60s = (uint16_t)(disp > 65535.0 ? 65535.0 : disp);
-        rec.ac_category = (uint8_t)PK_AC_CAT_PISTON_LIGHT;
+        rec.ac_category = (uint8_t)ac_cat;   /* 记的是"当时生效的分类"，见
+                                                 own.trk 字段表 44 号 ac_category
+                                                 的注释：改设置不能改回放依据 */
 
         uint8_t buf[PK_OWN_RECORD_LEN];
         pk_own_sample_encode(&rec, buf);

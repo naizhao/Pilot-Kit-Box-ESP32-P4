@@ -612,6 +612,56 @@ STRINGS = [
         },
     ),
     (
+        "SETTINGS_AC_CATEGORY",
+        {
+            # 设置页倒数第二行（阶段 5a）：驱动 pk_flight_phase 相位状态机的
+            # 滑行/抬轮/巡航阈值，见设计文档「机型分类阈值」节。缩写成
+            # "AC CATEGORY" 而不是 "AIRCRAFT CATEGORY"——本页行标签预算按
+            # M 档 15px/字符 算 240px，全拼会溢出压住控件。
+            "en": "AC CATEGORY",
+            "zh": "机型分类",
+        },
+    ),
+    (
+        "AC_CAT_GLIDER",
+        {
+            # 5 档分段控件的选项，各占一条词条（理由同 MAP_ORIENT_* 一组：
+            # 段宽按单个选项的墨迹宽度算，拼串会让翻译者看不出每段能占多宽）。
+            # 中文统一 2 字，五段等长最整齐。
+            "en": "GLIDER",
+            "zh": "滑翔",
+        },
+    ),
+    (
+        "AC_CAT_HELI",
+        {
+            "en": "HELI",
+            "zh": "直升",
+        },
+    ),
+    (
+        "AC_CAT_PISTON",
+        {
+            # 默认档（罩哥拍板：本产品用户主流是轻型活塞）。
+            "en": "PISTON",
+            "zh": "活塞",
+        },
+    ),
+    (
+        "AC_CAT_TURBOPROP",
+        {
+            "en": "TURBO",
+            "zh": "涡桨",
+        },
+    ),
+    (
+        "AC_CAT_JET",
+        {
+            "en": "JET",
+            "zh": "喷气",
+        },
+    ),
+    (
         "SETTINGS_FORMAT_SD",
         {
             "en": "FORMAT SD",

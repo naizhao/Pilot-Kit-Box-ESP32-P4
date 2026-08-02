@@ -122,6 +122,7 @@ const uint16_t *pk_logo_bitmap(int *w, int *h)
  * 机型数据库与用户设置——前者固件里是 8 MB 的离线库，后者存在 NVS。 */
 #include "aircraft_db.h"
 #include "config_traffic.h"
+#include "config_ac_category.h"
 #include "own_ship.h"
 
 const char *pk_aircraft_type_code(uint32_t icao24)
@@ -177,6 +178,25 @@ pk_map_orient_t pk_map_orient_get(void)
 void pk_map_orient_set(pk_map_orient_t m)      { s_orient = m; }
 int  pk_traffic_range_idx_get(void)            { return s_range_idx; }
 void pk_traffic_range_idx_set(int idx)         { s_range_idx = idx < 0 ? 0 : (idx > 3 ? 3 : idx); }
+
+/* 机型分类（阶段 5a）。PK_SIM_AC_CAT=1..5 起手就选定档位，用来截图核对设置
+ * 页每一档分段是否被选中、5 个选项有没有被压窄——不给的话默认 PISTON_LIGHT，
+ * 与真机 config_ac_category.c 的默认一致。 */
+static pk_ac_category_t s_ac_cat_init(void)
+{
+    int v = sim_env("PK_SIM_AC_CAT", (int)PK_AC_CAT_PISTON_LIGHT);
+    if (v < PK_AC_CAT_GLIDER_ULTRALIGHT || v >= PK_AC_CAT_COUNT)
+        v = (int)PK_AC_CAT_PISTON_LIGHT;
+    return (pk_ac_category_t)v;
+}
+static pk_ac_category_t s_ac_cat = (pk_ac_category_t)-1;
+
+pk_ac_category_t pk_ac_category_get(void)
+{
+    if ((int)s_ac_cat < 0) s_ac_cat = s_ac_cat_init();
+    return s_ac_cat;
+}
+void pk_ac_category_set(pk_ac_category_t cat) { s_ac_cat = cat; }
 
 /*
  * 航向解析。

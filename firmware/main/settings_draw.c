@@ -22,6 +22,7 @@
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
+#include "config_ac_category.h"
 #include "display.h"
 #include "i18n.h"
 #include "pfd_aa_font.h"
@@ -51,15 +52,16 @@
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 
-#define SET_ROWS      11
+#define SET_ROWS      12
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
 
-/* 滚动偏移(px)。11 行 × 64 = 704 > 可视的 432，最后两行"演示模式 / 格式化 SD"
- * 必须滚才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动可见）"），把最
- * 危险的操作放在需要多一个动作才能够到的地方。演示模式同样落在这一档：假数据
- * 在航空设备上和误格式化是同一量级的风险。 */
+/* 滚动偏移(px)。12 行 × 64 = 768 > 可视的 432，最后三行"机型分类 / 演示模式
+ * / 格式化 SD" 必须滚才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动
+ * 可见）"），把最危险的操作放在需要多一个动作才能够到的地方。演示模式同样
+ * 落在这一档：假数据在航空设备上和误格式化是同一量级的风险；机型分类不危险，
+ * 只是插在两者中间（阶段 5a，见 pk_settings_apply 的排版约定），跟着一起滚。 */
 static int s_set_scroll;
 
 /* 触摸手势：与列表页/诊断页同一套——按下只记起点，位移超阈值才算拖动，
@@ -373,7 +375,26 @@ void pk_settings_page_render(uint16_t *fb)
                        PK_AA_XS); }
       row++; }
 
-    /* 11 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 11 机型分类（阶段 5a）—— 驱动 pk_flight_phase 相位状态机的滑行/抬轮/
+     * 巡航阈值与振动地板初值，设计文档「机型分类阈值」节。5 档分段，插在
+     * 演示模式与格式化 SD 之间：它不危险（选错档最坏是相位判定不够贴合这
+     * 架机型，可事后重选），不需要挤进最后一行；但格式化 SD 必须留在最后
+     * 一行这条排版约定不能破，所以只能插在它前面。 */
+    { const char *o[] = { pk_i18n_text(PK_TR_AC_CAT_GLIDER),
+                          pk_i18n_text(PK_TR_AC_CAT_HELI),
+                          pk_i18n_text(PK_TR_AC_CAT_PISTON),
+                          pk_i18n_text(PK_TR_AC_CAT_TURBOPROP),
+                          pk_i18n_text(PK_TR_AC_CAT_JET) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_AC_CATEGORY));
+      /* 枚举从 1 开始（0=unknown 保留，见 pk_flight_phase.h），段序号从 0
+       * 开始——取当前档时减 1，两边约定在 pk_settings_apply() 里对称地加回去。 */
+      int ac_sel = (int)pk_ac_category_get() - 1;
+      if (ac_sel < 0 || ac_sel > 4) ac_sel = (int)PK_AC_CAT_PISTON_LIGHT - 1;
+      const int _x = draw_seg(fb, ROW_Y(row), o, 5, ac_sel, false);
+      hit_set(row, 1, _x, seg_last_w(), 5, ROW_Y(row));
+      row++; }
+
+    /* 12 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;
