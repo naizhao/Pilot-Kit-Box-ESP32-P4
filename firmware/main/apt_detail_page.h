@@ -92,6 +92,8 @@ void pk_apt_detail_page_render(uint16_t *fb);
 bool pk_apt_detail_page_touch(int x, int y);
 bool pk_apt_detail_page_drag(int x, int y);
 void pk_apt_detail_page_touch_up(void);
+/* 当前唯一调用方是模拟器 sim/main.c 的 PK_SIM_APT_SCROLL 截图铺垫
+ * （详见 .c 里的注释）。 */
 void pk_apt_detail_page_touch_cancel(void);
 
 /*

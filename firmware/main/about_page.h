@@ -19,9 +19,7 @@ void pk_about_page_render(uint16_t *fb);
 /* 触摸：与 adsb_list / diag / settings 同一套约定。
  *   touch()  按下，返回 true = 这一下由本页消费（顶栏与右侧 FAB 带放行）
  *   drag()   按住不放的后续帧，做滚动
- *   touch_up()      松手
- *   touch_cancel()  dock 展开等场合，作废本次手势（不当成点击提交） */
+ *   touch_up()      松手 */
 bool pk_about_page_touch(int x, int y);
 bool pk_about_page_drag(int x, int y);
 void pk_about_page_touch_up(void);
-void pk_about_page_touch_cancel(void);

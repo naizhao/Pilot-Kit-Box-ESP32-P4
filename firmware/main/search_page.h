@@ -79,7 +79,6 @@ void pk_search_page_render(uint16_t *fb);
 bool pk_search_page_touch(int x, int y);
 bool pk_search_page_drag(int x, int y);
 void pk_search_page_touch_up(void);
-void pk_search_page_touch_cancel(void);
 
 /* ── 以下是纯函数区：无 OS / 无全局状态，host 单测直接编
  * （firmware/test/test_search_page.c）。同 pk_aero_layer.h 的分区惯例。 ── */

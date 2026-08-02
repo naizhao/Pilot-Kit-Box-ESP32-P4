@@ -138,7 +138,6 @@ void pk_nav_grid_page_render(uint16_t *fb);
 bool pk_nav_grid_page_touch(int x, int y);      /* 按下，返回是否吃掉 */
 bool pk_nav_grid_page_drag(int x, int y);       /* 拖动续帧 */
 void pk_nav_grid_page_touch_up(void);           /* 抬起 */
-void pk_nav_grid_page_touch_cancel(void);       /* 取消（本次按压作废，不结算） */
 
 /* ── 纯函数区：无 OS / 无全局状态，host 单测直接把本模块的 .c 拉进翻译单元
  * 编译（firmware/test/test_nav_grid_page.c）。同 search_page.h /

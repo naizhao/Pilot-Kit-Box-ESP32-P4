@@ -396,8 +396,6 @@ void pk_about_page_touch_up(void)
     s_moved       = false;
 }
 
-void pk_about_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
-
 #ifdef PK_SIM_BUILD
 /*
  * 截图用的两个旋钮。

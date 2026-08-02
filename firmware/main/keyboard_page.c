@@ -298,8 +298,6 @@ bool pk_keyboard_page_touch(int x, int y)
     return true;
 }
 
-void pk_keyboard_page_touch_cancel(void) { s_press_valid = false; }
-
 /* 往缓冲里追加一个字符。到顶就什么都不做——计数器已经转成警示色，
  * 这里再弹一次提示反而打断连续输入。 */
 static void text_append(char c)

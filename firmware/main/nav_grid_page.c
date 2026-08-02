@@ -724,13 +724,6 @@ bool pk_nav_grid_page_drag(int x, int y)
     return true;
 }
 
-void pk_nav_grid_page_touch_cancel(void)
-{
-    /* 本次按压作废，**不结算**：取消是"这一下当没发生过"，补一条"需长按
-     * 1 秒"的提示反而是无中生有。 */
-    press_reset();
-}
-
 void pk_nav_grid_page_touch_up(void)
 {
     if (!s_active) return;

@@ -26,7 +26,6 @@ int pk_settings_format_state(void);
 bool pk_settings_page_touch(int x, int y);
 bool pk_settings_page_drag(int x, int y);
 void pk_settings_page_touch_up(void);
-void pk_settings_page_touch_cancel(void);
 
 /* 执行一次设置变更。row = 设置页行号，v 随控件而定：分段=段序号、
  * 步进器=±1、按钮=0。由 settings_draw.c 的命中判定调用。 */

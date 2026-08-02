@@ -475,7 +475,6 @@ void pk_settings_page_touch_up(void)
         }
     }
 }
-void pk_settings_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
 
 #ifdef PK_SIM_BUILD
 /* 截图用：PK_SIM_SET_SCROLL=<px> 直接把版面滚到指定位置。 */

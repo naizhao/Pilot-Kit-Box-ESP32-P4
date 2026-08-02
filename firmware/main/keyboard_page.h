@@ -71,4 +71,3 @@ void pk_keyboard_page_render(uint16_t *fb);
 /* 触摸：约定同 adsb_list / diag / settings。没有 drag —— 键盘不滚动。 */
 bool pk_keyboard_page_touch(int x, int y);
 void pk_keyboard_page_touch_up(void);
-void pk_keyboard_page_touch_cancel(void);

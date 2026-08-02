@@ -757,6 +757,16 @@ bool pk_apt_detail_page_drag(int x, int y)
     return true;
 }
 
+/*
+ * 取消本次触摸：只丢状态，**不执行**动作（touch_up 会把按下结算成一次点击）。
+ *
+ * 现在谁在用（2026-08-02 普查）：只有模拟器 sim/main.c 的 PK_SIM_APT_SCROLL
+ * 截图铺垫——滚动位置是本页内部状态没有 setter，那边用一次真实的
+ * touch()+drag() 把版面滚下去，收尾必须用 cancel 而不是 touch_up，否则那次
+ * 拖动会被结算成点击、把截图跳到别的页面去。
+ * 真机侧原先的调用方是 touch_gt911.c 里 dock 展开时的整体让路，已随 dock
+ * 一起删除（commit f560c8a）。别当死接口删掉。
+ */
 void pk_apt_detail_page_touch_cancel(void)
 {
     s_press_valid = false;

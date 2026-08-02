@@ -1185,12 +1185,6 @@ bool pk_search_page_drag(int x, int y)
     return true;
 }
 
-void pk_search_page_touch_cancel(void)
-{
-    s_press_valid = false;
-    s_moved       = false;
-}
-
 void pk_search_page_touch_up(void)
 {
     const bool click = s_active && s_press_valid && !s_moved;
