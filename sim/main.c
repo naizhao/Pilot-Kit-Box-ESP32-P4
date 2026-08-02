@@ -336,6 +336,16 @@ static int run_headless(float at_sec, const char *out)
         getenv("PK_SIM_MENU_LEVEL_DONE"))
         pk_nav_grid_page_open();
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
+    /* 阶段 5b：SD 写失败/降级告警——闪烁本身是逐帧现象，静态截图截不出
+     * "亮/灭"两态交替，但能核对红色告警配色 + 较长文案（比 PK_SIM_TOAST
+     * 那句"已绑定本机"长不少）在控件层会不会被裁切/压扁。直接调
+     * pk_ui_nav_toast() 而不是 pk_ui_toast_show_blink()：sim 是单帧渲染，
+     * 走 ui_state 的过期/相位判定在这里量不出差别，只会多一层间接。 */
+    if (getenv("PK_SIM_TOAST_REC"))
+        /* 走真正的 catalog 词条而不是手写字面量——手写字面量里的字不保证
+         * 在字库子集里（gen_pfd_aa_font.py 按 catalog 内容抽子集），刚踩过：
+         * "足" 字在第一版截图里就是个空心方块。 */
+        pk_ui_nav_toast(pk_i18n_text(PK_TR_TOAST_REC_SD_NORAW), true);
     /* PK_SIM_SUB=1 进入二级页，核对返回栏与 FAB 图标是否都切到「←」。 */
     if (getenv("PK_SIM_SUB")) pk_ui_nav_set_subpage(true, "诊断");
     /*

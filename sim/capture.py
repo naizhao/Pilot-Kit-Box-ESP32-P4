@@ -66,6 +66,7 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
 
     ("ui-4.3-subpage",      {"PK_SIM_SUB": "1"},                  "二级页面：返回栏 + FAB 变 ←"),
     ("ui-4.3-toast",        {"PK_SIM_TOAST": "1"},                "Toast 提示压在最上层"),
+    ("ui-4.3-toast-rec",    {"PK_SIM_TOAST_REC": "1"},            "阶段5b：SD写失败/降级告警红色Toast，核对长文案不裁切"),
     ("ui-4.3-battery-low",  {"PK_SIM_BATT": "3"},                 "低电量：电池转 alert 图标并变红"),
     ("ui-4.3-charging",     {"PK_SIM_BATT": "45",
                              "PK_SIM_CHARGING": "1"},             "充电中：电池播放逐帧动画"),
@@ -112,6 +113,10 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     ("ui-4.3-list",         {"PK_SIM_PAGE": "list"},              "看板正常态"),
     ("ui-4.3-diag",         {"PK_SIM_PAGE": "diag",
                              "PK_SIM_DIAG_OK": "1"},              "诊断总览正常态"),
+    ("ui-4.3-diag-rec-fail", {"PK_SIM_PAGE": "diag",
+                             "PK_SIM_DIAG_OK": "1",
+                             "PK_SIM_REC_TIER": "2",
+                             "PK_SIM_REC_FAIL": "2"},             "阶段5b：LOG卡片接入REC降级+失效sink数，核对不挤爆前半句"),
     ("ui-4.3-settings",     {"PK_SIM_PAGE": "settings",
                              "PK_SIM_SET_SCROLL": "400"},         "设置页底部：演示模式那一行（关）"),
 

@@ -18,6 +18,7 @@
 #include "esp_chip_info.h"
 #include "esp_timer.h"         /* 单调时钟冻结 + GPS 时间戳按 now 反推 */
 #include "mock_runtime.h"      /* pk_sim_flag：PK_SIM_EMPTY 总开关 */
+#include "pk_rec_store.h"      /* pk_rec_store_health_t / pk_rec_degrade_t —— pk_rec_store_get_health 桩 */
 
 /* 环境变量取整数，缺省回落。全文件的 PK_SIM_* 旋钮都走它。 */
 static int sim_env(const char *k, int dflt)
@@ -512,6 +513,21 @@ bool record_sink_file_stats(uint32_t *written, uint32_t *dropped)
     if (written) *written = diag_ok() ? 5120 : 0;
     if (dropped) *dropped = 0;
     return true;
+}
+
+/* 阶段 5b：pk_rec_store_get_health() 的真机实现在 pk_rec_store_fs.c——
+ * 依赖 FreeRTOS/VFS，跟本文件里其它"真机专属子系统"一样不进 sim 链接
+ * （sim/CMakeLists.txt 没列 pk_rec_store*.c）。PK_SIM_REC_TIER=0/1/2
+ * （FULL/NO_RAW/OWN_ONLY，默认 0）+ PK_SIM_REC_FAIL=N 让 ui-4.3-diag*
+ * 系列截图能核对 LOG 卡片接上 REC 后缀之后的版面。 */
+void pk_rec_store_get_health(pk_rec_store_health_t *out)
+{
+    if (out == NULL) return;
+    int tier = sim_env("PK_SIM_REC_TIER", 0);
+    out->tier = (tier == 2) ? PK_REC_DEGRADE_OWN_ONLY
+              : (tier == 1) ? PK_REC_DEGRADE_NO_RAW
+                             : PK_REC_DEGRADE_FULL;
+    out->disabled_count = (uint8_t)sim_env("PK_SIM_REC_FAIL", 0);
 }
 
 /* pk_aero_db_status_get 不在这里：它已经搬到 compat/pk_aero_layer_sim.c，

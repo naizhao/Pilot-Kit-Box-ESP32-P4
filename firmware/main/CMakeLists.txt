@@ -38,6 +38,12 @@ idf_component_register(
         "pk_aero_reader.c"
         "pk_aero_db.c"
         "pk_aero_layer.c"
+        # 以本机为中心的滚动窗口（W1 骨架）。与 pk_aero_db 全量加载**并存**：
+        # 窗口是新开的一条按格区间读的路，老路径一个字节都没动，
+        # PK_WIN_ENABLE=0 即整模块编译成空壳回到老路。
+        "pk_win_geom.c"
+        "pk_aero_span.c"
+        "pk_win.c"
         "display.c"
         "imu_task.c"
         "pk_vib.c"

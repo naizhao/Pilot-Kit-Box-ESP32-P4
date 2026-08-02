@@ -75,11 +75,21 @@ static const char *TAG = "pfd";
  *
  * 过期判定仍在 pk_ui_toast_get() 里：它带时间戳且线程安全，按键中断里也能
  * 安全地 show。这里只做「有就显示、没有就收起」。 */
+/*
+ * 阶段 5b：闪烁告警（SD 写失败 / 降级）复用这条同步路径——闪烁的"灭"相位
+ * 就是照旧调 pk_ui_nav_toast(NULL, ...) 把控件藏起来，"亮"相位再显示同一句
+ * 文案。不新增控件、不碰 pk_ui_nav.c，闪烁纯粹靠这里每帧的显/隐切换实现。
+ *
+ * 不得让 toast 变回可点击：它不吃点击靠的是 pk_ui_nav.c 里
+ * lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE)，与 touch_gt911.c 的
+ * eaten 链无关——这里改闪烁逻辑时若误触发那处加回 CLICKABLE，会把底下
+ * 页面的点击吞掉（SD 故障告警绝不能挡住飞行中的操作）。
+ */
 static void sync_toast(void)
 {
     pk_tr_id_t id;
     bool is_error;
-    if (pk_ui_toast_get(&id, &is_error)) {
+    if (pk_ui_toast_get(&id, &is_error) && pk_ui_toast_blink_visible()) {
         pk_ui_nav_toast(pk_i18n_text(id), is_error);
     } else {
         pk_ui_nav_toast(NULL, false);

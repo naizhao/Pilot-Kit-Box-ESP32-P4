@@ -5,10 +5,11 @@
  * 差别只在"分块流水线"）：
  *   stat → heap_caps_malloc(SPIRAM) → 64 KB 分块 fread + PSA 流式
  *   AES-128-CTR 就地解密（读一块解一块，不等整读完；块间 vTaskDelay(1)
- *   让渡）→ SHA-256 分块校验 → pk_aero_init（校验 magic/version∈{2,3}/段表）
+ *   让渡）→ SHA-256 分块校验 → pk_aero_init（校验 magic/version∈{2,3,4}/段表）
  *   → 发布 READY。任何失败释放缓冲，按卡还在不在分流 ERROR / ABSENT。
- *   v2/v3 两种 bin 都收（用户换卡有窗口期）：记录段逐字节相同，v3 只是多了
- *   搜索索引；缺索引的查询各自退化为返回 0，READY 日志会打出实际版本。
+ *   v2/v3/v4 三种 bin 都收（用户换卡有窗口期，且卡上现在还是 v3）：老段逐
+ *   字节相同，v3 多的是搜索索引、v4 多的是空域/航路段；缺段的查询各自退化
+ *   为返回 0/false，READY 日志会打出实际版本与各段条数。
  *
  * SD 驱动完全复用 pk_sdcard.c（唯一一套挂载/探活/热插拔状态机）：本模块
  * 只看 pk_sdcard_is_mounted()，自己绝不碰 sdmmc。挂载重试（IDF #10531
@@ -42,6 +43,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_attr.h"     /* EXT_RAM_BSS_ATTR（把 s_db 挪去 PSRAM） */
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -105,12 +107,19 @@ static SemaphoreHandle_t s_lock;
 static SemaphoreHandle_t s_io_lock;
 static volatile pk_aero_db_state_t s_state = PK_AERO_DB_ABSENT;
 static uint8_t      *s_buf;        /* PSRAM 整文件缓冲（含明文 header） */
-static pk_aero_db_t  s_db;         /* reader 解析态（指进 s_buf） */
+/* reader 解析态（指进 s_buf）。**放 PSRAM**：v4 加了 5 个段描述 + 2 个索引
+ * 描述后，sizeof(pk_aero_db_t) 从 480 B 涨到 704 B，把内部 dram0 那 65 KB
+ * 的"调度器启动前窗口"顶穿了（scripts/check_early_heap.py 直接报错拦下）。
+ * 它是典型的冷结构：只在本文件的加载/查询路径里读写、不做 DMA、不在 ISR
+ * 里碰，而查询本来就要去 PSRAM 读 payload——搬过去零代价。
+ * 同款处理见 pk_tile_loader.c 顶部注释。 */
+EXT_RAM_BSS_ATTR static pk_aero_db_t s_db;
 
 /* 诊断快照：只在发布/卸载瞬间写，诊断页无锁读。 */
 static char              s_cycle[9];
-static volatile uint16_t s_version;   /* 2 或 3；未 READY 为 0 */
+static volatile uint16_t s_version;   /* 2/3/4；未 READY 为 0 */
 static volatile uint32_t s_n_airports, s_n_navaids, s_n_fixes;
+static volatile uint32_t s_n_airspaces, s_n_airways;   /* v4；老卡恒 0 */
 static volatile uint8_t  s_load_pct;
 static const char *volatile s_err;   /* ERROR 原因（静态串） */
 /* 进 ERROR 时的 SD 挂载代数；与当前代数不等即说明卡被重插过，该重试了。 */
@@ -305,7 +314,7 @@ static bool aero_load_once(void)
 
     pk_aero_db_t db;
     if (ok) {
-        int rc = pk_aero_init(&db, buf, len, true);   /* magic/version 2|3/段表 */
+        int rc = pk_aero_init(&db, buf, len, true);  /* magic/version 2|3|4/段表 */
         if (rc != PK_AERO_OK) {
             ok = false;
             why = rc == PK_AERO_ERR_MAGIC   ? "bad magic"
@@ -346,6 +355,8 @@ static bool aero_load_once(void)
     s_n_airports = db.sec_airport.n;
     s_n_navaids  = db.sec_navaid.n;
     s_n_fixes    = db.sec_fix.n;
+    s_n_airspaces = db.sec_airspace.n;   /* v2/v3 卡上段缺席 → 0 */
+    s_n_airways   = db.sec_airway.n;
     s_err        = NULL;
     s_load_pct   = 100;
     s_generation++;
@@ -371,6 +382,12 @@ static bool aero_load_once(void)
              (unsigned long)db.sec_idx_fix_name.n,
              (unsigned long)db.nav_idx.n_second,
              db.version >= 3 ? "" : "  (v2 bin: 搜索索引缺席，相关查询返回空)");
+    /* v4 空域/航路：老卡上三个数全 0，一眼看出"不是坏了，是数据旧"。 */
+    ESP_LOGI(TAG, "airspace/airway: %lu airspaces (%lu verts), %lu airway legs%s",
+             (unsigned long)db.sec_airspace.n,
+             (unsigned long)db.sec_asp_vtx.n,
+             (unsigned long)db.sec_airway.n,
+             db.version >= 4 ? "" : "  (v2/v3 bin: 空域航路段缺席，相关查询返回空)");
     return true;
 }
 
@@ -384,6 +401,7 @@ static void aero_unload(void)
     s_cycle[0]   = '\0';
     s_version    = 0;
     s_n_airports = s_n_navaids = s_n_fixes = 0;
+    s_n_airspaces = s_n_airways = 0;
     s_err        = NULL;
     s_generation++;
     s_state      = PK_AERO_DB_ABSENT;
@@ -437,6 +455,23 @@ static void aero_smoke_check(void)
                   "ident GG(nav)=%d (v3 truth 5) prefix VM(fix)=%d [%s]",
              n_apt, (long long)dt_apt, n_nav, n_fix,
              s_version >= 3 ? "v3" : "v2 — 搜索索引缺席，前两项应为 0");
+
+    /* v4 空域/航路：也是打日志不断言。老卡（v2/v3）上三项预期全 0 —— 那正是
+     * 本轮要证明的"不回归"：段缺席不报错、不 panic、老功能照跑。
+     * 视野取 ZGGG 周边 1°×1°（约 60 nm 见方，比默认地图视野大一档）。 */
+    uint32_t sp[16];
+    int64_t t2 = esp_timer_get_time();
+    int n_asp = pk_aero_db_airspaces_in_bbox(a.lat - 0.5, a.lon - 0.5,
+                                             a.lat + 0.5, a.lon + 0.5, sp, 16);
+    int64_t dt_asp = esp_timer_get_time() - t2;
+    int64_t t3 = esp_timer_get_time();
+    int n_awy = pk_aero_db_airways_in_bbox(a.lat - 0.5, a.lon - 0.5,
+                                           a.lat + 0.5, a.lon + 0.5, sp, 16);
+    int64_t dt_awy = esp_timer_get_time() - t3;
+    ESP_LOGI(TAG, "smoke: bbox±0.5deg @ZGGG airspaces=%d (%lld us) "
+                  "airways=%d (%lld us) [%s]",
+             n_asp, (long long)dt_asp, n_awy, (long long)dt_awy,
+             s_version >= 4 ? "v4" : "v2/v3 — 空域航路段缺席，两项应为 0");
 }
 #endif /* PK_AERO_DB_SMOKE */
 
@@ -548,6 +583,8 @@ void pk_aero_db_status_get(pk_aero_db_status_t *out)
     out->n_airports = s_n_airports;
     out->n_navaids  = s_n_navaids;
     out->n_fixes    = s_n_fixes;
+    out->n_airspaces = s_n_airspaces;
+    out->n_airways   = s_n_airways;
     out->load_pct   = s_load_pct;
     out->err        = s_err;
 }
@@ -666,6 +703,86 @@ int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max)
 int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max)
 {
     AERO_QUERY(0, pk_aero_fixes_by_prefix(&s_db, prefix, out, max));
+}
+
+/* ---- v4 空域 / 航路 -----------------------------------------------------
+ *
+ * 一律沿用 AERO_QUERY 全程持锁，与 nearest 同等对待：耗时**尚未真机实测**，
+ * 只知道 ring 还原是"逐顶点两次乘 + 两次除"、bbox 是"格展开 + 逐候选 bbox
+ * 相交"，都随视野/数据规模变化。所以在测出来之前，这一组只许后台任务调，
+ * 禁止渲染循环与触摸回调同步调（头文件里写着同一条）。
+ *
+ * reader 侧对参数非法返回负错误码、对段缺席（v2/v3 卡）返回 0/false，
+ * 这里把负值统一收敛成 0——对调用方只有"有几条"，没有"错在哪"。 */
+
+bool pk_aero_db_airspace_get(uint32_t idx, pk_aero_airspace_t *out)
+{
+    if (out == NULL) return false;
+    AERO_QUERY(false, pk_aero_airspace_get(&s_db, idx, out));
+}
+
+int pk_aero_db_airspace_ring(uint32_t idx, bool coarse,
+                             pk_aero_lonlat_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    if (s_state != PK_AERO_DB_READY) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = (s_state == PK_AERO_DB_READY)
+          ? pk_aero_airspace_ring(&s_db, idx, coarse, out, max) : 0;
+    xSemaphoreGive(s_lock);
+    return n > 0 ? n : 0;
+}
+
+int pk_aero_db_airspaces_in_bbox(double min_lat, double min_lon,
+                                 double max_lat, double max_lon,
+                                 uint32_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    if (s_state != PK_AERO_DB_READY) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = (s_state == PK_AERO_DB_READY)
+          ? pk_aero_airspaces_in_bbox(&s_db, min_lat, min_lon,
+                                      max_lat, max_lon, out, max) : 0;
+    xSemaphoreGive(s_lock);
+    return n > 0 ? n : 0;   /* min_lon > max_lon 时 reader 给 ERR_ARG */
+}
+
+bool pk_aero_db_airway_get(uint32_t idx, pk_aero_airway_t *out)
+{
+    if (out == NULL) return false;
+    AERO_QUERY(false, pk_aero_airway_get(&s_db, idx, out));
+}
+
+int pk_aero_db_airways_in_bbox(double min_lat, double min_lon,
+                               double max_lat, double max_lon,
+                               uint32_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    if (s_state != PK_AERO_DB_READY) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = (s_state == PK_AERO_DB_READY)
+          ? pk_aero_airways_in_bbox(&s_db, min_lat, min_lon,
+                                    max_lat, max_lon, out, max) : 0;
+    xSemaphoreGive(s_lock);
+    return n > 0 ? n : 0;
+}
+
+int pk_aero_db_find_airways_by_designator(const char *name,
+                                          uint32_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    if (s_state != PK_AERO_DB_READY) return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = (s_state == PK_AERO_DB_READY)
+          ? pk_aero_find_airways_by_designator(&s_db, name, out, max) : 0;
+    xSemaphoreGive(s_lock);
+    return n > 0 ? n : 0;
+}
+
+int pk_aero_db_find_airways_by_prefix(const char *prefix,
+                                      uint32_t *out, int max)
+{
+    AERO_QUERY(0, pk_aero_find_airways_by_prefix(&s_db, prefix, out, max));
 }
 
 uint32_t pk_aero_db_generation(void)

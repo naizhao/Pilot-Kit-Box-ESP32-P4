@@ -1,8 +1,9 @@
 /*
  * pk_aero_reader.h — pk_aero.bin 可移植 C 参考实现（纯 C11，无 OS 依赖）
  *
- * 来源：tmp/pk_aero_bench/pk_aero_reader.h 搬入（2026-08-02，v3 版），
- * 唯一的固件侧改动是**同时接受 v2 与 v3 两种 bin**（见下「双版本兼容」）。
+ * 来源：tmp/pk_aero_bench/pk_aero_reader.h 搬入（2026-08-02，v4 版），
+ * 唯一的固件侧改动是**同时接受 v2/v3/v4 三种 bin**（见下「三版兼容」）
+ * 与可中断的分段子串搜索（pk_aero_search_substring_step）。
  * 对拍验证状态见 pk_aero_reader.c 文件头。
  *
  * 字节布局的权威实现是 Pilot-Kit 仓 scripts/aero_data_pipeline/
@@ -22,27 +23,49 @@
  *     反向索引项**只存记录下标**，键靠回读记录现取（同 ICAO/ident 索引手法）；
  *     机场表用 bit31 区分这一项索引的是 name_off 还是 city_off。
  *
- * 双版本兼容（固件侧要求：用户换卡前后不能出现"地图无数据"的窗口期）：
- *   - init 接受 version ∈ {2, 3}，实际版本记在 db->version；
- *   - v2 bin 里那 4 个新索引段根本不存在 → 对应 sec_idx_* 保持全 0（n=0），
- *     不判失败；v2 的段表最后一个 u32 是恒 0 的 _reserved，落到 strings_size
- *     上就是 0，顺扫池的 while 循环一步都不进，天然退化。
- *   - 各查询 API 在 v2 卡上的行为（缺索引 = 优雅返回 0，不读野指针）：
+ * v4（2026-08-02）新增空域 + 航路，**v3 的 9 个段一个字节都没动**：
+ *   - header version 3 → 4；n_sections 9 → 14；payload 起点 352 → 512；
+ *     读端版本判定放宽成区间 [PK_AERO_VERSION_MIN, PK_AERO_VERSION_MAX]，
+ *     读 v3 文件时新段缺席（n=0）→ 空域/航路查询安全退化为 0 结果；
+ *   - type=5  空域（48 B/条，带本段字符串池，无索引）；
+ *   - type=6  空域顶点池（4 B/条：u16 x_q, u16 y_q，相对本空域 bbox 定点化）；
+ *   - type=8  航路（48 B/条，记录**已按 (designator, seq) 排序**，
+ *             所以"按航路名查"直接在记录上二分，不另建 designator 索引）；
+ *   - type=20/21 空域、航路的**格→记录展开索引**：data = 按 (cell, 记录下标)
+ *     排序的 u32 记录下标表，index 区沿用 v3 的稀疏格表 {cell, first, count}
+ *     指向它（n_second=0）→ 格二分直接复用 pk_aero_grid_lookup。
  *
- *       API                          v2 卡        v3 卡    依赖的索引
- *       ---------------------------  -----------  -------  ------------------
- *       airport_by_icao              正常         正常     机场第二索引(ICAO)
- *       nearest_airports/navaids/    正常         正常     各段网格索引
+ * 三版兼容（固件侧要求：用户换卡前后不能出现"地图无数据"的窗口期。
+ * 卡上现在还是 v3，v4 上卡是另一件事，所以三版都得能读）：
+ *   - init 接受 version ∈ {2, 3, 4}，实际版本记在 db->version；
+ *   - 老卡里没有的段根本不在段表里 → 对应 sec_* 保持全 0（n=0），不判失败：
+ *     · v2 缺 4 个 v3 搜索索引段（16–19）+ strings_size（v2 那个 u32 是恒 0
+ *       的 _reserved，显式按版本清零，顺扫池的 while 一步都不进）；
+ *     · v2/v3 都缺 5 个 v4 段（5/6/8/20/21）→ 空域与航路查询一律返回 0。
+ *   - 各查询 API 在老卡上的行为（缺段/缺索引 = 优雅返回 0，不读野指针）：
+ *
+ *       API                          v2 卡      v3 卡      v4 卡  依赖
+ *       ---------------------------  ---------  ---------  -----  ------------
+ *       airport_by_icao              正常       正常       正常   机场二级索引
+ *       nearest_airports/navaids/    正常       正常       正常   各段网格索引
  *         fixes
- *       airport/rwy/freq/navaid/     正常         正常     无
+ *       airport/rwy/freq/navaid/     正常       正常       正常   无
  *         fix_get、*_runways/_freqs
- *       fix_by_ident                 正常         正常     FIX 第二索引(ident)
- *       fixes_by_prefix              正常         正常     同上
- *       navaid_by_ident              **返回 0**   正常     导航台第二索引
- *       navaids_by_prefix            **返回 0**   正常       （v2 是空表）
- *       airports_by_prefix           **返回 0**   正常     段 16 机场全量 key
- *       search_substring             **返回 0**   正常     strings_size + 段
- *                                                            17/18/19 反向索引
+ *       fix_by_ident                 正常       正常       正常   FIX 二级索引
+ *       fixes_by_prefix              正常       正常       正常   同上
+ *       navaid_by_ident              **返回 0** 正常       正常   导航台二级索引
+ *       navaids_by_prefix            **返回 0** 正常       正常     （v2 是空表）
+ *       airports_by_prefix           **返回 0** 正常       正常   段 16
+ *       search_substring             **返回 0** 正常       正常   strings_size
+ *                                                                 + 段 17/18/19
+ *       airspace_get/_ring           **false**  **false**  正常   段 5/6
+ *       airspaces_in_cell/_in_bbox   **返回 0** **返回 0** 正常   段 20
+ *       airway_get                   **false**  **false**  正常   段 8
+ *       find_airways_by_designator/  **返回 0** **返回 0** 正常   段 8（记录自
+ *         _by_prefix                                              身即有序）
+ *       airways_in_cell/_in_bbox     **返回 0** **返回 0** 正常   段 21
+ *
+ *   （pk_aero_airway_lon_span 是纯函数，与版本无关，任何时候都可调。）
  *
  * 约束（面向 ESP32-P4 移植）：
  *   - 不做文件 IO：入参是已整块载入内存的 buffer + 长度；
@@ -75,25 +98,32 @@ enum {
 
 /* ---- 格式常量（与 export_box_bin.py 一致）---- */
 #define PK_AERO_MAGIC          "PKAER1"
-/* 接受的版本区间：v2 = 24-bit first 指针 + FIX 段；v3 = 再加 4 个搜索索引。
- * 记录段两版逐字节相同，只差索引，所以一份 reader 通吃。 */
+/* 版本区间：v3 只加索引段、v4 只加空域/航路段，老段一个字节都没动
+ * → 读端接受 [MIN, MAX] 区间，一份 reader 通吃 v2/v3/v4。
+ * 老卡上新段缺席（n=0），对应查询安全退化为 0 结果，其余功能照跑。 */
 #define PK_AERO_VERSION_MIN    2
-#define PK_AERO_VERSION_MAX    3
-#define PK_AERO_VERSION        PK_AERO_VERSION_MAX   /* 当前发布版 */
+#define PK_AERO_VERSION_MAX    4
+#define PK_AERO_VERSION        PK_AERO_VERSION_MAX   /* 生成端当前版本 */
 #define PK_AERO_HEADER_SIZE    64
 #define PK_AERO_SECTION_SIZE   32
 
-#define PK_AERO_SEC_AIRPORTS      1
-#define PK_AERO_SEC_RUNWAY_DIRS   2
-#define PK_AERO_SEC_FREQUENCIES   3
-#define PK_AERO_SEC_NAVAIDS       4
-#define PK_AERO_SEC_WAYPOINTS_FIX 7
+#define PK_AERO_SEC_AIRPORTS       1
+#define PK_AERO_SEC_RUNWAY_DIRS    2
+#define PK_AERO_SEC_FREQUENCIES    3
+#define PK_AERO_SEC_NAVAIDS        4
+#define PK_AERO_SEC_AIRSPACES      5   /* v4 */
+#define PK_AERO_SEC_AIRSPACE_VERTS 6   /* v4 */
+#define PK_AERO_SEC_WAYPOINTS_FIX  7
+#define PK_AERO_SEC_AIRWAYS        8   /* v4 */
 
 /* v3 纯索引段（record_size=4，一项一个小端 u32 记录下标）*/
 #define PK_AERO_SEC_IDX_AIRPORT_KEY  16
 #define PK_AERO_SEC_IDX_AIRPORT_NAME 17
 #define PK_AERO_SEC_IDX_NAVAID_NAME  18
 #define PK_AERO_SEC_IDX_FIX_NAME     19
+/* v4 格→记录展开索引段（data = u32 记录下标表，index = 稀疏格表指向它）*/
+#define PK_AERO_SEC_IDX_AIRSPACE_CELL 20
+#define PK_AERO_SEC_IDX_AIRWAY_CELL   21
 #define PK_AERO_IDX_ENTRY_SIZE       4
 /* 机场名称反向索引项的 bit31：1=这一项索引的是 city_off，0=name_off */
 #define PK_AERO_NAME_IDX_CITY_FLAG   0x80000000u
@@ -104,6 +134,9 @@ enum {
 #define PK_AERO_FREQ_SIZE      8
 #define PK_AERO_NAVAID_SIZE    32
 #define PK_AERO_FIX_SIZE       24
+#define PK_AERO_AIRSPACE_SIZE     48   /* v4 */
+#define PK_AERO_AIRSPACE_VTX_SIZE 4    /* v4 */
+#define PK_AERO_AIRWAY_SIZE       48   /* v4 */
 
 /* FIX scope 枚举（0=未知 1=enroute 2=terminal 3=both）*/
 #define PK_AERO_FIX_SCOPE_UNKNOWN  0
@@ -114,6 +147,105 @@ enum {
 #define PK_AERO_COORD_NONE     0x7FFFFFFF   /* int32 缺失坐标哨兵 */
 #define PK_AERO_BEARING_NONE   0xFFFF       /* uint16 缺失磁航向哨兵（0.1°）*/
 #define PK_AERO_STR_NONE       0            /* 字符串池偏移 0 = 无 */
+
+/* v4 哨兵 / 定点常量 */
+#define PK_AERO_ALT_NONE       (-32768)     /* i16 高度哨兵（100 ft 为单位）*/
+#define PK_AERO_TRACK_NONE     0xFFFF       /* u16 磁航迹哨兵（0.1°）*/
+#define PK_AERO_DIST_NONE      0xFFFF       /* u16 距离哨兵（0.1 nm）*/
+#define PK_AERO_VTX_SCALE_MAX  65535.0      /* 顶点 u16 定点满量程（double）*/
+/* 上/下限高度都是 i16、单位 100 ft：-32768 = 该端无限制/未知（见上），
+ * 而 9999（= 999,900 ft）是生成端对 "UNL / UNLIMITED" 的编码，绘制时
+ * 应当显示成 "UNL" 而不是一个荒唐的高度数字。 */
+#define PK_AERO_ALT_UNLIMITED  9999
+
+/* ---- v4 枚举（照抄 export_box_bin.py 的 *_ENUM；0 = 未知/其它）----
+ *
+ * 管线的字典里同一个号有别名（PROHIBITED/P、DANGER/D、FORWARD/F/TRUE…），
+ * 读端只需要规范名，所以这里一个号只出现一次。分组按管线注释：
+ *   1–9   管制分类（CLASS_A..G）
+ *   10–19 限制类（禁/限/危/警/告警/军事活动区…）
+ *   20–39 管制区（FIR/UIR/CTA/TMA/CTR…）
+ *   40–49 其它活动区（跳伞/滑翔）
+ */
+#define PK_AERO_ASP_TYPE_OTHER        0
+#define PK_AERO_ASP_TYPE_CLASS_A      1
+#define PK_AERO_ASP_TYPE_CLASS_B      2
+#define PK_AERO_ASP_TYPE_CLASS_C      3
+#define PK_AERO_ASP_TYPE_CLASS_D      4
+#define PK_AERO_ASP_TYPE_CLASS_E      5
+#define PK_AERO_ASP_TYPE_CLASS_F      6
+#define PK_AERO_ASP_TYPE_CLASS_G      7
+#define PK_AERO_ASP_TYPE_PROHIBITED   10   /* 别名 P */
+#define PK_AERO_ASP_TYPE_RESTRICTED   11   /* 别名 R */
+#define PK_AERO_ASP_TYPE_DANGER       12   /* 别名 D */
+#define PK_AERO_ASP_TYPE_WARNING      13
+#define PK_AERO_ASP_TYPE_ALERT        14
+#define PK_AERO_ASP_TYPE_MOA          15
+#define PK_AERO_ASP_TYPE_TRA          16
+#define PK_AERO_ASP_TYPE_TSA          17
+#define PK_AERO_ASP_TYPE_ADIZ         18
+#define PK_AERO_ASP_TYPE_FIR          20
+#define PK_AERO_ASP_TYPE_UIR          21
+#define PK_AERO_ASP_TYPE_CTA          22
+#define PK_AERO_ASP_TYPE_UTA          23
+#define PK_AERO_ASP_TYPE_TMA          24
+#define PK_AERO_ASP_TYPE_CTR          25
+#define PK_AERO_ASP_TYPE_TIA          26
+#define PK_AERO_ASP_TYPE_TIZ          27
+#define PK_AERO_ASP_TYPE_ACC          28
+#define PK_AERO_ASP_TYPE_SECTOR       29
+#define PK_AERO_ASP_TYPE_AERODROME    30
+#define PK_AERO_ASP_TYPE_RMZ          31
+#define PK_AERO_ASP_TYPE_TMZ          32
+#define PK_AERO_ASP_TYPE_CORRIDOR     33
+#define PK_AERO_ASP_TYPE_PARA_JUMPING 40
+#define PK_AERO_ASP_TYPE_GLIDING      41
+
+/* 空域等级（AIRSPACE_CLASS_ENUM）*/
+#define PK_AERO_ASP_CLASS_NONE  0
+#define PK_AERO_ASP_CLASS_A     1
+#define PK_AERO_ASP_CLASS_B     2
+#define PK_AERO_ASP_CLASS_C     3
+#define PK_AERO_ASP_CLASS_D     4
+#define PK_AERO_ASP_CLASS_E     5
+#define PK_AERO_ASP_CLASS_F     6
+#define PK_AERO_ASP_CLASS_G     7
+
+/* 高度基准（ALT_REF_ENUM）。SFC 与 GND 同义、FL 与 STD 同义，但源库两种
+ * 写法都在用，管线保留了原始区分——显示时按需归并（GND/SFC → "AGL"）。 */
+#define PK_AERO_ALT_REF_UNKNOWN 0
+#define PK_AERO_ALT_REF_GND     1
+#define PK_AERO_ALT_REF_MSL     2
+#define PK_AERO_ALT_REF_STD     3
+#define PK_AERO_ALT_REF_FL      4
+#define PK_AERO_ALT_REF_SFC     5
+
+/* 航路类型（AIRWAY_TYPE_ENUM，实测全集 A/B/G/J/L/M/Q/R/T/V/W/Y）*/
+#define PK_AERO_AWY_TYPE_UNKNOWN 0
+#define PK_AERO_AWY_TYPE_A       1
+#define PK_AERO_AWY_TYPE_B       2
+#define PK_AERO_AWY_TYPE_G       3
+#define PK_AERO_AWY_TYPE_J       4
+#define PK_AERO_AWY_TYPE_L       5
+#define PK_AERO_AWY_TYPE_M       6
+#define PK_AERO_AWY_TYPE_Q       7
+#define PK_AERO_AWY_TYPE_R       8
+#define PK_AERO_AWY_TYPE_T       9
+#define PK_AERO_AWY_TYPE_V       10
+#define PK_AERO_AWY_TYPE_W       11
+#define PK_AERO_AWY_TYPE_Y       12
+
+/* 航路高度层（AIRWAY_LEVEL_ENUM）：高空 / 低空 / 两者 */
+#define PK_AERO_AWY_LEVEL_UNKNOWN 0
+#define PK_AERO_AWY_LEVEL_HIGH    1   /* H */
+#define PK_AERO_AWY_LEVEL_LOW     2   /* L */
+#define PK_AERO_AWY_LEVEL_BOTH    3   /* B */
+
+/* 航路方向（AIRWAY_DIR_ENUM）：沿 start→end / 反向 / 双向 */
+#define PK_AERO_AWY_DIR_UNKNOWN  0
+#define PK_AERO_AWY_DIR_FORWARD  1
+#define PK_AERO_AWY_DIR_BACKWARD 2
+#define PK_AERO_AWY_DIR_BOTH     3
 
 #define PK_AERO_ENC_NONE       0
 #define PK_AERO_ENC_AES128_CTR 1
@@ -164,13 +296,18 @@ typedef struct {
     uint64_t rev_lookups;    /* 名称反向索引二分次数 */
     uint64_t rev_derefs;     /* 反向/前缀二分中回读记录取键的次数（随机访存）*/
     uint64_t prefix_scanned; /* 前缀枚举里线性扫过的索引项数 */
+    /* v4 空间查询：平台无关的"触及量" */
+    uint64_t cells_visited;  /* bbox 展开出的格数（含重复格）*/
+    uint64_t cell_candidates;/* 格展开表里取到的候选记录下标数（含重复）*/
+    uint64_t bbox_tests;     /* 候选记录 bbox 相交测试次数 */
+    uint64_t bbox_inserts;   /* 通过精筛并尝试插入结果集的次数 */
 } pk_aero_stats_t;
 
 /* ---- 数据库句柄（解析态，几十字节级，验证"常驻 = bin 本体"）---- */
 typedef struct {
     const uint8_t *payload;      /* 明文 payload 起点（buffer 内）*/
     uint32_t       payload_len;
-    uint16_t       version;      /* 实际 bin 版本（2 或 3），诊断/日志用 */
+    uint16_t       version;      /* 实际 bin 版本（2/3/4），诊断/日志用 */
     char           cycle[9];     /* NUL 结尾 */
     uint8_t        enc_algo;
     uint8_t        nonce[8];     /* CTR 高 64 位（供调用方解密用）*/
@@ -180,6 +317,10 @@ typedef struct {
     pk_aero_section_t sec_idx_apt_key, sec_idx_apt_name;
     pk_aero_section_t sec_idx_nav_name, sec_idx_fix_name;
     pk_aero_index_t   apt_idx, nav_idx, fix_idx;
+    /* v4 段（读 v3 文件时全为 0 → n=0 → 空域/航路查询返回 0 结果）*/
+    pk_aero_section_t sec_airspace, sec_asp_vtx, sec_airway;
+    pk_aero_section_t sec_idx_asp_cell, sec_idx_awy_cell;
+    pk_aero_index_t   asp_cell_idx, awy_cell_idx;
     pk_aero_stats_t   stats;
 } pk_aero_db_t;
 
@@ -236,6 +377,39 @@ typedef struct {
     const char *name;             /* 无则 "" */
 } pk_aero_fix_t;
 
+/* v4：空域（airspaces 段，48 B/条）*/
+typedef struct {
+    int32_t     min_lat_e7, min_lon_e7, max_lat_e7, max_lon_e7;
+    double      min_lat, min_lon, max_lat, max_lon;   /* = e7 / 1e7 */
+    uint8_t     type, cls;            /* AIRSPACE_TYPE_ENUM / CLASS_ENUM */
+    uint8_t     lower_ref, upper_ref; /* ALT_REF_ENUM（0=未知）*/
+    int16_t     lower_100ft, upper_100ft;  /* PK_AERO_ALT_NONE = 无 */
+    bool        has_lower, has_upper;
+    const char *name, *designator;    /* 无则 ""（本段字符串池）*/
+    uint32_t    vtx_first_fine, vtx_first_coarse;   /* 记录里是 24-bit 大端 */
+    uint16_t    vtx_count_fine, vtx_count_coarse;
+    uint16_t    grid_cell;            /* bbox 中心代表点 */
+} pk_aero_airspace_t;
+
+/* v4：几何顶点（还原后的度）。x=经度、y=纬度，与 Python (lon, lat) 同序 */
+typedef struct {
+    double lon, lat;
+} pk_aero_lonlat_t;
+
+/* v4：航路段（airways 段，48 B/条）*/
+typedef struct {
+    int32_t     start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7;
+    double      start_lat, start_lon, end_lat, end_lon;
+    char        designator[7], start_ident[7], end_ident[7];  /* NUL 结尾 */
+    uint8_t     type, level, direction;
+    uint16_t    mag_track_dd;      /* 0.1°，PK_AERO_TRACK_NONE = 无 */
+    uint16_t    dist_dnm;          /* 0.1 nm，PK_AERO_DIST_NONE = 无 */
+    bool        has_mag_track, has_distance;
+    int16_t     min_alt_100ft, max_alt_100ft;   /* PK_AERO_ALT_NONE = 无 */
+    bool        has_min_alt, has_max_alt;
+    uint16_t    seq;
+} pk_aero_airway_t;
+
 /* nearest 查询结果 */
 typedef struct {
     uint32_t idx;        /* 段内记录下标 */
@@ -287,9 +461,9 @@ int pk_aero_fix_by_ident(pk_aero_db_t *db, const char *ident,
  *   - **写满 max 就停并返回已写条数**（单字符前缀会枚举出数千条，不做
  *     截断会白扫；调用方拿不到"还有更多"这一信息，需要就加大 max 重查）；
  *   - 零堆分配，工作区全在调用方给的 out[] 与几十字节的栈变量里；
- *   - **v2 卡上所需索引缺席时一律返回 0**（不是错误，就是"这版数据搜不了"），
+ *   - **老卡上所需索引缺席时一律返回 0**（不是错误，就是"这版数据搜不了"），
  *     唯一例外是 fixes_by_prefix：它吃的 FIX ident 索引 v2 就有，照常工作。
- *     逐 API 的可用性见文件头的表。
+ *     逐 API 的可用性见文件头的三版对照表。
  */
 
 /* 机场代码前缀枚举：走 v3 全量 key 索引（icao 优先，无 icao 用 iata），
@@ -356,6 +530,70 @@ bool pk_aero_navaid_get(const pk_aero_db_t *db, uint32_t idx,
                         pk_aero_navaid_t *out);
 bool pk_aero_fix_get(const pk_aero_db_t *db, uint32_t idx,
                      pk_aero_fix_t *out);
+
+/* ---- v4 空域 / 航路 API ----
+ *
+ * 共同约定（沿用 v3）：
+ *   - 零堆分配。bbox 查询的**唯一**工作区就是调用方给的 out[]：结果集在
+ *     out[] 里维持"记录下标升序 + 互异"，满 max 时挤掉当前最大的那个，
+ *     语义等价于 Python "所有格候选去重 → 升序 → 取前 max 个"。
+ *     额外内存 = 0（只有几十字节栈变量），代价是每次插入 O(max) 搬移。
+ *   - 段缺席（读 v2/v3 文件）时所有查询返回 0 / false，不报错。
+ */
+
+/* 空域记录读取（idx 越界 / 段缺席返回 false）*/
+bool pk_aero_airspace_get(const pk_aero_db_t *db, uint32_t idx,
+                          pk_aero_airspace_t *out);
+
+/* 还原某档几何（coarse=false 取 fine 档）。u16 定点 → 度：
+ *   lon = min_lon + (max_lon - min_lon) * x_q / 65535（double，同 Python）。
+ * 写入 out[]，返回写入点数（<= min(顶点数, max)）；参数非法返回负错误码。*/
+int pk_aero_airspace_ring(const pk_aero_db_t *db, uint32_t idx, bool coarse,
+                          pk_aero_lonlat_t *out, int max);
+
+/* 单格查询：段 20 展开表里该格的记录下标（已按下标升序）。返回写入条数。*/
+int pk_aero_airspaces_in_cell(pk_aero_db_t *db, uint16_t cell,
+                              uint32_t *out, int max);
+
+/* 视野 bbox → 命中空域下标（升序、去重）。两级过滤：1° 格展开取候选 →
+ * 记录 bbox 相交精筛。返回写入条数。
+ * ⚠ 约定 min_lon <= max_lon：**查询 bbox 自身不支持跨 ±180**，跨经线的
+ * 视野请由调用方拆成两段查（环绕逻辑只收在格展开一处）。违约返回
+ * PK_AERO_ERR_ARG。纬度反了（min_lat > max_lat）则是空结果，不是错误。*/
+int pk_aero_airspaces_in_bbox(pk_aero_db_t *db,
+                              double min_lat, double min_lon,
+                              double max_lat, double max_lon,
+                              uint32_t *out, int max);
+
+/* 航路段记录读取 */
+bool pk_aero_airway_get(const pk_aero_db_t *db, uint32_t idx,
+                        pk_aero_airway_t *out);
+
+/* 按航路名精确查：记录本身已按 (designator, seq) 排序，直接在记录上二分到
+ * 同名区间左端再线性扫 —— 返回的下标序列即该航路的完整有序段序列。
+ * 语义同 pk_aero_fix_by_ident：返回同名总条数（可能 > max，只写前 max 个）。*/
+int pk_aero_find_airways_by_designator(pk_aero_db_t *db, const char *name,
+                                       uint32_t *out, int max);
+/* 航路名前缀枚举（1–6 字符）：记录顺序即索引顺序，写满 max 就停。*/
+int pk_aero_find_airways_by_prefix(pk_aero_db_t *db, const char *prefix,
+                                   uint32_t *out, int max);
+
+/* 航路段的**真实经度区间**（短弧口径，可能越出 ±180，不夹回）。
+ * 直接对两端点取 min/max 是错的：SYA(174.06°E)→ADK(176.67°W) 这类阿留申
+ * 航段短弧只有一两百海里，min/max 却会给出横跨大半个地球的假区间。
+ * 生成端建格索引与读端精筛必须同口径，故公开出来供绘制端复用。*/
+void pk_aero_airway_lon_span(double start_lon, double end_lon,
+                             double *lo_lon, double *hi_lon);
+
+/* 航路的格 / bbox 查询，语义与约定同空域；精筛 = 段两端点构成的 bbox
+ * （纬度取 min/max、经度取上面的短弧区间并允许 ±360 平移后相交）。
+ * 线段与矩形的真实相交测试留给绘制时裁剪，这里只保证不漏。*/
+int pk_aero_airways_in_cell(pk_aero_db_t *db, uint16_t cell,
+                            uint32_t *out, int max);
+int pk_aero_airways_in_bbox(pk_aero_db_t *db,
+                            double min_lat, double min_lon,
+                            double max_lat, double max_lon,
+                            uint32_t *out, int max);
 
 /* 聚簇区间：机场的跑道 / 频率在各自段内的 [first, first+count) */
 bool pk_aero_airport_runways(const pk_aero_db_t *db, uint32_t apt_idx,

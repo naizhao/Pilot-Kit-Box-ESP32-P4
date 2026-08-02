@@ -167,6 +167,110 @@ static void test_sink_should_disable_threshold(void)
     CHECK(pk_rec_store_sink_should_disable(PK_REC_STORE_FAIL_THRESHOLD + 100) == true);
 }
 
+/* ================================================================ bounds（阶段 5b） */
+
+static void test_bounds_reset_has_no_data(void)
+{
+    pk_rec_bounds_t b;
+    pk_rec_bounds_reset(&b);
+    CHECK(b.has_any == false);
+}
+
+static void test_bounds_first_update_sets_min_eq_max(void)
+{
+    pk_rec_bounds_t b;
+    pk_rec_bounds_reset(&b);
+    pk_rec_bounds_update(&b, 377749000, 1206194000);   /* 37.7749, 120.6194 */
+    CHECK(b.has_any == true);
+    CHECK(b.min_lat_e7 == 377749000);
+    CHECK(b.max_lat_e7 == 377749000);
+    CHECK(b.min_lon_e7 == 1206194000);
+    CHECK(b.max_lon_e7 == 1206194000);
+}
+
+static void test_bounds_expands_with_each_point(void)
+{
+    pk_rec_bounds_t b;
+    pk_rec_bounds_reset(&b);
+    pk_rec_bounds_update(&b, 100, 200);
+    pk_rec_bounds_update(&b, 50, 300);     /* 更小的 lat，更大的 lon */
+    pk_rec_bounds_update(&b, 150, 100);    /* 更大的 lat，更小的 lon */
+    CHECK(b.min_lat_e7 == 50);
+    CHECK(b.max_lat_e7 == 150);
+    CHECK(b.min_lon_e7 == 100);
+    CHECK(b.max_lon_e7 == 300);
+}
+
+static void test_bounds_single_point_degenerate_box(void)
+{
+    /* 只见过一个目标一次：外包框退化成一个点，不是"没有 bounds"。 */
+    pk_rec_bounds_t b;
+    pk_rec_bounds_reset(&b);
+    pk_rec_bounds_update(&b, 42, 42);
+    CHECK(b.has_any == true);
+    CHECK(b.min_lat_e7 == b.max_lat_e7);
+    CHECK(b.min_lon_e7 == b.max_lon_e7);
+}
+
+static void test_bounds_negative_coordinates(void)
+{
+    /* 南半球/西经：负数比较不能想当然用无符号或字符串序，钉住一条用例。 */
+    pk_rec_bounds_t b;
+    pk_rec_bounds_reset(&b);
+    pk_rec_bounds_update(&b, -338700000, 1512100000);  /* 悉尼 */
+    pk_rec_bounds_update(&b, -370000000, 1440000000);  /* 更南、更西 */
+    CHECK(b.min_lat_e7 == -370000000);
+    CHECK(b.max_lat_e7 == -338700000);
+    CHECK(b.min_lon_e7 == 1440000000);
+    CHECK(b.max_lon_e7 == 1512100000);
+}
+
+/* ================================================================ own_icao_changes（阶段 5b） */
+
+static void test_icao_changes_reset_is_empty(void)
+{
+    pk_rec_own_icao_changes_t c;
+    pk_rec_own_icao_changes_reset(&c);
+    CHECK(c.count == 0);
+}
+
+static void test_icao_changes_append_bind(void)
+{
+    pk_rec_own_icao_changes_t c;
+    pk_rec_own_icao_changes_reset(&c);
+    const uint8_t icao[3] = {0xA1, 0xB2, 0xC3};
+    CHECK(pk_rec_own_icao_changes_append(&c, 1000, true, icao) == true);
+    CHECK(c.count == 1);
+    CHECK(c.entries[0].ts_ms == 1000);
+    CHECK(c.entries[0].bound == true);
+    CHECK(memcmp(c.entries[0].icao24, icao, 3) == 0);
+}
+
+static void test_icao_changes_append_unbind_zeroes_icao(void)
+{
+    pk_rec_own_icao_changes_t c;
+    pk_rec_own_icao_changes_reset(&c);
+    CHECK(pk_rec_own_icao_changes_append(&c, 2000, false, NULL) == true);
+    CHECK(c.entries[0].bound == false);
+    static const uint8_t zero[3] = {0, 0, 0};
+    CHECK(memcmp(c.entries[0].icao24, zero, 3) == 0);
+}
+
+static void test_icao_changes_full_array_rejects_further_appends(void)
+{
+    pk_rec_own_icao_changes_t c;
+    pk_rec_own_icao_changes_reset(&c);
+    const uint8_t icao[3] = {1, 2, 3};
+    for (unsigned i = 0; i < PK_REC_OWN_ICAO_CHANGES_MAX; i++) {
+        CHECK(pk_rec_own_icao_changes_append(&c, (int64_t)i, true, icao) == true);
+    }
+    CHECK(c.count == PK_REC_OWN_ICAO_CHANGES_MAX);
+    /* 满了之后：丢新不丢旧——追加失败，已有条目原样保留。 */
+    CHECK(pk_rec_own_icao_changes_append(&c, 99999, true, icao) == false);
+    CHECK(c.count == PK_REC_OWN_ICAO_CHANGES_MAX);
+    CHECK(c.entries[0].ts_ms == 0);   /* 最早那条没被顶掉 */
+}
+
 /* ================================================================ main */
 
 int main(void)
@@ -188,6 +292,17 @@ int main(void)
     test_degrade_tier_boundaries();
 
     test_sink_should_disable_threshold();
+
+    test_bounds_reset_has_no_data();
+    test_bounds_first_update_sets_min_eq_max();
+    test_bounds_expands_with_each_point();
+    test_bounds_single_point_degenerate_box();
+    test_bounds_negative_coordinates();
+
+    test_icao_changes_reset_is_empty();
+    test_icao_changes_append_bind();
+    test_icao_changes_append_unbind_zeroes_icao();
+    test_icao_changes_full_array_rejects_further_appends();
 
     if (g_fail == 0) {
         printf("OK (all pk_rec_store host tests passed)\n");

@@ -35,6 +35,7 @@
 #include "config_traffic.h"
 #include "config_ac_category.h"
 #include "pk_aero_db.h"
+#include "pk_win.h"
 #include "pk_aero_layer.h"
 #include "apt_detail_page.h"
 #include "nav_grid_page.h"
@@ -356,6 +357,12 @@ void app_main(void)
      * 须晚于 pk_sdcard_init()；任务自带 12 s 静默期，避开 pk_aero 的加载
      * 窗口，不与它抢 SD 带宽。未就绪时查询返回 NULL，UI 显示 ICAO24。 */
     pk_aircraft_db_init();
+    /* 以本机为中心的滚动窗口（W1 骨架，设计见
+     * docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md）。
+     * 与 pk_aero_db 全量加载**并存**：窗口另开一个只读句柄按格区间读，
+     * 老路径一个字节没动，UI 侧本轮也还没切过来。只创建后台任务、零 IO，
+     * 须晚于 pk_sdcard_init()。PK_WIN_ENABLE=0 时本调用是空函数。 */
+    pk_win_init();
     /* 地图页的航空数据叠加层：只创建后台快照任务，等地图页第一次渲染
      * 报出视图才开始查（pk_aero_layer.h）。须晚于 pk_aero_db_init()。 */
     pk_aero_layer_init();

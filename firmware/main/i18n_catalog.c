@@ -288,6 +288,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_AC_CAT_PISTON] = "PISTON",
         [PK_TR_AC_CAT_TURBOPROP] = "TURBO",
         [PK_TR_AC_CAT_JET] = "JET",
+        [PK_TR_TOAST_REC_SD_NORAW] = "SD LOW — RAW LOG STOPPED",
+        [PK_TR_TOAST_REC_SD_OWNONLY] = "SD CRITICAL — ONLY OWN TRACK KEPT",
+        [PK_TR_TOAST_REC_SINK_FAIL] = "RECORD WRITE FAILED — SINK STOPPED",
+        [PK_TR_DIAG_V_REC_NORAW] = "raw off",
+        [PK_TR_DIAG_V_REC_OWNONLY] = "own only",
+        [PK_TR_DIAG_V_REC_FAIL] = "fail",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -572,6 +578,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_AC_CAT_PISTON] = "活塞",
         [PK_TR_AC_CAT_TURBOPROP] = "涡桨",
         [PK_TR_AC_CAT_JET] = "喷气",
+        [PK_TR_TOAST_REC_SD_NORAW] = "SD 空间不足——已停写原始报文",
+        [PK_TR_TOAST_REC_SD_OWNONLY] = "SD 空间告急——仅保留本机航迹",
+        [PK_TR_TOAST_REC_SINK_FAIL] = "记录写入失败——该路已停用",
+        [PK_TR_DIAG_V_REC_NORAW] = "限流",
+        [PK_TR_DIAG_V_REC_OWNONLY] = "仅本机",
+        [PK_TR_DIAG_V_REC_FAIL] = "失效",
     },
 };
 

@@ -95,6 +95,20 @@ void pk_tile_loader_request(const pk_map_route_result_t *route);
  * 不处理（不影响已经在处理中的那一条）。 */
 void pk_tile_loader_bump_view(void);
 
+/*
+ * 队列里待处理 + 在途处理中的瓦片请求总数。0 = loader 现在闲着。
+ *
+ * 存在的唯一理由：航空数据的窗口预取（pk_win）要给瓦片让路。依据是
+ * docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md §1.7 的
+ * 账——前向 100 NM 的提前量是 12–40 分钟，而加载一个格是 25 ms（独占）到
+ * 412 ms（被瓦片压着），差 3 个数量级；而并发退化高度不对称（航空侧 ×16.6、
+ * 瓦片侧只 ×1.08）。所以让航空侧无条件让路是显然的选择，代价是航空侧延迟
+ * （有 12–40 分钟预算），收益是瓦片侧不掉帧。
+ *
+ * 纯内存 + 一次极短的 s_lock，渲染线程也能调（但没必要）。
+ */
+int pk_tile_loader_pending(void);
+
 #ifdef __cplusplus
 }
 #endif

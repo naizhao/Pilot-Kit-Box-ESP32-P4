@@ -316,7 +316,10 @@ static void file_writer_task(void *arg)
  * 区（最坏等一次已拔卡上的 sdmmc 命令超时，有限）。fclose 即使因卡已不
  * 在而 f_close 报错，IDF 的 vfs_fat_close 也会无条件释放 FIL 槽与 fd，
  * 所以回调返回时本模块保证无打开的 SD fd。base path 判定是防御：本回调
- * 只在 SD 后端注册，但句柄归属再核对一次不吃亏。 */
+ * 只在 SD 后端注册，但句柄归属再核对一次不吃亏。
+ *
+ * 顺风车。两个模块用各自的锁保护各自的句柄，互不干扰，只是共享同一次
+ * "卸载前静默" 的调用时机。 */
 static void sd_close_log_cb(void)
 {
     xSemaphoreTake(s_file_lock, portMAX_DELAY);

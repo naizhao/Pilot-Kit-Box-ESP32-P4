@@ -1,11 +1,14 @@
 /*
  * pk_aero_reader.c — pk_aero.bin 可移植 C 参考实现
  *
- * 来源：tmp/pk_aero_bench/pk_aero_reader.c 搬入（2026-08-02，v3 版），
- * 固件侧唯一改动是接受 v2/v3 两种 bin（版本判定 + db->version，见 pk_aero_init）。
- * 搬入前验证状态：Mac 端与 Python 对拍 100% 一致（ICAO / nearest / 聚簇 /
- * FIX ident / v3 前缀三表 / 导航台 ident / 子串）；P4 真机（p4_bench）
- * v2 全量库 correctness=PASS。
+ * 来源：tmp/pk_aero_bench/pk_aero_reader.c 搬入（2026-08-02，v4 版）。
+ * 固件侧改动只有两处：
+ *   1. 接受 v2/v3/v4 三种 bin（版本判定 + db->version，见 pk_aero_init）；
+ *   2. 多一份可中断的分段子串搜索（pk_aero_search_substring_step），
+ *      一口气版本改成"预算不限"地调它，两条路径共用同一个 scan_pool_range。
+ * 搬入前验证状态：Mac 端与 Python 对拍 100% 一致（5,229 条用例：ICAO /
+ * nearest / 聚簇 / FIX ident / v3 前缀三表 / 导航台 ident / 子串 /
+ * v4 空域记录 + 环 + bbox / 航路记录 + designator + bbox）。
  *
  * 布局权威：Pilot-Kit 仓 scripts/aero_data_pipeline/export_box_bin.py。
  * 逐字节组装所有多字节字段（小端），字符串池 24-bit 偏移为大端
@@ -100,8 +103,9 @@ int pk_aero_init(pk_aero_db_t *db, const uint8_t *buf, size_t len,
 
     if (len < PK_AERO_HEADER_SIZE) return PK_AERO_ERR_TRUNCATED;
     if (memcmp(buf, PK_AERO_MAGIC, 6) != 0) return PK_AERO_ERR_MAGIC;
-    /* 双版本：v2/v3 记录段逐字节相同，v3 只是多了 4 个索引段 + strings_size。
-     * 用户换卡有窗口期，两版都得能读，缺索引的查询各自退化（见头文件表）。 */
+    /* 三版兼容：v3 只加索引段、v4 只加空域/航路段，老段一个字节都没动
+     * → 接受 [MIN, MAX] 区间（同 PkAeroReader）。用户换卡有窗口期，
+     * 三版都得能读，缺段的查询各自退化（见头文件对照表）。 */
     uint16_t version = rd_u16(buf + 6);
     if (version < PK_AERO_VERSION_MIN || version > PK_AERO_VERSION_MAX)
         return PK_AERO_ERR_VERSION;
@@ -126,7 +130,7 @@ int pk_aero_init(pk_aero_db_t *db, const uint8_t *buf, size_t len,
     db->payload     = buf + payload_off;
     db->payload_len = (uint32_t)(len - payload_off);
 
-    /* 段表：只认识 1–4，未知类型跳过（前向兼容）*/
+    /* 段表：只认识下面 switch 里列出的类型，未知类型跳过（前向兼容）*/
     for (uint16_t i = 0; i < n_sections; i++) {
         const uint8_t *e = buf + sections_off
                          + (size_t)i * PK_AERO_SECTION_SIZE;
@@ -158,6 +162,12 @@ int pk_aero_init(pk_aero_db_t *db, const uint8_t *buf, size_t len,
         case PK_AERO_SEC_IDX_AIRPORT_NAME: db->sec_idx_apt_name = s; break;
         case PK_AERO_SEC_IDX_NAVAID_NAME:  db->sec_idx_nav_name = s; break;
         case PK_AERO_SEC_IDX_FIX_NAME:     db->sec_idx_fix_name = s; break;
+        /* v4：读 v2/v3 文件时这几个 case 一次都不会命中，结构体保持全 0 */
+        case PK_AERO_SEC_AIRSPACES:       db->sec_airspace     = s; break;
+        case PK_AERO_SEC_AIRSPACE_VERTS:  db->sec_asp_vtx      = s; break;
+        case PK_AERO_SEC_AIRWAYS:         db->sec_airway       = s; break;
+        case PK_AERO_SEC_IDX_AIRSPACE_CELL: db->sec_idx_asp_cell = s; break;
+        case PK_AERO_SEC_IDX_AIRWAY_CELL:   db->sec_idx_awy_cell = s; break;
         default: break;   /* 未知类型跳过：前向兼容 */
         }
     }
@@ -171,17 +181,32 @@ int pk_aero_init(pk_aero_db_t *db, const uint8_t *buf, size_t len,
     const pk_aero_section_t *idx4[] = {
         &db->sec_idx_apt_key, &db->sec_idx_apt_name,
         &db->sec_idx_nav_name, &db->sec_idx_fix_name,
+        /* v4 展开索引也是 4 B/项 */
+        &db->sec_idx_asp_cell, &db->sec_idx_awy_cell,
     };
     for (size_t i = 0; i < sizeof(idx4) / sizeof(idx4[0]); i++) {
         if (idx4[i]->n != 0 && idx4[i]->rec_size != PK_AERO_IDX_ENTRY_SIZE)
             return PK_AERO_ERR_SECTION;
     }
+    /* v4 数据段：缺席（n=0，读 v3 文件）不算错，存在就必须是约定的记录长度 */
+    if ((db->sec_airspace.n != 0 &&
+         db->sec_airspace.rec_size != PK_AERO_AIRSPACE_SIZE) ||
+        (db->sec_asp_vtx.n != 0 &&
+         db->sec_asp_vtx.rec_size != PK_AERO_AIRSPACE_VTX_SIZE) ||
+        (db->sec_airway.n != 0 &&
+         db->sec_airway.rec_size != PK_AERO_AIRWAY_SIZE))
+        return PK_AERO_ERR_SECTION;
 
     int rc = parse_index(db, &db->sec_airport, &db->apt_idx);
     if (rc != PK_AERO_OK) return rc;
     rc = parse_index(db, &db->sec_navaid, &db->nav_idx);
     if (rc != PK_AERO_OK) return rc;
     rc = parse_index(db, &db->sec_fix, &db->fix_idx);
+    if (rc != PK_AERO_OK) return rc;
+    /* v4 展开索引段的 index 区就是 v3 的稀疏格表，解析函数原样复用 */
+    rc = parse_index(db, &db->sec_idx_asp_cell, &db->asp_cell_idx);
+    if (rc != PK_AERO_OK) return rc;
+    rc = parse_index(db, &db->sec_idx_awy_cell, &db->awy_cell_idx);
     if (rc != PK_AERO_OK) return rc;
     if (db->apt_idx.n_grid == 0 || db->nav_idx.n_grid == 0)
         return PK_AERO_ERR_SECTION;   /* airports/navaids 必须带网格索引 */
@@ -523,6 +548,13 @@ static void fix_ident6(const pk_aero_db_t *db, uint32_t rec, uint8_t *out)
                 + (size_t)rec * PK_AERO_FIX_SIZE + 8, 6);
 }
 
+/* 索引表第 i 项 → 记录下标。table==NULL 表示**恒等排列**（v4 航路：记录
+ * 本身就按 designator 排序，Python 那边传的是 range(airway_count)）。*/
+static inline uint32_t idx_at(const uint8_t *table, uint32_t i)
+{
+    return table ? rd_u32(table + (size_t)i * 4) : i;
+}
+
 /* 定长键排序表上的前缀枚举。
  * 查询键右填 '\0'，而 '\0' 小于任何可打印 ASCII，所以 lower_bound 恰好落在
  * 前缀区间左端；随后线性扫到前缀不再匹配 / 写满 max 为止。 */
@@ -540,13 +572,13 @@ static int prefix_generic(pk_aero_db_t *db, const uint8_t *table, uint32_t n,
         uint32_t mid = (lo + hi) / 2;
         db->stats.bsearch_steps++;
         db->stats.rev_derefs++;          /* 每步一次随机访存回读记录 */
-        keyf(db, rd_u32(table + (size_t)mid * 4), k);
+        keyf(db, idx_at(table, mid), k);
         if (memcmp(k, padded, klen) < 0) lo = mid + 1;
         else                             hi = mid;
     }
     int found = 0;
     while (lo < n && found < max) {
-        uint32_t rec = rd_u32(table + (size_t)lo * 4);
+        uint32_t rec = idx_at(table, lo);
         db->stats.rev_derefs++;
         db->stats.prefix_scanned++;
         keyf(db, rec, k);
@@ -901,4 +933,380 @@ bool pk_aero_airport_freqs(const pk_aero_db_t *db, uint32_t apt_idx,
     *first = a.freq_first;
     *count = a.freq_count;
     return (uint64_t)a.freq_first + a.freq_count <= db->sec_freq.n;
+}
+
+/* ================================================================== */
+/* v4：空域记录 + 几何还原                                              */
+/* ================================================================== */
+
+bool pk_aero_airspace_get(const pk_aero_db_t *db, uint32_t idx,
+                          pk_aero_airspace_t *out)
+{
+    if (!db || !out) return false;
+    const pk_aero_section_t *s = &db->sec_airspace;
+    if (idx >= s->n) return false;          /* 段缺席时 n=0 → 一律 false */
+    const uint8_t *r = db->payload + s->data_off
+                     + (size_t)idx * PK_AERO_AIRSPACE_SIZE;
+    out->min_lat_e7 = rd_i32(r);
+    out->min_lon_e7 = rd_i32(r + 4);
+    out->max_lat_e7 = rd_i32(r + 8);
+    out->max_lon_e7 = rd_i32(r + 12);
+    out->min_lat = out->min_lat_e7 / 1e7;
+    out->min_lon = out->min_lon_e7 / 1e7;
+    out->max_lat = out->max_lat_e7 / 1e7;
+    out->max_lon = out->max_lon_e7 / 1e7;
+    out->type      = r[16];
+    out->cls       = r[17];
+    out->lower_ref = r[18];
+    out->upper_ref = r[19];
+    out->lower_100ft = rd_i16(r + 20);
+    out->upper_100ft = rd_i16(r + 22);
+    out->has_lower = (out->lower_100ft != (int16_t)PK_AERO_ALT_NONE);
+    out->has_upper = (out->upper_100ft != (int16_t)PK_AERO_ALT_NONE);
+    out->name       = pool_str(db, s, rd_u24be(r + 24));
+    out->designator = pool_str(db, s, rd_u24be(r + 27));
+    /* 顶点池下标同样是 24-bit 大端（照抄字符串池偏移手法）*/
+    out->vtx_first_fine   = rd_u24be(r + 30);
+    out->vtx_first_coarse = rd_u24be(r + 33);
+    out->vtx_count_fine   = rd_u16(r + 36);
+    out->vtx_count_coarse = rd_u16(r + 38);
+    out->grid_cell        = rd_u16(r + 40);
+    return true;
+}
+
+int pk_aero_airspace_ring(const pk_aero_db_t *db, uint32_t idx, bool coarse,
+                          pk_aero_lonlat_t *out, int max)
+{
+    if (!db || !out || max < 0) return PK_AERO_ERR_ARG;
+    pk_aero_airspace_t a;
+    if (!pk_aero_airspace_get(db, idx, &a)) return PK_AERO_ERR_ARG;
+
+    uint32_t first = coarse ? a.vtx_first_coarse : a.vtx_first_fine;
+    uint32_t count = coarse ? a.vtx_count_coarse : a.vtx_count_fine;
+    if ((uint64_t)first + count > db->sec_asp_vtx.n)
+        return PK_AERO_ERR_TRUNCATED;
+
+    /* 跨度为 0 的那一维（退化成线的空域）量化值恒 0，还原恒等于 min，误差 0 */
+    double span_lat = a.max_lat - a.min_lat;
+    double span_lon = a.max_lon - a.min_lon;
+    const uint8_t *base = db->payload + db->sec_asp_vtx.data_off;
+    int n = 0;
+    for (uint32_t k = 0; k < count && n < max; k++) {
+        const uint8_t *v = base
+                         + (size_t)(first + k) * PK_AERO_AIRSPACE_VTX_SIZE;
+        /* 运算次序与 Python 逐字对齐：span * q 先算，再除满量程 → 逐位一致 */
+        double xq = (double)rd_u16(v);
+        double yq = (double)rd_u16(v + 2);
+        out[n].lon = a.min_lon + span_lon * xq / PK_AERO_VTX_SCALE_MAX;
+        out[n].lat = a.min_lat + span_lat * yq / PK_AERO_VTX_SCALE_MAX;
+        n++;
+    }
+    return n;
+}
+
+/* ================================================================== */
+/* v4：航路记录                                                        */
+/* ================================================================== */
+
+bool pk_aero_airway_get(const pk_aero_db_t *db, uint32_t idx,
+                        pk_aero_airway_t *out)
+{
+    if (!db || !out) return false;
+    const pk_aero_section_t *s = &db->sec_airway;
+    if (idx >= s->n) return false;
+    const uint8_t *r = db->payload + s->data_off
+                     + (size_t)idx * PK_AERO_AIRWAY_SIZE;
+    out->start_lat_e7 = rd_i32(r);
+    out->start_lon_e7 = rd_i32(r + 4);
+    out->end_lat_e7   = rd_i32(r + 8);
+    out->end_lon_e7   = rd_i32(r + 12);
+    out->start_lat = out->start_lat_e7 / 1e7;
+    out->start_lon = out->start_lon_e7 / 1e7;
+    out->end_lat   = out->end_lat_e7   / 1e7;
+    out->end_lon   = out->end_lon_e7   / 1e7;
+    fix_str(out->designator,  r + 16, 6);
+    fix_str(out->start_ident, r + 22, 6);
+    fix_str(out->end_ident,   r + 28, 6);
+    out->type  = r[34];
+    out->level = r[35];
+    out->mag_track_dd = rd_u16(r + 36);
+    out->dist_dnm     = rd_u16(r + 38);
+    out->has_mag_track = (out->mag_track_dd != PK_AERO_TRACK_NONE);
+    out->has_distance  = (out->dist_dnm     != PK_AERO_DIST_NONE);
+    out->min_alt_100ft = rd_i16(r + 40);
+    out->max_alt_100ft = rd_i16(r + 42);
+    out->has_min_alt = (out->min_alt_100ft != (int16_t)PK_AERO_ALT_NONE);
+    out->has_max_alt = (out->max_alt_100ft != (int16_t)PK_AERO_ALT_NONE);
+    out->seq       = rd_u16(r + 44);
+    out->direction = r[46];
+    return true;
+}
+
+void pk_aero_airway_lon_span(double start_lon, double end_lon,
+                             double *lo_lon, double *hi_lon)
+{
+    /* 直接对两端点取 min/max 是错的：SYA(174.06°E) → ADK(176.67°W) 这类
+     * 阿留申航段只有一两百海里长，短弧从 174° 往东跨过 180° 就到了，
+     * 而 min/max 会给出 [-176.67, 174.06] 这个横跨大半个地球的假区间
+     * —— 既会被亚洲的视野误查出来（假阳），又会在 179° 附近的视野里漏掉
+     * （假阴）。生成端 _cell_expand_segment 建索引用的就是短弧，精筛必须
+     * 同口径。返回值可能越出 ±180（本例是 174.06 / 183.33），**不夹回**，
+     * 比较时由 lon_overlap 按 ±360 平移。 */
+    double dlon = end_lon - start_lon;
+    if (dlon > 180.0)       dlon -= 360.0;
+    else if (dlon < -180.0) dlon += 360.0;
+    double a = start_lon, b = start_lon + dlon;
+    if (a <= b) { *lo_lon = a; *hi_lon = b; }
+    else        { *lo_lon = b; *hi_lon = a; }
+}
+
+/* 航路记录**本身**按 (designator, seq) 排序 → designator 二分不需要索引表 */
+static void awy_desig6(const pk_aero_db_t *db, uint32_t rec, uint8_t *out)
+{
+    memcpy(out, db->payload + db->sec_airway.data_off
+                + (size_t)rec * PK_AERO_AIRWAY_SIZE + 16, 6);
+}
+
+int pk_aero_find_airways_by_designator(pk_aero_db_t *db, const char *name,
+                                       uint32_t *out, int max)
+{
+    if (!db || !out || max < 0) return PK_AERO_ERR_ARG;
+    uint8_t want[6] = {0, 0, 0, 0, 0, 0};
+    if (norm_query(name, want, 6) <= 0) return 0;   /* 非 ASCII/超长 = 无结果 */
+    uint32_t n = db->sec_airway.n;
+    if (n == 0) return 0;                            /* v3 文件：段缺席 */
+
+    const uint8_t *data = db->payload + db->sec_airway.data_off;
+    uint32_t lo = 0, hi = n;
+    while (lo < hi) {                                /* lower_bound */
+        uint32_t mid = (lo + hi) / 2;
+        db->stats.bsearch_steps++;
+        db->stats.rev_derefs++;
+        if (memcmp(data + (size_t)mid * PK_AERO_AIRWAY_SIZE + 16, want, 6) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    int found = 0;
+    while (lo < n) {                                 /* 线性扫同名区间 */
+        db->stats.rev_derefs++;
+        if (memcmp(data + (size_t)lo * PK_AERO_AIRWAY_SIZE + 16, want, 6) != 0)
+            break;
+        if (found < max) out[found] = lo;
+        found++;
+        lo++;
+    }
+    return found;
+}
+
+int pk_aero_find_airways_by_prefix(pk_aero_db_t *db, const char *prefix,
+                                   uint32_t *out, int max)
+{
+    if (!db || !out || max <= 0) return 0;
+    uint8_t want[6];
+    int plen = norm_query(prefix, want, sizeof want);
+    if (plen <= 0) return 0;
+    if (db->sec_airway.n == 0) return 0;
+    /* table=NULL：恒等排列（Python 传的是 range(airway_count)）*/
+    return prefix_generic(db, NULL, db->sec_airway.n, awy_desig6, 6,
+                          want, (size_t)plen, out, max);
+}
+
+/* ================================================================== */
+/* v4：格 / bbox 空间查询                                               */
+/* ================================================================== */
+
+/* 展开索引段：cell → 记录下标列表（data 是 u32 表，index 是稀疏格表）。
+ * 表内已按 (cell, 记录下标) 排序，所以同一格内的下标天然升序。 */
+static int cell_expansion(pk_aero_db_t *db, const pk_aero_section_t *sec,
+                          const pk_aero_index_t *gi, uint16_t cell,
+                          uint32_t *out, int max)
+{
+    if (max <= 0 || sec->n == 0 || gi->n_grid == 0) return 0;
+    uint32_t first = 0, count = 0;
+    pk_aero_grid_lookup(db, gi, cell, &first, &count);
+    if (count == 0) return 0;
+    if ((uint64_t)first + count > sec->n) return 0;   /* 越界表：当空 */
+    const uint8_t *tbl = db->payload + sec->data_off;
+    int n = 0;
+    for (uint32_t k = 0; k < count && n < max; k++) {
+        out[n++] = rd_u32(tbl + (size_t)(first + k) * PK_AERO_IDX_ENTRY_SIZE);
+        db->stats.cell_candidates++;
+    }
+    return n;
+}
+
+/* 有序去重插入：out[] 始终保持"记录下标升序 + 互异"，满 max 时挤掉当前
+ * 最大的那个。这就是 bbox 查询的**全部**工作区 —— 零额外内存（不用位图、
+ * 不用候选缓冲），代价是每次成功插入 O(max) 次搬移。
+ * 语义等价于 Python "候选全收进 set → sorted() → 精筛 → 取前 max"：
+ * 两边都只保留通过精筛的、最小的 max 个下标，且升序。 */
+static void insert_sorted_uniq(uint32_t *out, int *n, int max, uint32_t idx)
+{
+    int lo = 0, hi = *n;
+    while (lo < hi) {                       /* lower_bound */
+        int mid = (lo + hi) / 2;
+        if (out[mid] < idx) lo = mid + 1;
+        else                hi = mid;
+    }
+    if (lo < *n && out[lo] == idx) return;  /* 已在集合里（多格命中同一条）*/
+    if (*n == max) {
+        if (lo == max) return;              /* 比现有最大的还大 → 丢弃 */
+        (*n)--;                             /* 挤掉当前最大的那个 */
+    }
+    for (int i = *n; i > lo; i--) out[i] = out[i - 1];
+    out[lo] = idx;
+    (*n)++;
+}
+
+/* 候选记录的 bbox 相交精筛（比较全用 double，与 Python 逐项同构）*/
+typedef bool (*pk_bbox_fn_t)(const pk_aero_db_t *db, uint32_t rec,
+                             double qmin_lat, double qmin_lon,
+                             double qmax_lat, double qmax_lon);
+
+static bool asp_bbox_hit(const pk_aero_db_t *db, uint32_t rec,
+                         double qmin_lat, double qmin_lon,
+                         double qmax_lat, double qmax_lon)
+{
+    if (rec >= db->sec_airspace.n) return false;
+    const uint8_t *r = db->payload + db->sec_airspace.data_off
+                     + (size_t)rec * PK_AERO_AIRSPACE_SIZE;
+    double a_min_lat = rd_i32(r)      / 1e7;
+    double a_min_lon = rd_i32(r + 4)  / 1e7;
+    double a_max_lat = rd_i32(r + 8)  / 1e7;
+    double a_max_lon = rd_i32(r + 12) / 1e7;
+    return a_min_lat <= qmax_lat && a_max_lat >= qmin_lat
+        && a_min_lon <= qmax_lon && a_max_lon >= qmin_lon;
+}
+
+/* 经度区间相交：允许把被测区间按 ±360 平移去够查询区间
+ * （同 PkAeroReader._lon_overlap）*/
+static bool lon_overlap(double a0, double a1, double q0, double q1)
+{
+    static const double shift[3] = {-360.0, 0.0, 360.0};
+    for (int i = 0; i < 3; i++) {
+        if (a0 + shift[i] <= q1 && a1 + shift[i] >= q0) return true;
+    }
+    return false;
+}
+
+static bool awy_bbox_hit(const pk_aero_db_t *db, uint32_t rec,
+                         double qmin_lat, double qmin_lon,
+                         double qmax_lat, double qmax_lon)
+{
+    if (rec >= db->sec_airway.n) return false;
+    const uint8_t *r = db->payload + db->sec_airway.data_off
+                     + (size_t)rec * PK_AERO_AIRWAY_SIZE;
+    double s_lat = rd_i32(r)      / 1e7;
+    double s_lon = rd_i32(r + 4)  / 1e7;
+    double e_lat = rd_i32(r + 8)  / 1e7;
+    double e_lon = rd_i32(r + 12) / 1e7;
+    /* 段自身 bbox = 两端点构成（线段与矩形的真实相交留给绘制时裁剪）*/
+    double lo_lat = s_lat < e_lat ? s_lat : e_lat;
+    double hi_lat = s_lat < e_lat ? e_lat : s_lat;
+    if (lo_lat > qmax_lat || hi_lat < qmin_lat) return false;
+    double lo_lon, hi_lon;
+    pk_aero_airway_lon_span(s_lon, e_lon, &lo_lon, &hi_lon);
+    return lon_overlap(lo_lon, hi_lon, qmin_lon, qmax_lon);
+}
+
+/* 纬度 → 行号：floor + 钳位 [0,179]（同生成端 _cell_expand_bbox）。
+ * 先在 double 域钳位再取整，任意有限值都不会撞上 int 溢出的未定义行为。 */
+static int bbox_row(double lat)
+{
+    double r = floor(lat) + 90.0;
+    if (r < 0.0)   return 0;
+    if (r > 179.0) return 179;
+    return (int)r;
+}
+
+static int bbox_query(pk_aero_db_t *db, const pk_aero_section_t *idx_sec,
+                      const pk_aero_index_t *gi, pk_bbox_fn_t hit,
+                      double min_lat, double min_lon,
+                      double max_lat, double max_lon,
+                      uint32_t *out, int max)
+{
+    /* 约定：视野 bbox 自身不得跨 ±180（Python 端是 assert，C 端返回错误码）。
+     * 跨经线的视野请由调用方拆成两段查 —— 把环绕逻辑收在 _cell_expand_bbox
+     * 一个地方。NaN 也走这条（比较为假）。 */
+    if (!(min_lon <= max_lon)) return PK_AERO_ERR_ARG;
+    if (!(fabs(min_lat) < 1e15) || !(fabs(max_lat) < 1e15) ||
+        !(fabs(min_lon) < 1e15) || !(fabs(max_lon) < 1e15))
+        return PK_AERO_ERR_ARG;
+    if (max <= 0 || idx_sec->n == 0 || gi->n_grid == 0) return 0;
+    /* 纬度反了 → Python 的 range(r0, r1+1) 为空 → 无结果（不是错误）*/
+    if (!(min_lat <= max_lat)) return 0;
+
+    int r0 = bbox_row(min_lat), r1 = bbox_row(max_lat);
+    double fc0 = floor(min_lon), fc1 = floor(max_lon);
+    int64_t c0, c1;
+    if (fc1 - fc0 >= 359.0) {
+        c0 = 0; c1 = 359;    /* 已覆盖整圈：逐列枚举一次即可（结果集去重，
+                              * 与 Python 把同一格重复枚举多次等价）*/
+    } else {
+        c0 = (int64_t)fc0; c1 = (int64_t)fc1;
+    }
+
+    const uint8_t *tbl = db->payload + idx_sec->data_off;
+    int n = 0;
+    for (int row = r0; row <= r1; row++) {
+        for (int64_t c = c0; c <= c1; c++) {
+            int64_t col = ((c + 180) % 360 + 360) % 360;   /* Python % 恒非负 */
+            uint16_t cell = (uint16_t)(row * 360 + (int)col);
+            db->stats.cells_visited++;
+            uint32_t first = 0, count = 0;
+            pk_aero_grid_lookup(db, gi, cell, &first, &count);
+            if (count == 0) continue;
+            if ((uint64_t)first + count > idx_sec->n) continue;
+            for (uint32_t k = 0; k < count; k++) {
+                uint32_t rec = rd_u32(tbl + (size_t)(first + k)
+                                          * PK_AERO_IDX_ENTRY_SIZE);
+                db->stats.cell_candidates++;
+                db->stats.bbox_tests++;
+                if (!hit(db, rec, min_lat, min_lon, max_lat, max_lon))
+                    continue;
+                db->stats.bbox_inserts++;
+                insert_sorted_uniq(out, &n, max, rec);
+            }
+        }
+    }
+    return n;
+}
+
+int pk_aero_airspaces_in_cell(pk_aero_db_t *db, uint16_t cell,
+                              uint32_t *out, int max)
+{
+    if (!db || !out) return 0;
+    return cell_expansion(db, &db->sec_idx_asp_cell, &db->asp_cell_idx,
+                          cell, out, max);
+}
+
+int pk_aero_airways_in_cell(pk_aero_db_t *db, uint16_t cell,
+                            uint32_t *out, int max)
+{
+    if (!db || !out) return 0;
+    return cell_expansion(db, &db->sec_idx_awy_cell, &db->awy_cell_idx,
+                          cell, out, max);
+}
+
+int pk_aero_airspaces_in_bbox(pk_aero_db_t *db,
+                              double min_lat, double min_lon,
+                              double max_lat, double max_lon,
+                              uint32_t *out, int max)
+{
+    if (!db || !out) return 0;
+    return bbox_query(db, &db->sec_idx_asp_cell, &db->asp_cell_idx,
+                      asp_bbox_hit, min_lat, min_lon, max_lat, max_lon,
+                      out, max);
+}
+
+int pk_aero_airways_in_bbox(pk_aero_db_t *db,
+                            double min_lat, double min_lon,
+                            double max_lat, double max_lon,
+                            uint32_t *out, int max)
+{
+    if (!db || !out) return 0;
+    return bbox_query(db, &db->sec_idx_awy_cell, &db->awy_cell_idx,
+                      awy_bbox_hit, min_lat, min_lon, max_lat, max_lon,
+                      out, max);
 }

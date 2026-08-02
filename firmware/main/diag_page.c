@@ -44,6 +44,7 @@
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
 #include "pk_aero_db.h"      /* pk_aero_db_status_get — SD 航空库状态 */
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
+#include "pk_rec_store.h"    /* pk_rec_store_get_health —— LOG 卡片接入 SD 写失败/降级持续状态 */
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
@@ -460,6 +461,15 @@ void pk_diag_page_render(uint16_t *fb)
      * 文件），后面补一句「设为 X」把差异挑明。 */
     {
         uint32_t written = 0, dropped = 0;
+        /* 阶段 5b：这一格再叠一路独立的写入管线——pk_rec_store（rec/ 目录
+         * 的 session 持久化，SD 满/写失败降级那条）。它跟 record_sink_file
+         * （"别人飞机"那条 GDL90 日志）是两套完全不同的写入器，但罩哥要求
+         * "复用现有实现"，持续状态不新开卡片，接到这一格的值行末尾——
+         * 反复弹同一个 toast 的结果是飞行员学会忽略它，诊断页才是"想看就
+         * 有、不想看不用管"的常驻信息源（设计文档「告警呈现」节）。 */
+        pk_rec_store_health_t rec_health;
+        pk_rec_store_get_health(&rec_health);
+
         if (record_sink_file_stats(&written, &dropped)) {
             const bool on_sd = record_sink_file_uses_sd();
             const bool want_sd = (pk_log_store_get() == PK_LOG_STORE_SD);
@@ -468,18 +478,39 @@ void pk_diag_page_render(uint16_t *fb)
                              pk_i18n_text(PK_TR_DIAG_U_W),
                              (unsigned long)written);
             if (want_sd != on_sd && p > 0 && p < (int)sizeof(buf))
-                snprintf(buf + p, sizeof(buf) - p, "  (%s %s)",
-                         pk_i18n_text(PK_TR_DIAG_V_SET_TO),
-                         log_store_text(want_sd));
-            /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。 */
+                p += snprintf(buf + p, sizeof(buf) - p, "  (%s %s)",
+                              pk_i18n_text(PK_TR_DIAG_V_SET_TO),
+                              log_store_text(want_sd));
+            /* REC 后缀：只挑一个最要紧的说，不叠加——卡片这一行本来就已经
+             * 塞了后端名 + 写入数，再加"降级档位 + 失效数"两段很容易在中文
+             * 界面上把值行挤到 S 档还溢出相邻卡片（截图 ui-4.3-diag-rec-fail
+             * 第一版就撞过这个）。失效 sink 比单纯降级更严重（数据已经在
+             * 丢），优先说它；没有失效 sink 时才说降级档位；两者都正常
+             * （FULL 且 0 失效）这段完全不出现。 */
+            if (p > 0 && p < (int)sizeof(buf) && rec_health.disabled_count > 0) {
+                snprintf(buf + p, sizeof(buf) - p, "  %s%u",
+                         pk_i18n_text(PK_TR_DIAG_V_REC_FAIL),
+                         (unsigned)rec_health.disabled_count);
+            } else if (p > 0 && p < (int)sizeof(buf) &&
+                       rec_health.tier != PK_REC_DEGRADE_FULL) {
+                snprintf(buf + p, sizeof(buf) - p, "  %s",
+                         pk_i18n_text(rec_health.tier == PK_REC_DEGRADE_OWN_ONLY
+                                      ? PK_TR_DIAG_V_REC_OWNONLY
+                                      : PK_TR_DIAG_V_REC_NORAW));
+            }
+            /* 丢过条目就是琥珀：还在写，但已经不完整了，跟"没在写"是两回事。
+             * REC 失效 sink（写失败）比降级更严重——数据已经在丢，升到红；
+             * 单纯降级（SD 空间紧张但还在写）维持琥珀。 */
             draw_card(fb, 1, 2, card_title(5), buf,
                       /* written == 0 只是"还没收到可写的数据"，不是故障——
                        * 刚开机、或者 SDR 没插时本来就一条都没有。sink 建起来
                        * 了就算正常；丢过条目才是琥珀（还在写但已不完整）。
                        * 设置与实际不一致也是琥珀：不是故障，但用户以为已经
                        * 换过去了，得让这一格自己喊一声。 */
-                      dropped > 0 ? ST_WARN
+                      rec_health.disabled_count > 0 ? ST_BAD
+                      : dropped > 0 ? ST_WARN
                       : want_sd != on_sd ? ST_WARN
+                      : rec_health.tier != PK_REC_DEGRADE_FULL ? ST_WARN
                       : written > 0 ? ST_OK : ST_IDLE);
         } else {
             draw_card(fb, 1, 2, card_title(5),
@@ -630,8 +661,15 @@ void pk_diag_page_render(uint16_t *fb)
         card_state_t st;
         switch (a.state) {
         case PK_AERO_DB_READY:
-            /* 带上 bin 版本：用户换 v3 卡后靠它确认新库生效（v2 上搜索
-             * 索引缺席，按名/按码搜索会是空的——不是坏了，是数据旧）。 */
+            /* 带上 bin 版本：用户换卡后靠它确认新库生效（v2 上搜索索引
+             * 缺席，按名/按码搜索是空的；v3 上空域/航路段缺席，地图叠加层
+             * 是空的——都不是坏了，是数据旧）。
+             *
+             * 空域/航路条数**不上卡**：这一行的宽度只够"周期 + 版本 + 一个
+             * 计数"，再挂两个数就会掉到 S 档还压到隔壁卡（现有的导航台/FIX
+             * 计数同理也没显示）。而"v4 生效没有"这个问题版本号本身就答完了
+             * ——v4 容器必然带这两段。要看具体条数去串口：READY 时
+             * pk_aero_db.c 会打一行 "airspace/airway: … airspaces … legs"。 */
             snprintf(buf, sizeof(buf), "%s v%u  %lu apt",
                      a.cycle, (unsigned)a.version,
                      (unsigned long)a.n_airports);

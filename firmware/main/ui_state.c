@@ -74,10 +74,16 @@ static int64_t           s_cal_acc_first_low_us;
 static int64_t           s_cal_acc_first_high_us;
 static uint8_t           s_cal_last_accuracy;
 
-/* Transient toast. s_toast_until_us == 0 (or now past it) → no toast. */
+/* Transient toast. s_toast_until_us == 0 (or now past it) → no toast.
+ * s_toast_blink_times>0 时按 400 ms 一拍闪烁（阶段 5b，见 ui_state.h
+ * pk_ui_toast_show_blink 的注释）；s_toast_start_us 是闪烁相位的起点。 */
 static pk_tr_id_t        s_toast_id;
 static bool              s_toast_is_error;
 static int64_t           s_toast_until_us;
+static int               s_toast_blink_times;
+static int64_t           s_toast_start_us;
+
+#define UI_TOAST_BLINK_HALF_US   (400 * 1000)   /* 400 ms 一拍 */
 
 esp_err_t pk_ui_init(void)
 {
@@ -367,14 +373,31 @@ void pk_ui_clear_own_icao(void)
     ESP_LOGI(TAG, "own ICAO cleared at runtime");
 }
 
-void pk_ui_toast_show(pk_tr_id_t id, bool is_error)
+/* 两个公开入口共用的实现；blink_times<=0 折成 0（"不闪"）。 */
+static void toast_show_impl(pk_tr_id_t id, bool is_error, int blink_times)
 {
     if (s_lock == NULL) return;
+    int64_t now = esp_timer_get_time();
+    int64_t duration_us = (blink_times > 0)
+                         ? (int64_t)blink_times * 2 * UI_TOAST_BLINK_HALF_US
+                         : UI_TOAST_DURATION_US;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_toast_id       = id;
-    s_toast_is_error = is_error;
-    s_toast_until_us = esp_timer_get_time() + UI_TOAST_DURATION_US;
+    s_toast_id          = id;
+    s_toast_is_error    = is_error;
+    s_toast_blink_times = (blink_times > 0) ? blink_times : 0;
+    s_toast_start_us    = now;
+    s_toast_until_us    = now + duration_us;
     xSemaphoreGive(s_lock);
+}
+
+void pk_ui_toast_show(pk_tr_id_t id, bool is_error)
+{
+    toast_show_impl(id, is_error, 0);
+}
+
+void pk_ui_toast_show_blink(pk_tr_id_t id, bool is_error, int blink_times)
+{
+    toast_show_impl(id, is_error, blink_times);
 }
 
 bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error)
@@ -389,4 +412,20 @@ bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error)
     }
     xSemaphoreGive(s_lock);
     return active;
+}
+
+bool pk_ui_toast_blink_visible(void)
+{
+    if (s_lock == NULL) return true;
+    int64_t now = esp_timer_get_time();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool visible = true;
+    if (s_toast_blink_times > 0) {
+        int64_t elapsed = now - s_toast_start_us;
+        if (elapsed < 0) elapsed = 0;
+        int64_t phase = elapsed / UI_TOAST_BLINK_HALF_US;
+        visible = (phase % 2) == 0;   /* 偶数拍=亮，奇数拍=灭 */
+    }
+    xSemaphoreGive(s_lock);
+    return visible;
 }

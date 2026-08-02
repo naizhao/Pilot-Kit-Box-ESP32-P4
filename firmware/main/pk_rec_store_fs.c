@@ -47,6 +47,7 @@
 #include "ble_gatt.h"     /* pk_ble_device_name() —— session.json 的 device_name 字段 */
 #include "pk_clock.h"     /* pk_clock_is_synced() —— session.json 的 start_clock_synced 字段 */
 #include "pk_sdcard.h"
+#include "ui_state.h"     /* pk_ui_toast_show_blink() —— SD 写失败/降级告警（阶段 5b） */
 
 static const char *TAG = "rec_store";
 
@@ -85,6 +86,31 @@ static FILE   *s_fp_own_adsb;
  * 关闭时整表编码写出 traffic.idx。20 KB 量级（512 条 × 40 B），走
  * EXT_RAM——内存红线：所有静态缓冲一律 EXT_RAM_BSS_ATTR。 */
 static EXT_RAM_BSS_ATTR pk_rec_idx_table_t s_idx;
+
+/* --- 阶段 5b：session.json 的 counts/bounds/own_icao_changes ---------------
+ * 三者都是「本 session 见过什么」，随 ensure_session_open_locked() 建新
+ * session 一并 reset；纯逻辑（bounds 外包框、own_icao_changes 定长追加）
+ * 在 pk_rec_store.h/.c，这里只管调用点与 JSON 序列化。体量都很小，不需要
+ * 单独走 EXT_RAM（几十字节量级，跟 s_session_dir 这类小静态变量同档）。 */
+static pk_rec_counts_t             s_counts;
+static pk_rec_bounds_t             s_bounds;
+static pk_rec_own_icao_changes_t   s_icao_changes;
+
+/* --- 阶段 5b：SD 写失败/降级告警状态 ---------------------------------------
+ * 四路 sink 各自的连续失败计数与"已判定失效"标记；降级档位则是模块级的
+ * （物理 SD 容量，不随 session 边界复位，只随插卡换卡这类真实事件变化——
+ * 见 ensure_session_open_locked 里的复位注释）。 */
+typedef enum {
+    REC_SINK_ADSB = 0,
+    REC_SINK_OWN_ADSB,
+    REC_SINK_TRAFFIC_TRK,
+    REC_SINK_OWN_TRK,
+    REC_SINK_COUNT,
+} rec_sink_id_t;
+
+static uint32_t         s_sink_fail[REC_SINK_COUNT];
+static bool              s_sink_disabled[REC_SINK_COUNT];
+static pk_rec_degrade_t  s_last_tier = PK_REC_DEGRADE_FULL;
 
 /* --- 小 helper ---------------------------------------------------------- */
 
@@ -212,9 +238,6 @@ static void write_session_json_locked(bool final)
                  s_own_icao[0], s_own_icao[1], s_own_icao[2]);
     }
 
-    /* counts/bounds/own_icao_changes 仍是占位——这几个需要在写入路径上
-     * 逐条累计（bounds 尤其要遍历所有位置点求 min/max），3b 的范围只到
-     * traffic.idx，这几个字段留给下一阶段接上。 */
     fprintf(fp,
             "{\n"
             "  \"seq\": %u,\n"
@@ -223,13 +246,7 @@ static void write_session_json_locked(bool final)
             "  \"start_ts_ms\": %lld,\n"
             "  \"start_clock_synced\": %s,\n"
             "  \"end_ts_ms\": %lld,\n"
-            "  \"files\": [\"adsb-%03d.tsl\", \"traffic.trk\", \"own.trk\"%s],\n"
-            "  \"counts\": {},\n"
-            "  \"bounds\": null,\n"
-            "  \"own_icao\": %s,\n"
-            "  \"own_icao_changes\": [],\n"
-            "  \"complete\": %s\n"
-            "}\n",
+            "  \"files\": [\"adsb-%03d.tsl\", \"traffic.trk\", \"own.trk\"%s],\n",
             (unsigned)s_session_seq,
             app != NULL ? app->version : "unknown",
             devname,
@@ -237,9 +254,50 @@ static void write_session_json_locked(bool final)
             pk_clock_is_synced() ? "true" : "false",
             (long long)end_ts_ms,
             s_adsb_vol,
-            s_own_bound ? ", \"own_adsb.tsl\"" : "",
-            own_icao_json,
-            final ? "true" : "false");
+            s_own_bound ? ", \"own_adsb.tsl\"" : "");
+
+    /* counts：各文件已写记录数（阶段 5b，设计文档「session.json」节）。 */
+    fprintf(fp,
+            "  \"counts\": {\"traffic_pos\": %lu, \"traffic_id\": %lu, "
+            "\"own\": %lu, \"adsb_lines\": %lu, \"own_adsb_lines\": %lu},\n",
+            (unsigned long)s_counts.traffic_pos, (unsigned long)s_counts.traffic_id,
+            (unsigned long)s_counts.own, (unsigned long)s_counts.adsb_lines,
+            (unsigned long)s_counts.own_adsb_lines);
+
+    /* bounds：本 session 见过的目标位置外包框，键名照抄客户端
+     * coverage_bounds 约定（设计文档「session.json」节）。has_any=false
+     * （这个 session 一条位置记录都没写过）序列化成 null，不编造 0,0 框。
+     * e7 定点 → 浮点度数，%.7f 保住 1e7 定点的全部有效数字。 */
+    if (s_bounds.has_any) {
+        fprintf(fp,
+                "  \"bounds\": {\"minLat\": %.7f, \"maxLat\": %.7f, "
+                "\"minLon\": %.7f, \"maxLon\": %.7f},\n",
+                (double)s_bounds.min_lat_e7 / 1e7, (double)s_bounds.max_lat_e7 / 1e7,
+                (double)s_bounds.min_lon_e7 / 1e7, (double)s_bounds.max_lon_e7 / 1e7);
+    } else {
+        fprintf(fp, "  \"bounds\": null,\n");
+    }
+
+    fprintf(fp, "  \"own_icao\": %s,\n", own_icao_json);
+
+    /* own_icao_changes[]：绑定/改绑/解绑历史（设计文档「绑定机独立文件」
+     * 节）。unbind 事件 icao 写 null 而不是 "000000"——那看起来像一个真实
+     * ICAO24，会被回放端误读成"绑定到了全零地址"。 */
+    fprintf(fp, "  \"own_icao_changes\": [");
+    for (size_t i = 0; i < s_icao_changes.count; i++) {
+        const pk_rec_own_icao_change_t *e = &s_icao_changes.entries[i];
+        if (e->bound) {
+            fprintf(fp, "%s{\"ts_ms\": %lld, \"bound\": true, \"icao\": \"%02X%02X%02X\"}",
+                    i ? ", " : "", (long long)e->ts_ms,
+                    e->icao24[0], e->icao24[1], e->icao24[2]);
+        } else {
+            fprintf(fp, "%s{\"ts_ms\": %lld, \"bound\": false, \"icao\": null}",
+                    i ? ", " : "", (long long)e->ts_ms);
+        }
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "  \"complete\": %s\n}\n", final ? "true" : "false");
 
     fclose(fp);
 }
@@ -271,6 +329,17 @@ static bool ensure_session_open_locked(void)
     s_adsb_bytes = 0;
     pk_rec_idx_reset(&s_idx);
 
+    /* 阶段 5b：新 session = 新的「见过什么」统计窗口。sink 失效/连续失败
+     * 计数也一并复位——新 session 常常对应插了张新卡或问题已解决，不该背
+     * 着上个 session 的失效状态不放（"停止重试"是 session 内的约定，不是
+     * 永久熔断）。s_last_tier（降级档位）不在这里复位：它跟着物理 SD 容量
+     * 走，跨 session 边界仍然成立，复位反而会在同一张快满的卡上重复告警。 */
+    memset(&s_counts, 0, sizeof(s_counts));
+    pk_rec_bounds_reset(&s_bounds);
+    pk_rec_own_icao_changes_reset(&s_icao_changes);
+    memset(s_sink_fail, 0, sizeof(s_sink_fail));
+    memset(s_sink_disabled, 0, sizeof(s_sink_disabled));
+
     /* 保留策略：连新建的这个一起算，超过 KEEP 个就删最旧的。 */
     if (n < REC_STORE_MAX_SCAN) s_seq_scan[n++] = new_seq;
     size_t nv = pk_rec_store_select_prune(s_seq_scan, n, PK_REC_STORE_KEEP_SESSIONS,
@@ -296,6 +365,54 @@ static pk_rec_degrade_t current_degrade_tier_locked(void)
         return PK_REC_DEGRADE_OWN_ONLY;   /* 拿不到容量信息，按最保守档位处理 */
     }
     return pk_rec_store_degrade_tier(free_b);
+}
+
+/* 降级档位跃迁 → 弹一次闪烁告警（不阻断飞行，见 ui_state.h
+ * pk_ui_toast_show_blink）。只在真的变化时触发，同一档位反复写不会重复
+ * 弹（设计文档「同一故障只在状态跳变时弹一次」）。变差（tier 数值变大，
+ * 枚举本身按严重度递增定义）才告警；变好（腾出空间/换了张更大的卡）只记
+ * 日志，不需要用户操作、不必打扰。 */
+static void degrade_alert_check_locked(pk_rec_degrade_t tier)
+{
+    if (tier == s_last_tier) return;
+    pk_rec_degrade_t old = s_last_tier;
+    s_last_tier = tier;
+    if (tier > old) {
+        pk_tr_id_t id = (tier == PK_REC_DEGRADE_OWN_ONLY)
+                       ? PK_TR_TOAST_REC_SD_OWNONLY
+                       : PK_TR_TOAST_REC_SD_NORAW;
+        ESP_LOGW(TAG, "SD 剩余空间降级：档位 %d → %d", (int)old, (int)tier);
+        pk_ui_toast_show_blink(id, true, 3);
+    } else {
+        ESP_LOGI(TAG, "SD 剩余空间恢复：档位 %d → %d", (int)old, (int)tier);
+    }
+}
+
+/* current_degrade_tier_locked() 的告警版：无卡时不算"降级事件"（开机没
+ * 插卡不该被当成"SD 空间告急"），只在卡确实挂载时才拿真实档位去跟上次比。
+ * append 系列函数改用这个而不是裸的 current_degrade_tier_locked()。 */
+static pk_rec_degrade_t degrade_tier_check_locked(void)
+{
+    pk_rec_degrade_t tier = current_degrade_tier_locked();
+    if (pk_sdcard_is_mounted()) degrade_alert_check_locked(tier);
+    return tier;
+}
+
+/* sink 写结果记账：ok=false 累加连续失败，达阈值（PK_REC_STORE_FAIL_
+ * THRESHOLD）就标记该路失效、停止重试，并弹一次告警——只在 false→true
+ * 这一次跳变弹，后续再失败不会重复刷屏。调用方只应在"确实尝试过写"时
+ * 调用（降级跳过的那一路不算失败，也不该计进连续失败次数）。 */
+static void sink_write_result_locked(rec_sink_id_t sink, bool ok)
+{
+    if (ok) { s_sink_fail[sink] = 0; return; }
+    s_sink_fail[sink]++;
+    if (!s_sink_disabled[sink] &&
+        pk_rec_store_sink_should_disable(s_sink_fail[sink])) {
+        s_sink_disabled[sink] = true;
+        ESP_LOGE(TAG, "sink #%d 连续写失败 %u 次，已停用，停止重试",
+                 (int)sink, (unsigned)s_sink_fail[sink]);
+        pk_ui_toast_show_blink(PK_TR_TOAST_REC_SINK_FAIL, true, 3);
+    }
 }
 
 /* --- 文件打开 --------------------------------------------------------------- */
@@ -528,6 +645,23 @@ void pk_rec_store_init(void)
     }
 }
 
+void pk_rec_store_get_health(pk_rec_store_health_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (s_lock == NULL) { out->tier = PK_REC_DEGRADE_FULL; return; }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    /* 无卡时不报"降级"——那一格另有 microSD 卡片说"无卡"，这里报 FULL
+     * 只是"没有降级要说"，不是撒谎说"空间充裕"。 */
+    out->tier = pk_sdcard_is_mounted() ? current_degrade_tier_locked()
+                                       : PK_REC_DEGRADE_FULL;
+    for (int i = 0; i < REC_SINK_COUNT; i++) {
+        if (s_sink_disabled[i]) out->disabled_count++;
+    }
+    xSemaphoreGive(s_lock);
+}
+
 bool pk_rec_store_session_dir(char *out, size_t cap)
 {
     if (s_lock == NULL) return false;
@@ -545,16 +679,22 @@ void pk_rec_store_set_own_icao(const uint8_t icao24[3])
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
 
+    int64_t now_ms = (int64_t)(esp_timer_get_time() / 1000);
+
     if (icao24 == NULL) {
         if (s_own_bound) {
             if (s_fp_own_adsb) { fclose(s_fp_own_adsb); s_fp_own_adsb = NULL; }
             s_own_bound = false;
+            /* session.json 的 own_icao_changes[]（设计文档「绑定机独立文件」
+             * 节：改绑要记变更时刻）。定长数组满了就丢，不影响绑定本身。 */
+            pk_rec_own_icao_changes_append(&s_icao_changes, now_ms, false, NULL);
             ESP_LOGI(TAG, "own_adsb.tsl：解绑");
         }
     } else if (!s_own_bound || memcmp(s_own_icao, icao24, 3) != 0) {
         if (s_fp_own_adsb) { fclose(s_fp_own_adsb); s_fp_own_adsb = NULL; }
         memcpy(s_own_icao, icao24, 3);
         s_own_bound = true;
+        pk_rec_own_icao_changes_append(&s_icao_changes, now_ms, true, icao24);
         ESP_LOGI(TAG, "own_adsb.tsl：改绑 %02X%02X%02X",
                  icao24[0], icao24[1], icao24[2]);
     }
@@ -570,11 +710,13 @@ bool pk_rec_store_append_adsb_line(const char *line, size_t len)
     xSemaphoreTake(s_lock, portMAX_DELAY);
 
     bool ok = false;
-    if (current_degrade_tier_locked() == PK_REC_DEGRADE_FULL &&
-        ensure_adsb_volume_open_locked()) {
-        if (fwrite(line, 1, len, s_fp_adsb) == len) {
+    if (!s_sink_disabled[REC_SINK_ADSB] &&
+        degrade_tier_check_locked() == PK_REC_DEGRADE_FULL) {
+        if (ensure_adsb_volume_open_locked() &&
+            fwrite(line, 1, len, s_fp_adsb) == len) {
             s_adsb_bytes += len;
             ok = true;
+            s_counts.adsb_lines++;
             if (s_adsb_bytes >= ADSB_ROTATE_BYTES) {
                 fclose(s_fp_adsb);
                 s_fp_adsb = NULL;
@@ -582,6 +724,7 @@ bool pk_rec_store_append_adsb_line(const char *line, size_t len)
                 ensure_adsb_volume_open_locked();
             }
         }
+        sink_write_result_locked(REC_SINK_ADSB, ok);
     }
 
     xSemaphoreGive(s_lock);
@@ -594,7 +737,8 @@ bool pk_rec_store_append_own_adsb_line(const char *line, size_t len)
     xSemaphoreTake(s_lock, portMAX_DELAY);
 
     bool ok = false;
-    if (s_own_bound && current_degrade_tier_locked() == PK_REC_DEGRADE_FULL &&
+    if (s_own_bound && !s_sink_disabled[REC_SINK_OWN_ADSB] &&
+        degrade_tier_check_locked() == PK_REC_DEGRADE_FULL &&
         ensure_session_open_locked()) {
         if (s_fp_own_adsb == NULL) {
             char path[64];
@@ -603,7 +747,9 @@ bool pk_rec_store_append_own_adsb_line(const char *line, size_t len)
         }
         if (s_fp_own_adsb != NULL) {
             ok = fwrite(line, 1, len, s_fp_own_adsb) == len;
+            if (ok) s_counts.own_adsb_lines++;
         }
+        sink_write_result_locked(REC_SINK_OWN_ADSB, ok);
     }
 
     xSemaphoreGive(s_lock);
@@ -616,28 +762,37 @@ bool pk_rec_store_append_traffic_record(const uint8_t rec[32])
     xSemaphoreTake(s_lock, portMAX_DELAY);
 
     bool ok = false;
-    pk_rec_degrade_t tier = current_degrade_tier_locked();
-    if (tier != PK_REC_DEGRADE_OWN_ONLY &&
-        open_binary_with_header_locked(&s_fp_traffic_trk, "traffic.trk",
-                                        PK_REC_MAGIC_TRAFFIC_TRK, PK_TRK_RECORD_LEN,
-                                        PK_REC_FILE_KIND_TRAFFIC_TRK)) {
-        ok = fwrite(rec, 1, PK_TRK_RECORD_LEN, s_fp_traffic_trk) == PK_TRK_RECORD_LEN;
-        if (ok) {
-            /* 按机摘要在线维护——traffic.idx 从这张内存表在 session 关闭时
-             * 整表写出（write_traffic_idx_locked），掉电场景靠
-             * pk_rec_store_rebuild_index() 从 traffic.trk 全扫恢复。 */
-            uint8_t rec_type = pk_trk_rec_type_peek(rec);
-            bool is_own = s_own_bound && memcmp(&rec[8], s_own_icao, 3) == 0;
-            if (rec_type == PK_TRK_REC_POSITION) {
-                pk_trk_pos_t pos;
-                pk_trk_pos_decode(rec, &pos);
-                pk_rec_idx_ingest_pos(&s_idx, &pos, is_own);
-            } else if (rec_type == PK_TRK_REC_IDENTITY) {
-                pk_trk_id_t id;
-                pk_trk_id_decode(rec, &id);
-                pk_rec_idx_ingest_id(&s_idx, &id, is_own);
+    pk_rec_degrade_t tier = degrade_tier_check_locked();
+    if (!s_sink_disabled[REC_SINK_TRAFFIC_TRK] && tier != PK_REC_DEGRADE_OWN_ONLY) {
+        if (open_binary_with_header_locked(&s_fp_traffic_trk, "traffic.trk",
+                                            PK_REC_MAGIC_TRAFFIC_TRK, PK_TRK_RECORD_LEN,
+                                            PK_REC_FILE_KIND_TRAFFIC_TRK)) {
+            ok = fwrite(rec, 1, PK_TRK_RECORD_LEN, s_fp_traffic_trk) == PK_TRK_RECORD_LEN;
+            if (ok) {
+                /* 按机摘要在线维护——traffic.idx 从这张内存表在 session 关闭时
+                 * 整表写出（write_traffic_idx_locked），掉电场景靠
+                 * pk_rec_store_rebuild_index() 从 traffic.trk 全扫恢复。 */
+                uint8_t rec_type = pk_trk_rec_type_peek(rec);
+                bool is_own = s_own_bound && memcmp(&rec[8], s_own_icao, 3) == 0;
+                if (rec_type == PK_TRK_REC_POSITION) {
+                    pk_trk_pos_t pos;
+                    pk_trk_pos_decode(rec, &pos);
+                    pk_rec_idx_ingest_pos(&s_idx, &pos, is_own);
+                    s_counts.traffic_pos++;
+                    /* session.json 的 bounds{}：本 session 见过的目标位置外
+                     * 包框（设计文档「session.json」节，键名照抄客户端
+                     * coverage_bounds）。地面目标也算——它照样是"见过的目
+                     * 标"，外包框不区分空中/地面。 */
+                    pk_rec_bounds_update(&s_bounds, pos.lat_e7, pos.lon_e7);
+                } else if (rec_type == PK_TRK_REC_IDENTITY) {
+                    pk_trk_id_t id;
+                    pk_trk_id_decode(rec, &id);
+                    pk_rec_idx_ingest_id(&s_idx, &id, is_own);
+                    s_counts.traffic_id++;
+                }
             }
         }
+        sink_write_result_locked(REC_SINK_TRAFFIC_TRK, ok);
     }
 
     xSemaphoreGive(s_lock);
@@ -651,11 +806,19 @@ bool pk_rec_store_append_own_record(const uint8_t rec[48])
 
     bool ok = false;
     /* own.trk 是本机航迹本身，四档降级里唯一从不停写的一路
-     * （设计文档「SD 满 / 写失败降级」表：<100MB 时"只保留 own.trk"）。 */
-    if (open_binary_with_header_locked(&s_fp_own_trk, "own.trk",
-                                        PK_REC_MAGIC_OWN_TRK, PK_OWN_RECORD_LEN,
-                                        PK_REC_FILE_KIND_OWN_TRK)) {
-        ok = fwrite(rec, 1, PK_OWN_RECORD_LEN, s_fp_own_trk) == PK_OWN_RECORD_LEN;
+     * （设计文档「SD 满 / 写失败降级」表：<100MB 时"只保留 own.trk"）。
+     * 正因为它从不因降级跳过，own.trk 的写入节奏（1 Hz）也是最稳定的
+     * 降级/告警探测点——即使这一刻没有任何 ADS-B 报文在收，own.trk 的
+     * 写入照样每秒跑一次，检测不会因为空域安静而停摆。 */
+    if (!s_sink_disabled[REC_SINK_OWN_TRK]) {
+        (void)degrade_tier_check_locked();   /* 只为触发降级告警，own.trk 本身不看这个档位 */
+        if (open_binary_with_header_locked(&s_fp_own_trk, "own.trk",
+                                            PK_REC_MAGIC_OWN_TRK, PK_OWN_RECORD_LEN,
+                                            PK_REC_FILE_KIND_OWN_TRK)) {
+            ok = fwrite(rec, 1, PK_OWN_RECORD_LEN, s_fp_own_trk) == PK_OWN_RECORD_LEN;
+            if (ok) s_counts.own++;
+        }
+        sink_write_result_locked(REC_SINK_OWN_TRK, ok);
     }
 
     xSemaphoreGive(s_lock);

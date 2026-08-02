@@ -87,3 +87,46 @@ bool pk_rec_store_sink_should_disable(uint32_t consecutive_fail_count)
 {
     return consecutive_fail_count >= PK_REC_STORE_FAIL_THRESHOLD;
 }
+
+/* ------------------------------------------------------------ bounds */
+
+void pk_rec_bounds_reset(pk_rec_bounds_t *b)
+{
+    memset(b, 0, sizeof(*b));
+}
+
+void pk_rec_bounds_update(pk_rec_bounds_t *b, int32_t lat_e7, int32_t lon_e7)
+{
+    if (!b->has_any) {
+        b->min_lat_e7 = b->max_lat_e7 = lat_e7;
+        b->min_lon_e7 = b->max_lon_e7 = lon_e7;
+        b->has_any = true;
+        return;
+    }
+    if (lat_e7 < b->min_lat_e7) b->min_lat_e7 = lat_e7;
+    if (lat_e7 > b->max_lat_e7) b->max_lat_e7 = lat_e7;
+    if (lon_e7 < b->min_lon_e7) b->min_lon_e7 = lon_e7;
+    if (lon_e7 > b->max_lon_e7) b->max_lon_e7 = lon_e7;
+}
+
+/* ------------------------------------------------------------ own_icao_changes */
+
+void pk_rec_own_icao_changes_reset(pk_rec_own_icao_changes_t *c)
+{
+    memset(c, 0, sizeof(*c));
+}
+
+bool pk_rec_own_icao_changes_append(pk_rec_own_icao_changes_t *c, int64_t ts_ms,
+                                     bool bound, const uint8_t icao24[3])
+{
+    if (c->count >= PK_REC_OWN_ICAO_CHANGES_MAX) return false;
+    pk_rec_own_icao_change_t *e = &c->entries[c->count++];
+    e->ts_ms = ts_ms;
+    e->bound = bound;
+    if (bound && icao24 != NULL) {
+        memcpy(e->icao24, icao24, 3);
+    } else {
+        memset(e->icao24, 0, 3);
+    }
+    return true;
+}

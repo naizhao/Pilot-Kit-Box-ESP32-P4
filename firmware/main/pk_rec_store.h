@@ -89,6 +89,74 @@ pk_rec_degrade_t pk_rec_store_degrade_tier(uint64_t free_bytes);
 #define PK_REC_STORE_FAIL_THRESHOLD 8u
 bool pk_rec_store_sink_should_disable(uint32_t consecutive_fail_count);
 
+/* ------------------------------------------------------------ session.json 的 counts/bounds/own_icao_changes（阶段 5b）
+ *
+ * 设计文档「session.json」节：`counts{} / bounds{minLat,maxLat,minLon,maxLon}
+ * / own_icao_changes[]` 三个字段此前（3a/3b）是占位。这三块本身逻辑很薄
+ * （累加/求外包框/定长追加），但薄也是逻辑——照本文件的分层原则，能不摸
+ * 文件系统的都留在这个纯 C 结构体里，真机专属的 FreeRTOS/VFS 胶水
+ * （静态实例、递增调用点、JSON 序列化）留给 pk_rec_store_fs.c。 */
+
+/* counts：各文件已写记录数。字段名与落盘文件一一对应。 */
+typedef struct {
+    uint32_t traffic_pos;      /* traffic.trk 位置记录(rec_type=0)数 */
+    uint32_t traffic_id;       /* traffic.trk 身份记录(rec_type=1)数 */
+    uint32_t own;               /* own.trk 记录数(采样+校时) */
+    uint32_t adsb_lines;        /* adsb-NNN.tsl 行数(累计跨卷) */
+    uint32_t own_adsb_lines;    /* own_adsb.tsl 行数 */
+} pk_rec_counts_t;
+
+/* bounds：本 session 见过的目标（traffic）位置外包框，1e-7 度定点——
+ * 与 pk_trk_pos_t.lat_e7/lon_e7 同尺度，序列化成 JSON 时才转浮点度数。
+ * 键名照抄客户端 coverage_bounds 约定：{minLat,maxLat,minLon,maxLon}。
+ * has_any=false 表示这个 session 还没写过一条位置记录——序列化成 JSON
+ * null，不能编造一个 0,0 的假包框。 */
+typedef struct {
+    bool    has_any;
+    int32_t min_lat_e7, max_lat_e7;
+    int32_t min_lon_e7, max_lon_e7;
+} pk_rec_bounds_t;
+
+void pk_rec_bounds_reset(pk_rec_bounds_t *b);
+void pk_rec_bounds_update(pk_rec_bounds_t *b, int32_t lat_e7, int32_t lon_e7);
+
+/* own_icao_changes[]：绑定机变更历史（改绑/解绑各记一条）。飞行中改绑
+ * 次数是个位数量级，定长数组够用；满了就不再追加——丢新不丢旧，开局那次
+ * 绑定最重要，顶到上限说明用户在反复点错，不是本模块要兜底的场景。 */
+#define PK_REC_OWN_ICAO_CHANGES_MAX 16u
+
+typedef struct {
+    int64_t ts_ms;
+    bool    bound;        /* true=绑定/改绑到 icao24；false=解绑 */
+    uint8_t icao24[3];     /* bound=false 时无意义，恒为 0 */
+} pk_rec_own_icao_change_t;
+
+typedef struct {
+    pk_rec_own_icao_change_t entries[PK_REC_OWN_ICAO_CHANGES_MAX];
+    size_t count;
+} pk_rec_own_icao_changes_t;
+
+void pk_rec_own_icao_changes_reset(pk_rec_own_icao_changes_t *c);
+
+/* 追加一条变更记录；数组已满则丢弃本次追加、不覆盖旧的。返回是否真的
+ * 写入了（host 单测用它断言"满了就不再长"）。 */
+bool pk_rec_own_icao_changes_append(pk_rec_own_icao_changes_t *c, int64_t ts_ms,
+                                     bool bound, const uint8_t icao24[3]);
+
+/* ------------------------------------------------------------ 诊断页只读状态（阶段 5b） */
+
+/* diag_page.c LOG 卡片接入用的只读快照：当前降级档位 + 判定失效的 sink 数
+ * （0..4）。不做告警触发——那由 pk_rec_store_fs.c 内部状态跳变时调
+ * pk_ui_toast_show_blink，这里只给"持续状态"（设计文档「告警呈现」节：
+ * "持续状态放到诊断页 LOG 卡片常驻显示"）。真机实现在 pk_rec_store_fs.c
+ * （要摸 FreeRTOS 锁），host 测不到，同 pk_rec_store_rebuild_index 的分层。 */
+typedef struct {
+    pk_rec_degrade_t tier;
+    uint8_t           disabled_count;
+} pk_rec_store_health_t;
+
+void pk_rec_store_get_health(pk_rec_store_health_t *out);
+
 /* ------------------------------------------------------------ 文件系统 / 生命周期 */
 
 /* 幂等；须晚于 pk_sdcard_init()。无卡时只记"待创建"状态，探测任务发现

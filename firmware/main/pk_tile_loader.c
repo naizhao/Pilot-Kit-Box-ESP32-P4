@@ -507,6 +507,22 @@ static void handle_sd_transition(void)
     }
 }
 
+int pk_tile_loader_pending(void)
+{
+    if (s_lock == NULL) return 0;
+    /* 数的是**去重表**而不是队列长度：inflight 标记在 pk_tile_loader_request
+     * 里 xQueueSend **之前**就打上、在 worker 处理完之后才清掉，所以它同时
+     * 覆盖"排队中"与"正在解码中"两种状态。只看 uxQueueMessagesWaiting 会漏
+     * 掉"队列已空但两个 worker 都在解 PNG"——那正是最该让路的时刻；两者相加
+     * 则会把排队中的请求数两遍。 */
+    int n = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < LOADER_INFLIGHT_MAX; i++)
+        if (s_inflight[i].used) n++;
+    xSemaphoreGive(s_lock);
+    return n;
+}
+
 static void loader_task(void *arg)
 {
     (void)arg;

@@ -242,6 +242,29 @@ STRINGS = [
             "zh": "已取消本机",
         },
     ),
+    # --- 瞬时屏幕提示(toast) — 阶段 5b：SD 写失败/降级告警（闪 3 次，
+    # 复用 pk_ui_toast_show_blink，见 ui_state.h / pk_rec_store_fs.c） ---
+    (
+        "TOAST_REC_SD_NORAW",
+        {
+            "en": "SD LOW — RAW LOG STOPPED",
+            "zh": "SD 空间不足——已停写原始报文",
+        },
+    ),
+    (
+        "TOAST_REC_SD_OWNONLY",
+        {
+            "en": "SD CRITICAL — ONLY OWN TRACK KEPT",
+            "zh": "SD 空间告急——仅保留本机航迹",
+        },
+    ),
+    (
+        "TOAST_REC_SINK_FAIL",
+        {
+            "en": "RECORD WRITE FAILED — SINK STOPPED",
+            "zh": "记录写入失败——该路已停用",
+        },
+    ),
 
     # ── 4.3″ 触摸导航（spec §3.2 / §5）──────────────────────────
     #
@@ -857,6 +880,14 @@ STRINGS = [
     ("DIAG_V_LOG_SD",      {"en": "microSD",       "zh": "microSD"}),
     ("DIAG_V_SINK_DOWN",   {"en": "sink down",     "zh": "输出中断"}),
     ("DIAG_V_DOWN",        {"en": "down",          "zh": "中断"}),
+    # 阶段 5b：LOG 卡片常驻显示 pk_rec_store 的降级档位/失效 sink 数——与
+    # 上面的 sink down（record_sink_file，别人飞机那条日志）是两个独立
+    # 写入管线，共用同一张卡片只是版面上不再多开一格（罩哥要求"复用现有
+    # 实现"）。缩写要短：卡片值行宽度有限，被这三个词占满就顶不下前半句
+    # 的 "microSD w N" 了。
+    ("DIAG_V_REC_NORAW",   {"en": "raw off",       "zh": "限流"}),
+    ("DIAG_V_REC_OWNONLY", {"en": "own only",      "zh": "仅本机"}),
+    ("DIAG_V_REC_FAIL",    {"en": "fail",          "zh": "失效"}),
     ("DIAG_V_SD_MOUNTED",  {"en": "mounted",       "zh": "已挂载"}),
     ("DIAG_V_SD_NO_CARD",  {"en": "no card",       "zh": "无卡"}),
     ("DIAG_V_SD_FORMATTING", {"en": "formatting...", "zh": "格式化中..."}),
