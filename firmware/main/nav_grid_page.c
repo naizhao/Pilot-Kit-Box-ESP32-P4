@@ -158,6 +158,17 @@ _Static_assert(PK_NAV_COLS * PK_NAV_CELL_W == PK_DISPLAY_W,
                "网格列宽乘不满屏宽");
 _Static_assert(PK_NAV_ACT_TOP + PK_NAV_ACT_H == PK_DISPLAY_H,
                "动作条没有贴着屏底");
+/*
+ * 头文件与 pk_nav_hit_test() 里的屏宽是**字面量 800**（那边不能 include
+ * display.h，理由见头文件），而渲染这侧用的是 PK_DISPLAY_W。两处写的是同一个
+ * 数却没有语法上的联系——动作条三等分尤其危险：命中判定按 800/3 分，渲染按
+ * PK_DISPLAY_W/3 分，屏宽一改就会变成"看得见的不是点得中的"，而且是**静默**的。
+ * 钉在这里：换屏时编译期就炸，不必等到手指点空。
+ */
+_Static_assert(PK_DISPLAY_W == 800,
+               "头文件里的字面量 800 与 display.h 的 PK_DISPLAY_W 不一致");
+_Static_assert(PK_DISPLAY_H == 480,
+               "头文件里的字面量 480 与 display.h 的 PK_DISPLAY_H 不一致");
 
 /* ── 调色板：逐值照抄 spec 视觉稿（docs/ux/box-4.3-ux-spec.html 的 --sel /
  * --bar / --dim / --txt / --line / --warn），与 pk_ui_nav.c 的 FAB、返回栏
