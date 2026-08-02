@@ -290,6 +290,20 @@ STRINGS = [
             "zh": "工具",
         },
     ),
+    (
+        "NAV_SEARCH",
+        {
+            "en": "Search",
+            "zh": "搜索",
+        },
+    ),
+    (
+        "NAV_LOGBOOK",
+        {
+            "en": "Logbook",
+            "zh": "记录",
+        },
+    ),
 
     # dock 右侧的动作区。「调平」是把当前姿态归零，与 TARE 是同一件事，
     # 但对飞行员说「调平」比说「TARE」直白。

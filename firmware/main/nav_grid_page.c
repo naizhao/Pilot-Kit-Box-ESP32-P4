@@ -23,6 +23,23 @@ int pk_nav_page_count(int page)
     return page ? (PK_NAV_ITEM_CNT - PK_NAV_PAGE1_CNT) : PK_NAV_PAGE1_CNT;
 }
 
+/* index 5「记录」（飞行记录页）、index 6「工具」（工具页）尚未实现——
+ * 不是设计上永久禁用，是版面先钉死等实现跟上（产品负责人 2026-08-02 定，
+ * 见 nav_grid_page.h 文件头）。做出来之后把这两个 case 删掉即可，其余项
+ * 一律可点。越界 index（<0 或 >=PK_NAV_ITEM_CNT）一律当不可用，调用方
+ * 不必自己先做范围检查。 */
+bool pk_nav_item_enabled(int index)
+{
+    if (index < 0 || index >= PK_NAV_ITEM_CNT) return false;
+    switch (index) {
+    case 5: /* 记录：飞行记录页还没写 */
+    case 6: /* 工具：工具页还没写 */
+        return false;
+    default:
+        return true;
+    }
+}
+
 pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
 {
     pk_nav_hit_t r = { PK_NAV_HIT_NONE, -1 };
@@ -67,8 +84,15 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
     const int slot = row * PK_NAV_COLS + col;
     if (slot >= pk_nav_page_count(page)) return r;   /* 空格什么都不做 */
 
+    const int index = pk_nav_page_first(page) + slot;
+    /* 置灰项不可点：命中判定要在这里挡住，不能等调用方拿到 index 再判断——
+     * 否则 CELL 这个返回值本身就已经"看得见的是点得中的"，与置灰的视觉承诺
+     * 矛盾。点了没反应，不弹提示，置灰视觉本身就是信号（产品负责人
+     * 2026-08-02 定）。 */
+    if (!pk_nav_item_enabled(index)) return r;
+
     r.kind = PK_NAV_HIT_CELL;
-    r.index = pk_nav_page_first(page) + slot;
+    r.index = index;
     return r;
 }
 

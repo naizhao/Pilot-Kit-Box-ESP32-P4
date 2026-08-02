@@ -30,6 +30,11 @@ static void chk_int(const char *what, int got, int want)
     if (got != want) { printf("FAIL %s: got %d want %d\n", what, got, want); g_fail++; }
 }
 
+static void chk_true(const char *what, bool got)
+{
+    if (!got) { printf("FAIL %s: 期望 true\n", what); g_fail++; }
+}
+
 /* ── 1) 分页切分 ──────────────────────────────────────────────────
  * 第 1 页 7 项、第 2 页 3 项——不是"4×2=8 塞满才换页"，切分点是常用度。 */
 static void test_paging(void)
@@ -122,6 +127,39 @@ static void test_x_out_of_bounds(void)
             pk_nav_hit_test(-250, ay, 0, false).kind, PK_NAV_HIT_NONE);
 }
 
+/* ── 7) 未实现的页面先置灰占位而不是从版面拿掉 ───────────────────
+ * 格子位置要永久钉死，将来补上这两个页面时版面一个数都不用改
+ * （产品负责人 2026-08-02 定）。置灰项必须不可点：命中判定要挡住它们，
+ * 否则会切到一个不存在的 mode。 */
+static void test_disabled_items(void)
+{
+    chk_true("PFD 可点",    pk_nav_item_enabled(0));
+    chk_true("搜索可点",    pk_nav_item_enabled(4));
+    chk_true("记录不可点", !pk_nav_item_enabled(5));
+    chk_true("工具不可点", !pk_nav_item_enabled(6));
+    chk_true("诊断可点",    pk_nav_item_enabled(7));
+    chk_true("关于可点",    pk_nav_item_enabled(9));
+
+    /* 越界一律当不可用，别让调用方拿越界 index 去查表。 */
+    chk_true("越界不可点", !pk_nav_item_enabled(-1));
+    chk_true("越界不可点", !pk_nav_item_enabled(PK_NAV_ITEM_CNT));
+}
+
+/* ── 8) 点在置灰格上：命中判定必须返回 NONE，不能返回 CELL ────────── */
+static void test_disabled_cell_not_hittable(void)
+{
+    /* 第 1 页第 6 格（index 5「记录」）= 第 2 行第 2 列。 */
+    const int x = 1 * PK_NAV_CELL_W + 10;
+    const int y = PK_NAV_BAR_BOT + PK_NAV_CELL_H + 10;
+    pk_nav_hit_t h = pk_nav_hit_test(x, y, 0, false);
+    chk_int("点「记录」不命中", h.kind, PK_NAV_HIT_NONE);
+
+    /* 相邻的第 5 格（index 4「搜索」）仍然可点——别一刀切把整行禁掉。 */
+    pk_nav_hit_t ok = pk_nav_hit_test(0 * PK_NAV_CELL_W + 10, y, 0, false);
+    chk_int("点「搜索」命中", ok.kind, PK_NAV_HIT_CELL);
+    chk_int("命中的是 index 4", ok.index, 4);
+}
+
 int main(void)
 {
     test_paging();
@@ -130,6 +168,8 @@ int main(void)
     test_action_bar();
     test_pop_swallows_grid();
     test_x_out_of_bounds();
+    test_disabled_items();
+    test_disabled_cell_not_hittable();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }
