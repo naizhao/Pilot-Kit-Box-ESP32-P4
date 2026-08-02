@@ -16,6 +16,7 @@
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
+#include "esp_timer.h"         /* 单调时钟冻结 + GPS 时间戳按 now 反推 */
 #include "mock_runtime.h"      /* pk_sim_flag：PK_SIM_EMPTY 总开关 */
 
 /* 环境变量取整数，缺省回落。全文件的 PK_SIM_* 旋钮都走它。 */
@@ -375,6 +376,50 @@ int gettimeofday(struct timeval *__restrict tv, void *__restrict tz)
     return 0;
 }
 
+/* 冻结单调时钟（开机至今）。上面冻的是墙钟，这里冻的是 esp_timer_get_time()
+ * ——两条时间线各走各的，上一版只冻了墙钟，这条漏了。
+ *
+ * 为什么必须冻：compat/esp_timer.h 默认把它实现成 CLOCK_MONOTONIC，也就是
+ * **这台 Mac 开机至今**（实测约 1574399 s），每次跑都不同。凡是拿它算差值
+ * 的地方，截出来的图就跟着 host 走：
+ *
+ *   1. nav_grid_page.c 的调平长按填充。截图钩子 sim_setup() 先记
+ *      s_press_us = now - 长按时长*pct%，render 再算 now - s_press_us；两次
+ *      取 now 之间隔着 LVGL 初始化那一段，这段耗时每次不同，填充边界就在
+ *      整数像素上抖。实测 ui-4.3-menu-level.png 与 HEAD 差 87 px——正好是
+ *      x=187 那一条 1 px 宽的竖线，就是填充的右边界。
+ *   2. diag_page.c 的 UPTIME 卡直接显示它。今天没暴露只因为 UPTIME 是第 6
+ *      行卡片、800×480 下在折叠线以下，还没有场景截到它；诊断页可滚动，
+ *      将来加一个滚动场景就会炸出来。
+ *   3. 各页的陈旧判定（GPS 新鲜度、目标老化、本机位置过期）。这些的
+ *      "stored_us" 大多也由本文件/mock_runtime.c 按同一个 now 记，差值恒为
+ *      0，冻不冻都稳；例外是下面 pk_gps_get 那两个字段，见那边。
+ *
+ * 只在 --shot 那条路上冻（sim/main.c 的 run_headless 开头调一次）。交互模式
+ * 冻了就没法用了：长按进度条走不动、无操作自动收起永不触发、绿闪不落幕。
+ *
+ * 默认 8130 s = 2h15m30s，UPTIME 卡渲染成 "2h 15m"。挑这个数的三条理由：
+ *   - 必须非 0。0 与「不冻结」的哨兵撞车；而且 nav_grid_page.c 的
+ *     flash_active() 拿 s_flash_us != 0 当"闪过没有"的哨兵，冻到 0 会让
+ *     ui-4.3-menu-level-done.png 那一闪整个消失。故下面把秒数夹到 ≥1。
+ *   - 跨过 3600 s，走 "%luh %lum" 那条分支——真机开机超过一小时后一直走的
+ *     就是它，另一条 "%lum %lus" 只在刚上电那几分钟出现。
+ *   - 余下的 30 s 故意不取整：它验的是那条分支**截断**而不是四舍五入，
+ *     哪天有人改成进位，这张图就会变。
+ *
+ * PK_SIM_UPTIME_S=<秒> 可改（比如验 "%lum %lus" 那条短分支）。用 strtoll
+ * 而不是本文件的 sim_env()：秒数乘 1e6 要落进 int64，atoi 先截成 int 就废了。
+ */
+int64_t pk_sim_clock_frozen_us;
+
+void pk_sim_clock_freeze(void)
+{
+    const char *e = getenv("PK_SIM_UPTIME_S");
+    long long s = (e && e[0]) ? strtoll(e, NULL, 10) : 8130LL;
+    if (s < 1) s = 1;
+    pk_sim_clock_frozen_us = (int64_t)s * 1000000LL;
+}
+
 void pk_dsp_get_stats(pk_dsp_stats_t *o)
 {
     if (!o) return;
@@ -390,7 +435,28 @@ bool pk_gps_get(pk_gps_state_t *o)
     o->have_fix = true;  o->sats = 11;  o->hdop = 0.9f;
     o->sats_in_view = 17;  o->ant_status = PK_GPS_ANT_OK;
     o->lat = 39.90750;  o->lon = 116.39125;
-    o->last_nmea_us = 1;  o->updated_us = 1;
+    /*
+     * 两个时间戳按**当前单调时钟往回推**，不能是常量。
+     *
+     * 上一版写死成 1，而 esp_timer_get_time() 是个巨大的数（冻结后 8130 s，
+     * 不冻结就是 host 开机至今），diag_page.c 里 now - last_nmea_us 恒大于
+     * 5 s 门槛，于是 PK_SIM_DIAG_OK=1 这个「各子系统都正常」的场景，GPS 卡
+     * 却是红的「模块静默 >5s」——截图表达的东西跟场景的本意相反。同一个
+     * 常量还让详情页（PK_SIM_DIAG_DETAIL=2）的状态行恒为 NO_FIX。
+     *
+     * 门槛在 diag_page.c：GPS_FRESH_US = 5 s 判 fix 新鲜，另有一条
+     * now - last_nmea_us > 5 s 判模块静默。两个年龄都取得远小于 5 s，且
+     * 刻意不相等——NMEA 句子比定位刷新密，真机上 last_nmea_us 总比
+     * updated_us 新，桩成一样就把「模块在讲话」与「定位是新的」这两件被
+     * 分开判的事又混成了一件。
+     *
+     * 反推而不是取 0：last_nmea_us == 0 是 diag_page.c 的「模块没插」哨兵，
+     * 归零会把这张卡打回 NO_MODULE。EMPTY 一侧正是靠上面那句 return false
+     * 前的 memset 走这条哨兵，与这里各管一头。
+     */
+    const int64_t now_us = esp_timer_get_time();
+    o->updated_us   = now_us - 400000LL;   /* 定位 1 Hz，0.4 s 前那一次 */
+    o->last_nmea_us = now_us - 120000LL;   /* NMEA 更密，刚收到一句 */
     /* 每星座几颗，用来验证 SNR 柱状图分行——这是 spec 点名的那张图，
      * 桩不喂数据就永远只能看到 "(no satellites in view)"。 */
     static const uint8_t snr[] = { 44,38,31,22,41,36,28,19,33,25 };

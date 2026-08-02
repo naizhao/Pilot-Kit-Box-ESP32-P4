@@ -107,6 +107,7 @@
 #include "config_demo.h"
 #include "demo_data.h"
 #include "display.h"
+#include "esp_timer.h"     /* pk_sim_clock_freeze()：截图路径冻结单调时钟 */
 #include "i18n.h"
 #include "pfd_attitude.h"
 #include "mock_runtime.h"
@@ -300,6 +301,14 @@ static void save_bmp(const uint16_t *fb, int seq)
  */
 static int run_headless(float at_sec, const char *out)
 {
+    /* 第一件事：冻住单调时钟。截图这条路上任何读 esp_timer_get_time() 的地方
+     * 都必须拿到同一个值，否则 capture.py 那个「用 git diff 看哪些图变了」的
+     * 判据就带着噪音（实测抖的是调平填充的边界像素与 UPTIME 卡）。必须早于
+     * 下面所有初始化——sim_setup() 之类的截图钩子会记时间戳，记的和后面渲染
+     * 时读的不是同一个值就白冻了。理由与默认值见 compat/page_stub.c。
+     * 交互模式**不**调它，那边时钟要真的走。 */
+    pk_sim_clock_freeze();
+
     /* 经 LVGL 走一遍，而不是直接看 PFD 写的那块缓冲：截图要反映的是**合成
      * 之后**的画面，叠上 FAB / toast / DEMO 标识才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
