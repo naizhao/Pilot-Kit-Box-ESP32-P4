@@ -57,7 +57,7 @@ extern "C" {
  * **只在验收时打开**——它会强行改写窗口中心，与真实本机位置无关。
  */
 #ifndef PK_WIN_SELFTEST
-#define PK_WIN_SELFTEST 1
+#define PK_WIN_SELFTEST 0
 #endif
 
 /* 诊断快照（无锁读；字段只在窗口任务里写）。 */
