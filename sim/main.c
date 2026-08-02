@@ -58,6 +58,9 @@
  *     PK_SIM_MENU=1          打开菜单（第 1 页 7 项 + 1 格余量 + 动作条）
  *     PK_SIM_MENU_PAGE=<n>   打开并翻到第 n 页（0 起；=1 就是第 2 页那 3 项）
  *     PK_SIM_MENU_BRIGHT=1   打开并展开亮度快调 pop
+ *     PK_SIM_MENU_LEVEL=<pct>   打开并停在「调平」长按进行中：橙色进度填充走到
+ *                               pct%（0~100，UX 规格 §6 的 ③）
+ *     PK_SIM_MENU_LEVEL_DONE=1  打开并停在调平完成的绿闪那一帧（同 §6 的 ④）
  *     PK_SIM_UI_MODE=<n>     当前在哪一页（pk_ui_mode_t 序号），决定哪一格
  *                            画选中框；默认 0=PFD，第 2 页可给 6=DIAG
  *
@@ -320,7 +323,8 @@ static int run_headless(float at_sec, const char *out)
      * 一版没有对应物，已从 capture.py 删除。
      */
     if (getenv("PK_SIM_MENU") || getenv("PK_SIM_MENU_PAGE") ||
-        getenv("PK_SIM_MENU_BRIGHT"))
+        getenv("PK_SIM_MENU_BRIGHT") || getenv("PK_SIM_MENU_LEVEL") ||
+        getenv("PK_SIM_MENU_LEVEL_DONE"))
         pk_nav_grid_page_open();
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
     /* PK_SIM_SUB=1 进入二级页，核对返回栏与 FAB 图标是否都切到「←」。 */

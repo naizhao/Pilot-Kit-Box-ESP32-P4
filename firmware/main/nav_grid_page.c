@@ -177,6 +177,25 @@ _Static_assert(PK_NAV_ACT_TOP + PK_NAV_ACT_H == PK_DISPLAY_H,
 /* 置灰项（记录 / 工具，页面还没写）。比 COL_DIM 再暗一档，与"能点的"一眼
  * 分得开；同时**不画选中框**，双重信号。 */
 #define COL_OFF     pk_rgb565(0x3D, 0x4D, 0x6B)
+/*
+ * 调平长按的进度填充底色 —— COL_ACT 压到约 35%（255/180/63 → 89/63/22）。
+ *
+ * 为什么是「压暗的同色」而不是另起一个色相：填充是**背景**、橙色标签是
+ * **前景**，同色系才让人一眼读成"这一格自己在充满"；换个色相就变成"这一格
+ * 旁边多了个别的东西"。
+ *
+ * 35% 是两头夹出来的：再亮一档，压在上面的 COL_ACT 标签对比度掉到 4.5:1
+ * 以下（WCAG AA 的下限），字就被填充吃掉了；再暗一档，与动作条底色 COL_BG
+ * 分不开，进度走到哪儿看不出来。这一档实测对标签 5.5:1、对底色 2.0:1。
+ */
+#define COL_ACT_FILL pk_rgb565(0x59, 0x3F, 0x16)
+/*
+ * 完成绿闪。调色板里没有绿档——座舱里绿 = 正常/确认，必须与 COL_ACT 的
+ * 橙 = 需注意 拉开，所以不能拿现成的任何一档改亮度凑出来。取值参照仪表面板
+ * 那种偏青的「正常」绿：够亮，200 ms 里余光也能捕捉到；不刺眼，夜航时不会
+ * 在暗适应的眼睛里留下残像。
+ */
+#define COL_OK      pk_rgb565(0x2F, 0xB2, 0x62)
 
 /*
  * 覆盖层的遮蔽强度（proto.c 的 OVERLAY_DARKEN，逐值照搬）。
@@ -273,6 +292,29 @@ static bool         s_swipe_locked;  /* 滑动判定已到终局（关闭待定 
                                        * 侦测，直到松手/取消。 */
 static bool         s_close_on_up;   /* 松手时关闭网格（见 touch_up 上方） */
 static int64_t      s_last_act_us;   /* 最后一次触摸，5 s 无操作自动收起用 */
+
+/*
+ * ── 调平长按的两个时长 ────────────────────────────────────────────
+ *
+ * 长按阈值 1 s 的来由见下面触摸状态机那一节开头的大注释。定义提到这里，是
+ * 因为**渲染也要用它**：进度填充按「已按住时长 / 阈值」算宽度，与判定共用
+ * 同一个数、同一个 s_press_us，绝不另起一个时钟——两份真值迟早会走偏，而
+ * 走偏的症状是"填充走满了却没生效"。
+ *
+ * 绿闪 200 ms：网格打开时这块屏约 6 FPS（docs/ui_performance-zh_CN.md），
+ * 短于此连一帧都保不住；长于此就成了"卡了一下"而不是"闪了一下"。
+ */
+#define NAV_LEVEL_HOLD_MS   1000
+#define NAV_LEVEL_FLASH_MS  200
+
+/* ── 调平的两个视觉反馈态（spec §6 的 ③④）────────────────────────
+ *
+ * ③ 进度填充**没有**自己的状态量：它整个由上面那组按压态算出来（见
+ *    level_hold_progress()）。滑出按钮 / 翻页 / 已结算把按压作废时，填充自动
+ *    跟着消失，不需要谁记得去清它。
+ * ④ 绿闪要在按压结束之后还活 200 ms，这才需要一个自己的时间戳。 */
+static int64_t      s_flash_us;          /* 绿闪起点；0 = 不在闪 */
+static bool         s_close_after_flash; /* 手已松、闪没完：闪完由 render 关 */
 
 /* ── 绘制 ────────────────────────────────────────────────────────── */
 
@@ -408,8 +450,54 @@ static bool idle_expired(void)
     return (esp_timer_get_time() - s_last_act_us) >= (int64_t)NAV_IDLE_MS * 1000;
 }
 
+/*
+ * 调平长按已经按了多少（0.0 ~ 1.0）；不在长按中返回 -1。
+ *
+ * 判据逐条对齐 drag() 里那段长按分支——"看得见的"与"点得中的"必须是同一件
+ * 事：手指滑出按钮、这一下已被判成翻页、按压已经结算，那边一作废，这边的
+ * 填充就必须同帧消失，否则屏上会留下一条走不完也退不掉的橙条。
+ */
+static float level_hold_progress(void)
+{
+    if (!s_press_valid || s_swiped || s_press_hit.kind != PK_NAV_HIT_LEVEL)
+        return -1.0f;
+
+    const int64_t held = esp_timer_get_time() - s_press_us;
+    if (held <= 0) return 0.0f;
+    const float p = (float)held / (float)((int64_t)NAV_LEVEL_HOLD_MS * 1000);
+    return p > 1.0f ? 1.0f : p;
+}
+
+static bool flash_active(void)
+{
+    return s_flash_us != 0 &&
+           esp_timer_get_time() - s_flash_us < (int64_t)NAV_LEVEL_FLASH_MS * 1000;
+}
+
+/* 绿闪态归零。与 press_reset() 分开：touch_up() 要先 press_reset() 再判绿闪
+ * （闪没走完就得把关闭推后），混成一个函数会把刚点起来的那一闪当场抹掉。 */
+static void flash_reset(void)
+{
+    s_flash_us          = 0;
+    s_close_after_flash = false;
+}
+
 void pk_nav_grid_page_render(uint16_t *fb)
 {
+    /*
+     * 绿闪结算：手已经松了、闪还没走完时，touch_up() 把"关网格"推到这里
+     * （见那边的说明）。判定放在 render 与下面那条无操作自动收起是同一个
+     * 理由——本层没有后台任务，render 就是唯一的心跳。
+     *
+     * 这**不**违反「关闭一律等松手」：那条规矩挡的是**手指还按着**就清
+     * s_active（本次按压的剩余帧会顺着 touch_gt911.c 的分派落到底页去）。
+     * 走到这儿手指必然已经离屏，剩下的 200 ms 里没有属于那次按压的帧。
+     */
+    if (s_close_after_flash && !flash_active()) {
+        pk_nav_grid_page_close();
+        return;
+    }
+
     if (idle_expired()) {
         /* 直接返回不画：本帧底页已经由 pfd.c 照常画完了（网格不进那条模态
          * if/else 链），少叠一层覆盖层就是"菜单收起"该有的样子。 */
@@ -468,11 +556,40 @@ void pk_nav_grid_page_render(uint16_t *fb)
     {
         const char *acts[3] = { TXT_ACT_LEVEL, TXT_ACT_BRIGHT, TXT_ACT_CLOSE };
         const int   lh      = pk_aa_cell_h(PK_AA_L);
+
+        /*
+         * 「调平」那一格的两个反馈态（spec §6 的 ③④）。
+         *
+         * 画在文字**之前**：填充是底、文字是面。次序反过来整块颜色会盖掉标签，
+         * 而"填充走到一半把字吃了"恰恰是这条反馈最不该有的样子。
+         *
+         * 不做插值 / 缓动：网格打开时这块屏约 6 FPS（docs/ui_performance-zh_CN.md），
+         * 1 s 只有 6 帧，每帧按当前时刻直接算一次宽度就足够看出"它在走"；为
+         * 6 帧引一个定时器或动画框架，只会多一个要记得删的对象。
+         */
+        const int  lvl_w   = PK_DISPLAY_W / 3;   /* 与 pk_nav_hit_test 的 third 同源 */
+        const int  lvl_top = PK_NAV_ACT_TOP + 1; /* 让开顶上那条 COL_LINE 分隔线 */
+        const bool flash   = flash_active();
+        if (flash) {
+            pk_pfd_fill_rect(fb, 0, lvl_top, lvl_w, PK_DISPLAY_H, COL_OK);
+        } else {
+            const float p = level_hold_progress();
+            /* 四舍五入而不是截断：6 帧里每一帧都该往前挪一截，截断会让第一帧
+             * 停在 0 px（看上去像"没反应"）。 */
+            if (p >= 0.0f)
+                pk_pfd_fill_rect(fb, 0, lvl_top, (int)((float)lvl_w * p + 0.5f),
+                                 PK_DISPLAY_H, COL_ACT_FILL);
+        }
+
         for (int i = 0; i < 3; ++i) {
             /* 调平是唯一会改变飞机状态显示的动作，用警示橙与另两个分开。
              * 亮度被点开时它自己也高亮，否则 pop 弹出来会像凭空冒出的一块。 */
             uint16_t c = (i == 0) ? COL_ACT : COL_DIM;
             if (i == 1 && s_pop_open) c = COL_ON;
+            /* 绿底上再摆橙字读不出来（对比 1.6:1）。换成动作条底色那档近黑，
+             * 对绿是 7:1——绿闪于是整体读成"这一格反白了"，比只换字色更强的
+             * 完成信号，而且用的还是同一张调色板，不必再多定义一个前景色。 */
+            if (i == 0 && flash) c = COL_BG;
             const int cx = PK_DISPLAY_W * (2 * i + 1) / 6;   /* 三等分的格心 */
             const int tw = pk_aa_text_width(acts[i], PK_AA_L);
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
@@ -513,6 +630,7 @@ void pk_nav_grid_page_init(void)
     s_page     = 0;
     s_pop_open = false;
     press_reset();
+    flash_reset();
 }
 
 #ifdef PK_SIM_BUILD
@@ -527,6 +645,7 @@ void pk_nav_grid_page_open(void)
     s_pop_open = false;
     s_active   = true;
     press_reset();
+    flash_reset();
     /* 倒计时从打开这一刻起算，而不是从第一次触摸起算——打开后一下都没碰，
      * 5 s 后同样该自己收起。 */
     s_last_act_us = esp_timer_get_time();
@@ -552,8 +671,11 @@ void pk_nav_grid_page_open(void)
  *   PK_SIM_MENU_PAGE=<n>  打开后翻到第 n 页（0 起，=1 就是第 2 页那一屏：
  *                         3 项 + 5 格空位，验"末页不居中"）
  *   PK_SIM_MENU_BRIGHT=1  打开后展开亮度快调 pop（网格再压一档 + 三档面板）
+ *   PK_SIM_MENU_LEVEL=<pct>   停在「调平」长按进行中（spec §6 的 ③），pct 是
+ *                             0~100 的进度百分比
+ *   PK_SIM_MENU_LEVEL_DONE=1  停在长按满 1 s 之后的绿闪那一帧（同 ④）
  *
- * 摆的是本模块自己那两个状态量，**不导出 setter**：内部状态一旦对外可写，
+ * 摆的是本模块自己那几个状态量，**不导出 setter**：内部状态一旦对外可写，
  * 真机那侧就多了一条绕过触摸状态机的路。入口仍是正规的 open()，所以截出来
  * 的就是用户点 FAB 之后看到的那一屏，连"藏掉 FAB"这个副作用都一并带上。
  */
@@ -569,6 +691,28 @@ static void sim_setup(void)
         s_page = p;
     }
     if (getenv("PK_SIM_MENU_BRIGHT") != NULL) s_pop_open = true;
+
+    /* 调平的 ③ 进度填充 / ④ 绿闪都只在按住的那 1 s 与随后的 200 ms 里出现，
+     * 靠环境变量开个页面是截不到的，只能把状态直接摆到那一刻。 */
+    const char *lv = getenv("PK_SIM_MENU_LEVEL");
+    if (lv != NULL) {
+        int pct = atoi(lv);
+        if (pct < 0)   pct = 0;
+        if (pct > 100) pct = 100;
+        /* 摆的与真机 touch() 记的是同一组量：命中「调平」、按压有效、按下
+         * 时刻往前挪 pct% 个长按时长——render 里 level_hold_progress() 算出来
+         * 就正好是 pct%，走的是与真机逐字相同的那条算式。 */
+        s_press_hit.kind  = PK_NAV_HIT_LEVEL;
+        s_press_hit.index = -1;
+        s_press_x     = PK_DISPLAY_W / 6;                    /* 「调平」格心 */
+        s_press_y     = PK_NAV_ACT_TOP + PK_NAV_ACT_H / 2;
+        s_press_page  = s_page;
+        s_press_valid = true;
+        s_press_us    = esp_timer_get_time()
+                      - (int64_t)NAV_LEVEL_HOLD_MS * 1000 * pct / 100;
+    }
+    if (getenv("PK_SIM_MENU_LEVEL_DONE") != NULL)
+        s_flash_us = esp_timer_get_time();
 }
 #endif /* PK_SIM_BUILD */
 
@@ -579,6 +723,7 @@ void pk_nav_grid_page_close(void)
     s_active   = false;
     s_pop_open = false;
     press_reset();
+    flash_reset();
     pk_ui_nav_set_fab_hidden(false);
 }
 
@@ -587,10 +732,14 @@ void pk_nav_grid_page_close(void)
  * 「调平」必须长按 1 s 才生效：误触把地平线归零，飞行中是要命的。四个状态
  * 与 dock 那枚调平键（已随 dock 删除）逐条对齐，规矩不变：
  *
- *     按下       记下时刻
- *     满 1 s     pk_ui_nav_on_level()，真正执行
+ *     按下       记下时刻（s_press_us）
+ *     按住       进度填充跟着长（render 的 level_hold_progress()，不另起时钟）
+ *     满 1 s     pk_ui_nav_on_level()，真正执行 + 起绿闪（s_flash_us）
  *     提前松手   pk_ui_nav_on_level_hint()（提示"需长按 1 秒"）
  *     滑出按钮   同上（等价于 LVGL 的 PRESS_LOST）
+ *
+ * 阈值 NAV_LEVEL_HOLD_MS 与绿闪时长 NAV_LEVEL_FLASH_MS 定义在上面的状态区，
+ * 因为渲染那侧也要用（见那两个宏的注释）。
  *
  * 计时用 esp_timer_get_time() 而不是 lv_timer：本层是自绘的，drag() 在手指
  * 按住期间**每一轮触摸轮询都会被调到**（touch_gt911.c 的 PK_TOUCH_ACTION_DRAG
@@ -604,8 +753,19 @@ void pk_nav_grid_page_close(void)
  * pk_ui_modal_top() 已经不是 NAVGRID 了，这一次按压的剩余帧会落到底下那一页
  * 上——底页是地图时后果尤其具体：map_page.c:611 的状态机会把它当成一次全新
  * 按下，随后 map_page.c:696 的 tap 判定成立，手一松就跳进机场详情页。
+ *
+ * 绿闪（④）与这条规矩的协调
+ * --------------------------
+ * 绿闪要占 200 ms，而"满 1 s"这一刻手指多半还按着——那 200 ms 本来就落在
+ * "等松手"这段里，一帧都不用额外拖。只有"按满就立刻松手"这一种走法会撞上：
+ * 关掉网格，那一格连同绿闪一起没了，④ 在最常见的操作下等于不存在。
+ *
+ * 处理是**把关闭再往后推一小段**，推到 render 里（s_close_after_flash）。
+ * 这没有破坏上面那条规矩——它挡的是「手指还按着就清 s_active」，而这时手已
+ * 经松了，剩下的 200 ms 里不存在属于那次按压的帧。唯一的缝是"松手后 200 ms
+ * 内又按了一下"：那一下由 touch() 接住，把关闭改挂回**新那次**按压的松手上
+ * （见 touch() 里的 pending_close），于是任何时刻都不会在手指按着时关网格。
  */
-#define NAV_LEVEL_HOLD_MS  1000
 
 /* 点中格子之后往哪跳。
  *
@@ -635,6 +795,11 @@ bool pk_nav_grid_page_touch(int x, int y)
 {
     if (!s_active) return false;
 
+    /* 上一次调平的绿闪还没结算完就又按下来了（松手后 200 ms 内的第二次
+     * 点击）。先记下来，等下面把按压态摆好再处理——那一段会把 s_close_on_up
+     * 清成 false。 */
+    const bool pending_close = s_close_after_flash;
+
     s_press_hit    = pk_nav_hit_test(x, y, s_page, s_pop_open);
     s_press_x      = x;
     s_press_y      = y;
@@ -645,6 +810,19 @@ bool pk_nav_grid_page_touch(int x, int y)
     s_swiped       = false;
     s_swipe_locked = false;
     s_close_on_up  = false;
+
+    /* 绿闪待结算时又来一次按压：把"闪完就关"改挂到**这一次**的松手上。
+     *
+     * 不能在这儿直接关：手指正按着，清掉 s_active 之后本次按压的剩余帧会顺着
+     * touch_gt911.c 的分派落到底页去，正是本节开头那条规矩要挡的事。
+     *
+     * 顺带把这一下的其它归宿全挡掉（s_close_on_up 一置位，touch_up 就只关
+     * 网格、不走那条 switch）——调平刚做完、网格正要关，这一下多半是手抖或
+     * 想再确认一次，不该因此跳进某一格。 */
+    if (pending_close) {
+        flash_reset();
+        s_close_on_up = true;
+    }
 
     /* 整屏都吃，命中与否都一样：网格铺满全屏且 FAB 已藏，底下没有任何该被
      * 点到的东西；更要紧的是横向滑动可以从任何一格上起手，归属必须在**按下
@@ -715,9 +893,11 @@ bool pk_nav_grid_page_drag(int x, int y)
         } else if (esp_timer_get_time() - s_press_us
                        >= (int64_t)NAV_LEVEL_HOLD_MS * 1000) {
             /* 满 1 s 当场执行（提示随即弹出），网格留到松手再关——理由见
-             * 本节开头。 */
+             * 本节开头。绿闪从这一刻起算：s_press_valid 一清，进度填充就停在
+             * 满格并被绿底接管，视觉上是"充满 → 变绿"一条连贯的线。 */
             s_press_valid = false;      /* 已消费，松手不再重复结算 */
             s_close_on_up = true;
+            s_flash_us    = esp_timer_get_time();
             pk_ui_nav_on_level();
         }
     }
@@ -736,7 +916,15 @@ void pk_nav_grid_page_touch_up(void)
     const int64_t      held_us     = esp_timer_get_time() - s_press_us;
     press_reset();
 
-    if (close_on_up) { pk_nav_grid_page_close(); return; }
+    if (close_on_up) {
+        /* 绿闪还没走完就先别关：关本身是安全的（手已离屏），但网格一没，那
+         * 一格的绿闪也就跟着没了——「按满 1 s 立刻松手」是最常见的走法，④ 在
+         * 它下面会等于不存在。把关闭推给 render 收尾，与本节开头那条规矩怎么
+         * 协调见那段。 */
+        if (flash_active()) { s_close_after_flash = true; return; }
+        pk_nav_grid_page_close();
+        return;
+    }
     if (!valid || swiped) return;      /* 翻过页的这一下不再算点击 */
 
     switch (hit.kind) {
@@ -750,7 +938,10 @@ void pk_nav_grid_page_touch_up(void)
          * 轮询稀疏到一次 drag 都轮不上，也不该把一次真正的长按提示成短按。 */
         if (held_us >= (int64_t)NAV_LEVEL_HOLD_MS * 1000) {
             pk_ui_nav_on_level();
-            pk_nav_grid_page_close();
+            /* 这条路同样要绿闪，理由与 drag() 那条一样：不能因为触摸轮询稀疏
+             * 就少给一次完成反馈。手已经松了，直接挂到 render 上收尾。 */
+            s_flash_us          = esp_timer_get_time();
+            s_close_after_flash = true;
         } else {
             pk_ui_nav_on_level_hint();
         }
