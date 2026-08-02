@@ -52,11 +52,39 @@ h3{font-size:13px;margin:20px 0 4px;color:#9ec4ff}
 .xl{font-size:5.0mm}  .lg{font-size:3.5mm}  .md{font-size:3.0mm}
 .sm{font-size:2.5mm}  .xs{font-size:2.1mm}
 
-/* ── 顶栏 ── */
-.bar{height:5.6mm;display:flex;align-items:center;justify-content:space-between;
-  padding:0 1.3mm;background:var(--bar);border-bottom:1px solid var(--line);
-  color:var(--cyan);font-size:2.5mm;flex-shrink:0}
-.stt{display:flex;gap:1.4mm;align-items:center}
+/* ── 顶栏 ─────────────────────────────────────────────────────────
+   真源：firmware/main/pfd_statusbar.c（版面与取值）+ pfd_layout.h（几何）
+   条高 48px(5.62mm) · 左边距 12px(1.41mm) · 右边距 16px(1.87mm)
+   文字 M 档 26px(3.0mm，等宽 15px) · 图标 cell 30px(3.51mm)
+   图标↔自己的数值 2px(0.23mm) · 组内 8px(0.94mm) · 词组之间 16px(1.87mm)
+   ⚠️ 圆点字符版式（●GPS ●REC ●BLE 🔋）已作废，见 §2.1 */
+.bar{height:5.62mm;display:flex;align-items:center;justify-content:space-between;
+  padding:0 1.87mm 0 1.41mm;background:var(--bar);border-bottom:1px solid var(--line);
+  color:var(--cyan);font-size:3.0mm;flex-shrink:0;position:relative}
+.bar .ttl{color:#ebebeb}                      /* 页面标题 PK_UI_TITLE_COL */
+.bar .hdg{white-space:nowrap;color:#46dcfa}   /* "HDG" 标签 COL_LABEL */
+.bar .hdg b{font-weight:400;color:#00dc3c}    /* 航向读数 COL_GREEN */
+.bar .hdg b.stale{color:#646464}              /* 无航向 "---°" COL_STALE */
+/* 状态位：一组词组，组内每项 = 图标 + 紧贴的数值，图标与数值同色成为一体 */
+.stt{display:flex;gap:1.87mm;align-items:center}
+.stt.dev{gap:.94mm}                           /* 蓝牙+电量同属"设备自身"，用近距 */
+.si{display:flex;align-items:center;gap:.23mm;white-space:nowrap}
+.si .bi{width:3.51mm;height:3.51mm;flex-shrink:0;fill:currentColor}
+/* 状态位配色。前缀 si- 不能省：本文件早有一个 .ok（绿色说明框：底色 + 左边框 +
+   padding + max-width），状态位若写成 class="si si-ok" 会连那一套一起吃进来，
+   顶栏里凭空多出一块绿底方框。 */
+.si-ok{color:#00dc3c}  /* COL_GREEN 有效在线 */
+.si-al{color:#ff503c}  /* COL_RED   NO FIX / REC / 低电 */
+.si-wn{color:#ffb43f}  /* COL_WARN  超温 / <25% 电量 */
+.si-cy{color:#46dcfa}  /* COL_LABEL 蓝牙 */
+.si-wh{color:#fff}     /* COL_WHITE 电量常态 */
+/* 单独展示一条顶栏时的外框（不带整屏内容） */
+.barbox{width:93.7mm;zoom:var(--cal,1);border:1px solid #2a3550;border-radius:.5mm;
+  overflow:hidden;flex-shrink:0;font-family:"SF Mono",Menlo,monospace;background:var(--bg)}
+/* 演示模式徽标：96×32px，画在 LVGL 控件层，常驻顶栏最右端 */
+.dmb{position:absolute;right:1.87mm;top:50%;transform:translateY(-50%);
+  width:11.24mm;height:3.75mm;border-radius:.7mm;background:#c8202a;color:#fff;
+  display:flex;align-items:center;justify-content:center;gap:.5mm;font-size:2.5mm}
 .fb{position:absolute;right:1.9mm;bottom:1.9mm;width:6.6mm;height:6.6mm;border-radius:50%;
   background:var(--sel);color:#fff;display:flex;align-items:center;justify-content:center;
   font-size:3.2mm;z-index:9;box-shadow:0 .3mm 1.4mm rgba(46,109,240,.5)}
@@ -283,14 +311,73 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 .sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px}
 </style></head><body>
 
+<!-- ══════════════════════════════════════════════════════════════
+     顶栏状态位图标（<use> 引用，9 条顶栏共用这一份，不重复 markup）
+
+     真身是 Material Symbols Rounded 经 gen_pfd_icons.py 生成的
+     30×30px / 4bpp 灰度字形表（pfd_icon_font.h）；本稿内为**等尺寸近似
+     示意**，与导航网格那几枚图标同一处理方式。
+     FILL 轴的取舍照抄真身：卫星/目标/录制/温度/蓝牙实心，电池轮廓
+     （填成实心就看不出电量了）。
+     ══════════════════════════════════════════════════════════════ -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <!-- satellite_alt U+EB3A FILL=1 —— GPS 星数 -->
+  <symbol id="i-sat" viewBox="0 0 24 24">
+    <path d="M9.9 6.6 6.6 9.9l7.5 7.5 3.3-3.3z"/>
+    <path d="M4.6 1.3 1.3 4.6l3.6 3.6 3.3-3.3zM19.4 16.1l-3.3 3.3 3.6 3.6 3.3-3.3z"/>
+    <circle cx="18" cy="6" r="2.5"/>
+  </symbol>
+  <!-- connecting_airports U+E7C9 FILL=1 —— ADS-B 目标数（画的是两架飞机） -->
+  <symbol id="i-adsb" viewBox="0 0 24 24">
+    <g transform="translate(.6 .6) scale(.5) rotate(35 12 12)"><path d="M12 1.8l1.25 6.7 8.75 5v1.8l-8.75-2.5v6.3l2.9 2.5v1.1L12 21.2l-4.15 1.5v-1.1l2.9-2.5v-6.3L2 15.3v-1.8l8.75-5z"/></g>
+    <g transform="translate(11.4 11.4) scale(.5) rotate(215 12 12)"><path d="M12 1.8l1.25 6.7 8.75 5v1.8l-8.75-2.5v6.3l2.9 2.5v1.1L12 21.2l-4.15 1.5v-1.1l2.9-2.5v-6.3L2 15.3v-1.8l8.75-5z"/></g>
+  </symbol>
+  <!-- fiber_manual_record U+E061 FILL=1 —— 正在写记录 -->
+  <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.2"/></symbol>
+  <!-- thermometer_alert U+FFFFB FILL=1 —— 超温（温度计 + 感叹号） -->
+  <symbol id="i-temp" viewBox="0 0 24 24">
+    <path d="M7.3 1.9c1.7 0 3 1.4 3 3v7.4a4.7 4.7 0 1 1-6 0V4.9c0-1.6 1.3-3 3-3z"/>
+    <path d="M17.4 4.2h2.8v9.4h-2.8zM17.4 15.9h2.8v2.8h-2.8z"/>
+  </symbol>
+  <!-- bluetooth U+E1A7 FILL=1 —— 已连上 App（只有图标，没有文字） -->
+  <symbol id="i-ble" viewBox="0 0 24 24">
+    <path d="M7 7.5 17 16.5 12 21V3l5 4.5L7 16.5" fill="none" stroke="currentColor"
+          stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <!-- battery_android_full U+F304 FILL=0 —— 满格（九档刻度的末档） -->
+  <symbol id="i-batt" viewBox="0 0 24 24">
+    <rect x="1.6" y="7.4" width="18.4" height="9.2" rx="2.2" fill="none"
+          stroke="currentColor" stroke-width="1.8"/>
+    <rect x="21" y="10" width="1.8" height="4" rx=".8"/>
+    <rect x="3.8" y="9.6" width="14" height="4.8" rx="1"/>
+  </symbol>
+  <!-- battery_android_alert U+F306 FILL=0 —— ≤6%，与变红同时发生 -->
+  <symbol id="i-batt-alert" viewBox="0 0 24 24">
+    <rect x="1.6" y="7.4" width="18.4" height="9.2" rx="2.2" fill="none"
+          stroke="currentColor" stroke-width="1.8"/>
+    <rect x="21" y="10" width="1.8" height="4" rx=".8"/>
+    <rect x="9.9" y="9.4" width="1.9" height="3.6" rx=".5"/>
+    <rect x="9.9" y="13.7" width="1.9" height="1.9" rx=".5"/>
+  </symbol>
+  <!-- battery_android_frame_3 U+F255 FILL=0 —— 充电动画中的一帧 -->
+  <symbol id="i-batt-chg" viewBox="0 0 24 24">
+    <rect x="1.6" y="7.4" width="18.4" height="9.2" rx="2.2" fill="none"
+          stroke="currentColor" stroke-width="1.8"/>
+    <rect x="21" y="10" width="1.8" height="4" rx=".8"/>
+    <rect x="3.8" y="9.6" width="6.4" height="4.8" rx="1"/>
+  </symbol>
+</svg>
+
 <h1>Pilot Kit Box · 4.3″ UX 设计稿</h1>
 <p class="meta">
 硬件：微雪 ESP32-P4-WIFI6-Touch-LCD-4.3（480×800 原生竖屏 → PPA 旋转 90° 为 <b>800×480 横屏</b>，GT911 五点电容触摸）<br>
 交互：<b>无物理按键</b>（deep sleep 取消 · 板载 POWER 为硬件开关）· 全触摸 · <b>FAB 点击打开全屏导航网格</b><br>
 框架：<b>LVGL v9</b> + esp_lvgl_adapter（PPA 旋转 / 防撕裂）· 最终目标屏 5″ 800×480 半反半透，同分辨率可 1:1 迁移<br>
 版本：v2（物理尺寸修订版）· 2026-07-27 ·
-<b style="color:var(--warn)">v2.1 修订 2026-08-02</b>：横向 dock 在 800×480 上溢出 41 px，
-改为<b>全屏导航网格</b>（§3 / §3.5 / §11 / §13 / §14 已重画，原委见 §3 的宽度账）
+<b style="color:var(--warn)">v2.1 修订 2026-08-02</b>：① 横向 dock 在 800×480 上溢出 41 px，
+改为<b>全屏导航网格</b>（§3 / §3.5 / §11 / §13 / §14 已重画，原委见 §3 的宽度账）；
+② <b>顶栏按实现重画</b>：<code>●GPS ●REC ●BLE 🔋</code> 那套圆点字符版式早已作废，
+现在是图标化状态栏（新增 §2.1），且这条状态栏<b>只有 PFD 页有</b>，其余各页顶栏各画各的
 </p>
 
 <div class="calib">
@@ -344,10 +431,13 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 <h2>2 · PFD 主页（默认 · 菜单未开）</h2>
 <div class="row">
   <div class="scr">
-    <div class="bar"><span>HDG 359°</span>
-      <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-        <span style="color:var(--cyan)">●BLE</span><span style="color:var(--dim)">87%</span></span>
-      <span>ADSB 6</span></div>
+    <div class="bar"><span class="hdg">HDG <b>359°</b></span>
+      <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+        <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+        <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+        <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+      <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+        <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>87%</span></span></div>
     <div class="mid">
       <div class="tp s"><div class="bd"><span>450</span><span>400</span><span>350</span>
         <span>300</span><div class="cu">378</div></div><div class="cv">700 km/h</div></div>
@@ -368,12 +458,120 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 </div>
 <p class="cap">顶栏 5.6mm(48px) · 主区 25mm(214px)：速度带 11.7mm(100px) ｜ 姿态 70.3mm(600px) ｜ 高度带 11.7mm(100px) · 底部 HSI 16.4mm(140px)。姿态区刻意留空。</p>
 
+<h2>2.1 · 顶栏状态栏（真源 <code>pfd_statusbar.c</code>）</h2>
+<div class="warn">
+<b>圆点字符版式（<code>HDG · ●GPS ●REC ●BLE 🔋 · ADSB 计数</code>）已作废，2026-08-02 按实现重画。</b><br>
+圆点只说得出"有 / 没有"，说不出"几颗星""几架飞机"；而 <code>ADSB</code> / <code>REC</code> 这类字母缩写在 26px 字号下一项就吃掉 60~90px。
+实现早已改成<b>图标 + 读数</b>：图标提供语义（孤立的 <code>100%</code> 看不出是电量还是亮度），数字提供读数，二者<b>同色</b>成为一体。<br>
+图标取自 <b>Material Symbols Rounded</b>（Google，Apache-2.0），经 <code>gen_pfd_icons.py</code> 生成
+<b>30×30px / 4bpp 灰度</b>字形表（<code>pfd_icon_font.h</code>），与文字<b>共用同一条 alpha 混合路径</b>（<code>pk_aa_blit_4bpp</code>），边缘处理完全一致。
+本稿内为等尺寸近似示意。<b>顶栏文字是 M 档 26px</b>，不是 S 档。
+</div>
+
+<h3>满载态 —— 所有状态位同时点亮（实拍 <code>images/ui-4.3-pfd.png</code>）</h3>
+<div class="barbox"><div class="bar"><span class="hdg">HDG <b>082°</b></span>
+  <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+    <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+    <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+  <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+    <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>100%</span></span></div></div>
+<p class="cap">
+几何（<code>pfd_layout.h</code>）：条高 <b>48px</b> · 左边距 12px · 右边距 16px · 图标与自己的数值间隙 2px ·
+组内 8px（<code>PFD_BAR_GAP_LABEL</code>，蓝牙与电量同属"设备自身状态"，用近距不用词距）· 词组之间 16px（<code>PFD_BAR_GAP_WORD</code>）。<br>
+<b>左端 HDG 与右端蓝牙 / 电量常驻，永不隐藏</b>；右段按<b>最坏宽度</b>（两个图标 + <code>100%</code>）预留，蓝牙一断开中段也不会整排平移 ——
+顶栏元素位置必须稳定，否则每次扫视都要重新找目标在哪。<br>
+温度这一格<b>只在超温时出现</b>，色是<b>警示橙</b>不是红（红留给 <code>NO FIX</code> / <code>REC</code> / 低电这类"已经出事"）；
+阈值 <code>CONFIG_PK_SOC_TEMP_WARN_C</code> 当前 <b>85℃ 触发 / 78℃ 解除</b>（7℃ 滞回，免得那一格出现又消失，把飞行员训练成忽略它）。
+读的是 <b>SoC 结温</b>（<code>soc_temp.c</code>），不是 BMP388 那颗测座舱环境温度的传感器 —— 暴晒时二者能差二三十度。
+实拍里显示 78℃ 是模拟器强制点亮的 mock 值。
+</p>
+
+<h3>全空态 —— 出厂开机、什么都还没连上（实拍 <code>images/empty-4.3-pfd.png</code>）</h3>
+<div class="barbox"><div class="bar"><span class="hdg">HDG <b class="stale">---°</b></span>
+  <span class="stt"><span class="si si-al"><svg class="bi"><use href="#i-sat"/></svg>NO FIX</span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>0</span></span>
+  <span class="stt dev"><span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>100%</span></span></div></div>
+<p class="cap">
+无航向 → <code>---°</code> <b>灰</b>（灰是本项目里"数据失效"的专用色，有效读数绝不能用灰）· 无定位 → <code>NO FIX</code> <b>红</b> ·
+目标数 <code>0</code> 仍是绿（0 是个有效读数，不是失效）· <b>REC / 温度 / 蓝牙整枚不画</b>（不是画成灰的占位）·
+电量照常显示 —— 电池焊在板上，没有"没接"这一说。<br>
+中段是在"左端 HDG 之后、右段之前"的剩余空间里<b>居中</b>的，所以 REC / 温度出现或消失时中段会整体重新居中（比较上下两图即可看出）。
+</p>
+
+<h3>演示模式 —— 右端常驻 DEMO 徽标（实拍 <code>images/demo-4.3-pfd.png</code>）</h3>
+<div class="barbox"><div class="bar" style="padding-right:14.98mm"><span class="hdg">HDG <b>082°</b></span>
+  <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+    <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+    <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+  <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+    <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>100%</span></span>
+  <span class="dmb">⚠ 演示</span></div></div>
+<p class="cap">
+徽标 <b>96 × 32px</b>，画在 LVGL 控件层、压在各页之上。高度取 32 而不是整条 48：它是浮在顶栏上的一枚 chip，铺满整条会读成"顶栏本身变红了"。<br>
+各页把自己右对齐内容的右界报给 <code>pk_ui_topbar_right_limit()</code> 统一裁，中段跟着一起退 ——
+顶栏本来就有一套"装不下就按优先级丢"的机制，把新的可用宽度告诉它就够了，不必每页各写一个 <code>if (demo) x -= 112</code>。
+</p>
+
+<h3>电量的三个形态</h3>
+<div class="row" style="align-items:flex-start;gap:8mm;font-family:'SF Mono',Menlo,monospace">
+  <div><div style="font-size:3.0mm;zoom:var(--cal,1)"><span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>100%</span></div>
+    <p class="cap">常态<b>白</b>（航电惯例 白 = 正常 / 仅供参考；绿留给需要主动确认有效的读数：航向、星数、目标数）<br><code>&lt;25%</code> 转警示橙</p></div>
+  <div><div style="font-size:3.0mm;zoom:var(--cal,1)"><span class="si si-al"><svg class="bi"><use href="#i-batt-alert"/></svg>3%</span></div>
+    <p class="cap"><code>≤6%</code> 转<b>红</b>并同时换成 <b>alert 图标</b>（电池内嵌感叹号）—— 阈值正是九档刻度里 alert 那一档的覆盖范围，变红与换图标同时发生，不各走各的。实拍 <code>ui-4.3-battery-low.png</code></p></div>
+  <div><div style="font-size:3.0mm;zoom:var(--cal,1)"><span class="si si-wh"><svg class="bi"><use href="#i-batt-chg"/></svg>45%</span></div>
+    <p class="cap"><b>充电</b>：<code>frame_1…6 → frame_full</code> <b>逐帧动画</b>，300ms 一帧、整周期 2.1s；颜色<b>一律白</b>。实拍 <code>ui-4.3-charging.png</code></p></div>
+</div>
+<div class="ok">
+<b>为什么电池是九档连续刻度而不是三档空壳</b> —— <code>battery_android</code> 系列排成 <code>alert → _0…_6 → full</code> 九档，
+<code>step = (pct×8+50)/100</code> 一次线性映射，<b>形态本身就是读数</b>。此前的 <code>battery_horiz_*</code> 只有 000/050/075 三档，
+20% 与 4% 渲染成同一个空壳、只能靠颜色区分。末档取 <code>full</code> 而不是 <code>_6</code>：<code>_6</code> 内部还留着一条黑，
+拿它当 100% 会一直显示成"还差一格"，最容易被误当成故障。<br>
+<b>为什么充电用动画而不是静态闪电</b> —— 闪电只说明"接了电"，动画才说明"电真的在进"。
+每帧 300ms（整周期 2.1s）而不是手机上常见的 200ms：座舱里任何接近 1Hz 的动效都会被余光当成告警去抓一下注意力，而充电是最不需要被注意的状态。
+相位由 <code>uptime_ms</code> 算而不是数渲染帧 —— 固件与模拟器帧率不同，数帧会让同一段动画快慢不一。
+</div>
+
+<h3>槽位与降级</h3>
+<table class="t">
+<tr><th>段</th><th>槽位</th><th>图标（Material 名）</th><th>内容与颜色</th><th>数据来源</th></tr>
+<tr><td><b>左</b>（常驻）</td><td>HDG</td><td>无，青色 <code>HDG</code> 文字标签</td><td><code>082°</code> 绿；无航向 <code>---°</code> 灰</td>
+  <td><code>pk_own_heading_resolve()</code>：ADS-B 绑定机 &gt; IMU yaw &gt; GPS track(≥2kt)</td></tr>
+<tr><td>中 ①</td><td>卫星</td><td><code>satellite_alt</code></td><td>星数 绿；无 fix <code>NO FIX</code> 红</td><td><code>pk_gps_get()</code></td></tr>
+<tr><td>中 ②</td><td>ADS-B 目标数</td><td><code>connecting_airports</code><br><small style="color:#7d90ad">画的是<b>两架</b>飞机：后面跟的是"周围有 N 架"，要的是复数语义</small></td>
+  <td>计数 绿</td><td><code>aircraft_state_snapshot()</code>，60s 新鲜窗</td></tr>
+<tr><td>中 ③</td><td>录制</td><td><code>fiber_manual_record</code></td><td><code>REC</code> 红，<b>仅正在写记录时出现</b></td><td><code>rec_active</code></td></tr>
+<tr><td>中 ④</td><td>温度</td><td><code>thermometer_alert</code><br><small style="color:#7d90ad">温度计 + 感叹号，比通用三角贴切</small></td>
+  <td><code>88°C</code> 警示橙，<b>仅超温时出现</b></td><td><code>pk_soc_temp_get()</code></td></tr>
+<tr><td><b>右</b>（常驻）</td><td>蓝牙</td><td><code>bluetooth</code></td><td><b>只有图标、没有文字</b>（符号本身即可表意），青；未连接则整枚不画</td><td><code>ble_gatt_is_connected()</code></td></tr>
+<tr><td><b>右</b>（常驻）</td><td>电量</td><td><code>battery_android_*</code>（唯一 FILL=0 的一枚）</td><td>见上</td><td><code>pk_batt_get()</code></td></tr>
+</table>
+<p class="cap">
+<b>中段优先级 GPS &gt; ADSB &gt; REC &gt; TEMP</b>，依据是"不知道会出事"的程度：定位丢失直接影响本机位置与授时；周围有几架飞机是本产品的核心输出；
+"以为在录、其实没录"是本产品最难受的失败；超温对应"Garmin 高温死机时的备份"这一定位。<br>
+装不下就<b>从最低优先级那端整项丢弃</b>（不是缩字号、不是截断），<b>GPS 永不丢</b>。中段能放多少完全取决于面板宽度 ——
+320 屏只剩约 130px（一项），800 屏有 500px 上下（四项）；与其为每种屏手算一套坐标，不如声明优先级后让代码自己裁，以后新增状态位也不必重新推导布局。<br>
+<b>左端 HDG 与右端蓝牙 / 电量不参与降级</b> —— 后两者是「设备自身」的状态而非「飞行」的状态。
+</p>
+<div class="ok">
+<b>这条状态栏只有 PFD 页有。</b>其余整屏页面各画各的顶栏（同高 48px、标题同为 M 档）：
+交通 = 标题 + HDG + 目标数 + 朝向 / 量程 · 空管看板 = 标题 + 目标数 + 排序说明 + RESET（非默认排序才出现）·
+地图 = 标题 + 右上角瓦片层级 <code>Z12</code> · <b>设置 / 诊断 / 关于只有左上角一个标题</b> ·
+诊断子系统详情页顶上是 LVGL 的 <code>← 诊断</code> backbar（一枚胶囊，不是整条顶栏），子系统名画在内容区第一行 ·
+<b>罗盘校准向导是全屏页，没有顶栏</b>。<br>
+导航网格与 Toast 压在当前页之上，露出的是<b>底页自己的</b>顶栏 —— 下面 §3 那两屏底页是 PFD，所以顶上是这条状态栏。
+</div>
+
 <h2>3 · PFD 主页（FAB 打开全屏导航网格 · 第 1 页）</h2>
 <div class="scr">
-  <div class="bar"><span>HDG 359°</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--cyan)">●BLE</span><span style="color:var(--dim)">87%</span></span>
-    <span>ADSB 6</span></div>
+  <div class="bar"><span class="hdg">HDG <b>359°</b></span>
+    <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+      <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+      <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+      <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+    <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+      <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>87%</span></span></div>
   <div class="mid">
     <div class="tp s"><div class="bd"><span>450</span><span>400</span><span>350</span>
       <span>300</span><div class="cu">378</div></div><div class="cv">700 km/h</div></div>
@@ -403,7 +601,7 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
   </div>
 </div>
 <p class="cap">
-顶栏 5.6mm(48px) <b>不遮罩</b>（菜单期间电量 / GPS / 蓝牙照常可见）· 网格 4 列 × 2 行，格 <b>23.4 × 18.3mm(200 × 156px)</b>，
+顶栏 5.6mm(48px) <b>不遮罩</b>，露出<b>底页自己的</b>顶栏（这里底页是 PFD，故仍是 §2.1 那条状态栏：星数 / 目标数 / REC / 温度 / 蓝牙 / 电量，菜单期间也要能看状态）· 网格 4 列 × 2 行，格 <b>23.4 × 18.3mm(200 × 156px)</b>，
 远超 44px 触摸下限 · 每格 = 64px 图标 + 3.0mm(26px) 标签，整组在格内垂直居中 · 分页点 y=368、1.4mm(12px)，<b>仅状态指示不可点</b> ·
 动作条 10.3mm(88px) 三等分：<b style="color:var(--warn)">调平</b>（警示橙，唯一会改变仪表状态的动作）｜屏幕亮度｜关闭。<br>
 底页压暗 <b>232/255 → 保留 9.4% 原亮度</b>：地平线的明暗分界仍隐约可辨，飞行员不会在菜单打开的这两秒里失去姿态参照，
@@ -428,10 +626,13 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h3>第 2 页（3 项 · 末页刻意不居中）</h3>
 <div class="scr">
-  <div class="bar"><span>HDG 359°</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--cyan)">●BLE</span><span style="color:var(--dim)">87%</span></span>
-    <span>ADSB 6</span></div>
+  <div class="bar"><span class="hdg">HDG <b>359°</b></span>
+    <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+      <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+      <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+      <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+    <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+      <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>87%</span></span></div>
   <div class="mid">
     <div class="tp s"><div class="bd"><span>450</span><span>400</span><span>350</span>
       <span>300</span><div class="cu">378</div></div><div class="cv">700 km/h</div></div>
@@ -538,9 +739,12 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h2>4 · 交通雷达页</h2>
 <div class="scr">
-  <div class="bar"><span>TRAFFIC · 20 NM</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>ADSB 12</span></div>
+  <!-- 交通页有自己的顶栏（不是 PFD 那条状态栏）：标题 + HDG + 目标数 + 朝向/量程 -->
+  <div class="bar"><span class="ttl">交通</span>
+    <span class="hdg">HDG <b style="color:#46dcfa">359°</b></span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>12</span>
+    <span><span style="color:#46dcfa">航向朝上</span>
+      <span style="color:#9aa4b4;margin-left:1.87mm">20NM</span></span></div>
   <div class="mid">
     <div class="rd">
       <div class="ring" style="width:88%;aspect-ratio:1"></div>
@@ -589,9 +793,11 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h2>5 · 空管看板页（7 列 × 7 行）</h2>
 <div class="scr">
-  <div class="bar"><span>LIST · 12 架</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>20 NM</span></div>
+  <!-- 看板页自己的顶栏：标题 + 目标数 + 当前排序 + RESET（非默认排序才出现）-->
+  <div class="bar"><span class="ttl">航空器</span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>12</span>
+    <span><span style="color:#9aa4b4">排序 距离↑</span>
+      <span style="color:#ffd23c;margin-left:1.2mm">RESET</span></span></div>
   <div class="th7"><span>向</span><span>呼号</span><span>距离</span><span>高度</span>
     <span>升降</span><span>速度</span><span>航向</span></div>
   <div style="flex:1;overflow:hidden;position:relative">
@@ -609,9 +815,11 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h2>6 · 目标详情抽屉（点击行后滑入）</h2>
 <div class="scr">
-  <div class="bar"><span>LIST · 12 架</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>20 NM</span></div>
+  <!-- 看板页自己的顶栏：标题 + 目标数 + 当前排序 + RESET（非默认排序才出现）-->
+  <div class="bar"><span class="ttl">航空器</span>
+    <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>12</span>
+    <span><span style="color:#9aa4b4">排序 距离↑</span>
+      <span style="color:#ffd23c;margin-left:1.2mm">RESET</span></span></div>
   <div class="th7"><span>向</span><span>呼号</span><span>距离</span><span>高度</span>
     <span>升降</span><span>速度</span><span>航向</span></div>
   <div style="flex:1;overflow:hidden;position:relative">
@@ -634,9 +842,8 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h2>7 · 设置页（7 行满屏 + 滚动）</h2>
 <div class="scr">
-  <div class="bar"><span>设置</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>v0.9.0</span></div>
+  <!-- 设置 / 诊断 / 关于的顶栏只有左上角一个标题，不带状态位 -->
+  <div class="bar"><span class="ttl">设置</span></div>
   <div style="flex:1;overflow:hidden;position:relative">
     <div class="sr"><span>语言</span><span class="sg"><span class="on">中文</span><span>EN</span></span></div>
     <div class="sr"><span>QNH</span><span class="sp2"><i>−</i><b style="font-size:3mm;color:#fff">1013.2</b><i>+</i></span></div>
@@ -652,9 +859,7 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <h2>8 · 诊断页（2×4，每卡一行核心值）</h2>
 <div class="scr">
-  <div class="bar"><span>诊断</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>运行 02:14:07</span></div>
+  <div class="bar"><span class="ttl">诊断</span></div>
   <div class="dg">
     <div class="dc"><div class="dh"><span class="dot"></span>IMU</div>
       <div class="dv">acc 3/3 <small>· 100 Hz</small></div></div>
@@ -675,7 +880,9 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
   </div>
   <div class="fb">☰</div>
 </div>
-<p class="cap">每卡 10.8mm 高，只放<b>标题 + 一行核心值</b>（物理空间不允许三行密排）· <b>点卡片进入该子系统详情页</b>（下节）· <b>SYS 卡含芯片温度，>75℃ 顶栏弹红色警告</b>（对应「Garmin 高温死机」的产品定位）。</p>
+<p class="cap">每卡 10.8mm 高，只放<b>标题 + 一行核心值</b>（物理空间不允许三行密排）· <b>点卡片进入该子系统详情页</b>（下节）· <b>SYS 卡含芯片温度</b>（对应「Garmin 高温死机」的产品定位）：
+超温时 PFD 顶栏中段多出「温度计 + 结温」一格，<b>警示橙、不是红</b>，阈值 <code>CONFIG_PK_SOC_TEMP_WARN_C</code> 当前
+<b>85℃ 触发 / 78℃ 解除</b>（见 §2.1；本稿早先写的 "&gt;75℃ 弹红色警告" 与实现不符，已订正）。</p>
 
 <h2>8.1 · GPS 详情页（点卡片进入）</h2>
 <div class="ok">
@@ -685,10 +892,11 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
 800×480 下这些内容不再需要挤，反而能全部同屏。
 </div>
 <div class="scr">
-  <div class="bar"><span class="back"><em>←</em>诊断</span>
-    <span style="color:#fff;font-weight:700">GPS · ATGM336H</span>
-    <span><span style="color:var(--up)">● 在线</span> · 0.3s</span></div>
+  <!-- 二级页顶上是 LVGL 的 backbar（一枚胶囊，不是整条顶栏）；
+       子系统名画在内容区第一行——backbar 说的是"返回去哪"，这行说的是"现在看的是谁" -->
+  <div class="bar"><span class="back"><em>←</em>诊断</span></div>
   <div class="dt">
+    <div style="color:#ebebeb;font-size:3.0mm;line-height:1;margin:0 0 .6mm">GPS · ATGM336H</div>
     <div class="dtg">
       <div>定位状态<b class="g">3D FIX</b></div>
       <div>可见卫星<b>17 颗</b></div>
@@ -727,9 +935,7 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
 
 <h2>9 · 关于页（纯静态身份）</h2>
 <div class="scr">
-  <div class="bar"><span>关于</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span></span></div>
+  <div class="bar"><span class="ttl">关于</span></div>
   <div class="ab">
     <div class="abl">
       <div class="lg2">✈</div>
@@ -762,9 +968,7 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
 
 <h2>10 · 罗盘校准向导（自动进入 / 自动退出）</h2>
 <div class="scr">
-  <div class="bar"><span style="color:var(--warn)">⚠ 罗盘校准</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--dim)">87%</span></span>
-    <span>自动进入</span></div>
+  <!-- 校准向导是全屏页：cal_wizard.c 自己清整屏、标题居中，**没有顶栏** -->
   <div class="cal">
     <div style="color:var(--cyan);font-size:3.5mm;font-weight:700;letter-spacing:.5mm">罗盘校准</div>
     <svg class="lem" viewBox="0 0 200 100" fill="none">
@@ -779,7 +983,7 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
     <div class="skip">稍后再说</div>
   </div>
 </div>
-<p class="cap">acc=0 持续触发自动进入、acc≥2 持续自动退出（沿用现有逻辑）· <b>「稍后再说」为新增</b> —— 原靠 MODE 键关闭，按键删除后若不补此按钮，用户在磁干扰环境下会被永久卡在本页 · 点击后本次开机不再自动弹出（重启复位）· 本页刻意不放 FAB。</p>
+<p class="cap">acc=0 持续触发自动进入、acc≥2 持续自动退出（沿用现有逻辑）· <b>「稍后再说」为新增</b> —— 原靠 MODE 键关闭，按键删除后若不补此按钮，用户在磁干扰环境下会被永久卡在本页 · 点击后本次开机不再自动弹出（重启复位）· 本页刻意不放 FAB · <b>本页是全屏页，没有顶栏</b>（<code>cal_wizard.c</code> 自己清整屏、标题居中）。</p>
 
 <h2>11 · 调平 LEVEL 四态（全屏导航网格的动作条最左一格）</h2>
 <p class="cap">下面四格为<b>实际尺寸</b>：动作条三等分，每格 <b>31.2 × 10.3mm(266 × 88px)</b>。
@@ -794,9 +998,13 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
 
 <h3>短按提示（防止用户误以为按钮失灵）</h3>
 <div class="scr">
-  <div class="bar"><span>HDG 359°</span>
-    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
-      <span style="color:var(--dim)">87%</span></span><span>ADSB 6</span></div>
+  <div class="bar"><span class="hdg">HDG <b>359°</b></span>
+    <span class="stt"><span class="si si-ok"><svg class="bi"><use href="#i-sat"/></svg>17</span>
+      <span class="si si-ok"><svg class="bi"><use href="#i-adsb"/></svg>6</span>
+      <span class="si si-al"><svg class="bi"><use href="#i-rec"/></svg>REC</span>
+      <span class="si si-wn"><svg class="bi"><use href="#i-temp"/></svg>88°C</span></span>
+    <span class="stt dev"><span class="si si-cy"><svg class="bi"><use href="#i-ble"/></svg></span>
+      <span class="si si-wh"><svg class="bi"><use href="#i-batt"/></svg>87%</span></span></div>
   <div class="mid">
     <div class="tp s"><div class="bd"><span>450</span><span>400</span><span>350</span>
       <span>300</span><div class="cu">378</div></div><div class="cv">700 km/h</div></div>
@@ -843,6 +1051,10 @@ toast 停留 2 秒淡出，<b>屏幕正中</b>、画在控件层<b>最前面</b>
 <tr><td>选中 / FAB · HSI 指针 · 警告</td><td><span class="sw" style="background:#2e6df0"></span>#2e6df0 · <span class="sw" style="background:#ff3fd0"></span>#ff3fd0 · <span class="sw" style="background:#ffb43f"></span>#ffb43f</td></tr>
 <tr><td>选中格底 / 置灰项</td><td><span class="sw" style="background:#122244"></span>#122244（--sel 压到约 20% 明度）· <span class="sw" style="background:#3d4d6b"></span>#3d4d6b（比 --dim 再暗一档）</td></tr>
 <tr><td>顶栏 / HSI / 网格动作条 / FAB</td><td>5.6mm(48px) / 16.4mm(140px) / 10.3mm(88px) / 6.6mm(56px)⌀</td></tr>
+<tr><td>顶栏文字 / 状态位图标 cell / 词组间距</td><td>3.0mm(26px，M 档) / 3.51mm(30px，墨迹 27px) / 1.87mm(16px)，图标↔自己的数值 0.23mm(2px)</td></tr>
+<tr><td>状态位配色</td><td><span class="sw" style="background:#00dc3c"></span>#00dc3c 有效在线 · <span class="sw" style="background:#ff503c"></span>#ff503c NO FIX/REC/低电 ·
+  <span class="sw" style="background:#ffb43f"></span>#ffb43f 超温/&lt;25% 电量 · <span class="sw" style="background:#46dcfa"></span>#46dcfa 标签与蓝牙 ·
+  <span class="sw" style="background:#fff"></span>#ffffff 电量常态 · <span class="sw" style="background:#646464"></span>#646464 数据失效（灰是失效专用色，有效读数绝不用灰）</td></tr>
 <tr><td>网格格 / 格内图标 / 分页点</td><td>23.4 × 18.3mm(200 × 156px) / 7.5mm(64px) / 1.4mm(12px)，点距 3.0mm(26px)</td></tr>
 <tr><td>菜单遮罩 / pop 二次遮罩</td><td>232/255（保留 9.4%）/ 120/255（保留 53%）· 顶栏与动作条<b>不遮</b></td></tr>
 <tr><td>速度带 / 高度带 / 姿态区</td><td>11.7mm(100px) / 11.7mm(100px) / 70.3mm(600px)</td></tr>
@@ -856,8 +1068,9 @@ toast 停留 2 秒淡出，<b>屏幕正中</b>、画在控件层<b>最前面</b>
 <tr><td>速度带 / 高度带</td><td><code>lv_canvas</code></td><td class="reuse">✅ pfd_tape.c / pfd_speed_tape.c</td></tr>
 <tr><td>HSI + 交通叠加</td><td><code>lv_canvas</code></td><td class="reuse">✅ pfd_hsi.c / pfd_hsi_traffic.c</td></tr>
 <tr><td>交通雷达</td><td><code>lv_canvas</code></td><td class="reuse">✅ traffic_page.c / traffic_geom.c</td></tr>
-<tr><td>顶部状态栏</td><td><code>lv_obj</code> + <code>lv_label</code></td><td>重写（逻辑参考 pfd_statusbar.c）</td></tr>
-<tr><td>FAB</td><td><code>lv_button</code> + <code>lv_anim</code></td><td>新增（pk_ui_nav.c）</td></tr>
+<tr><td>顶部状态栏</td><td><b style="color:var(--warn)">不用 LVGL</b>，直接在 RGB565 framebuffer 上手绘</td>
+  <td class="reuse">✅ pfd_statusbar.c / pfd_statusbar_icons.c<br><small style="color:#7d90ad">图标与文字共用 pk_aa_blit_4bpp 这一条 alpha 混合路径，走 LVGL 控件树就得让二者各走各的渲染器</small></td></tr>
+<tr><td>FAB / 返回栏（← 诊断）/ DEMO 徽标</td><td><code>lv_button</code> + <code>lv_anim</code> · <code>lv_obj</code></td><td>新增（pk_ui_nav.c）</td></tr>
 <tr><td><b>全屏导航网格</b></td><td><b style="color:var(--warn)">不用 LVGL 对象树</b>，直接在 RGB565 framebuffer 上手绘</td><td>新增 <code>nav_grid_page.c</code><br><small style="color:#7d90ad">一层全屏 = 800×480×2 = 768 KB 绘制表面，而 <code>CONFIG_LV_MEM_SIZE_KILOBYTES=64</code> —— 分配不出这么大一块 layer，失败时 <code>LV_OS_NONE</code> 下是裸忙等，单线程 LVGL 当场死锁</small></td></tr>
 <tr><td>雷达右栏 / 看板 / 抽屉</td><td>flex + <b>内建滚动</b> · <code>lv_anim</code></td><td>数据层复用 aircraft_state.c / adsb_list.c</td></tr>
 <tr><td>分段控件 / 步进器</td><td><code>lv_buttonmatrix</code> · <code>lv_button</code>×2</td><td class="reuse">✅ settings_page.c / config_qnh.c</td></tr>
