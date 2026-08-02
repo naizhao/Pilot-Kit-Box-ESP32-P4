@@ -147,6 +147,39 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
+# --- FATFS fast seek（microSD 随机读）---------------------------------------
+# f_lseek 默认要顺着 FAT 簇链一路爬到目标偏移，耗时与「偏移 / 簇大小」成正比
+# ——文件越大越慢。地图瓦片是 1.46 GB 的 pmtiles 里随机取 64 KB，正好是这条
+# 路径的最坏情况。fastseek 在 open() 时一次性建好 CLMT（簇位置表），之后
+# lseek 变成常数时间查表。
+#
+# 实测（本盒子真机 2026-08，同一张卡同一批文件，开/关各跑两轮取一致值）：
+#   裸 fseeko+fread，定种子随机偏移 ×64：
+#     /sdcard/maps/pk_map_cn.pmtiles 1.46 GB  64 KB 读  184.1 → 18.3 ms（10×）
+#     /sdcard/aero/pk_aero.bin      11.45 MB   4 KB 读   10.4 →  6.4 ms
+#   真实瓦片加载路径（pk_tile_loader 的 16 张 z9 瓦片，find/read 分段均值）：
+#     find  87.4 → 1.6 ms      read  91.6 → 3.8 ms
+#     单张 total 286.4 → 102.4 ms，16 张墙钟 2162 → 770 ms
+#   （剩下那 ~100 ms 是 PNG 解码，与本开关无关。）
+#
+# BUFFER_SIZE 单位是 32-bit 字。CLMT 的格式是
+#   [0]=表容量，随后每个「连续簇片段」占 2 个字（长度, 起始簇），末尾 1 个 0，
+# 所以 N 个字能装下 (N-2)/2 个碎片；完全连续的文件只需要 4 个字。取 64 能容
+# 31 个碎片，对这几个「往空卡上一次性拷进去」的大文件绰绰有余，而不是照抄
+# 基准工程那个拍脑袋的 512。
+#
+# 内存：每个**只读**打开的文件占 64 × 4 = 256 B（写模式不建表，
+# record_sink_file.c 的录制写入路径完全不受影响）。pk_sdcard.c 挂载参数
+# max_files = 8，最坏 8 × 256 = 2 KiB。且 CONFIG_FATFS_ALLOC_PREFER_EXTRAM=y
+# （SPIRAM_USE_MALLOC 打开时默认就是 y），CLMT 优先落 PSRAM，不吃那 66 KB 的
+# 早期内部堆预算（check_early_heap.py 的门槛）。
+#
+# 注意：缓冲区装不下碎片表时 vfs_fat.c 会**回退**到普通 seek，只打一条
+# W "fast-seek not activated reason code: 17"。换卡/换文件后要盯这条日志，
+# 出现即说明该文件碎片超过 31 段，需要调大这里或整理文件。
+CONFIG_FATFS_USE_FASTSEEK=y
+CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE=64
+
 # --- LittleFS storage / TWDT timeout ----------------------------------------
 # The 16 MiB `storage` partition takes ~5 s to mount because LittleFS has no
 # on-disk index and must scan every block's metadata at boot. That scan runs
