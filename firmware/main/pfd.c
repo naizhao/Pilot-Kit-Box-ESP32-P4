@@ -121,7 +121,10 @@ static void pfd_task(void *arg)
      * 组件、PPA 与 vsync 等待）走 ESP_LOGD，CONFIG_LOG_MAXIMUM_LEVEL=4 已把
      * 它们编译进来，默认被 INFO 级别挡住。要看就在这里加一行
      * esp_log_level_set(TAG, ESP_LOG_DEBUG) 临时提级，别提交——每秒三行会
-     * 把串口刷满，真出问题时反而看不见有用的日志。 */
+     * 把串口刷满，真出问题时反而看不见有用的日志。
+     *
+     * 2026-08-02 用它测过一轮，分解表与优化方向见
+     * docs/ui_performance-zh_CN.md，下次动手前先读那份，别重复测。 */
 
     int64_t  fps_window_start_us = esp_timer_get_time();
     uint32_t frames_in_window = 0;
