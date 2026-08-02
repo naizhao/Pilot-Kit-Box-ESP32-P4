@@ -34,9 +34,9 @@
  * 相对列表的全部优势。产品负责人 2026-08-02 明确否掉了"末页居中"这条路。
  * 详见 test_nav_grid_page.c 的 test_cell_position_stable。
  *
- * 本文件范围：Task 2 只做纯函数区（分页切分 + 命中判定）+ host 单测。
- * 渲染（draw_*）与触摸状态机（打开/关闭/拖动分页）是后续任务，平台区先留
- * 好 `#ifndef PK_NAV_GRID_HOST_TEST` 的结构占位。
+ * 本文件范围：Task 2 做纯函数区（分页切分 + 命中判定）+ host 单测，
+ * Task 4 补上打开/关闭与渲染。触摸状态机（点了往哪跳 / 拖动切页 / 亮度 pop
+ * 的开合）是 Task 5，那部分的入口届时加在下面的生命周期之后。
  */
 #pragma once
 
@@ -98,6 +98,30 @@ typedef struct {
     pk_nav_hit_kind_t kind;
     int               index;
 } pk_nav_hit_t;
+
+/* ── 生命周期（签名风格照 search_page.h / keyboard_page.h）───────────
+ *
+ * 本层没有后台任务也没有 NVS，状态只有「开着没 / 在第几页 / 亮度 pop 开着没」
+ * 三个静态变量；init() 只是把它们摆回初值，留着是为了与其它页的惯例对齐。
+ *
+ * open() 会藏掉 FAB、close() 还原——网格全屏铺开，FAB 留着既点不动又盖内容，
+ * 而且它可拖动，挡住哪一格不可预测（同 pk_ui_nav_set_fab_hidden 的注释）。 ── */
+
+void pk_nav_grid_page_init(void);
+
+void pk_nav_grid_page_open(void);
+bool pk_nav_grid_page_active(void);
+void pk_nav_grid_page_close(void);
+
+/*
+ * 渲染。**半透明覆盖层**：只把 y ≥ PK_NAV_BAR_BOT 那块压暗后叠上网格，
+ * 顶栏原样留着（菜单期间电量 / GPS 仍要可见）。
+ *
+ * 因此调用方**必须先把底下那一页照常画完再调它**——压暗是就地改像素，
+ * 而 canvas 是单块常驻缓冲，只画网格不画底页的话同一批像素会被逐帧反复
+ * 压暗，两三帧就全黑。分派处见 pfd.c。
+ */
+void pk_nav_grid_page_render(uint16_t *fb);
 
 /* ── 纯函数区：无 OS / 无全局状态，host 单测直接把本模块的 .c 拉进翻译单元
  * 编译（firmware/test/test_nav_grid_page.c）。同 search_page.h /

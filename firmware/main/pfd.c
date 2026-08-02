@@ -52,6 +52,7 @@
 #include "sdkconfig.h"
 #include "apt_detail_page.h"
 #include "keyboard_page.h"
+#include "nav_grid_page.h"
 #include "search_page.h"
 #include "settings_page.h"
 #include "traffic_page.h"
@@ -157,10 +158,20 @@ static void pfd_task(void *arg)
          * 两处分派共用同一个纯函数，不再靠注释互相提醒。次序 键盘 > 详情 >
          * 搜索 的依据与"关掉最上层就回到来时的地方"这条推论都写在那边。
          */
-        const pk_ui_modal_t modal = pk_ui_modal_top(false,
+        const pk_ui_modal_t modal = pk_ui_modal_top(pk_nav_grid_page_active(),
                                                     pk_keyboard_page_active(),
                                                     pk_apt_detail_page_active(),
                                                     pk_search_page_active());
+        /*
+         * 导航网格不进下面这条 if/else 链，理由是它与另外三层的性质不同：
+         * 键盘 / 详情 / 搜索都是整屏**不透明**重绘，画了它们就不必画底页；
+         * 网格是**半透明覆盖层**，遮罩之下要留住底页的轮廓（nav_grid_page.c
+         * 里 232 那条：地平线的明暗分界仍要隐约可辨）。而 pk_pfd_darken_rect()
+         * 是就地把已有像素压暗，canvas 又是单块常驻缓冲（lv_port.c 的
+         * pk_lv_port_canvas_px）——只画网格不画底页的话，同一批像素会被逐帧
+         * 反复压暗，两三帧就全黑了。
+         * 所以它走「底页照常画完，再叠上去」，叠加动作在 switch 之后。
+         */
         if (modal == PK_UI_MODAL_KEYBOARD) {
             pk_keyboard_page_render(fb);
         } else if (modal == PK_UI_MODAL_DETAIL) {
@@ -411,6 +422,13 @@ static void pfd_task(void *arg)
 
             break;
         }
+        }
+
+        /* 全屏导航网格：压在一切之上的半透明层，底页刚在上面画完（见 modal
+         * 那段注释）。放在 switch **之外**与演示模式标识同理——每一页都要能
+         * 被它盖住，而上面那个 switch 的每一支都只知道自己那一页。 */
+        if (modal == PK_UI_MODAL_NAVGRID) {
+            pk_nav_grid_page_render(fb);
         }
 
         /* 瞬时提示叠加在任意页面之上(TARE 保存 / own 绑定·取消反馈)。 */
