@@ -60,6 +60,14 @@ void pk_ui_nav_toast(const char *msg, bool is_error);
  * pk_ui_nav.c，各宿主按需覆盖，这样这个文件不必知道宿主是谁。 */
 void pk_ui_nav_on_tab(int tr_id);
 
+/* 一级页面点了 FAB —— 宿主应打开主菜单（固件里是全屏导航网格
+ * pk_nav_grid_page_open()）。
+ *
+ * 走回调而不是在这里直接开：网格是自绘模态层，画在 framebuffer 上、依赖
+ * display / pfd_draw 那一串 IDF 侧的东西，而本文件是平台无关的（模拟器编
+ * 同一份）。导航层只报告"用户要菜单了"，菜单长什么样归宿主。 */
+void pk_ui_nav_on_menu(void);
+
 /* 「调平」长按满 1 s，真正执行（固件里是 pk_imu_tare_persist()）。 */
 void pk_ui_nav_on_level(void);
 

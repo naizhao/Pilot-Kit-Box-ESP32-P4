@@ -38,6 +38,7 @@
 #include "diag_page.h"
 #include "apt_detail_page.h"
 #include "keyboard_page.h"
+#include "nav_grid_page.h"
 #include "search_page.h"
 #include "settings_page.h"
 #include "pk_ui_nav.h"
@@ -166,6 +167,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * 同时把这次按压钉给 LVGL 直到松手：dock 中途收起（5 s 自动收）
              * 时页面不该突然把手指接管过去——那一下的起点早就不在页面上了。 */
             pk_touch_arbiter_force_lvgl(&s_arb);
+            pk_nav_grid_page_touch_cancel();
             pk_adsb_list_touch_cancel();
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
@@ -191,11 +193,20 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * 2026-08-02 加了机场详情页（第三层）之后，次序收进
              * pk_ui_modal_top()（apt_detail_page.h），与 pfd.c 共用同一个
              * 纯函数——"看得见的就是点得中的"从此不再依赖两处注释对齐。
+             *
+             * 导航网格排在最前，而 pfd.c 那侧它**不进**渲染的 if/else 链——
+             * 这处不对称是有意的，不是漏改：网格是**半透明**覆盖层，底页要
+             * 照常画完再叠上去（pfd.c 约 165 行那段说明了为什么：darken_rect
+             * 就地压暗 + canvas 是单块常驻缓冲，只画网格不画底页两三帧就全黑）；
+             * 而触摸没有"半透明"这回事，它盖在最上面，就该最先拿到触摸。
              */
-            switch (pk_ui_modal_top(false,
+            switch (pk_ui_modal_top(pk_nav_grid_page_active(),
                                     pk_keyboard_page_active(),
                                     pk_apt_detail_page_active(),
                                     pk_search_page_active())) {
+            case PK_UI_MODAL_NAVGRID:
+                eaten = pk_nav_grid_page_touch(lx, ly);
+                break;
             case PK_UI_MODAL_KEYBOARD:
                 eaten = pk_keyboard_page_touch(lx, ly);
                 break;
@@ -226,10 +237,15 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
              * LVGL 或底下的页面），搜索页要滚。 */
             {
                 const pk_ui_modal_t modal =
-                    pk_ui_modal_top(false,
+                    pk_ui_modal_top(pk_nav_grid_page_active(),
                                     pk_keyboard_page_active(),
                                     pk_apt_detail_page_active(),
                                     pk_search_page_active());
+                /* 网格要滑动翻页，续帧必须给它。 */
+                if (modal == PK_UI_MODAL_NAVGRID) {
+                    eaten = pk_nav_grid_page_drag(lx, ly);
+                    break;
+                }
                 if (modal == PK_UI_MODAL_KEYBOARD) { eaten = true; break; }
                 if (modal == PK_UI_MODAL_DETAIL) {
                     eaten = pk_apt_detail_page_drag(lx, ly);
@@ -277,6 +293,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 那里 !pressed 恒假——于是第一次点击把闸门关上之后再也没机会恢复，
          * 所有自绘按钮从此全部失灵。 */
         pk_touch_arbiter_release(&s_arb);
+        pk_nav_grid_page_touch_up();
         pk_traffic_page_touch_up();
         pk_map_page_touch_up();
         pk_adsb_list_touch_up();

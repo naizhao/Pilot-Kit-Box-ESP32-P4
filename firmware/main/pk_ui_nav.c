@@ -578,12 +578,16 @@ static void fab_event_cb(lv_event_t *e)
             s_drag_happened = false;
             break;
         }
-        /* 二级页面里 FAB 是返回键，不是 dock 开关。 */
+        /* 二级页面里 FAB 是返回键，不是菜单键。 */
         if (s_in_subpage) {
             pk_ui_nav_set_subpage(false, NULL);
             pk_ui_nav_on_back();
         } else {
-            pk_ui_nav_set_dock_open(!s_dock_open);
+            /* 一级页面：打开主菜单。此前这里是 set_dock_open(!s_dock_open)，
+             * 横向 dock 在 800×480 上排到第 8 个页签就溢出屏幕（见 dock_width()
+             * 上方那段），已由全屏导航网格取代——网格是自绘层，本文件够不着，
+             * 走弱符号回调交给宿主。dock 的代码暂时留着，只是不再有入口。 */
+            pk_ui_nav_on_menu();
         }
         break;
 
@@ -741,6 +745,10 @@ void pk_ui_nav_set_dock_open(bool open)
 __attribute__((weak)) void pk_ui_nav_on_tab(int tr_id)
 {
     LV_UNUSED(tr_id);
+}
+
+__attribute__((weak)) void pk_ui_nav_on_menu(void)
+{
 }
 
 __attribute__((weak)) void pk_ui_nav_on_level(void)

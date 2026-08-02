@@ -112,12 +112,31 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
     return r;
 }
 
+/*
+ * 滑动翻页的两道门槛（见头文件）。
+ *
+ * 60 px 在 4.3″ 屏上约 7 mm——短于此更像手抖或按压时的轻微位移，翻页会显得
+ * 「我什么都没干它自己跳了」。颠簸中的座舱里这个下限只会需要更大，不会更小。
+ *
+ * `adx < ady * 2` 这一条挡的是斜划：网格本身不纵向滚动，但手指从格子上抬起
+ * 时带一点弧线是常态，只看横向位移会把「点了一下、手滑了」判成翻页。
+ */
+#define NAV_SWIPE_MIN_DX  60      /* 约 7 mm，短于此更像手抖 */
+
+int pk_nav_swipe_dir(int dx, int dy)
+{
+    const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+    if (adx < NAV_SWIPE_MIN_DX || adx < ady * 2) return 0;
+    return dx > 0 ? -1 : 1;
+}
+
 #ifndef PK_NAV_GRID_HOST_TEST
 
 /* ═══════════════════════════════════════════════════════════════════
- * 平台区：打开/关闭 + 渲染。触摸状态机（点了往哪跳 / 拖动切页 / pop 开合）
- * 留待 Task 5。
+ * 平台区：打开/关闭 + 渲染 + 触摸状态机。
  * ═══════════════════════════════════════════════════════════════════ */
+
+#include "esp_timer.h"
 
 #include "display.h"
 #include "i18n.h"
@@ -127,6 +146,7 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
 #include "pfd_draw.h"
 #include "pfd_layout.h"
 #include "pk_ui_nav.h"
+#include "search_page.h"
 #include "ui_state.h"
 
 /* 头文件里的版面常量用的是字面量 800/480（它不能 include display.h，见那边
@@ -228,11 +248,24 @@ _Static_assert(sizeof(ITEMS) / sizeof(ITEMS[0]) == PK_NAV_ITEM_CNT,
 #define TXT_ACT_CLOSE   pk_i18n_text(PK_TR_SEARCH_CLOSE)
 
 /* ── 状态 ────────────────────────────────────────────────────────
- * 三个变量就是整个模态层的状态。触摸状态机（谁来改 s_page / s_pop_open）
- * 是 Task 5 的事，本任务只保证 render 能按这三个值画出正确画面。 */
+ * 这三个变量决定 render 画出什么，触摸状态机（下面那一节）是改它们的唯一入口。 */
 static bool s_active;
 static int  s_page;
 static bool s_pop_open;
+
+/* ── 触摸的按压态 ─────────────────────────────────────────────────
+ *
+ * 归属按下即定死（pk_touch_arbiter.h），所以这一组量在 touch() 里一次性记全，
+ * 之后 drag / touch_up 只读不重判——「这一下是点在哪儿的」不允许随手指移动
+ * 而改变，否则就是「拖 FAB 被列表抢走」的另一种形状。 */
+static bool         s_press_valid;   /* 本次按压还没被结算/作废 */
+static int          s_press_x, s_press_y;
+static int          s_press_page;    /* 按下那一刻在第几页（之后可能已翻页） */
+static pk_nav_hit_t s_press_hit;     /* 按下那一刻命中了什么 */
+static int64_t      s_press_us;      /* 按下时刻，调平长按据此计时 */
+static bool         s_swiped;        /* 本次按压已经翻过页：不再算点击 */
+static bool         s_close_on_up;   /* 松手时关闭网格（见 touch_up 上方） */
+static int64_t      s_last_act_us;   /* 最后一次触摸，5 s 无操作自动收起用 */
 
 /* ── 绘制 ────────────────────────────────────────────────────────── */
 
@@ -346,8 +379,35 @@ static void draw_bright_pop(uint16_t *fb)
     }
 }
 
+/*
+ * 5 s 无操作自动收起——三条退路的第三条（另两条是动作条的「关闭」与第 0 页
+ * 右滑）。飞行中忘记收起是常态，不能让菜单一直盖着 PFD。
+ *
+ * 5000 的来历是 dock 的 DOCK_IDLE_MS（pk_ui_nav.c），沿用它是为了不打破用户
+ * 已经养成的手感。**不直接引用那个宏**：Task 6 要连 dock 一起删掉，引用过去
+ * 只会让删除时多一处返工，而且网格的内容比 dock 多（两页十项），上机后这个
+ * 值多半要往上调——那时它该是本模块自己的参数，不是 dock 的遗产。
+ */
+#define NAV_IDLE_MS   5000
+
+/* 判定放在 render 里：本层没有后台任务，而 render 恰好"网格活着时每帧调
+ * 一次、收起后一次不调"，正是这个倒计时需要的心跳。判定时手指必然不在屏上
+ * （touch/drag 每一帧都在刷新 s_last_act_us），所以这里关闭不会撞上下面那条
+ * 「关闭一律等松手」的规矩。 */
+static bool idle_expired(void)
+{
+    return (esp_timer_get_time() - s_last_act_us) >= (int64_t)NAV_IDLE_MS * 1000;
+}
+
 void pk_nav_grid_page_render(uint16_t *fb)
 {
+    if (idle_expired()) {
+        /* 直接返回不画：本帧底页已经由 pfd.c 照常画完了（网格不进那条模态
+         * if/else 链），少叠一层覆盖层就是"菜单收起"该有的样子。 */
+        pk_nav_grid_page_close();
+        return;
+    }
+
     /* 遮罩。顶栏（y < PK_NAV_BAR_BOT）不遮——电量 / GPS / 蓝牙这些状态在菜单
      * 打开期间同样要能看见。
      *
@@ -428,11 +488,21 @@ void pk_nav_grid_page_render(uint16_t *fb)
 /* 没有后台任务、没有 NVS，状态全在上面那三个静态变量里，所以 init 只是把它们
  * 摆回初值。留着这个函数是为了与 search_page / keyboard_page 的生命周期惯例
  * 对齐（调用方不必记"这一个例外不用 init"）。幂等。 */
+/* 按压态归零。open / close / cancel 三处共用——漏掉任何一处，上一次没结算完
+ * 的按压就会跨过一次开合活下来（表现是"一打开网格就自己翻了一页"）。 */
+static void press_reset(void)
+{
+    s_press_valid = false;
+    s_swiped      = false;
+    s_close_on_up = false;
+}
+
 void pk_nav_grid_page_init(void)
 {
     s_active   = false;
     s_page     = 0;
     s_pop_open = false;
+    press_reset();
 }
 
 void pk_nav_grid_page_open(void)
@@ -442,6 +512,10 @@ void pk_nav_grid_page_open(void)
     s_page     = 0;
     s_pop_open = false;
     s_active   = true;
+    press_reset();
+    /* 倒计时从打开这一刻起算，而不是从第一次触摸起算——打开后一下都没碰，
+     * 5 s 后同样该自己收起。 */
+    s_last_act_us = esp_timer_get_time();
     /*
      * 藏掉 FAB，理由与 keyboard_page / search_page 完全相同：本层铺满全屏、
      * 命中判定排在 LVGL 之前，FAB 留着就是"它自己点不动、又盖住底下的格"。
@@ -458,7 +532,185 @@ void pk_nav_grid_page_close(void)
 {
     s_active   = false;
     s_pop_open = false;
+    press_reset();
     pk_ui_nav_set_fab_hidden(false);
+}
+
+/* ── 触摸状态机 ──────────────────────────────────────────────────
+ *
+ * 「调平」必须长按 1 s 才生效：误触把地平线归零，飞行中是要命的。四个状态
+ * 与 dock 那枚调平键逐条对齐（pk_ui_nav.c 的 act_event_cb）：
+ *
+ *     按下       记下时刻
+ *     满 1 s     pk_ui_nav_on_level()，真正执行
+ *     提前松手   pk_ui_nav_on_level_hint()（提示"需长按 1 秒"）
+ *     滑出按钮   同上（等价于 LVGL 的 PRESS_LOST）
+ *
+ * 计时用 esp_timer_get_time() 而不是 lv_timer：本层是自绘的，drag() 在手指
+ * 按住期间**每一轮触摸轮询都会被调到**（touch_gt911.c 的 PK_TOUCH_ACTION_DRAG
+ * 不要求手指移动），已经是一个现成的、比 1 s 密得多的心跳，再挂一个 LVGL
+ * 定时器只是多一个要记得删的对象。反过来也不能用 LVGL 的 LONG_PRESSED——
+ * 它的阈值 lv_indev_set_long_press_time() 是 indev 全局的，改了会一并影响
+ * FAB 的起拖判定（那里要的是 200 ms）。
+ *
+ * 动作与执行分两级，且**关闭网格一律等到松手**（s_close_on_up）：
+ * 手指还按着就把 s_active 清掉的话，下一轮触摸轮询在 touch_gt911.c 里算出的
+ * pk_ui_modal_top() 已经不是 NAVGRID 了，这一次按压的剩余帧会落到底下那一页
+ * 上——底页是地图时后果尤其具体：map_page.c:611 的状态机会把它当成一次全新
+ * 按下，随后 map_page.c:696 的 tap 判定成立，手一松就跳进机场详情页。
+ */
+#define NAV_LEVEL_HOLD_MS  1000
+
+/* 点中格子之后往哪跳。
+ *
+ * 复用上面那张 ITEMS 表，不另抄一份 index→动作的映射：抄的那份不会跟着版面
+ * 变，改一次排序就会悄悄把「关于」接到「诊断」上去（pk_ui_nav_host.c 的
+ * mode_for_tab 用词条 id 做键，也是同一个理由）。搜索同样按词条 id 认，
+ * 不写死"第 5 格"。 */
+static void activate_item(int index)
+{
+    if (index < 0 || index >= PK_NAV_ITEM_CNT) return;
+    /* hit_test 已经挡过置灰项，这里再挡一次是因为本函数只信自己的入参。 */
+    if (!pk_nav_item_enabled(index)) return;
+
+    if (ITEMS[index].mode >= 0) {
+        pk_ui_set_mode((pk_ui_mode_t)ITEMS[index].mode);
+    } else if (ITEMS[index].label == PK_TR_NAV_SEARCH) {
+        /* 搜索是模态层，不是 pk_ui_mode_t 的一站：只打开它，当前是哪一页不变
+         * （见 search_page.h）。 */
+        pk_search_page_open();
+    } else {
+        return;   /* 记录 / 工具：页面还没写，enabled 已挡，走不到这儿 */
+    }
+    pk_nav_grid_page_close();
+}
+
+bool pk_nav_grid_page_touch(int x, int y)
+{
+    if (!s_active) return false;
+
+    s_press_hit   = pk_nav_hit_test(x, y, s_page, s_pop_open);
+    s_press_x     = x;
+    s_press_y     = y;
+    s_press_page  = s_page;
+    s_press_us    = esp_timer_get_time();
+    s_last_act_us = s_press_us;
+    s_press_valid = true;
+    s_swiped      = false;
+    s_close_on_up = false;
+
+    /* 整屏都吃，命中与否都一样：网格铺满全屏且 FAB 已藏，底下没有任何该被
+     * 点到的东西；更要紧的是横向滑动可以从任何一格上起手，归属必须在**按下
+     * 这一刻**就定给本层，不能等划出阈值再抢（pk_touch_arbiter.h）。 */
+    return true;
+}
+
+bool pk_nav_grid_page_drag(int x, int y)
+{
+    if (!s_active) return false;
+    s_last_act_us = esp_timer_get_time();
+    if (!s_press_valid) return true;   /* 仍然吃掉：模态 */
+
+    /* ① 滑动翻页。pop 开着时不翻——那时网格整层已被压暗且不可点
+     * （pk_nav_hit_test 的 pop_open 分支），底下悄悄翻页只会让人一头雾水。
+     * 一次按压最多翻一页：s_swiped 一旦立起就不再重判，否则一次长距离拖动
+     * 会连翻好几页，而总共只有两页。 */
+    if (!s_swiped && !s_pop_open) {
+        const int dir = pk_nav_swipe_dir(x - s_press_x, y - s_press_y);
+        if (dir != 0) {
+            s_swiped = true;
+            if (dir < 0 && s_page == 0) {
+                /* 三条退路之二：第 0 页继续右滑 = 关闭。 */
+                s_close_on_up = true;
+            } else {
+                const int np = s_page + dir;
+                if (np >= 0 && np < PK_NAV_PAGES) s_page = np;
+            }
+            return true;
+        }
+    }
+
+    /* ② 调平长按。翻过页的这一下不再算按钮操作。 */
+    if (!s_swiped && s_press_hit.kind == PK_NAV_HIT_LEVEL) {
+        if (pk_nav_hit_test(x, y, s_press_page, s_pop_open).kind
+                != PK_NAV_HIT_LEVEL) {
+            /* 滑出按钮 = 放弃，等同 LVGL 的 PRESS_LOST。 */
+            s_press_valid = false;
+            pk_ui_nav_on_level_hint();
+        } else if (esp_timer_get_time() - s_press_us
+                       >= (int64_t)NAV_LEVEL_HOLD_MS * 1000) {
+            /* 满 1 s 当场执行（提示随即弹出，手感与 dock 一致），网格留到
+             * 松手再关——理由见本节开头。 */
+            s_press_valid = false;      /* 已消费，松手不再重复结算 */
+            s_close_on_up = true;
+            pk_ui_nav_on_level();
+        }
+    }
+    return true;
+}
+
+void pk_nav_grid_page_touch_cancel(void)
+{
+    /* 本次按压作废，**不结算**：取消是"这一下当没发生过"，补一条"需长按
+     * 1 秒"的提示反而是无中生有。 */
+    press_reset();
+}
+
+void pk_nav_grid_page_touch_up(void)
+{
+    if (!s_active) return;
+
+    /* 先取快照再清状态：下面的分支会调 close()，而 close() 也会清这几个量。 */
+    const bool         close_on_up = s_close_on_up;
+    const bool         valid       = s_press_valid;
+    const bool         swiped      = s_swiped;
+    const pk_nav_hit_t hit         = s_press_hit;
+    const int64_t      held_us     = esp_timer_get_time() - s_press_us;
+    press_reset();
+
+    if (close_on_up) { pk_nav_grid_page_close(); return; }
+    if (!valid || swiped) return;      /* 翻过页的这一下不再算点击 */
+
+    switch (hit.kind) {
+    case PK_NAV_HIT_CELL:
+        activate_item(hit.index);
+        break;
+
+    case PK_NAV_HIT_LEVEL:
+        /* 满 1 s 的那条路在 drag() 里就走完了（按压随即被消费掉），能走到这儿
+         * 的实际上只有短按。仍然按时长判一次而不是无条件 hint：万一哪天触摸
+         * 轮询稀疏到一次 drag 都轮不上，也不该把一次真正的长按提示成短按。 */
+        if (held_us >= (int64_t)NAV_LEVEL_HOLD_MS * 1000) {
+            pk_ui_nav_on_level();
+            pk_nav_grid_page_close();
+        } else {
+            pk_ui_nav_on_level_hint();
+        }
+        break;
+
+    case PK_NAV_HIT_BRIGHT:
+        s_pop_open = true;
+        break;
+
+    case PK_NAV_HIT_CLOSE:
+        /* 三条退路之一。 */
+        pk_nav_grid_page_close();
+        break;
+
+    case PK_NAV_HIT_BRIGHT_STEP:
+        /* index 与 display.h 的 PK_BL_STEP_LOW/MID/HIGH 同序（见 nav_grid_page.h
+         * 那条枚举的注释）。档位真值只有 pk_backlight_* 一处，不与设置页分家。 */
+        pk_backlight_step_set((uint8_t)hit.index);
+        s_pop_open = false;
+        break;
+
+    case PK_NAV_HIT_NONE:
+    default:
+        /* pop 开着时命中判定只测那三个档位，点别处一律 NONE = 收起 pop
+         * （不关网格）。pop 没开时点空处什么都不做。 */
+        s_pop_open = false;
+        break;
+    }
 }
 
 #endif /* !PK_NAV_GRID_HOST_TEST */

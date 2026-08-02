@@ -160,6 +160,18 @@ static void test_disabled_cell_not_hittable(void)
     chk_int("命中的是 index 4", ok.index, 4);
 }
 
+/* ── 9) 滑动翻页的阈值 ───────────────────────────────────────────
+ * 横向位移够大、且明显大于纵向位移，才算翻页——斜着划不该翻页，
+ * 手抖几像素更不该。返回 -1 上一页 / +1 下一页 / 0 不翻。 */
+static void test_swipe(void)
+{
+    chk_int("右划回上一页", pk_nav_swipe_dir(90, 5), -1);
+    chk_int("左划到下一页", pk_nav_swipe_dir(-90, 5), 1);
+    chk_int("位移不够不翻", pk_nav_swipe_dir(30, 5), 0);
+    chk_int("斜划不翻", pk_nav_swipe_dir(90, 80), 0);
+    chk_int("纯竖划不翻", pk_nav_swipe_dir(0, 120), 0);
+}
+
 int main(void)
 {
     test_paging();
@@ -170,6 +182,7 @@ int main(void)
     test_x_out_of_bounds();
     test_disabled_items();
     test_disabled_cell_not_hittable();
+    test_swipe();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

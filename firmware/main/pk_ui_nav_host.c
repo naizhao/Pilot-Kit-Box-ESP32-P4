@@ -20,6 +20,7 @@
 #include "imu_task.h"
 #include "diag_page.h"
 #include "map_page.h"
+#include "nav_grid_page.h"
 #include "search_page.h"
 #include "ui_state.h"
 
@@ -50,6 +51,18 @@ void pk_ui_nav_on_tab(int tr_id)
     pk_ui_mode_t m = mode_for_tab(tr_id);
     ESP_LOGI(TAG, "tab -> mode %d", (int)m);
     pk_ui_set_mode(m);
+}
+
+/*
+ * 点 FAB 打开主菜单 = 全屏导航网格。
+ *
+ * 网格自己会藏掉 FAB 并在关闭时放回来（pk_nav_grid_page_open 里那段），
+ * 所以这里只管开，不必再操心浮层避让。
+ */
+void pk_ui_nav_on_menu(void)
+{
+    ESP_LOGI(TAG, "menu -> nav grid");
+    pk_nav_grid_page_open();
 }
 
 /*

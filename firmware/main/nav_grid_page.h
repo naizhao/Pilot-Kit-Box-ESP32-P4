@@ -123,6 +123,22 @@ void pk_nav_grid_page_close(void);
  */
 void pk_nav_grid_page_render(uint16_t *fb);
 
+/* ── 触摸（签名照 search_page.h / adsb_list.h 的惯例）─────────────
+ *
+ * **归属按下即定死**（pk_touch_arbiter.h 的唯一一条规则）：网格 active 时
+ * touch() 一律返回 true 吃掉整屏，后续的 drag / touch_up 就都归本层。横向
+ * 滑动因此不需要"划出阈值再来抢"——那正是「拖 FAB 被列表抢走」那个 bug 的
+ * 形状（每帧重判归属，拖到一半易主）。
+ *
+ * 另一条本层自己的规矩：**所有"关闭网格"一律在松手时结算**，绝不在手指还
+ * 按着的时候关。理由见 .c 里 touch_up 上方那段（手指还按着就关掉，随后的每
+ * 一帧会顺着 touch_gt911.c 的分派落到底下那一页去）。
+ */
+bool pk_nav_grid_page_touch(int x, int y);      /* 按下，返回是否吃掉 */
+bool pk_nav_grid_page_drag(int x, int y);       /* 拖动续帧 */
+void pk_nav_grid_page_touch_up(void);           /* 抬起 */
+void pk_nav_grid_page_touch_cancel(void);       /* 取消（本次按压作废，不结算） */
+
 /* ── 纯函数区：无 OS / 无全局状态，host 单测直接把本模块的 .c 拉进翻译单元
  * 编译（firmware/test/test_nav_grid_page.c）。同 search_page.h /
  * apt_detail_page.h 的分区惯例。 ── */
@@ -147,6 +163,17 @@ bool pk_nav_item_enabled(int index);
  * 结合 PK_NAV_HIT_NONE 这个返回值自己处理，本函数不关心"收起"这个动作）。
  */
 pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open);
+
+/*
+ * 一次按压从起点到落点的位移算不算「翻页」。
+ * dx / dy = 落点 − 起点（屏幕坐标，右为正、下为正）。
+ * 返回 -1 上一页 / +1 下一页 / 0 不翻。
+ *
+ * 两道门槛缺一不可：横向位移要够大（手抖几像素不能翻页），且要明显大于
+ * 纵向位移（斜着划不该翻页）。方向取反直觉的那一侧：手指往右带 = 把左边
+ * 那一页拉过来 = 上一页，与所有分页控件的惯例一致。
+ */
+int pk_nav_swipe_dir(int dx, int dy);
 
 #ifdef __cplusplus
 }
