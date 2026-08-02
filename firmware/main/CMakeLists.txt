@@ -14,6 +14,7 @@ idf_component_register(
         "icao_country.c"
         "airline_codes.c"
         "aircraft_db.c"
+        "aircraft_db_reader.c"
         "gdl90.c"
         "ble_gatt.c"
         "record_sink.c"
@@ -44,6 +45,7 @@ idf_component_register(
         "settings_draw.c"
         "keyboard_page.c"
         "search_page.c"
+        "apt_detail_page.c"
         "config_ble.c"
         "config_demo.c"
         "demo_data.c"
@@ -91,12 +93,13 @@ idf_component_register(
         # Pilot-Kit-Dashboard/public/pilot-kit-export-logo.png).
         # Linked into .rodata via _binary_pk_logo_rgb565_{start,end}.
         "pk_logo.rgb565"
-        # Compact ICAO24 -> aircraft type/model/registration database.
-        # Generated offline by firmware/scripts/gen_aircraft_db.py from
-        # tar1090-db; checked-in snapshot size and record count vary with
-        # the upstream source (current blob is about 8 MiB / 570k records).
-        # Linked into .rodata via _binary_aircraft_db_bin_{start,end}.
-        "aircraft_db.bin"
+        # 机型库（8.16 MB 的 ICAO24 → 型号/注册号）曾经在这里 EMBED，
+        # 2026-08 搬到 SD 卡 /sdcard/aero/pk_actdb.bin 懒加载（见
+        # aircraft_db.c 文件头：tar1090-db 周更 vs AIRAC 28 天，节奏不同
+        # 必须分开更新）。app 镜像因此从 11,470,080 B 降到 2,911,184 B
+        # （10.94 MiB → 2.78 MiB，正好省下 8.16 MiB），12 MB 的 factory
+        # 分区占用率 91% → 23%。那份旧的 main/aircraft_db.bin 已不再参与
+        # 构建，也已移出源码树（现在在 datafiles/data/，见 datafiles/README.md）。
     REQUIRES
         esp32-rtl-sdr            # our patched RTL-SDR driver component
         espressif__usb           # USB host library (was core `usb` pre-IDF v6.0)

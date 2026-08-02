@@ -35,6 +35,7 @@
 #include "config_traffic.h"
 #include "pk_aero_db.h"
 #include "pk_aero_layer.h"
+#include "apt_detail_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
@@ -305,11 +306,6 @@ void app_main(void)
     aircraft_state_init();
     pk_gps_start();   /* GT-U8 GPS on UART1 */
 
-    /* Validate the embedded ICAO24 -> type/model/registration database
-     * (aircraft_db.bin in .rodata). Bad header is non-fatal: lookups
-     * return NULL and the UI falls back to blank / placeholder fields. */
-    pk_aircraft_db_init();
-
     /* Bring the ADS-B record sinks up before the producer starts. The
      * file sink mounts LittleFS and may take ~50 ms on first boot (it
      * formats the partition automatically). The UART sink is always
@@ -326,12 +322,20 @@ void app_main(void)
      * 须晚于 pk_sdcard_init()——任务靠 pk_sdcard_is_mounted() 决定何时
      * 开始分块加载 /sdcard/aero/pk_aero.bin。 */
     pk_aero_db_init();
+    /* SD 机型库（ICAO24 → 型号/注册号）懒加载，同样只建任务、零 IO。
+     * 须晚于 pk_sdcard_init()；任务自带 12 s 静默期，避开 pk_aero 的加载
+     * 窗口，不与它抢 SD 带宽。未就绪时查询返回 NULL，UI 显示 ICAO24。 */
+    pk_aircraft_db_init();
     /* 地图页的航空数据叠加层：只创建后台快照任务，等地图页第一次渲染
      * 报出视图才开始查（pk_aero_layer.h）。须晚于 pk_aero_db_init()。 */
     pk_aero_layer_init();
     /* 搜索页的后台查询任务 + 从 NVS 读回最近搜索。同样只建任务、零 IO，
      * 须晚于 pk_aero_db_init()（它是那边的消费者）。 */
     pk_search_page_init();
+    /* 机场详情页**没有**初始化：它没有后台任务也没有 NVS，打开那一刻同步
+     * 取数就够（89 条记录读全是 µs 级，见 apt_detail_page.h）。这里只挂一个
+     * 默认关闭的自检钩子——PK_APT_DETAIL_SMOKE=0 时它是个空函数。 */
+    pk_apt_detail_smoke_init();
 
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {

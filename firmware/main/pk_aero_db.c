@@ -70,12 +70,27 @@ static const char *TAG = "pk_aero";
 #define AERO_STARTUP_DELAY_MS 5000
 
 /* 任务参数。优先级 2 = 与 sd_detect 同级，低于 rec_file/tile_loader(3)、
- * pfd/dsp(4)、sdr(6)——加载/解密/SHA 全程可被渲染与写日志抢占。核 0 与
- * 其余 SD 消费方（sd_detect/rec_file/tile_loader）同侧。栈 16 KB：照
- * p4_bench 同款 16 KB 跑完全套加载+查询的余量记录留的（nearest 栈上
- * 工作区 ~1.2 KB + PSA + 浮点日志）。 */
+ * pfd/dsp(4)、sdr(6)——加载/解密/SHA 全程可被渲染与写日志抢占。栈 16 KB：
+ * 照 p4_bench 同款 16 KB 跑完全套加载+查询的余量记录留的（nearest 栈上
+ * 工作区 ~1.2 KB + PSA + 浮点日志）。
+ *
+ * ── 为什么钉在核 1 ────────────────────────────────────────────────
+ * 原先钉核 0，与其余 SD 消费方（sd_detect/rec_file/tile_loader）同侧。
+ * 代价是：核 0 上还有 pfd/baro/gps 三个 prio 4 的任务，pfd 每帧要画满
+ * 800×480，本任务 prio 2 全程被压在下面——同一份加载代码在 p4_bench 里
+ * 不被压时 2.03 s，装到盒子上开机实测 7.7~9.8 s。
+ *
+ * 不提优先级：提到 4 以上就会直接抢渲染，用户看到的是开机十秒内 PFD 掉帧，
+ * 那比"数据库晚几秒可用"严重得多——PFD 是飞行中一直在看的东西，而航空
+ * 数据库只在打开搜索/地图叠加层时才用得到。
+ *
+ * 改成挪核：核 1 上是 sdr(6)/dsp(4)/tile_ld1(3)，全都高于本任务的 prio 2，
+ * 所以本任务只吃它们让出来的空闲片，抢不到 ADS-B 解调头上去。
+ * 与 SD 同核不是必要条件——SDMMC 驱动本身跨核安全，本文件的 IO 又全部串在
+ * s_io_lock 后面。 */
 #define AERO_TASK_STACK      (16 * 1024)
 #define AERO_TASK_PRIO       2
+#define AERO_TASK_CORE       1
 
 /* READY 后跑一次的真机自检（学 aircraft_db 的 init 校验风格：只打日志、
  * 不影响状态）。验收稳定后可关，不碍事就留着——它是"数据源对不对"的
@@ -506,7 +521,8 @@ void pk_aero_db_init(void)
     /* 只创建任务，不做任何 IO——开机路径零阻塞。 */
     BaseType_t ok = xTaskCreatePinnedToCore(aero_task, "aero_db",
                                             AERO_TASK_STACK, NULL,
-                                            AERO_TASK_PRIO, NULL, 0);
+                                            AERO_TASK_PRIO, NULL,
+                                            AERO_TASK_CORE);
     if (ok != pdTRUE) ESP_LOGE(TAG, "aero_db task create failed");
 }
 
