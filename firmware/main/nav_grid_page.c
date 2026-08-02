@@ -263,7 +263,13 @@ static int          s_press_x, s_press_y;
 static int          s_press_page;    /* 按下那一刻在第几页（之后可能已翻页） */
 static pk_nav_hit_t s_press_hit;     /* 按下那一刻命中了什么 */
 static int64_t      s_press_us;      /* 按下时刻，调平长按据此计时 */
-static bool         s_swiped;        /* 本次按压已经翻过页：不再算点击 */
+static bool         s_swiped;        /* 本次按压已经判定过滑动：不再算点击。
+                                       * 翻到有效页之后仍可能继续滑，所以它
+                                       * 不兼任「还要不要继续侦测」——那是
+                                       * s_swipe_locked 的职责，见 drag()。 */
+static bool         s_swipe_locked;  /* 滑动判定已到终局（关闭待定 / 末页
+                                       * 到界），本次按压剩下的时间不再继续
+                                       * 侦测，直到松手/取消。 */
 static bool         s_close_on_up;   /* 松手时关闭网格（见 touch_up 上方） */
 static int64_t      s_last_act_us;   /* 最后一次触摸，5 s 无操作自动收起用 */
 
@@ -492,9 +498,10 @@ void pk_nav_grid_page_render(uint16_t *fb)
  * 的按压就会跨过一次开合活下来（表现是"一打开网格就自己翻了一页"）。 */
 static void press_reset(void)
 {
-    s_press_valid = false;
-    s_swiped      = false;
-    s_close_on_up = false;
+    s_press_valid  = false;
+    s_swiped       = false;
+    s_swipe_locked = false;
+    s_close_on_up  = false;
 }
 
 void pk_nav_grid_page_init(void)
@@ -589,15 +596,16 @@ bool pk_nav_grid_page_touch(int x, int y)
 {
     if (!s_active) return false;
 
-    s_press_hit   = pk_nav_hit_test(x, y, s_page, s_pop_open);
-    s_press_x     = x;
-    s_press_y     = y;
-    s_press_page  = s_page;
-    s_press_us    = esp_timer_get_time();
-    s_last_act_us = s_press_us;
-    s_press_valid = true;
-    s_swiped      = false;
-    s_close_on_up = false;
+    s_press_hit    = pk_nav_hit_test(x, y, s_page, s_pop_open);
+    s_press_x      = x;
+    s_press_y      = y;
+    s_press_page   = s_page;
+    s_press_us     = esp_timer_get_time();
+    s_last_act_us  = s_press_us;
+    s_press_valid  = true;
+    s_swiped       = false;
+    s_swipe_locked = false;
+    s_close_on_up  = false;
 
     /* 整屏都吃，命中与否都一样：网格铺满全屏且 FAB 已藏，底下没有任何该被
      * 点到的东西；更要紧的是横向滑动可以从任何一格上起手，归属必须在**按下
@@ -611,20 +619,48 @@ bool pk_nav_grid_page_drag(int x, int y)
     s_last_act_us = esp_timer_get_time();
     if (!s_press_valid) return true;   /* 仍然吃掉：模态 */
 
-    /* ① 滑动翻页。pop 开着时不翻——那时网格整层已被压暗且不可点
+    /* ① 滑动翻页：过阈值当场换页，不等松手（产品负责人 2026-08-02 反馈
+     * "左右滑不跟手，尤其速度快的时候"——拖动全程改 s_page，而不是等
+     * touch_up() 才判定）。pop 开着时仍不翻——那时网格整层已被压暗且不可点
      * （pk_nav_hit_test 的 pop_open 分支），底下悄悄翻页只会让人一头雾水。
-     * 一次按压最多翻一页：s_swiped 一旦立起就不再重判，否则一次长距离拖动
-     * 会连翻好几页，而总共只有两页。 */
-    if (!s_swiped && !s_pop_open) {
+     *
+     * 「顺手收起 pop 再翻页」这条想过、没做：pop 面板总宽只有 380 px，起手点
+     * 落在某个快调按钮上、手指再侧移五六十像素完全可能只是想点相邻档位，
+     * 拿去当翻页/关闭信号会把一次正常的选档操作误判掉。松手时已有的兜底
+     * （touch_up 的 default 分支：pop 开着时点面板外一律 PK_NAV_HIT_NONE，
+     * 收起 pop）已经够用，不需要在 drag 里再抢一次。
+     *
+     * 落到有效页时（目标页存在）当场改 s_page，并把起点重置到当前指尖
+     * 位置——这样一次长滑可以连续翻多页，不必翻一页就锁住等下一次按压。
+     * 两种到界的终局（第 0 页继续右滑要关闭 / 末页继续同向不做事）不重置
+     * 起点，判一次就锁死到松手：这两种没有"下一页"可去，继续侦测没有意义；
+     * 锁死还避免了"关闭待定之后又被反向滑动悄悄推翻，但 s_close_on_up 没
+     * 跟着清掉"这种状态不一致。s_swiped 记"这一下算不算点击"（只要滑动过就
+     * 一直是 true，供 touch_up 用），s_swipe_locked 记"还要不要继续判"
+     * （只在两种终局分支置位），两件事分开存正是为了不让上面这条边界情况
+     * 无解——都塞进同一个标志位，翻到有效页后要么没法继续判，要么终局分支
+     * 判完还能被继续判。 */
+    if (!s_swipe_locked && !s_pop_open) {
         const int dir = pk_nav_swipe_dir(x - s_press_x, y - s_press_y);
         if (dir != 0) {
-            s_swiped = true;
+            s_swiped = true;   /* 不管落进哪个分支，这一下都不再算点击 */
             if (dir < 0 && s_page == 0) {
-                /* 三条退路之二：第 0 页继续右滑 = 关闭。 */
-                s_close_on_up = true;
+                /* 三条退路之二：第 0 页继续右滑 = 关闭。仍然延到松手结算
+                 * （s_close_on_up），理由见 touch_up 上方大注释——手指还按着
+                 * 就清 s_active 的话，剩余帧会落到底页，底页是地图时手一松
+                 * 就会被当成一次新按下，跳进机场详情页。 */
+                s_close_on_up  = true;
+                s_swipe_locked = true;
             } else {
                 const int np = s_page + dir;
-                if (np >= 0 && np < PK_NAV_PAGES) s_page = np;
+                if (np >= 0 && np < PK_NAV_PAGES) {
+                    s_page    = np;   /* 当场翻页 */
+                    s_press_x = x;    /* 重置起点：支持一次长滑连续翻页 */
+                    s_press_y = y;
+                } else {
+                    /* 最后一页继续左滑：不做任何事，也不循环回第 0 页。 */
+                    s_swipe_locked = true;
+                }
             }
             return true;
         }
