@@ -110,6 +110,11 @@ set(FW_DRAW_SRC
     # 键盘编辑器同样是纯排版 + 命中判定，唯一的外部依赖是 config_devname 的
     # 长度常量（头文件里的宏）与 pk_ui_nav 的 FAB 显隐，两者都已在这里。
     ${FW}/keyboard_page.c
+    # 航空数据搜索页。版面、分桶排序、空态文案都要在模拟器上评审，所以原样
+    # 编进来；host 上跑不起来的只有后台任务与 NVS 历史，那两段在 PK_SIM_BUILD
+    # 下退化成"同步查 + 内存里的历史"（见 search_page.c 尾部）。数据源同样
+    # 由 compat/pk_aero_layer_sim.c 桩掉。
+    ${FW}/search_page.c
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c
     ${FW}/icao_country.c

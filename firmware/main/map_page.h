@@ -26,3 +26,30 @@ bool pk_map_page_touch(int x, int y);
 
 /* 松手。清掉按下高亮、结束本次拖动手势。 */
 void pk_map_page_touch_up(void);
+
+/*
+ * 把视口挪到指定经纬度并定住（搜索页点结果的落点）。
+ *
+ * 副作用有三个，缺一不可：设 center/zoom、**关掉跟随**（s_follow=false，
+ * 否则下一帧本机位置一到就把视口拽回去了）、通知瓦片加载器与航空叠加层
+ * 视图变了（不通知的话，屏上会先干瞪几秒旧瓦片）。
+ * zoom 会被夹到 [MAP_ZOOM_MIN, MAP_ZOOM_MAX]。
+ */
+void pk_map_page_goto(double lat, double lon, int zoom);
+
+/*
+ * 搜索结果的 PIN。画在最上层（ADS-B 目标与本机符号之上、UI 铬层之下），
+ * 形状与配色都与既有符号刻意区分：航空叠加层的机场/导航台/FIX 是蓝/绿/紫，
+ * ADS-B 是青，本机是白——PIN 取琥珀 + 白描边，且是唯一一个"带尖脚落地"的
+ * 形状，余光扫过就知道那是刚查到的那个点。
+ *
+ * label 是要显示在 PIN 上方的短串（一般是 ICAO/ident），会被拷贝；传 NULL
+ * 或空串就只画符号。clear 之后不再画。
+ */
+void pk_map_page_set_pin(double lat, double lon, const char *label);
+void pk_map_page_clear_pin(void);
+
+/* 打开搜索页的入口在本页右侧那一列按钮上；这个回调由 map_page 调出去，
+ * 宿主接到就 pk_search_page_open()。做成弱符号（同 pk_ui_nav 的做法）是
+ * 为了让模拟器与 host 单测不必把整个搜索页链进来。 */
+void pk_map_page_on_search(void);

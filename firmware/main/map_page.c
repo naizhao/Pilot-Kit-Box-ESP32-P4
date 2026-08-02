@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_attr.h"    /* EXT_RAM_BSS_ATTR —— 见 render 里两个大数组的注释 */
 #include "esp_timer.h"
 #include "sdkconfig.h"
 
@@ -66,8 +67,14 @@
 
 /* FAB 可拖动，固定坐标躲不开它——每帧按 FAB 当前占位动态避让：竖直方向
  * 与本列按钮堆相交时，把整堆抬到 FAB 上沿之上（顶到 MAP_TOP 为止）。
- * render 与 touch 用同一套结果，保证看见的位置就是点得中的位置。 */
-static void btn_layout(int *zin_y, int *zout_y, int *recenter_y)
+ * render 与 touch 用同一套结果，保证看见的位置就是点得中的位置。
+ *
+ * 2026-08-02：右列多了一枚「搜索」，压在 zoom-in 之上，整堆从两枚变三枚。
+ * 它**跟着这一堆一起避让**而不是自成一列——避让逻辑只有一份，多开一列就得
+ * 再抄一遍相交判定，而这一堆的总高 3×56+2×10 = 188，从 FOOTER_Y0−8 往上排
+ * 到 y=266，离 MAP_TOP(48) 还远，摆得下。 */
+#define BTN_SEARCH_X   BTN_ZOUT_X
+static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y)
 {
     int zo = BTN_ZOUT_Y_DEF, zi = BTN_ZOUT_Y_DEF - BTN_D - 10, rc = BTN_RECENTER_Y_DEF;
     int fx, fy, fw, fh;
@@ -75,11 +82,13 @@ static void btn_layout(int *zin_y, int *zout_y, int *recenter_y)
         const int gap = 10;
         bool right_col = fx + fw > BTN_ZOUT_X - BTN_HIT_PAD;
         bool left_col  = fx < BTN_RECENTER_X + BTN_D + BTN_HIT_PAD;
-        if (right_col && fy < zo + BTN_D + gap && fy + fh > zi - gap) {
+        /* 相交判定要按**整堆**的上沿算（搜索钮在 zi 之上一格），否则 FAB 停在
+         * 搜索钮那一格的高度时整堆纹丝不动，搜索钮正好被压住点不着。 */
+        if (right_col && fy < zo + BTN_D + gap && fy + fh > zi - BTN_D - 10 - gap) {
             zo = fy - gap - BTN_D;            /* 堆底贴 FAB 上沿 */
             zi = zo - BTN_D - 10;
-            if (zi < MAP_TOP + gap) {         /* 上方不够就翻到 FAB 下方 */
-                zi = fy + fh + gap;
+            if (zi - BTN_D - 10 < MAP_TOP + gap) {  /* 上方不够就翻到 FAB 下方 */
+                zi = fy + fh + gap + BTN_D + 10;
                 zo = zi + BTN_D + 10;
             }
         }
@@ -88,6 +97,7 @@ static void btn_layout(int *zin_y, int *zout_y, int *recenter_y)
             if (rc < MAP_TOP + gap) rc = fy + fh + gap;
         }
     }
+    if (search_y) *search_y = zi - BTN_D - 10;
     if (zin_y) *zin_y = zi;
     if (zout_y) *zout_y = zo;
     if (recenter_y) *recenter_y = rc;
@@ -105,7 +115,15 @@ static double   s_last_own_lat, s_last_own_lon;
 
 static bool     s_press_active = false;  /* 正在拖动/按下 */
 static int      s_press_lx, s_press_ly;  /* 上一帧触点，算增量用 */
-static int      s_btn_down = -1;         /* 0=recenter 1=zoom-in 2=zoom-out，-1=无 */
+static int      s_btn_down = -1;         /* 0=recenter 1=zoom-in 2=zoom-out
+                                          * 3=search，-1=无 */
+static bool     s_press_moved = false;   /* 本次按压有没有真的挪过视口 */
+
+/* 搜索结果 PIN（见 map_page.h）。经纬度而不是屏幕坐标——视口一动，PIN 要
+ * 跟着地面走，存屏幕坐标就成了贴在玻璃上的一个点。 */
+static bool   s_pin_valid = false;
+static double s_pin_lat, s_pin_lon;
+static char   s_pin_label[8];
 
 /* ── Web Mercator 世界像素 ↔ 经纬度（度）── */
 static void lonlat_to_world(double lon, double lat, uint8_t z, double *wx, double *wy)
@@ -142,6 +160,77 @@ static void draw_btn_plate(uint16_t *fb, int x, int y, bool down)
             if (px < 0 || px >= PK_DISPLAY_W || py < 0 || py >= PK_DISPLAY_H) continue;
             fb[py * PK_DISPLAY_W + px] = (d2 >= (r - 2) * (r - 2)) ? edge : face;
         }
+    }
+}
+
+/* 放大镜图标：一个圆环 + 一根 45° 手柄。
+ *
+ * 为什么不用 pk_pfd_draw_arc_aa 画那个圆：它把 360° 按 1.5° 拆成 240 段
+ * draw_line_aa，pk_aero_layer 就是这么从 8 FPS 掉到 5 FPS 的（见该文件的
+ * 性能坑记录）。这里直接按 d² 判环带，一次双重循环 24×24 就画完。
+ *
+ * 也不用图标字体：pfd_icon_font 里没有放大镜，为一个 22 px 的图形去重跑
+ * 字库生成器不划算，而这一个形状用几何原语就能画准。 */
+static void draw_search_icon(uint16_t *fb, int cx, int cy)
+{
+    const uint16_t ink = pk_rgb565(225, 235, 248);
+    /* 镜片中心略偏左上，给右下角的手柄让位——两者叠在正中的话，图标看着
+     * 是个歪掉的圆而不是放大镜。 */
+    const int ox = cx - 3, oy = cy - 3;
+    const int r_out = 11, r_in = 8;
+    for (int dy = -r_out; dy <= r_out; ++dy) {
+        for (int dx = -r_out; dx <= r_out; ++dx) {
+            const int d2 = dx * dx + dy * dy;
+            if (d2 > r_out * r_out || d2 < r_in * r_in) continue;
+            const int px = ox + dx, py = oy + dy;
+            if (px < 0 || px >= PK_DISPLAY_W || py < 0 || py >= PK_DISPLAY_H) continue;
+            fb[py * PK_DISPLAY_W + px] = ink;
+        }
+    }
+    /* 手柄画三条平行线当作 3 px 线宽——draw_line_aa 有线宽参数，但这里是
+     * 纯水平/对角的短线，三条整数线比 AA 更实，小尺寸下不糊。 */
+    for (int k = -1; k <= 1; ++k)
+        pk_pfd_draw_line(fb, ox + 7 + k, oy + 7, ox + 15 + k, oy + 15, ink);
+}
+
+/* 搜索结果 PIN：泪滴形（圆头 + 尖脚落地）+ 白描边 + 代码标签。
+ * 尖脚**正好落在目标经纬度上**，圆头在它上方——地图上的点位符号必须让人
+ * 一眼知道"指的是哪个像素"，画成居中的圆就得靠猜。 */
+static void draw_search_pin(uint16_t *fb, int sx, int sy, const char *label)
+{
+    const uint16_t body = pk_rgb565(255, 176,   0);   /* 琥珀：地图上没有第二处用它画符号 */
+    const uint16_t edge = pk_rgb565(255, 255, 255);
+    const uint16_t hole = pk_rgb565( 20,  16,   6);
+
+    const int r = 11;                 /* 圆头半径 */
+    const int cy = sy - 26;           /* 圆心离地 26 px，尖脚落在 (sx, sy) */
+
+    /* 尖脚：从圆头下沿收到落点的实心三角。 */
+    pk_pfd_draw_triangle(fb, sx - 7, cy + 6, sx + 7, cy + 6, sx, sy, edge);
+    pk_pfd_draw_triangle(fb, sx - 5, cy + 5, sx + 5, cy + 5, sx, sy - 2, body);
+
+    for (int dy = -r - 2; dy <= r + 2; ++dy) {
+        for (int dx = -r - 2; dx <= r + 2; ++dx) {
+            const int d2 = dx * dx + dy * dy;
+            if (d2 > (r + 2) * (r + 2)) continue;
+            const int px = sx + dx, py = cy + dy;
+            if (px < 0 || px >= PK_DISPLAY_W || py < MAP_TOP || py >= PK_DISPLAY_H)
+                continue;
+            fb[py * PK_DISPLAY_W + px] =
+                (d2 > r * r) ? edge : (d2 <= 4 * 4 ? hole : body);
+        }
+    }
+
+    /* 代码标签压在 PIN 上方，带暗底衬——底图颜色不可控，不衬底就会有
+     * 「白字压在雪地瓦片上」的读不出来（署名条踩过同一个坑）。 */
+    if (label != NULL && label[0] != '\0') {
+        const int lw = pk_aa_text_width(label, PK_AA_S);
+        int lx = sx - lw / 2, ly = cy - r - 4 - PK_AA_S_H;
+        if (lx < 2) lx = 2;
+        if (lx + lw > PK_DISPLAY_W - 2) lx = PK_DISPLAY_W - 2 - lw;
+        if (ly < MAP_TOP + 2) ly = MAP_TOP + 2;
+        pk_pfd_darken_rect(fb, lx - 5, ly - 2, lx + lw + 5, ly + PK_AA_S_H + 2, 170);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx, ly, label, body, PK_AA_S);
     }
 }
 
@@ -250,8 +339,10 @@ static void draw_chrome(uint16_t *fb, double meters_per_px)
         }
     }
 
-    int zin_y, zout_y, rc_y;
-    btn_layout(&zin_y, &zout_y, &rc_y);
+    int search_y, zin_y, zout_y, rc_y;
+    btn_layout(&search_y, &zin_y, &zout_y, &rc_y);
+    draw_btn_plate(fb, BTN_SEARCH_X, search_y, s_btn_down == 3);
+    draw_search_icon(fb, BTN_SEARCH_X + BTN_D / 2, search_y + BTN_D / 2);
     draw_btn_plate(fb, BTN_ZIN_X, zin_y, s_btn_down == 1);
     draw_btn_plate(fb, BTN_ZOUT_X, zout_y, s_btn_down == 2);
     {
@@ -384,10 +475,30 @@ void pk_map_page_render(uint16_t *fb)
 
     /* ── ADS-B 目标叠加（own_valid 时才有意义算相对位置；无本机位置也照样
      * 能把目标画在地图上——目标的经纬度与本机是否已知无关）── */
-    static aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
+    /*
+     * 本页两块大静态数组（快照工作区 7168 B + 标签占位池 4112 B）**全部放
+     * PSRAM**，让 map_page 在内部 .bss 里的占用降到 0。
+     *
+     * 起因是一次很不直观的链接期观察（2026-08-02）：本项目开启了
+     * -Wl,--enable-non-contiguous-regions，.dram0.bss 会被拆到高低两段内部
+     * RAM 里，而**哪个目标文件落在哪一段是按链接顺序贪心决定的**。给 libmain.a
+     * 加一个新目标文件（search_page.c.obj，自身内部 .bss 只有 26 B）就足以让
+     * map_page.c.obj 整个 11280 B 从高段翻到低段，把"调度器启动前可用内部堆"
+     * 从 66160 B 压到 64384 B —— 低于 check_early_heap.py 的 66000 B 门槛，
+     * 开机会在 vApplicationGetTimerTaskMemory 断言上 boot loop。
+     *
+     * 也就是说：只要这两块还在内部 .bss 里，本页就是一颗随链接顺序抖动的地雷，
+     * 下一个往 main 加文件的人会莫名其妙地把机器搞成 boot loop。挪进 PSRAM
+     * 之后这条依赖彻底消失（实测余量回到 66160 B 之上）。
+     *
+     * 访问模式支持这么做：s_scratch 每帧被 aircraft_state_snapshot 整块写一次
+     * 再线性读一遍；s_occ 是几十条矩形的顺序比较。都没有随机小访存，PSRAM
+     * 带宽绰绰有余，且 pfd.c:119 对同一个快照数组早就是这么做的。
+     */
+    static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
     size_t n = aircraft_state_snapshot(s_scratch, AIRCRAFT_TABLE_CAPACITY,
                                        now_us, AIRCRAFT_STALE_AGE_US);
-    static rect_t s_occ[MAP_LBL_MAX + 1 + PK_AERO_LAYER_OCC_MAX];
+    static EXT_RAM_BSS_ATTR rect_t s_occ[MAP_LBL_MAX + 1 + PK_AERO_LAYER_OCC_MAX];
     int nocc = 0;
     /* 航空叠加层分两趟夹住 ADS-B：符号垫在飞机之下，标签排在呼号之后
      * （交通信息优先于机场位置，见 pk_aero_layer.h）。 */
@@ -463,6 +574,20 @@ void pk_map_page_render(uint16_t *fb)
         }
     }
 
+    /* ── 搜索 PIN：画在所有地理符号之上、UI 铬层之下。它是"我刚查的就是
+     * 这个"的唯一凭据，被交通目标压住就白放了。 ── */
+    if (s_pin_valid) {
+        double pwx, pwy;
+        lonlat_to_world(s_pin_lon, s_pin_lat, s_zoom, &pwx, &pwy);
+        const int px = MCX + (int)lround(pwx - cwx);
+        const int py = MCY + (int)lround(pwy - cwy);
+        /* 余量给足：PIN 主体在落点上方 37 px，标签还要再高一截，
+         * 落点刚滚出下沿时上半截仍该露出来。 */
+        if (px > -40 && px < PK_DISPLAY_W + 40 &&
+            py > MAP_TOP - 8 && py < PK_DISPLAY_H + 60)
+            draw_search_pin(fb, px, py, s_pin_label);
+    }
+
     /* ── 比例尺基准：中心纬度的米/像素（Web Mercator 随纬度变形，用当前
      * 中心点的纬度算，跟屏幕中心那一列最准）── */
     double mpp = 156543.03392 * cos(s_center_lat * M_PI / 180.0) / (double)(1u << s_zoom);
@@ -491,12 +616,21 @@ bool pk_map_page_touch(int x, int y)
     }
 
     if (!s_press_active) {
-        int zin_y, zout_y, rc_y;
-        btn_layout(&zin_y, &zout_y, &rc_y);
+        int search_y, zin_y, zout_y, rc_y;
+        btn_layout(&search_y, &zin_y, &zout_y, &rc_y);
         /* 命中按钮同样要把这次按压标记为 active：触摸驱动在手指按住期间会
          * 持续上报，不置位的话每一帧都重新走一遍这里——一次点击涨好几级
          * zoom（罩哥 2026-08-01 实测）。s_btn_down 之后充当"本次按压已归属
          * 某个按钮"的凭据，下面的重复上报据此直接吃掉。 */
+        /* 搜索钮。与下面几个一样必须置 s_press_active——触摸驱动在手指按住
+         * 期间持续上报，不置位就会每帧重开一次搜索页（历史 bug 8cf64ec 的
+         * 教训，那次是一次点击涨好几级 zoom）。 */
+        if (hit_btn(x, y, BTN_SEARCH_X, search_y)) {
+            s_btn_down = 3;
+            s_press_active = true;
+            pk_map_page_on_search();
+            return true;
+        }
         if (hit_btn(x, y, BTN_ZIN_X, zin_y)) {
             s_btn_down = 1;
             if (s_zoom < MAP_ZOOM_MAX) { s_zoom++; pk_tile_loader_bump_view(); }
@@ -517,6 +651,7 @@ bool pk_map_page_touch(int x, int y)
             return true;
         }
         s_press_active = true;
+        s_press_moved  = false;
         s_press_lx = x;
         s_press_ly = y;
         return true;
@@ -535,6 +670,7 @@ bool pk_map_page_touch(int x, int y)
         wy -= dy;
         world_to_lonlat(wx, wy, s_zoom, &s_center_lon, &s_center_lat);
         s_follow = false;
+        s_press_moved = true;
         s_press_lx = x;
         s_press_ly = y;
     }
@@ -543,6 +679,51 @@ bool pk_map_page_touch(int x, int y)
 
 void pk_map_page_touch_up(void)
 {
+    /*
+     * 空白处点一下清掉 PIN。
+     *
+     * PIN 的清除时机必须是用户能想到的动作，而不是某个定时器：定时消失会让
+     * 人以为"刚才那个机场没找到"。判据取"落在地图上、没按到任何按钮、也没
+     * 拖动过"——平移途中手指自然会停一下，把那当成清除就成了"一拖就没"。
+     * 另一条清除路径是再搜一次（set_pin 直接覆盖）。
+     */
+    if (s_press_active && s_btn_down < 0 && !s_press_moved) s_pin_valid = false;
     s_press_active = false;
+    s_press_moved  = false;
     s_btn_down = -1;
+}
+
+/* ── 搜索页的两个入口（见 map_page.h）───────────────────────────── */
+
+void pk_map_page_goto(double lat, double lon, int zoom)
+{
+    if (zoom < MAP_ZOOM_MIN) zoom = MAP_ZOOM_MIN;
+    if (zoom > MAP_ZOOM_MAX) zoom = MAP_ZOOM_MAX;
+    s_zoom       = (uint8_t)zoom;
+    s_center_lat = lat;
+    s_center_lon = lon;
+    /* 关跟随是这个函数的重点：不关的话，下一帧本机位置一到就把视口拽回去，
+     * 用户看到的是"跳过去又弹回来"。回中钮此时会重新出现，是回去的路。 */
+    s_follow     = false;
+    pk_tile_loader_bump_view();
+    pk_aero_layer_notify_view(s_center_lat, s_center_lon, s_zoom);
+}
+
+void pk_map_page_set_pin(double lat, double lon, const char *label)
+{
+    s_pin_lat   = lat;
+    s_pin_lon   = lon;
+    s_pin_valid = true;
+    snprintf(s_pin_label, sizeof(s_pin_label), "%s", label ? label : "");
+}
+
+void pk_map_page_clear_pin(void)
+{
+    s_pin_valid = false;
+}
+
+/* 弱符号默认实现：模拟器与 host 单测不必把搜索页链进来（同 pk_ui_nav.c 的
+ * 各个 on_* 回调）。固件侧由 pfd.c 提供强符号。 */
+__attribute__((weak)) void pk_map_page_on_search(void)
+{
 }

@@ -101,6 +101,11 @@ static const char *volatile s_err;   /* ERROR 原因（静态串） */
 /* 进 ERROR 时的 SD 挂载代数；与当前代数不等即说明卡被重插过，该重试了。 */
 static volatile uint32_t s_err_generation;
 
+/* 库代数：发布与卸载各 +1（都在 s_lock 内）。分段让渡的子串搜索靠它判断
+ * "上一段扫的还是不是同一份 payload"——只看 state 不够：拔卡后立刻重插并
+ * 加载成功，state 会绕一圈又回到 READY，而 s_buf 早已换成另一块内存。 */
+static volatile uint32_t s_generation;
+
 /* ---- dev key -----------------------------------------------------------
  * AES-128 开发密钥（devkey，与导出脚本 --key-env PK_AERO_KEY 一致，
  * 非量产密钥）。拆成两半异或存放，不让整串出现在 .rodata 喂 `strings`；
@@ -328,6 +333,7 @@ static bool aero_load_once(void)
     s_n_fixes    = db.sec_fix.n;
     s_err        = NULL;
     s_load_pct   = 100;
+    s_generation++;
     s_state      = PK_AERO_DB_READY;
     xSemaphoreGive(s_lock);
 
@@ -364,6 +370,7 @@ static void aero_unload(void)
     s_version    = 0;
     s_n_airports = s_n_navaids = s_n_fixes = 0;
     s_err        = NULL;
+    s_generation++;
     s_state      = PK_AERO_DB_ABSENT;
     xSemaphoreGive(s_lock);
     ESP_LOGW(TAG, "card removed — aero DB unloaded (auto-reload on insert)");
@@ -643,4 +650,74 @@ int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max)
 int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max)
 {
     AERO_QUERY(0, pk_aero_fixes_by_prefix(&s_db, prefix, out, max));
+}
+
+uint32_t pk_aero_db_generation(void)
+{
+    return s_generation;
+}
+
+/* 一次持锁最多扫多少字节字符串池。
+ *
+ * 65 ms 是整池 2.2 MB 的实测值 → 约 34 µs/KB，64 KB ≈ 2.2 ms 一段。取这个数
+ * 的理由是它与"允许的最长持锁窗口"对齐：nearest 系列最坏 ~16 ms 一直是本模块
+ * 公开承诺的上限（pk_aero_db.h 开头那段），子串搜索的分段只要明显低于它，
+ * 就不会成为新的最坏情况。再小意义不大——give/take 一对信号量本身也要开销。 */
+#define AERO_SEARCH_CHUNK_BYTES  (64 * 1024)
+
+int pk_aero_db_search_substring(const char *query, pk_aero_hit_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    if (s_state != PK_AERO_DB_READY) return 0;
+
+    /* 开工时的代数。中途它一变就说明这份 payload 已经不是刚才那份了。 */
+    const uint32_t gen = s_generation;
+    pk_aero_search_cursor_t cur = { 0, 0, 0 };
+    const int64_t t0 = esp_timer_get_time();
+    int chunks = 0;
+
+    for (;;) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        /*
+         * 每段开头复检——这是整个分段方案的安全性所在。
+         *
+         * 卸载路径（aero_unload）同样先拿 s_lock 再 free(s_buf) 并 memset(&s_db)，
+         * 所以"锁在我手上"期间 payload 一定还活着；而两段之间锁是放开的，
+         * 卸载完全可能就发生在那个缝里。只看 s_state 不够：拔卡→重插→重新
+         * 加载成功之后 state 又回到 READY，但 s_buf 是另一块内存，游标里的
+         * off 指的是旧池的偏移，续扫就是越界读。代数把这种 ABA 挡掉。
+         *
+         * 中止时返回 0 而不是已经攒下的 cur.n：那些命中来自上一张卡，
+         * 记录下标在新库里指向完全不同的机场——给飞行员一个错的机场比
+         * 给他"没找到"危险得多。
+         */
+        if (s_state != PK_AERO_DB_READY || s_generation != gen) {
+            xSemaphoreGive(s_lock);
+            return 0;
+        }
+        const bool done = pk_aero_search_substring_step(
+            &s_db, query, out, max, &cur, AERO_SEARCH_CHUNK_BYTES);
+        xSemaphoreGive(s_lock);
+        if (done) {
+            ESP_LOGI(TAG, "substring \"%s\": %d hits, %d chunks, %lld ms",
+                     query, cur.n, chunks, (long long)((esp_timer_get_time() - t0) / 1000));
+            return cur.n;
+        }
+        chunks++;
+        /*
+         * 每段之间必须**真的阻塞一下**，不能只 taskYIELD()。
+         *
+         * 2026-08-02 真机实测：第一版用的是 taskYIELD()，理由是"同优先级的等锁者
+         * 就有机会插进来，而 vTaskDelay(1) 一段 10 ms、34 段白搭 340 ms"。那个
+         * 推理漏了空闲任务——taskYIELD() 只在**同优先级**的就绪任务之间轮转，
+         * prio 0 的 IDLE0 一次都轮不到。于是本任务（prio 2）连续占着 CPU0 一分钟，
+         * 触发 `task_wdt: IDLE0 (CPU 0)` 看门狗告警（日志里 "CPU 0: aero_search"
+         * 就是它点名的现行犯）。
+         *
+         * vTaskDelay(1) 让本任务真正离开就绪队列一个 tick，IDLE 得以喂狗。代价是
+         * 每段 10 ms —— 但那笔账本来就该付：这条路径是"用户敲了名字片段"的慢查询，
+         * 它的正确姿态是**让出机器**，而不是把渲染和喂狗都挤掉去抢那几百毫秒。
+         */
+        vTaskDelay(1);
+    }
 }

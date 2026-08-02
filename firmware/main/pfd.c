@@ -51,6 +51,7 @@
 #include "baro.h"
 #include "sdkconfig.h"
 #include "keyboard_page.h"
+#include "search_page.h"
 #include "settings_page.h"
 #include "traffic_page.h"
 #include "map_page.h"
@@ -116,6 +117,12 @@ static void pfd_task(void *arg)
      * with FreeRTOS / ESP-Hosted tasks for scarce DMA-capable internal
      * RAM during the early-boot constructor storm. */
     static EXT_RAM_BSS_ATTR aircraft_t scratch[AIRCRAFT_TABLE_CAPACITY];
+    /* 帧率排查：本模块的 PERF/PERF2/PERF3 埋点（draw/lvgl/flush、各 PFD
+     * 组件、PPA 与 vsync 等待）走 ESP_LOGD，CONFIG_LOG_MAXIMUM_LEVEL=4 已把
+     * 它们编译进来，默认被 INFO 级别挡住。要看就在这里加一行
+     * esp_log_level_set(TAG, ESP_LOG_DEBUG) 临时提级，别提交——每秒三行会
+     * 把串口刷满，真出问题时反而看不见有用的日志。 */
+
     int64_t  fps_window_start_us = esp_timer_get_time();
     uint32_t frames_in_window = 0;
     int64_t  acc_draw_us = 0, acc_lvgl_us = 0;   /* 诊断：分段耗时 */
@@ -132,7 +139,23 @@ static void pfd_task(void *arg)
 
         pk_ui_mode_t mode = pk_ui_get_mode();
 
-        switch (mode) {
+        /*
+         * 模态层排在 pk_ui_mode_t 之前。
+         *
+         * 键盘编辑器与搜索页都是「浮在某一页之上的整屏层」，不是模式循环里的
+         * 一站（dock 塞不下第 8 个页签，导航也只有两层——见 search_page.h）。
+         * 原先键盘的判定嵌在 case PK_UI_MODE_SETTINGS 里，等于把「它只可能
+         * 从设置页打开」这个当时的事实写死进了分派；搜索页从地图页打开，
+         * 那条 case 就再也覆盖不到。提到 switch 之前，与 touch_gt911.c 的
+         * 分派次序对齐（两处次序一致是"看得见的就是点得中的"的前提）。
+         *
+         * 键盘在搜索页之上：它可以从搜索页里打开，反过来不成立。
+         */
+        if (pk_keyboard_page_active()) {
+            pk_keyboard_page_render(fb);
+        } else if (pk_search_page_active()) {
+            pk_search_page_render(fb);
+        } else switch (mode) {
         case PK_UI_MODE_CAL_WIZARD:
             pk_cal_wizard_render(fb);
             break;
@@ -150,11 +173,7 @@ static void pfd_task(void *arg)
             break;
 
         case PK_UI_MODE_SETTINGS:
-            /* 键盘编辑器是设置页之上的**模态层**，不是独立的 pk_ui_mode_t：
-             * 模式循环（PFD→TRAFFIC→…）里不该冒出一个「键盘页」，用户按
-             * MODE 也不该切进一个半途的编辑态。 */
-            if (pk_keyboard_page_active()) pk_keyboard_page_render(fb);
-            else                           pk_settings_page_render(fb);
+            pk_settings_page_render(fb);
             break;
 
         case PK_UI_MODE_TRAFFIC:

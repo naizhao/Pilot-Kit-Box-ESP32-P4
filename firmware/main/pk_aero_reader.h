@@ -319,6 +319,32 @@ typedef struct {
 int pk_aero_search_substring(pk_aero_db_t *db, const char *query,
                              pk_aero_hit_t *out, int max);
 
+/* ---- 可中断的子串搜索（分段让渡用）--------------------------------
+ *
+ * 为什么需要它：上面那个一口气版本在 P4 上实测 **65 ms**，而 pk_aero_db 的
+ * 并发方案是"查询全程持锁"——65 ms 的持锁窗口会把地图叠加层的后台快照查询
+ * 和拔卡卸载一起堵住那么久。正确做法是每扫若干 KB 就 give/take 一次锁，并
+ * **在每段开头复检 state/代数**（拔卡后 payload 已被 free，拿着上一段的游标
+ * 继续 strlen 就是对悬空指针取值）。
+ *
+ * 游标零初始化即"从头开始"。每次调用最多扫 budget_bytes 字节的字符串池
+ * （budget_bytes==0 = 不限，等价于一口气版本），返回 true 表示**已扫完**
+ * （三段扫尽，或 out 已写满 max）。结果条数在 cur->n。
+ *
+ * out[] 由调用方跨调用持有：里面只有 (type, idx)，没有任何指向 payload 的
+ * 指针，所以中途拔卡也不会留下悬空引用——但**中断后的半截结果属于上一张卡**，
+ * 调用方应当整体丢弃而不是拿来显示。 */
+typedef struct {
+    uint8_t  stage;   /* 0=机场 1=导航台 2=FIX 3=已扫完 */
+    uint32_t off;     /* 当前段字符串池内的下一个待扫偏移（0=本段还没开始）*/
+    int      n;       /* 已写进 out[] 的条数（跨段累计）*/
+} pk_aero_search_cursor_t;
+
+bool pk_aero_search_substring_step(pk_aero_db_t *db, const char *query,
+                                   pk_aero_hit_t *out, int max,
+                                   pk_aero_search_cursor_t *cur,
+                                   uint32_t budget_bytes);
+
 /* 记录读取（idx 越界返回 false）*/
 bool pk_aero_airport_get(const pk_aero_db_t *db, uint32_t idx,
                          pk_aero_airport_t *out);

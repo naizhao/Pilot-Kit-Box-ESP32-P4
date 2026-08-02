@@ -35,6 +35,7 @@
 #include "config_traffic.h"
 #include "pk_aero_db.h"
 #include "pk_aero_layer.h"
+#include "search_page.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
 #include "display.h"
@@ -328,6 +329,9 @@ void app_main(void)
     /* 地图页的航空数据叠加层：只创建后台快照任务，等地图页第一次渲染
      * 报出视图才开始查（pk_aero_layer.h）。须晚于 pk_aero_db_init()。 */
     pk_aero_layer_init();
+    /* 搜索页的后台查询任务 + 从 NVS 读回最近搜索。同样只建任务、零 IO，
+     * 须晚于 pk_aero_db_init()（它是那边的消费者）。 */
+    pk_search_page_init();
 
     const char *file_mount = record_sinks_install_defaults();
     if (file_mount != NULL) {

@@ -84,10 +84,23 @@ bool pk_imu_sample_get(pk_imu_sample_t *out)
 #define MAP_DEMO_OWN_LAT  22.54
 #define MAP_DEMO_OWN_LON  113.90
 
+/* 地图页与搜索页共用同一个本机位置。
+ *
+ * 搜索页也算进来，是因为它的「附近机场」以本机为原点，而那批要素来自
+ * compat/pk_aero_layer_sim.c 的桩表——那张表锚在 MAP_DEMO_OWN_LAT/LON。
+ * 只放行 map 的话，搜索页的本机会落到 pk_demo_own_pos() 的巡航轨迹上，
+ * 屏上每一行都写着「1050 NM」，看不出"最近的排最前"这条规则对不对。 */
 static bool sim_is_map_page(void)
 {
     const char *page = getenv("PK_SIM_PAGE");
     return page != NULL && strcmp(page, "map") == 0;
+}
+
+static bool sim_uses_map_own_pos(void)
+{
+    const char *page = getenv("PK_SIM_PAGE");
+    return page != NULL &&
+           (strcmp(page, "map") == 0 || strcmp(page, "search") == 0);
 }
 
 /* ── 本机 ─────────────────────────────────────────────────────────── */
@@ -104,7 +117,7 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
         memset(out, 0, sizeof(*out));
         out->icao24        = 0x780ABC;
         out->have_position = true;
-        if (sim_is_map_page()) {
+        if (sim_uses_map_own_pos()) {
             /* PK_SIM_MAP_OWN_LAT/LON：挪出珠三角试点包覆盖范围，用来压
              * overzoom 场景——global 包只到 z9，本机落在只有 global 覆盖
              * 的地方，把 zoom 拉到 10+ 就会触发"越级放大"（见 map_page.c

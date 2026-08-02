@@ -24,6 +24,7 @@
  *     的词边界 + "..." 那条路径）。
  */
 #include "pk_aero_db.h"
+#include "geo.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,37 +132,223 @@ const char *pk_aero_db_cycle(void)
     return aero_on() ? "2026-02" : "";
 }
 
-/* nearest 三兄弟：桩表统共十来条，全在一屏之内，按表序返回即可——真实实现
- * 那套"网格粗排 + Haversine 精算"在这里没有任何可观察的差别（调用方
- * fill_* 只按 LOD 的 limit 截断，limit 32 > 表长，一条都不会被截掉）。 */
-static int near_all(int n, pk_aero_near_t *out, int max)
+/* nearest 三兄弟：桩表统共十来条，全在一屏之内，真实实现那套"网格粗排 +
+ * Haversine 精算"在这里没有可观察的差别（地图叠加层只按 LOD 的 limit 截断，
+ * limit 32 > 表长）。
+ *
+ * 但**距离与方位必须算真的**：搜索页把它们直接摆在结果行右侧，全填 0 的话
+ * 截出来的图上每一行都写着 "0.0NM 000"，那既看不出数字列会不会顶到名字，
+ * 也演示不了"离我最近的排最前"这条排序规则——而那正是要在模拟器上评审的东西。
+ * 排序也照真实现来：距离升序。 */
+/* 三张桩表的**共同前缀**都是 { double dlat, dlon; }（C 的 common initial
+ * sequence），所以一份带 stride 的遍历就够，不必给每类各抄一遍。 */
+typedef struct { double dlat, dlon; } pos_row_t;
+
+static int near_all(const void *rows, size_t stride, int n,
+                    double qlat, double qlon, pk_aero_near_t *out, int max)
 {
     if (!aero_on()) return 0;
-    if (n > max) n = max;
+    double blat, blon;
+    base_pos(&blat, &blon);
+
+    pk_aero_near_t tmp[64];
+    if (n > (int)(sizeof(tmp) / sizeof(tmp[0]))) n = (int)(sizeof(tmp) / sizeof(tmp[0]));
     for (int i = 0; i < n; i++) {
-        out[i].idx = (uint32_t)i;
-        out[i].dist_nm = 0.0;
-        out[i].brg_deg = 0.0;
+        const pos_row_t *r = (const pos_row_t *)((const char *)rows + (size_t)i * stride);
+        tmp[i].idx = (uint32_t)i;
+        geo_dist_brg(qlat, qlon, blat + r->dlat, blon + r->dlon,
+                     &tmp[i].dist_nm, &tmp[i].brg_deg);
     }
+    /* 插入排序，n ≤ 十几条 */
+    for (int i = 1; i < n; i++) {
+        pk_aero_near_t k = tmp[i];
+        int j = i - 1;
+        while (j >= 0 && tmp[j].dist_nm > k.dist_nm) { tmp[j + 1] = tmp[j]; j--; }
+        tmp[j + 1] = k;
+    }
+    if (n > max) n = max;
+    for (int i = 0; i < n; i++) out[i] = tmp[i];
     return n;
 }
 
 int pk_aero_db_nearest_airports(double lat, double lon, pk_aero_near_t *out, int max)
 {
-    (void)lat; (void)lon;
-    return near_all(NAPT, out, max);
+    return near_all(kApt, sizeof(kApt[0]), NAPT, lat, lon, out, max);
 }
 
 int pk_aero_db_nearest_navaids(double lat, double lon, pk_aero_near_t *out, int max)
 {
-    (void)lat; (void)lon;
-    return near_all(NNAV, out, max);
+    return near_all(kNav, sizeof(kNav[0]), NNAV, lat, lon, out, max);
 }
 
 int pk_aero_db_nearest_fixes(double lat, double lon, pk_aero_near_t *out, int max)
 {
-    (void)lat; (void)lon;
-    return near_all(NFIX, out, max);
+    return near_all(kFix, sizeof(kFix[0]), NFIX, lat, lon, out, max);
+}
+
+/* ── 搜索页要用的那几个查询（2026-08-02 补）─────────────────────────
+ *
+ * 桩的仍然是**数据源**：分桶次序、去重、桶内排序、空态分因都在 search_page.c
+ * 那份真实代码里跑，这里只负责"给出符合语义的结果"。前缀比较照真库的规矩来
+ * ——池里的代码字段全大写、比较大小写敏感（memcmp），所以这里也直接比大写。
+ *
+ * PK_SIM_AERO_V2=1 可以把版本按到 2，用来截"这张卡没有搜索索引"那一屏：
+ * 真库 v2 上机场/导航台前缀与子串搜索全都返回 0，只有 FIX 前缀还能用。 */
+static bool aero_v2(void)
+{
+    const char *e = getenv("PK_SIM_AERO_V2");
+    return e != NULL && e[0] == '1';
+}
+
+/*
+ * 状态快照。诊断页那张 AERO DB 卡片与搜索页共用它（原先诊断那份在
+ * compat/page_stub.c，两处各留一份直接是 duplicate symbol，更糟的是会出现
+ * "诊断说 READY、搜索却查不出东西"）。
+ *
+ * 两个开关语义不同，都要认：
+ *   PK_SIM_AERO=1     给地图叠加层与搜索页喂真数据（本文件那三张桩表）；
+ *   PK_SIM_DIAG_OK=1  把整屏诊断切成"一切正常"，AERO DB 卡片也该跟着变绿，
+ *                     否则会出现"七张卡跟着开关变、单单这张纹丝不动"的违和。
+ */
+static bool diag_ok(void)
+{
+    const char *e = getenv("PK_SIM_DIAG_OK");
+    return e != NULL && e[0] == '1';
+}
+
+void pk_aero_db_status_get(pk_aero_db_status_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (!aero_on() && !diag_ok()) {
+        out->state = PK_AERO_DB_ABSENT;
+        return;
+    }
+    out->state = PK_AERO_DB_READY;
+    snprintf(out->cycle, sizeof(out->cycle), "%s", "2026-02");
+    out->version    = aero_v2() ? 2 : 3;
+    out->load_pct   = 100;
+    /* 有桩表就报桩表的条数，没有（只开了 DIAG_OK）就报一组像真库的数字。 */
+    out->n_airports = aero_on() ? (uint32_t)NAPT : 9327;
+    out->n_navaids  = aero_on() ? (uint32_t)NNAV : 4118;
+    out->n_fixes    = aero_on() ? (uint32_t)NFIX : 61240;
+}
+
+uint32_t pk_aero_db_generation(void) { return aero_on() ? 1u : 0u; }
+
+/* 大写化 + 前缀比较（桩表里的代码本来就全大写）。 */
+static bool has_prefix(const char *s, const char *pfx)
+{
+    for (size_t i = 0; pfx[i] != '\0'; ++i) {
+        char c = s[i];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        if (c != pfx[i]) return false;
+    }
+    return true;
+}
+
+/* 大小写不敏感的子串判定（needle 已是大写）。 */
+static bool ci_has(const char *hay, const char *needle)
+{
+    for (size_t i = 0; hay[i] != '\0'; ++i) {
+        size_t j = 0;
+        while (needle[j] != '\0') {
+            char c = hay[i + j];
+            if (c == '\0') return false;
+            if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+            if (c != needle[j]) break;
+            j++;
+        }
+        if (needle[j] == '\0') return true;
+    }
+    return false;
+}
+
+static void upper(const char *in, char *out, size_t cap)
+{
+    size_t n = 0;
+    for (; in[n] != '\0' && n + 1 < cap; ++n) {
+        char c = in[n];
+        out[n] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    out[n] = '\0';
+}
+
+int32_t pk_aero_db_airport_by_icao(const char *code)
+{
+    if (!aero_on() || code == NULL) return -1;
+    char q[8];
+    upper(code, q, sizeof(q));
+    for (int i = 0; i < NAPT; ++i)
+        if (strcmp(kApt[i].icao, q) == 0) return i;
+    return -1;
+}
+
+int pk_aero_db_airports_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    if (!aero_on() || aero_v2() || prefix == NULL || out == NULL) return 0;
+    char q[8];
+    upper(prefix, q, sizeof(q));
+    if (q[0] == '\0') return 0;
+    int n = 0;
+    for (int i = 0; i < NAPT && n < max; ++i)
+        if (has_prefix(kApt[i].icao, q)) out[n++] = (uint32_t)i;
+    return n;
+}
+
+int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    if (!aero_on() || aero_v2() || prefix == NULL || out == NULL) return 0;
+    char q[8];
+    upper(prefix, q, sizeof(q));
+    if (q[0] == '\0') return 0;
+    int n = 0;
+    for (int i = 0; i < NNAV && n < max; ++i)
+        if (has_prefix(kNav[i].ident, q)) out[n++] = (uint32_t)i;
+    return n;
+}
+
+int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max)
+{
+    /* FIX ident 索引 v2 就有，两版都正常——这一条**不受** aero_v2() 影响，
+     * 与真库一致（见 pk_aero_reader.h 文件头那张表）。 */
+    if (!aero_on() || prefix == NULL || out == NULL) return 0;
+    char q[8];
+    upper(prefix, q, sizeof(q));
+    if (q[0] == '\0') return 0;
+    int n = 0;
+    for (int i = 0; i < NFIX && n < max; ++i)
+        if (has_prefix(kFix[i].ident, q)) out[n++] = (uint32_t)i;
+    return n;
+}
+
+int pk_aero_db_navaid_by_ident(const char *ident, uint32_t *out, int max)
+{
+    if (!aero_on() || aero_v2() || ident == NULL || out == NULL) return 0;
+    char q[8];
+    upper(ident, q, sizeof(q));
+    int n = 0;
+    for (int i = 0; i < NNAV && n < max; ++i)
+        if (strcmp(kNav[i].ident, q) == 0) out[n++] = (uint32_t)i;
+    return n;
+}
+
+int pk_aero_db_search_substring(const char *query, pk_aero_hit_t *out, int max)
+{
+    if (!aero_on() || aero_v2() || query == NULL || out == NULL) return 0;
+    char q[32];
+    upper(query, q, sizeof(q));
+    if (q[0] == '\0') return 0;
+    int n = 0;
+    /* 段顺序同真实现：机场 → 导航台 → FIX。桩表里只有机场有名字。 */
+    for (int i = 0; i < NAPT && n < max; ++i) {
+        if (ci_has(kApt[i].name, q)) {
+            out[n].type = PK_AERO_SEC_AIRPORTS;
+            out[n].idx  = (uint32_t)i;
+            n++;
+        }
+    }
+    return n;
 }
 
 bool pk_aero_db_airport_get(uint32_t idx, pk_aero_airport_t *out)

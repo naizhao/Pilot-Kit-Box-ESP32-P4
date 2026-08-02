@@ -28,7 +28,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "i18n_catalog.h"    /* pk_tr_id_t — 标题按翻译条目 id 传 */
 
 /* 编辑缓冲上限（不含 NUL）。调用方给的 max_len 会被夹到这个数以内。
  *
@@ -39,8 +38,29 @@
  * 编译期断言钉住「调用方上限 ≤ 这个数」，免得出现屏上敲得进、存下来被截断。 */
 #define PK_KBD_TEXT_MAX  26
 
-/* 打开编辑器。initial 为 NULL 或空串即从空开始；max_len 是允许的字符数。 */
-void pk_keyboard_page_open(pk_tr_id_t title, const char *initial, int max_len);
+/* ── 结果回调 ──────────────────────────────────────────────────────
+ *
+ * 编辑器不知道自己在编什么：落 NVS、重开 BLE 广播、发起一次搜索，都是宿主
+ * 的事。原先这两个是**全局弱符号**（照 pk_ui_nav.c 的做法），设置页提供强
+ * 符号占住了它们——那在"全机只有一个调用者"时成立，多一个（搜索页）就散架：
+ * 链接期只能有一个强符号，敲完 ZGGG 按确定会去改设备名。改成随 open 传入的
+ * 函数指针，谁打开谁负责收结果。
+ *
+ * commit 收到的 text 是**栈上的临时缓冲**（见 pk_keyboard_page_touch_up），
+ * 回调返回后即失效——要留就自己拷走。 */
+typedef void (*pk_keyboard_commit_fn)(const char *text);
+typedef void (*pk_keyboard_cancel_fn)(void);
+
+/* 打开编辑器。initial 为 NULL 或空串即从空开始；max_len 是允许的字符数。
+ * on_commit / on_cancel 可为 NULL（那就是"编完什么也不做"）。
+ *
+ * title 收的是**已经取好的串**（调用方自己 pk_i18n_text()），不是翻译条目
+ * id：搜索页的标题是一条不进 catalog 的 ASCII 常量（见 search_page.h 顶部
+ * 关于中文的那一段），拿不出 id 来。串必须活过整个编辑期——catalog 里的
+ * 译文和 .rodata 字面量都满足，栈上的临时缓冲不满足。 */
+void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
+                           pk_keyboard_commit_fn on_commit,
+                           pk_keyboard_cancel_fn on_cancel);
 
 /* 当前是否处于编辑态。渲染与触摸的分派靠它——键盘不是独立的 pk_ui_mode_t，
  * 它是设置页之上的模态层，模式循环里不该出现一个「键盘页」。 */
@@ -52,10 +72,3 @@ void pk_keyboard_page_render(uint16_t *fb);
 bool pk_keyboard_page_touch(int x, int y);
 void pk_keyboard_page_touch_up(void);
 void pk_keyboard_page_touch_cancel(void);
-
-/* ── 结果回调（弱符号，照 pk_ui_nav.c 的做法）──────────────────────
- *
- * 编辑器不知道自己在编什么：落 NVS、重开 BLE 广播都是宿主的事。固件侧由
- * settings_page.c 提供强符号，模拟器不提供、链接照样通过。 */
-void pk_keyboard_page_on_commit(const char *text);
-void pk_keyboard_page_on_cancel(void);

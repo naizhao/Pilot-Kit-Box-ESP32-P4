@@ -915,4 +915,69 @@ STRINGS = [
     # 底图数据是 OSM(ODbL)，商用去掉 OSM 署名有合规风险，不可只留自家名。
     ("MAP_ATTRIBUTION", {"en": "© Pilot Kit Map  © OpenStreetMap",
                          "zh": "© Pilot Kit Map  © OpenStreetMap"}),
+
+    # ══════════════════════════════════════════════════════════════════
+    # 航空数据搜索页（search_page.c）
+    #
+    # 这一页曾经整页写死 ASCII 英文字面量，理由是「本页的内容（机场名、
+    # ident）本来就只能是 ASCII」。那个理由只覆盖**数据**，不覆盖**框架文字**：
+    # 标题、分组标题、三种空态的提示语全是给人读的散文，中文语言下顶着一屏
+    # 英文，与地图/交通/诊断三页的做法不一致。
+    #
+    # 两条词条**刻意不在这里另立一份**（同「朝向那两个词」的先例）：
+    #   · CLEAR 清除钮 → KBD_CLEAR，与键盘上那枚同词同义同动作；
+    #   · 没有本机位置该怎么办 → TFC_NO_OWN_HINT，交通页那一句已经把两条
+    #     来源（等 GPS 定位 / 自己绑定本机）说全了，两处各写一份迟早说岔。
+    #
+    # 类型徽章 APT / NAV / FIX 也不进表：与 HDG / QNH / ICAO 同一条原则——
+    # 标准航空缩写一律不译，中文飞行员本来就这么读。
+    #
+    # 宽度账（可用宽 = 784 − 16 = 768；XS 档 ASCII 10 / 汉字 15，
+    # S 档 ASCII 11 / 汉字 17）：
+    #   NO_DB_ABSENT (XS)  6 汉字 90 + 29 拉丁 290 = 380 ≤ 768
+    #   NO_MATCH_HINT(XS) 12 汉字 180 + 15 拉丁 150 = 330 ≤ 768
+    #   PLACEHOLDER  (S )  9 汉字 153 + 11 拉丁 121 = 274 ≤ 754（有清除钮时更窄）
+    #   NO_POS       (S ) 13 汉字 221                      ≤ 768
+    # 圆括号一律不用：AA 字库里 '(' ')' 的字形几乎与方括号同形，屏上读成
+    # "[ZGGG]"（英文侧已经因此改过一轮，中文侧不重蹈）。
+    # ══════════════════════════════════════════════════════════════════
+    ("SEARCH_TITLE", {"en": "SEARCH", "zh": "搜索"}),
+    ("SEARCH_CLOSE", {"en": "CLOSE", "zh": "关闭"}),
+    # 输入框占位。写清楚"能搜什么"而不是只写"搜索"：这台盒子没有实体键盘，
+    # 用户点一下才弹软键盘，点之前得先知道值不值得点。
+    ("SEARCH_PLACEHOLDER", {"en": "TAP TO TYPE - ICAO / IDENT / NAME",
+                            "zh": "点击输入 ICAO / 识别码 / 名称"}),
+    ("SEARCH_SEC_NEARBY",  {"en": "NEARBY AIRPORTS", "zh": "附近机场"}),
+    ("SEARCH_SEC_RECENT",  {"en": "RECENT SEARCHES", "zh": "最近搜索"}),
+    ("SEARCH_SEC_RESULTS", {"en": "RESULTS", "zh": "搜索结果"}),
+    # 第 5 桶（名称子串顺扫）真机要好几秒，这一态用户一定看得见。
+    ("SEARCH_BUSY",        {"en": "SEARCHING ...", "zh": "搜索中 ..."}),
+    ("SEARCH_NO_HISTORY",  {"en": "NO RECENT SEARCHES YET", "zh": "还没有搜索记录"}),
+    # 库未就绪：标题一句，成因靠下面三条 HINT 分（同 diag 页「同一症状、
+    # 不同 HINT」的写法）。
+    ("SEARCH_NO_DB",        {"en": "AERO DATABASE NOT AVAILABLE",
+                             "zh": "航空数据库不可用"}),
+    ("SEARCH_NO_DB_ABSENT", {"en": "INSERT A microSD CARD WITH /aero/pk_aero.bin",
+                             "zh": "请插入含 /aero/pk_aero.bin 的 microSD 卡"}),
+    ("SEARCH_NO_DB_LOAD",   {"en": "DATABASE IS STILL LOADING - TRY AGAIN IN A MOMENT",
+                             "zh": "数据库仍在加载——稍后再试"}),
+    ("SEARCH_NO_DB_ERR",    {"en": "DATABASE ERROR - SEE DIAGNOSTICS PAGE",
+                             "zh": "数据库出错——详见诊断页"}),
+    # v2 卡：前缀与子串索引全缺席，返回 0 条不是"没有这个机场"。这两句必须
+    # 让用户看出该换卡，否则他会反复重敲同一个代码。
+    ("SEARCH_NO_INDEX",      {"en": "v2 DATA PACK - NO SEARCH INDEX ON THIS CARD",
+                              "zh": "v2 数据包——本卡没有搜索索引"}),
+    ("SEARCH_NO_INDEX_HINT", {"en": "COPY A v3 PACK TO THE CARD TO SEARCH BY CODE",
+                              "zh": "拷入 v3 数据包才能按代码搜索"}),
+    # 真的没命中。提示给两个能照着敲的例子——"换个词试试"等于没说。
+    ("SEARCH_NO_MATCH",      {"en": "NO MATCH", "zh": "无匹配"}),
+    ("SEARCH_NO_MATCH_HINT", {"en": "TRY AN ICAO CODE LIKE ZGGG OR A NAVAID IDENT LIKE SZA",
+                              "zh": "试试 ICAO 代码 ZGGG，或导航台识别码 SZA"}),
+    # 「附近」这一组要本机位置才算得出距离；提示语复用 TFC_NO_OWN_HINT。
+    ("SEARCH_NO_POS",    {"en": "NO OWN POSITION - NEARBY LIST UNAVAILABLE",
+                          "zh": "无本机位置——附近列表不可用"}),
+    # 有位置、库也正常，就是这一带没有机场（比如远海）。与上一条成因完全
+    # 不同：那一种要等定位，这一种等也没用。
+    ("SEARCH_NO_NEARBY", {"en": "NO AIRPORT IN RANGE OF THIS POSITION",
+                          "zh": "该位置附近没有机场"}),
 ]

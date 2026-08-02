@@ -43,6 +43,7 @@ idf_component_register(
         "settings_page.c"
         "settings_draw.c"
         "keyboard_page.c"
+        "search_page.c"
         "config_ble.c"
         "config_demo.c"
         "demo_data.c"

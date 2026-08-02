@@ -679,50 +679,91 @@ static bool rev_emit(pk_aero_db_t *db, uint8_t type,
     return false;
 }
 
-/* 顺扫一段的字符串池。返回 true 表示 out 已满。 */
-static bool scan_pool(pk_aero_db_t *db, uint8_t type,
-                      const pk_aero_section_t *sec,
-                      const pk_aero_section_t *idx_sec,
-                      const uint8_t *q, size_t qlen,
-                      pk_aero_hit_t *out, int *n, int max)
+/* 一段池的扫描结果。 */
+typedef enum {
+    SCAN_BUDGET_OUT = 0,   /* 预算用完，本段还没扫完（*off 是续扫点）*/
+    SCAN_SECTION_DONE,     /* 本段扫尽 */
+    SCAN_FULL,             /* out 写满 max，整个搜索可以收工 */
+} scan_res_t;
+
+/* 顺扫一段字符串池的 [*off, …) 区间，最多扫 budget 字节（budget==0 = 不限）。
+ * *off 由调用方跨调用持有；传 0 表示从本段开头扫起。 */
+static scan_res_t scan_pool_range(pk_aero_db_t *db, uint8_t type,
+                                  const pk_aero_section_t *sec,
+                                  const pk_aero_section_t *idx_sec,
+                                  const uint8_t *q, size_t qlen,
+                                  pk_aero_hit_t *out, int *n, int max,
+                                  uint32_t *off, uint32_t budget)
 {
     if (sec->strings_off == 0 || sec->strings_size <= 1 || idx_sec->n == 0)
-        return false;
+        return SCAN_SECTION_DONE;
     const char *base = (const char *)(db->payload + sec->strings_off);
-    uint32_t off = 1;                    /* 偏移 0 是"无"哨兵（单个 NUL）*/
-    while (off < sec->strings_size) {
-        const char *s = base + off;
+    if (*off < 1) *off = 1;              /* 偏移 0 是"无"哨兵（单个 NUL）*/
+    uint32_t used = 0;
+    while (*off < sec->strings_size) {
+        const char *s = base + *off;
         size_t len = strlen(s);
         db->stats.pool_bytes += (uint64_t)len + 1;
         db->stats.pool_strings++;
         if (ci_contains(s, q, qlen)) {
             db->stats.pool_hits++;
-            if (rev_emit(db, type, idx_sec, off, out, n, max)) return true;
+            if (rev_emit(db, type, idx_sec, *off, out, n, max)) return SCAN_FULL;
         }
-        off += (uint32_t)len + 1;
+        *off += (uint32_t)len + 1;
+        used += (uint32_t)len + 1;
+        /* 预算判定放在**推进游标之后**：下次进来从下一条串扫起，
+         * 不会把同一条串数两遍（那会让去重之外的 stats 计数虚高）。 */
+        if (budget != 0 && used >= budget) return SCAN_BUDGET_OUT;
     }
-    return false;
+    return SCAN_SECTION_DONE;
+}
+
+bool pk_aero_search_substring_step(pk_aero_db_t *db, const char *query,
+                                   pk_aero_hit_t *out, int max,
+                                   pk_aero_search_cursor_t *cur,
+                                   uint32_t budget_bytes)
+{
+    if (!db || !out || max <= 0 || !cur) return true;
+    uint8_t q[PK_AERO_QUERY_MAX];
+    int qlen = norm_query(query, q, sizeof q);
+    if (qlen <= 0) { cur->stage = 3; return true; }
+
+    while (cur->stage < 3) {
+        /* 段顺序即结果顺序的一部分，必须与 Python SEARCH_SECTIONS 一致 */
+        uint8_t type;
+        const pk_aero_section_t *sec, *idx;
+        if (cur->stage == 0) {
+            type = PK_AERO_SEC_AIRPORTS;
+            sec = &db->sec_airport; idx = &db->sec_idx_apt_name;
+        } else if (cur->stage == 1) {
+            type = PK_AERO_SEC_NAVAIDS;
+            sec = &db->sec_navaid;  idx = &db->sec_idx_nav_name;
+        } else {
+            type = PK_AERO_SEC_WAYPOINTS_FIX;
+            sec = &db->sec_fix;     idx = &db->sec_idx_fix_name;
+        }
+        scan_res_t r = scan_pool_range(db, type, sec, idx, q, (size_t)qlen,
+                                       out, &cur->n, max, &cur->off,
+                                       budget_bytes);
+        if (r == SCAN_FULL)       { cur->stage = 3; return true; }
+        if (r == SCAN_BUDGET_OUT) return false;
+        cur->stage++;
+        cur->off = 0;
+        /* 分段模式下换段也要让渡一次：否则"这一段刚好只剩几十字节"时，
+         * 单次调用会连着把下一整段扫掉，预算就形同虚设。 */
+        if (budget_bytes != 0 && cur->stage < 3) return false;
+    }
+    return true;
 }
 
 int pk_aero_search_substring(pk_aero_db_t *db, const char *query,
                              pk_aero_hit_t *out, int max)
 {
     if (!db || !out || max <= 0) return 0;
-    uint8_t q[PK_AERO_QUERY_MAX];
-    int qlen = norm_query(query, q, sizeof q);
-    if (qlen <= 0) return 0;
-
-    int n = 0;
-    /* 段顺序即结果顺序的一部分，必须与 Python SEARCH_SECTIONS 一致 */
-    if (scan_pool(db, PK_AERO_SEC_AIRPORTS, &db->sec_airport,
-                  &db->sec_idx_apt_name, q, (size_t)qlen, out, &n, max))
-        return n;
-    if (scan_pool(db, PK_AERO_SEC_NAVAIDS, &db->sec_navaid,
-                  &db->sec_idx_nav_name, q, (size_t)qlen, out, &n, max))
-        return n;
-    scan_pool(db, PK_AERO_SEC_WAYPOINTS_FIX, &db->sec_fix,
-              &db->sec_idx_fix_name, q, (size_t)qlen, out, &n, max);
-    return n;
+    /* 不限预算 = 一口气扫完，行为与分段版逐字节一致（同一份 scan_pool_range）。*/
+    pk_aero_search_cursor_t cur = { 0, 0, 0 };
+    while (!pk_aero_search_substring_step(db, query, out, max, &cur, 0)) { }
+    return cur.n;
 }
 
 /* ------------------------------------------------------------------ */

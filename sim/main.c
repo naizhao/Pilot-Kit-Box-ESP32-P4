@@ -84,6 +84,7 @@
 #include "config_devname.h"   /* PK_DEVNAME_MAX_LEN —— 键盘页的上限跟真机同一个数 */
 #include "diag_page.h"
 #include "keyboard_page.h"
+#include "search_page.h"
 #include "settings_page.h"
 #include "boot_splash.h"
 #include "traffic_page.h"
@@ -375,7 +376,33 @@ static int run_headless(float at_sec, const char *out)
                     }
                 }
             }
+            /*
+             * PK_SIM_MAP_PIN=<lat>,<lon>[,<label>]：摆一枚搜索结果 PIN，
+             * 用来核对它在各种底图颜色上都读得出来、且不被 ADS-B 目标压住。
+             * 真机上这一步由搜索页点结果时调 pk_map_page_goto + set_pin 完成，
+             * 这里直接调同两个公开接口，走的是同一条路径。
+             */
+            {
+                const char *p = getenv("PK_SIM_MAP_PIN");
+                if (p != NULL && p[0] != '\0') {
+                    double plat = 0, plon = 0;
+                    char label[16] = "";
+                    if (sscanf(p, "%lf,%lf,%15s", &plat, &plon, label) >= 2) {
+                        pk_map_page_set_pin(plat, plon, label);
+                        pk_map_page_goto(plat, plon, 11);
+                    }
+                }
+            }
             pk_map_page_render(fb);
+        } else if (strcmp(page, "search") == 0) {
+            /* 航空数据搜索页。真机上由地图页右侧那枚放大镜打开，这里直接调
+             * open()——与诊断详情页用 PK_SIM_DIAG_DETAIL 跳进去是同一个套路。
+             *
+             * 数据要 PK_SIM_AERO=1 才有（同地图叠加层）；不给就能截到
+             * 「数据库不可用」那一屏。摆哪一态由 search_page.c 的截图钩子读
+             * 环境变量决定：PK_SIM_SEARCH / _HIST / _SCROLL，见那边的注释。 */
+            pk_search_page_open();
+            pk_search_page_render(fb);
         } else if (strcmp(page, "keyboard") == 0) {
             /* 键盘编辑器。真机上它由设置页那一行点开（pk_settings_apply
              * 的 case 8），模拟器直接调 open() —— 这与诊断详情页那边用
@@ -385,8 +412,9 @@ static int run_headless(float at_sec, const char *out)
              * 给满 PK_DEVNAME_MAX_LEN 个字符 = 计数器转警示色的那一态。
              * 上限跟着真机的宏走，不写字面量：写死过一次 10，上限一改
              * 模拟器就在演一个真机上不存在的键盘。 */
-            pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME,
-                                  getenv("PK_SIM_KBD"), PK_DEVNAME_MAX_LEN);
+            pk_keyboard_page_open(pk_i18n_text(PK_TR_SETTINGS_DEVNAME),
+                                  getenv("PK_SIM_KBD"), PK_DEVNAME_MAX_LEN,
+                                  NULL, NULL);
             pk_keyboard_page_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);

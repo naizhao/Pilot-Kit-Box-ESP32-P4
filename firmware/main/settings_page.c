@@ -152,6 +152,25 @@ int pk_settings_cursor_row(void)
 }
 
 /*
+ * 键盘编辑器按下「确定」——设备名那一行的收尾。
+ *
+ * 编辑器本身不知道自己在编什么（它是个通用的受限 ASCII 输入框），落 NVS 与
+ * 重开广播都归设置页。两步顺序不能反：先存，再让 ble_gatt 按存好的值重拼名字。
+ *
+ * 2026-08-02：由全局弱符号 pk_keyboard_page_on_commit 改成随 open 传进去的
+ * 函数指针。原因见 keyboard_page.h——搜索页也要用这块键盘，而链接期只容得下
+ * 一个强符号，再来一个调用者就会互相顶掉。
+ */
+static void devname_commit(const char *text)
+{
+    pk_devname_set(text);
+    /* 改名不必重启整机——广播停掉重开就行（与 BLE 总开关那行不同，那个受
+     * hosted 握手必须排在点屏之前那条硬约束限制，只能下次开机生效）。 */
+    pk_ble_device_name_apply();
+    ESP_LOGI(TAG, "device name committed: \"%s\"", pk_ble_device_name());
+}
+
+/*
  * 执行一次设置变更。row 是设置页的行号，v 的含义随控件而定：
  * 分段=段序号，步进器=±1，按钮=0。
  *
@@ -204,8 +223,8 @@ void pk_settings_apply(int row, int v)
                * 后缀会就此进了正文——用户设了名之后广播名里本来是没有它的。 */
         { char cur[PK_DEVNAME_BUF_SIZE];
           pk_devname_get(cur, sizeof(cur));
-          pk_keyboard_page_open(PK_TR_SETTINGS_DEVNAME, cur,
-                                PK_DEVNAME_MAX_LEN); }
+          pk_keyboard_page_open(pk_i18n_text(PK_TR_SETTINGS_DEVNAME), cur,
+                                PK_DEVNAME_MAX_LEN, devname_commit, NULL); }
         break;
 
     case 9:   /* 演示模式（安全件，见 config_demo.h）。
@@ -229,19 +248,4 @@ void pk_settings_apply(int row, int v)
     default:
         break;
     }
-}
-
-/*
- * 键盘编辑器按下「确定」——keyboard_page.c 里那个弱符号的强实现。
- *
- * 编辑器本身不知道自己在编什么（它是个通用的受限 ASCII 输入框），落 NVS 与
- * 重开广播都归设置页。两步顺序不能反：先存，再让 ble_gatt 按存好的值重拼名字。
- */
-void pk_keyboard_page_on_commit(const char *text)
-{
-    pk_devname_set(text);
-    /* 改名不必重启整机——广播停掉重开就行（与 BLE 总开关那行不同，那个受
-     * hosted 握手必须排在点屏之前的硬约束限制，只能下次开机生效）。 */
-    pk_ble_device_name_apply();
-    ESP_LOGI(TAG, "device name committed: \"%s\"", pk_ble_device_name());
 }

@@ -115,12 +115,21 @@ int pk_aero_db_airports_by_prefix(const char *prefix, uint32_t *out, int max);
 int pk_aero_db_navaids_by_prefix(const char *prefix, uint32_t *out, int max);
 int pk_aero_db_fixes_by_prefix(const char *prefix, uint32_t *out, int max);
 
-/* 子串搜索（pk_aero_search_substring）**本轮不对外暴露**：它要顺扫 2.2 MB
- * 字符串池，P4 外推 40–120 ms，用现在这套"查询全程持 s_lock"的并发方案会
- * 把地图图层的后台快照查询和拔卡卸载一起堵住那么久。正确做法是分段让渡
- * （每扫若干 KB give/take 锁 + 每段复检 state/代数），但本轮没有搜索页 UI，
- * 没有消费者的并发代码无法被真实验证——等 P2 做搜索页时连同分段让渡一起
- * 落地。reader 侧的 pk_aero_search_substring 已就位，届时只补封装。 */
+/* ---- 子串搜索（名称/城市/IATA，分段让渡）--------------------------
+ *
+ * 唯一一个**不能**全程持锁的查询：顺扫 2.2 MB 字符串池，P4 真机实测 65 ms，
+ * 而 s_lock 同时罩着地图叠加层的后台快照查询与拔卡卸载路径。这里按设计文档
+ * §3.4 的方案一实现：每扫 64 KB give/take 一次锁，**每段开头复检
+ * state + 挂载代数**，卡被拔掉/换过就整体放弃（半截结果属于上一张卡，
+ * 不能拿来显示）。
+ *
+ * 因此它是**毫秒到百毫秒级**的：只许后台搜索任务调用，禁止渲染循环与触摸
+ * 回调。写满 max 就停并返回条数；v2 卡（无搜索索引）恒返回 0。 */
+int pk_aero_db_search_substring(const char *query, pk_aero_hit_t *out, int max);
+
+/* 库代数：每次发布（加载成功）与卸载（拔卡）各 +1。分段查询靠它识别
+ * "手里这份游标是不是上一张卡的"；UI 侧也可用它决定要不要重查。 */
+uint32_t pk_aero_db_generation(void);
 
 #ifdef __cplusplus
 }

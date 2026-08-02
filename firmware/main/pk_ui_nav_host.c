@@ -18,6 +18,8 @@
 #include "i18n_catalog.h"
 #include "imu_task.h"
 #include "diag_page.h"
+#include "map_page.h"
+#include "search_page.h"
 #include "ui_state.h"
 
 static const char *TAG = "nav_host";
@@ -95,6 +97,18 @@ void pk_ui_nav_on_back(void)
         return;
     }
     pk_ui_set_mode(PK_UI_MODE_DIAG);
+}
+
+/*
+ * 地图页右侧那枚放大镜 —— map_page.c 里弱符号 pk_map_page_on_search 的强实现。
+ *
+ * 落在这里而不是 pfd.c，理由同本文件开头那段：pfd.c 只负责画 PFD 那一页，
+ * 「页面之间怎么跳」归导航宿主。搜索页是模态层（不是 pk_ui_mode_t），
+ * 所以这里只是把它打开，不切 mode——用户仍然在地图页上，只是被盖住了。
+ */
+void pk_map_page_on_search(void)
+{
+    pk_search_page_open();
 }
 
 void pk_ui_nav_host_init(void)

@@ -96,10 +96,17 @@ static const char *const KBD_KEYS[KBD_ROW_CNT] = {
 /* ── 状态 ──────────────────────────────────────────────────────── */
 
 static bool       s_active;
-static pk_tr_id_t s_title;
+static const char *s_title = "";
 static int        s_max_len = PK_KBD_TEXT_MAX;
 static char       s_text[PK_KBD_TEXT_MAX + 1];
 static int        s_len;
+
+/* 本次编辑归谁（见 keyboard_page.h 的「结果回调」）。close_page() 不清它们：
+ * 「先关页再回调」是有意的顺序（回调里会写 NVS / 起后台任务，那时渲染任务
+ * 已经切回底下那一页），所以回调指针必须活过 close_page()。下一次 open()
+ * 会整组覆盖。 */
+static pk_keyboard_commit_fn s_on_commit;
+static pk_keyboard_cancel_fn s_on_cancel;
 
 /* 按下时的坐标，松手时才判定——与 settings/list/diag 三页同一套。
  * 键盘不滚动，所以没有 drag 与位移阈值：手指落在哪个键上，抬起就是哪个键。 */
@@ -214,7 +221,7 @@ void pk_keyboard_page_render(uint16_t *fb)
 
     /* 页首：标题走各页统一的标题字号/配色，切进来时顶部这条带不跳。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L,
-               (KBD_HDR_H - PK_UI_TITLE_H) / 2, pk_i18n_text(s_title),
+               (KBD_HDR_H - PK_UI_TITLE_H) / 2, s_title,
                PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 
     draw_button(fb, KBD_CLEAR_X0, KBD_BTN_Y0, KBD_BTN_W, KBD_BTN_H,
@@ -242,9 +249,13 @@ static void close_page(void)
     pk_ui_nav_set_fab_hidden(false);
 }
 
-void pk_keyboard_page_open(pk_tr_id_t title, const char *initial, int max_len)
+void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
+                           pk_keyboard_commit_fn on_commit,
+                           pk_keyboard_cancel_fn on_cancel)
 {
-    s_title   = title;
+    s_title     = (title != NULL) ? title : "";
+    s_on_commit = on_commit;
+    s_on_cancel = on_cancel;
     s_max_len = (max_len < 1) ? 1
               : (max_len > PK_KBD_TEXT_MAX ? PK_KBD_TEXT_MAX : max_len);
 
@@ -309,8 +320,9 @@ void pk_keyboard_page_touch_up(void)
      * 「视觉按 spec、命中放宽到整行」是同一条规矩。 */
     if (y < KBD_HDR_H) {
         if (x >= KBD_CANCEL_X0 && x < KBD_CANCEL_X0 + KBD_BTN_W) {
+            const pk_keyboard_cancel_fn cb = s_on_cancel;
             close_page();
-            pk_keyboard_page_on_cancel();
+            if (cb != NULL) cb();
         } else if (x >= KBD_CLEAR_X0 && x < KBD_CLEAR_X0 + KBD_BTN_W) {
             s_len = 0;
             s_text[0] = '\0';
@@ -332,20 +344,10 @@ void pk_keyboard_page_touch_up(void)
          * 已经切回设置页，不会再去读这边正在被改的缓冲。 */
         char out[PK_KBD_TEXT_MAX + 1];
         memcpy(out, s_text, (size_t)s_len + 1);
+        const pk_keyboard_commit_fn cb = s_on_commit;
         close_page();
-        pk_keyboard_page_on_commit(out);
+        if (cb != NULL) cb(out);
     } else {
         text_append(k);
     }
-}
-
-/* ── 结果回调的默认实现（弱符号）───────────────────────────────── */
-
-__attribute__((weak)) void pk_keyboard_page_on_commit(const char *text)
-{
-    (void)text;
-}
-
-__attribute__((weak)) void pk_keyboard_page_on_cancel(void)
-{
 }

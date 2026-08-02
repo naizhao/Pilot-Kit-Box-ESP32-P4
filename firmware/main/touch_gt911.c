@@ -37,6 +37,7 @@
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "keyboard_page.h"
+#include "search_page.h"
 #include "settings_page.h"
 #include "pk_ui_nav.h"
 #include "pk_touch_arbiter.h"
@@ -168,28 +169,49 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             pk_diag_page_touch_cancel();
             pk_settings_page_touch_cancel();
             pk_keyboard_page_touch_cancel();
+            pk_search_page_touch_cancel();
             pk_about_page_touch_cancel();
         } else switch (pk_touch_arbiter_press(&s_arb)) {
         case PK_TOUCH_ACTION_HITTEST:
-            /* 设置页那一条要先问键盘：编辑器是浮在设置页之上的模态层
-             * （渲染那侧同样是这个次序，见 pfd.c），设置页此刻在屏上根本
-             * 看不见，它的命中表却还留着上一帧的几何——不挡掉的话，点
-             * 「Q」会被判成点中了底下的某个分段控件。 */
-            eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
-                 || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
-                 || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
-                 || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
-                 || (m == PK_UI_MODE_SETTINGS  && (pk_keyboard_page_active()
-                        ? pk_keyboard_page_touch(lx, ly)
-                        : pk_settings_page_touch(lx, ly)))
-                 || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
+            /*
+             * 模态层先问，且与 mode 无关。
+             *
+             * 键盘编辑器与搜索页是浮在**某一页**之上的整屏层（渲染那侧同样是
+             * 这个次序，见 pfd.c）。底下那一页此刻在屏上根本看不见，它的命中表
+             * 却还留着上一帧的几何——不挡掉的话，点键盘上的「Q」会被判成点中了
+             * 设置页的某个分段控件。
+             *
+             * 原先这两条是写成 `m == PK_UI_MODE_SETTINGS && 键盘…` 的，等于把
+             * 「键盘只可能从设置页打开」这个当时的事实钉进了分派表；搜索页从
+             * 地图页打开，键盘又能从搜索页打开，那条 case 就再也覆盖不到。
+             * 模态层的归属只该由它自己的 active() 决定，与当前是哪一页无关。
+             */
+            if (pk_keyboard_page_active()) {
+                eaten = pk_keyboard_page_touch(lx, ly);
+            } else if (pk_search_page_active()) {
+                eaten = pk_search_page_touch(lx, ly);
+            } else {
+                eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
+                     || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
+                     || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
+                     || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
+                     || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
+                     || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
+            }
             /* 归属就此定死，松手前不再回头问——这一行是「拖 FAB 拖到一半
              * 被列表抢走」那个 bug 的闸门，别改成每帧重判。 */
             pk_touch_arbiter_settle(&s_arb, eaten);
             break;
 
         case PK_TOUCH_ACTION_DRAG:
-            if (m == PK_UI_MODE_MAP) {
+            /* 模态层同样排在最前，理由同上：这次按压归了模态层，后续帧就不能
+             * 落到底下那一页的滚动上。键盘不滚动但仍然要吃掉（不吃就漏给
+             * LVGL 或底下的页面），搜索页要滚。 */
+            if (pk_keyboard_page_active()) {
+                eaten = true;
+            } else if (pk_search_page_active()) {
+                eaten = pk_search_page_drag(lx, ly);
+            } else if (m == PK_UI_MODE_MAP) {
                 /* 地图页没有独立的 drag() 入口——单指拖动平移的每一帧都重复调
                  * pk_map_page_touch()，由它内部的按下/续行状态机区分"新按下"
                  * 还是"接着上一次拖"（见 map_page.h 顶部注释）。 */
@@ -197,10 +219,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             } else if (m == PK_UI_MODE_DIAG) {
                 eaten = pk_diag_page_drag(lx, ly);
             } else if (m == PK_UI_MODE_SETTINGS) {
-                /* 键盘不滚动，按住不放的后续帧没有它要做的事——但仍然要**吃掉**：
-                 * 不吃就会落到设置页的滚动上（编辑器底下那一页会被悄悄滚走），
-                 * 或者漏给底下的 LVGL 控件。 */
-                eaten = pk_keyboard_page_active() || pk_settings_page_drag(lx, ly);
+                eaten = pk_settings_page_drag(lx, ly);
             } else if (m == PK_UI_MODE_ABOUT) {
                 /* 关于页正文比屏高，同样要按住不放地连续滚动，判定与 diag/settings 一致。 */
                 eaten = pk_about_page_drag(lx, ly);
@@ -235,6 +254,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();
         pk_keyboard_page_touch_up();
+        pk_search_page_touch_up();
         pk_about_page_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
