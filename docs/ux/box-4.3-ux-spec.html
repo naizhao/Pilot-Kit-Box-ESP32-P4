@@ -88,15 +88,42 @@ h3{font-size:13px;margin:20px 0 4px;color:#9ec4ff}
   transform:translateX(-50%)}
 .tg{position:absolute;width:1.1mm;height:1.1mm;background:var(--normal);transform:rotate(45deg)}
 .tg.rd{background:var(--alert)}
-/* dock */
-.dk{position:absolute;left:1.4mm;right:9.8mm;bottom:1.9mm;height:6.6mm;
-  background:rgba(10,16,30,.93);border:1px solid #3a5080;border-radius:.7mm;
-  display:flex;padding:.6mm;gap:.5mm;z-index:8}
-.dk b{flex:1;display:flex;align-items:center;justify-content:center;border-radius:.5mm;
-  background:#1b2740;color:#a8c0e0;font-weight:400;font-size:2.5mm}
-.dk b.on{background:var(--sel);color:#fff;font-weight:700}
-.dk .sp{width:1px;background:#3a5080;margin:.7mm .4mm;flex:0 0 1px}
-.dk .ac{flex:0 0 10.5mm;background:#243350;border:1px solid #4a648f;color:#c8d6ea;font-weight:700}
+/* ── 全屏导航网格（2026-08-02 取代横向 dock）──────────────────────
+   版面真源：firmware/main/nav_grid_page.h / .c
+   顶栏 48px 不遮 · 网格 y48–360（4×2，格 200×156）· 分页点 y368
+   动作条 y392–480（88px，三等分）· 遮罩 232/255 → 保留 9.4% 原亮度 */
+.ngov{position:absolute;left:0;right:0;top:5.62mm;bottom:0;
+  background:rgba(0,0,0,.906);z-index:8}
+.ng{display:grid;grid-template-columns:repeat(4,23.43mm);
+  grid-template-rows:repeat(2,18.27mm)}
+.ngc{position:relative;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:1.17mm;color:var(--txt)}
+.ngc>*{position:relative;z-index:1}
+.ngc b{font-weight:400;font-size:3.0mm;line-height:1}
+.ngc .ngi{width:7.5mm;height:7.5mm;display:block}
+.ngc .ngi svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.ngc .ngi svg.f{fill:currentColor;stroke:none}
+.ngc.off{color:#3d4d6b}                        /* 置灰占位：记录 / 工具 */
+.ngc.sel::before{content:"";position:absolute;z-index:0;left:.94mm;right:.94mm;
+  top:.7mm;bottom:.7mm;border:.35mm solid var(--sel);border-radius:1.9mm;
+  background:#122244}
+.ngd{position:absolute;left:0;right:0;top:37.48mm;display:flex;
+  justify-content:center;gap:1.64mm}
+.ngd i{width:1.41mm;height:1.41mm;border-radius:50%;background:var(--line)}
+.ngd i.on{background:var(--sel)}
+.nga{position:absolute;left:0;right:0;bottom:0;height:10.31mm;box-sizing:border-box;
+  background:var(--bar);border-top:1px solid var(--line);display:flex;
+  align-items:center;z-index:10}
+.nga span{flex:1;text-align:center;font-size:3.0mm;color:var(--dim)}
+.nga span.lv{color:var(--warn)} .nga span.on{color:var(--txt)}
+/* 亮度快调 pop：面板 400×84，按钮 120×64，四边留白同一个 pad=10 */
+.ngp{width:46.86mm;height:9.84mm;background:var(--bg);border-radius:1.6mm;
+  box-shadow:0 0 0 .23mm var(--line);display:flex;align-items:center;
+  justify-content:center;gap:1.17mm}
+.ngp span{width:14.06mm;height:7.5mm;border-radius:1.17mm;display:flex;
+  align-items:center;justify-content:center;font-size:3.0mm;color:var(--dim)}
+.ngp span.on{background:var(--sel);color:#fff}
 
 /* ── 雷达 ── */
 .rd{flex:1;position:relative;background:radial-gradient(circle at 50% 50%,#0b1424,#060a13)}
@@ -202,16 +229,17 @@ h3{font-size:13px;margin:20px 0 4px;color:#9ec4ff}
 .skip{position:absolute;right:2.5mm;bottom:2.5mm;padding:1.4mm 3mm;border-radius:.7mm;
   background:#1b2740;border:1px solid #3a5080;color:#a8c0e0;font-size:2.5mm;font-weight:700}
 
-/* ── TARE 三态 ── */
-.tst{display:flex;gap:8mm;margin-top:8px;align-items:flex-start}
-.tb{width:21mm;height:6.6mm;border-radius:.7mm;font:700 2.5mm/1 "SF Mono",monospace;
-  display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
-.tb.i{background:#243350;border:1px solid #4a648f;color:#c8d6ea}
-.tb.h{background:#243350;border:1px solid var(--warn);color:#fff}
+/* ── 调平四态（导航网格动作条最左一格，266 × 88 px 实尺寸）── */
+.tst{display:flex;gap:5mm;margin-top:8px;align-items:flex-start;flex-wrap:wrap}
+.tb{width:31.2mm;height:10.31mm;background:var(--bar);border-top:1px solid var(--line);
+  font:400 3.0mm/1 system-ui;display:flex;align-items:center;justify-content:center;
+  position:relative;overflow:hidden}
+.tb.i{color:var(--warn)}
+.tb.h{color:#fff}
 .tb.h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:62%;
   background:linear-gradient(90deg,rgba(255,180,63,.55),rgba(255,180,63,.28))}
 .tb.h span{position:relative;z-index:1}
-.tb.d{background:#14301f;border:1px solid var(--up);color:var(--up)}
+.tb.d{color:var(--up)}
 
 /* ── 返回按钮（顶栏左侧，整块可点） ── */
 .back{display:flex;align-items:center;gap:1mm;background:#1b2740;border:1px solid #3a5080;
@@ -258,9 +286,11 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 <h1>Pilot Kit Box · 4.3″ UX 设计稿</h1>
 <p class="meta">
 硬件：微雪 ESP32-P4-WIFI6-Touch-LCD-4.3（480×800 原生竖屏 → PPA 旋转 90° 为 <b>800×480 横屏</b>，GT911 五点电容触摸）<br>
-交互：<b>无物理按键</b>（deep sleep 取消 · 板载 POWER 为硬件开关）· 全触摸 · <b>FAB 点击展开横向 dock</b><br>
+交互：<b>无物理按键</b>（deep sleep 取消 · 板载 POWER 为硬件开关）· 全触摸 · <b>FAB 点击打开全屏导航网格</b><br>
 框架：<b>LVGL v9</b> + esp_lvgl_adapter（PPA 旋转 / 防撕裂）· 最终目标屏 5″ 800×480 半反半透，同分辨率可 1:1 迁移<br>
-版本：v2（物理尺寸修订版）· 2026-07-27
+版本：v2（物理尺寸修订版）· 2026-07-27 ·
+<b style="color:var(--warn)">v2.1 修订 2026-08-02</b>：横向 dock 在 800×480 上溢出 41 px，
+改为<b>全屏导航网格</b>（§3 / §3.5 / §11 / §13 / §14 已重画，原委见 §3 的宽度账）
 </p>
 
 <div class="calib">
@@ -311,7 +341,7 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 <b>低于 18 px（2.1 mm）的字号一律不得出现在设计中。</b>
 </div>
 
-<h2>2 · PFD 主页（默认 · dock 收起）</h2>
+<h2>2 · PFD 主页（默认 · 菜单未开）</h2>
 <div class="row">
   <div class="scr">
     <div class="bar"><span>HDG 359°</span>
@@ -338,7 +368,7 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 </div>
 <p class="cap">顶栏 5.6mm(48px) · 主区 25mm(214px)：速度带 11.7mm(100px) ｜ 姿态 70.3mm(600px) ｜ 高度带 11.7mm(100px) · 底部 HSI 16.4mm(140px)。姿态区刻意留空。</p>
 
-<h2>3 · PFD 主页（FAB 展开 dock）</h2>
+<h2>3 · PFD 主页（FAB 打开全屏导航网格 · 第 1 页）</h2>
 <div class="scr">
   <div class="bar"><span>HDG 359°</span>
     <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
@@ -355,12 +385,97 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
       <span>23000</span><div class="cu">23225</div></div><div class="cv">VS +1408</div></div>
   </div>
   <div class="hs"><div class="ro"></div><div class="nl"></div>
-    <div class="tg rd" style="left:31%;top:28%"></div>
-    <div class="dk"><b class="on">PFD</b><b>交通</b><b>列表</b><b>设置</b><b>关于</b><b>诊断</b>
-      <span class="sp"></span><b class="ac">调平</b></div></div>
-  <div class="fb">✕</div>
+    <div class="tg rd" style="left:31%;top:28%"></div></div>
+  <!-- 覆盖层：只压 y≥48px，顶栏原样留着；FAB 打开即隐藏 -->
+  <div class="ngov">
+    <div class="ng">
+      <div class="ngc sel"><span class="ngi"><svg class="f" viewBox="0 0 24 24"><path d="M12 1.8l1.25 6.7 8.75 5v1.8l-8.75-2.5v6.3l2.9 2.5v1.1L12 21.2l-4.15 1.5v-1.1l2.9-2.5v-6.3L2 15.3v-1.8l8.75-5z"/></svg></span><b>PFD</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span><b>交通</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M9 3.5 3 6v14.5l6-2.5 6 2.5 6-2.5V3.5l-6 2.5z"/><path d="M9 3.5v14.5M15 6v14.5"/></svg></span><b>地图</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M9.4 7h10.6M9.4 12h10.6M9.4 17h10.6"/><circle cx="4.6" cy="7" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="17" r="1.3" fill="currentColor" stroke="none"/></svg></span><b>列表</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.6"/><path d="m15.4 15.4 5.4 5.4"/></svg></span><b>搜索</b></div>
+      <div class="ngc off"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M3.4 9.6A8.8 8.8 0 1 1 3.2 14"/><path d="M3.2 4.4v5.2h5.2"/><path d="M12 7.6V12l3.4 2"/></svg></span><b>记录</b></div>
+      <div class="ngc off"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M20.3 4.6a4.6 4.6 0 0 1-6 6L6.7 18.2a2 2 0 1 1-2.8-2.8l7.6-7.6a4.6 4.6 0 0 1 6-6l-3 3 2.8 2.8z"/></svg></span><b>工具</b></div>
+      <div class="ngc"></div><!-- 第 8 格：余量，永久留空 -->
+    </div>
+    <div class="ngd"><i class="on"></i><i></i></div>
+    <div class="nga"><span class="lv">调平</span><span>屏幕亮度</span><span>关闭</span></div>
+  </div>
 </div>
-<p class="cap">dock 高 6.6mm(56px) · 6 页签各约 <b>11mm(94px)</b> 宽，远超 44px 触摸下限 · 分隔线右侧为动作区「调平」· 再点 FAB 或 5s 无操作收起。</p>
+<p class="cap">
+顶栏 5.6mm(48px) <b>不遮罩</b>（菜单期间电量 / GPS / 蓝牙照常可见）· 网格 4 列 × 2 行，格 <b>23.4 × 18.3mm(200 × 156px)</b>，
+远超 44px 触摸下限 · 每格 = 64px 图标 + 3.0mm(26px) 标签，整组在格内垂直居中 · 分页点 y=368、1.4mm(12px)，<b>仅状态指示不可点</b> ·
+动作条 10.3mm(88px) 三等分：<b style="color:var(--warn)">调平</b>（警示橙，唯一会改变仪表状态的动作）｜屏幕亮度｜关闭。<br>
+底页压暗 <b>232/255 → 保留 9.4% 原亮度</b>：地平线的明暗分界仍隐约可辨，飞行员不会在菜单打开的这两秒里失去姿态参照，
+但白底黑字的高度带 / 速度带不再能读出内容（初版 210 保留 18%，实测那些白框仍是抢眼的浅色矩形）。<br>
+<b>打开即藏 FAB</b>：网格铺满全屏且命中判定排在 LVGL 之前，FAB 留着就是"自己点不动、又盖住底下的格"，何况它可拖动、挡住哪一格不可预测。
+出口写在屏上。<b>三条退路</b>：① 动作条「关闭」② 第 1 页继续右滑 ③ <b>6 s</b> 无操作自动收起（真机走查后由 5 s 调大：网格内容比 dock 多，5 s 不够看完）。<br>
+三条动作文案<b>复用现有 catalog 词条</b>不另立（<code>PK_TR_ACT_LEVEL</code> / <code>PK_TR_SETTINGS_BRIGHTNESS</code> / <code>PK_TR_SEARCH_CLOSE</code>）；
+图标为 Material Symbols Outlined 64px 墨迹（<code>gen_nav_icons.py</code> 生成，cell 68px），本稿内为等尺寸近似示意。
+</p>
+
+<div class="warn">
+<b>为什么不是横向 dock（2026-08-02 改版的由来，删掉这段下一个人就会重新提议做 dock）</b><br>
+初版这里是一条从 FAB 那侧滑出的<b>横向 dock</b>：N 个导航页签 × 94px｜分隔线｜动作区「调平」。它在 800×480 上<b>排不下</b> ——
+按已删除的 <code>pk_ui_nav.c :: dock_width()</code> 算：<br>
+<code style="color:#ffd0d0">7 个页签 × 94 ＋ 分隔 8 ＋ 分隔线 1 ＋ 动作区 94 = 761 px</code><br>
+<code style="color:#ffd0d0">FAB 吸右后可用宽度 = 800 − (16 边距 + 56 FAB + 8 呼吸) = 720 px</code><br>
+<b>左侧溢出 41 px</b>：真机截图里最左那个页签渲染出来是「FD」。
+第 8 项（搜索）根本进不来，而页签已经窄到 94px；再缩窄就跌破 44px 触摸下限，换行则是"横向 dock"这个形态本身不成立。<br>
+一级页面已从 6 涨到 7（新增地图页），另有「记录」「工具」两个占位 —— 数量只会继续涨，
+而<b>网格再加项只是多一页</b>，不再有"排不下"这回事。方案 A / C 两版全屏网格原型经评审，<b>方案 C 拍板</b>（4×2 + 底部动作条 + 分页）。
+</div>
+
+<h3>第 2 页（3 项 · 末页刻意不居中）</h3>
+<div class="scr">
+  <div class="bar"><span>HDG 359°</span>
+    <span class="stt"><span style="color:var(--cyan)">●GPS</span><span style="color:var(--alert)">●REC</span>
+      <span style="color:var(--cyan)">●BLE</span><span style="color:var(--dim)">87%</span></span>
+    <span>ADSB 6</span></div>
+  <div class="mid">
+    <div class="tp s"><div class="bd"><span>450</span><span>400</span><span>350</span>
+      <span>300</span><div class="cu">378</div></div><div class="cv">700 km/h</div></div>
+    <div class="at"><div class="sk"></div><div class="gd"></div><div class="hz"></div>
+      <div class="pt" style="top:30%;width:20%"></div><div class="pt" style="top:41%;width:11%"></div>
+      <div class="pt" style="top:63%;width:11%"></div><div class="pt" style="top:74%;width:20%"></div>
+      <div class="pl">⊣ ▪ ⊢</div></div>
+    <div class="tp a"><div class="bd"><span>23600</span><span>23400</span><span>23200</span>
+      <span>23000</span><div class="cu">23225</div></div><div class="cv">VS +1408</div></div>
+  </div>
+  <div class="hs"><div class="ro"></div><div class="nl"></div>
+    <div class="tg rd" style="left:31%;top:28%"></div></div>
+  <div class="ngov">
+    <div class="ng">
+      <div class="ngc sel"><span class="ngi"><svg viewBox="0 0 24 24"><rect x="2.6" y="4.2" width="18.8" height="15.6" rx="2.6"/><path d="M5.6 12h2.9l1.6-3.2 2.6 6.4 1.6-3.2h3.7"/></svg></span><b>诊断</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/><path d="M19 12h2.4M16.95 16.95l1.7 1.7M12 19v2.4M7.05 16.95l-1.7 1.7M5 12H2.6M7.05 7.05 5.35 5.35M12 5V2.6M16.95 7.05l1.7-1.7"/></svg></span><b>设置</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/></svg></span><b>关于</b></div>
+    </div>
+    <div class="ngd"><i></i><i class="on"></i></div>
+    <div class="nga"><span class="lv">调平</span><span>屏幕亮度</span><span>关闭</span></div>
+  </div>
+</div>
+<p class="cap">
+<b>切分点是常用度，不是塞满页面</b>：第 1 页放飞行中会用的 7 项（PFD / 交通 / 地图 / 列表 / 搜索 / 记录 / 工具），第 8 格留作余量；
+第 2 页放地面才碰的 3 项（诊断 / 设置 / 关于）—— 飞行中最常按的几个不该为了凑满一页而往后挪。<br>
+<b>格子位置钉死，末页不居中</b>：位置一旦随项数浮动，同一个功能在两页上就落在不同坐标，手指记不住位置 ——
+而"记得住位置"正是网格相对列表的全部优势。空就空着。<br>
+<b>「记录」「工具」置灰占位</b>（页面尚未实现）：不从版面拿掉，将来补上时版面一个数都不用改。
+点了<b>不弹提示</b> —— 命中判定直接把它们排除，置灰视觉本身就是信号。<br>
+<b>翻页只能滑</b>（分页点不可点）：阈值 60px(≈7mm) 且横向位移须 &gt; 2× 纵向；过阈值<b>当场翻</b>不等松手，一次长滑可连翻多页。
+第 1 页继续右滑 = 关闭（延到松手才结算）；末页继续左滑不做事，也不循环回第 1 页。
+</p>
+
+<h3>亮度快调 pop（点动作条「屏幕亮度」弹出）</h3>
+<div class="row" style="align-items:center">
+  <div class="ngp"><span>低</span><span class="on">中</span><span>高</span></div>
+  <div style="font-size:12px;color:#8fa3c0;line-height:1.9;max-width:420px">
+    面板 <b>46.9 × 9.8mm(400 × 84px)</b>，按钮 <b>14.1 × 7.5mm(120 × 64px)</b>×3<br>
+    <b>四边留白同一个 pad = 10px</b>（初版把面板底边钉死、按钮顶边从另一头反推，得到上 10 下 20 的不对称）<br>
+    面板底边离动作条 12px，压在第 2 行格子上；档位真值取自 <code>pk_backlight_step_get()</code>，与设置页同源不分家<br>
+    pop 打开期间<b>网格再压一档</b>（120/255）且整层不可点 —— 看得见的必须是点得中的；动作条不压暗（「屏幕亮度」正高亮着，压掉它等于抹去"是我弹出来的"这条线索）<br>
+    点面板外 = 收起 pop，<b>不关网格</b>
+  </div>
+</div>
 
 <h2>3.5 · 导航结构与返回规则</h2>
 <div class="warn">
@@ -369,11 +484,18 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 </div>
 
 <div class="nav">
-  <div class="navcol"><h5>一级页面（6 个）</h5>
-    <ul><li>PFD 主页</li><li>交通雷达</li><li>空管看板</li>
-        <li>设置</li><li>关于</li><li>诊断</li></ul>
+  <div class="navcol"><h5>一级页面（7 个）</h5>
+    <ul><li>PFD 主页</li><li>交通雷达</li><li>地图</li><li>空管看板</li>
+        <li>诊断</li><li>设置</li><li>关于</li></ul>
     <p style="margin:8px 0 0;font-size:11px;color:#7d90ad">
-      互相平级 · 只能通过 <b>FAB → dock</b> 切换<br>FAB 图标 = <b>☰</b></p></div>
+      互相平级 · 只能通过 <b>FAB → 全屏导航网格</b>切换<br>FAB 图标 = <b>☰</b><br>
+      （另有「记录」「工具」两格<b>置灰占位</b>）</p></div>
+
+  <div class="navcol"><h5>模态层（铺满全屏，压在某一页之上）</h5>
+    <ul class="lv2"><li><b>导航网格</b></li><li>搜索</li><li>机场详情</li><li>键盘编辑器</li></ul>
+    <p style="margin:8px 0 0;font-size:11px;color:#7d90ad">
+      不是一级页面的一站，<b>不改当前在哪一页</b><br>打开即<b>藏 FAB</b>，出口写在自己屏上<br>
+      优先级由 <b>pk_ui_modal_top()</b> 单点决定</p></div>
 
   <div class="navcol"><h5>二级页面（全屏，替换一级）</h5>
     <ul class="lv2">
@@ -395,7 +517,8 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <table class="t">
 <tr><th>所在位置</th><th>返回方式（三选一，任一可用）</th><th>返回目标</th></tr>
-<tr><td>一级页面</td><td>—（已是顶层，FAB 展开 dock 横向切换）</td><td>—</td></tr>
+<tr><td>一级页面</td><td>—（已是顶层，FAB 打开全屏导航网格切换）</td><td>—</td></tr>
+<tr><td><b>全屏导航网格</b></td><td>① 动作条「<b>关闭</b>」<br>② <b>第 1 页继续右滑</b><br>③ <b>6s 无操作</b>自动收起</td><td>打开它之前的那一页</td></tr>
 <tr><td><b>子系统详情页</b></td><td>① 顶栏左侧「<b>← 诊断</b>」按钮<br>② <b>FAB（此时为 ←）</b><br>③ 右滑手势</td><td>诊断总览</td></tr>
 <tr><td>目标详情抽屉</td><td>① 抽屉内「关闭」<br>② 点抽屉<b>上方列表区</b><br>③ 下滑手势</td><td>看板页（保留选中行）</td></tr>
 <tr><td>格式化确认框</td><td>① 「取消」<br>② 点遮罩<br>③ <b>5s 超时自动取消</b></td><td>设置页</td></tr>
@@ -406,9 +529,11 @@ table.t code{color:#7fb3ff;font-family:"SF Mono",monospace;font-size:11px}
 
 <p class="cap">
 <b>设计原则</b>：层级最多 <b>2 层</b>，不做返回栈 —— 二级页面只可能从诊断进入，返回目标唯一确定。<br>
-<b>FAB 双重身份</b>：一级页面 = <b>☰</b>（展开 dock）；二级页面 = <b>←</b>（返回）。位置固定不变，
-用户只需记住"右下角那个圆钮"一个位置。二级页面<b>不提供 dock</b>，要切主页面须先返回 —— 层级清晰，
-也避免"在 GPS 详情页切到 PFD 再回来"的状态混乱。
+<b>FAB 双重身份</b>：一级页面 = <b>☰</b>（打开全屏导航网格）；二级页面 = <b>←</b>（返回）。位置固定不变，
+用户只需记住"右下角那个圆钮"一个位置。二级页面<b>不提供导航网格</b>，要切主页面须先返回 —— 层级清晰，
+也避免"在 GPS 详情页切到 PFD 再回来"的状态混乱。<br>
+<b>网格打开期间 FAB 是隐藏的</b>，所以它不承担"再点一次收起"这个角色（那是 dock 时代的收起方式）——
+出口一律走上表那三条。
 </p>
 
 <h2>4 · 交通雷达页</h2>
@@ -656,13 +781,15 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
 </div>
 <p class="cap">acc=0 持续触发自动进入、acc≥2 持续自动退出（沿用现有逻辑）· <b>「稍后再说」为新增</b> —— 原靠 MODE 键关闭，按键删除后若不补此按钮，用户在磁干扰环境下会被永久卡在本页 · 点击后本次开机不再自动弹出（重启复位）· 本页刻意不放 FAB。</p>
 
-<h2>11 · 调平 LEVEL 四态（dock 动作区）</h2>
+<h2>11 · 调平 LEVEL 四态（全屏导航网格的动作条最左一格）</h2>
+<p class="cap">下面四格为<b>实际尺寸</b>：动作条三等分，每格 <b>31.2 × 10.3mm(266 × 88px)</b>。
+调平<b>与导航格物理分离</b>（隔着分页点那一条），误触把地平线归零的路被堵死 —— 飞行中那是要命的。</p>
 <div class="tst">
-  <div><div class="tb i">调平</div><p class="cap">① 待机</p></div>
-  <div><div class="tb i" style="border-color:var(--warn)">调平</div>
-    <p class="cap">② <b style="color:var(--warn)">短按 → 弹提示</b><br>见下图</p></div>
-  <div><div class="tb h"><span>0.6s</span></div><p class="cap">③ 按住，橙色填充走满 1s<br>松手即取消</p></div>
-  <div><div class="tb d">✓ 已调平</div><p class="cap">④ 绿闪 + toast</p></div>
+  <div><div class="tb i">调平</div><p class="cap">① 待机（警示橙）</p></div>
+  <div><div class="tb i">调平</div>
+    <p class="cap">② <b style="color:var(--warn)">短按 → 只弹提示</b><br>按钮本身不变，见下图</p></div>
+  <div><div class="tb h"><span>0.6s</span></div><p class="cap">③ 按住，橙色填充走满 1s<br>松手 / 滑出即取消</p></div>
+  <div><div class="tb d">✓ 已调平</div><p class="cap">④ 绿闪 + toast<br>随即收起网格</p></div>
 </div>
 
 <h3>短按提示（防止用户误以为按钮失灵）</h3>
@@ -680,17 +807,29 @@ fix/HDOP、可见星、天线状态、经纬度、<b>以及每个星座单独一
     <div class="tp a"><div class="bd"><span>23600</span><span>23400</span><span>23200</span>
       <span>23000</span><div class="cu">23225</div></div><div class="cv">VS +1408</div></div>
   </div>
-  <div class="hs"><div class="ro"></div><div class="nl"></div>
-    <div class="dk"><b>PFD</b><b>交通</b><b>列表</b><b>设置</b><b>关于</b><b>诊断</b>
-      <span class="sp"></span><b class="ac" style="border-color:var(--warn)">调平</b></div>
-    <div class="toast warn2">长按 1 秒调平地平仪</div></div>
-  <div class="fb">✕</div>
+  <div class="hs"><div class="ro"></div><div class="nl"></div></div>
+  <div class="ngov">
+    <div class="ng">
+      <div class="ngc sel"><span class="ngi"><svg class="f" viewBox="0 0 24 24"><path d="M12 1.8l1.25 6.7 8.75 5v1.8l-8.75-2.5v6.3l2.9 2.5v1.1L12 21.2l-4.15 1.5v-1.1l2.9-2.5v-6.3L2 15.3v-1.8l8.75-5z"/></svg></span><b>PFD</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span><b>交通</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M9 3.5 3 6v14.5l6-2.5 6 2.5 6-2.5V3.5l-6 2.5z"/><path d="M9 3.5v14.5M15 6v14.5"/></svg></span><b>地图</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M9.4 7h10.6M9.4 12h10.6M9.4 17h10.6"/><circle cx="4.6" cy="7" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="17" r="1.3" fill="currentColor" stroke="none"/></svg></span><b>列表</b></div>
+      <div class="ngc"><span class="ngi"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.6"/><path d="m15.4 15.4 5.4 5.4"/></svg></span><b>搜索</b></div>
+      <div class="ngc off"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M3.4 9.6A8.8 8.8 0 1 1 3.2 14"/><path d="M3.2 4.4v5.2h5.2"/><path d="M12 7.6V12l3.4 2"/></svg></span><b>记录</b></div>
+      <div class="ngc off"><span class="ngi"><svg viewBox="0 0 24 24"><path d="M20.3 4.6a4.6 4.6 0 0 1-6 6L6.7 18.2a2 2 0 1 1-2.8-2.8l7.6-7.6a4.6 4.6 0 0 1 6-6l-3 3 2.8 2.8z"/></svg></span><b>工具</b></div>
+      <div class="ngc"></div>
+    </div>
+    <div class="ngd"><i class="on"></i><i></i></div>
+    <div class="nga"><span class="lv">调平</span><span>屏幕亮度</span><span>关闭</span></div>
+  </div>
+  <div class="toast warn2" style="top:50%;bottom:auto;transform:translate(-50%,-50%)">长按 1 秒调平地平仪</div>
 </div>
 <p class="cap">
 <b>短按不执行动作，只弹 toast 说明用法</b> —— 否则用户点一下没反应会认为按钮坏了。
-toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
-文案随语言切换（中「长按 1 秒调平地平仪」/ 英「Hold 1s to level horizon」），
-需加进 <code>i18n_catalog.py</code>。
+toast 停留 2 秒淡出，<b>屏幕正中</b>、画在控件层<b>最前面</b>（菜单打开时弹出的提示也必须看得见，不能被网格盖住）。
+文案随语言切换（中「长按 1 秒调平地平仪」/ 英「Hold 1 s to level the horizon」），已入 <code>i18n_catalog.py</code>。<br>
+长按满 1 s <b>当场执行</b>（提示随即弹出），网格<b>留到松手才收起</b> —— 手指还按着就把网格关掉的话，
+这一次按压的剩余帧会落到底下那一页上（底页是地图时，手一松就跳进机场详情页）。
 </p>
 
 <h2>12 · 设计 token</h2>
@@ -702,7 +841,10 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
 <tr><td>威胁 / 一般目标</td><td><span class="sw" style="background:#ff5555"></span>#ff5555 · <span class="sw" style="background:#ffd23f"></span>#ffd23f</td></tr>
 <tr><td>上升 / 下降</td><td><span class="sw" style="background:#3fe08a"></span>#3fe08a · <span class="sw" style="background:#ff9b5a"></span>#ff9b5a</td></tr>
 <tr><td>选中 / FAB · HSI 指针 · 警告</td><td><span class="sw" style="background:#2e6df0"></span>#2e6df0 · <span class="sw" style="background:#ff3fd0"></span>#ff3fd0 · <span class="sw" style="background:#ffb43f"></span>#ffb43f</td></tr>
-<tr><td>顶栏 / HSI / dock / FAB</td><td>5.6mm(48px) / 16.4mm(140px) / 6.6mm(56px) / 6.6mm(56px)⌀</td></tr>
+<tr><td>选中格底 / 置灰项</td><td><span class="sw" style="background:#122244"></span>#122244（--sel 压到约 20% 明度）· <span class="sw" style="background:#3d4d6b"></span>#3d4d6b（比 --dim 再暗一档）</td></tr>
+<tr><td>顶栏 / HSI / 网格动作条 / FAB</td><td>5.6mm(48px) / 16.4mm(140px) / 10.3mm(88px) / 6.6mm(56px)⌀</td></tr>
+<tr><td>网格格 / 格内图标 / 分页点</td><td>23.4 × 18.3mm(200 × 156px) / 7.5mm(64px) / 1.4mm(12px)，点距 3.0mm(26px)</td></tr>
+<tr><td>菜单遮罩 / pop 二次遮罩</td><td>232/255（保留 9.4%）/ 120/255（保留 53%）· 顶栏与动作条<b>不遮</b></td></tr>
 <tr><td>速度带 / 高度带 / 姿态区</td><td>11.7mm(100px) / 11.7mm(100px) / 70.3mm(600px)</td></tr>
 <tr><td>看板行高 / 设置行高 / 触摸下限</td><td>5.6mm(48px) / 7.5mm(64px) / ≥5.2mm(44px)</td></tr>
 </table>
@@ -715,7 +857,8 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
 <tr><td>HSI + 交通叠加</td><td><code>lv_canvas</code></td><td class="reuse">✅ pfd_hsi.c / pfd_hsi_traffic.c</td></tr>
 <tr><td>交通雷达</td><td><code>lv_canvas</code></td><td class="reuse">✅ traffic_page.c / traffic_geom.c</td></tr>
 <tr><td>顶部状态栏</td><td><code>lv_obj</code> + <code>lv_label</code></td><td>重写（逻辑参考 pfd_statusbar.c）</td></tr>
-<tr><td>FAB / dock</td><td><code>lv_button</code> + <code>lv_obj</code> flex + <code>lv_anim</code></td><td>新增</td></tr>
+<tr><td>FAB</td><td><code>lv_button</code> + <code>lv_anim</code></td><td>新增（pk_ui_nav.c）</td></tr>
+<tr><td><b>全屏导航网格</b></td><td><b style="color:var(--warn)">不用 LVGL 对象树</b>，直接在 RGB565 framebuffer 上手绘</td><td>新增 <code>nav_grid_page.c</code><br><small style="color:#7d90ad">一层全屏 = 800×480×2 = 768 KB 绘制表面，而 <code>CONFIG_LV_MEM_SIZE_KILOBYTES=64</code> —— 分配不出这么大一块 layer，失败时 <code>LV_OS_NONE</code> 下是裸忙等，单线程 LVGL 当场死锁</small></td></tr>
 <tr><td>雷达右栏 / 看板 / 抽屉</td><td>flex + <b>内建滚动</b> · <code>lv_anim</code></td><td>数据层复用 aircraft_state.c / adsb_list.c</td></tr>
 <tr><td>分段控件 / 步进器</td><td><code>lv_buttonmatrix</code> · <code>lv_button</code>×2</td><td class="reuse">✅ settings_page.c / config_qnh.c</td></tr>
 <tr><td>格式化两步确认</td><td><code>lv_msgbox</code></td><td class="reuse">✅ pk_settings_format_action()</td></tr>
@@ -743,11 +886,13 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
   </div>
   <div style="font-size:12px;color:#8fa3c0;line-height:1.9;max-width:380px">
     <b style="color:#c9d6e8">交互规则</b><br>
-    · 长按 <b>200 ms</b> 进入拖动态（避免与点击冲突），FAB 微放大 + 半透明<br>
+    · 长按 <b>200 ms</b> 进入拖动态（避免与点击冲突），FAB <b>半透明 + 亮边 + 阴影加重</b><br>
+    　<small style="color:#7d90ad">不能用 <code>transform_scale</code> 做"微放大"：那会让 LVGL 走 TRANSFORM layer，64 KB 池分配不出整块 buffer，单线程 LVGL 死在忙等里</small><br>
     · 拖动中实时跟手，<b>垂直位置自由</b><br>
     · 松手后<b>水平吸附到最近的左 / 右边缘</b>（不允许悬在中间遮挡内容）<br>
     · 位置存 <b>NVS</b>：<code>fab_side</code>(L/R) + <code>fab_y</code>(0~100%)，重启保留<br>
-    · dock 展开方向随 FAB 边缘自动翻转（FAB 在左则 dock 向右铺开）<br>
+    · <b>导航网格是全屏的，不随 FAB 那一侧翻转</b>（"展开方向跟着 FAB 反向铺开"是 dock 时代才需要的规则，已作废）<br>
+    · <b>打开网格即隐藏 FAB</b>：它可拖动，挡住哪一格不可预测<br>
     · <b>校准页不显示 FAB</b>，避免误导
   </div>
 </div>
@@ -760,15 +905,16 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
 </p>
 <table class="t">
 <tr><th>方案</th><th>英文</th><th>中文</th><th>说明</th></tr>
-<tr style="background:rgba(63,224,138,.12)"><td><b>✅ A（已采用）</b></td><td><b>LEVEL</b></td><td><b>调平</b></td><td>现代 EFIS 通用叫法（Dynon SkyView 即为 Level）；「调平」直观、2 字、dock 放得下</td></tr>
+<tr style="background:rgba(63,224,138,.12)"><td><b>✅ A（已采用）</b></td><td><b>LEVEL</b></td><td><b>调平</b></td><td>现代 EFIS 通用叫法（Dynon SkyView 即为 Level）；「调平」直观、2 字，动作条一格放得下</td></tr>
 <tr><td>B</td><td>CAGE</td><td>锁定 / 笼锁</td><td>最贴合传统陀螺仪，老飞行员一看就懂；但年轻用户可能陌生，中文「锁定」易误解为锁死</td></tr>
 <tr><td>C</td><td>ZERO</td><td>归零</td><td>最直白；但「归零」在航向语境下有歧义（本功能不动航向）</td></tr>
 <tr><td>D</td><td>TARE</td><td>校零</td><td>维持现状，代码零改动；但术语与航空语境脱节</td></tr>
 </table>
 <p class="cap">
-✅ <b>已采用方案 A</b>，本稿 dock 与四态图均已替换为「调平」。
+✅ <b>已采用方案 A</b>，本稿动作条与四态图均已替换为「调平」。
 涉及改动：<code>i18n_catalog.py</code> 加词条 → 重跑 <code>gen_i18n_assets.py</code> 生成字形
-（否则中文渲染成 <code>?</code>）· dock 动作区宽度按最终字数复核。
+（否则中文渲染成 <code>?</code>）· 动作条一格 <b>800/3 = 266px</b> 宽度按最终字数复核：
+最长的一条是「屏幕亮度」中文 4 字 × 32 = 128px、英文 BRIGHTNESS 10 字 × 21 = 210px，都摆得下。
 </p>
 
 <h2>16 · 预览校准说明（防止实施时吃不准）</h2>
@@ -781,7 +927,7 @@ toast 停留 2 秒淡出，位置在 dock 上方居中，不遮挡姿态仪。
 <tr><td>对应缩放系数</td><td>14″ 约 2.64× · 16″ 约 2.31× · 24″ 约 1.50× · 27″ 约 1.33×</td></tr>
 <tr><td>校准方法</td><td>页首滑块 + 信用卡实测（85.6 × 54.0 mm），结果存 <code>localStorage['pkbox-cal']</code></td></tr>
 <tr><td><b>实施时以什么为准</b></td><td><b>以像素值为准</b>（表格中括号内数字），mm 仅用于人眼校验尺度感。
-  例：正文 26 px、看板行高 48 px、dock 高 56 px</td></tr>
+  例：正文 26 px、看板行高 48 px、网格格 200 × 156 px、动作条高 88 px</td></tr>
 </table>
 
 <h2>17 · 待办（未定稿）</h2>
