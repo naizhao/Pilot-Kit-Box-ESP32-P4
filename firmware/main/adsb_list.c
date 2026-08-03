@@ -53,6 +53,7 @@
 #include "pfd_layout.h"
 #include "pfd_statusbar.h"   /* pk_ui_topbar_right_limit —— 给 DEMO 徽标让位 */
 #include "pk_ui_nav.h"       /* pk_ui_nav_fab_rect —— FAB 头上的触摸要放行 */
+#include "pk_callsign.h"     /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "traffic_geom.h"
 #include "ui_state.h"
 
@@ -402,17 +403,12 @@ static const char *emergency_tag(const aircraft_t *a)
     }
 }
 
-/* 呼号；没广播过就退回 ICAO 十六进制。留空会被当成渲染坏了。 */
+/* 呼号；没广播过就退回 ICAO 十六进制。留空会被当成渲染坏了。实现收敛到
+ * pk_callsign.c——原先这份剔掉**所有**空格，与 traffic 页那份（只剔尾部）
+ * 行为不一致，"N1 2AB" 两页显示不同。现在统一成只剔尾部填充。 */
 static void callsign_of(const aircraft_t *a, char *out, size_t cap)
 {
-    if (a->have_callsign && a->callsign[0]) {
-        size_t j = 0;
-        for (size_t i = 0; i < sizeof(a->callsign) && a->callsign[i]; ++i)
-            if (a->callsign[i] != ' ' && j + 1 < cap) out[j++] = a->callsign[i];
-        out[j] = '\0';
-        if (j) return;
-    }
-    snprintf(out, cap, "%06lX", (unsigned long)a->icao24);
+    pk_callsign_display(a->have_callsign, a->callsign, a->icao24, out, cap);
 }
 
 /* 气压 → 1013.25 标准高度(ft)，与目标 Mode-C 同基准（同 traffic_page）。 */

@@ -51,6 +51,7 @@
 #include "mag_var.h"    /* 磁->真 修正，见 own_heading_true_deg 注释 */
 #include "own_ship.h"
 #include "pk_aero_layer.h"
+#include "pk_callsign.h"    /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
@@ -837,13 +838,8 @@ void pk_map_page_render(uint16_t *fb)
         }
 
         char cs[10];
-        if (a->have_callsign && a->callsign[0]) {
-            size_t k = 0;
-            for (; k + 1 < sizeof(cs) && a->callsign[k]; k++) cs[k] = a->callsign[k];
-            cs[k] = '\0';
-            while (k > 0 && cs[k - 1] == ' ') cs[--k] = '\0';
-        }
-        if (!cs[0]) snprintf(cs, sizeof(cs), "%06lX", (unsigned long)a->icao24);
+        pk_callsign_display(a->have_callsign, a->callsign, a->icao24,
+                            cs, sizeof(cs));
 
         const int lw = pk_aa_text_width(cs, PK_AA_XS);
         rect_t r = { sx + 10, sy - PK_AA_XS_H / 2 - 1, sx + 10 + lw + 2, sy + PK_AA_XS_H / 2 + 1 };

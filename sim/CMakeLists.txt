@@ -135,6 +135,8 @@ set(FW_DRAW_SRC
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c
     ${FW}/icao_country.c
+    # 呼号规范化 / 显示回退：纯逻辑零依赖，三个页面都要用（见 pk_callsign.h）
+    ${FW}/pk_callsign.c
     # 2026-08-03 删除：text.c / text_font_cjk*.c。见 firmware/main/CMakeLists.txt
     # 同一处的说明——最后一个调用者（校准向导）已改走 pfd_aa_text。
     # SD 离线地图页。map_page.c 本身只依赖 pk_tile_loader.h 这个纯函数式

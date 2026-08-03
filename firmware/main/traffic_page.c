@@ -40,6 +40,7 @@
 #include "traffic_geom.h"
 #include "mag_var.h"
 #include "aircraft_db.h"
+#include "pk_callsign.h"     /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "ui_state.h"
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 
@@ -194,17 +195,11 @@ typedef struct {
     pk_traffic_rel_t  rel;
 } vis_t;
 
-/* 呼号(去尾空格)；无呼号回退 ICAO 十六进制。 */
+/* 呼号(去尾空格)；无呼号回退 ICAO 十六进制。实现收敛到 pk_callsign.c，
+ * 这里留个薄封装只为少改一堆调用点。 */
 static void callsign_of(const aircraft_t *a, char *out, size_t cap)
 {
-    if (a->have_callsign && a->callsign[0]) {
-        size_t i = 0;
-        for (; i + 1 < cap && a->callsign[i]; i++) out[i] = a->callsign[i];
-        out[i] = '\0';
-        while (i > 0 && out[i - 1] == ' ') out[--i] = '\0';
-        if (out[0]) return;
-    }
-    snprintf(out, cap, "%06lX", (unsigned long)a->icao24);
+    pk_callsign_display(a->have_callsign, a->callsign, a->icao24, out, cap);
 }
 
 /* 目标在雷达上的落点。 */

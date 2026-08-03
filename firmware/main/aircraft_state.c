@@ -19,6 +19,7 @@
 #include "freertos/semphr.h"
 
 #include "config_demo.h"  /* pk_demo_enabled —— 演示模式接管目标表快照 */
+#include "pk_callsign.h"  /* pk_callsign_sanitize —— 拒收含保留码位的呼号 */
 #include "demo_data.h"
 #include "mode-s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
 #include "ui_state.h" /* pk_ui_get_own_icao() — pin the bound own-ship
@@ -32,6 +33,11 @@ static const char *TAG = "aircraft";
  * allocation off the heap. Mutex-guarded reads from PSRAM are cheap
  * enough for the dsp_task ingest path (~30-50 calls/s). */
 static EXT_RAM_BSS_ATTR aircraft_t s_table[AIRCRAFT_TABLE_CAPACITY];
+/* 两处长度必须同值：pk_callsign_sanitize 按 PK_CALLSIGN_LEN 写出参，
+ * 结果直接 memcpy 进 aircraft_t.callsign[AIRCRAFT_CALLSIGN_LEN]。 */
+_Static_assert(PK_CALLSIGN_LEN == AIRCRAFT_CALLSIGN_LEN,
+               "callsign buffer length mismatch");
+
 static SemaphoreHandle_t           s_lock;
 
 static void take_lock(void)    { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -207,17 +213,13 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
             /* Aircraft identification — callsign + wake category.
              * metype 1..4 maps to Category Sets D/C/B/A; mesub gives
              * the in-set position (Light/Small/Large/Heavy/etc.). */
-            memcpy(a->callsign, mm->flight, AIRCRAFT_CALLSIGN_LEN - 1);
-            a->callsign[AIRCRAFT_CALLSIGN_LEN - 1] = '\0';
-            /* Strip dump1090 trailing underscores for nicer display. */
-            for (int i = AIRCRAFT_CALLSIGN_LEN - 2; i >= 0; --i) {
-                if (a->callsign[i] == '_' || a->callsign[i] == ' ') {
-                    a->callsign[i] = '\0';
-                } else {
-                    break;
-                }
+            char cs[PK_CALLSIGN_LEN];
+            if (pk_callsign_sanitize(mm->flight, cs)) {
+                memcpy(a->callsign, cs, sizeof(cs));
+                a->have_callsign = true;
             }
-            a->have_callsign = (a->callsign[0] != '\0');
+            /* 校验没过就什么都不动：保留上一次收到的好呼号，have_callsign
+             * 也维持原样。为什么不"剔掉非法字符再显示"见 pk_callsign.h 头注。 */
             pk_wake_t w = decode_wake_category(mm->metype, mm->mesub);
             if (w != PK_WAKE_NONE) a->wake = w;
         } else if (mm->metype >= 5 && mm->metype <= 8) {
