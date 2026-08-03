@@ -36,13 +36,19 @@ APP_USABLE_DIRAM_END = 0x4FF3AFC0
 # 被吃干净，链接期看到的 65 KB 里真正剩给定时器任务栈的只有一两 KB：
 #
 #     64,976 B (0x0FDD0) → 必崩（vApplicationGetTimerTaskMemory 断言）
-#     66,368 B (0x10340) → 稳定启动（当前基线，连续复位 3/3）
-#     66,512 B (0x105D0) → 稳定启动
+#     66,368 B (0x10340) → 稳定启动
+#     91,664 B (0x16610) → 当前基线（2026-08-03 把 dsp_task 的 s_decoder
+#                          32,780 B 移进 PSRAM 之后）
 #
-# 所以这个数的含义是"不许比当前基线更差"，而不是"低于此值才危险"。真要拿到
-# 像样的冗余，得动 dram0 里的大户（dsp_task 独占约 53 KB）或压 IRAM，那是
-# 另一件需要单独评估的事。
-DEFAULT_MIN_FREE = 66000
+# 阈值取 80,000：它不是"崩溃线"（那在 65,000 附近），而是**预警线**——留出
+# 约 15 KB 的反应余地，让人在还有得改的时候就看到，而不是等贴着悬崖才报。
+#
+# 想再腾余量，dram0 里剩下的大户（nm 按地址段查得，别信 map 的 .o 归类，
+# 那个会漏）：s_mag_buf 8 KB 与 s_iq_buf 8 KB（**都不要动**：解调内循环按
+# 采样点访问，且 IQ 缓冲是 USB 落点、可能要 DMA 能力）、adsb_list 的
+# s_scratch 7 KB（其余五份同类快照都已 EXT_RAM_BSS_ATTR，只有它漏了，是
+# 现成的下一块）、cpr_decode 的 s_table 5 KB、s_icao_seen 4 KB。
+DEFAULT_MIN_FREE = 80000
 
 
 def read_symbol(elf_path, name):

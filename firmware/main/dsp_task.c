@@ -71,7 +71,18 @@ static const char *TAG_ADSB = "adsb";
 
 static uint8_t   s_iq_buf[DSP_IQ_BUF_BYTES];
 static uint16_t  s_mag_buf[DSP_MAG_BUF_LEN];
-static mode_s_t  s_decoder;
+/* 放 PSRAM：32,780 B 的 mode_s_t（大头是 ICAO 地址缓存）此前占着调度器启动
+ * 前那段极稀缺的内部堆窗口——它一个符号就吃掉将近一半（详见
+ * firmware/scripts/check_early_heap.py 的机理说明）。
+ *
+ * 搬得动的理由：它只在 dsp_task() 函数体内被访问（init 一次 + 每次
+ * mode_s_detect 传指针），全文件零 IRAM_ATTR、零中断注册，不存在 ISR 上下文
+ * 访问 PSRAM 的风险；且缓存是**按报文**命中（几十次/秒），不是按采样点
+ * （2M/s），PSRAM 延迟摊到每条报文上可忽略。
+ *
+ * 隔壁 s_iq_buf / s_mag_buf **不要**跟着搬：它们在解调内循环里按采样点访问，
+ * 且 IQ 缓冲是 USB 传输落点、可能要求 DMA 能力。 */
+EXT_RAM_BSS_ATTR static mode_s_t  s_decoder;
 
 /* --- 1 Hz dashboard counters ------------------------------------------ */
 
