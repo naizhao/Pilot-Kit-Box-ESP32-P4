@@ -281,6 +281,52 @@ static void test_modal_order(void)
             pk_ui_modal_top(false, false, false, false), PK_UI_MODAL_NONE);
 }
 
+/* ── 7) FAB 显隐判据 ─────────────────────────────────────────────
+ *
+ * 规则一句话：还有任何一层模态活着，FAB 就得藏着。之所以值得单独钉住，是因为
+ * 2026-08-04 之前这个布尔值由四层各自 open/close 时**手算**，普查抓到两处算
+ * 错的，两处都是"关掉自己这一层时无条件放出 FAB"：
+ *
+ *   - 导航网格点「搜索」：先 open 搜索（藏）再 close 网格（放）→ FAB 浮在
+ *     搜索页上；
+ *   - 搜索页里敲完键盘按「确定」：keyboard 的 close_page 无条件放，而底下的
+ *     搜索页还开着 → FAB 浮在结果列表上。
+ *
+ * 这两条正是下面的 F2 / F4，用户能看见的现象都是"一枚点不动的悬浮球盖住了
+ * 底下那一行"。判据本身是 top != NONE 一句话，测试的价值不在算式，在把
+ * **哪些状态组合是真实会出现的**写下来。 */
+static void test_fab_hidden(void)
+{
+    /* 一层都没有 = 底层页在屏上，FAB 是唯一的导航入口，必须露着。 */
+    chk_true("F1 无模态层 → FAB 露着",
+             !pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, false)));
+
+    /* F2 = 导航网格点「搜索」的中间态：两层同时活着。旧实现在这一刻按
+     * "网格关了"算，放出了 FAB。 */
+    chk_true("F2 网格+搜索同时活着 → 仍然藏",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(true, false, false, true)));
+    chk_true("F3 网格关掉、搜索留下 → 仍然藏",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, true)));
+
+    /* F4 = 搜索页里关掉键盘的那一刻。旧实现无条件放出 FAB。 */
+    chk_true("F4 键盘+搜索 → 藏",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(false, true, false, true)));
+    chk_true("F5 关掉键盘、搜索留下 → 仍然藏",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, true)));
+
+    /* F6/F7 = 「在地图上显示」：详情与搜索一起关掉，一步落到地图，FAB 回来。 */
+    chk_true("F6 详情+搜索 → 藏",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, true, true)));
+    chk_true("F7 详情与搜索一起关掉 → FAB 回来",
+             !pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, false)));
+
+    /* 单层各自也要成立——四个入参谁单独为真都得藏。 */
+    chk_true("F8 只有网格",   pk_ui_fab_hidden_for(pk_ui_modal_top(true, false, false, false)));
+    chk_true("F9 只有键盘",   pk_ui_fab_hidden_for(pk_ui_modal_top(false, true, false, false)));
+    chk_true("F10 只有详情",  pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, true, false)));
+    chk_true("F11 只有搜索",  pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, true)));
+}
+
 int main(void)
 {
     test_freq_rank();
@@ -290,6 +336,7 @@ int main(void)
     test_rwy_sentinels();
     test_capacity();
     test_modal_order();
+    test_fab_hidden();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

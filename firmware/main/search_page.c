@@ -135,6 +135,7 @@ void pk_search_hist_push(pk_search_hist_t *h, const char *q)
 #include "pk_aero_db.h"
 #include "pk_ui_nav.h"
 #include "traffic_geom.h"
+#include "ui_state.h"
 
 #include "esp_attr.h"
 #include "esp_timer.h"
@@ -580,7 +581,6 @@ static TaskHandle_t      s_task;
 #define SRCH_TASK_PRIO   2
 
 #if PK_SEARCH_PAGE_SMOKE
-#include "ui_state.h"   /* pk_ui_set_mode —— 只有自检用得到 */
 static void smoke_run(void);
 #endif
 
@@ -1035,8 +1035,12 @@ void pk_search_page_open(void)
      * 藏掉 FAB，理由与 keyboard_page 完全相同：本页铺满全屏、命中判定排在
      * LVGL 之前，FAB 留着就是"它自己点不动、又盖住底下的行"。出口写在屏上：
      * 页首的 CLOSE。
+     *
+     * 走 sync 而不是 set_fab_hidden(true)：本页可以由导航网格打开，而网格
+     * **要到本次触摸松手才关**——两层同时活着的那一小段里，谁都不该单方面
+     * 决定 FAB 的显隐。见 apt_detail_page.h 的 pk_ui_fab_hidden_for。
      */
-    pk_ui_nav_set_fab_hidden(true);
+    pk_ui_fab_sync();
     /* 一打开就去查「附近」——无键盘设备上，默认视图有内容才是关键体验。 */
     submit("");
 #ifdef PK_SIM_BUILD
@@ -1050,7 +1054,9 @@ void pk_search_page_close(void)
 {
     s_active      = false;
     s_press_valid = false;
-    pk_ui_nav_set_fab_hidden(false);
+    /* 不能无条件 set_fab_hidden(false)：本页关掉时**上面**可能还压着详情页
+     * （「在地图上显示」是先关详情再关搜索），也可能还压着键盘。 */
+    pk_ui_fab_sync();
 }
 
 /* 键盘编辑器的回调。**必须是本文件的 static 函数指针**，不能再走当年那个
@@ -1142,6 +1148,17 @@ static void open_keyboard(void)
  *
  * 详情页是模态层，**不关搜索页**：关掉详情就自然回到这一屏（见
  * apt_detail_page.h 的「三层导航是怎么解决的」）。
+ *
+ * 导航台 / FIX 那条路为什么要显式切 mode（2026-08-04 修）
+ * -------------------------------------------------------
+ * 本页最初是"盖在地图页之上的模态层"，入口只有地图页右侧那枚放大镜，所以
+ * 「关掉本页 → 露出来的就是地图」这一步不写代码也成立。dock 换成全屏导航
+ * 网格之后（commit f560c8a），网格里多了一格「搜索」，而网格从**任何一页**
+ * 都能用 FAB 叫出来——在 PFD 上点搜索、点一条导航台，视口挪好了、PIN 也落了，
+ * 关掉本页露出来的却是 PFD。这正是罩哥报的"点击搜索结果后没有打开地图"。
+ *
+ * 与 apt_detail_page.c 的 goto_map() 同一条修法、同一个理由：终态归动作本身
+ * 负责，不能指望每一个入口都恰好停在 PK_UI_MODE_MAP 上。
  */
 static void goto_item(const pk_search_item_t *it)
 {
@@ -1150,8 +1167,11 @@ static void goto_item(const pk_search_item_t *it)
         return;
     }
     pk_map_page_set_pin(it->lat, it->lon, it->code);
+    /* goto 顺手关掉本机跟随（s_follow=false），否则下一帧本机位置一到就把
+     * 视口拽回脚下、用户根本看不到刚查的那个点。判据在 map_page.c:1069。 */
     pk_map_page_goto(it->lat, it->lon, SRCH_GOTO_ZOOM);
     pk_search_page_close();
+    pk_ui_set_mode(PK_UI_MODE_MAP);
 }
 
 bool pk_search_page_touch(int x, int y)

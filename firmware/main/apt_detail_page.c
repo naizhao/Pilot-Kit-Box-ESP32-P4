@@ -74,6 +74,11 @@ pk_ui_modal_t pk_ui_modal_top(bool navgrid_active, bool keyboard_active,
     return PK_UI_MODAL_NONE;
 }
 
+bool pk_ui_fab_hidden_for(pk_ui_modal_t top)
+{
+    return top != PK_UI_MODAL_NONE;
+}
+
 uint8_t pk_apt_freq_rank(uint8_t service)
 {
     switch (service) {
@@ -176,7 +181,9 @@ bool pk_apt_rwy_bearing_deg(const pk_apt_rwy_item_t *r, int *out_deg)
 #include "display.h"
 #include "geo.h"
 #include "i18n.h"
+#include "keyboard_page.h"
 #include "map_page.h"
+#include "nav_grid_page.h"
 #include "own_ship.h"
 #include "pfd_aa_font.h"
 #include "pfd_aa_text.h"
@@ -185,10 +192,26 @@ bool pk_apt_rwy_bearing_deg(const pk_apt_rwy_item_t *r, int *out_deg)
 #include "pk_aero_db.h"
 #include "pk_ui_nav.h"
 #include "search_page.h"
+#include "ui_state.h"
 
 #include "esp_attr.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
+
+/*
+ * FAB 显隐的唯一入口（见 apt_detail_page.h 里这个函数的声明）。
+ *
+ * 落在本文件是因为模态次序的真源 pk_ui_modal_top() 就在这里，两者是同一条
+ * 规则的两个面：谁在最上面决定「点得中谁」，有没有人在上面决定「FAB 露不露」。
+ */
+void pk_ui_fab_sync(void)
+{
+    pk_ui_nav_set_fab_hidden(pk_ui_fab_hidden_for(
+        pk_ui_modal_top(pk_nav_grid_page_active(),
+                        pk_keyboard_page_active(),
+                        pk_apt_detail_page_active(),
+                        pk_search_page_active())));
+}
 
 #ifndef PK_SIM_BUILD
 #include "esp_log.h"
@@ -668,6 +691,10 @@ void pk_apt_detail_page_render(uint16_t *fb)
 
 /* ═══════════════ 打开 / 关闭 / 触摸 ═════════════════════════════ */
 
+#ifdef PK_SIM_BUILD
+static void sim_setup_once(void);
+#endif
+
 void pk_apt_detail_page_open(uint32_t apt_idx, pk_apt_detail_from_t from)
 {
     s_scroll      = 0;
@@ -678,13 +705,15 @@ void pk_apt_detail_page_open(uint32_t apt_idx, pk_apt_detail_from_t from)
     s_active      = true;
     /* 藏掉 FAB，理由与 search_page / keyboard_page 完全相同：本页铺满全屏、
      * 命中判定排在 LVGL 之前，FAB 留着就是"它自己点不动、又盖住底下的行"。
-     * 出口写在屏上：页首的 BACK。 */
-    pk_ui_nav_set_fab_hidden(true);
+     * 出口写在屏上：页首的 BACK。s_active 已经置真，sync 自己会算出"藏"。 */
+    pk_ui_fab_sync();
 #ifndef PK_SIM_BUILD
     ESP_LOGI(TAG, "open apt #%lu \"%s\": %d/%lu runways, %d/%lu freqs%s",
              (unsigned long)apt_idx, s_d.icao, s_d.n_rwy,
              (unsigned long)s_d.total_rwy, s_d.n_freq,
              (unsigned long)s_d.total_freq, s_d.valid ? "" : " (no data)");
+#else
+    sim_setup_once();
 #endif
 }
 
@@ -701,18 +730,35 @@ void pk_apt_detail_page_close(void)
      * 分派次序一放开它就重新露出来——FAB 必须**继续藏着**，否则搜索页上会
      * 冒出一枚点不动的悬浮球。从地图进来的则要把 FAB 放回去。
      *
-     * 判据用 opener 而不是现问一句 pk_search_page_active()：两者此刻等价，
-     * 但 opener 是"当初从哪来"这个事实本身，而 active() 是别人的当前状态；
-     * 将来若多一个入口（比如 PFD 上的最近机场），照着 opener 写不会错。
+     * 2026-08-04：这一行原来手算成 `s_from == PK_APT_DETAIL_FROM_SEARCH`，
+     * 改走 pk_ui_fab_sync()。opener 与"此刻谁还活着"两者在这里恰好等价，但
+     * 另外三层各自手算的版本里有两处算错了（见 apt_detail_page.h 里
+     * pk_ui_fab_hidden_for 的注释），把四处收成同一条判据比留一个"这里恰好
+     * 对"的特例划算。
      */
-    pk_ui_nav_set_fab_hidden(s_from == PK_APT_DETAIL_FROM_SEARCH);
+    pk_ui_fab_sync();
 }
 
-/* 「在地图上显示」：把视口挪过去 + 落 PIN + **一路关到地图**。
+/* 「在地图上显示」：把视口挪过去 + 落 PIN + 切到地图页 + **一路关掉模态层**。
  *
  * 这是唯一一个不走"退回上一层"的动作：用户要的是看地图，不是回搜索列表。
  * 所以详情与搜索一起关掉——search_page 那边点结果跳地图时做的也是这件事
- * （goto_item），两条路径落到同一个终态。 */
+ * （goto_item），两条路径落到同一个终态。
+ *
+ * 为什么必须显式 pk_ui_set_mode(PK_UI_MODE_MAP)（2026-08-04 修）
+ * ------------------------------------------------------------
+ * 这里原来写着"不必切 mode：这条链路的两个入口都只可能在 PK_UI_MODE_MAP 下
+ * 发生"。那句话在写下的时候是真的——当时搜索页只有一个入口，就是地图页右侧
+ * 那枚放大镜。dock 换成全屏导航网格之后（commit f560c8a），网格里多了一格
+ * 「搜索」，而网格从**任何一页**都能用 FAB 叫出来。于是"底下那一页一定是
+ * 地图"这个前提整体失效：在 PFD 上叫出网格 → 搜索 → 点一个机场 → 详情 →
+ * 「在地图上显示」，视口和 PIN 都摆好了，模态层也关干净了，露出来的却是 PFD。
+ * 用户看到的现象就是"点了在地图上显示，什么都没发生"。
+ *
+ * 修法只能是显式切页，不能是"让入口去保证 mode"：入口是会增加的（这次就是
+ * 增加了一个），而这个动作的语义本来就是"我要去地图看这个点"——终态由动作
+ * 自己负责，才不会每加一个入口就漏一次。
+ */
 static void goto_map(void)
 {
     pk_map_page_set_pin(s_d.lat, s_d.lon,
@@ -720,12 +766,40 @@ static void goto_map(void)
     pk_map_page_goto(s_d.lat, s_d.lon, APTD_GOTO_ZOOM);
     s_active      = false;
     s_press_valid = false;
-    pk_search_page_close();          /* 没开着时是空操作 */
-    pk_ui_nav_set_fab_hidden(false);
-    /* 不必切 mode：这条链路的两个入口（地图点符号、地图上打开的搜索页）都
-     * 只可能在 PK_UI_MODE_MAP 下发生，mode 本来就是 MAP。search_page 的
-     * goto_item 同理不切——多切一次反而多一处要跟着入口变的假设。 */
+    pk_search_page_close();          /* 没开着时也照调，它自己幂等 */
+    pk_ui_set_mode(PK_UI_MODE_MAP);
+    pk_ui_fab_sync();                /* 此刻模态层已全关 → FAB 放出来 */
 }
+
+#ifdef PK_SIM_BUILD
+/*
+ * 截图钩子（同 search_page.c 的 sim_setup_once、nav_grid_page.c 的 sim_setup）：
+ *
+ *   PK_SIM_APT_GOTO_MAP=1   打开本页后立刻按一下页首的「在地图上显示」
+ *
+ * 摆的不是内部状态，是**一次真实的触摸**：坐标取页首右侧那枚按钮的命中区，
+ * 走 touch()+touch_up() 与真机逐字相同的那条路，所以截出来的就是用户点完那
+ * 一下之后的终态。配 PK_SIM_PAGE=map + PK_SIM_MAP_TAP 用：sim/main.c 在那条
+ * 分支里按 pk_apt_detail_page_active() 决定重画详情还是重画地图，于是这一个
+ * 钩子就把「地图点机场符号 → 详情 → 在地图上显示 → 回到地图并落 PIN」整条
+ * 链路截成了一张图。
+ *
+ * 唯一截不到的是 pk_ui_set_mode(PK_UI_MODE_MAP) 那一步——模拟器里
+ * pk_ui_set_mode 是空壳（sim/compat/page_stub.c），截哪一页由 PK_SIM_PAGE 决定，
+ * 不由 mode 决定。那一步只能在真机上验。
+ */
+#include <stdlib.h>
+
+static void sim_setup_once(void)
+{
+    if (getenv("PK_SIM_APT_GOTO_MAP") == NULL) return;
+    /* 「在地图上显示」按钮的命中区：顶栏内、x ≥ APTD_MAP_HIT_X0。 */
+    const int x = (APTD_MAP_HIT_X0 + PK_DISPLAY_W) / 2;
+    const int y = APTD_HDR_H / 2;
+    pk_apt_detail_page_touch(x, y);
+    pk_apt_detail_page_touch_up();
+}
+#endif /* PK_SIM_BUILD */
 
 bool pk_apt_detail_page_touch(int x, int y)
 {

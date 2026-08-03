@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "apt_detail_page.h"   /* pk_ui_fab_sync —— FAB 显隐的唯一入口 */
 #include "display.h"
 #include "i18n.h"
 #include "pfd_aa_font.h"
@@ -245,8 +246,16 @@ static void close_page(void)
 {
     s_active      = false;
     s_press_valid = false;
-    /* FAB 收回来：它在编辑期间是藏着的（见 open）。 */
-    pk_ui_nav_set_fab_hidden(false);
+    /*
+     * FAB 收回来：它在编辑期间是藏着的（见 open）。
+     *
+     * 2026-08-04：这里原来是无条件 set_fab_hidden(false)，在"设置页 → 键盘"
+     * 那条唯一的老链路上是对的，键盘底下就是设置页。但键盘也能从**搜索页**
+     * 的查询行打开，那时按「确定」/「取消」露出来的是搜索页——一枚点不动的
+     * 悬浮球就浮在结果列表上。判据改由 pk_ui_fab_hidden_for 统一给
+     * （apt_detail_page.h）。
+     */
+    pk_ui_fab_sync();
 }
 
 void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
@@ -281,7 +290,7 @@ void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
      * 藏掉之后出口仍有两个：页首「取消」与键盘右下角「确定」，都是屏上写着
      * 字的实心按钮，比一个含义随页面变化的圆钮更不会让人困住。
      */
-    pk_ui_nav_set_fab_hidden(true);
+    pk_ui_fab_sync();   /* s_active 已置真 → 必然算成"藏" */
 }
 
 bool pk_keyboard_page_active(void) { return s_active; }

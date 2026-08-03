@@ -145,6 +145,7 @@ int pk_nav_swipe_dir(int dx, int dy)
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
 #include "pfd_layout.h"
+#include "apt_detail_page.h"   /* pk_ui_fab_sync —— FAB 显隐的唯一入口 */
 #include "pk_ui_nav.h"
 #include "search_page.h"
 #include "ui_state.h"
@@ -667,7 +668,7 @@ void pk_nav_grid_page_open(void)
      * 还不可预测（原型 navgrid-A.png 里第 12 格就是这么被吃掉的）。
      * 出口写在屏上：动作条右边那枚「关闭」。
      */
-    pk_ui_nav_set_fab_hidden(true);
+    pk_ui_fab_sync();   /* s_active 已置真 → 必然算成"藏" */
 #ifdef PK_SIM_BUILD
     sim_setup();
 #endif
@@ -735,7 +736,14 @@ void pk_nav_grid_page_close(void)
     s_pop_open = false;
     press_reset();
     flash_reset();
-    pk_ui_nav_set_fab_hidden(false);
+    /*
+     * 2026-08-04：这里原来是无条件 set_fab_hidden(false)，而 activate_item
+     * 点「搜索」时的次序是**先开搜索页（藏）、再关网格（放）**——净效果是
+     * FAB 浮在搜索页上，正是每一层的注释都在防的那件事。改走统一判据之后，
+     * 「这一层关了」与「此刻还有没有别人」被分开，两个动作的先后就不再要紧。
+     * 见 apt_detail_page.h 的 pk_ui_fab_hidden_for。
+     */
+    pk_ui_fab_sync();
 }
 
 /* ── 触摸状态机 ──────────────────────────────────────────────────
@@ -793,8 +801,12 @@ static void activate_item(int index)
     if (ITEMS[index].mode >= 0) {
         pk_ui_set_mode((pk_ui_mode_t)ITEMS[index].mode);
     } else if (ITEMS[index].label == PK_TR_NAV_SEARCH) {
-        /* 搜索是模态层，不是 pk_ui_mode_t 的一站：只打开它，当前是哪一页不变
-         * （见 search_page.h）。 */
+        /*
+         * 搜索是模态层，不是 pk_ui_mode_t 的一站：只打开它，当前是哪一页不变
+         * （见 search_page.h）。**底下那一页因此可以是任何一页**——这正是
+         * 「点搜索结果要显式切到地图」那条修改的由来，见 search_page.c 的
+         * goto_item()。
+         */
         pk_search_page_open();
     } else {
         return;   /* 记录 / 工具：页面还没写，enabled 已挡，走不到这儿 */
