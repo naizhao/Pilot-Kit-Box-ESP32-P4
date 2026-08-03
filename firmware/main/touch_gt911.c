@@ -29,6 +29,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_log.h"
+#include "esp_timer.h"     /* 触摸自愈重试的退避计时 */
 #include "lvgl.h"
 
 #include "display.h"
@@ -385,21 +386,58 @@ esp_err_t pk_touch_init(void)
 /* 最近一次已经据此重试过的总线恢复代数。 */
 static uint32_t s_bus_gen_tried;
 
-void pk_touch_retry_after_bus_recovery(void)
+/* 独立重试的下一次到期时刻与当前退避间隔。 */
+static int64_t  s_next_retry_us;
+static int64_t  s_retry_backoff_us = PK_TOUCH_RETRY_FIRST_US;
+
+void pk_touch_retry_tick(void)
 {
     /* 已经成功过就一个指针比较,直接回。**不能**重跑:pk_touch_init() 末尾会
      * lv_indev_create(),跑第二遍就多一个输入设备。 */
     if (s_tp != NULL) return;
 
+    const int64_t  now = esp_timer_get_time();
     const uint32_t gen = pk_i2c0_recover_generation();
-    if (gen == s_bus_gen_tried) return;
+
+    /* 两条独立的触发路径,缺一不可:
+     *
+     * ① 总线刚被救回来一轮 —— 立刻重试,不等退避。这是 2026-08-03 那次真机
+     *    日志里的形态:GT911 初始化中途把 I²C0 拖塌,baro/imu 跟着挂,恢复模块
+     *    把总线救回来之后,触摸得跟着补一刀。
+     *
+     * ② 到点了 —— 与总线恢复无关的**自愈**路径,这一条是 2026-08-04 补的。
+     *    上机后出现"偶发拉不起触摸,重启才好":总线只在 GT911 初始化那一瞬间
+     *    抖了一下、随后自己好了,baro 和 imu 全程正常,于是没有任何器件报告
+     *    失败 → 不触发总线恢复 → 代数永远停在 0 → 只看代数的话这里每次都
+     *    直接 return,触摸再也没有第二次机会。
+     *
+     *    触摸是这块板子唯一的输入手段(4.3″ 板没有实体键),拉不起来等于整机
+     *    不可用、只能断电重启,所以宁可一直退避重试也不设次数上限。 */
+    const bool bus_recovered = (gen != s_bus_gen_tried);
+    const bool due           = (now >= s_next_retry_us);
+    if (!bus_recovered && !due) return;
+
     s_bus_gen_tried = gen;
 
-    /* 走到这里 = 触摸从开机起就没初始化成功,而总线刚被救回来一轮。
-     * 2026-08-03 那次真机日志里正是这个形态:只有「GT911 found at 0x5D」,
-     * 没有「GT911 ready」——总线在 GT911 初始化中途塌了,pk_touch_init()
-     * 返回错误,整台机器这次开机就再也点不动了。 */
-    ESP_LOGW(TAG, "I²C0 总线已复位(第 %lu 轮)— 重试触摸初始化",
-             (unsigned long)gen);
-    (void)pk_touch_init();
+    if (bus_recovered) {
+        ESP_LOGW(TAG, "I²C0 总线已复位(第 %lu 轮)— 重试触摸初始化",
+                 (unsigned long)gen);
+        s_retry_backoff_us = PK_TOUCH_RETRY_FIRST_US;   /* 换了条件,退避重来 */
+    } else {
+        ESP_LOGW(TAG, "触摸仍未就绪 — 自愈重试(下次间隔 %lld ms)",
+                 (long long)(s_retry_backoff_us / 1000));
+    }
+
+    const esp_err_t err = pk_touch_init();
+    if (err == ESP_OK) {
+        s_retry_backoff_us = PK_TOUCH_RETRY_FIRST_US;
+        return;
+    }
+
+    /* 失败:指数退避到封顶。pk_touch_init() 里探两个地址各 50 ms,失败一次
+     * 最多占总线 100 ms,别让它每帧都来抢 I²C。 */
+    s_next_retry_us    = now + s_retry_backoff_us;
+    s_retry_backoff_us = (s_retry_backoff_us * 2 > PK_TOUCH_RETRY_MAX_US)
+                       ? PK_TOUCH_RETRY_MAX_US
+                       : s_retry_backoff_us * 2;
 }
