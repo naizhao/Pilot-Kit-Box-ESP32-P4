@@ -229,6 +229,57 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
     return true;
 }
 
+/* 同真机 pk_tile_loader.c 的同名函数：heading-up 旋转扫描线的逐像素采样入口。
+ * sim 是单线程同步模型，没有真机那把 s_lock，"锁定"在这里只是走一遍与
+ * try_blit 相同的"未命中就同步解码"路径，再把裸指针递给调用方——语义上与
+ * 真机版一致（返回的数据在下一次可能重新分配缓存槽之前有效），配对的
+ * unlock_sample() 是空操作，但仍然要提供，因为 map_page.c 无条件调用它。 */
+bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
+                                const uint16_t **out_data, uint32_t *out_shift,
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0)
+{
+    (void)now_ms;
+    pk_map_route_result_t route;
+    if (!pk_tile_loader_route(z, tx, ty, &route)) return false;
+
+    sim_tile_slot_t *slot = cache_find(route.pack_index, route.actual_z,
+                                       route.actual_x, route.actual_y);
+    if (slot == NULL) {
+        pk_map_pack_t *pack = &s_store.packs[route.pack_index];
+        pk_pmtiles_tile_loc_t loc;
+        bool found = pk_pmtiles_find_tile(&pack->pm, route.actual_z,
+                                          route.actual_x, route.actual_y, &loc);
+        slot = cache_new_slot();
+        slot->used       = true;
+        slot->pack_index = route.pack_index;
+        slot->z = route.actual_z;
+        slot->x = route.actual_x;
+        slot->y = route.actual_y;
+        slot->data     = found ? decode_tile(pack, &loc) : NULL;
+        slot->negative = (slot->data == NULL);
+    }
+    if (slot->negative) return false;
+
+    uint32_t scale = route.scale;
+    if (scale > PK_TILE_PIXELS) scale = PK_TILE_PIXELS;
+    uint32_t crop = PK_TILE_PIXELS / scale;
+    uint32_t shift = 0;
+    for (uint32_t s = scale; s > 1; s >>= 1) shift++;
+    uint32_t local_x = tx - (route.actual_x << shift);
+    uint32_t local_y = ty - (route.actual_y << shift);
+
+    *out_data     = slot->data;
+    *out_shift    = shift;
+    *out_crop_x0  = local_x * crop;
+    *out_crop_y0  = local_y * crop;
+    return true;
+}
+
+void pk_tile_loader_unlock_sample(void)
+{
+    /* 空实现，见函数组注释。 */
+}
+
 /* 同真机 pk_tile_loader.c 的同名函数：未命中时从**已解码的上级瓦片**里裁子块
  * 放大顶上，让放大一级时画面保持连续。
  *

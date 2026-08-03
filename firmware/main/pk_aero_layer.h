@@ -89,21 +89,31 @@ void pk_aero_layer_notify_view(double center_lat, double center_lon, uint8_t zoo
  * 目标压在机场上时呼号会被整批挤掉——那正是要修的问题。
  *
  * 两趟共享同一份快照：符号趟把当时的快照记下来给标签趟用，所以**必须成对
- * 按序调用**（symbols 在前）。单独调 labels 什么都不画。 */
+ * 按序调用**（symbols 在前）。单独调 labels 什么都不画。
+ *
+ * map_rot_deg（2026-08-03 加，地图页 heading-up 支持）：地图整体绕视口中心
+ * 旋转的角度——north-up 传 0（原有行为不变，两次三角函数按浮点常量折叠，
+ * 成本可忽略）；heading-up 时地图页传当前本机航向，本层内部按同一套旋转
+ * 公式把机场/导航台/FIX 的屏幕位置转到与底图瓦片一致的地方（map_page.c 的
+ * 旋转扫描线用的是同一套矩阵，两边任何一处改了公式必须同步）。旋转只动
+ * **位置**：标签文字本身不转（画字符串不支持旋转，也不该转——转了没法读）；
+ * 罗盘玫瑰刻度与管制机场的 N/E/S/W tick 这类"指向真实方位"的图形元素会跟着
+ * 转（在 draw_navaid/draw_airport 调用处把 map_rot_deg 叠进它们各自的方位角，
+ * 保持"刻度指向的还是磁北/真北"这句话成立）。 */
 void pk_aero_layer_render_symbols(uint16_t *fb, double center_lat, double center_lon,
-                                  uint8_t zoom);
+                                  uint8_t zoom, float map_rot_deg);
 void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_lon,
                                  uint8_t zoom, pk_aero_rect_t *occ, int *nocc,
-                                 int occ_max);
+                                 int occ_max, float map_rot_deg);
 
 /* 屏幕坐标 → 当前快照里最近的那个要素。命中返回 true 并写 *out。
  *
  * 投影参数必须与**本帧渲染用的那一份**一致（地图页把它自己的 s_center_* /
- * s_zoom 传进来），否则"看得见的"与"点得中的"会错位。
+ * s_zoom / 上一帧用过的旋转角传进来），否则"看得见的"与"点得中的"会错位。
  * 容差与优先级见 pk_aero_hit_pick 的注释。未 READY / 无快照时返回 false，
  * 调用方据此走原来的空白点击路径——**绝不能把没命中的点击吞掉**。 */
 bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
-                            uint8_t zoom, pk_aero_layer_hit_t *out);
+                            uint8_t zoom, float map_rot_deg, pk_aero_layer_hit_t *out);
 
 #else  /* PK_SIM_BUILD 且未开 PK_AERO_LAYER_SIM_IMPL */
 
@@ -115,15 +125,18 @@ static inline void pk_aero_layer_init(void) { }
 static inline void pk_aero_layer_notify_view(double lat, double lon, uint8_t z)
 { (void)lat; (void)lon; (void)z; }
 static inline void pk_aero_layer_render_symbols(uint16_t *fb, double lat, double lon,
-                                                uint8_t z)
-{ (void)fb; (void)lat; (void)lon; (void)z; }
+                                                uint8_t z, float map_rot_deg)
+{ (void)fb; (void)lat; (void)lon; (void)z; (void)map_rot_deg; }
 static inline void pk_aero_layer_render_labels(uint16_t *fb, double lat, double lon,
                                                uint8_t z, pk_aero_rect_t *occ,
-                                               int *nocc, int occ_max)
-{ (void)fb; (void)lat; (void)lon; (void)z; (void)occ; (void)nocc; (void)occ_max; }
+                                               int *nocc, int occ_max, float map_rot_deg)
+{ (void)fb; (void)lat; (void)lon; (void)z; (void)occ; (void)nocc; (void)occ_max;
+  (void)map_rot_deg; }
 static inline bool pk_aero_layer_hit_test(int x, int y, double lat, double lon,
-                                          uint8_t z, pk_aero_layer_hit_t *out)
-{ (void)x; (void)y; (void)lat; (void)lon; (void)z; (void)out; return false; }
+                                          uint8_t z, float map_rot_deg,
+                                          pk_aero_layer_hit_t *out)
+{ (void)x; (void)y; (void)lat; (void)lon; (void)z; (void)map_rot_deg; (void)out;
+  return false; }
 
 #endif /* PK_SIM_BUILD */
 

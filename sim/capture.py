@@ -181,6 +181,25 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps")},
                                                                    "地图页正常态：底图 + 本机 + 5 个 ADS-B 目标"),
+    # 2026-08-03：north-up / heading-up 对照组。PK_SIM_HDG 把航向钉在 60°
+    # （不是 0/90/180/270 这种巧合角度，转没转、转对没对一眼能分辨）。
+    # north-up 那张应该与 ui-4.3-map 视觉上几乎一致（航向只影响本机符号的
+    # 指向，不影响底图/铬层）；heading-up 那张底图要整体转 60°、本机符号
+    # 应该垂直指向屏幕正上方、指北箭头应偏离正上方 60°、比例尺/按钮/顶栏
+    # 位置与 north-up 那张完全一致（铬层不旋转）。
+    ("ui-4.3-map-northup",  {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_ORIENT": "north",
+                             "PK_SIM_HDG": "60"},
+                                                                   "地图朝向=north-up：底图轴对齐，本机符号指向 60°航向"),
+    ("ui-4.3-map-headingup", {"PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_ORIENT": "heading",
+                             "PK_SIM_HDG": "60"},
+                                                                   "地图朝向=heading-up：底图整体反向旋转 60°，本机符号垂直"
+                                                                   "指向屏幕正上方，指北箭头偏离正上方 60°，铬层不转"),
     ("ui-4.3-map-clump",    {"PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),

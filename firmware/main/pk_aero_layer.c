@@ -613,6 +613,21 @@ static bool on_screen(int sx, int sy)
            sy >= AERO_MAP_TOP - 16 && sy < PK_DISPLAY_H + 16;
 }
 
+/* 世界像素 → 屏幕像素，按 (cos_r,sin_r)=(cos,sin)(map_rot_deg) 把内容绕视口
+ * 中心旋转——与 map_page.c 的 world_to_screen_rot()/旋转扫描线用的是**同一套
+ * 矩阵**（正变换：sx = dx·cos+dy·sin，sy = dy·cos−dx·sin），两边任何一处改
+ * 公式都要同步，否则底图转了、机场没转（或转错方向），画面会整体错位。
+ * north-up（map_rot_deg=0）时 cos_r=1,sin_r=0，退化成原来的纯平移，函数体不
+ * 单独分快路径：本层一帧最多投影 ~96 次，多两次乘法可忽略——真正要抠周期的
+ * 是每帧 30 万+ 像素的瓦片采样，见 map_page.c 里的耗时评估。 */
+static void proj_screen(double wx, double wy, double cwx, double cwy,
+                        double cos_r, double sin_r, int *sx, int *sy)
+{
+    const double dx = wx - cwx, dy = wy - cwy;
+    *sx = AERO_MCX + (int)lround(dx * cos_r + dy * sin_r);
+    *sy = AERO_MCY + (int)lround(dy * cos_r - dx * sin_r);
+}
+
 /* 圆盘 / 圆环：直接扫描外接正方形，按到圆心的距离落在 [r_in, r_out] 内就上色，
  * 边缘 1 px 用 blend 做抗锯齿。r_in=0 即实心圆盘。
  *
@@ -671,7 +686,8 @@ static void apt_colors(const apt_ent_t *e, uint16_t *sym, uint16_t *lbl)
     }
 }
 
-static void draw_airport(uint16_t *fb, int sx, int sy, int r, const apt_ent_t *e)
+static void draw_airport(uint16_t *fb, int sx, int sy, int r, const apt_ent_t *e,
+                         float map_rot_deg)
 {
     uint16_t col, lbl;
     apt_colors(e, &col, &lbl);
@@ -681,10 +697,13 @@ static void draw_airport(uint16_t *fb, int sx, int sy, int r, const apt_ent_t *e
     else                                   draw_disc(fb, sx, sy, (float)r, r - 2.0f, col);
 
     /* 管制机场加 4 个 tick（正北/东/南/西各一根短须）——形状=种类、
-     * tick=是否管制、实心=跑道等级，三个维度正交，互不干扰。 */
+     * tick=是否管制、实心=跑道等级，三个维度正交，互不干扰。
+     * tick 指向的是**真北**为基准的四个方位，地图旋转后（heading-up）它们要
+     * 跟着转，否则"北向 tick"会指向屏幕上错误的方向：screen 方位 = true 方位
+     * − map_rot_deg（与 map_page.c 的旋转推导同一个公式）。 */
     if (e->ctrl == APT_CTRL_CTRL) {
         for (int k = 0; k < 4; k++) {
-            const float a = (float)k * (float)M_PI / 2.0f;
+            const float a = ((float)k * 90.0f - map_rot_deg) * (float)M_PI / 180.0f;
             const float dx = sinf(a), dy = -cosf(a);
             pk_pfd_draw_line_aa(fb, sx + dx * r, sy + dy * r,
                                 sx + dx * (r + 4), sy + dy * (r + 4), 2.0f, col);
@@ -722,9 +741,12 @@ static void draw_square(uint16_t *fb, int sx, int sy, float h, float w, uint16_t
 /* 罗盘玫瑰。外圈 + 每 10° 一根刻度（30° 的加长）+ 磁北那根旁边一个 "N"。
  *
  * 磁差：直接用导航台自己的经纬度查 pk_mag_var_lookup（WMM 5° 网格双线性插值，
- * 东偏为正）。地图是**正北朝上**（瓦片按 Web Mercator 轴对齐贴，没有旋转），
- * 所以屏幕上方 = 真北；磁北在真北**东侧** var 度，即整圈顺时针转 +var。
- * 这正是罗盘玫瑰存在的意义——航图上 VOR 的径向是磁方位，圈不按磁差转就读错。
+ * 东偏为正）。north-up 时屏幕上方 = 真北，磁北在真北**东侧** var 度，即整圈
+ * 顺时针转 +var；heading-up 时底图整体转了 map_rot_deg，"磁北在屏幕上指向
+ * 哪"这件事也要跟着转——调用方（render_symbols）在传参前把 var 减掉
+ * map_rot_deg，本函数自己不关心地图有没有转，只管"传进来的角度是磁北的
+ * 屏幕方位"这一件事。这正是罗盘玫瑰存在的意义——航图上 VOR 的径向是磁方位，
+ * 圈不按磁差转就读错。
  *
  * 性能：外圈走 draw_disc 的环路径（R=26 的细环 ≈ 340 个像素判定），刻度是
  * 36 条长 3~6 px 的短线。**绝不能**用 pk_pfd_draw_arc_aa 画整圈：它按 1.5°
@@ -905,7 +927,7 @@ static int nav_occ_r(uint8_t type, bool rose_on)
 }
 
 void pk_aero_layer_render_symbols(uint16_t *fb, double center_lat, double center_lon,
-                                  uint8_t zoom)
+                                  uint8_t zoom, float map_rot_deg)
 {
     s_pass_act = -1;
     s_pass_nvis = 0;
@@ -920,6 +942,8 @@ void pk_aero_layer_render_symbols(uint16_t *fb, double center_lat, double center
      * 符号是跟手的，只是 LOD 集合还是上一档的——比整层闪一下好得多。 */
     double cwx, cwy;
     pk_aero_lonlat_to_world(center_lon, center_lat, zoom, &cwx, &cwy);
+    const double cos_r = cos((double)map_rot_deg * M_PI / 180.0);
+    const double sin_r = sin((double)map_rot_deg * M_PI / 180.0);
     const int r_apt = r_apt_for_zoom(zoom);
     int nvis = 0;
 
@@ -928,24 +952,24 @@ void pk_aero_layer_render_symbols(uint16_t *fb, double center_lat, double center
      * lonlat_to_world（几十微秒），相对绘制可忽略——标签趟本来也要重投影一遍。 */
     int nvor = 0;
     for (int i = 0; i < s->n_fix; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
-        if (on_screen(AERO_MCX + (int)lround(wx - cwx), AERO_MCY + (int)lround(wy - cwy)))
-            nvis++;
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
+        if (on_screen(sx, sy)) nvis++;
     }
     for (int i = 0; i < s->n_nav; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
-        if (!on_screen(AERO_MCX + (int)lround(wx - cwx), AERO_MCY + (int)lround(wy - cwy)))
-            continue;
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
+        if (!on_screen(sx, sy)) continue;
         nvis++;
         if (nav_has_rose(s->nav[i].type, true)) nvor++;
     }
     for (int i = 0; i < s->n_apt; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->apt[i].lon, s->apt[i].lat, zoom, &wx, &wy);
-        if (on_screen(AERO_MCX + (int)lround(wx - cwx), AERO_MCY + (int)lround(wy - cwy)))
-            nvis++;
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
+        if (on_screen(sx, sy)) nvis++;
     }
     s_pass_nvis = nvis;
     s_pass_rose = pk_aero_rose_enabled(zoom, nvis, nvor);
@@ -953,35 +977,38 @@ void pk_aero_layer_render_symbols(uint16_t *fb, double center_lat, double center
     /* 符号自下而上：FIX → 导航台 → 机场。机场压在最上面，它是这一层里
      * 最要紧的信息。这一趟**只画不占位**——占位在标签趟统一登记，理由见那边。 */
     for (int i = 0; i < s->n_fix; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         draw_fix(fb, sx, sy, R_FIX);
     }
     for (int i = 0; i < s->n_nav; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         const bool rose = nav_has_rose(s->nav[i].type, s_pass_rose);
         /* 磁差按**导航台自己的位置**查，不是视图中心：一屏可能横跨几度经度，
-         * 高纬度上两个 VOR 的磁差能差好几度，圈转错就把径向读歪了。 */
-        const float mv = rose ? pk_mag_var_lookup(s->nav[i].lat, s->nav[i].lon) : 0.0f;
+         * 高纬度上两个 VOR 的磁差能差好几度，圈转错就把径向读歪了。heading-up
+         * 时再减掉 map_rot_deg——传给 draw_navaid 的是"磁北的屏幕方位"，不是
+         * "磁差本身"，见 draw_compass_rose 头注 2026-08-03 那段。 */
+        const float mv = rose ? pk_mag_var_lookup(s->nav[i].lat, s->nav[i].lon) - map_rot_deg
+                              : 0.0f;
         draw_navaid(fb, sx, sy, R_NAV, s->nav[i].type, rose, mv);
     }
     for (int i = 0; i < s->n_apt; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->apt[i].lon, s->apt[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
-        draw_airport(fb, sx, sy, r_apt, &s->apt[i]);
+        draw_airport(fb, sx, sy, r_apt, &s->apt[i], map_rot_deg);
     }
 }
 
 void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_lon,
                                  uint8_t zoom, pk_aero_rect_t *occ, int *nocc,
-                                 int occ_max)
+                                 int occ_max, float map_rot_deg)
 {
     const int act = s_pass_act;
     if (act < 0 || act > 1) return;          /* 符号趟没画：标签也不画 */
@@ -993,6 +1020,8 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
 
     double cwx, cwy;
     pk_aero_lonlat_to_world(center_lon, center_lat, zoom, &cwx, &cwy);
+    const double cos_r = cos((double)map_rot_deg * M_PI / 180.0);
+    const double sin_r = sin((double)map_rot_deg * M_PI / 180.0);
     const int r_apt = r_apt_for_zoom(zoom);
 
     /* 先把本层所有上屏符号登记成障碍物，再摆标签。
@@ -1007,15 +1036,15 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
      * 重投影用的是与符号趟同一份快照（s_pass_act）和同一套投影参数，
      * 所以盒子一定盖在刚才画出来的符号上。 */
     for (int i = 0; i < s->n_fix; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (on_screen(sx, sy)) occ_add_symbol(occ, nocc, occ_max, sx, sy, R_FIX);
     }
     for (int i = 0; i < s->n_nav; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         /* 带罗盘玫瑰的导航台占位盒按玫瑰外圈算（含 "N" 那个字），否则标签
          * 会压在刻度上——符号一大，包围盒必须跟着大。 */
         if (on_screen(sx, sy))
@@ -1023,9 +1052,9 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
                            nav_occ_r(s->nav[i].type, s_pass_rose));
     }
     for (int i = 0; i < s->n_apt; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->apt[i].lon, s->apt[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         /* 管制机场那 4 根 tick 伸出 r+4，包围盒要跟着涨，否则标签压住须尖。 */
         if (on_screen(sx, sy))
             occ_add_symbol(occ, nocc, occ_max, sx, sy,
@@ -1040,9 +1069,9 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
      * 一两次位置，抖的是它自己躲不躲得开，与谁先占位无关。 */
     for (int i = 0; i < s->n_apt; i++) {
         const apt_ent_t *e = &s->apt[i];
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(e->lon, e->lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         /* txt 装得下最坏情况：代码 7 + 空格 + 名称 21 + 空格 + "-32768ft" 8
          * + NUL = 39 < 64，这三条 snprintf 都不会截断。 */
@@ -1063,9 +1092,9 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
                   txt, lbl_col, occ, nocc, occ_max);
     }
     for (int i = 0; i < s->n_nav; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (on_screen(sx, sy))
             put_label(fb, sx, sy, nav_occ_r(s->nav[i].type, s_pass_rose),
                       s->nav[i].ident, COL_LBL_NAV,
@@ -1073,9 +1102,9 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
     }
     if (label < 2) return;   /* 仅代码档不给 FIX 加标签，太挤 */
     for (int i = 0; i < s->n_fix; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
-        int sx = AERO_MCX + (int)lround(wx - cwx), sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (on_screen(sx, sy))
             put_label(fb, sx, sy, R_FIX, s->fix[i].ident, COL_LBL_FIX,
                       occ, nocc, occ_max);
@@ -1098,7 +1127,7 @@ void pk_aero_layer_render_labels(uint16_t *fb, double center_lat, double center_
  * 顺序无关，排这个序只是让"同类平手取先到"落在离本机更近的那一个上。
  */
 bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
-                            uint8_t zoom, pk_aero_layer_hit_t *out)
+                            uint8_t zoom, float map_rot_deg, pk_aero_layer_hit_t *out)
 {
     if (out == NULL) return false;
     const int act = s_active;
@@ -1107,6 +1136,8 @@ bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
 
     double cwx, cwy;
     pk_aero_lonlat_to_world(center_lon, center_lat, zoom, &cwx, &cwy);
+    const double cos_r = cos((double)map_rot_deg * M_PI / 180.0);
+    const double sin_r = sin((double)map_rot_deg * M_PI / 180.0);
 
     /* 栈预算是硬的：本函数跑在触摸 read_cb 里，而那是 pfd 任务
      * （xTaskCreate "pfd", 6 KB，pfd.c:503）的 lv_timer_handler 内层调用。
@@ -1122,30 +1153,27 @@ bool pk_aero_layer_hit_test(int x, int y, double center_lat, double center_lon,
 
     /* 三类各投影一遍。顺序机场 → 导航台 → FIX，见函数头。 */
     for (int i = 0; i < s->n_apt && n < cap; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->apt[i].lon, s->apt[i].lat, zoom, &wx, &wy);
-        const int sx = AERO_MCX + (int)lround(wx - cwx);
-        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
                                         PK_AERO_LAYER_KIND_AIRPORT };
         slot[n++] = (uint8_t)i;
     }
     for (int i = 0; i < s->n_nav && n < cap; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->nav[i].lon, s->nav[i].lat, zoom, &wx, &wy);
-        const int sx = AERO_MCX + (int)lround(wx - cwx);
-        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
                                         PK_AERO_LAYER_KIND_NAVAID };
         slot[n++] = (uint8_t)i;
     }
     for (int i = 0; i < s->n_fix && n < cap; i++) {
-        double wx, wy;
+        double wx, wy; int sx, sy;
         pk_aero_lonlat_to_world(s->fix[i].lon, s->fix[i].lat, zoom, &wx, &wy);
-        const int sx = AERO_MCX + (int)lround(wx - cwx);
-        const int sy = AERO_MCY + (int)lround(wy - cwy);
+        proj_screen(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (!on_screen(sx, sy)) continue;
         cand[n] = (pk_aero_hit_cand_t){ (int16_t)sx, (int16_t)sy,
                                         PK_AERO_LAYER_KIND_FIX };

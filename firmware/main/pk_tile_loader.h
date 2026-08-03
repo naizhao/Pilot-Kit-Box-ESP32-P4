@@ -75,6 +75,35 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
                              uint16_t *fb, int dst_x0, int dst_y0,
                              uint32_t now_ms, bool *out_negative);
 
+/*
+ * heading-up 逐像素旋转采样专用：锁定 (z,tx,ty) 这一张瓦片的原始 RGB565
+ * 数据供只读采样，命中后**不释放锁**——调用方（map_page.c 的旋转扫描线）
+ * 在同一张瓦片内逐像素采样完，或跨到下一张瓦片前，必须调用
+ * pk_tile_loader_unlock_sample() 配对释放。
+ *
+ * 为什么不用 pk_tile_loader_try_blit：那个函数每次调用做一整块 256×256 的
+ * blit，是为"按瓦片格"的 north-up 快路径设计的；旋转扫描线是按屏幕行走的，
+ * 一行会跨好几张瓦片、每张瓦片内只采样一小段像素，粒度对不上。这里把"路由
+ * 查找 + 拿裸指针"这一步单独暴露出来，让调用方按**跨瓦片边界**（而不是逐
+ * 像素）的粒度去锁/解锁，代价与 try_blit 同量级（一次路由 + 一次缓存查找），
+ * 只是把"锁内做什么"的决定权交给调用方。
+ *
+ * out_shift：overzoom 时源瓦片需要裁剪再放大 2^shift 倍，调用方用
+ * `crop_x0 + (local_x >> shift)` 算源瓦片内的采样坐标——给 shift 而不是给
+ * scale 是为了让调用方用移位代替除法（除数不是编译期常量，编译器优化不掉）。
+ * scale==1（精确命中）时 shift=0。
+ *
+ * 返回 false：没有包覆盖 / 未缓存 / 负缓存——调用方不持有任何锁，应退回占位
+ * 色，不阻塞（不在这里做 ancestor 回退，那是 try_blit_ancestor 的职责，逐
+ * 像素路径为了控制成本不重复实现那一套，见 map_page.c 的耗时评估注释）。
+ */
+bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
+                                const uint16_t **out_data, uint32_t *out_shift,
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0);
+
+/* 与 pk_tile_loader_lock_sample() 配对：仅在其返回 true 时调用一次。 */
+void pk_tile_loader_unlock_sample(void);
+
 /* 未命中时的兜底：从缓存里找**已有的上级瓦片**（z-1、z-2…最多 max_levels_up
  * 级），裁出对应子块放大填满目标区域。
  *

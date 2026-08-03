@@ -201,6 +201,45 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
     return true;
 }
 
+bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
+                                const uint16_t **out_data, uint32_t *out_shift,
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0)
+{
+    pk_map_route_result_t route;
+    if (!pk_tile_loader_route(z, tx, ty, &route)) return false;
+
+    uint32_t scale = route.scale;
+    if (scale > PK_TILE_PIXELS) scale = PK_TILE_PIXELS;
+    uint32_t crop = PK_TILE_PIXELS / scale;
+    uint32_t shift = 0;
+    for (uint32_t s = scale; s > 1; s >>= 1) shift++;
+    uint32_t local_x = tx - (route.actual_x << shift);
+    uint32_t local_y = ty - (route.actual_y << shift);
+
+    pk_tile_key_t key = {
+        .pack_id = (uint32_t)route.pack_index,
+        .z = route.actual_z, .x = route.actual_x, .y = route.actual_y,
+    };
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool neg = false;
+    const uint16_t *data = pk_tile_cache_get(&s_cache, key, now_ms, &neg);
+    if (data == NULL) {
+        xSemaphoreGive(s_lock);
+        return false;
+    }
+    *out_data = data;
+    *out_shift = shift;
+    *out_crop_x0 = local_x * crop;
+    *out_crop_y0 = local_y * crop;
+    return true;   /* 锁仍持有,调用方用完必须调 pk_tile_loader_unlock_sample() */
+}
+
+void pk_tile_loader_unlock_sample(void)
+{
+    xSemaphoreGive(s_lock);
+}
+
 bool pk_tile_loader_try_blit_ancestor(uint8_t z, uint32_t x, uint32_t y,
                                       uint16_t *fb, int dst_x0, int dst_y0,
                                       uint32_t now_ms, int max_levels_up)

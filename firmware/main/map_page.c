@@ -1,7 +1,6 @@
 /*
- * map_page.c — SD 离线地图页。north-up、本机居中跟随，PMTiles 栅格底图 +
- * ADS-B 目标叠加。设计依据
- * docs/superpowers/specs/2026-08-01-sd-offline-map-design.md。
+ * map_page.c — SD 离线地图页。本机居中跟随，PMTiles 栅格底图 + ADS-B 目标
+ * 叠加。设计依据 docs/superpowers/specs/2026-08-01-sd-offline-map-design.md。
  *
  * 数据获取照 traffic_page.c 的 PFD 分支：own_ship 取位置、
  * aircraft_state_snapshot 取目标。绘制原语（pk_pfd_draw_aircraft /
@@ -15,7 +14,17 @@
  *
  * 渲染顺序严格按 spec：底图 blit（含缺瓦片占位）→ ADS-B 目标 → 本机符号 →
  * 比例尺 + 署名 → 最后是页头/按钮等 UI 铬层。
- */
+ *
+ * north-up / heading-up（2026-08-03 加）：朝向设置复用 config_traffic.h 的
+ * pk_map_orient_t（交通页与设置页"地图朝向"那一行已经在用同一个开关，本页
+ * 直接读，不新建设置项）。north-up 时 map_rot_deg 恒为 0，底图走原来的
+ * 轴对齐 blit（memcpy 级，帧率关键路径不碰三角函数）；heading-up 且拿到本机
+ * 航向时，底图整体绕视口中心反向旋转 map_rot_deg，走 render_tiles_heading_up()
+ * 的逐像素旋转扫描线（整数增量步进 + 按瓦片边界锁采样，不逐像素查表/浮点，
+ * 耗时估算见该函数注释）。ADS-B 目标、本机符号、搜索 PIN、pk_aero_layer 的
+ * 机场/导航台/FIX 位置都跟着同一个 map_rot_deg 旋转；比例尺/按钮/顶栏等铬层
+ * 是屏幕坐标系的东西，不旋转。文字标签一律保持正立——旋转只动"画在哪"，不
+ * 动"字形本身"。 */
 #include "map_page.h"
 
 #include <math.h>
@@ -36,6 +45,8 @@
 #include "pfd_icon_font.h"
 
 #include "aircraft_state.h"
+#include "config_traffic.h"  /* pk_map_orient_get —— north-up/heading-up 开关，
+                              * 与交通页/设置页"地图朝向"是同一个设置 */
 #include "imu_task.h"   /* pk_imu_sample_get —— 本机符号旋转的 IMU 航向来源 */
 #include "mag_var.h"    /* 磁->真 修正，见 own_heading_true_deg 注释 */
 #include "own_ship.h"
@@ -128,6 +139,14 @@ static bool   s_pin_valid = false;
 static double s_pin_lat, s_pin_lon;
 static char   s_pin_label[8];
 
+/* 上一帧 render() 用过的地图旋转角（north-up 恒 0；heading-up 拿到本机航向
+ * 时=当前航向，拿不到时也是 0——见 render() 里 map_rot_deg 的计算）。
+ * touch_up() 的命中测试要用**与刚画的那一帧完全一致**的投影参数（同
+ * s_center_lat/lon 的道理，见 touch_up 头注释），旋转角不像中心点/zoom 那样
+ * 是用户操作决定的持久状态，是每帧从实时航向算出来的，所以单独存一份供
+ * touch_up 读，不重新走一遍航向解析（触摸回调没有 own/src，也不该现查）。 */
+static float  s_map_rot_deg = 0.0f;
+
 /* ── Web Mercator 世界像素 ↔ 经纬度（度）── */
 static void lonlat_to_world(double lon, double lat, uint8_t z, double *wx, double *wy)
 {
@@ -146,6 +165,121 @@ static void world_to_lonlat(double wx, double wy, uint8_t z, double *lon, double
     double yfrac = wy / n;
     double latrad = atan(sinh(M_PI * (1.0 - 2.0 * yfrac)));
     *lat = latrad * 180.0 / M_PI;
+}
+
+/* 世界像素 → 屏幕像素，按 (cos_r,sin_r)=(cos,sin)(map_rot_deg) 把内容绕视口
+ * 中心旋转。这是**正变换**（世界→屏幕），ADS-B 目标/本机符号/搜索 PIN 这些
+ * "个位数量级"的点都走它——north-up 时 cos_r=1,sin_r=0 退化成原来的纯平移，
+ * 不需要为这几十个点单独维护一条快路径。
+ *
+ * 与 pk_aero_layer.c 的 proj_screen() 是**同一套矩阵**（sx=dx·cos+dy·sin，
+ * sy=dy·cos−dx·sin），两边分属两个文件是因为 pk_aero_layer 的视口宏
+ * （AERO_MCX/AERO_MCY）是它自己抄的一份、不导出——公式必须逐字同步，任何一处
+ * 改了另一处要跟着改，否则底图转了、叠加层没转，画面会整体错位。 */
+static inline void world_to_screen_rot(double wx, double wy, double cwx, double cwy,
+                                       double cos_r, double sin_r, int *sx, int *sy)
+{
+    const double dx = wx - cwx, dy = wy - cwy;
+    *sx = MCX + (int)lround(dx * cos_r + dy * sin_r);
+    *sy = MCY + (int)lround(dy * cos_r - dx * sin_r);
+}
+
+/*
+ * heading-up 底图：逐屏幕行做**增量步进**的逆向采样，把 north-up 快路径换成
+ * "旋转扫描线"，不用离屏画布+整体旋转的两趟方案（那个方案的第二趟要多一次
+ * 800×432 的全屏拷贝+双线性/最近邻重采样，且离屏画布本身要一块 800×480×2B
+ * ≈768KB 的缓冲区，即使放 PSRAM 也是一次额外的读写往返；逐像素方案只有一趟，
+ * 没有这块开销）。
+ *
+ * 数学：设本函数把内容绕视口中心 (MCX,MCY) 反向旋转 map_rot_deg 度，屏幕
+ * 偏移 (sdx,sdy)=(x-MCX,y-MCY) 对应的世界偏移是**逆旋转**：
+ *     wdx = sdx·cos(H) − sdy·sin(H)
+ *     wdy = sdx·sin(H) + sdy·cos(H)     (H = map_rot_deg，与 world_to_screen_rot
+ *                                         的正变换互为转置——旋转矩阵是正交阵)
+ * 固定一行（sdy 不变），wdx/wdy 随 sdx 每 +1 线性递增 cos(H)/sin(H)——这正是
+ * "沿扫描线增量步进"：每列只需 wx+=cosH、wy+=sinH 两次加法，不必重算三角函数
+ * 或重新做除法。
+ *
+ * 定点化：cosH/sinH 与累加器都转成 Q8 定点整数（乘 256）而不是每像素跑
+ * double：
+ *   - world 像素坐标在 zoom≤12 时最大 2^12×256=1,048,576，乘 256 后
+ *     ≈2.68×10^8，落在 int32_t 范围内（上限 2.15×10^9），一次 32 位加法搞定，
+ *     不需要 int64；
+ *   - 单步误差 ≤0.5/256 世界像素，累加 800 步最坏漂移 ≈1.56/256 ≈ 0.006 像素，
+ *     远小于 1 像素，肉眼与量测都看不出；
+ *   - tx = wx_fp >> 16（Q8 再除以 256 定位到瓦片，等价再右移 8，合计 16）；
+ *     lx = (wx_fp >> 8) & 0xFF（瓦片内局部坐标，256 对齐，移位+掩码代替取模）。
+ *     两者都依赖"负数算术右移在这颗目标（RISC-V + gcc）上是符号扩展"这一条
+ *     实现定义行为——本项目的 riscv32-esp-elf 工具链恒如此，是嵌入式/图形代码
+ *     里公认可依赖的写法，这里落成注释而不是当成理所当然。
+ *
+ * 单像素成本（tile 命中、未跨瓦片边界的稳态路径）：2 次 int32 加法（步进）
+ * + 2 次移位+掩码（tx/ty 与 lx/ly）+ 2 次整数比较（判断是否跨瓦片）+ 1 次
+ * 数组下标读——十条上下的整数指令，个位数周期量级（不含 fb 写回与 cache miss）。
+ * 跨瓦片边界时才多付一次 pk_tile_loader_lock_sample()（一次路由查找 + 一次
+ * 哈希/线性查表 + 一把互斥量），一整行横跨的瓦片数最多 (800/256)+2 ≈ 5 张，
+ * 432 行 × 5 ≈ 2160 次——量级与 north-up 路径每帧最多 ~15 次 try_blit() 调用
+ * 不同，但每次的成本也低得多（不做 256×256 整块拷贝，只挂一个指针）。
+ *
+ * 与 north-up 的差异（已知取舍，未做的原因见下）：
+ *   - 不做 ancestor 放大回退（try_blit_ancestor 那一套）：未命中的像素直接
+ *     露出函数外层已经填过的背景色，不画缺瓦片网格。给每个缺失像素单独算
+ *     "属于哪个 256 网格、网格内第几个格子"要重新引入按瓦片对齐的坐标系，
+ *     增加的分支/查表成本不值得——旋转态本来就是新瓦片正在到达的过渡状态，
+ *     真瓦片一到自然替换，与 north-up 的连续性诉求（overzoom 场景）不是
+ *     同一件事。
+ *   - 不做双线性插值：最近邻（整数截断）与 north-up 的 blit_tile_scaled 一致，
+ *     没有引入新的视觉差异。
+ */
+static void render_tiles_heading_up(uint16_t *fb, double cwx, double cwy, uint8_t zoom,
+                                    double cos_r, double sin_r, uint32_t now_ms)
+{
+    const int32_t ntiles = (int32_t)1 << zoom;
+    const int32_t COS_FP = (int32_t)lround(cos_r * 256.0);
+    const int32_t SIN_FP = (int32_t)lround(sin_r * 256.0);
+
+    for (int y = MAP_TOP; y < PK_DISPLAY_H; y++) {
+        const double sdy = (double)(y - MCY);
+        const double wx0 = cwx + (double)(0 - MCX) * cos_r - sdy * sin_r;
+        const double wy0 = cwy + (double)(0 - MCX) * sin_r + sdy * cos_r;
+        int32_t wx_fp = (int32_t)lround(wx0 * 256.0);
+        int32_t wy_fp = (int32_t)lround(wy0 * 256.0);
+
+        int32_t cur_tx = INT32_MIN, cur_ty = INT32_MIN;
+        const uint16_t *cur_data = NULL;
+        uint32_t cur_shift = 0, cur_crop_x0 = 0, cur_crop_y0 = 0;
+        bool cur_locked = false;
+
+        for (int x = 0; x < PK_DISPLAY_W; x++, wx_fp += COS_FP, wy_fp += SIN_FP) {
+            const int32_t tx = wx_fp >> 16;
+            const int32_t ty = wy_fp >> 16;
+            if (tx < 0 || tx >= ntiles || ty < 0 || ty >= ntiles) {
+                if (cur_locked) { pk_tile_loader_unlock_sample(); cur_locked = false; }
+                cur_tx = cur_ty = INT32_MIN;
+                continue;   /* 背景色已在外层整屏填过，越界不用画 */
+            }
+            if (tx != cur_tx || ty != cur_ty) {
+                if (cur_locked) { pk_tile_loader_unlock_sample(); cur_locked = false; }
+                cur_tx = tx; cur_ty = ty;
+                cur_locked = pk_tile_loader_lock_sample((uint8_t)zoom, (uint32_t)tx,
+                                                        (uint32_t)ty, now_ms, &cur_data,
+                                                        &cur_shift, &cur_crop_x0, &cur_crop_y0);
+                if (!cur_locked) {
+                    pk_map_route_result_t route;
+                    if (pk_tile_loader_route((uint8_t)zoom, (uint32_t)tx, (uint32_t)ty, &route))
+                        pk_tile_loader_request(&route);
+                }
+            }
+            if (!cur_locked) continue;
+
+            const uint32_t lx = ((uint32_t)(wx_fp >> 8)) & 0xFF;
+            const uint32_t ly = ((uint32_t)(wy_fp >> 8)) & 0xFF;
+            const uint32_t sx_in = cur_crop_x0 + (lx >> cur_shift);
+            const uint32_t sy_in = cur_crop_y0 + (ly >> cur_shift);
+            fb[y * PK_DISPLAY_W + x] = cur_data[sy_in * TILE_PX + sx_in];
+        }
+        if (cur_locked) pk_tile_loader_unlock_sample();
+    }
 }
 
 /* ── 圆形按钮底（照抄 traffic_page.c 的 draw_btn_plate，本页自成一份：
@@ -295,9 +429,39 @@ static void draw_no_data_state(uint16_t *fb, bool sd_mounted)
               cy + PK_AA_L_H / 2 + 8, hint, col_hint, PK_AA_S);
 }
 
-/* ── 顶栏 / 底部铬层 ── */
-static void draw_chrome(uint16_t *fb, double meters_per_px)
+/* 指北标识：一个小箭头 + "N"，箭头方向 = 真北当前的屏幕方位（north-up 时
+ * map_rot_deg 恒 0，箭头恒指屏幕正上方；heading-up 时随 map_rot_deg 反向
+ * 摆动）。north-up/heading-up 只用这一个 widget 就都覆盖了——箭头动不动本身
+ * 就在说"地图有没有转"，比另外加一行 "HDG UP" 文案更直观，也不用碰 i18n：
+ * "N" 是纯 ASCII，PK_AA 子集字库本来就有，不需要走 i18n_catalog 三件套。
+ * 画在铬层（draw_chrome 最后调用，叠在所有地理内容之上），坐标固定、不旋转
+ * ——它标的是"北在哪"，自己转了就失去意义了。 */
+static void draw_north_ind(uint16_t *fb, int cx, int cy, float map_rot_deg)
 {
+    const uint16_t col = pk_rgb565(255, 200, 90);
+    /* 真北的屏幕方位 = 真北在世界坐标系里的方位(0°) − map_rot_deg，与
+     * pk_aero_layer.c 罗盘玫瑰/管制机场 tick 的推导是同一条公式。 */
+    const float ang = -map_rot_deg * (float)M_PI / 180.0f;
+    const float dx = sinf(ang), dy = -cosf(ang);
+    const int r_tip = 8, r_tail = 3, half_w = 4;
+    const int tipx  = cx + (int)lroundf(dx * r_tip),  tipy  = cy + (int)lroundf(dy * r_tip);
+    const int tailx = cx - (int)lroundf(dx * r_tail), taily = cy - (int)lroundf(dy * r_tail);
+    const int wx = (int)lroundf(-dy * half_w), wy = (int)lroundf(dx * half_w);
+    pk_pfd_draw_triangle(fb, tipx, tipy, tailx + wx, taily + wy, tailx - wx, taily - wy, col);
+
+    /* "N" 标在箭尖再往外一点，字形本身不跟着转（转了就读不出来）。 */
+    const int lx = cx + (int)lroundf(dx * (r_tip + 8));
+    const int ly = cy + (int)lroundf(dy * (r_tip + 8));
+    const int lw = pk_aa_text_width("N", PK_AA_XS);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, lx - lw / 2, ly - PK_AA_XS_H / 2,
+              "N", col, PK_AA_XS);
+}
+
+/* ── 顶栏 / 底部铬层 ── */
+static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg)
+{
+    draw_north_ind(fb, 34, MAP_TOP + 34, map_rot_deg);
+
     /* 顶栏底色：地图瓦片可能画到 y<MAP_TOP（视口边缘取整误差），用一块实底
      * 盖掉，与其它整屏页一致（页头永远是不透明的一条）。 */
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, MAP_TOP, pk_rgb565(7, 10, 16));
@@ -420,42 +584,84 @@ void pk_map_page_render(uint16_t *fb)
     /* 告知航空叠加层当前视图（只存值+置 dirty，查库在它自己的后台任务里）。 */
     pk_aero_layer_notify_view(s_center_lat, s_center_lon, s_zoom);
 
-    /* ── 底图：可见范围内的瓦片 blit（含缺瓦片占位）── */
+    /*
+     * 地图旋转角。north-up 恒 0；heading-up 且拿到本机航向时 = 航向（否则也是
+     * 0，见下）。这份计算原来贴在本机符号那一段（只为了那一个符号服务），
+     * 现在提到最前面，因为**底图**也要用它——旋转与否决定接下来走 north-up
+     * 快路径还是 render_tiles_heading_up()。
+     *
+     * own_valid==false 时 own_rot_deg 保持 0.0f，map_rot_deg 也就跟着是 0：
+     * 丢失本机当前定位时地图自动退回 north-up（没有航向数据，"转成什么角度"
+     * 无从谈起），与既有的"拿不到航向就朝北"降级逻辑是同一条原则，不是
+     * 新增的特例。
+     *
+     * IMU 这一路要加磁偏角转真北（mag_var.h：东偏为正，真=磁+偏）——ADS-B
+     * 地面航迹与 GPS track 本来就是真北，只有 IMU yaw 是磁北，直接拿磁航向
+     * 当地图旋转角会让"正上方"偏掉一个磁偏角（国内 3~10°，高纬更多），而且
+     * 屏幕上完全看不出错，这条换算不能省。
+     */
+    float own_rot_deg = 0.0f;
+    if (own_valid) {
+        pk_imu_sample_t imu;
+        bool imu_ok = pk_imu_sample_get(&imu) && imu.valid;
+        float hdg = 0.0f;
+        pk_hdg_src_t hsrc = PK_HDG_SRC_NONE;
+        if (pk_own_heading_resolve(own_valid, src, &own,
+                                   imu_ok, imu_ok ? imu.yaw_deg : 0.0f,
+                                   &hdg, &hsrc)) {
+            if (hsrc == PK_HDG_SRC_IMU)
+                hdg += pk_mag_var_lookup(own.lat, own.lon);
+            own_rot_deg = hdg;
+        }
+    }
+    const float map_rot_deg = (pk_map_orient_get() == PK_MAP_NORTH_UP) ? 0.0f : own_rot_deg;
+    s_map_rot_deg = map_rot_deg;   /* touch_up() 命中测试要用同一份，见其声明处注释 */
+    const double rot_rad = (double)map_rot_deg * M_PI / 180.0;
+    const double cos_r = cos(rot_rad), sin_r = sin(rot_rad);
+
+    /* ── 底图：可见范围内的瓦片 blit（含缺瓦片占位）──
+     * map_rot_deg==0（north-up，或 heading-up 但暂时没有航向数据）时走原来的
+     * 轴对齐 blit（memcpy 级，逐瓦片而不是逐像素）；否则走旋转扫描线，见
+     * render_tiles_heading_up() 的耗时与算法注释。 */
     const int32_t ntiles = (int32_t)1 << s_zoom;
-    double world_left  = cwx - MCX;
-    double world_right = cwx + (PK_DISPLAY_W - MCX);
-    double world_top    = cwy - (MCY - MAP_TOP);
-    double world_bottom = cwy + (PK_DISPLAY_H - MCY);
-    int32_t tx0 = (int32_t)floor(world_left  / TILE_PX);
-    int32_t tx1 = (int32_t)floor(world_right / TILE_PX);
-    int32_t ty0 = (int32_t)floor(world_top    / TILE_PX);
-    int32_t ty1 = (int32_t)floor(world_bottom / TILE_PX);
+    if (map_rot_deg == 0.0f) {
+        double world_left  = cwx - MCX;
+        double world_right = cwx + (PK_DISPLAY_W - MCX);
+        double world_top    = cwy - (MCY - MAP_TOP);
+        double world_bottom = cwy + (PK_DISPLAY_H - MCY);
+        int32_t tx0 = (int32_t)floor(world_left  / TILE_PX);
+        int32_t tx1 = (int32_t)floor(world_right / TILE_PX);
+        int32_t ty0 = (int32_t)floor(world_top    / TILE_PX);
+        int32_t ty1 = (int32_t)floor(world_bottom / TILE_PX);
 
-    for (int32_t ty = ty0; ty <= ty1; ty++) {
-        if (ty < 0 || ty >= ntiles) continue;
-        for (int32_t tx = tx0; tx <= tx1; tx++) {
-            if (tx < 0 || tx >= ntiles) continue;
-            int dst_x0 = MCX + (int)lround((double)tx * TILE_PX - cwx);
-            int dst_y0 = MCY + (int)lround((double)ty * TILE_PX - cwy);
+        for (int32_t ty = ty0; ty <= ty1; ty++) {
+            if (ty < 0 || ty >= ntiles) continue;
+            for (int32_t tx = tx0; tx <= tx1; tx++) {
+                if (tx < 0 || tx >= ntiles) continue;
+                int dst_x0 = MCX + (int)lround((double)tx * TILE_PX - cwx);
+                int dst_y0 = MCY + (int)lround((double)ty * TILE_PX - cwy);
 
-            pk_map_route_result_t route;
-            bool found = pk_tile_loader_route((uint8_t)s_zoom, (uint32_t)tx, (uint32_t)ty, &route);
-            bool blitted = false, neg = false;
-            if (found) {
-                blitted = pk_tile_loader_try_blit(&route, (uint32_t)tx, (uint32_t)ty,
-                                                  fb, dst_x0, dst_y0, now_ms, &neg);
-                if (!blitted && !neg) pk_tile_loader_request(&route);
-            }
-            if (!blitted) {
-                /* 真瓦片还没到：先拿缓存里的上级瓦片放大顶上，画面不留空洞；
-                 * 一级都找不到才退回网格占位。 */
-                if (!pk_tile_loader_try_blit_ancestor((uint8_t)s_zoom, (uint32_t)tx,
-                                                      (uint32_t)ty, fb, dst_x0, dst_y0,
-                                                      now_ms, 4))
-                    draw_missing_tile(fb, dst_x0, dst_y0, (uint8_t)s_zoom,
-                                      (uint32_t)tx, (uint32_t)ty);
+                pk_map_route_result_t route;
+                bool found = pk_tile_loader_route((uint8_t)s_zoom, (uint32_t)tx, (uint32_t)ty, &route);
+                bool blitted = false, neg = false;
+                if (found) {
+                    blitted = pk_tile_loader_try_blit(&route, (uint32_t)tx, (uint32_t)ty,
+                                                      fb, dst_x0, dst_y0, now_ms, &neg);
+                    if (!blitted && !neg) pk_tile_loader_request(&route);
+                }
+                if (!blitted) {
+                    /* 真瓦片还没到：先拿缓存里的上级瓦片放大顶上，画面不留空洞；
+                     * 一级都找不到才退回网格占位。 */
+                    if (!pk_tile_loader_try_blit_ancestor((uint8_t)s_zoom, (uint32_t)tx,
+                                                          (uint32_t)ty, fb, dst_x0, dst_y0,
+                                                          now_ms, 4))
+                        draw_missing_tile(fb, dst_x0, dst_y0, (uint8_t)s_zoom,
+                                          (uint32_t)tx, (uint32_t)ty);
+                }
             }
         }
+    } else {
+        render_tiles_heading_up(fb, cwx, cwy, s_zoom, cos_r, sin_r, now_ms);
     }
 
     /* 越级放大提示：视口中心那格如果是 overzoom，弱化提示一下（spec §交互）。 */
@@ -505,7 +711,7 @@ void pk_map_page_render(uint16_t *fb)
     int nocc = 0;
     /* 航空叠加层分两趟夹住 ADS-B：符号垫在飞机之下，标签排在呼号之后
      * （交通信息优先于机场位置，见 pk_aero_layer.h）。 */
-    pk_aero_layer_render_symbols(fb, s_center_lat, s_center_lon, s_zoom);
+    pk_aero_layer_render_symbols(fb, s_center_lat, s_center_lon, s_zoom, map_rot_deg);
     const uint16_t col_ac  = pk_rgb565(0, 210, 235);
     const uint16_t col_lbl = pk_rgb565(207, 211, 220);
     /*
@@ -542,8 +748,8 @@ void pk_map_page_render(uint16_t *fb)
         if (own_valid && own.icao24 != 0 && a->icao24 == own.icao24) continue;
         double wx, wy;
         lonlat_to_world(a->lon, a->lat, s_zoom, &wx, &wy);
-        int sx = MCX + (int)lround(wx - cwx);
-        int sy = MCY + (int)lround(wy - cwy);
+        int sx, sy;
+        world_to_screen_rot(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (sx < -20 || sx > PK_DISPLAY_W + 20 || sy < MAP_TOP - 20 || sy > PK_DISPLAY_H + 20)
             continue;
 
@@ -551,7 +757,12 @@ void pk_map_page_render(uint16_t *fb)
         if (own_on_ground && !a->on_ground) sal_pct = MAP_SALIENCY_DIM_PCT; /* 本机在地面：压暗空中目标 */
         else if (own_airborne && a->on_ground) sal_pct = MAP_SALIENCY_DIM_PCT; /* 本机在空中：压暗地面目标 */
 
-        const float rot = a->have_velocity ? (float)a->heading_deg : 0.0f;
+        /* 目标航向是绝对方位（真北基准），地图转了 map_rot_deg 之后画在屏幕上
+         * 的角度要跟着减，否则目标机头会指向错误方向——这条与本机符号、
+         * pk_aero_layer 的罗盘玫瑰/tick 是同一条公式（screen 方位 = 真方位
+         * − map_rot_deg）。航向未知时维持既有降级：画成朝屏幕正上方，这是
+         * "不知道"的既有约定，不随地图旋转变化。 */
+        const float rot = a->have_velocity ? (float)a->heading_deg - map_rot_deg : 0.0f;
         /* 地面目标画空心剪影——与空中实心目标一眼可辨（阶段 4c，见
          * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。阶段 4d 起颜色也
          * 独立成一套（COL_GROUND），不再借用空中目标的青色。 */
@@ -588,59 +799,43 @@ void pk_map_page_render(uint16_t *fb)
         }
     }
     pk_aero_layer_render_labels(fb, s_center_lat, s_center_lon, s_zoom,
-                                s_occ, &nocc, (int)(sizeof(s_occ) / sizeof(s_occ[0])));
-
-    /* 本机符号的旋转角。地图是 **north-up 且以真北为基准**，而
-     * pk_own_heading_resolve() 的输出基准随来源变：ADS-B 地面航迹与 GPS
-     * track 本来就是真北，IMU yaw 是**磁北**。直接把磁航向画上去，机头会
-     * 偏掉一整个磁偏角（国内 3~10°，高纬更多），而且屏幕上完全看不出错。
-     * 所以 IMU 这一路必须加磁偏角转真北（mag_var.h：东偏为正，真=磁+偏）。
-     *
-     * 拿不到航向就保持 0（朝北）——这是既有行为，不是新引入的降级。 */
-    float own_rot_deg = 0.0f;
-    if (own_valid) {
-        pk_imu_sample_t imu;
-        bool imu_ok = pk_imu_sample_get(&imu) && imu.valid;
-        float hdg = 0.0f;
-        pk_hdg_src_t hsrc = PK_HDG_SRC_NONE;
-        if (pk_own_heading_resolve(own_valid, src, &own,
-                                   imu_ok, imu_ok ? imu.yaw_deg : 0.0f,
-                                   &hdg, &hsrc)) {
-            if (hsrc == PK_HDG_SRC_IMU)
-                hdg += pk_mag_var_lookup(own.lat, own.lon);
-            own_rot_deg = hdg;
-        }
-    }
+                                s_occ, &nocc, (int)(sizeof(s_occ) / sizeof(s_occ[0])),
+                                map_rot_deg);
 
     /* ── 本机符号：跟随模式画在视口中心；手动平移模式画在它真实的地理投影位置
      * （可能滚出视口之外，此时自然不画——离开可见范围本来就不该出现）。
      * GPS 无 fix：灰显于上次已知位置；从未有过位置则整个不画（同 traffic 页的
-     * "无本机符号"降级逻辑，画一个我不知道在哪的"我在这"就是说谎）。 ── */
+     * "无本机符号"降级逻辑，画一个我不知道在哪的"我在这"就是说谎）。
+     *
+     * 图标旋转角 = own_rot_deg − map_rot_deg：north-up 时 map_rot_deg=0，与
+     * 原来行为一致；heading-up 时两者相等，画出来恒为 0（机头指屏幕正上方）
+     * ——这正是 heading-up 这个名字的字面意思。 ── */
     if (own_valid) {
         int ox, oy;
         if (s_follow) { ox = MCX; oy = MCY; }
         else {
             double owx, owy;
             lonlat_to_world(own.lon, own.lat, s_zoom, &owx, &owy);
-            ox = MCX + (int)lround(owx - cwx);
-            oy = MCY + (int)lround(owy - cwy);
+            world_to_screen_rot(owx, owy, cwx, cwy, cos_r, sin_r, &ox, &oy);
         }
         if (ox >= 0 && ox < PK_DISPLAY_W && oy >= MAP_TOP && oy < PK_DISPLAY_H) {
             const uint8_t *ac = pk_icon_bitmap
                               + (size_t)PK_ICON_OWNSHIP * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
             pk_aa_blit_4bpp_rot(fb, PK_DISPLAY_W, PK_DISPLAY_H, ox, oy, ac, PK_ICON_W, PK_ICON_H,
-                               own_rot_deg, pk_rgb565(255, 255, 255));
+                               own_rot_deg - map_rot_deg, pk_rgb565(255, 255, 255));
         }
     } else if (s_have_last_own) {
         double owx, owy;
         lonlat_to_world(s_last_own_lon, s_last_own_lat, s_zoom, &owx, &owy);
-        int ox = MCX + (int)lround(owx - cwx);
-        int oy = MCY + (int)lround(owy - cwy);
+        int ox, oy;
+        world_to_screen_rot(owx, owy, cwx, cwy, cos_r, sin_r, &ox, &oy);
         if (ox >= 0 && ox < PK_DISPLAY_W && oy >= MAP_TOP && oy < PK_DISPLAY_H) {
             const uint8_t *ac = pk_icon_bitmap
                               + (size_t)PK_ICON_OWNSHIP * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
             /* 陈旧位置：位置本身已经不可信，航向更不可信（可能是几分钟前的），
-             * 保持朝北而不是画一个会误导的角度。 */
+             * 保持朝北而不是画一个会误导的角度——本分支 own_valid 恒 false，
+             * map_rot_deg 因此也恒为 0（见上面的计算），0.0f 与"指向真北"
+             * 完全等价，不用额外写 -map_rot_deg。 */
             pk_aa_blit_4bpp_rot(fb, PK_DISPLAY_W, PK_DISPLAY_H, ox, oy, ac, PK_ICON_W, PK_ICON_H,
                                0.0f, pk_rgb565(140, 148, 158));
         }
@@ -651,8 +846,8 @@ void pk_map_page_render(uint16_t *fb)
     if (s_pin_valid) {
         double pwx, pwy;
         lonlat_to_world(s_pin_lon, s_pin_lat, s_zoom, &pwx, &pwy);
-        const int px = MCX + (int)lround(pwx - cwx);
-        const int py = MCY + (int)lround(pwy - cwy);
+        int px, py;
+        world_to_screen_rot(pwx, pwy, cwx, cwy, cos_r, sin_r, &px, &py);
         /* 余量给足：PIN 主体在落点上方 37 px，标签还要再高一截，
          * 落点刚滚出下沿时上半截仍该露出来。 */
         if (px > -40 && px < PK_DISPLAY_W + 40 &&
@@ -667,7 +862,7 @@ void pk_map_page_render(uint16_t *fb)
     /* ── 拔卡提示留给 pk_tile_loader.c 的 toast（pfd.c 统一叠加），本页
      * 不重复画——两处都画会互相压。 ── */
 
-    draw_chrome(fb, mpp);
+    draw_chrome(fb, mpp, map_rot_deg);
 }
 
 /* ── 触摸 ─────────────────────────────────────────────────────────── */
@@ -768,10 +963,10 @@ void pk_map_page_touch_up(void)
     const bool tap = s_press_active && s_btn_down < 0 && !s_press_moved;
     if (tap) {
         pk_aero_layer_hit_t hit;
-        /* 投影参数用本页当前的视图状态，与刚画完的那一帧完全一致——
-         * 看得见的就是点得中的。 */
+        /* 投影参数（含旋转角 s_map_rot_deg）用本页当前的视图状态，与刚画完
+         * 的那一帧完全一致——看得见的就是点得中的。 */
         if (pk_aero_layer_hit_test(s_press_lx, s_press_ly, s_center_lat,
-                                   s_center_lon, s_zoom, &hit)) {
+                                   s_center_lon, s_zoom, s_map_rot_deg, &hit)) {
             if (hit.kind == PK_AERO_LAYER_KIND_AIRPORT) {
                 pk_map_page_on_apt_detail(hit.idx);
             } else {
