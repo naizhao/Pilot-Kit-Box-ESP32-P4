@@ -87,6 +87,13 @@ void pk_batt_init(void)
     ESP_LOGI(TAG, "BAT_ADC on GPIO%d (unit %d chan %d), divider x%.2f",
              BATT_ADC_GPIO, (int)unit, (int)s_chan,
              CONFIG_PK_BATT_DIVIDER_X100 / 100.0);
+    /* 开机报一次 STAT 初始电平，帮装配时定位飞线。
+     * 注意判读方向：LOW 一定说明飞线通了（且在充电）；HIGH 则**分不出**
+     * "没接线"和"接了但没充电"——因为没接线时内部上拉同样把它读成 HIGH。
+     * 所以要确认飞线，插上充电线看有没有那条 "TP1 飞线已确认接通"。 */
+    ESP_LOGI(TAG, "STAT(GPIO%d) 初始电平=%s（LOW=正在充电且飞线已通；"
+                  "HIGH=未充电 或 飞线未接，两者此刻无法区分）",
+             BATT_STAT_GPIO, gpio_get_level(BATT_STAT_GPIO) ? "HIGH" : "LOW");
 }
 
 /*
@@ -104,6 +111,45 @@ static int mv_to_pct(int mv)
     if (mv >= 3500) return 20 + (mv - 3500) * 30 / 200;
     if (mv >= 3300) return      (mv - 3300) * 20 / 200;
     return 0;
+}
+
+/*
+ * 充电时的端电压补偿。
+ *
+ * 上面那张表是**放电曲线**，按静置开路电压标定。充电时测到的是端电压 =
+ * 开路电压 + 充电电流 × 内阻，直接查表必然虚高：真机实测插着电显示 99%、
+ * 拔掉掉到 88%，跳 11 个百分点。
+ *
+ * 这里以前的决定是"不补偿"，理由是压降随充电电流变化、减一个固定值会在别的
+ * 阶段引入新的错。理由本身成立，但固定值并不是唯一选择 —— ETA6098 是 CC/CV
+ * 充电器，压降怎么变是有形状的：
+ *
+ *   CC 恒流段（端电压还没顶到 4.15 V）：电流恒定，压降 ≈ I×R 也基本恒定；
+ *   CV 恒压段（4.15 V 以上）：电压被钳住，电流从满流逐渐降到截止电流，
+ *                              压降随之线性趋近 0。
+ *
+ * 所以补偿量在 CV 区间线性收敛到 0，而不是一刀切。这样快充阶段扣得多、
+ * 快充满时几乎不扣，跳变从 11 个百分点压到 2 个左右。
+ *
+ * BATT_CHG_DROP_MV 是**经验值**，不是测出来的内阻：它等于"插电稳定读数 −
+ * 拔电稳定读数"，本机 2026-08-04 实测约 150 mV。换电芯或改充电电流后要重标：
+ * esp_log_level_set("batt", ESP_LOG_DEBUG) 会打出补偿前后的电压，插拔一次
+ * 取差值填回来即可。
+ *
+ * 仍是估算，做不到电量计那么准 —— 这块板既没有电流采样也没有库仑计。但比
+ * 「充电时系统性虚高 10%+」好，而且只在 STAT 确认正在充电时才介入（充满后
+ * ETA6098 停充、STAT 拉高，这里就不再扣，不会把满电压成 90%）。
+ */
+#define BATT_CHG_DROP_MV   150
+#define BATT_CV_KNEE_MV    4150   /* CC→CV 拐点 */
+#define BATT_CV_FULL_MV    4200   /* CV 段终点，压降到此归零 */
+
+static int charge_drop_mv(int batt_mv)
+{
+    if (batt_mv <= BATT_CV_KNEE_MV) return BATT_CHG_DROP_MV;
+    if (batt_mv >= BATT_CV_FULL_MV) return 0;
+    return BATT_CHG_DROP_MV * (BATT_CV_FULL_MV - batt_mv)
+                            / (BATT_CV_FULL_MV - BATT_CV_KNEE_MV);
 }
 
 bool pk_batt_get(pk_batt_t *out)
@@ -133,6 +179,15 @@ bool pk_batt_get(pk_batt_t *out)
              */
             const int stat = gpio_get_level(BATT_STAT_GPIO);
             if (stat == 0) {
+                /* 第一次看到 LOW = TP1 飞线确实接上了，而且此刻在充电。
+                 * 这条走 INFO 打一次（不是 DEBUG）：飞线接没接好是装配问题，
+                 * 装完就想立刻确认，不该要求先去改日志级别重烧一遍。
+                 * 之后 s_stat_valid 恒为真，这里不会再打。 */
+                if (!s_stat_valid) {
+                    ESP_LOGI(TAG, "STAT(GPIO%d)=LOW —— TP1 飞线已确认接通，"
+                                  "充电状态改用硬件信号（不再靠电压推断）",
+                             BATT_STAT_GPIO);
+                }
                 s_stat_valid = true;
                 s_charging = true;
             } else if (s_stat_valid) {
@@ -181,26 +236,30 @@ bool pk_batt_get(pk_batt_t *out)
              * 2026-07-29 已用它标出 296（raw 1387 mV ↔ 实测 4.10 V），故降到
              * DEBUG。换板子或换电芯要重标时，esp_log_level_set("batt",
              * ESP_LOG_DEBUG) 打开即可，不必回头改代码。 */
-            ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV)", s_ema_mv,
-                     CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
-                     s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100);
+            const int batt_mv_dbg = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
+            const int drop_dbg    = s_charging ? charge_drop_mv(batt_mv_dbg) : 0;
+            ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV) chg=%d drop=%d mV "
+                          "-> %d mV = %d%%",
+                     s_ema_mv, CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
+                     batt_mv_dbg, (int)s_charging, drop_dbg,
+                     batt_mv_dbg - drop_dbg, mv_to_pct(batt_mv_dbg - drop_dbg));
         }
     }
 
     if (out) {
-        /*
-         * 一个已知的系统性偏差，暂不补偿：**充电时电量虚高**。
-         *
-         * 同一块电池，接着线读 4165 mV（100%）、拔掉立刻回落到 4100 mV
-         * （95%）——差的 65 mV 是充电电流在内阻上的压降，不是真实电量。
-         *
-         * 不做补偿是因为压降随充电电流变化（快充阶段远大于涓流），减一个
-         * 固定值会在别的阶段引入新的错。要做准得测内阻或读电量计，这块板
-         * 两样都没有。记在这里，免得下次有人把它当 bug 查。
-         */
         out->raw_mv   = s_ema_mv;
         out->batt_mv  = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
-        out->pct      = mv_to_pct(out->batt_mv);
+        /*
+         * 百分比按**扣掉充电压降后**的电压算，见 charge_drop_mv() 顶部那段
+         * 推导。batt_mv 本身仍report 实测值——它是标定分压比和排查用的原始
+         * 量，补偿只影响"给人看的电量"。
+         *
+         * 只在 s_charging 时扣。这个标志优先取自 STAT 引脚（TP1 飞线，硬件
+         * 信号）；飞线没接时退化成电压推断，那种情况下补偿也跟着不可靠——
+         * 但那时本来就没有可靠的充电状态可言。
+         */
+        const int drop = s_charging ? charge_drop_mv(out->batt_mv) : 0;
+        out->pct      = mv_to_pct(out->batt_mv - drop);
         /* 满电仍如实报充电状态：阶跃检测能证明线插着，不必再靠"电压还在涨"
          * 来推断，上一版那条 <4150 的抑制反而会把已知事实盖掉。 */
         out->charging = s_charging;
