@@ -236,15 +236,23 @@ void pk_ui_cal_wizard_dismiss(void)
  * 闸门的开关一律留在本文件：s_cal_advisor 是私有状态，让设置页去改就得把它
  * 导出去，"谁在什么时候动过闸门"就散进各个页面了。页面只表达意图。
  *
- * pk_cal_advisor_user_open() 顺手把两条连续段计时器一并清零，各有各的原因
- * （下面这段真机结论原样搬进了 advisor，那边照抄了同一段推理）：
- *   - 低精度那条：进来之后自动进入分支本来就不该再触发（已经在这一页了），
- *     清零与自动进入路径的做法一致。
- *   - 高精度那条：**不清零会让这一页当场闪一下就跑掉**。设备若已经校准好
- *     （acc≥2 持续了几分钟），自动退出下一拍就满足"acc≥2 超过 3 s"，用户刚
- *     点开就被弹回 PFD。清零后至少有 3 s 的窗口；3 s 后仍然自动退回是**有意
- *     保留**的——精度已经够了，这一页没事可做，而真正需要校准（acc<2）时
- *     自动退出根本不会触发，页面会一直等着他。
+ * pk_cal_advisor_user_open() 顺手把两条连续段计时器一并清零（各有各的原因，
+ * 见 advisor 那边的注释）。
+ *
+ * D3（2026-08-04）：user_open() 现在还置位 user_opened 标志，使得
+ * should_exit_wizard() 恒返回 false——**用户主动进入的页面永不自动退出**。
+ *
+ *   推翻的老结论：上一版注释写「3 s 后仍然自动退回是有意保留的——精度已经
+ *   够了，这一页没事可做」。这条被真机反馈推翻了：用户从设置页点进校准页，
+ *   页面显示 3/3，几秒后自己跑回 PFD——用户原话「没给我校准的机会」。用户主动
+ *   点进来就是要校准（重新校准 / 验证 / 画 8 字顶精度都正当），系统凭一个 acc
+ *   读数替他判定「没事可做」然后收走页面是自作聪明。用户的显式动作必须压过
+ *   系统的自动判断。保留这段历史是为了说明为什么当初设计了自动退出（老前提
+ *   是合理的），以及是哪条真机反馈推翻了它。
+ *
+ *   只对自动弹出的页面维持原行为：acc 稳定达标 EXIT_MS 后自动退回 PFD。
+ *   两种进入方式的区分靠 user_opened 标志（advisor 内部维护，dismiss / 自动
+ *   进入路径都会清位）。
  */
 void pk_ui_cal_wizard_enter(void)
 {
@@ -258,7 +266,8 @@ void pk_ui_cal_wizard_enter(void)
                   "auto-enter re-armed)");
 }
 
-void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase)
+void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase,
+                           uint8_t vib_level)
 {
     if (s_lock == NULL) return;
 
@@ -268,7 +277,8 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase
     s_cal_last_accuracy = valid ? accuracy : 0;
 
     pk_cal_advice_t advice = pk_cal_advisor_update(&s_cal_advisor, now_ms,
-                                                   valid, accuracy, phase);
+                                                   valid, accuracy, phase,
+                                                   vib_level);
     s_cal_advice = advice;
 
     /*

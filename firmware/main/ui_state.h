@@ -74,12 +74,12 @@ void pk_ui_set_mode(pk_ui_mode_t mode);
 
 /*
  * 驱动校准向导的自动进入/退出。渲染任务每帧调一次（pfd.c），传最近一份 IMU
- * 样本的 accuracy(0..3)、样本是否有效，以及本机当前飞行相位
- * （pk_own_sampler_get_phase()）。
+ * 样本的 accuracy(0..3)、样本是否有效、本机当前飞行相位
+ * （pk_own_sampler_get_phase()），以及 IMU 振动强度 vib_level
+ * （pk_imu_sample_t.vib_level，pk_vib.c 的加速度模长 RMS）。
  *
  * 判定本身全部在 pk_cal_advisor（纯状态机，host 有单测），本函数只把它的结论
- * 落成切页。三段判据，缺一条就会退回 2026-08-04 之前那个约 13 s 一轮把用户
- * 拽回校准页的循环：
+ * 落成切页。**五段判据**，配套缺一不可，缺一条就会退回骚扰循环：
  *
  *   1. 重新武装滞回 —— 「稍后再说」关上的闸门，要等 accuracy **连续保持**在
  *      阈值之上足够久才解除。旧实现是单帧 acc≥2 就解除，而机坪上这个信号本
@@ -89,13 +89,20 @@ void pk_ui_set_mode(pk_ui_mode_t mode);
  *      PFD 换成校准向导是安全问题，不是骚扰问题。
  *   3. 磁干扰识别 —— accuracy 在滑动窗口内反复跨阈说明是磁环境在变，这种地方
  *      画 8 字物理上救不回来，一律闭嘴（连图标都不给，见 pk_ui_cal_jammed）。
+ *   4. 静止门控 —— 磁力计校准物理上需要转动，vib_level 低于阈值 = 设备没在动
+ *      → 画 8 字没用，降级 HINT（图标照给）。vib_level==0 是「不可用」不是
+ *      「零振动」（pk_vib.h 明确警告过），不可用时不抑制弹页。
+ *   5. 冷启动宽限 —— 本次开机 acc 从未到过 EXIT_ACCURACY → ENTER 窗口临时拉长
+ *      到 120 s（实测冷启动自然收敛要 29~30 s，20 s 窗口会在它自己好之前弹窗）。
+ *      收敛过一次后永久走 20 s 快通道。
  *
  * IMU 断流（valid=false）时不抢页面：读不到姿态的板子弹出一页让人画 8 字毫无
  * 意义。这一条挡在 ui_state.c 的胶水层，理由写在那边。
  *
- * 阈值取值与每个数的依据见 pk_cal_advisor.c 顶部。
+ * 阈值取值与每个数的依据见 pk_cal_advisor.h。
  */
-void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase);
+void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase,
+                           uint8_t vib_level);
 
 /*
  * 用户主动关掉校准页（页内那枚「稍后再说」）。切回 PFD，并关上自动重弹的

@@ -159,9 +159,14 @@ static void pfd_task(void *arg)
         pk_imu_sample_t s;
         bool have = pk_imu_sample_get(&s);
         /* 相位一并传进去：自动弹整页校准向导只允许在地面静止时发生，
-         * 飞行中一律降级成状态栏图标（见 pk_ui_cal_wizard_tick 的注释）。 */
+         * 飞行中一律降级成状态栏图标（见 pk_ui_cal_wizard_tick 的注释）。
+         * vib_level 取自 pk_imu_sample_t.vib_level（pk_vib.c 的加速度模长
+         * RMS）——静止门控用它判「设备没在动 → 画 8 字没用，只给 HINT」。
+         * have 为假时 vib_level 传 0（advisor 内部把 0 当「不可用」处理，
+         * 不会因此误判为静止）。 */
         pk_ui_cal_wizard_tick(have, have ? s.accuracy : 0,
-                              pk_own_sampler_get_phase());
+                              pk_own_sampler_get_phase(),
+                              have ? s.vib_level : 0);
 
         pk_ui_mode_t mode = pk_ui_get_mode();
 

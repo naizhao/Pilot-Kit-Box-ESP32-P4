@@ -1,4 +1,13 @@
-/* pk_cal_advisor.c — 罗盘校准提示判定状态机实现。设计说明见 pk_cal_advisor.h。 */
+/* pk_cal_advisor.c — 罗盘校准提示判定状态机实现。设计说明见 pk_cal_advisor.h。
+ *
+ * 判据共五段（配套缺一不可）：
+ *   1. 重新武装滞回 —— 「稍后再说」的闸门，acc 连续保持 REARM_MS 才解除；
+ *   2. 飞行相位门控 —— 只有地面静止（含 UNKNOWN）才允许抢页面；
+ *   3. 磁干扰识别   —— accuracy 反复跨阈 → 一律闭嘴；
+ *   4. 静止门控     —— vib_level 低 = 设备没在动 → 画 8 字物理上没用，降级 HINT；
+ *   5. 冷启动宽限   —— 本次开机从未收敛过 → ENTER 窗口临时拉长到 120 s。
+ * 另有 acc<EXIT_ACCURACY（0 或 1 都算低精度）的判据修正：BNO 冷启动停在 0 还是 1
+ * 是随机的，旧逻辑只认 ==0 导致停在 1 时永不提示。 */
 #include "pk_cal_advisor.h"
 
 #include <string.h>
@@ -45,7 +54,8 @@ void pk_cal_advisor_reset(pk_cal_advisor_t *st)
 
 pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
                                       bool imu_valid, uint8_t accuracy,
-                                      pk_flight_phase_t phase)
+                                      pk_flight_phase_t phase,
+                                      uint8_t vib_level)
 {
     if (imu_valid) {
         bool acc_high = (accuracy >= PK_CAL_EXIT_ACCURACY);
@@ -59,7 +69,16 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
         st->acc_high_prev = acc_high;
         st->acc_seeded    = true;
 
-        if (accuracy == 0) {
+        /* 记住本次开机是否到过 EXIT_ACCURACY：冷启动宽限只给「从未收敛过」。
+         * 一帧 acc>=2 即置位——后续即便退化也不再享受宽限。 */
+        if (acc_high) st->ever_converged = true;
+
+        if (accuracy < PK_CAL_EXIT_ACCURACY) {
+            /* D2(c)：低精度判据从 ==0 改成 <EXIT_ACCURACY（即 0 或 1）。
+             * BNO 冷启动后停在 0 还是 1 是随机的：停在 0 → 旧逻辑起算；
+             * 停在 1 → 旧逻辑的 else 分支不碰计时器 → 永不提示。可 acc==1
+             * 同样是低精度、航向同样不准。靠静止门控(a)与冷启动宽限(b)兜住，
+             * 三条配套才安全。 */
             if (!st->low_active) {
                 st->low_active   = true;
                 st->low_since_ms = now_ms;
@@ -72,12 +91,10 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
             }
             st->low_active = false;
         }
-        /* accuracy == 1：两条连续段都不动——既不起算也不清零（沿用
-         * ui_state.c 的原行为，注释原话「fusion is in transit」）。注意
-         * 「不动」指的是不碰起点：低精度累计用的是墙钟差值，所以 acc=1 这段
-         * 时间照样算进 ENTER 窗口里，这与旧实现逐位等价。 */
+        /* accuracy 在 EXIT_ACCURACY 之上但不到 high？不存在——EXIT_ACCURACY 就是
+         * high 的阈值，这两条分支互斥且穷尽。 */
     }
-    /* !imu_valid：同 acc==1 —— 取样断流不是磁环境变化，不推进也不清零任何
+    /* !imu_valid：同上 —— 取样断流不是磁环境变化，不推进也不清零任何
      * 计时器，也不参与跨阈统计。 */
 
     /* 闸门重新武装。放在这里（而不是像旧实现那样塞在 acc>=2 的分支里）是为了
@@ -88,13 +105,22 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
         st->suppressed = false;
     }
 
+    /* D3：用户主动打开的校准页永不自动退出。should_exit_wizard() 在该标志为真
+     * 时恒返回 false（见只读结论那段）。exit_ready 照常算——它只反映「acc 是
+     * 否连续达标」，是否据此退出由调用方按 user_opened 判断。这里不改 exit_ready
+     * 是为了让 should_exit_wizard 的实现干净（一个标志 gate 一个 bool）。 */
     st->exit_ready = st->high_active &&
                      (uint32_t)(now_ms - st->high_since_ms) >= PK_CAL_EXIT_MS;
 
     jam_evaluate(st, now_ms);
 
+    /* D2(b)：冷启动宽限。本次开机从未到过 EXIT_ACCURACY 时，ENTER 窗口临时拉长
+     * 到 COLDSTART_GRACE_MS；到过一次后永久走 ENTER_MS 快通道。 */
+    uint32_t enter_window = st->ever_converged ? PK_CAL_ENTER_MS
+                                               : PK_CAL_COLDSTART_GRACE_MS;
+
     pk_cal_advice_t advice = PK_CAL_ADVICE_NONE;
-    if (st->low_active && (uint32_t)(now_ms - st->low_since_ms) >= PK_CAL_ENTER_MS) {
+    if (st->low_active && (uint32_t)(now_ms - st->low_since_ms) >= enter_window) {
         /* 相位门控：只有地面静止（含 UNKNOWN）才允许抢页面。
          * UNKNOWN 也放行的理由：它覆盖「刚开机、GPS 还没定位」这个最该提示的
          * 场景（pk_flight_phase.h 明确 GPS 无效时整段跳过、相位原样返回，而
@@ -103,12 +129,24 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
         bool phase_allows_page = (phase == PK_PHASE_GROUND_STOPPED ||
                                   phase == PK_PHASE_UNKNOWN);
 
-        /* 闸门关着或不在地面静止 → 降级成状态栏图标，而不是彻底闭嘴：
+        /* D2(a)：静止门控。磁力计校准物理上需要转动，静止时提示画 8 字是白提。
+         * vib_level < VIB_STILL_THRESH 判为静止 → 降级成 HINT（图标照给，用户
+         * 得知道精度不够，看到图标才会想起来拿起来转）。vib_level==0 是「振动
+         * 传感器不可用」而不是「零振动」——不可用时**不**按静止处理（不抑制
+         * 弹页）：冷启动宽限已经盖住了 BNO 本身还没起来的那段，等宽限期满精度
+         * 仍然低、且不在飞行相位，说明设备确实没校准好，此时若振动子系统也挂
+         * 了，与其静默吞掉提示，不如照常弹——漏弹比误弹危险（用户不知道精度
+         * 不够）。这是「不可用 = 不抑制」的取舍，不是「不可用 = 零振动」。 */
+        bool vib_available = (vib_level != 0);
+        bool is_still = vib_available && (vib_level < PK_CAL_VIB_STILL_THRESH);
+
+        /* 闸门关着 / 不在地面静止 / 静止 → 降级成状态栏图标，而不是彻底闭嘴：
          * 「稍后再说」表达的是「别抢我的页面」，不是「别再告诉我」；精度确实
-         * 不够这件事仍然该有个地方看得见（旧实现那句注释也写了「这只挡自动
-         * 进入」）。 */
-        advice = (!st->suppressed && phase_allows_page) ? PK_CAL_ADVICE_WIZARD
-                                                        : PK_CAL_ADVICE_HINT;
+         * 不够这件事仍然该有个地方看得见（静止时图标尤其重要——那是用户拿起来
+         * 转一转的唯一触发线索）。 */
+        advice = (!st->suppressed && phase_allows_page && !is_still)
+                     ? PK_CAL_ADVICE_WIZARD
+                     : PK_CAL_ADVICE_HINT;
     }
 
     /* 干扰环境一律闭嘴：连状态栏图标都不给。这里画 8 字救不回来，图标只会让
@@ -125,6 +163,11 @@ void pk_cal_advisor_dismiss(pk_cal_advisor_t *st, uint32_t now_ms)
 {
     st->suppressed = true;
 
+    /* D3：用户离开了校准页（无论是「稍后再说」还是 FAB→导航网格），清掉
+     * user_opened。不清的话，下一次系统自动弹出也会被当成「用户主动打开」
+     * 而永不自动退出——等于永久禁用自动退出。 */
+    st->user_opened = false;
+
     /* 重新武装的 30 s 从「用户说别烦我」这一刻重新起算。不这么做的话，若他
      * 恰好是在 acc 已经高了 25 s 的时候按下「稍后再说」，5 s 后闸门就自己开
      * 了——用户的意图只保住了 5 s。注意这不影响 SC2 那种正常路径：那里高精度
@@ -140,14 +183,18 @@ void pk_cal_advisor_user_open(pk_cal_advisor_t *st, uint32_t now_ms)
 
     st->suppressed = false;
 
+    /* D3：标记本次进入是用户主动的。should_exit_wizard() 据此恒返回 false，
+     * 页面只能由用户自己离开。dismiss / 自动进入路径都会清位（自动进入路径
+     * 在胶水层 pk_ui_cal_wizard_tick 里走 take_page 分支，不会调 user_open，
+     * 所以 user_opened 保持初值 false）。 */
+    st->user_opened = true;
+
     /* 两条计时器一并清零，各有各的原因（沿用 pk_ui_cal_wizard_enter() 的真机
      * 结论）：
      *   - 低精度：人已经在这一页了，自动进入分支本来就不该再触发；
-     *   - 高精度：**不清零会让这一页当场闪一下就跑掉**。设备若已经校准好
-     *     （acc>=2 保持了几分钟），下一拍就满足「acc>=2 超过 3 s」，用户刚点开
-     *     就被弹回 PFD。清零后至少有 3 s 的窗口；3 s 后仍然自动退回是有意保留
-     *     的——精度已经够了，这一页没事可做，而真需要校准（acc<2）时自动退出
-     *     根本不会触发，页面会一直等着他。 */
+     *   - 高精度：D3 之后 user_opened 已经拦住了自动退出，这里清零是冗余的
+     *     安全层——即便将来有人改坏了 should_exit_wizard 的 user_opened gate，
+     *     清零也能多撑 3 s 才退。 */
     st->low_active  = false;
     st->high_active = false;
     st->exit_ready  = false;
@@ -162,5 +209,9 @@ bool pk_cal_advisor_is_jammed(const pk_cal_advisor_t *st)
 
 bool pk_cal_advisor_should_exit_wizard(const pk_cal_advisor_t *st)
 {
+    /* D3：用户主动打开的校准页永不自动退出。用户的显式动作压过系统的自动
+     * 判断——他点进来就是要校准（重新校准/验证/画 8 字顶精度都正当），系统凭
+     * 一个 acc 读数判定「没事可做」然后收走页面是自作聪明。 */
+    if (st->user_opened) return false;
     return st->exit_ready;
 }

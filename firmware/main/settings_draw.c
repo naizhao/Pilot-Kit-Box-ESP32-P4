@@ -404,8 +404,9 @@ void pk_settings_page_render(uint16_t *fb)
      * 不需要确认，套那套配色会把它误标成"别乱点"。
      *
      * 为什么非得有这个入口：校准页**只能自动进入**（ui_state.c 的
-     * pk_ui_cal_wizard_tick → pk_cal_advisor），而自动进入要同时满足三条：
-     * 精度低满 PK_CAL_ENTER_MS、本机在地面静止、且不在磁干扰环境里。页内的
+     * pk_ui_cal_wizard_tick → pk_cal_advisor），而自动进入要同时满足五条：
+     * 精度低满 PK_CAL_ENTER_MS、本机在地面静止、不在磁干扰环境里、设备在动
+     * （静止门控）、且不在冷启动宽限期内。页内的
      * 「稍后再说」还会关掉自动重弹的闸门，要等 acc≥2 连续保持 PK_CAL_REARM_MS
      * 才重新武装——而"还没校准好"的时候它恰恰一直关着。于是用户关过一次之后，
      * 本次开机内主动想校准就再也没有任何入口（在空中、在机库里同理，那两种
