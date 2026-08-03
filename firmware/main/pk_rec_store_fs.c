@@ -564,14 +564,33 @@ bool pk_rec_store_rebuild_index(const char *session_dir, const uint8_t own_icao[
     return true;
 }
 
+/* fflush 之后**必须**再 fsync —— 这不是保险，是正确性。
+ *
+ * FATFS 上两者管的是不同层：fflush 只把数据从 C 库缓冲推到 VFS→f_write，
+ * 数据确实落进了簇；但**目录项里的文件大小要 f_sync 才更新**。少了它：
+ *   - 另开一个句柄读同一个文件，size 还是旧的 → 读回来是空的
+ *     （2026-08-03 注入式自检就是这么挂的：fwrite 全部返回成功、写计数
+ *      也涨了，回读却少于 3 条记录）；
+ *   - **掉电即丢整段** —— 飞行中断电，目录里这个 session 可能仍是 0 字节。
+ *     对飞行记录仪来说这是致命的，而且平时完全看不出来。
+ *
+ * 代价：f_sync 要写 FAT 与目录扇区。所以只在**周期 flush / 关 session /
+ * pre-unmount** 这些低频点调用，绝不逐条调。 */
+static void flush_and_sync_locked(FILE *fp)
+{
+    if (fp == NULL) return;
+    fflush(fp);
+    fsync(fileno(fp));
+}
+
 void pk_rec_store_flush_all(void)
 {
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_fp_adsb)        fflush(s_fp_adsb);
-    if (s_fp_traffic_trk) fflush(s_fp_traffic_trk);
-    if (s_fp_own_trk)     fflush(s_fp_own_trk);
-    if (s_fp_own_adsb)    fflush(s_fp_own_adsb);
+    flush_and_sync_locked(s_fp_adsb);
+    flush_and_sync_locked(s_fp_traffic_trk);
+    flush_and_sync_locked(s_fp_own_trk);
+    flush_and_sync_locked(s_fp_own_adsb);
     xSemaphoreGive(s_lock);
 }
 

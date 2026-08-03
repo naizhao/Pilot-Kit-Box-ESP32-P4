@@ -31,6 +31,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 
 #include "record_sink.h"
@@ -189,7 +190,10 @@ static void selftest_task(void *arg)
         (uint8_t)((SELFTEST_ICAO_A >> 8) & 0xFFu),
         (uint8_t)(SELFTEST_ICAO_A & 0xFFu),
     };
-    static pk_rec_idx_table_t s_rebuilt;   /* 20 KB 量级，别上栈 */
+    /* 20 KB 量级：既不能上栈（任务栈才 6 KB），也不能进内部 .bss——那会把
+     * 调度器启动前的堆窗口砍掉 20 KB 直接触发护栏（实测 91.7KB→71.2KB）。
+     * 自检虽是调试件，但开关一旦打开它就参与链接期布局，同样吃这块窗口。 */
+    EXT_RAM_BSS_ATTR static pk_rec_idx_table_t s_rebuilt;
     bool rebuild_ok = pk_rec_store_rebuild_index(session_dir, own_icao_bytes, &s_rebuilt);
     CHECK(rebuild_ok);
     if (rebuild_ok) {
