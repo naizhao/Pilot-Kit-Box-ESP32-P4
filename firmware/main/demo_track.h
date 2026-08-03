@@ -70,9 +70,43 @@ typedef struct {
     int16_t  gs_kt;       /* 地速，节 */
 } pk_demo_track_pt_t;
 
+/* 内置轨迹表（demo_track_data.c，由 gen_demo_track.py 生成）。
+ * 它是**兜底**：没插卡 / 没有 demo 目录 / 目录里没有 .gpx / 解析失败，
+ * 一律回到这张表上，演示模式永远有轨迹可放。 */
 extern const pk_demo_track_pt_t pk_demo_track[];
 extern const uint32_t pk_demo_track_n;
 extern const uint32_t pk_demo_track_dur_s;
+
+/*
+ * 当前生效的轨迹来源。回放代码只认这个结构，不关心表是编在固件里的还是
+ * 从 SD 卡的 GPX 现算出来的——两条路走**同一套**回放逻辑（往返、10× 速、
+ * 二分插值、VS 段常量），只是数据来源不同。
+ */
+typedef struct {
+    const pk_demo_track_pt_t *pts;
+    uint32_t n;
+    uint32_t dur_s;
+} pk_demo_track_src_t;
+
+/*
+ * 切换轨迹来源。src 传 NULL 表示回到内置表。
+ *
+ * ── 与"无状态"约束的关系 ─────────────────────────────────────────────
+ * 这不是把 pk_demo_track_at() 变成有状态的函数。来源是**启动阶段一次性选定**
+ * 的配置（SD 上有 GPX 就换过去，之后不再变），不是随调用累积的积分量：给定
+ * 来源之后，at() 仍然是 t_us 的纯函数，`--shot <秒>` 照样定得住帧，乱序重采样
+ * 照样逐字节相同。模拟器从不调用本函数，永远跑内置表。
+ *
+ * ── 并发 ─────────────────────────────────────────────────────────────
+ * 写方是 SD 加载任务，读方是 UI/采样任务。src 指向的内容必须**先填满再发布**，
+ * 且发布之后永不释放、永不修改（PSRAM 上一块常驻内存）。指针本身用
+ * __atomic_ 读写，读方要么看到旧来源要么看到新来源，不会看到撕裂的三元组
+ * ——所以才把 pts/n/dur 打包成一个结构体，而不是三个各自发布的全局量。
+ */
+void pk_demo_track_use(const pk_demo_track_src_t *src);
+
+/* 当前来源；从没调用过 pk_demo_track_use() 或传过 NULL 时返回 NULL（= 内置表）。 */
+const pk_demo_track_src_t *pk_demo_track_current(void);
 
 /* 某一时刻的本机状态。角度单位度、高度 ft、速度 kt、升降率 fpm。 */
 typedef struct {

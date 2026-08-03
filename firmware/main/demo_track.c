@@ -1,15 +1,20 @@
 /*
  * demo_track.c —— 见 demo_track.h。
  *
- * 整个文件只有一个对外函数，它必须是纯函数：不许有 static 缓存（哪怕是
- * "上次查到的段下标"这种看起来无害的加速），因为模拟器会用 --shot 以任意
- * 顺序取任意时刻的帧，带缓存就不可复现。651 条记录的二分查找是 10 次比较，
- * 1 Hz 的调用频率下这点开销不值得用状态去换。
+ * 回放的主函数必须是纯函数：不许有 static 缓存（哪怕是"上次查到的段下标"
+ * 这种看起来无害的加速），因为模拟器会用 --shot 以任意顺序取任意时刻的帧，
+ * 带缓存就不可复现。651 条记录的二分查找是 10 次比较，1 Hz 的调用频率下这点
+ * 开销不值得用状态去换。
+ *
+ * 唯一的 static 是**轨迹来源指针**（内置表 or SD 卡上的 GPX 现算表）。它是
+ * 启动阶段一次性选定的配置而不是随调用累积的状态，纯函数性质不受影响
+ * ——详见 demo_track.h 里 pk_demo_track_use() 的说明。
  */
 
 #include "demo_track.h"
 
 #include <math.h>
+#include <stddef.h>   /* NULL —— 轨迹来源指针 */
 
 #define M_PER_FT      0.3048f
 #define FT_PER_M      3.2808399f
@@ -39,23 +44,44 @@ static float lerp_angle(float a, float b, float u)
     return wrap360(a + wrap180(b - a) * u);
 }
 
-/* 最后一个 t_s <= t 的下标。表非空且严格递增（生成脚本保证并有单测）。 */
-static uint32_t seek(double t)
+/* 当前来源。NULL = 内置表。见 demo_track.h 里对"无状态"与并发的说明。 */
+static const pk_demo_track_src_t *s_src = NULL;
+
+void pk_demo_track_use(const pk_demo_track_src_t *src)
 {
-    uint32_t lo = 0, hi = pk_demo_track_n - 1;
+    __atomic_store_n(&s_src, src, __ATOMIC_RELEASE);
+}
+
+const pk_demo_track_src_t *pk_demo_track_current(void)
+{
+    return __atomic_load_n(&s_src, __ATOMIC_ACQUIRE);
+}
+
+/* 最后一个 t_s <= t 的下标。表非空且严格递增（生成脚本 / demo_gpx.c 保证，
+ * 两边都有单测）。 */
+static uint32_t seek(const pk_demo_track_pt_t *tbl, uint32_t n, double t)
+{
+    uint32_t lo = 0, hi = n - 1;
     while (lo < hi) {
         const uint32_t mid = lo + (hi - lo + 1) / 2;
-        if ((double)pk_demo_track[mid].t_s <= t) lo = mid;
-        else                                     hi = mid - 1;
+        if ((double)tbl[mid].t_s <= t) lo = mid;
+        else                           hi = mid - 1;
     }
     return lo;
 }
 
 bool pk_demo_track_at(int64_t t_us, pk_demo_track_state_t *out)
 {
-    if (!out || pk_demo_track_n < 2 || pk_demo_track_dur_s == 0) return false;
+    /* 整个函数只在这里读一次来源，之后全程用局部量：中途被 SD 加载任务换掉
+     * 来源的话，二分查到的下标就会去索引另一张表。 */
+    const pk_demo_track_src_t *src = __atomic_load_n(&s_src, __ATOMIC_ACQUIRE);
+    const pk_demo_track_pt_t *tbl = src ? src->pts   : pk_demo_track;
+    const uint32_t tbl_n          = src ? src->n     : pk_demo_track_n;
+    const uint32_t tbl_dur        = src ? src->dur_s : pk_demo_track_dur_s;
 
-    const double dur = (double)pk_demo_track_dur_s;
+    if (!out || tbl == NULL || tbl_n < 2 || tbl_dur == 0) return false;
+
+    const double dur = (double)tbl_dur;
 
     /* 用 double 全程中转：t_us 在开机几小时后已经上百亿，float 只有 24 位
      * 尾数，转进去就丢掉秒以下的位，回放会一顿一顿地跳。 */
@@ -68,10 +94,10 @@ bool pk_demo_track_at(int64_t t_us, pk_demo_track_state_t *out)
     bool reverse = false;
     if (ph > dur) { ph = period - ph; reverse = true; }
 
-    const uint32_t i = seek(ph);
-    const uint32_t j = (i + 1 < pk_demo_track_n) ? i + 1 : i;
-    const pk_demo_track_pt_t *a = &pk_demo_track[i];
-    const pk_demo_track_pt_t *b = &pk_demo_track[j];
+    const uint32_t i = seek(tbl, tbl_n, ph);
+    const uint32_t j = (i + 1 < tbl_n) ? i + 1 : i;
+    const pk_demo_track_pt_t *a = &tbl[i];
+    const pk_demo_track_pt_t *b = &tbl[j];
 
     const double span = (double)b->t_s - (double)a->t_s;
     double u = (span > 0.0) ? (ph - (double)a->t_s) / span : 0.0;

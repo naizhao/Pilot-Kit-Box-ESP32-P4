@@ -72,6 +72,11 @@ idf_component_register(
         # （firmware/scripts/gen_demo_track.py，见 demo_track.h 文件头）。
         "demo_track.c"
         "demo_track_data.c"
+        # SD 卡上的 GPX → 轨迹表（优先于内置表）。demo_gpx.c 是
+        # gen_demo_track.py 的 C 移植且**不依赖 ESP-IDF**，好让 host 单测与
+        # 对拍脚本直接编它；demo_track_sd.c 才是接卡/接任务的那一层。
+        "demo_gpx.c"
+        "demo_track_sd.c"
         "config_devname.c"
         "traffic_page.c"
         "pk_pmtiles.c"

@@ -225,6 +225,74 @@ static void test_sweep(void)
            vs_min, vs_max, wall_s);
 }
 
+/* ── 5. 轨迹来源可替换（SD 卡上的 GPX）───────────────────────────────
+ *
+ * 卡上的 GPX 与内置表走的是**同一套**回放代码，只是数据来源不同。这里钉住
+ * 三条：切过去真的生效、切回 NULL 真的回到内置表、以及切换之后回放的全部
+ * 性质（往返、纯函数、短弧插值）一条都没变——那些性质写在 pk_demo_track_at()
+ * 里，与表从哪来无关，但"无关"这件事得有证据。 */
+static void test_source_switch(void)
+{
+    printf("source switch（SD 卡轨迹）\n");
+
+    /* 一条 60 s、正东、200 kt、爬升的小轨迹。数值不重要，能和内置表区分开即可。 */
+    static const pk_demo_track_pt_t tiny[] = {
+        { 300000000, 1200000000,  0,  100,   0,  900, 200 },
+        { 300000000, 1200185000, 20,  400,  50,  900, 200 },
+        { 300000000, 1200370000, 40,  700, -50,  900, 200 },
+        { 300000000, 1200555000, 60, 1000,   0,  900, 200 },
+    };
+    static const pk_demo_track_src_t src = { tiny, 4, 60 };
+
+    chk("默认来源为 NULL（= 内置表）", pk_demo_track_current() == NULL);
+
+    /* 先清零：结构体末尾的 bool 后面有 7 字节填充，pk_demo_track_at() 不会碰
+     * 它们，直接 memcmp 两个栈上变量比的是各自的栈垃圾。 */
+    pk_demo_track_state_t builtin0, sd0, back0;
+    memset(&builtin0, 0, sizeof(builtin0));
+    memset(&back0, 0, sizeof(back0));
+    pk_demo_track_at(0, &builtin0);
+
+    pk_demo_track_use(&src);
+    chk("current() 返回刚切进去的来源", pk_demo_track_current() == &src);
+    pk_demo_track_at(0, &sd0);
+    chk_near("t=0 落在新表的首点上", sd0.lat, 30.0, 1e-6);
+    chk_near("t=0 经度落在新表的首点上", sd0.lon, 120.0, 1e-6);
+    chk("与内置表的起点确实不同", fabs(sd0.lat - builtin0.lat) > 1.0);
+
+    /* 往返播放对新表同样成立：dur=60 s，10× 速下墙钟 6 s 一个单程。 */
+    pk_demo_track_state_t fwd, rev;
+    pk_demo_track_at(wall_us_for_track_s(60.0 - 10.0), &fwd);
+    pk_demo_track_at(wall_us_for_track_s(60.0 + 10.0), &rev);
+    chk_near("新表也往返播放 · 纬度对称", rev.lat, fwd.lat, 1e-6);
+    chk_near("新表也往返播放 · 经度对称", rev.lon, fwd.lon, 1e-6);
+    chk("新表也往返播放 · 回程标记", rev.reverse && !fwd.reverse);
+    chk_near("新表也往返播放 · 坡度取反", rev.roll_deg, -fwd.roll_deg, 0.01);
+
+    /* 换了来源之后仍然是纯函数：乱序重采样逐字节相同。 */
+    pk_demo_track_state_t a1, a2, b1;
+    pk_demo_track_at(wall_us_for_track_s(37.0), &a1);
+    pk_demo_track_at(wall_us_for_track_s(11.0), &b1);
+    pk_demo_track_at(wall_us_for_track_s(37.0), &a2);
+    chk("换源后仍无隐藏状态", memcmp(&a1, &a2, sizeof(a1)) == 0);
+    (void)b1;
+
+    /* 空表/坏表必须被拒，而不是让回放去索引 NULL。 */
+    static const pk_demo_track_src_t empty = { tiny, 0, 60 };
+    static const pk_demo_track_src_t nullp = { NULL, 4, 60 };
+    pk_demo_track_state_t junk;
+    pk_demo_track_use(&empty);
+    chk("n=0 的来源返回 false（调用方回落固定位置）", !pk_demo_track_at(0, &junk));
+    pk_demo_track_use(&nullp);
+    chk("pts=NULL 的来源返回 false 且不解引用", !pk_demo_track_at(0, &junk));
+
+    /* 回落：拔卡/加载失败都靠这条回到内置表。 */
+    pk_demo_track_use(NULL);
+    chk("current() 回到 NULL", pk_demo_track_current() == NULL);
+    pk_demo_track_at(0, &back0);
+    chk("回落后与内置表逐字节相同", memcmp(&back0, &builtin0, sizeof(back0)) == 0);
+}
+
 int main(void)
 {
     printf("== demo_track ==\n");
@@ -232,6 +300,7 @@ int main(void)
     test_pure();
     test_pingpong();
     test_sweep();
+    test_source_switch();
     printf(g_fail ? "\nFAILED (%d)\n" : "\nALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
 }
