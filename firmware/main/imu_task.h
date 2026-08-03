@@ -236,8 +236,7 @@ bool pk_imu_sample_get(pk_imu_sample_t *out);
  * the next tare and wiped on power-cycle. Use pk_imu_tare_persist()
  * if the reference should survive a reboot.
  *
- * Safe to call from any task. Typical caller: button_task on TARE
- * short-press.
+ * Safe to call from any task.
  */
 esp_err_t pk_imu_tare_now(void);
 
@@ -251,8 +250,6 @@ esp_err_t pk_imu_tare_now(void);
  * Returns the NVS write status — ESP_OK on success, the underlying
  * nvs_* error code on failure. The in-RAM tare is updated either way
  * (a flash-write failure does not invalidate the live calibration).
- *
- * Typical caller: button_task on TARE long-press (≥3 s).
  */
 esp_err_t pk_imu_tare_persist(void);
 
@@ -277,8 +274,6 @@ esp_err_t pk_imu_tare_persist(void);
  * magnetometer fusion re-converges. Once `acc >= 2` on the 1 Hz log
  * line, a TARE long-press persists a clean calibration for the long
  * term.
- *
- * Typical caller: button_task on TARE very-long-press (≥10 s).
  */
 esp_err_t pk_imu_factory_reset(void);
 

@@ -18,15 +18,16 @@
  * renderer. Mode transitions happen in O(1) — just a flag flip — so
  * the next frame already shows the new view.
  *
- * MODE short-press cycles through the USER-visible modes:
+ * Mode is cycled by the touch UI (e.g. a long-press gesture on the
+ * screen) through the USER-visible modes:
  *     PFD → TRAFFIC → MAP → ADSB_LIST → SETTINGS → ABOUT → DIAG → PFD …
  * CAL_WIZARD is not in the cycle — it's auto-entered/auto-exited
  * based on IMU calibration state (see pk_ui_cal_wizard_tick below)
- * and the user can also dismiss it manually by pressing MODE.
+ * and the user can also dismiss it manually via touch.
  *
  * Threading
  * ---------
- * Multiple producers/consumers (button task + render task + IMU
+ * Multiple producers/consumers (touch UI + render task + IMU
  * task + future BLE task) read and update mode + selection.
  * Everything goes through a small mutex; calls are short and
  * non-blocking so it's never meaningfully contended.
@@ -53,7 +54,7 @@ typedef enum {
 } pk_ui_mode_t;
 
 /* Initialise the UI state mutex. Must be called once before the
- * button task or the render task starts. */
+ * render task starts. */
 esp_err_t pk_ui_init(void);
 
 /* Get the current top-level view. Safe from any task. */
@@ -222,7 +223,7 @@ uint32_t pk_ui_get_own_icao(void);
 void     pk_ui_clear_own_icao(void);
 
 /*
- * Transient on-screen toast. The button handler calls pk_ui_toast_show()
+ * Transient on-screen toast. The UI calls pk_ui_toast_show()
  * with the translation id to display (localised at render time, so it
  * follows the active language) and an error flag (true → red banner,
  * false → green). The PFD render loop polls pk_ui_toast_get() once per

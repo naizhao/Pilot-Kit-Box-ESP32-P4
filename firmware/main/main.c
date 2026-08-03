@@ -29,7 +29,6 @@
 #include "gps.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
-#include "button_task.h"
 #include "config_qnh.h"
 #include "config_storage.h"
 #include "config_traffic.h"
@@ -55,7 +54,6 @@
 #include "config_devname.h"
 #include "i18n.h"
 #include "pfd.h"
-#include "power.h"
 #include "record_sink.h"
 #include "settings_page.h"
 #include "ui_state.h"
@@ -68,188 +66,6 @@ static const char *TAG = "pilot_kit";
 #define PK_I18N_ID_SELFTEST 0
 
 RingbufHandle_t g_iq_ringbuf = NULL;
-
-/* --- Button → action routing ----------------------------------------- *
- *
- * Single source of truth for what each button does in each UI mode.
- * Stays in main.c so the button task doesn't have to depend on
- * imu_task + ui_state directly — keeps modules loosely coupled.
- *
- * Press semantics defined in button_task.h:
- *   - PK_BTN_EVT_SHORT_PRESS      fires on release (< 3 s held)
- *   - PK_BTN_EVT_LONG_PRESS       fires at 3 s while still held
- *                                 (TARE / MODE only — UP/DOWN suppress
- *                                  long-press in favour of the combo)
- *   - PK_BTN_EVT_VERY_LONG_PRESS  fires at 10 s while still held
- *                                 (TARE only — reserves MODE long for
- *                                  power on/off)
- *   - PK_BTN_EVT_COMBO_BLE_PAIR   fires on PK_BTN_UP at 5 s while both
- *                                 UP and DOWN are still held
- *
- * TARE actions form a graduated cage: short = "zero the live attitude
- * for this session", long = "also persist to NVS so it survives a
- * reboot", very-long = "wipe everything (NVS + BNO state) and start
- * over". The application accepts both LONG and VERY_LONG arriving on
- * the same sustained hold; factory_reset() running after tare_persist()
- * cleanly undoes it.
- *
- * Exception: in the ADS-B aircraft-list view, TARE short-press is
- * repurposed to "bind the highlighted aircraft as own-ship" (the
- * runtime override for the PFD's ALT/VS/GS data source). Pressing it
- * again on the same bound aircraft de-selects it; binding a new one
- * jumps back to the PFD. Long and very-long TARE still do their IMU
- * actions in any mode.
- */
-static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
-{
-    switch (id) {
-    case PK_BTN_TARE:
-        if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_mode_t mode = pk_ui_get_mode();
-            if (mode == PK_UI_MODE_SETTINGS) {
-                /* TARE 短按:切换选中行(Language <-> QNH) */
-                pk_settings_cursor_next();
-            } else if (mode == PK_UI_MODE_ADSB_LIST) {
-                /* Bind / de-select the highlighted aircraft as own-ship.
-                 * ui_state tracks the highlight by ICAO, so we just read
-                 * whichever ICAO the list renderer last committed —
-                 * sel_icao == 0 means the user hasn't scrolled yet OR
-                 * the previously-highlighted aircraft dropped out of the
-                 * 60s window without being replaced.
-                 *   - Pressing TARE on the already-bound aircraft TOGGLES
-                 *     the binding off (de-select) and stays in the list.
-                 *   - Binding a different aircraft sets it and jumps back
-                 *     to PFD so the pilot immediately sees the caged
-                 *     horizon sourced from the fresh transponder.
-                 * Both actions raise a toast for visual confirmation. */
-                uint32_t sel_icao = pk_ui_list_get_selected_icao();
-                if (sel_icao == 0) {
-                    ESP_LOGW(TAG, "TARE in ADSB list: no aircraft "
-                                  "highlighted yet — binding skipped");
-                } else if (pk_ui_get_own_icao() == sel_icao) {
-                    pk_ui_clear_own_icao();
-                    pk_ui_toast_show(PK_TR_TOAST_OWN_CLEARED, false);
-                } else {
-                    pk_ui_set_own_icao(sel_icao);
-                    pk_ui_toast_show(PK_TR_TOAST_OWN_BOUND, false);
-                    pk_ui_set_mode(PK_UI_MODE_PFD);
-                }
-            } else {
-                (void)pk_imu_tare_now();
-            }
-        } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            /* 长按保存:把当前 tare 偏移写入 NVS。弹 toast 反馈成功/失败,
-             * 否则用户无从知道这一次按压到底有没有落盘。 */
-            esp_err_t e = pk_imu_tare_persist();
-            pk_ui_toast_show(e == ESP_OK ? PK_TR_TOAST_TARE_SAVED
-                                         : PK_TR_TOAST_TARE_SAVE_FAIL,
-                             e != ESP_OK);
-        } else if (evt == PK_BTN_EVT_VERY_LONG_PRESS) {
-            (void)pk_imu_factory_reset();
-        }
-        break;
-
-    case PK_BTN_MODE:
-        if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_toggle_mode();
-        } else if (evt == PK_BTN_EVT_LONG_PRESS) {
-            /* Soft power-off: drop backlight, configure GPIO5 as the
-             * deep-sleep wake GPIO, enter deep sleep. Does not return — next
-             * press of MODE is a cold boot. */
-            pk_power_enter_sleep();
-        }
-        break;
-
-    case PK_BTN_UP:
-        if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_mode_t mode = pk_ui_get_mode();
-            if (mode == PK_UI_MODE_SETTINGS) {
-                int row = pk_settings_cursor_row();
-                if (row == 1) {
-                    /* QNH 行:UP +0.25 hPa */
-                    pk_qnh_set(pk_qnh_get() + 0.25f);
-                } else if (row == 2) {
-                    /* MAP 行:切换地图朝向 */
-                    pk_map_orient_set(pk_map_orient_get() == PK_MAP_NORTH_UP
-                                          ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
-                } else if (row == 3) {
-                    /* RANGE 行:UP 量程加一档 */
-                    pk_traffic_range_idx_set(pk_traffic_range_idx_get() + 1);
-                } else if (row == 4) {
-                    /* LOG 行:切换日志存储位置(flash <-> microSD,重启生效) */
-                    pk_log_store_set(pk_log_store_get() == PK_LOG_STORE_SD
-                                         ? PK_LOG_STORE_FLASH : PK_LOG_STORE_SD);
-                } else if (row == 5) {
-                    /* FORMAT SD 行:两步确认格式化 */
-                    pk_settings_format_action();
-                } else {
-                    /* Language 行:切语言 */
-                    esp_err_t err = pk_i18n_toggle_lang();
-                    if (err != ESP_OK) {
-                        ESP_LOGW(TAG, "language toggle failed (%s)",
-                                 esp_err_to_name(err));
-                    }
-                }
-            } else if (mode == PK_UI_MODE_ADSB_LIST || mode == PK_UI_MODE_TRAFFIC) {
-                pk_ui_list_scroll(-1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
-            } else if (mode == PK_UI_MODE_ABOUT) {
-                pk_ui_about_scroll(-1);
-            } else if (mode == PK_UI_MODE_DIAG) {
-                pk_ui_diag_scroll(-1);
-            }
-        } else if (evt == PK_BTN_EVT_COMBO_BLE_PAIR) {
-            /* BLE pairing request gesture is verified in firmware.
-             * Mobile UI handling is intentionally left for the client
-             * integration layer. */
-            ESP_LOGW(TAG, "UP+DOWN combo: BLE pairing requested "
-                          "(mobile UI handling not implemented yet)");
-        }
-        break;
-
-    case PK_BTN_DOWN:
-        if (evt == PK_BTN_EVT_SHORT_PRESS) {
-            pk_ui_mode_t mode = pk_ui_get_mode();
-            if (mode == PK_UI_MODE_SETTINGS) {
-                int row = pk_settings_cursor_row();
-                if (row == 1) {
-                    /* QNH 行:DOWN -0.25 hPa */
-                    pk_qnh_set(pk_qnh_get() - 0.25f);
-                } else if (row == 2) {
-                    /* MAP 行:切换地图朝向 */
-                    pk_map_orient_set(pk_map_orient_get() == PK_MAP_NORTH_UP
-                                          ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
-                } else if (row == 3) {
-                    /* RANGE 行:DOWN 量程减一档 */
-                    pk_traffic_range_idx_set(pk_traffic_range_idx_get() - 1);
-                } else if (row == 4) {
-                    /* LOG 行:切换日志存储位置(flash <-> microSD,重启生效) */
-                    pk_log_store_set(pk_log_store_get() == PK_LOG_STORE_SD
-                                         ? PK_LOG_STORE_FLASH : PK_LOG_STORE_SD);
-                } else if (row == 5) {
-                    /* FORMAT SD 行:两步确认格式化 */
-                    pk_settings_format_action();
-                } else {
-                    /* Language 行:切语言 */
-                    esp_err_t err = pk_i18n_toggle_lang();
-                    if (err != ESP_OK) {
-                        ESP_LOGW(TAG, "language toggle failed (%s)",
-                                 esp_err_to_name(err));
-                    }
-                }
-            } else if (mode == PK_UI_MODE_ADSB_LIST || mode == PK_UI_MODE_TRAFFIC) {
-                pk_ui_list_scroll(+1);   /* 雷达页与列表共用按 ICAO 跟踪的选中 */
-            } else if (mode == PK_UI_MODE_ABOUT) {
-                pk_ui_about_scroll(+1);
-            } else if (mode == PK_UI_MODE_DIAG) {
-                pk_ui_diag_scroll(+1);
-            }
-        }
-        break;
-
-    default:
-        break;
-    }
-}
 
 /*
  * USB 排障日志开关（2026-08-03 起临时默认打开）。
@@ -585,7 +401,7 @@ void app_main(void)
     pk_tile_loader_init();
     pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_READY), 3, 3);
 
-    /* UI state lives in its own module so the button callback can flip
+    /* UI state lives in its own module so the UI can flip
      * the mode without touching the render task directly. Default mode
      * is PFD; survives an IMU-init failure (you can still scroll the
      * ADS-B list with no attitude). */
@@ -593,20 +409,7 @@ void app_main(void)
     if (ui_err != ESP_OK) {
         ESP_LOGW(TAG, "ui_state init failed (%s)", esp_err_to_name(ui_err));
     }
-
     /* pk_i18n_init() 已提前到 splash 之前，见那里的注释。 */
-
-    /*
-     * 4.3 寸一体板以触摸为唯一 UI 输入。button_task.c 已从 CMakeLists 移出
-     * 编译（它写死的 GPIO26/GPIO23 在本板是 LCD_BL_PWM / GT911 TP_RST），
-     * 所以这里不能再调用 pk_button_init()——调用会直接链接失败。
-     *
-     * on_button_event 仍保留：ADS-B 列表里「TARE 短按绑定本机」
-     * （pk_ui_set_own_icao）这条动作路径目前还没有对应的触摸入口，这段代码
-     * 是移植时的唯一参考。用 (void) 引用它以避免 -Wunused-function。
-     */
-    (void)on_button_event;
-    ESP_LOGI(TAG, "legacy tact buttons disabled on 4.3-inch touch board");
 
     /* PFD render task. Starts after the display + IMU init
      * so it can read both straight away. Survives either failing.
