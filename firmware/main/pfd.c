@@ -149,6 +149,12 @@ static void pfd_task(void *arg)
         TickType_t frame_start = xTaskGetTickCount();
         int64_t t_frame0 = esp_timer_get_time();
 
+        /* 触摸如果是在开机时被 I²C0 总线塌陷卡住的（日志里只有「GT911
+         * found」没有「GT911 ready」），总线救回来之后在这里补一次初始化。
+         * 初始化成功过的话这行只是一个指针比较，见 touch_gt911.h。
+         * 必须在这个任务里调：它是跑 LVGL 的那个。 */
+        pk_touch_retry_after_bus_recovery();
+
         pk_imu_sample_t s;
         bool have = pk_imu_sample_get(&s);
         pk_ui_cal_wizard_tick(have, have ? s.accuracy : 0);

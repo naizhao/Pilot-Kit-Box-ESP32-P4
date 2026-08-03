@@ -79,10 +79,29 @@ void pk_ui_set_mode(pk_ui_mode_t mode);
  * The wizard auto-enters when accuracy stays at 0 for more than
  * UI_CAL_WIZARD_ENTER_MS, and auto-exits when accuracy stays at
  * ≥ UI_CAL_WIZARD_EXIT_ACCURACY for more than UI_CAL_WIZARD_EXIT_MS.
- * The user can override the wizard at any time with MODE press
- * (returns to PFD).
+ *
+ * 自动进入会被"用户手动离开过校准页"这件事挡住，直到 accuracy 真的再上到
+ * ≥ UI_CAL_WIZARD_EXIT_ACCURACY 才重新武装——否则室内磁环境下 acc 长期为 0，
+ * 用户关一次就被拽回来一次。策略与取舍见 ui_state.c 的 s_cal_auto_suppressed。
  */
 void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy);
+
+/*
+ * 用户主动关掉校准页（页内那枚「稍后再说」）。切回 PFD，并关上自动重弹的
+ * 闸门。4.3″ 板上没有 MODE 键，这是页内唯一的退路；FAB → 导航网格那条走
+ * pk_ui_set_mode()，同样会关闸门。
+ */
+void pk_ui_cal_wizard_dismiss(void);
+
+/*
+ * 用户主动**打开**校准页（设置页那一行「罗盘校准」）。
+ *
+ * 与直接 pk_ui_set_mode(PK_UI_MODE_CAL_WIZARD) 的差别是它顺手把自动重弹的
+ * 闸门重新武装。上面那个 dismiss 关掉闸门之后，本次开机内自动弹窗就不再出现
+ * （要等 accuracy 真的上到 ≥2 才复位），主动来校准的人必须能把它开回去，
+ * 否则"关一次就永远进不来"。策略与取舍见 ui_state.c 里这个函数的注释。
+ */
+void pk_ui_cal_wizard_enter(void);
 
 /* Read the current target accuracy bar used by the wizard renderer.
  * Returns 0..3. Stable across reads — updated only when imu_task

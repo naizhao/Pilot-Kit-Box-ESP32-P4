@@ -31,6 +31,7 @@
 
 #include "config_demo.h"   /* pk_demo_enabled —— 演示模式接管姿态数据源 */
 #include "demo_data.h"
+#include "pk_i2c0_recover.h"  /* 总线级恢复：坏的是总线时 bno_bring_up 救不回来 */
 #include "pk_vib.h"        /* vib_level：加速度模长滑动窗口 RMS */
 
 #include <math.h>
@@ -658,6 +659,18 @@ static void imu_task(void *arg)
     int64_t last_valid_us  = esp_timer_get_time();
     int64_t last_reinit_us = 0;
 
+    /* 总线级故障的上报口。门槛 2 次、不看时长：这里的"一次失败"已经是
+     * 「stall watchdog 等了 5 秒 + 拉 RST 重放了一遍 SH-2 init 仍然没流」，
+     * 上游天然带了 5 秒去抖，再等两轮（约 8 秒一轮）就够保守了。
+     * bring-up 自己都失败的那条路径不走这个门槛，见下面的调用点。 */
+    pk_i2c0_client_t i2c_client;
+    pk_i2c0_client_init(&i2c_client, "imu", 2, 0);
+
+    /* 总线恢复代数。别的任务（baro）把总线救回来之后，这里要跟着把
+     * BNO085 重新初始化一遍——总线复位只是把线放开了，芯片那侧的 SH-2
+     * 会话已经断了，不重放 init 就永远收不到报文。 */
+    uint32_t bus_gen = pk_i2c0_recover_generation();
+
     /* Per-second counters (zeroed in the 1 Hz dump). */
     uint32_t valid_count        = 0;   /* successfully parsed RV reports */
     uint32_t parse_fail         = 0;   /* SHTP frame on CH3 but not an RV report */
@@ -666,6 +679,31 @@ static void imu_task(void *arg)
     uint32_t recv_wrong_channel = 0;   /* SHTP frame received but channel != 3 (CH 0/1/2/4 etc.) */
 
     while (1) {
+        /* --- 总线被别人救回来了？先把自己重新初始化，再谈轮询 --- */
+        {
+            const uint32_t gen = pk_i2c0_recover_generation();
+            if (gen != bus_gen) {
+                bus_gen = gen;
+                ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 BNO085 初始化",
+                         (unsigned long)gen);
+                xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+                s_sample.valid = false;
+                s_sample.have_accel = false;
+                xSemaphoreGive(s_sample_lock);
+
+                esp_err_t bu = bno_bring_up();
+                last_reinit_us = esp_timer_get_time();
+                last_valid_us  = last_reinit_us;   /* 给芯片时间重新出流 */
+                pk_i2c0_client_reset(&i2c_client);
+                if (bu != ESP_OK) {
+                    ESP_LOGW(TAG, "总线恢复后 bring-up 仍失败: %s",
+                             esp_err_to_name(bu));
+                } else {
+                    ESP_LOGI(TAG, "总线恢复后 BNO085 重新初始化完成");
+                }
+            }
+        }
+
         uint8_t channel;
         size_t  cargo_len = 0;
         esp_err_t err = shtp_recv(cargo, sizeof(cargo), &channel, &cargo_len);
@@ -716,13 +754,30 @@ static void imu_task(void *arg)
             if (bu != ESP_OK) {
                 ESP_LOGW(TAG, "bring-up after stall failed: %s",
                          esp_err_to_name(bu));
+                /* 升级路径 a：bring-up 里那几笔 i2c_master_transmit 自己就
+                 * 超时了 —— 这是**总线**级故障的直接证据，不是 BNO085 挂了
+                 * （芯片挂了会 NACK 或给出乱码，不会让主控发不出去）。
+                 * 2026-08-03 真机日志的最后一行就是这条：
+                 *     W (19440) imu: bring-up after stall failed: ESP_ERR_TIMEOUT
+                 * 走到这里说明再拉几次 RST 也没意义，直接请求总线级恢复。 */
+                (void)pk_i2c0_recover_request("imu/bring-up-timeout");
             } else {
                 ESP_LOGI(TAG, "BNO085 re-init complete; waiting for reports");
+                /* 升级路径 b：命令发得出去、芯片也复位了，可流就是不回来。
+                 * 单轮可能只是 BNO085 自己启动慢，所以连着两轮 stall 都这样
+                 * 才升级（门槛见 i2c_client 的初始化）。总线半死不活时正是
+                 * 这个形态：写能 ACK，读回来全是 0 长度帧。 */
+                (void)pk_i2c0_client_report(&i2c_client, false);
             }
         }
 
         /* --- 1 Hz summary log --- */
         if (now - last_log_us >= 1000000) {
+            /* 这一秒收到过有效报文 = 流是通的，把总线失败计数清零。放在
+             * 1 Hz 这里而不是 parse 成功那一刻，是为了不给 100 Hz 的热路径
+             * 加调用；判据完全等价（stall 的定义就是 5 秒没有有效报文）。 */
+            if (valid_count > 0) pk_i2c0_client_reset(&i2c_client);
+
             pk_imu_sample_t s;
             pk_imu_sample_get(&s);
             ESP_LOGI(TAG, "rpy = %+7.2f / %+7.2f / %7.2f  "

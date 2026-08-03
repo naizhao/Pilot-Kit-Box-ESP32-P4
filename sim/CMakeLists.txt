@@ -110,6 +110,11 @@ set(FW_DRAW_SRC
     # 整页视图（关于/设置/诊断…）。它们只把运行时状态排版成像素，数据来源
     # 由 compat/page_stub.c 桩掉，排版逻辑原样编译。
     ${FW}/about_page.c
+    # 磁力计校准向导。它是**唯一一个用户自己点不进去**的页面（acc=0 满 10 s
+    # 才自动弹），真机上想看一眼它长什么样得先把 IMU 弄失准——所以更要能在
+    # 模拟器里截。渲染只依赖 pk_ui_cal_wizard_last_accuracy()（page_stub.c
+    # 里由 PK_SIM_CAL_ACC 摆），命中判定只依赖 pk_ui_cal_wizard_dismiss()。
+    ${FW}/cal_wizard.c
     ${FW}/boot_splash.c
     ${FW}/traffic_page.c
     ${FW}/adsb_list.c
@@ -130,9 +135,8 @@ set(FW_DRAW_SRC
     # 航司 / 国籍两张纯数据表：零 IDF 依赖，直接编进来比写桩真实
     ${FW}/airline_codes.c
     ${FW}/icao_country.c
-    ${FW}/text.c
-    ${FW}/text_font_cjk.c
-    ${FW}/text_font_cjk_body.c
+    # 2026-08-03 删除：text.c / text_font_cjk*.c。见 firmware/main/CMakeLists.txt
+    # 同一处的说明——最后一个调用者（校准向导）已改走 pfd_aa_text。
     # SD 离线地图页。map_page.c 本身只依赖 pk_tile_loader.h 这个纯函数式
     # 接口（route/try_blit/request/bump_view），不直接碰 pk_map_store /
     # pk_pmtiles——那两个是 pk_tile_loader 的实现细节。真机的

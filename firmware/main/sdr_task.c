@@ -22,6 +22,7 @@
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "freertos/event_groups.h"
+#include "esp_heap_caps.h"  /* 启流前后报内部堆余量——URB 只能落内部 DMA RAM */
 #include "esp_log.h"
 #include "esp_system.h"     /* esp_restart() — final-fallback only */
 #include "esp_timer.h"      /* esp_timer_get_time() for stream-healthy timer */
@@ -248,8 +249,37 @@ void sdr_task(void *arg)
              * pre-set the bit (persisted dongle) or this blocks until
              * cold plug. Subsequent iterations: blocks until next
              * replug. */
+            /*
+             * 干等时每 10 s 报一次总线状态。
+             *
+             * 之前这里是彻底静默的：没插 dongle 和「插了但主机没看见」在串口
+             * 上长得一模一样——都只有开头那句 waiting，然后永远没有下文。
+             * 2026-08-03 排查载板 USB-A 不枚举时就卡在这一点上：VBUS 4.88 V、
+             * dongle 发烫，可日志里没有任何东西能证明主机侧到底在做什么。
+             *
+             * num_devices 是**已枚举**设备数，所以它把问题一分为二：
+             *   >0 → 设备枚举成功了，是我们这一侧漏了 NEW_DEV 事件（固件 bug）；
+             *   =0 → 主机压根没看到设备，往下查根端口/走线/极性（硬件侧）。
+             */
+            int64_t last_report_us = 0;
             while ((xEventGroupGetBits(s_ctx.evt) & SDR_EVT_NEW_DEV) == 0) {
                 usb_host_client_handle_events(client_hdl, pdMS_TO_TICKS(100));
+
+                int64_t now = esp_timer_get_time();
+                if (now - last_report_us >= 10 * 1000 * 1000) {
+                    last_report_us = now;
+                    usb_host_lib_info_t info = { 0 };
+                    if (usb_host_lib_info(&info) == ESP_OK) {
+                        ESP_LOGW(TAG, "still waiting for RTL-SDR — USB bus has "
+                                      "%d enumerated device(s), %d client(s), "
+                                      "root port %s",
+                                 info.num_devices, info.num_clients,
+                                 info.root_port_suspended ? "SUSPENDED" : "active");
+                    } else {
+                        ESP_LOGE(TAG, "still waiting for RTL-SDR — "
+                                      "usb_host_lib_info() failed");
+                    }
+                }
             }
             /* Real attach: any prior re-init failures are irrelevant
              * since this is a fresh hardware event. */
@@ -333,9 +363,10 @@ void sdr_task(void *arg)
             ESP_LOGW(TAG, "reset_buffer failed (%d)", r);
         }
 
-        ESP_LOGI(TAG, "Starting async IQ stream (defaults: %d URBs)",
-                 /* doc value, kept in sync with DEFAULT_BUF_NUMBER in librtlsdr.c */
-                 15);
+        ESP_LOGI(TAG, "Starting async IQ stream (%d URBs x %d B, free internal "
+                      "heap: %u B)",
+                 PK_SDR_URB_COUNT, PK_SDR_URB_LEN,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
         /* Mark "stream just started — we haven't seen any IQ yet" so the
          * health check below knows the difference between "stream ran
@@ -347,7 +378,8 @@ void sdr_task(void *arg)
         /* Blocks until rtlsdr_cancel_async() (called by either DEV_GONE
          * handler on physical unplug, or pk_sdr_request_reinit() on
          * IQ stall) or the URB error threshold trips. */
-        r = rtlsdr_read_async(dev, on_iq, NULL, /*buf_num=*/0, /*buf_len=*/0);
+        r = rtlsdr_read_async(dev, on_iq, NULL,
+                              PK_SDR_URB_COUNT, PK_SDR_URB_LEN);
 
         /* Was this an actually healthy run? If we saw IQ for at least
          * SDR_REINIT_RESET_AFTER_US, clear the attempts counter so the

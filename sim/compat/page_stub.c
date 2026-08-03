@@ -63,7 +63,26 @@ void esp_chip_info(esp_chip_info_t *out)
  * PK_SIM_ABOUT_SCROLL、diag_page.c 的 PK_SIM_DIAG_SCROLL。 */
 int     pk_ui_about_scroll_y(void)          { return 0; }
 int     pk_ui_diag_scroll_y(void)           { return 0; }
-uint8_t pk_ui_cal_wizard_last_accuracy(void){ return 3; }   /* 3 = 已校准 */
+
+/*
+ * 磁力计精度 0..3。默认 3（已校准），诊断页/关于页拿它显示"一切正常"那一态。
+ *
+ * PK_SIM_CAL_ACC=<0..3> 摆档位——校准页的进度条分三种配色（低橙 / 中黄 /
+ * 高绿），真机上想截齐这三档得让 IMU 依次走过三个精度，做不到。夹到 0..3
+ * 是因为渲染那侧按 acc/3 算填充宽度，给个 7 会画出条子外面去。
+ */
+uint8_t pk_ui_cal_wizard_last_accuracy(void)
+{
+    int a = sim_env("PK_SIM_CAL_ACC", 3);
+    if (a < 0) a = 0;
+    if (a > 3) a = 3;
+    return (uint8_t)a;
+}
+
+/* 关校准页：模拟器里没有"页面切换"这回事（截哪一页由 PK_SIM_PAGE 决定），
+ * 同 pk_ui_set_mode 一样只是个空壳。留着是为了让 cal_wizard.c 的命中判定
+ * 原样编译——那段代码本身要被验的是坐标，不是它调了谁。 */
+void pk_ui_cal_wizard_dismiss(void) { }
 
 /*
  * 当前是哪一页。导航网格拿它反查「当前在哪一格」，画出那一格的选中框

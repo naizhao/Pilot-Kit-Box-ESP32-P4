@@ -33,8 +33,10 @@
 
 #include "display.h"
 #include "imu_task.h"      /* pk_i2c0_bus_get() */
+#include "pk_i2c0_recover.h"  /* 总线恢复代数 —— 见 pk_touch_retry_after_bus_recovery() */
 #include "about_page.h"
 #include "adsb_list.h"
+#include "cal_wizard.h"
 #include "diag_page.h"
 #include "apt_detail_page.h"
 #include "keyboard_page.h"
@@ -203,7 +205,11 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                      || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                      || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
                      || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
-                     || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly));
+                     || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly))
+                     /* 校准页只有「稍后再说」一个命中区，其余落点放行给
+                      * LVGL（FAB → 导航网格那条退路要照常可用）。这一页在
+                      * 4.3″ 板上没有别的退路：MODE 键已经没有了。 */
+                     || (m == PK_UI_MODE_CAL_WIZARD && pk_cal_wizard_touch(lx, ly));
                 break;
             }
             /* 归属就此定死，松手前不再回头问——这一行是「拖 FAB 拖到一半
@@ -283,6 +289,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_apt_detail_page_touch_up();
         pk_search_page_touch_up();
         pk_about_page_touch_up();
+        pk_cal_wizard_touch_up();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }
@@ -359,6 +366,9 @@ esp_err_t pk_touch_init(void)
     err = esp_lcd_touch_new_i2c_gt911(io, &tp_cfg, &s_tp);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "gt911 init failed: %s", esp_err_to_name(err));
+        /* io 已经建出来了,不还回去的话每重试一次就漏一个 device handle
+         * （2026-08-03 加了总线恢复后的重试才让这条路径可能跑不止一次）。 */
+        (void)esp_lcd_panel_io_del(io);
         return err;
     }
 
@@ -370,4 +380,26 @@ esp_err_t pk_touch_init(void)
     ESP_LOGI(TAG, "GT911 ready: native %dx%d -> logical %dx%d (90 CCW)",
              TOUCH_NATIVE_W, TOUCH_NATIVE_H, PK_DISPLAY_W, PK_DISPLAY_H);
     return ESP_OK;
+}
+
+/* 最近一次已经据此重试过的总线恢复代数。 */
+static uint32_t s_bus_gen_tried;
+
+void pk_touch_retry_after_bus_recovery(void)
+{
+    /* 已经成功过就一个指针比较,直接回。**不能**重跑:pk_touch_init() 末尾会
+     * lv_indev_create(),跑第二遍就多一个输入设备。 */
+    if (s_tp != NULL) return;
+
+    const uint32_t gen = pk_i2c0_recover_generation();
+    if (gen == s_bus_gen_tried) return;
+    s_bus_gen_tried = gen;
+
+    /* 走到这里 = 触摸从开机起就没初始化成功,而总线刚被救回来一轮。
+     * 2026-08-03 那次真机日志里正是这个形态:只有「GT911 found at 0x5D」,
+     * 没有「GT911 ready」——总线在 GT911 初始化中途塌了,pk_touch_init()
+     * 返回错误,整台机器这次开机就再也点不动了。 */
+    ESP_LOGW(TAG, "I²C0 总线已复位(第 %lu 轮)— 重试触摸初始化",
+             (unsigned long)gen);
+    (void)pk_touch_init();
 }

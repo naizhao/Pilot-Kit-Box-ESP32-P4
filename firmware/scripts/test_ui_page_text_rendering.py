@@ -39,7 +39,17 @@ def code_only(text: str) -> str:
 # 走，应当先回到这条决定本身，而不是让测试给死代码背书。
 # ══════════════════════════════════════════════════════════════════════
 
-# 已删除的 UI 档渲染链路：text.c 的渲染器 + 它们背后的字库。
+#
+# 2026-08-03 的续集：剩下的两个渲染器（pk_text_puts / pk_text_puts_title）也没
+# 有调用者了——最后一个是磁力计校准向导，它随 4.3″ 版面改造换到了 pfd_aa_text
+# 的 pk_aa_puts。于是 text.c / text.h 连同 L30、M26 两档位图字库
+# （text_font_cjk.c 1.0 MB、text_font_cjk_body.c 0.8 MB 源码）整套删除，
+# 生成侧对应地不再产出这两档（gen_i18n_assets.py 现在只产词条表）。
+# ══════════════════════════════════════════════════════════════════════
+
+# 已删除的整条位图 CJK 渲染链路：text.c 的渲染器 + 它们背后的三档字库。
+# 只列符号名，文件名交给下面的 exists() 断言——"text.c" 这种名字是
+# "pfd_aa_text.c" 的子串，放进来会把现役字体一起误伤。
 REMOVED_UI_FONT_SYMBOLS = (
     "pk_text_puts_ui",
     "pk_text_puts_page_title",
@@ -48,6 +58,26 @@ REMOVED_UI_FONT_SYMBOLS = (
     "pk_text_cjk_ui_glyph",
     "text_font_cjk_ui",
     "PK_TEXT_CJK_UI_CELL_H",
+    # ── 2026-08-03 追加 ──
+    "pk_text_puts",          # 同时覆盖 pk_text_puts_title（子串）
+    "pk_text_width",
+    "pk_text_title_width",
+    "pk_text_cjk_glyph",     # 同时覆盖 pk_text_cjk_body_glyph
+    "PK_TEXT_CJK_CELL_H",
+    "PK_TEXT_CJK_BODY_CELL_H",
+)
+
+# 已删除的源文件。CMakeLists 里的构建条目单独断言（见下），那边不能只搜
+# 文件名——注释里要写清"为什么删"，搜名字会把解释历史的注释也禁掉。
+REMOVED_FONT_FILES = (
+    "text.c",
+    "text.h",
+    "text_font_cjk.c",
+    "text_font_cjk.h",
+    "text_font_cjk_body.c",
+    "text_font_cjk_body.h",
+    "text_font_cjk_ui.c",
+    "text_font_cjk_ui.h",
 )
 
 
@@ -71,11 +101,12 @@ class UiPageTextRenderingTest(unittest.TestCase):
         self.assertRegex(diag, r"static\s+void\s+draw_snr_row\s*\(")
         self.assertRegex(diag, r"static\s+void\s+fmt_clock\s*\(")
 
-    def test_ui_weight_font_stays_deleted(self) -> None:
-        """UI 档字库与它的三个渲染器不许回到任何固件源码里。"""
+    def test_bitmap_cjk_font_stays_deleted(self) -> None:
+        """位图 CJK 字库与它的渲染器不许回到任何固件源码或构建里。"""
         main_dir = ROOT / "main"
-        self.assertFalse((main_dir / "text_font_cjk_ui.c").exists())
-        self.assertFalse((main_dir / "text_font_cjk_ui.h").exists())
+        for name in REMOVED_FONT_FILES:
+            with self.subTest(file=name):
+                self.assertFalse((main_dir / name).exists(), f"{name} 又回来了")
 
         for path in sorted(main_dir.glob("*.[ch]")):
             body = code_only(path.read_text(encoding="utf-8"))
@@ -83,9 +114,16 @@ class UiPageTextRenderingTest(unittest.TestCase):
                 with self.subTest(file=path.name, symbol=sym):
                     self.assertNotIn(sym, body)
 
-        for cmake in (ROOT / "main" / "CMakeLists.txt",
-                      ROOT.parent / "sim" / "CMakeLists.txt"):
-            self.assertNotIn("text_font_cjk_ui", cmake.read_text(encoding="utf-8"))
+        # 构建条目：固件侧是带引号的裸文件名，模拟器侧是 ${FW}/ 前缀。两边都
+        # 只匹配"条目"的形状，注释里出现文件名不算——那是在解释为什么删。
+        fw_cmake = (ROOT / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+        sim_cmake = (ROOT.parent / "sim" / "CMakeLists.txt").read_text(encoding="utf-8")
+        for name in REMOVED_FONT_FILES:
+            if not name.endswith(".c"):
+                continue
+            with self.subTest(entry=name):
+                self.assertNotIn(f'"{name}"', fw_cmake)
+                self.assertNotIn(f"${{FW}}/{name}", sim_cmake)
 
     def test_pages_render_through_aa_text(self) -> None:
         """各页 render 入口仍在，且都走 pfd_aa_text 的 pk_aa_puts。"""
@@ -124,52 +162,19 @@ class UiPageTextRenderingTest(unittest.TestCase):
         layout = (ROOT / "main" / "pfd_layout.h").read_text(encoding="utf-8")
         self.assertRegex(layout, r"#define\s+PK_UI_TITLE_SIZE\s+PK_AA_M\b")
 
-    def test_cjk_solid_rendering_uses_alpha_threshold(self) -> None:
-        text = (ROOT / "main" / "text.c").read_text(encoding="utf-8")
-        self.assertIn("CJK_SOLID_ALPHA4_THRESHOLD", text)
-        self.assertIn("alpha4 < CJK_SOLID_ALPHA4_THRESHOLD", text)
-        self.assertNotIn("ascii_scale <= 1);", text)
+    def test_cal_wizard_renders_through_aa_text(self) -> None:
+        """校准向导是 text.c 的最后一个调用者，它必须留在 pfd_aa_text 这边。
 
-    def test_remaining_text_renderers_keep_ascii_and_cjk_on_matching_ladders(self) -> None:
-        """text.c 剩下的两个渲染器，拉丁档位必须配得上它取的 CJK 字库。
-
-        page_title / page_body / puts_ui 那三档随 legacy 一起删了（见文件头的
-        决定说明），只剩校准向导在用的 pk_text_puts 与 pk_text_puts_title：
-          puts_title → PK_AA_L 配大号 pk_text_cjk_glyph
-          puts       → 按 ascii_scale 自适应挑档（aa_size_for_cjk）
-        错配就会出现"汉字比旁边的字母矮一圈"。
+        原来那三个断言（CJK_SOLID_ALPHA4_THRESHOLD 阈值、alpha 线性展开、
+        puts_title 的档位配对）测的都是 text.c 的内部实现，随文件一起删。
+        真正要守住的是**这一页不许退回去**：一旦它重新 include text.h，
+        整套 1.8 MB 字库就会被链接回来。
         """
-        text = (ROOT / "main" / "text.c").read_text(encoding="utf-8")
-        self.assertIn("int pk_text_puts_title", text)
-        self.assertIn("int pk_text_puts(", text)
-        self.assertNotIn("pk_font_putchar", text)
-
-        title = text[text.index("int pk_text_puts_title"):]
-        self.assertIn("aa_putc(fb, fb_w, fb_h, x, y, cp, color, PK_AA_L)", title)
-        self.assertIn("pk_text_cjk_glyph(cp)", title)
-        # solid=false：CJK 走真灰度混合，不压实成硬阶梯。
-        self.assertIn("PK_TEXT_CJK_CELL_H, color, false", title)
-
-    def test_antialiased_cjk_uses_raw_glyph_alpha(self) -> None:
-        """4.3 寸屏上不再重映射 CJK 的 alpha 曲线。
-
-        旧断言要求一张 CJK_AA_LCD_ALPHA4[16] 查表把 alpha≥5 一律拉满。那是
-        2.8 寸 167 PPI 的补偿；这块 217 PPI 屏字号已提到 21..30 px，再压实等
-        于扔掉抗锯齿，汉字会"发破"。所以这里反过来钉住：查表不许回来，
-        alpha 必须是字库灰度的线性展开（4bpp × 17 → 0..255）。
-        """
-        text = (ROOT / "main" / "text.c").read_text(encoding="utf-8")
-        # 只看代码，不看注释——text.c 的注释里留了这张表的来历，那是有意为之。
-        self.assertNotRegex(text, r"CJK_AA_LCD_ALPHA4\s*\[\s*16\s*\]\s*=")
-        self.assertNotIn("alpha4 = CJK_AA_LCD_ALPHA4[alpha4]", text)
-        self.assertIn("if (alpha4 == 0) continue;", text)
-        self.assertIn("uint8_t alpha = (uint8_t)(alpha4 * 17);", text)
-
-        # solid 路径（小字压实）保留，用阈值而不是查表。
-        self.assertIn("CJK_SOLID_ALPHA4_THRESHOLD", text)
-        match = re.search(r"#define\s+CJK_SOLID_ALPHA4_THRESHOLD\s+(\d+)", text)
-        self.assertIsNotNone(match)
-        self.assertGreaterEqual(int(match.group(1)), 1)
+        body = (ROOT / "main" / "cal_wizard.c").read_text(encoding="utf-8")
+        self.assertIn("void pk_cal_wizard_render(uint16_t *fb)", body)
+        self.assertIn("pk_aa_puts", body)
+        self.assertIn('#include "pfd_aa_text.h"', body)
+        self.assertNotIn('#include "text.h"', body)
 
 
 if __name__ == "__main__":

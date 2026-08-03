@@ -48,15 +48,20 @@ idf_component_register(
         "imu_task.c"
         "pk_vib.c"
         "baro_task.c"
+        # I²C0 总线级恢复。policy 是纯逻辑（host 单测 test_pk_i2c0_policy.c），
+        # recover 才碰 i2c_master_bus_reset()。见 pk_i2c0_recover.h 文件头。
+        "pk_i2c0_policy.c"
+        "pk_i2c0_recover.c"
         # button_task.c 故意不编译：它写死的 GPIO26/GPIO23 在 Rev1.2
         # 4.3 寸上是背光 PWM 和触摸复位，配成输入上拉会打死背光和触摸。
         # 详见 button_task.h 顶部说明。
         "ui_state.c"
         "i18n.c"
         "i18n_catalog.c"
-        "text.c"
-        "text_font_cjk.c"
-        "text_font_cjk_body.c"
+        # 2026-08-03 删除：text.c / text_font_cjk*.c（8 px 位图 CJK + 5×7 缩放
+        # 拉丁）。最后一个调用者是校准向导，它随 4.3″ 改版换到了 pfd_aa_text
+        # 的 pk_aa_puts（与其余各页同一份抗锯齿字体）。整套 1.8 MB 源码、约
+        # 96 KB 只读数据从此零调用者。
         "adsb_list.c"
         "settings_page.c"
         "settings_draw.c"

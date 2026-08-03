@@ -54,6 +54,20 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 # --- USB Host stack ---------------------------------------------------------
 # RTL-SDR dongles enumerate a single device but some ship via a hub bridge.
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
+# URB 数据缓冲放 PSRAM，别占内部 RAM。
+#
+# 2026-08-03 载板 USB 接好、dongle 第一次真正枚举成功之后才暴露出来的：URB
+# 默认从**内部** DMA 堆分配（espressif__usb/src/usb_private.c:24 的
+# DATA_BUFFER_CAPS 带 MALLOC_CAP_INTERNAL），15×6144 ≈ 92 KB，直接把屏、
+# NimBLE、IMU、气压计全饿死（ST7701 DMA 链表 NO_MEM / vhci malloc failed /
+# baro task create failed）。把 SDR 挪到最后启动只是缓解，实测仍然只能分配出
+# 4 个 URB 就 NO_MEM——内部 DMA 堆本来就那么大。
+#
+# ESP32-P4 的 USB-DWC DMA **可以直接访问外部 RAM**（同文件 :22 那条分支，
+# Kconfig 帮助文本亦然），打开后 URB 落 PSRAM（我们有 32 MB、空闲 18 MB），
+# 内部 RAM 一个字节都不占。代价是访问外部 RAM 的少量开销，而 IQ 数据的终点
+# g_iq_ringbuf 本来就在 PSRAM，多这一跳无关紧要。
+CONFIG_USB_HOST_DWC_DMA_CAP_MEMORY_IN_PSRAM=y
 # Increase the control-transfer descriptor cap so we can read RTL2832U's
 # config/string descriptors without short reads.
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512

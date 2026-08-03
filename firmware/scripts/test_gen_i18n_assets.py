@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for generated i18n strings and CJK glyph subsets."""
+"""Tests for the generated i18n string table.
+
+CJK 字形子集不再由本脚本生成（2026-08-03，见 gen_i18n_assets.py 文件头）：
+屏上的汉字来自 gen_pfd_aa_font.py 的 pfd_aa_font.c。凡是「码位子集是否覆盖
+catalog」这类断言，都改问那一个——问已经不产字库的脚本等于测了个寂寞。
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import unittest
 from pathlib import Path
 
 import gen_i18n_assets as gen
+import gen_pfd_aa_font as aafont
 import i18n_catalog
 
 
@@ -108,6 +114,12 @@ class I18nAssetGeneratorTest(unittest.TestCase):
         self.assertIn("TARE ", strings["SETTINGS_FOOTER"]["zh"])
 
     def test_cjk_subset_contains_only_non_ascii_chars_from_catalog(self) -> None:
+        """屏上的 CJK 码位表必须覆盖 catalog 里出现的每一个非 ASCII 字符。
+
+        问的是 gen_pfd_aa_font（现役字库），不是 gen_i18n_assets——后者
+        2026-08-03 起不再产字形。它比 catalog 多出的只有 ARROW_CODES 那八个
+        方向箭头（符号不是文案，见那边的注释），所以是包含关系而不是相等。
+        """
         expected = {
             ord(ch)
             for _, translations in i18n_catalog.STRINGS
@@ -115,21 +127,27 @@ class I18nAssetGeneratorTest(unittest.TestCase):
             for ch in text
             if ord(ch) > 0x7F
         }
-        self.assertEqual(gen.collect_cjk_codepoints(i18n_catalog.STRINGS), expected)
+        codes = set(aafont.collect_cjk_codes())
+        self.assertTrue(expected <= codes, f"字库漏字: {sorted(expected - codes)}")
+        self.assertEqual(codes - expected, set(aafont.ARROW_CODES))
         self.assertIn(ord("设"), expected)
         self.assertIn(ord("中"), expected)
         self.assertNotIn(ord("A"), expected)
 
-    def test_ui_weight_font_generation_stays_removed(self) -> None:
-        """21 px「UI 变宽字库」这一档不许回潮（2026-07-30 决定）。
+    def test_bitmap_cjk_font_generation_stays_removed(self) -> None:
+        """本脚本产字库这条链路整条不许回潮。
 
-        text_font_cjk_ui.c 只喂 text.c 里的 pk_text_puts_ui / page_* 渲染器，
-        而那三个只被 settings/diag 两页的 *_render_legacy() 调用——那两个从上线
-        起就挂着 __attribute__((unused))，一年零调用者。硬件已换成 4.3″ 800×480
-        触摸屏，各页统一走 pfd_aa_text，不存在退回 2.4″ 逐行版面的场景，所以整
-        条链路（渲染器 + 字库 + 这里的生成代码）一起删。
+        2026-07-30 先删 21 px「UI 变宽字库」（text_font_cjk_ui.c）：它只喂
+        text.c 里的 pk_text_puts_ui / page_* 三个渲染器，而那三个只被
+        settings/diag 两页的 *_render_legacy() 调用，从上线起就挂着
+        __attribute__((unused))。
 
-        本脚本仍必须生成词条表与另外两档 CJK 字库，由下面几个测试守住。
+        2026-08-03 删掉剩下的 L30 / M26 两档（text_font_cjk.c /
+        text_font_cjk_body.c）连同它们唯一的渲染器 text.c：最后一个调用者是
+        磁力计校准向导，它随 4.3″ 改版换到了 pfd_aa_text 的 pk_aa_puts。
+
+        所以这是反向断言：这些生成函数一旦回来，就说明有人在把位图字库那条
+        路走回去，应当先回到「各页统一走 pfd_aa_text」这条决定本身。
         """
         for name in ("collect_ui_codepoints", "ui_glyph_width",
                      "emit_ui_font_header", "emit_ui_font_source",
@@ -138,75 +156,43 @@ class I18nAssetGeneratorTest(unittest.TestCase):
         for name in ("DEFAULT_UI_BODY_H", "DEFAULT_UI_BODY_PT",
                      "DEFAULT_UI_ASCII_W", "DEFAULT_UI_WIDE_W"):
             self.assertFalse(hasattr(gen, name), f"{name} 不该回来")
+        for name in ("emit_cjk_header", "emit_cjk_source", "glyph_bytes_4bpp",
+                     "pack_readable_4bpp", "normalize_glyph_alpha",
+                     "threshold_4bpp", "collect_cjk_codepoints",
+                     "DEFAULT_TITLE_CELL", "DEFAULT_BODY_CELL",
+                     "DEFAULT_TITLE_PT", "DEFAULT_BODY_PT"):
+            self.assertFalse(hasattr(gen, name), f"{name} 不该回来")
 
-    def test_catalog_and_two_cjk_ladders_are_still_generated(self) -> None:
-        """删 UI 档时不能误伤词条表和 L30/M26 两档字库。"""
-        for name in ("emit_i18n_header", "emit_i18n_source",
-                     "emit_cjk_header", "emit_cjk_source",
-                     "collect_cjk_codepoints"):
+    def test_catalog_table_is_still_generated(self) -> None:
+        """删字库时不能误伤词条表——那才是本脚本现在唯一的产物。"""
+        for name in ("emit_i18n_header", "emit_i18n_source"):
             self.assertTrue(hasattr(gen, name), f"{name} 丢了")
-        self.assertEqual(gen.DEFAULT_TITLE_CELL, 30)
-        self.assertEqual(gen.DEFAULT_BODY_CELL, 26)
+        # 匹配的是**写盘那一行**的形状（out_dir / "text_font_cjk…"），不是
+        # 裸文件名——文件头那段"为什么删"的注释里必然会写出这些名字，搜名字
+        # 等于禁止解释历史，下一个人只会把注释也删掉。
+        source = Path(gen.__file__).read_text(encoding="utf-8")
+        self.assertNotIn('out_dir / "text_font_cjk', source)
+
+    def test_glyph_rendering_base_stays_for_sibling_generators(self) -> None:
+        """渲染底座留着：另外三个生成器 import 的就是这几个。"""
+        for name in ("render_glyph", "render_glyph_with_fallback",
+                     "pack_4bpp", "glyph_has_ink", "default_font_chain"):
+            self.assertTrue(hasattr(gen, name), f"{name} 是共用底座，不能删")
 
     def test_default_ui_font_is_noto_sans_sc(self) -> None:
         self.assertEqual(gen.DEFAULT_UI_FONT.name, "NotoSansSC-VariableFont_wght.ttf")
-        self.assertEqual(gen.DEFAULT_TITLE_FONT, gen.DEFAULT_UI_FONT)
-        self.assertEqual(gen.DEFAULT_BODY_FONT, gen.DEFAULT_UI_FONT)
         self.assertEqual(gen.default_font_chain()[0], gen.DEFAULT_UI_FONT)
 
     def test_cjk_glyphs_are_packed_as_4bpp_alpha(self) -> None:
         gray = bytes([0, 17, 128, 255])
         self.assertEqual(gen.pack_4bpp(gray), bytes([0x01, 0x8F]))
 
-    def test_threshold_4bpp_keeps_body_ui_glyphs_solid(self) -> None:
-        gray = bytes([0, 95, 96, 255])
-        self.assertEqual(gen.threshold_4bpp(gray, threshold=96), bytes([0x00, 0xFF]))
-
-    def test_ui_threshold_keeps_low_contrast_cjk_pixels(self) -> None:
-        gray = bytes([0, 47, 48, 255])
-        self.assertEqual(gen.threshold_4bpp(gray), bytes([0x00, 0xFF]))
-
-    def test_readable_pack_preserves_antialias_alpha_levels(self) -> None:
-        gray = bytes([0, 48, 96, 255])
-        packed = gen.pack_readable_4bpp(gray)
-        levels = [(byte >> 4, byte & 0x0F) for byte in packed]
-        flat = [level for pair in levels for level in pair]
-        self.assertEqual(packed, gen.pack_4bpp(gray))
-        self.assertTrue(any(0 < level < 15 for level in flat))
-
-    def test_readable_pack_normalizes_small_glyphs_to_full_alpha(self) -> None:
-        fonts = gen.default_font_chain()
-        for ch in ("A", "0", "项", "版", "于"):
-            with self.subTest(ch=ch):
-                gray = gen.render_glyph_with_fallback(
-                    "magick", fonts, 11, 12, 12, ord(ch)
-                )
-                packed = gen.pack_readable_4bpp(gray)
-                flat = [level for byte in packed for level in (byte >> 4, byte & 0x0F)]
-                self.assertEqual(max(flat), 15)
-                self.assertTrue(any(0 < level < 15 for level in flat))
-
-    def test_readable_pack_normalizes_title_cjk_glyphs_to_full_alpha(self) -> None:
-        fonts = gen.default_font_chain()
-        for ch in ("关", "于", "语", "言"):
-            with self.subTest(ch=ch):
-                gray = gen.render_glyph_with_fallback("magick", fonts, 15, 16, 16, ord(ch))
-                packed = gen.pack_readable_4bpp(gray)
-                flat = [level for byte in packed for level in (byte >> 4, byte & 0x0F)]
-                self.assertEqual(max(flat), 15)
-                self.assertTrue(any(0 < level < 15 for level in flat))
-
-    def test_cjk_title_and_body_glyphs_have_distinct_storage_sizes(self) -> None:
-        self.assertEqual(gen.glyph_bytes_4bpp(16, 16), 128)
-        self.assertEqual(gen.glyph_bytes_4bpp(10, 10), 50)
-        self.assertEqual(gen.glyph_bytes_4bpp(8, 8), 32)
-
     def test_fallback_fonts_cover_catalog_cjk(self) -> None:
         fonts = gen.default_font_chain()
-        for code in gen.collect_cjk_codepoints(i18n_catalog.STRINGS):
+        for code in aafont.collect_cjk_codes():
             with self.subTest(code=f"U+{code:04X}", char=chr(code)):
                 # 12×12 只是「这个字形在字体里有墨」的探针尺寸，与真正落盘的
-                # L30/M26 两档无关——档位由上面 DEFAULT_*_CELL 那条断言守。
+                # xs/s/m/l 四档无关——档位由 gen_pfd_aa_font.SIZES 定。
                 gray = gen.render_glyph_with_fallback(
                     "magick", fonts, 11, 12, 12, code
                 )

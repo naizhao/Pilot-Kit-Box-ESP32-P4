@@ -31,6 +31,7 @@
 #include "pfd_layout.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
+#include "ui_state.h"          /* pk_ui_cal_wizard_last_accuracy —— 罗盘校准那行的值 */
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 设置页 800×480（spec §5.4）
@@ -52,16 +53,17 @@
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 
-#define SET_ROWS      12
+#define SET_ROWS      13
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
 
-/* 滚动偏移(px)。12 行 × 64 = 768 > 可视的 432，最后三行"机型分类 / 演示模式
- * / 格式化 SD" 必须滚才看得到——spec §5.4 就是这么写的（"危险按钮（需滚动
- * 可见）"），把最危险的操作放在需要多一个动作才能够到的地方。演示模式同样
- * 落在这一档：假数据在航空设备上和误格式化是同一量级的风险；机型分类不危险，
- * 只是插在两者中间（阶段 5a，见 pk_settings_apply 的排版约定），跟着一起滚。 */
+/* 滚动偏移(px)。13 行 × 64 = 832 > 可视的 432，最后四行"演示模式 / 机型分类
+ * / 罗盘校准 / 格式化 SD" 必须滚才看得到——spec §5.4 就是这么写的（"危险
+ * 按钮（需滚动可见）"），把最危险的操作放在需要多一个动作才能够到的地方。
+ * 演示模式同样落在这一档：假数据在航空设备上和误格式化是同一量级的风险；
+ * 机型分类与罗盘校准都不危险，只是插在两者中间（见 pk_settings_apply 的排版
+ * 约定），跟着一起滚。 */
 static int s_set_scroll;
 
 /* 触摸手势：与列表页/诊断页同一套——按下只记起点，位移超阈值才算拖动，
@@ -394,7 +396,47 @@ void pk_settings_page_render(uint16_t *fb)
       hit_set(row, 1, _x, seg_last_w(), 5, ROW_Y(row));
       row++; }
 
-    /* 12 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 12 罗盘校准 —— 「动作行」：点了不是改值，而是跳到另一个页面。
+     *
+     * 照抄的是上面第 9 行「设备名」那一行的写法（深色圆角值框 + hit_set
+     * kind=3 + pk_settings_apply 里打开另一个界面），不是下面那行格式化 SD：
+     * 格式化是危险按钮（红底 + 两步确认 + 三种不可用文案），校准既不危险也
+     * 不需要确认，套那套配色会把它误标成"别乱点"。
+     *
+     * 为什么非得有这个入口：校准页此前**只能自动进入**（磁力计 acc=0 连续
+     * 10 s，ui_state.c 的 pk_ui_cal_wizard_tick）。页内的「稍后再说」会关掉
+     * 自动重弹的闸门（s_cal_auto_suppressed），于是用户关过一次之后，本次开机
+     * 内主动想校准就再也没有任何入口。导航网格那张表里刻意没有它（那张表列的
+     * 是"页面"，校准是一次"动作"，见 nav_grid_page.c 的项表注释），所以落在
+     * 设置页这一行。
+     *
+     * 值框里显示的是**当前精度**而不是一个"校准"按钮字样：一眼就能判断该不该
+     * 点进去。文案直接复用校准页进度条那句（PK_TR_CAL_QUALITY + "n / 3"，与
+     * cal_wizard.c 的 draw_progress_bar 同一份写法），既不必新造词条，两处口径
+     * 也不会说岔。
+     *
+     * 框宽 200 与格式化那行等宽——两个动作行的控件右缘、宽度都对齐，扫一眼是
+     * 一列而不是参差的两块。宽度够用：英文最长态 "Quality  0 / 3" 14 字符 ×
+     * PK_AA_S_W(11) = 154 px，中文 "质量  0 / 3" 是 2×17 + 7×11 = 111 px，
+     * 都在 200 − 左右各 10 的余量里。 */
+    { ROW_LABEL(row, pk_i18n_text(PK_TR_CAL_TITLE));
+      const int y_mid = ROW_Y(row);
+      const int y0 = y_mid - SET_CTL_H / 2;
+      const int w  = 200;
+      const int x0 = SET_CTL_R - w;
+      pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
+                             SET_CTL_H / 2, pk_rgb565(28, 36, 48));
+      char v[32];
+      snprintf(v, sizeof(v), "%s  %u / 3", pk_i18n_text(PK_TR_CAL_QUALITY),
+               pk_ui_cal_wizard_last_accuracy());
+      const int tw = pk_aa_text_width(v, PK_AA_S);
+      pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
+                 y0 + (SET_CTL_H - PK_AA_S_H) / 2, v,
+                 pk_rgb565(235, 240, 248), PK_AA_S);
+      hit_set(row, 3, x0, w, 0, y_mid);
+      row++; }
+
+    /* 13 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;

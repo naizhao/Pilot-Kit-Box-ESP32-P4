@@ -358,9 +358,17 @@ H4 is the speaker connector, not the C6 header.
 plug, and takes VBUS straight from J3-1/J3-3 `VCC_5V`. The dongle therefore
 plugs into the carrier and **H2 must stay empty**.
 
-Without the carrier — a bare Waveshare board on the bench — use H2 `USB` with
-a USB-C OTG adapter or powered hub instead. H2 and J3-25/27 are the same
-nets, so exactly one of them may be occupied at a time.
+Without the carrier — a bare Waveshare board on the bench — H2 `USB` carries
+the same data pair, but **H2 supplies no VBUS**: measured on the bench
+2026-08-03, neither H1 nor H2 sources 5 V outward. A dongle plugged straight
+into H2 never powers up, so it can never enumerate. On a bare board you must
+therefore use a **self-powered** USB hub (or otherwise feed the dongle 5 V);
+a passive OTG adapter is not enough. H2 and J3-25/27 are the same nets, so
+exactly one of them may be occupied at a time.
+
+This is the reason the RTL-SDR had never once enumerated before the carrier
+was wired: every earlier attempt went through H2, where the dongle simply
+had no power. It is not evidence that the firmware was ever at fault.
 
 Known limitation: the carrier has **no current-limited switch** on VBUS; the
 dongle draws directly from the board 5 V rail. A 500 mA USB Host

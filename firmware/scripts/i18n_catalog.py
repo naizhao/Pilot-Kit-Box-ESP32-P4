@@ -207,10 +207,14 @@ STRINGS = [
         },
     ),
     (
+        # 4.3″ 板上没有 MODE 键了，"按 MODE 跳过"指向一个不存在的硬件——跳过
+        # 改由校准页右下角那枚「稍后再说」(CAL_LATER) 承担。这一条腾出来讲
+        # **为什么值得校准**，否则页脚就只剩一句废话。
+        # 用字全部落在既有 CJK 子集内(校准后航向更准)，不必重生成字库。
         "CAL_FOOTER",
         {
-            "en": "Press MODE to skip",
-            "zh": "按 MODE 跳过",
+            "en": "Calibration improves heading accuracy",
+            "zh": "校准后航向更准",
         },
     ),
     # --- 瞬时屏幕提示(toast) — TARE 保存 / own 绑定反馈 ---
@@ -850,15 +854,22 @@ STRINGS = [
     ("DIAG_V_ANT_SHORT_S", {"en": "SHORT",    "zh": "短路"}),
     ("DIAG_V_NO_SATS",     {"en": "(no satellites in view)", "zh": "(无可见卫星)"}),
     # SDR：没枚举时**直接把该插哪儿写在屏上**——这是接线问题，写 "OFFLINE"
-    # 帮不上忙，写 H2 才能解决问题。
-    ("DIAG_V_SDR_NONE",    {"en": "NO DONGLE - use H2 USB-C", "zh": "无接收机 - 用 H2 USB-C"}),
+    # 帮不上忙。
+    #
+    # 2026-08-03：原文写死「用 H2 USB-C」，装了载板之后这句是**误导**——
+    # 载板把同一对 USBD_P/N 从 J3 排针 27/25 引到了自己的 USB-A 座，两个
+    # 出口是同一组网络，同一时刻只能占一个（见 pilot_kit.h 里
+    # PK_USB_PERIPHERAL_MAP 的说明）。照原文去插 H2 等于和载板抢线。
+    # 常态是装了载板，所以正文指向载板，H2 退到 HINT 里作为裸板备选。
+    ("DIAG_V_SDR_NONE",    {"en": "NO DONGLE - carrier USB-A", "zh": "无接收机 - 插载板 USB"}),
     ("DIAG_V_SDR_NONE_S",  {"en": "NO DONGLE",     "zh": "无接收机"}),
     ("DIAG_V_SDR_ATTACH",  {"en": "attached, opening...", "zh": "已连接, 打开中..."}),
     ("DIAG_V_SDR_ATTACH_S",{"en": "attached",      "zh": "已连接"}),
     ("DIAG_V_SDR_STALL",   {"en": "STALLED - no IQ >1s",  "zh": "停滞 - 无 IQ >1s"}),
     ("DIAG_V_SDR_STALL_S", {"en": "STALLED",       "zh": "停滞"}),
     ("DIAG_V_SDR_STREAM",  {"en": "streaming",     "zh": "数据流"}),
-    ("DIAG_V_SDR_HINT",    {"en": "connect to H2 (USB OTG)", "zh": "接到 H2 (USB OTG)"}),
+    # 两个出口二选一：装了载板插它的 USB-A；裸板上机才用 H2。
+    ("DIAG_V_SDR_HINT",    {"en": "carrier USB-A, or H2", "zh": "插载板 USB 或 H2"}),
     # IMU / BARO 离线时的接线提示，照 SDR 那条的样子给。
     # 没有它，这两页在「外设全没接」时**整页只有一行**「传感器 离线」，下面
     # 四百像素纯黑——空态排查时看到的就是这个，第一反应是详情页没渲染出来。

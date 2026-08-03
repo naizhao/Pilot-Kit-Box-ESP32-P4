@@ -74,6 +74,39 @@ static int64_t           s_cal_acc_first_low_us;
 static int64_t           s_cal_acc_first_high_us;
 static uint8_t           s_cal_last_accuracy;
 
+/*
+ * 自动弹出校准页的"闸门"。true = 本次开机内不再自动进入。
+ *
+ * 为什么需要它
+ * ------------
+ * 下面的 tick 只要看到 acc=0 连续 10 s 就把 s_mode 强拽成 CAL_WIZARD，进入
+ * 后计时器清零、acc 仍是 0 就重新计时。于是用户**无论用什么方式离开**（点
+ * 页内的「稍后再说」、或 FAB → 导航网格切到别的页），10 s 后都会被原样拽
+ * 回来。真机实测：室内磁环境 + 刚重装的 IMU，acc 连续 40 s 都是 0。旧版的
+ * 退路是物理 MODE 键，4.3″ 板上那个键已经没有了。
+ *
+ * 抑制到什么时候：**直到磁力计精度真的上过 UI_CAL_WIZARD_EXIT_ACCURACY**
+ * （见下面 tick 里那句 s_cal_auto_suppressed = false）。
+ *
+ * 为什么不是"抑制 N 分钟"
+ *   N 到期时磁环境多半没变（用户还在同一间屋里），于是再弹一次、再被关掉，
+ *   只是把骚扰的周期拉长，循环并没有断。用户按下"稍后再说"表达的是"我知道
+ *   没校准，现在不想弄"，这个意图不该被一个计时器推翻。
+ *
+ * 为什么重新武装的条件是"acc 曾经 ≥2"而不是"重启"
+ *   acc 上过 2 说明设备确实完成过一次校准；此后再掉回 0 是**新的一次**退化
+ *   （换了环境、靠近了磁干扰源），那时候提示是有信息量的，不是重复骚扰。
+ *
+ * 为什么是 RAM-only（不落 NVS）
+ *   开机时用户正处在"准备飞行"的场景，提醒一次是合理的；把"不想校准"写进
+ *   NVS 会让一台从此再也不提示的盒子看起来像坏了，而排查线索只有一条藏在
+ *   NVS 里的布尔量。
+ *
+ * 注意：这只挡**自动进入**。手动进入（导航网格里的入口）与自动退出
+ * （acc≥2 持续 3 s 回 PFD）的逻辑一个字都没动。
+ */
+static bool              s_cal_auto_suppressed;
+
 /* Transient toast. s_toast_until_us == 0 (or now past it) → no toast.
  * s_toast_blink_times>0 时按 400 ms 一拍闪烁（阶段 5b，见 ui_state.h
  * pk_ui_toast_show_blink 的注释）；s_toast_start_us 是闪烁相位的起点。 */
@@ -138,7 +171,12 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;
                                   s_diag_scroll_y = 0;          break;
     case PK_UI_MODE_DIAG:        s_mode = PK_UI_MODE_PFD;       break;
-    case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;       break;
+    case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;
+                                 /* 手动离开校准页 = 用户明确表示"现在不想
+                                  * 校准"，关掉自动重弹的闸门，理由见
+                                  * s_cal_auto_suppressed 的注释。 */
+                                 s_cal_auto_suppressed = true;
+                                 s_cal_acc_first_low_us = 0;    break;
     default:                     s_mode = PK_UI_MODE_PFD;       break;
     }
     pk_ui_mode_t new_mode = s_mode;
@@ -150,12 +188,78 @@ void pk_ui_set_mode(pk_ui_mode_t mode)
 {
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    /* 从校准页**主动切走**（导航网格里选了别的页）同样算"用户不想校准"。
+     * 不这么做的话，用户用 FAB 切出去 10 s 后又被拽回来——罩哥真机上遇到的
+     * 正是这一条。判据刻意收紧成"离开时正好在校准页"：只要写成"任何一次
+     * set_mode 都抑制"，用户开机后随便切一次页，这一整轮开机就再也不会提示
+     * 校准了。 */
+    if (s_mode == PK_UI_MODE_CAL_WIZARD && mode != PK_UI_MODE_CAL_WIZARD) {
+        s_cal_auto_suppressed  = true;
+        s_cal_acc_first_low_us = 0;
+    }
     s_mode = mode;
     /* 进入 About/Diag 时复位各自滚动位置 —— 与 toggle 路径行为一致。 */
     if (mode == PK_UI_MODE_ABOUT) s_about_scroll_y = 0;
     if (mode == PK_UI_MODE_DIAG)  s_diag_scroll_y  = 0;
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "mode → %s (direct)", mode_name(mode));
+}
+
+/*
+ * 用户点了校准页上的「稍后再说」。
+ *
+ * 回 PFD 而不是"回到被拽走之前那一页"：自动退出（acc≥2）走的就是 PFD，物理
+ * MODE 键那条老路径（pk_ui_toggle_mode 的 CAL_WIZARD 分支）也是 PFD。为一个
+ * 次要动作单独记一份"来时的页"，三条退路就会有两种落点，而这一页本来就是
+ * 从任意页面被强行拽进来的——落回主界面反而是最不容易让人迷路的选择。
+ */
+void pk_ui_cal_wizard_dismiss(void)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_mode                 = PK_UI_MODE_PFD;
+    s_cal_auto_suppressed  = true;
+    s_cal_acc_first_low_us = 0;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "mode → PFD (user dismissed cal wizard; auto-enter "
+                  "suppressed until acc≥%u is seen again)",
+             UI_CAL_WIZARD_EXIT_ACCURACY);
+}
+
+/*
+ * 用户从设置页那一行「罗盘校准」主动进来。
+ *
+ * 为什么不让设置页直接调 pk_ui_set_mode(PK_UI_MODE_CAL_WIZARD)
+ * ---------------------------------------------------------
+ * 那样只切页，不动闸门。而 s_cal_auto_suppressed 一旦被「稍后再说」/切走
+ * 那两条路径置上，就要等磁力计精度真的上到 UI_CAL_WIZARD_EXIT_ACCURACY 才会
+ * 复位（见该变量的注释）——恰恰是"还没校准好"的时候它一直关着。用户此刻的
+ * 动作说明他改主意了，闸门必须跟着重新武装：不然他在这一页没转够就退出去，
+ * 本次开机内既不会自动提醒、也不会有第二次提示。
+ *
+ * 闸门的开关一律留在本文件：s_cal_auto_suppressed 是私有状态，让设置页去改
+ * 就得把它导出去，"谁在什么时候动过闸门"就散进各个页面了。页面只表达意图。
+ *
+ * 两个计时器也一并清零，各有各的原因：
+ *   - s_cal_acc_first_low_us：进来之后 tick 的自动进入分支本来就不该再触发
+ *     （已经在这一页了），清零与自动进入路径的做法一致。
+ *   - s_cal_acc_first_high_us：**不清零会让这一页当场闪一下就跑掉**。设备
+ *     若已经校准好（acc≥2 持续了几分钟），tick 的自动退出分支下一拍就满足
+ *     "acc≥2 超过 3 s"，用户刚点开就被弹回 PFD。清零后至少有 3 s 的窗口；
+ *     3 s 后仍然自动退回是**有意保留**的——精度已经够了，这一页没事可做，
+ *     而真正需要校准（acc<2）时自动退出根本不会触发，页面会一直等着他。
+ */
+void pk_ui_cal_wizard_enter(void)
+{
+    if (s_lock == NULL) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_mode                  = PK_UI_MODE_CAL_WIZARD;
+    s_cal_auto_suppressed   = false;
+    s_cal_acc_first_low_us  = 0;
+    s_cal_acc_first_high_us = 0;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "mode → CAL_WIZARD (user opened it from settings; "
+                  "auto-enter re-armed)");
 }
 
 void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy)
@@ -173,14 +277,19 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy)
     } else if (valid && accuracy >= UI_CAL_WIZARD_EXIT_ACCURACY) {
         if (s_cal_acc_first_high_us == 0) s_cal_acc_first_high_us = now;
         s_cal_acc_first_low_us = 0;
+        /* 精度真的上来过 → 重新武装自动弹出。之后再掉回 0 是**新的一次**
+         * 退化（换了环境/受了磁干扰），那时候提示是有信息量的。 */
+        s_cal_auto_suppressed = false;
     } else {
         /* acc=1 or invalid: don't progress either timer, but
          * don't reset them either — fusion is in transit. */
     }
 
     /* Auto-enter wizard from any non-wizard mode if acc has been
-     * stuck at 0 for the enter window. */
+     * stuck at 0 for the enter window. s_cal_auto_suppressed 是用户手动
+     * 关过之后的闸门——没有它，「稍后再说」按下去 10 s 就白按了。 */
     if (s_mode != PK_UI_MODE_CAL_WIZARD &&
+        !s_cal_auto_suppressed &&
         s_cal_acc_first_low_us != 0 &&
         (now - s_cal_acc_first_low_us) / 1000 >= UI_CAL_WIZARD_ENTER_MS) {
         s_mode = PK_UI_MODE_CAL_WIZARD;

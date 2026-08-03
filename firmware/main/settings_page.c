@@ -34,7 +34,8 @@
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
-#include "ui_state.h"      /* pk_ui_toast_show —— 演示模式开关的即时反馈 */
+#include "ui_state.h"      /* pk_ui_toast_show —— 演示模式开关的即时反馈；
+                            * pk_ui_cal_wizard_enter —— 罗盘校准那一行 */
 
 /*
  * 行数必须与 settings_draw.c 的 SET_ROWS 一致——那边才是版面的真源。
@@ -43,7 +44,7 @@
  * 回去了，后面几项按键根本选不到。触摸上线后这条路径没人走，问题才一直
  * 没被发现。
  */
-#define SETTINGS_ROW_COUNT       12
+#define SETTINGS_ROW_COUNT       13
 
 /* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
  * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后
@@ -250,7 +251,16 @@ void pk_settings_apply(int row, int v)
         pk_ac_category_set((pk_ac_category_t)(v + 1));
         break;
 
-    case 11:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 11:  /* 罗盘校准 —— 与设备名那行同类：不改值，跳到另一个界面。
+               *
+               * 走 pk_ui_cal_wizard_enter() 而不是 pk_ui_set_mode()：后者只切页，
+               * 而校准页的自动弹出被「稍后再说」关过闸门之后不会自己恢复，
+               * 主动来校准的人得把它重新武装。闸门归 ui_state 管，设置页只表达
+               * 意图——理由写在 pk_ui_cal_wizard_enter() 上。 */
+        pk_ui_cal_wizard_enter();
+        break;
+
+    case 12:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

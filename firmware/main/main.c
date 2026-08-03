@@ -251,9 +251,51 @@ static void on_button_event(pk_button_id_t id, pk_button_event_t evt)
     }
 }
 
+/*
+ * USB 排障日志开关（2026-08-03 起临时默认打开）。
+ *
+ * 为什么需要：dongle 接到载板 USB-A（DP/DM 走 J3 排针 27/25）之后不再枚举，
+ * 而 VBUS 实测 4.88 V、dongle 发烫说明供电与上电都正常。默认 INFO 级别下
+ * USB 栈**一句话都不打**——「根端口有没有上电」「有没有看到 D+ 上拉」这些
+ * 判据全在 DEBUG 级，于是现象只剩 sdr_task 那句干等的 waiting，无从下手。
+ *
+ * 打开后能区分三种情况（这正是要拿的实证）：
+ *   - 连 `HUB: Root port powered` 都没有  → 根端口没起来，问题在主机侧；
+ *   - 有 powered、没有 connection            → 主机没看到设备 D+ 上拉，
+ *                                              问题在 DP/DM 走线或极性；
+ *   - 有 connection、ENUM 报错               → 枚举失败，多半是信号完整性
+ *                                              （J3 排针飞线跑 480 Mbps）。
+ *
+ * 代价是每次插拔多几十行日志，没有设备时几乎不刷屏。
+ *
+ * 2026-08-03 已收工，改回 0。当时靠它拿到的判据是「root port active、
+ * 0 enumerated device、HUB 全程无 power-on 失败」——据此排除了主机侧，
+ * 把问题定位到载板那段接线。下次 dongle 又不认，第一件事就是改回 1。
+ */
+#define PK_USB_DIAG_VERBOSE   0
+
+static void usb_diag_enable_logs(void)
+{
+#if PK_USB_DIAG_VERBOSE
+    /* TAG 取自 managed_components/espressif__usb/src/ 各文件里的 *_TAG 常量，
+     * 以及 esp_hw_support/usb_phy/usb_phy.c 的 USBPHY_TAG。 */
+    esp_log_level_set("usb_phy",  ESP_LOG_DEBUG);   /* PHY 选型/初始化 */
+    esp_log_level_set("HCD DWC",  ESP_LOG_DEBUG);   /* 控制器与端口状态机 */
+    esp_log_level_set("HUB",      ESP_LOG_DEBUG);   /* 根端口上电/连接检测 */
+    esp_log_level_set("ENUM",     ESP_LOG_DEBUG);   /* 枚举各阶段 */
+    esp_log_level_set("USBH",     ESP_LOG_DEBUG);
+    esp_log_level_set("USB HOST", ESP_LOG_DEBUG);
+    ESP_LOGW(TAG, "USB diagnostic logging ENABLED (PK_USB_DIAG_VERBOSE=1) "
+                  "— set it back to 0 once the dongle enumerates");
+#endif
+}
+
 void usb_host_lib_task(void *arg)
 {
-    ESP_LOGI(TAG, "Installing USB host stack on peripheral_map=0x%x",
+    usb_diag_enable_logs();
+
+    ESP_LOGI(TAG, "Installing USB host stack on peripheral_map=0x%x "
+                  "(BIT0 = peripheral 0 = High-Speed / UTMI, see pilot_kit.h)",
              (unsigned)PK_USB_PERIPHERAL_MAP);
 
     const usb_host_config_t host_cfg = {
@@ -389,11 +431,9 @@ void app_main(void)
      * 注册好，所以排在它后面。见 pk_rec_selftest.h。 */
     pk_rec_selftest_init();
 
-    ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
-    assert(ok == pdTRUE);
-
-    ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
-    assert(ok == pdTRUE);
+    /* sdr_task / dsp_task 的创建**故意排到 app_main 末尾**（PFD 起来之后），
+     * 不在这里。原因见那边的注释：RTL-SDR 一旦枚举成功就会抢内部 DMA 堆，
+     * 早启动会把屏、BLE、IMU、气压计全饿死。 */
 
     /* ESP-Hosted 握手必须排在 MIPI-DSI 之前——顺序反了整机会 26 秒一重启。
      *
@@ -568,4 +608,41 @@ void app_main(void)
         }
     }
 
+    /*
+     * RTL-SDR 放到最后启动 —— 这个次序是有代价换来的，别再往前挪。
+     *
+     * 2026-08-03 载板 USB 接好、dongle 第一次真正枚举成功之后，整机反而垮了：
+     *
+     *     I (9073) rtlsdr_async: alloc'd 15 URBs x 6144 B (free internal heap: 45059 B)
+     *     E (10111) display: ST7701 panel create failed: ESP_ERR_NO_MEM
+     *     E (10142) vhci_drv: Tx ble_transport_to_ll_cmd_impl: malloc failed
+     *     W (10903) pilot_kit: IMU init failed (ESP_ERR_NO_MEM)
+     *     E (10925) baro: baro task create failed
+     *
+     * 屏、BLE、姿态、高度**同时**没了，只剩一个在收 ADS-B 的无头盒子。
+     *
+     * 机理：USB URB 必须落在 DMA-capable 的**内部** RAM（PSRAM 不行），15×6144
+     * ≈ 92 KB，加上 USB host stack 自己的开销，把内部堆从 298 KB 打到 45 KB。
+     * 而排在后面的 ST7701 DPI DMA 链表、NimBLE 的 vhci 缓冲、BNO085/BMP388 的
+     * 驱动分配全都要内部 RAM——先到先得，SDR 早启动就等于它先把堆吃掉。
+     *
+     * 之所以此前一直没暴露：dongle 从来没枚举成功过（H1/H2 座子不对外供电，
+     * 插上去根本不上电），sdr_task 一直停在等 NEW_DEV，那 92 KB 从未真正分配。
+     * 换句话说这个坑是**功能修好之后才浮出来的**，不是新引入的回归。
+     *
+     * 于是把次序反过来：需求固定且不可降级的（屏 / BLE / IMU / 气压计 / PFD）
+     * 先各自拿到内存，SDR 用剩下的。ADS-B 晚几秒开始收没有任何影响——它本来
+     * 就要等 dongle 枚举 + 调谐 + PLL 锁定。
+     *
+     * 前置条件仍然满足：USB host stack 早在 app_main 开头就装好了（上面那句
+     * ulTaskNotifyTake 等的就是它），g_iq_ringbuf 也已就绪，record_sink 已注册。
+     */
+    ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
+    assert(ok == pdTRUE);
+
+    ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
+    assert(ok == pdTRUE);
+
+    ESP_LOGI(TAG, "SDR + DSP tasks spawned last (free internal heap: %u B)",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 }

@@ -68,6 +68,11 @@
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
  *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
  *
+ * 磁力计校准向导（这一页用户**点不进去**，acc=0 满 10 s 才自动弹）：
+ *     PK_SIM_CAL=1           渲染校准页（= PK_SIM_PAGE=cal 的简写）
+ *     PK_SIM_CAL_ACC=<0..3>  进度条档位：0 橙 / 1 黄 / 2、3 绿
+ *     PK_SIM_UPTIME_S=<秒>   挪动点在双纽线上的相位（时钟在截图路径被冻结）
+ *
  * 常用组合已经登记在 capture.py 的 SCENES 里（empty-4.3-* 那一组），
  * 跑 `python3 sim/capture.py --only empty` 一次出齐。
  */
@@ -94,6 +99,7 @@
 #include "nav_grid_page.h"
 #include "about_page.h"
 #include "adsb_list.h"
+#include "cal_wizard.h"
 #include "config_devname.h"   /* PK_DEVNAME_MAX_LEN —— 键盘页的上限跟真机同一个数 */
 #include "diag_page.h"
 #include "keyboard_page.h"
@@ -388,9 +394,40 @@ static int run_headless(float at_sec, const char *out)
     /* PK_SIM_PAGE=<name> 渲染整页视图而不是 PFD——那几页正在从 2.4″ 迁到
      * 800×480，需要能截图比对。名字与导航网格的项一一对应。 */
     const char *page = getenv("PK_SIM_PAGE");
+    /* PK_SIM_CAL=1 是 PK_SIM_PAGE=cal 的简写。校准页跟其余页面不一样：用户
+     * 点不进去（acc=0 满 10 s 才自动弹），改它的时候手边最好有个一按就到的
+     * 开关，不必每次去回忆页名。 */
+    if (getenv("PK_SIM_CAL")) page = "cal";
     if (page != NULL && page[0] != '\0') {
         if (strcmp(page, "about") == 0) {
             pk_about_page_render(fb);
+        } else if (strcmp(page, "cal") == 0) {
+            /* 磁力计校准向导。进度条档位由 PK_SIM_CAL_ACC=<0..3> 摆
+             * （见 compat/page_stub.c 的 pk_ui_cal_wizard_last_accuracy）。
+             * 动点的相位来自被冻结的单调时钟，PK_SIM_UPTIME_S 能挪它——
+             * 默认 8130 s 正好是 3 s 周期的整数倍，点会停在双纽线最右端。 */
+            pk_cal_wizard_render(fb);
+            /*
+             * PK_SIM_CAL_TAP=<x>,<y>：走**真机同一条**命中判定，然后重画一帧。
+             *
+             * 要验的是"画在哪儿"和"点得中哪儿"是不是同一块地方。这一页的
+             * 命中区比图形外扩 12 px（WZ_BTN_HIT_PAD），两者出自同一组宏，
+             * 但只有真点一下才知道有没有对上——而真机上这一页要先把 IMU 弄
+             * 失准才进得来，现场试错的代价太高。
+             *
+             * 刻意**不调** pk_cal_wizard_touch_up()：要截的就是按住那一帧的
+             * 高亮（按钮唯一的"我收到了"信号）。eaten 打到 stdout，capture.py
+             * 之外手跑时可以直接当断言看。
+             */
+            {
+                const char *t = getenv("PK_SIM_CAL_TAP");
+                int tx = 0, ty = 0;
+                if (t != NULL && sscanf(t, "%d,%d", &tx, &ty) == 2) {
+                    const bool eaten = pk_cal_wizard_touch(tx, ty);
+                    printf("cal tap (%d,%d) -> eaten=%d\n", tx, ty, (int)eaten);
+                    pk_cal_wizard_render(fb);
+                }
+            }
         } else if (strcmp(page, "splash") == 0) {
             pk_boot_splash_render(fb);
         } else if (strcmp(page, "traffic") == 0) {

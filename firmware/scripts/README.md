@@ -8,10 +8,21 @@ i18n_catalog.py            词条唯一真源（KEY + 各语言译文）
       │
       ├── translate_catalog.py    ① 批量补齐缺失语言的译文（调 LLM，回填本文件）
       │
-      └── gen_i18n_assets.py      ② 生成 C 查表 + CJK/UI 字模子集
-                                     → firmware/main/i18n_catalog.{h,c}
-                                     → firmware/main/text_font_cjk*.{h,c} 等
+      ├── gen_i18n_assets.py      ② 生成 C 查表（**只有**这一样）
+      │                              → firmware/main/i18n_catalog.{h,c}
+      │
+      ├── gen_pfd_aa_font.py      ③ 生成屏上真正在用的字形（含 CJK 子集）
+      │                              → firmware/main/pfd_aa_font.c
+      │
+      └── gen_lv_font.py          ④ 生成 LVGL 控件用的字体（toast 等）
+                                     → firmware/main/lv_font_zh.c
 ```
+
+> **字体管线有三套，不是一套。**②③④ 各管一摊，漏跑哪一个的症状都不一样：
+> 漏 ③ 是**直绘页面**（PFD/设置/关于…）上的汉字整片空白（查表落空只推进
+> 宽度、不画），漏 ④ 是 LVGL 控件（toast）变豆腐块。②不产任何字形——
+> 2026-08-03 之前它还生成 `text_font_cjk*.{h,c}`，那两档随最后一个调用者
+> `text.c` 一起删了（见 `gen_i18n_assets.py` 文件头）。
 
 > **注意**：`translate_catalog.py` 按要求列在 `.gitignore` 里，只在本地保留，
 > 不随仓库分发（脚本本身不含任何密钥，见 `.gitignore` 里那段说明）。
@@ -101,25 +112,29 @@ python3 firmware/scripts/translate_catalog.py --lang ja
 
 多语言一次跑：`--lang ja --lang ko` 或 `--lang ja,ko`。
 
-### ③ 重生成字库（**不能跳过**）
+### ③ 重生成词条表与字库（**三条都不能跳过**）
 
 ```bash
-python3 firmware/scripts/gen_i18n_assets.py
+python3 firmware/scripts/gen_i18n_assets.py    # 词条表
+python3 firmware/scripts/gen_pfd_aa_font.py    # 直绘页面的字形（含 CJK）
+python3 firmware/scripts/gen_lv_font.py        # LVGL 控件的字体
 ```
 
 字模是**按 catalog 里实际出现的字符**做子集的
-（`gen_i18n_assets.py:70-84` 的 `collect_cjk_codepoints` / `collect_ui_codepoints`）。
-新语言的字形不在子集里，屏上就是空白或 `?`。需要 ImageMagick 的 `magick` 命令。
+（`gen_pfd_aa_font.py` 的 `collect_cjk_codes()`，另外并进八个方向箭头）。
+新语言的字形不在子集里，屏上就是空白。后两条需要 ImageMagick 的 `magick`
+命令与 `fontTools`。
 
 ### ④ 目测检查
 
 用 `sim/` 或直接上机看一遍：
 
-- 有没有渲染成空白/问号的字（字库没覆盖）；
-- 列宽有没有被撑破。`gen_i18n_assets.py:87-88` 的 `ui_glyph_width()` 把
-  **所有 >0x7F 的码点**一律按 12px 宽格排版——西里尔字母、带音标的拉丁字母
-  （`é` / `ü` / `ã`）也会走这条宽格路径，不是只有汉字。列表页的列宽有一组
-  `_Static_assert` 钉着（见 `adsb_list.c` 顶部），撑破了编译就会报。
+- 有没有渲染成空白的字。`pfd_aa_text.c` 查表落空时**只推进宽度、不画**
+  （宁可留白也不画错位字形），所以症状是"少了几个字"而不是豆腐块；
+- 列宽有没有被撑破。非 ASCII 码位一律按该档的 `PK_AA_*_CJK_W` 宽格排版——
+  西里尔字母、带音标的拉丁字母（`é` / `ü` / `ã`）也走这条宽格路径，不是只有
+  汉字。列表页的列宽有一组 `_Static_assert` 钉着（见 `adsb_list.c` 顶部），
+  撑破了编译就会报。
 
 ---
 
@@ -180,4 +195,9 @@ python3 firmware/scripts/gen_i18n_assets.py
 ## 5. 加词条（不涉及新语言）时
 
 改 `i18n_catalog.py` 加 `("KEY", {"en": ..., "zh": ...})` 之后，**必须**重跑
-`gen_i18n_assets.py`，否则新的汉字不在字模子集里，屏上渲染成 `?`。
+第 2 节 ③ 那三条命令：漏 `gen_i18n_assets.py` 是新词条根本没有枚举值（编译期
+报错，看得见）；漏 `gen_pfd_aa_font.py` 是新汉字不在字模子集里、屏上那几个字
+直接消失（**静默**，只有肉眼看得出）。
+
+新汉字如果全部已经在既有子集里（比如复用「校」「准」这种别处已经出现过的
+字），字库文件重跑后不会变，`git diff` 是空的——这不是没跑成功。
