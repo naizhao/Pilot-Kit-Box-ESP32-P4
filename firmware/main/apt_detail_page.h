@@ -92,8 +92,15 @@ typedef enum {
  * 会让用户以为自己没点中。 */
 void pk_apt_detail_page_open(uint32_t apt_idx, pk_apt_detail_from_t from);
 
+/* **只有 OPEN 才算 active**：收起态既不画也不吃触摸，pk_ui_modal_top /
+ * pk_ui_fab_sync 都得把它当成"不在"，否则地图点不动、FAB 一直藏着。 */
 bool pk_apt_detail_page_active(void);
 void pk_apt_detail_page_close(void);
+
+/* 收起 / 恢复 / 查询。三个都幂等，状态不对时是空操作（见 pk_sheet_next）。 */
+void pk_apt_detail_page_collapse(void);
+void pk_apt_detail_page_restore(void);
+bool pk_apt_detail_page_collapsed(void);
 
 void pk_apt_detail_page_render(uint16_t *fb);
 
@@ -176,6 +183,81 @@ pk_ui_modal_t pk_ui_modal_top(bool navgrid_active, bool keyboard_active,
  * 判据之后调用方不必再知道自己上面/下面有谁，也不必关心 open 与 close 的先后。
  */
 bool pk_ui_fab_hidden_for(pk_ui_modal_t top);
+
+/* ── 模态层的第三态：「收起」（2026-08-04，sheet 语义）──────────────
+ *
+ * 起因是罩哥推翻了"跳转是终点、不提供返回"这条桌面惯例：
+ *
+ *   「搜索到地图后，点击返回就回到搜索结果页。因为用户可能只看一眼，发现
+ *     不是自己要的，那就返回了，再点下一个。手持设备没有电脑或者手机那么
+ *     方便，所以不要为用户增加'再搜索一次'的交互难度。」
+ *
+ * 于是「点结果 → 跳地图」不再是 close()，而是 collapse()：页面**不渲染、
+ * 不吃触摸、不算活跃层**，但查询串与结果快照原样留着，地图上多一枚返回钮
+ * 能把它整个拉回来。
+ *
+ * 为什么不能重查而必须留快照：第 5 桶要顺扫 3 MB PSRAM 字符串池、真机实测
+ * 数秒（search_page.c run_buckets）；而「附近机场」是随本机位置变的，飞行中
+ * 重查一次列表就换了一批，用户会以为自己点错了页。
+ *
+ * 三态而不是"再加一个 bool"：collapsed 与 active 若各存一个布尔，就存在
+ * (active && collapsed) 这种没有意义却编得过的组合，而这两个量恰好是
+ * pk_ui_modal_top / pk_ui_fab_sync 的输入——错一次就是"屏上画着搜索页、
+ * 点下去命中的是地图"。一个枚举把非法态从类型上消掉。
+ */
+typedef enum {
+    PK_SHEET_CLOSED = 0,   /* 没开过 / 已经真关掉：状态可以丢 */
+    PK_SHEET_OPEN,         /* 在屏上，吃触摸，算活跃层 */
+    PK_SHEET_COLLAPSED,    /* 收起：不画不吃触摸、**不算活跃层**，但状态留着 */
+} pk_sheet_state_t;
+
+typedef enum {
+    PK_SHEET_EV_OPEN,      /* 用户从任一入口打开（放大镜 / 导航网格 / 结果行）*/
+    PK_SHEET_EV_COLLAPSE,  /* 跳地图：收起而不是关掉 */
+    PK_SHEET_EV_RESTORE,   /* 地图上点返回钮 */
+    PK_SHEET_EV_CLOSE,     /* 真关闭：页首 CLOSE / BACK */
+} pk_sheet_ev_t;
+
+/*
+ * 收起态的状态机（纯函数，host 单测钉在 test_apt_detail_page.c）。
+ *
+ * 两条关键规则，都不是显然的：
+ *   - COLLAPSED + OPEN → OPEN 且**不重置内容**：用户从 FAB 再次点「搜索」，
+ *     意图九成是"接着刚才那次"，而不是从零开始。真想重来，输入框旁边就有
+ *     CLEAR。反过来（每次 open 都清空）会把收起态的全部价值抹掉。
+ *   - CLOSED + COLLAPSE → CLOSED：没开过的页收不起来。这条挡住的是详情页
+ *     那条路——「在地图上显示」要把详情与搜索一起收起，而搜索可能根本没开
+ *     （用户是从地图点机场符号进来的），此时不该凭空冒出一枚返回钮。
+ */
+pk_sheet_state_t pk_sheet_next(pk_sheet_state_t st, pk_sheet_ev_t ev);
+
+/*
+ * 这一态能不能触发后台重查。
+ *
+ * 只有 OPEN 才行。收起期间**绝不重查**：搜索页的后台任务本来有一条"库刚
+ * 加载完/GPS 刚定位就自己重跑一次"的兜底（search_page.c 的 search_task），
+ * 它按 active 判断；收起之后 active 已经是 false，但这条判据值得写成一个
+ * 有名字的函数——演示模式下本机一直在动，「附近机场」每跑一次就换一批，
+ * 用户拉回列表发现内容变了，正是这次改动要避免的那个现象。
+ */
+bool pk_sheet_may_requery(pk_sheet_state_t st);
+
+/* ── 收起态的现场版（同 pk_ui_fab_sync：向各层问，不由调用方手算）──── */
+
+/* 有没有收起的 sheet。地图页据此决定要不要画那枚返回钮。 */
+bool pk_ui_sheet_has_collapsed(void);
+
+/*
+ * 把收起的那一叠**整体**恢复。
+ *
+ * 整体而不是"只恢复最上面那一层"：详情是盖在搜索之上的，只恢复详情的话，
+ * 详情按 BACK 露出来的就不是搜索而是地图——用户挑下一个机场的列表没了，
+ * 而那正是这次改动的目的。搜索仍在 COLLAPSED 时恢复它是无副作用的，因为
+ * 它本来就"开着、只是被详情盖住"。
+ *
+ * 与 pk_ui_fab_sync 同样的线程约束：必须在持有 LVGL 控件树的那个任务里调。
+ */
+void pk_ui_sheet_restore(void);
 
 /*
  * 上面那条判据的现场版：向四层各问一次 active()，把结论推给

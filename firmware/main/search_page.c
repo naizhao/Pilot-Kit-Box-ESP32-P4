@@ -268,6 +268,16 @@ static volatile int      s_res_pub;
 static volatile uint8_t  s_status = ST_IDLE;
 /* 快照对应的 DB 版本，用来把"没命中"与"这张卡搜不了"分开报。 */
 static volatile uint16_t s_res_dbver;
+/*
+ * 快照对应的**库代数**（pk_aero_db_generation：每次发布与卸载各 +1）。
+ *
+ * 与上面那个 dbver 管的不是一件事：dbver 是数据包的格式版本（v2 无搜索索引），
+ * gen 是"手里这份下标还属不属于当前这张卡"。收起态把快照留过了拔卡窗口，
+ * 而 pk_search_item_t.idx 是**段内记录下标**——换一张卡，同一个下标指向的
+ * 就是另一个机场，拿去开详情页会显示一份张冠李戴的跑道表（比报错危险得多，
+ * 因为屏上看着完全正常）。恢复时与点结果时各查一次，不等就重查。
+ */
+static volatile uint32_t s_res_gen;
 
 #ifndef PK_SIM_BUILD
 /* 作业请求。UI 线程写、后台任务读，靠 s_req_lock 串起来——不加锁的话
@@ -288,7 +298,10 @@ EXT_RAM_BSS_ATTR static pk_search_hist_t s_hist;
 
 /* ── 页面状态 ───────────────────────────────────────────────────── */
 
-static bool s_active;
+/* 三态可见性，取代原来的 `static bool s_active`（见 apt_detail_page.h 的
+ * pk_sheet_state_t）。volatile 是因为后台查询任务要读它（那条"库刚加载完
+ * 就自己重跑一次"的兜底判据）——原来的 s_active 也被那样读，只是没写出来。 */
+static volatile uint8_t s_vis = PK_SHEET_CLOSED;
 static int  s_scroll;
 static int  s_content_h;      /* 上一帧的内容总高，drag 的钳位基准 */
 
@@ -563,6 +576,7 @@ static void run_job(const char *q)
 
     s_res_n[w]   = n;
     s_res_dbver  = db.version;
+    s_res_gen    = pk_aero_db_generation();
     s_res_pub    = w;
     s_status     = (uint8_t)st;
 }
@@ -609,7 +623,13 @@ static void search_task(void *arg)
              * 否则页面开着不动，用户得先关掉再打开才看得到附近机场，而他
              * 并不知道自己该做这个动作。只在页面开着时重跑，免得在后台空转。
              */
-            if (s_active &&
+            /*
+             * 只有 OPEN 才重跑（pk_sheet_may_requery）。**收起态绝不重查**：
+             * 演示模式下本机一直在动，「附近机场」每跑一次就换一批；用户
+             * 从地图把列表拉回来，看到的却是另外五个机场，会以为自己点错了。
+             * 这是 sheet 语义的硬约束，不是省 CPU。
+             */
+            if (pk_sheet_may_requery((pk_sheet_state_t)s_vis) &&
                 (s_status == ST_NO_DB || s_status == ST_NO_POS) &&
                 pk_aero_db_state() == PK_AERO_DB_READY) {
                 run_job(q);
@@ -1026,11 +1046,25 @@ static void sim_setup_once(void);
 
 void pk_search_page_open(void)
 {
+    /*
+     * 收起态下"打开"就是**恢复**，不是重开。
+     *
+     * 两个入口都走这里（地图页放大镜、导航网格的「搜索」格），两个都该恢复：
+     * 用户刚才把一条结果点到地图上看了一眼，现在又来点搜索，意图九成是
+     * "接着刚才那次挑下一个"，而不是从零重来。重来的成本也只有一下——输入框
+     * 旁边就是 CLEAR。反过来（每次都清空重查）会把收起态的价值整个抹掉，
+     * 而且要再付一次「附近」查询的钱、还会因本机移动而换一批结果。
+     */
+    if (s_vis == PK_SHEET_COLLAPSED) {
+        pk_search_page_restore();
+        return;
+    }
+
     s_query[0]    = '\0';
     s_scroll      = 0;
     s_press_valid = false;
     s_moved       = false;
-    s_active      = true;
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_OPEN);
     /*
      * 藏掉 FAB，理由与 keyboard_page 完全相同：本页铺满全屏、命中判定排在
      * LVGL 之前，FAB 留着就是"它自己点不动、又盖住底下的行"。出口写在屏上：
@@ -1048,14 +1082,55 @@ void pk_search_page_open(void)
 #endif
 }
 
-bool pk_search_page_active(void) { return s_active; }
+bool pk_search_page_active(void) { return s_vis == PK_SHEET_OPEN; }
+
+bool pk_search_page_collapsed(void) { return s_vis == PK_SHEET_COLLAPSED; }
+
+/*
+ * 收起。
+ *
+ * 一行都不碰 s_query / s_scroll / s_res / s_hist —— 这正是"收起"与"关闭"的
+ * 全部区别。结果快照在 EXT_RAM_BSS 的双缓冲里（s_res[2]），唯一会覆盖它的是
+ * run_job()，而 run_job 只有三个调用点：submit()（用户动作）、后台任务的
+ * 兜底重跑（已由 pk_sheet_may_requery 挡在 OPEN 之外）、真机自检。收起期间
+ * 这三条一条都不会发生，快照自然活着。
+ *
+ * 不在这里 sync FAB：collapse 总是与 set_mode 连着做，由那条动作收尾统一
+ * sync 一次（goto_item / apt_detail_page.c 的 goto_map）。
+ */
+void pk_search_page_collapse(void)
+{
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_COLLAPSE);
+    s_press_valid = false;
+    s_moved       = false;
+}
+
+void pk_search_page_restore(void)
+{
+    if (s_vis != PK_SHEET_COLLAPSED) return;
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_RESTORE);
+    s_press_valid = false;
+    s_moved       = false;
+    /* s_scroll 故意不重置：用户滚到第 9 条、去地图看了一眼再回来，该停在
+     * 他离开的地方。这正是 sheet 与"重新打开一页"的区别。 */
+    pk_ui_fab_sync();
+
+    /*
+     * 唯一一种"恢复时必须重查"：库换代了（拔卡 / 重挂载 / 换卡）。
+     * 快照里的 idx 是段内记录下标，换代之后它指向的是别的记录——照旧显示
+     * 会给出一份张冠李戴的列表，而且点进去还是"正常"的详情页。宁可让用户
+     * 等一次查询，也不能给他一份编出来的数据。
+     */
+    if (pk_aero_db_generation() != s_res_gen) submit(s_query);
+}
 
 void pk_search_page_close(void)
 {
-    s_active      = false;
+    s_vis         = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis,
+                                           PK_SHEET_EV_CLOSE);
     s_press_valid = false;
-    /* 不能无条件 set_fab_hidden(false)：本页关掉时**上面**可能还压着详情页
-     * （「在地图上显示」是先关详情再关搜索），也可能还压着键盘。 */
+    /* 不能无条件 set_fab_hidden(false)：本页关掉时**上面**可能还压着详情页，
+     * 也可能还压着键盘。 */
     pk_ui_fab_sync();
 }
 
@@ -1126,6 +1201,19 @@ static void sim_setup_once(void)
         s_scroll = v < 0 ? 0 : v;
     }
 }
+
+void pk_search_sim_tap_row(int row)
+{
+    for (int i = 0; i < s_nhit; ++i) {
+        if (s_hit[i].kind != 1 || s_hit[i].arg != row) continue;
+        const int y = (s_hit[i].y0 + s_hit[i].y1) / 2;
+        pk_search_page_touch(PK_DISPLAY_W / 2, y);
+        pk_search_page_touch_up();
+        return;
+    }
+    fprintf(stderr, "PK_SIM_SEARCH_TAP=%d：命中表里没有这一行"
+                    "（结果不够多？先渲染过一帧了吗？）\n", row);
+}
 #endif
 
 static void open_keyboard(void)
@@ -1168,15 +1256,19 @@ static void goto_item(const pk_search_item_t *it)
     }
     pk_map_page_set_pin(it->lat, it->lon, it->code);
     /* goto 顺手关掉本机跟随（s_follow=false），否则下一帧本机位置一到就把
-     * 视口拽回脚下、用户根本看不到刚查的那个点。判据在 map_page.c:1069。 */
+     * 视口拽回脚下、用户根本看不到刚查的那个点。判据在 map_page.c。 */
     pk_map_page_goto(it->lat, it->lon, SRCH_GOTO_ZOOM);
-    pk_search_page_close();
+    /* **收起而不是关掉**（2026-08-04，sheet 语义）。用户多半只是看一眼这个
+     * 导航台在哪，发现不对就要回来点下一条——地图左上那枚返回钮把这一屏
+     * 原样拉回来，结果列表连滚动位置都不变。见 apt_detail_page.h 那一段。 */
+    pk_search_page_collapse();
     pk_ui_set_mode(PK_UI_MODE_MAP);
+    pk_ui_fab_sync();   /* 收起态不算活跃层 → FAB 放出来，地图也点得动 */
 }
 
 bool pk_search_page_touch(int x, int y)
 {
-    if (!s_active) return false;
+    if (!pk_search_page_active()) return false;
     (void)x;
     s_press_x      = x;
     s_press_y      = y;
@@ -1189,7 +1281,7 @@ bool pk_search_page_touch(int x, int y)
 
 bool pk_search_page_drag(int x, int y)
 {
-    if (!s_active) return false;
+    if (!pk_search_page_active()) return false;
     if (!s_press_valid) return true;   /* 仍然吃掉：模态 */
     (void)x;
     const int dy = y - s_press_y;
@@ -1207,7 +1299,7 @@ bool pk_search_page_drag(int x, int y)
 
 void pk_search_page_touch_up(void)
 {
-    const bool click = s_active && s_press_valid && !s_moved;
+    const bool click = pk_search_page_active() && s_press_valid && !s_moved;
     const int x = s_press_x, y = s_press_y;
     s_press_valid = false;
     s_moved       = false;
@@ -1235,6 +1327,18 @@ void pk_search_page_touch_up(void)
         const row_hit_t *h = &s_hit[i];
         if (y < h->y0 || y >= h->y1) continue;
         if (h->kind == 1) {
+            /*
+             * 库换代了就**只重查、不跳转**。
+             *
+             * 收起态把快照留过了拔卡窗口（这是它存在的意义），代价是 idx 可能
+             * 已经属于上一张卡。restore() 已经查过一次并重查了，这里是第二道
+             * 闸：restore 到点这一下之间仍有几百毫秒的窗口，而拿旧 idx 去开
+             * 详情页不会报错，只会安静地显示另一个机场的跑道表。
+             */
+            if (pk_aero_db_generation() != s_res_gen) {
+                submit(s_query);
+                return;
+            }
             const int pub = s_res_pub;
             if (h->arg >= 0 && h->arg < s_res_n[pub])
                 goto_item(&s_res[pub][h->arg]);

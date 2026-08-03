@@ -327,6 +327,170 @@ static void test_fab_hidden(void)
     chk_true("F11 只有搜索",  pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, false, true)));
 }
 
+/* ── 8) 收起态（sheet 语义）的状态机 ──────────────────────────────
+ *
+ * 罩哥 2026-08-04 推翻了"跳转是终点、不提供返回"：
+ *
+ *   「搜索到地图后，点击返回就回到搜索结果页……手持设备没有电脑或者手机
+ *     那么方便，所以不要为用户增加'再搜索一次'的交互难度。」
+ *
+ * 于是「点结果 → 跳地图」从 close() 变成 collapse()。这一段钉的是那条
+ * 状态机以及它与 pk_ui_modal_top / pk_ui_fab_hidden_for 的关系——三者错开
+ * 一格，用户看到的就是"FAB 一直藏着、地图点不动"或者"屏上是地图、点下去
+ * 命中的是搜索页"。 */
+static void test_sheet_state(void)
+{
+    /* 基本迁移。 */
+    chk_int("S1 没开过 → 打开",
+            pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_OPEN), PK_SHEET_OPEN);
+    chk_int("S2 开着 → 收起",
+            pk_sheet_next(PK_SHEET_OPEN, PK_SHEET_EV_COLLAPSE), PK_SHEET_COLLAPSED);
+    chk_int("S3 收起 → 恢复",
+            pk_sheet_next(PK_SHEET_COLLAPSED, PK_SHEET_EV_RESTORE), PK_SHEET_OPEN);
+    chk_int("S4 开着 → 真关闭",
+            pk_sheet_next(PK_SHEET_OPEN, PK_SHEET_EV_CLOSE), PK_SHEET_CLOSED);
+    chk_int("S5 收起 → 真关闭（页首 CLOSE 恢复后按下）",
+            pk_sheet_next(PK_SHEET_COLLAPSED, PK_SHEET_EV_CLOSE), PK_SHEET_CLOSED);
+
+    /*
+     * S6 是这条状态机存在的理由之一：**没开过的收不起来**。
+     * 「在地图上显示」要把详情与它底下的搜索一起收起，而从地图点机场符号
+     * 进来时搜索根本没开过——不挡住的话，地图上会冒出一枚返回钮，点下去
+     * "恢复"出一个用户从没打开过的空搜索页。
+     */
+    chk_int("S6 没开过的收不起来",
+            pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_COLLAPSE), PK_SHEET_CLOSED);
+    /* 反向同理：不在收起态时"恢复"必须是空操作。地图上那枚钮只在
+     * has_collapsed 时才画，但 restore 是整叠一起调的（搜索 + 详情），
+     * 其中一层常常本来就是 CLOSED 或 OPEN。 */
+    chk_int("S7 没收起的恢复不了（CLOSED 保持）",
+            pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_RESTORE), PK_SHEET_CLOSED);
+    chk_int("S8 已经开着的恢复是空操作",
+            pk_sheet_next(PK_SHEET_OPEN, PK_SHEET_EV_RESTORE), PK_SHEET_OPEN);
+
+    /* 幂等：连点两下返回钮、或者 collapse 被 goto_map 与 goto_item 各调一次。 */
+    chk_int("S9 收起两次",
+            pk_sheet_next(PK_SHEET_COLLAPSED, PK_SHEET_EV_COLLAPSE), PK_SHEET_COLLAPSED);
+    chk_int("S10 打开两次",
+            pk_sheet_next(PK_SHEET_OPEN, PK_SHEET_EV_OPEN), PK_SHEET_OPEN);
+    chk_int("S11 关两次",
+            pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_CLOSE), PK_SHEET_CLOSED);
+
+    /* S12：收起态下再点入口（放大镜 / 导航网格的「搜索」格）= 恢复，
+     * 不是重开。调用方据此**不重置查询串**（search_page.c 的 open()）。 */
+    chk_int("S12 收起态下再打开 → OPEN（调用方据此不清空查询串）",
+            pk_sheet_next(PK_SHEET_COLLAPSED, PK_SHEET_EV_OPEN), PK_SHEET_OPEN);
+
+    /* 重查闸门：**只有 OPEN 能重查**。收起期间后台任务那条"库刚加载完就
+     * 自己重跑一次"的兜底必须闭嘴——演示模式下本机一直在动，「附近机场」
+     * 重跑一次就换一批，用户把列表拉回来会发现内容变了。 */
+    chk_true("S13 开着可以重查",   pk_sheet_may_requery(PK_SHEET_OPEN));
+    chk_true("S14 收起不许重查",  !pk_sheet_may_requery(PK_SHEET_COLLAPSED));
+    chk_true("S15 关掉不许重查",  !pk_sheet_may_requery(PK_SHEET_CLOSED));
+}
+
+/* ── 9) 收起态与模态次序 / FAB 判据的联动 ────────────────────────
+ *
+ * 收起态最容易错的地方不在状态机本身，而在"它算不算活跃层"。答案是**不算**：
+ * active() 只在 OPEN 时为真。错成"收起也算活跃"的现象非常具体——地图铺在
+ * 屏上，但 FAB 一直藏着、点哪儿都没反应，因为触摸分派仍然落在那个不渲染的
+ * 搜索页上。下面把三条真实路径按用户的动作顺序走一遍。
+ *
+ * 约定：把 pk_sheet_state_t 折成 active 布尔（== PK_SHEET_OPEN）再喂给
+ * pk_ui_modal_top，与 pk_search_page_active() / pk_apt_detail_page_active()
+ * 在固件里做的是同一件事。 */
+static bool sheet_active(pk_sheet_state_t st) { return st == PK_SHEET_OPEN; }
+
+static void test_sheet_vs_modal(void)
+{
+    /* 路径 G：搜索 → 点导航台 → 地图 → 返回钮 → 搜索。 */
+    pk_sheet_state_t s = PK_SHEET_CLOSED, d = PK_SHEET_CLOSED;
+
+    s = pk_sheet_next(s, PK_SHEET_EV_OPEN);
+    chk_int("G1 搜索开着 → 屏上是搜索",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_SEARCH);
+    chk_true("G1 FAB 藏着",
+             pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, sheet_active(d),
+                                                  sheet_active(s))));
+
+    s = pk_sheet_next(s, PK_SHEET_EV_COLLAPSE);
+    chk_int("G2 点导航台跳地图 → 搜索收起，屏上回到底层页",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_NONE);
+    chk_true("G2 FAB 必须放出来（否则地图上一枚点不动的球都没有，且地图点不动）",
+             !pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, sheet_active(d),
+                                                   sheet_active(s))));
+    chk_int("G2 但状态留着 → 地图上要画返回钮", s, PK_SHEET_COLLAPSED);
+
+    s = pk_sheet_next(s, PK_SHEET_EV_RESTORE);
+    chk_int("G3 点返回钮 → 又回到搜索",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_SEARCH);
+
+    s = pk_sheet_next(s, PK_SHEET_EV_CLOSE);
+    chk_int("G4 页首 CLOSE → 真关掉，返回钮也该消失", s, PK_SHEET_CLOSED);
+
+    /* 路径 H：搜索 → 机场 → 详情 → 在地图上显示 → 返回钮 → **详情** → 搜索。
+     * 这是"逐层返回"那条决定的凭据：整叠一起收、一起恢复，恢复后屏上是详情
+     * （它在搜索之上），再按 BACK 才回搜索，而搜索的结果列表原样还在。 */
+    s = pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_OPEN);
+    d = pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_OPEN);
+    chk_int("H1 详情盖住搜索",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_DETAIL);
+
+    /* goto_map()：两层一起收。 */
+    d = pk_sheet_next(d, PK_SHEET_EV_COLLAPSE);
+    s = pk_sheet_next(s, PK_SHEET_EV_COLLAPSE);
+    chk_int("H2 在地图上显示 → 整叠收起，屏上是地图",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_NONE);
+    chk_true("H2 FAB 放出来",
+             !pk_ui_fab_hidden_for(pk_ui_modal_top(false, false, sheet_active(d),
+                                                   sheet_active(s))));
+
+    /* pk_ui_sheet_restore()：也是两层一起。 */
+    d = pk_sheet_next(d, PK_SHEET_EV_RESTORE);
+    s = pk_sheet_next(s, PK_SHEET_EV_RESTORE);
+    chk_int("H3 返回钮 → 回到**详情**（逐层返回）",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_DETAIL);
+
+    d = pk_sheet_next(d, PK_SHEET_EV_CLOSE);
+    chk_int("H4 详情 BACK → 结果列表还在（这条错了整个改动就白做）",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_SEARCH);
+
+    /* 路径 I：地图点机场符号 → 详情 → 在地图上显示 → 返回钮。
+     * 搜索**从没打开过**，收/恢复都不许把它变出来。 */
+    s = PK_SHEET_CLOSED;
+    d = pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_OPEN);
+    d = pk_sheet_next(d, PK_SHEET_EV_COLLAPSE);
+    s = pk_sheet_next(s, PK_SHEET_EV_COLLAPSE);   /* 空操作 */
+    chk_int("I1 搜索没开过 → 收不起来", s, PK_SHEET_CLOSED);
+    d = pk_sheet_next(d, PK_SHEET_EV_RESTORE);
+    s = pk_sheet_next(s, PK_SHEET_EV_RESTORE);    /* 空操作 */
+    chk_int("I2 恢复后屏上是详情，搜索仍然不存在",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_DETAIL);
+    d = pk_sheet_next(d, PK_SHEET_EV_CLOSE);
+    chk_int("I3 详情 BACK → 直接回地图，不会露出空搜索页",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_NONE);
+
+    /* 路径 J：收起期间键盘/导航网格照样能压上来。收起的层不是活跃层，
+     * 所以它对次序没有任何影响——这一条钉住"收起 ≠ 半开"。 */
+    s = pk_sheet_next(PK_SHEET_CLOSED, PK_SHEET_EV_OPEN);
+    s = pk_sheet_next(s, PK_SHEET_EV_COLLAPSE);
+    chk_int("J1 搜索收起时打开导航网格 → 网格",
+            pk_ui_modal_top(true, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_NAVGRID);
+    chk_int("J2 关掉网格 → 回地图，而不是回那个收起的搜索页",
+            pk_ui_modal_top(false, false, sheet_active(d), sheet_active(s)),
+            PK_UI_MODAL_NONE);
+}
+
 int main(void)
 {
     test_freq_rank();
@@ -337,6 +501,8 @@ int main(void)
     test_capacity();
     test_modal_order();
     test_fab_hidden();
+    test_sheet_state();
+    test_sheet_vs_modal();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;
 }

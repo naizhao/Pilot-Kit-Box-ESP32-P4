@@ -58,3 +58,27 @@ void pk_map_page_on_search(void);
  * apt_idx = 机场段内记录下标（由 pk_aero_layer 的命中测试给出）。
  * 弱符号，理由同上。 */
 void pk_map_page_on_apt_detail(uint32_t apt_idx);
+
+/*
+ * 收起的搜索/详情 sheet —— 本页左上角那枚返回钮（2026-08-04）。
+ *
+ * 语义见 apt_detail_page.h 的 pk_sheet_state_t：点搜索结果跳到地图之后，
+ * 搜索页是"收起"而不是"关掉"，用户看一眼发现不是要找的那个，点这枚钮就能
+ * 原样回到结果列表接着挑下一条。
+ *
+ * 两个都是弱符号，理由同上面两个：模拟器与 host 单测不必把整个模态栈链进来。
+ * 固件侧的强符号在 pk_ui_nav_host.c，转给 pk_ui_sheet_has_collapsed /
+ * pk_ui_sheet_restore。
+ *
+ * has_collapsed() 每帧都会被 render 与 touch 各问一次，必须是廉价的纯查询
+ * ——它只是读两个页面的可见性枚举。
+ */
+bool pk_map_page_sheet_collapsed(void);
+void pk_map_page_on_sheet_restore(void);
+
+#ifdef PK_SIM_BUILD
+/* 截图用：按一下那枚返回钮，走**真机同一条** touch()+touch_up()。落点由
+ * map_page.c 自己按当前版面（含 FAB 避让）算，不在 sim/main.c 那边照抄坐标
+ * ——抄一份就会在 FAB 挪过去之后静静点空。 */
+void pk_map_page_sim_tap_sheet_back(void);
+#endif

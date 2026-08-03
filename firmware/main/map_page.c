@@ -97,6 +97,43 @@
 #define BTN_ORIENT_X   BTN_M
 #define BTN_ORIENT_Y_DEF BTN_RECENTER_Y_DEF
 
+/*
+ * 「回结果列表」——收起的搜索/详情 sheet 的返回入口（见 map_page.h）。
+ *
+ * 位置：**左列最上方**，紧贴顶栏下沿。四周都是被占掉的：
+ *   - 右列自下而上是 缩放− / 缩放+ / 放大镜，还带 FAB 避让；
+ *   - 左列下方是 朝向 / 回中；
+ *   - 顶栏 y<48 是状态图标；左下角 y≥462 是比例尺与署名。
+ * 左上这块是整屏唯一一处既不与既有元素相撞、又在拇指自然落点上的空地。
+ *
+ * 为什么不放在 PIN 旁边：PIN 是"我刚查的就是这个"的唯一凭据，它周围必须留白。
+ * 而且 PIN 会随视口移动、还会滚出屏外，把返回钮拴在它身上就是把一个常驻功能
+ * 挂到一个会跑掉的锚点上。
+ *
+ * 视觉刻意与其余四枚按钮**完全一致**（同一个 draw_btn_plate、同一支浅色墨）：
+ * 它是一枚普通的地图控件，不该和琥珀色的 PIN 抢焦点。
+ *
+ * 只在有收起的 sheet 时出现，其余时候一格地方都不占。
+ */
+#define BTN_SHEET_X    BTN_M
+#define BTN_SHEET_Y_DEF (MAP_TOP + 10)
+
+/* FAB 避让：只有一枚钮，用不着上面那套整堆搬迁——相交就挪到 FAB 下沿之下。
+ * 往下挪而不是往上：上面就是顶栏，没有余量。FAB 最低只能到 PK_DISPLAY_H−56，
+ * 那时它离左上角十万八千里，本分支根本不会进。 */
+static int sheet_btn_y(void)
+{
+    int y = BTN_SHEET_Y_DEF;
+    int fx, fy, fw, fh;
+    if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh)) {
+        const int gap = 10;
+        const bool left_col = fx < BTN_SHEET_X + BTN_D + BTN_HIT_PAD;
+        if (left_col && fy < y + BTN_D + gap && fy + fh > y - gap)
+            y = fy + fh + gap;
+    }
+    return y;
+}
+
 static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y,
                        int *orient_y)
 {
@@ -148,7 +185,8 @@ static double   s_last_own_lat, s_last_own_lon;
 static bool     s_press_active = false;  /* 正在拖动/按下 */
 static int      s_press_lx, s_press_ly;  /* 上一帧触点，算增量用 */
 static int      s_btn_down = -1;         /* 0=recenter 1=zoom-in 2=zoom-out
-                                          * 3=search，-1=无 */
+                                          * 3=search 4=orient 5=回结果列表，
+                                          * -1=无 */
 static bool     s_press_moved = false;   /* 本次按压有没有真的挪过视口 */
 
 /* 搜索结果 PIN（见 map_page.h）。经纬度而不是屏幕坐标——视口一动，PIN 要
@@ -346,6 +384,36 @@ static void draw_search_icon(uint16_t *fb, int cx, int cy)
      * 纯水平/对角的短线，三条整数线比 AA 更实，小尺寸下不糊。 */
     for (int k = -1; k <= 1; ++k)
         pk_pfd_draw_line(fb, ox + 7 + k, oy + 7, ox + 15 + k, oy + 15, ink);
+}
+
+/*
+ * 「回结果列表」图标：一个左向尖角 + 三条列表横杠。
+ *
+ * 纯几何自绘，不用文字：任何字符都必须落在 ASCII 0x20–0x7F 内（屏上的 CJK
+ * 字形是 i18n catalog 驱动的子集，加一句中文要改 catalog 再重跑字库生成器），
+ * 而 "BACK"/"LIST" 这类英文缩写在 56 px 的圆盘里摆不下，摆得下也要先读再想。
+ * 尖角 + 横杠是两个通用符号的叠加：「往回」+「一份列表」，扫一眼就知道点了
+ * 会回到刚才那张单子。也不用图标字体——pfd_icon_font 里没有这个形状，为一个
+ * 26×16 的图形重跑一次字库生成器不划算（同 draw_search_icon 的取舍）。
+ */
+static void draw_sheet_back_icon(uint16_t *fb, int cx, int cy)
+{
+    const uint16_t ink = pk_rgb565(225, 235, 248);
+
+    /* 尖角：apex 在左，两条 8 px 的斜边。三条平行线当 3 px 线宽，同
+     * draw_search_icon 的手柄——短斜线上整数线比 AA 更实，小尺寸不糊。 */
+    const int ax = cx - 15, ay = cy;
+    for (int k = -1; k <= 1; ++k) {
+        pk_pfd_draw_line(fb, ax, ay + k, ax + 8, ay - 8 + k, ink);
+        pk_pfd_draw_line(fb, ax, ay + k, ax + 8, ay + 8 + k, ink);
+    }
+
+    /* 列表横杠：三条 15 px 宽、3 px 高、间距 6 —— 总高 15，与尖角的 16 齐平，
+     * 两者在竖直方向对得上，看着才像一个整体而不是两个图标挤在一起。 */
+    for (int i = 0; i < 3; ++i) {
+        const int y0 = cy - 7 + i * 6;
+        pk_pfd_fill_rect(fb, cx - 1, y0, cx + 14, y0 + 3, ink);
+    }
 }
 
 /* 搜索结果 PIN：泪滴形（圆头 + 尖脚落地）+ 白描边 + 代码标签。
@@ -576,6 +644,14 @@ static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg, s
                         BTN_ORIENT_X + (BTN_D - PK_ICON_W) / 2,
                         orient_y + (BTN_D - PK_ICON_H) / 2,
                         oic, PK_ICON_W, PK_ICON_H, pk_rgb565(225, 235, 248));
+    }
+
+    /* 收起的 sheet 才画返回钮。没有就一格地方都不占——地图上每一枚常驻控件
+     * 都在和地形抢像素。 */
+    if (pk_map_page_sheet_collapsed()) {
+        const int by = sheet_btn_y();
+        draw_btn_plate(fb, BTN_SHEET_X, by, s_btn_down == 5);
+        draw_sheet_back_icon(fb, BTN_SHEET_X + BTN_D / 2, by + BTN_D / 2);
     }
 
     if (!s_follow) {
@@ -954,6 +1030,24 @@ bool pk_map_page_touch(int x, int y)
             pk_map_page_on_search();
             return true;
         }
+        /*
+         * 「回结果列表」。判在最前面是因为它离顶栏最近，与别的按钮不相交，
+         * 次序其实无所谓；置 s_press_active 的理由与上面逐字相同（触摸驱动
+         * 按住期间持续上报，不置位就会每帧恢复一次）。
+         *
+         * **不做右滑手势**：本页的拖动就是平移地图，一次右滑与"我要往东看"
+         * 逐帧同形，只能靠起手位置或速度阈值去猜。猜错的代价是不对称的——
+         * 猜成返回会把用户正在看的视口整个换掉，而多点一下按钮只是多点一下。
+         * 二级页面那套 LV_DIR_RIGHT 在这里用不上：那些页底下没有一个会吃掉
+         * 全屏拖动的画布。
+         */
+        if (pk_map_page_sheet_collapsed() &&
+            hit_btn(x, y, BTN_SHEET_X, sheet_btn_y())) {
+            s_btn_down = 5;
+            s_press_active = true;
+            pk_map_page_on_sheet_restore();
+            return true;
+        }
         if (hit_btn(x, y, BTN_ZIN_X, zin_y)) {
             s_btn_down = 1;
             if (s_zoom < MAP_ZOOM_MAX) { s_zoom++; pk_tile_loader_bump_view(); }
@@ -1083,6 +1177,26 @@ void pk_map_page_clear_pin(void)
 /* 弱符号默认实现：模拟器与 host 单测不必把搜索页链进来（同 pk_ui_nav.c 的
  * 各个 on_* 回调）。固件侧由 pfd.c 提供强符号。 */
 __attribute__((weak)) void pk_map_page_on_search(void)
+{
+}
+
+#ifdef PK_SIM_BUILD
+void pk_map_page_sim_tap_sheet_back(void)
+{
+    const int by = sheet_btn_y();
+    pk_map_page_touch(BTN_SHEET_X + BTN_D / 2, by + BTN_D / 2);
+    pk_map_page_touch_up();
+}
+#endif
+
+/* 默认「没有收起的 sheet」：不链模态栈的构建里那枚返回钮就从不出现，
+ * 而不是画一枚点了没反应的按钮。 */
+__attribute__((weak)) bool pk_map_page_sheet_collapsed(void)
+{
+    return false;
+}
+
+__attribute__((weak)) void pk_map_page_on_sheet_restore(void)
 {
 }
 

@@ -114,6 +114,24 @@ void pk_map_page_on_apt_detail(uint32_t apt_idx)
     pk_apt_detail_page_open(apt_idx, PK_APT_DETAIL_FROM_MAP);
 }
 
+/*
+ * 地图页左上那枚「回结果列表」—— map_page.c 里两个弱符号的强实现。
+ *
+ * 落在这里的理由同上面两个：页面之间怎么跳归导航宿主。地图页不该知道
+ * "收起的是搜索还是详情"，模态栈也不该知道地图上有一枚按钮，两边只经由
+ * 这两个函数握手。真正的规则在 apt_detail_page.c（模态栈的真源）。
+ */
+bool pk_map_page_sheet_collapsed(void)
+{
+    return pk_ui_sheet_has_collapsed();
+}
+
+void pk_map_page_on_sheet_restore(void)
+{
+    ESP_LOGI(TAG, "restore collapsed sheet");
+    pk_ui_sheet_restore();
+}
+
 void pk_ui_nav_host_init(void)
 {
     pk_config_fab_load();

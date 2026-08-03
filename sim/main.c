@@ -336,6 +336,39 @@ static void save_bmp(const uint16_t *fb, int seq)
 }
 
 /*
+ * 按模态栈次序重画整屏 —— pfd.c 那段分派的模拟器版。
+ *
+ * 截图路径上每走一次真实触摸（点结果、点返回钮），屏上该出现哪一页就可能变了，
+ * 而"变成了哪一页"正是这批截图要验的东西。所以不能在调用点写死"渲染搜索页"，
+ * 必须原样问一次 pk_ui_modal_top()——这也顺带验了收起态**不算活跃层**：
+ * 两层都收起时它返回 NONE，这里就落到地图。
+ *
+ * 只覆盖搜索链路会用到的三层（详情 / 搜索 / 地图）。键盘与导航网格不参与这条
+ * 链路，真需要时再加。
+ */
+static void sim_render_modal_top(uint16_t *fb)
+{
+    if (pk_apt_detail_page_active())      pk_apt_detail_page_render(fb);
+    else if (pk_search_page_active())     pk_search_page_render(fb);
+    else                                  pk_map_page_render(fb);
+}
+
+/*
+ * map_page.c 里两个弱符号的模拟器强实现（固件那份在 pk_ui_nav_host.c）。
+ * 语义逐字相同：地图页不知道收起的是搜索还是详情，只经由这两个函数与模态栈
+ * 握手。不接的话地图上那枚返回钮永远不出现，这条链路就截不出来。
+ */
+bool pk_map_page_sheet_collapsed(void)
+{
+    return pk_ui_sheet_has_collapsed();
+}
+
+void pk_map_page_on_sheet_restore(void)
+{
+    pk_ui_sheet_restore();
+}
+
+/*
  * headless 截图模式：--shot <秒> [输出名]
  *
  * 不开窗口，直接把「动画进行到第 N 秒」那一帧渲染出来存成 BMP。
@@ -575,9 +608,30 @@ static int run_headless(float at_sec, const char *out)
              *
              * 数据要 PK_SIM_AERO=1 才有（同地图叠加层）；不给就能截到
              * 「数据库不可用」那一屏。摆哪一态由 search_page.c 的截图钩子读
-             * 环境变量决定：PK_SIM_SEARCH / _HIST / _SCROLL，见那边的注释。 */
+             * 环境变量决定：PK_SIM_SEARCH / _HIST / _SCROLL，见那边的注释。
+             *
+             * 再往后两个钩子把「点结果 → 地图 → 返回结果列表」这条 sheet
+             * 链路整条截了出来（2026-08-04）：
+             *
+             *   PK_SIM_SEARCH_TAP=<行号>   点第 N 条结果（0 起）
+             *   PK_SIM_MAP_RESTORE=1       随后按地图左上那枚返回钮
+             *
+             * 两步走的都是真实触摸路径，每一步之后按 pk_ui_modal_top 的次序
+             * 重新分派渲染——与 pfd.c 逐字同一条规则，所以截出来的就是用户
+             * 在那一刻看到的整屏。 */
             pk_search_page_open();
             pk_search_page_render(fb);
+            {
+                const char *t = getenv("PK_SIM_SEARCH_TAP");
+                if (t != NULL) {
+                    pk_search_sim_tap_row(atoi(t));
+                    sim_render_modal_top(fb);
+                    if (getenv("PK_SIM_MAP_RESTORE") != NULL) {
+                        pk_map_page_sim_tap_sheet_back();
+                        sim_render_modal_top(fb);
+                    }
+                }
+            }
         } else if (strcmp(page, "aptdetail") == 0) {
             /*
              * 机场详情页。真机上有两个入口（搜索结果点机场、地图上点机场

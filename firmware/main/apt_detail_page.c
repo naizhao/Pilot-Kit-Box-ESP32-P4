@@ -79,6 +79,31 @@ bool pk_ui_fab_hidden_for(pk_ui_modal_t top)
     return top != PK_UI_MODAL_NONE;
 }
 
+pk_sheet_state_t pk_sheet_next(pk_sheet_state_t st, pk_sheet_ev_t ev)
+{
+    switch (ev) {
+    case PK_SHEET_EV_OPEN:
+        /* 三个来态都落到 OPEN。COLLAPSED 那一条是"恢复旧内容"而不是"重开"，
+         * 差别不在这个返回值里，在调用方要不要重置查询串——见 search_page.c
+         * 的 pk_search_page_open()。 */
+        return PK_SHEET_OPEN;
+    case PK_SHEET_EV_COLLAPSE:
+        /* 没开过的收不起来：不然从地图直接进详情、再「在地图上显示」，
+         * 会给一枚返回钮把从未打开过的搜索页"恢复"出来。 */
+        return (st == PK_SHEET_OPEN) ? PK_SHEET_COLLAPSED : st;
+    case PK_SHEET_EV_RESTORE:
+        return (st == PK_SHEET_COLLAPSED) ? PK_SHEET_OPEN : st;
+    case PK_SHEET_EV_CLOSE:
+    default:
+        return PK_SHEET_CLOSED;
+    }
+}
+
+bool pk_sheet_may_requery(pk_sheet_state_t st)
+{
+    return st == PK_SHEET_OPEN;
+}
+
 uint8_t pk_apt_freq_rank(uint8_t service)
 {
     switch (service) {
@@ -213,6 +238,21 @@ void pk_ui_fab_sync(void)
                         pk_search_page_active())));
 }
 
+/* 收起态的现场版，落在本文件的理由同上：模态栈的真源在这里。 */
+bool pk_ui_sheet_has_collapsed(void)
+{
+    return pk_search_page_collapsed() || pk_apt_detail_page_collapsed();
+}
+
+void pk_ui_sheet_restore(void)
+{
+    /* 先搜索后详情只是书写顺序：两者互不影响，最终由 pk_ui_modal_top
+     * 决定屏上是谁（详情在搜索之上）。 */
+    pk_search_page_restore();
+    pk_apt_detail_page_restore();
+    pk_ui_fab_sync();
+}
+
 #ifndef PK_SIM_BUILD
 #include "esp_log.h"
 static const char *TAG = "aptdetail";
@@ -310,7 +350,11 @@ typedef struct {
 
 EXT_RAM_BSS_ATTR static detail_t s_d;
 
-static bool s_active;
+/* 三态可见性，取代原来的 `static bool s_active`（见 apt_detail_page.h 的
+ * pk_sheet_state_t）。s_d 里那份取好的跑道/频率快照在 COLLAPSED 期间原样
+ * 留着——它本来就是打开那一刻拷贝下来的值，不含任何指向 PSRAM 池的指针，
+ * 拔卡也不会悬空。 */
+static uint8_t s_vis = PK_SHEET_CLOSED;
 static uint8_t s_from = PK_APT_DETAIL_FROM_MAP;
 static int  s_scroll;
 static int  s_content_h;
@@ -702,10 +746,10 @@ void pk_apt_detail_page_open(uint32_t apt_idx, pk_apt_detail_from_t from)
     s_moved       = false;
     s_from        = (uint8_t)from;
     load(apt_idx);
-    s_active      = true;
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_OPEN);
     /* 藏掉 FAB，理由与 search_page / keyboard_page 完全相同：本页铺满全屏、
      * 命中判定排在 LVGL 之前，FAB 留着就是"它自己点不动、又盖住底下的行"。
-     * 出口写在屏上：页首的 BACK。s_active 已经置真，sync 自己会算出"藏"。 */
+     * 出口写在屏上：页首的 BACK。s_vis 已经是 OPEN，sync 自己会算出"藏"。 */
     pk_ui_fab_sync();
 #ifndef PK_SIM_BUILD
     ESP_LOGI(TAG, "open apt #%lu \"%s\": %d/%lu runways, %d/%lu freqs%s",
@@ -717,11 +761,33 @@ void pk_apt_detail_page_open(uint32_t apt_idx, pk_apt_detail_from_t from)
 #endif
 }
 
-bool pk_apt_detail_page_active(void) { return s_active; }
+bool pk_apt_detail_page_active(void) { return s_vis == PK_SHEET_OPEN; }
+
+bool pk_apt_detail_page_collapsed(void) { return s_vis == PK_SHEET_COLLAPSED; }
+
+/* 收起：状态全留着，只是不再算活跃层。地图上那枚返回钮会把它拉回来。 */
+void pk_apt_detail_page_collapse(void)
+{
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_COLLAPSE);
+    s_press_valid = false;
+    s_moved       = false;
+    /* 不在这里 sync：collapse 通常与 search 的 collapse、set_mode 连着做，
+     * 由那条动作收尾统一 sync 一次（goto_map / goto_item）。 */
+}
+
+void pk_apt_detail_page_restore(void)
+{
+    s_vis = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis, PK_SHEET_EV_RESTORE);
+    s_press_valid = false;
+    s_moved       = false;
+    /* 滚动位置**故意不重置**：用户翻到第 40 条频率、去地图看了一眼再回来，
+     * 该停在他离开的地方。这正是 sheet 与"重新打开一页"的区别。 */
+}
 
 void pk_apt_detail_page_close(void)
 {
-    s_active      = false;
+    s_vis         = (uint8_t)pk_sheet_next((pk_sheet_state_t)s_vis,
+                                           PK_SHEET_EV_CLOSE);
     s_press_valid = false;
     /*
      * 返回目标就在这一行里。
@@ -739,11 +805,23 @@ void pk_apt_detail_page_close(void)
     pk_ui_fab_sync();
 }
 
-/* 「在地图上显示」：把视口挪过去 + 落 PIN + 切到地图页 + **一路关掉模态层**。
+/* 「在地图上显示」：把视口挪过去 + 落 PIN + 切到地图页 + **一路收起模态层**。
  *
- * 这是唯一一个不走"退回上一层"的动作：用户要的是看地图，不是回搜索列表。
- * 所以详情与搜索一起关掉——search_page 那边点结果跳地图时做的也是这件事
- * （goto_item），两条路径落到同一个终态。
+ * 2026-08-04 起是「收起」而不是「关闭」（sheet 语义，见 apt_detail_page.h 的
+ * pk_sheet_state_t）。用户去地图只是"看一眼"，看完多半要回来挑下一个。
+ *
+ * 收起的是**整叠**：详情与它底下的搜索一起收（搜索没开着时那一下是空操作）。
+ * 地图上点返回钮时也整叠一起恢复，于是回到的是详情，再按 BACK 才回搜索——
+ * **逐层返回**。为什么选逐层而不是一步回搜索：
+ *   - 罩哥的原话就是「原来在哪里进来的，那就回哪里去」，从地图回来的上一层
+ *     就是详情；
+ *   - 详情页装的是跑道长度/道面/塔台频率，"去地图看了眼位置再回来核对跑道"
+ *     是真实动作，一步跳回搜索会把它抹掉，而且用户没有别的路回到详情
+ *     （回到搜索后要重新点那一条，反而更远）；
+ *   - 代价是"挑下一个"多一次点击，但那一次点击落在详情页页首的 BACK 上，
+ *     位置固定、不用找。
+ * 直接从地图点机场符号进来的详情（搜索是 CLOSED）同样能被收起并恢复——
+ * pk_sheet_next 保证没开过的搜索不会被"恢复"出来。
  *
  * 为什么必须显式 pk_ui_set_mode(PK_UI_MODE_MAP)（2026-08-04 修）
  * ------------------------------------------------------------
@@ -764,11 +842,11 @@ static void goto_map(void)
     pk_map_page_set_pin(s_d.lat, s_d.lon,
                         s_d.icao[0] ? s_d.icao : s_d.iata);
     pk_map_page_goto(s_d.lat, s_d.lon, APTD_GOTO_ZOOM);
-    s_active      = false;
-    s_press_valid = false;
-    pk_search_page_close();          /* 没开着时也照调，它自己幂等 */
+    pk_apt_detail_page_collapse();
+    pk_search_page_collapse();       /* 没开着时是空操作，见 pk_sheet_next */
     pk_ui_set_mode(PK_UI_MODE_MAP);
-    pk_ui_fab_sync();                /* 此刻模态层已全关 → FAB 放出来 */
+    /* 收起态不算活跃层 → 这一下把 FAB 放出来，地图也重新点得动。 */
+    pk_ui_fab_sync();
 }
 
 #ifdef PK_SIM_BUILD
@@ -803,7 +881,7 @@ static void sim_setup_once(void)
 
 bool pk_apt_detail_page_touch(int x, int y)
 {
-    if (!s_active) return false;
+    if (!pk_apt_detail_page_active()) return false;
     s_press_x      = x;
     s_press_y      = y;
     s_press_scroll = s_scroll;
@@ -815,7 +893,7 @@ bool pk_apt_detail_page_touch(int x, int y)
 
 bool pk_apt_detail_page_drag(int x, int y)
 {
-    if (!s_active) return false;
+    if (!pk_apt_detail_page_active()) return false;
     if (!s_press_valid) return true;   /* 仍然吃掉：模态 */
     (void)x;
     const int dy = y - s_press_y;
@@ -849,7 +927,7 @@ void pk_apt_detail_page_touch_cancel(void)
 
 void pk_apt_detail_page_touch_up(void)
 {
-    const bool click = s_active && s_press_valid && !s_moved;
+    const bool click = pk_apt_detail_page_active() && s_press_valid && !s_moved;
     const int x = s_press_x, y = s_press_y;
     s_press_valid = false;
     s_moved       = false;

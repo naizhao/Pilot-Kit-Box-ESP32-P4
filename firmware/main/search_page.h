@@ -81,9 +81,40 @@ extern "C" {
 /* 建后台查询任务 + 从 NVS 读回历史。须晚于 pk_aero_db_init()。幂等。 */
 void pk_search_page_init(void);
 
+/*
+ * 打开。**COLLAPSED（收起）时等价于恢复**：查询串与结果快照原样留着，
+ * 不重查也不清空。见下面 collapse/restore 那一段与 apt_detail_page.h 的
+ * pk_sheet_state_t。
+ */
 void pk_search_page_open(void);
+
+/* **只有 OPEN 才算 active**：收起态既不渲染也不吃触摸，pk_ui_modal_top /
+ * pk_ui_fab_sync 都得把它当成"不在"，否则 FAB 一直藏着、地图也点不动。 */
 bool pk_search_page_active(void);
+
+/* 真关闭：状态作废，回到当初打开它的那一页。 */
 void pk_search_page_close(void);
+
+/*
+ * 收起 / 恢复（sheet 语义，2026-08-04）。
+ *
+ * 收起 ≠ 关闭：不渲染、不吃触摸、不算活跃层，但 s_query 与 PSRAM 里那份
+ * 结果快照原样留着，**收起期间也不重查**（pk_sheet_may_requery）。恢复回来
+ * 时看到的逐像素还是离开前那一屏，包括滚动位置。
+ *
+ * 为什么不能"回来时重查一遍"：
+ *   - 慢。第 5 桶要顺扫 3 MB PSRAM 字符串池，真机数秒（见 .c run_buckets）；
+ *   - 会变。默认视图是「附近机场」，本机一直在动，重查回来就是另一批，
+ *     用户会以为自己点错了。
+ *
+ * 唯一会重查的情形是**库换代**（拔卡/重挂载）：那时快照里的段内记录下标
+ * 已经指向别的记录，留着才是真的危险。判据是 pk_aero_db_generation()。
+ *
+ * 三个都幂等，状态不对时是空操作。
+ */
+void pk_search_page_collapse(void);
+void pk_search_page_restore(void);
+bool pk_search_page_collapsed(void);
 
 void pk_search_page_render(uint16_t *fb);
 
@@ -91,6 +122,18 @@ void pk_search_page_render(uint16_t *fb);
 bool pk_search_page_touch(int x, int y);
 bool pk_search_page_drag(int x, int y);
 void pk_search_page_touch_up(void);
+
+#ifdef PK_SIM_BUILD
+/*
+ * 截图用：点第 row 条结果（0 起），走**真机同一条** touch()+touch_up() 路径。
+ *
+ * 落点从上一帧留下的命中表里取，而不是在 sim/main.c 那边照抄一遍行高与分组
+ * 标题的算术——那份几何依赖滚动偏移与当前是不是默认视图，抄一份迟早会飘，
+ * 而飘掉之后截出来的图看着还挺正常（点在了相邻那一行上）。
+ * **必须先渲染过一帧**：命中表是 render 填的。
+ */
+void pk_search_sim_tap_row(int row);
+#endif
 
 /* ── 以下是纯函数区：无 OS / 无全局状态，host 单测直接编
  * （firmware/test/test_search_page.c）。同 pk_aero_layer.h 的分区惯例。 ── */
