@@ -888,6 +888,23 @@ STRINGS = [
     ("DIAG_V_REC_NORAW",   {"en": "raw off",       "zh": "限流"}),
     ("DIAG_V_REC_OWNONLY", {"en": "own only",      "zh": "仅本机"}),
     ("DIAG_V_REC_FAIL",    {"en": "fail",          "zh": "失效"}),
+    # ── WINDOW 卡片（pk_win 滚动窗口的运行状态）─────────────────────────
+    # 卡片标题沿用 "AERO DB" 的做法写死 ASCII（WINDOW），只有值行进 catalog：
+    # 标题是给排查者认卡用的固定标签，翻不翻译都一样认得出，翻了反而要多养
+    # 一批字形。
+    #
+    # 量词与数字拼在一起，词序中英一致（"12 cells" / "12 格"），见本节开头。
+    ("DIAG_U_CELLS",       {"en": "cells",     "zh": "格"}),
+    # 异常后缀。两个都非零时只说更严重的那个，取舍理由同 LOG 卡片：
+    # skip = 字符串片段跨度超限被放弃，那一格的名字**确实缺了**；
+    # forced = 让路超时后抢读了一次卡，只是时序上的妥协，数据是全的。
+    ("DIAG_V_WIN_SKIP",    {"en": "skip",      "zh": "跳过"}),
+    ("DIAG_V_WIN_FORCED",  {"en": "forced",    "zh": "强读"}),
+    # 三种"没数可看"的态，各说各的：编译开关关掉 / 卡上没有航空库 / 刚开机
+    # 还没填满。混成一句「无数据」会让人分不清该去改开关、换卡还是等一会。
+    ("DIAG_V_WIN_OFF",     {"en": "disabled",  "zh": "未启用"}),
+    ("DIAG_V_WIN_NODATA",  {"en": "no data",   "zh": "无数据"}),
+    ("DIAG_V_WIN_FILL",    {"en": "filling...", "zh": "填充中..."}),
     ("DIAG_V_SD_MOUNTED",  {"en": "mounted",       "zh": "已挂载"}),
     ("DIAG_V_SD_NO_CARD",  {"en": "no card",       "zh": "无卡"}),
     ("DIAG_V_SD_FORMATTING", {"en": "formatting...", "zh": "格式化中..."}),

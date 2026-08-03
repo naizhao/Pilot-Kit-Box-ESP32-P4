@@ -2,7 +2,10 @@
  *
  *   cc -std=c11 -Wall -Wextra -O2 -I firmware/main -o /tmp/test_win \
  *      firmware/test/test_pk_win_geom.c firmware/main/pk_win_geom.c \
- *      firmware/main/pk_aero_reader.c -lm && /tmp/test_win
+ *      firmware/main/pk_aero_reader.c firmware/main/geo.c -lm && /tmp/test_win
+ *
+ * （geo.c 不能省：pk_aero_reader.c 的 nearest_generic 要 geo_dist_brg。
+ *   原来的命令行少了它，照抄会在链接期报 undefined symbol。）
  *
  * 覆盖 docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md 里
  * W1.1 点名要测的四件事 + 风险 R8：

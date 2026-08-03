@@ -24,6 +24,7 @@
  *     的词边界 + "..." 那条路径）。
  */
 #include "pk_aero_db.h"
+#include "pk_win.h"
 #include "geo.h"
 
 #include <stdio.h>
@@ -235,6 +236,43 @@ void pk_aero_db_status_get(pk_aero_db_status_t *out)
 }
 
 uint32_t pk_aero_db_generation(void) { return aero_on() ? 1u : 0u; }
+
+/*
+ * 滚动窗口（pk_win）的状态快照。真身依赖 FreeRTOS 任务 + SD 区间读，host 上
+ * 起不来，但诊断页那张 WINDOW 卡片的版面要在模拟器上评审，所以在这里给桩。
+ *
+ * 口径跟着 AERO DB 那格走：没开 PK_SIM_AERO / PK_SIM_DIAG_OK 就报"句柄没开"
+ * （屏上 no data，灰），否则报一组像真库的驻留量。
+ *
+ * PK_SIM_WIN_WARN=1 摆**最糟情况**：48 个槽全满、驻留量顶到两位数 MB、再挂上
+ * 最长的异常后缀。理想数据下值行只有十几个字符，永远踩不到降档与溢出——
+ * 这一档就是专门用来看"降到 S 档之后还压不压隔壁卡"的。
+ */
+void pk_win_status_get(pk_win_status_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    out->enabled = true;
+    if (!aero_on() && !diag_ok()) return;      /* open=false → "no data" */
+
+    out->open    = true;
+    out->version = aero_v2() ? 2 : 3;
+
+    const char *w = getenv("PK_SIM_WIN_WARN");
+    if (w != NULL && w[0] == '1') {
+        out->n_cells = out->n_ready = 48;
+        out->win_cells = 15;
+        out->bytes = 19u * 1024u * 1024u + 800u * 1024u;
+        out->str_skipped = 3;
+        out->forced = 12;
+    } else {
+        out->n_cells = out->n_ready = 12;
+        out->win_cells = 12;
+        out->bytes = 1u * 1024u * 1024u + 420u * 1024u;
+    }
+    out->yields = 1837;
+    out->loads  = out->n_ready;
+}
 
 /* 大写化 + 前缀比较（桩表里的代码本来就全大写）。 */
 static bool has_prefix(const char *s, const char *pfx)

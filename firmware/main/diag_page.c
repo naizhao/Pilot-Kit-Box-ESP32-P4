@@ -43,6 +43,7 @@
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
 #include "pk_aero_db.h"      /* pk_aero_db_status_get — SD 航空库状态 */
+#include "pk_win.h"          /* pk_win_status_get — 滚动窗口运行状态 */
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
 #include "pk_rec_store.h"    /* pk_rec_store_get_health —— LOG 卡片接入 SD 写失败/降级持续状态 */
 #include <string.h>
@@ -286,7 +287,25 @@ static void draw_card(uint16_t *fb, int col, int row, const char *title,
      * 宽度必须用 pk_aa_text_width：strlen 数的是字节，一个汉字 3 字节却只画
      * 一个字形。按 strlen 算，「无接收机 - 用 H2 USB-C」会被当成 24 个字符
      * （实际 16 个字形）而误降一档，中文界面上整页的值都会莫名其妙变小。 */
-    const int avail = CARD_W - 26;
+    /*
+     * 可用宽度还要**避开 FAB**。
+     *
+     * FAB 是浮在这一层之上的 LVGL 控件，被它盖住的字等于没画。以前撞不到是
+     * 因为右列最后一格恰好是空的；WINDOW 卡片补上那一格之后，中文最糟版面
+     * 的末位数字正好被那个蓝圆吃掉一半（sim 截图 win-zh-warn 第一版）。
+     * 地图页的缩放钮当年也是没避让才被压住的（map_page.c:82 那段）。
+     *
+     * 问 pk_ui_nav_fab_rect() 要真实矩形而不是抄一组坐标：FAB 可以被用户拖到
+     * 另一侧或另一个高度，抄下来的常量第一次拖动就失效。相交才收窄，不相交
+     * 时这一格的可用宽度一点没变（= 原来的 CARD_W - 26）。
+     */
+    int right = x + CARD_W;
+    int fx, fy, fw, fh;
+    if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh) &&
+        fy < y + CARD_H && fy + fh > y && fx > x && fx < right)
+        right = fx;
+
+    const int avail = right - (x + 18) - 8;
     const int need  = pk_aa_text_width(value, PK_AA_M);
     const pk_aa_size_t sz = (need <= avail) ? PK_AA_M : PK_AA_S;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 18,
@@ -690,6 +709,89 @@ void pk_diag_page_render(uint16_t *fb)
             break;
         }
         draw_card(fb, 0, 6, "AERO DB", buf, st);
+    }
+
+    /* ── WINDOW ──
+     * pk_win 滚动窗口（以本机为中心的增量加载）的运行状态。跟在 AERO DB 旁边
+     * 是有道理的：那一格说的是"全量库加载完没有"，这一格说的是"窗口这条独立
+     * 读路现在驻留了多少"，两者是同一份 bin 上的两条路。
+     *
+     * 追加在网格末尾、不往中间插——理由同 AERO DB 那格：卡片序号就是触摸分派
+     * 与 CARD_TITLE 的下标，插中间会错位后面所有卡的详情映射。
+     * 序号 13 ≥ CARD_N，触摸层自然不进详情页——本卡暂无详情。
+     *
+     * ── 字段取舍 ────────────────────────────────────────────────────
+     * 值行只有 352 px（CARD_W - 26），装不下 pk_win_status_t 的十几个指标，
+     * 所以只留**看一眼就能下结论**的那两个 + 一个异常后缀：
+     *
+     *   驻留格数 / 驻留字节  → 主行。它们回答"窗口到底在不在干活、吃了多少
+     *                          PSRAM"，是这张卡存在的第一理由；两个数任何一个
+     *                          长期是 0，就说明这条读路没跑起来。
+     *   str_skipped / forced → 只在非零时以后缀出现，且**只说更严重的那个**。
+     *                          skip 意味着那一格的名字确实缺了（回落到
+     *                          pk_aero_db 老路径），forced 只是抢了一次卡、
+     *                          数据是全的——所以 skip 优先。取舍写法照 LOG 卡。
+     *   yields               → **不上卡**。它在稳态下是个一直在涨的大数（每
+     *                          100 ms 让一次就 +1），摆在屏上像是有什么东西在
+     *                          反复失败，实际上"让路成功"才是设计意图。这类
+     *                          需要看趋势、不需要看瞬时值的量归串口日志
+     *                          （pk_win.c 的 "status ... yields=N"）。
+     *                          microSD 卡当年那个 retry 计数就是这么被撤下去的。
+     *   loads/evicts/psram/  → 同理归日志，卡片放不下也不该放。
+     *   in/out/last_load_us
+     */
+    {
+        pk_win_status_t w;
+        pk_win_status_get(&w);
+        card_state_t st;
+        if (!w.enabled) {
+            /* 编译开关关掉了（PK_WIN_ENABLE=0 的回滚态）。不是故障，是没开。 */
+            snprintf(buf, sizeof(buf), "%s",
+                     pk_i18n_text(PK_TR_DIAG_V_WIN_OFF));
+            st = ST_IDLE;
+        } else if (!w.open) {
+            /* 卡上没有 aero bin / 没插卡。数据库是可选内容包，灰而不红——
+             * 与 AERO DB 那格的空态口径保持一致。 */
+            snprintf(buf, sizeof(buf), "%s",
+                     pk_i18n_text(PK_TR_DIAG_V_WIN_NODATA));
+            st = ST_IDLE;
+        } else if (w.n_ready == 0) {
+            /* 句柄开着但一格都没就绪：开机首填中，或者还没拿到本机位置
+             * （没 GPS fix 时 resolve_shape 直接返回，窗口无中心可用）。 */
+            snprintf(buf, sizeof(buf), "%s",
+                     pk_i18n_text(PK_TR_DIAG_V_WIN_FILL));
+            st = ST_WARN;
+        } else {
+            /* 字节按量级换单位：驻留量从几百 KB 到十几 MB 都可能，固定用 MB
+             * 会在稀疏区显示成 "0.0 MB"（看起来像没加载），固定用 KB 又在密集
+             * 区变成七位数。 */
+            int p;
+            if (w.bytes >= 1024 * 1024)
+                p = snprintf(buf, sizeof(buf), "%u %s  %.1f MB",
+                             (unsigned)w.n_ready,
+                             pk_i18n_text(PK_TR_DIAG_U_CELLS),
+                             (double)w.bytes / (1024.0 * 1024.0));
+            else
+                p = snprintf(buf, sizeof(buf), "%u %s  %lu KB",
+                             (unsigned)w.n_ready,
+                             pk_i18n_text(PK_TR_DIAG_U_CELLS),
+                             (unsigned long)(w.bytes / 1024));
+
+            if (p > 0 && p < (int)sizeof(buf) && w.str_skipped > 0) {
+                snprintf(buf + p, sizeof(buf) - p, "  %s %lu",
+                         pk_i18n_text(PK_TR_DIAG_V_WIN_SKIP),
+                         (unsigned long)w.str_skipped);
+                st = ST_WARN;
+            } else if (p > 0 && p < (int)sizeof(buf) && w.forced > 0) {
+                snprintf(buf + p, sizeof(buf) - p, "  %s %lu",
+                         pk_i18n_text(PK_TR_DIAG_V_WIN_FORCED),
+                         (unsigned long)w.forced);
+                st = ST_WARN;
+            } else {
+                st = ST_OK;
+            }
+        }
+        draw_card(fb, 1, 6, "WINDOW", buf, st);
     }
 
     s_card_rows = 7;

@@ -64,6 +64,19 @@ static const char *TAG = "pk_win";
 /* R4 地面限流：两次加载之间至少间隔 300 ms。 */
 #define WIN_GROUND_GAP_MS   300
 
+/*
+ * 状态日志的节流。
+ *
+ * 这个模块上线时一条日志都不打，"让路规则到底生不生效"只能靠猜——数据全在
+ * PSRAM 里烂着。补一条，但**必须低频**：核 0 的 PFD 每秒打一行帧率，这里再
+ * 高频一点就会把真正要看的东西冲出屏幕（串口 grep 也会被噪音淹）。
+ *
+ * 两档：计数有变化时最快 10 s 一行；完全没动静时降到 60 s 一行当心跳。
+ * 稳态（窗口填满、飞机没动）就是每分钟一行，看得见"它还活着"，又不刷屏。
+ */
+#define WIN_LOG_MIN_MS       10000
+#define WIN_LOG_HEARTBEAT_MS 60000
+
 /* 转弯保护：|Δtrack| > 30° / 10 s → 退化为 60 NM 圆（文档 §1.4）。 */
 #define WIN_TURN_DEG        30.0
 #define WIN_TRACK_HIST      10          /* 1 Hz × 10 槽 = 10 s */
@@ -800,6 +813,64 @@ static void advance(void)
     s_st.psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
 }
 
+/* ── 状态日志 ───────────────────────────────────────────────────────── */
+
+/*
+ * 一行打全，不拆多行：拆开之后 grep 到的每一行都只有半个故事，还得靠时间戳
+ * 把它们拼回去。诊断页只放得下"驻留格数 + 字节"两个数，剩下的指标全靠这一行
+ * ——它才是完整的观测口。
+ *
+ * 变量名与 pk_win_status_t 的字段名一一对应，看日志时不用再翻译一遍。
+ */
+static void status_log_maybe(void)
+{
+    /* 上一次打印时的计数快照。只在本函数里读写，且只有窗口任务这一个调用方。 */
+    static uint32_t s_log_last_ms;
+    static uint32_t p_loads, p_evicts, p_fail, p_skip, p_yields, p_forced;
+    static uint8_t  p_cells, p_ready;
+    static bool     s_log_first = true;
+
+    const uint32_t t = now_ms();
+    const bool changed = s_st.loads       != p_loads  ||
+                         s_st.evicts      != p_evicts ||
+                         s_st.load_fail   != p_fail   ||
+                         s_st.str_skipped != p_skip   ||
+                         s_st.yields      != p_yields ||
+                         s_st.forced      != p_forced ||
+                         s_st.n_cells     != p_cells  ||
+                         s_st.n_ready     != p_ready;
+
+    if (!s_log_first) {
+        const uint32_t age = t - s_log_last_ms;
+        if (age < (changed ? WIN_LOG_MIN_MS : WIN_LOG_HEARTBEAT_MS)) return;
+    }
+    s_log_first   = false;
+    s_log_last_ms = t;
+    p_loads  = s_st.loads;   p_evicts = s_st.evicts;  p_fail   = s_st.load_fail;
+    p_skip   = s_st.str_skipped; p_yields = s_st.yields; p_forced = s_st.forced;
+    p_cells  = s_st.n_cells; p_ready  = s_st.n_ready;
+
+    ESP_LOGI(TAG,
+             "status ready=%u/%u win=%u%s %s bytes=%lu apt=%lu nav=%lu fix=%lu "
+             "in=%lu out=%lu loads=%lu evicts=%lu fail=%lu strskip=%lu "
+             "yields=%lu forced=%lu last_load=%luus read=%lluKB "
+             "psram=%luK/%luK ctr=%.4f,%.4f trk=%.0f",
+             (unsigned)s_st.n_ready, (unsigned)s_st.n_cells,
+             (unsigned)s_st.win_cells, s_st.truncated ? "+TRUNC" : "",
+             s_st.circle ? "circle" : "ellipse",
+             (unsigned long)s_st.bytes, (unsigned long)s_st.n_apt,
+             (unsigned long)s_st.n_nav, (unsigned long)s_st.n_fix,
+             (unsigned long)s_st.last_in, (unsigned long)s_st.last_out,
+             (unsigned long)s_st.loads, (unsigned long)s_st.evicts,
+             (unsigned long)s_st.load_fail, (unsigned long)s_st.str_skipped,
+             (unsigned long)s_st.yields, (unsigned long)s_st.forced,
+             (unsigned long)s_st.last_load_us,
+             (unsigned long long)(s_st.bytes_read / 1024),
+             (unsigned long)(s_st.psram_free / 1024),
+             (unsigned long)(s_st.psram_largest / 1024),
+             s_st.lat, s_st.lon, s_st.track_deg);
+}
+
 /* ── 自检 ───────────────────────────────────────────────────────────── */
 #if PK_WIN_SELFTEST
 #include "pk_win_selftest.inc"
@@ -854,6 +925,7 @@ static void win_task(void *arg)
         win_selftest_step();
 #endif
         advance();
+        status_log_maybe();
         vTaskDelay(pdMS_TO_TICKS(WIN_TICK_MS));
     }
 }

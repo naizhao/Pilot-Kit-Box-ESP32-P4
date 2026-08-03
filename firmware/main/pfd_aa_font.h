@@ -27,7 +27,7 @@ extern const uint8_t pk_aa_m[];
 extern const uint8_t pk_aa_l[];
 extern const uint8_t pk_aa_xl[];
 
-#define PK_AA_CJK_COUNT  350
+#define PK_AA_CJK_COUNT  352
 #define PK_AA_XS_CJK_W  15
 #define PK_AA_XS_CJK_H  17
 #define PK_AA_S_CJK_W  17

@@ -294,6 +294,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DIAG_V_REC_NORAW] = "raw off",
         [PK_TR_DIAG_V_REC_OWNONLY] = "own only",
         [PK_TR_DIAG_V_REC_FAIL] = "fail",
+        [PK_TR_DIAG_U_CELLS] = "cells",
+        [PK_TR_DIAG_V_WIN_SKIP] = "skip",
+        [PK_TR_DIAG_V_WIN_FORCED] = "forced",
+        [PK_TR_DIAG_V_WIN_OFF] = "disabled",
+        [PK_TR_DIAG_V_WIN_NODATA] = "no data",
+        [PK_TR_DIAG_V_WIN_FILL] = "filling...",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -584,6 +590,12 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DIAG_V_REC_NORAW] = "限流",
         [PK_TR_DIAG_V_REC_OWNONLY] = "仅本机",
         [PK_TR_DIAG_V_REC_FAIL] = "失效",
+        [PK_TR_DIAG_U_CELLS] = "格",
+        [PK_TR_DIAG_V_WIN_SKIP] = "跳过",
+        [PK_TR_DIAG_V_WIN_FORCED] = "强读",
+        [PK_TR_DIAG_V_WIN_OFF] = "未启用",
+        [PK_TR_DIAG_V_WIN_NODATA] = "无数据",
+        [PK_TR_DIAG_V_WIN_FILL] = "填充中...",
     },
 };
 
