@@ -30,6 +30,7 @@
 #include "gps.h"
 #include "pk_sdcard.h"
 #include "soc_temp.h"
+#include "ui_state.h"      /* pk_ui_cal_hint_active —— 罗盘校准提示的电平 */
 
 #define STATUSBAR_TOP   0
 #define STATUSBAR_BOT  PFD_BAR_BOT
@@ -142,6 +143,10 @@ void pk_ui_topbar_status_collect(pk_pfd_status_t *st)
 
     st->temp_warn = pk_soc_temp_get(&st->temp_c);
 
+    /* 罗盘校准提示。取的是 advisor 的结论电平（HINT 档），四页共用这一处，
+     * 与 PFD 分支同一个真值——PFD 也走本函数，没有第二份取法。 */
+    st->cal_hint = pk_ui_cal_hint_active();
+
     pk_batt_t b;
     pk_batt_get(&b);
     st->batt_valid    = b.valid;
@@ -167,6 +172,9 @@ void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)
      *   2  REC   以为在录、实际没录，是本产品最难受的失败
      *   3  TEMP  仅在超温时出现；产品定位就是"Garmin 热死时的备份"，
      *            自身温度异常必须让用户看见
+     *   4  CAL   罗盘精度低。排在 TEMP 之下是因为它**不是故障**：航向还在出，
+     *            只是可能不准，而且转两圈就好了。前面四项任何一项要位置，
+     *            它都该先让出来
      *
      * BLE 与电量不在此列 —— 它们是「设备自身」的状态而非「飞行」的状态，
      * 固定在右端，与左端的航向一样常驻不参与降级。
@@ -178,7 +186,7 @@ void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)
             pk_bar_icon_t icon;     /* 图标提供语义：孤立的「100%」看不出是电量 */
         } bar_item_t;
 
-        bar_item_t items[4] = {0};
+        bar_item_t items[5] = {0};
         int n = 0;
 
         if (s->gps_have_fix) {
@@ -210,6 +218,19 @@ void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)
             snprintf(items[n].text, sizeof(items[n].text), "%d~C", s->temp_c);
             items[n].col  = COL_WARN;
             items[n].icon = PK_BAR_ICON_TEMP;   /* 温度计+感叹号，比通用三角更准确 */
+            n++;
+        }
+        if (s->cal_hint) {
+            /* 图标独自成立，不带文字：精度数值（0..3）是校准页与诊断页的事，
+             * 顶栏这一枚只回答"要不要去校准"，多一个数字反而要用户先学会
+             * 0..3 各是什么意思。
+             *
+             * COL_WARN 常亮，**不闪**。与没插卡那枚 SD_ALERT 的红闪刻意区分：
+             * 红闪说的是"现在就有东西坏了/没在录"，而罗盘精度低是"注意，航向
+             * 可能不准"——航向照样在出，飞行也照样能继续。座舱里闪烁是抢注意
+             * 力的最强手段，留给真出事的那一档，否则闪多了就没人再看了。 */
+            items[n].col  = COL_WARN;
+            items[n].icon = PK_BAR_ICON_COMPASS;
             n++;
         }
 

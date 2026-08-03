@@ -2,13 +2,18 @@
  * cal_wizard.h — 磁力计校准向导（画 8 字提示页）。
  *
  * pk_ui_get_mode() == PK_UI_MODE_CAL_WIZARD 时由 pfd.c 分派渲染。进入/退出
- * 都是自动的：BNO085 报 acc=0 连续 UI_CAL_WIZARD_ENTER_MS 就自动进，acc≥2
- * 连续 UI_CAL_WIZARD_EXIT_MS 就自动回 PFD（两个阈值见 ui_state.c）。
+ * 都是自动的：BNO085 报 acc=0 连续 PK_CAL_ENTER_MS 才自动进，acc≥2 连续
+ * PK_CAL_EXIT_MS 就自动回 PFD（阈值与依据见 pk_cal_advisor.h）。
+ *
+ * 「自动进」还要同时过另外两道闸（都在 pk_cal_advisor.c 判定，本页不参与）：
+ * 只在**地面静止**时才抢页面（滑行/空中一律降级成顶栏图标），且识别出**磁
+ * 干扰环境**时连图标都不给——那种地方画 8 字物理上救不回来。
  *
  * 用户也可以自己关——点右下角那枚「稍后再说」。4.3″ 板上**没有 MODE 键**，
  * 这枚按钮是这一页唯一的自有退路（另一条是 FAB → 导航网格，那条本页不拦）。
- * 关掉之后自动重弹会被抑制，否则 10 s 后又回来了；策略写在 ui_state.c 的
- * s_cal_auto_suppressed 处。
+ * 关掉之后自动重弹会被抑制，直到精度真的**连续**好起来（PK_CAL_REARM_MS）才
+ * 重新武装——只等一个固定时长的话，到期时磁环境多半没变，弹一次关一次，循环
+ * 并没有断；策略写在 ui_state.c 的 s_cal_advisor 处。
  *
  * 版面（详细坐标与推导见 cal_wizard.c 的文件头）
  * ----

@@ -80,6 +80,35 @@ uint8_t pk_ui_cal_wizard_last_accuracy(void)
 }
 
 /* 关校准页：模拟器里没有"页面切换"这回事（截哪一页由 PK_SIM_PAGE 决定），
+/*
+ * 顶栏那枚罗盘图标点不点亮。固件里是 pk_cal_advisor 的判定结论（低精度满窗、
+ * 但因为在飞/闸门关着/而没抢页面的那一档），模拟器里没有那条时间轴，做成
+ * PK_SIM_CAL_HINT=1 一个旋钮。
+ *
+ * 顶栏是四页共用的（pk_ui_topbar_status_collect），所以这一个开关同时管住
+ * PFD/交通/地图/列表四页，与真机同一条路径。
+ */
+bool pk_ui_cal_hint_active(void)
+{
+    return sim_env("PK_SIM_CAL_HINT", 0) != 0;
+}
+
+/*
+ * 强磁干扰环境的判定结论（诊断页 IMU 段那一行「磁环境」）。
+ *
+ * 固件里要连续观察 60 s、看 accuracy 跨阈跳变够不够 3 次才会置真
+ * （pk_cal_advisor 的 PK_CAL_JAM_* 那组阈值），模拟器里没有那条时间轴，同
+ * cal_hint 一样做成一个旋钮：PK_SIM_CAL_JAM=1。
+ *
+ * 与 PK_SIM_CAL_HINT 是两个独立开关，不能合成一个：真机上这两态**互斥**
+ * ——干扰时连图标都不给（hint 恒假），而 hint 亮着说明恰恰不是干扰。分开摆
+ * 才截得出「干扰态顶栏没有图标、诊断页里却查得到原因」这一对。
+ */
+bool pk_ui_cal_jammed(void)
+{
+    return sim_env("PK_SIM_CAL_JAM", 0) != 0;
+}
+
  * 同 pk_ui_set_mode 一样只是个空壳。留着是为了让 cal_wizard.c 的命中判定
  * 原样编译——那段代码本身要被验的是坐标，不是它调了谁。 */
 void pk_ui_cal_wizard_dismiss(void) { }

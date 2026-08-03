@@ -38,7 +38,8 @@ typedef enum {
     PK_ICON_BATT_CHG_5 = 24,   /* battery_android_frame_5  U+F253  FILL=0 */
     PK_ICON_BATT_CHG_6 = 25,   /* battery_android_frame_6  U+F252  FILL=0 */
     PK_ICON_BATT_CHG_FULL = 26,   /* battery_android_frame_full  U+F24F  FILL=0 */
-    PK_ICON_COUNT = 27
+    PK_ICON_COMPASS = 27,   /* explore  U+E87A  FILL=0 */
+    PK_ICON_COUNT = 28
 } pk_icon_id_t;
 
 /* 单一字重（见脚本头「字重」一节）。所有图标按 PK_ICON_W×H 顺序拼接。 */

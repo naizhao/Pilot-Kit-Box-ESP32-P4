@@ -28,6 +28,14 @@ typedef struct {
     bool    batt_charging;      /* 外部供电中，图标改播充电动画   */
     bool    temp_warn;          /* 芯片超温告警，优先级高于电量   */
     int     temp_c;
+    /* 罗盘（磁力计）精度低，建议校准。数据源是 pk_ui_cal_hint_active()，判定
+     * 全在 pk_cal_advisor。
+     *
+     * 放中段这一组而不是右段：右段（BLE/电量/SD）是"设备自身状态"常驻位，
+     * 插一枚进去就等于永久占掉一个槽；而罗盘精度是**会自愈的瞬态**——转两圈
+     * 或者走出干扰区它自己就没了，不该长期挤占常驻位。中段那套"装不下就按
+     * 优先级丢"正好对得上它可有可无的分量。 */
+    bool    cal_hint;
     bool    sd_mounted;         /* TF 卡已挂载：绿色 sd_card 常亮  */
     /* 未插卡 / 挂不上时红色闪烁的相位，由调用方（渲染侧）每帧算好传入——
      * 本模块只管画，不存状态（见 pfd.c 里 alert_blink_on 的同款做法）。 */
@@ -69,9 +77,10 @@ int pk_ui_topbar_content_right_limit(int dflt);
 
 /*
  * 汇总 pk_pfd_status_t 里"设备自身状态"那一组字段（GPS/SD/BLE/电量/温度/
- * 时钟相位），供交通/地图/列表三页复用——这些取数逻辑与 pfd.c 里 PFD 分支
- * 的写法完全一致（同一批数据源，一台设备只有一份真值），不该四页各抄一份、
- * 抄出四套容易分叉的实现。
+ * 罗盘校准提示/时钟相位），供交通/地图/列表三页复用——这些取数逻辑与 pfd.c
+ * 里 PFD 分支的写法完全一致（同一批数据源，一台设备只有一份真值），不该四页
+ * 各抄一份、抄出四套容易分叉的实现。PFD 分支自己也调本函数，只在调用前填
+ * imu_valid/yaw_deg/aircraft_count 那三个专属字段，因此四页口径天然一致。
  *
  * 不填 imu_valid/yaw_deg/aircraft_count/rec_active：
  *   - 前两个是 PFD 专属的左段数据，与本组无关；

@@ -68,6 +68,11 @@ static pk_icon_id_t icon_id_for(pk_bar_icon_t kind, const pk_bar_batt_t *batt)
     case PK_BAR_ICON_SD:   return PK_ICON_SD;
     case PK_BAR_ICON_SD_ALERT: return PK_ICON_SD_ALERT;
     case PK_BAR_ICON_ADSB: return PK_ICON_ADSB;
+    /* 罗盘精度低。同 TEMP 的取法——告警语义也用**专用形状**而不是通用三角：
+     * 三角只说"有事"，罗盘图形直接说清了是哪一路传感器不准，用户不必进诊断页
+     * 才知道该去画 8 字。图形选型（为什么是 explore、为什么破例用轮廓）写在
+     * gen_pfd_icons.py 的 ICONS 表里。 */
+    case PK_BAR_ICON_COMPASS: return PK_ICON_COMPASS;
     case PK_BAR_ICON_BATT: return batt ? batt_icon_for(batt) : PK_ICON_COUNT;
     default:               return PK_ICON_COUNT;      /* 无图标 */
     }

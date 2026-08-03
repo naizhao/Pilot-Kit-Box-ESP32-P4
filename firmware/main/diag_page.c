@@ -39,6 +39,7 @@
 #include "config_qnh.h"      /* pk_qnh_get — baro 高度的 QNH 基准 */
 #include "config_storage.h"  /* pk_log_store_get — 用户希望写哪个后端 */
 #include "i18n.h"            /* pk_i18n_text — 页面文案随语言切换 */
+#include "ui_state.h"        /* pk_ui_cal_jammed — 磁环境是否被判为强磁干扰 */
 #include "ble_gatt.h"        /* ble_gatt_is_connected, ble_gatt_is_advertising */
 #include "pk_clock.h"        /* pk_clock_is_synced / pk_clock_source */
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
@@ -344,13 +345,36 @@ void pk_diag_page_render(uint16_t *fb)
     {
         pk_imu_sample_t s;
         if (pk_imu_sample_get(&s) && s.valid) {
-            snprintf(buf, sizeof(buf), "%s %u/3   %s %.0f",
-                     pk_i18n_text(PK_TR_DIAG_U_CAL), s.accuracy,
-                     pk_i18n_text(PK_TR_DIAG_U_YAW), (double)s.yaw_deg);
+            /*
+             * 强磁干扰时**用磁环境顶掉航向那一格**，而不是再挤出第三格。
+             *
+             * 卡片值行只有 352 px（见 draw_card 里那笔宽度账），中文
+             * 「校准 3/3   航向 123」已占 253 px，再追一个词英文侧就会整张卡
+             * 降到 S 档——为一个瞬态结论把常态版面改小，代价给错了地方。
+             *
+             * 顶掉的偏偏是航向也不是凑合：磁场被拽偏的时候，磁航向正是那个
+             * 不该照着信的数（下面那条注释说的"cal 0 时航向可以差几十度"，
+             * 干扰态是同一件事的另一个成因）。把它换成成因本身，信息量只增
+             * 不减，宽度还省了——真要看角度，详情页那一行原样还在。
+             * 格数因此恒为二，卡片版面不随状态伸缩。
+             */
+            const bool jam = pk_ui_cal_jammed();
+            if (jam) {
+                snprintf(buf, sizeof(buf), "%s %u/3   %s",
+                         pk_i18n_text(PK_TR_DIAG_U_CAL), s.accuracy,
+                         pk_i18n_text(PK_TR_DIAG_V_MAG_JAM_S));
+            } else {
+                snprintf(buf, sizeof(buf), "%s %u/3   %s %.0f",
+                         pk_i18n_text(PK_TR_DIAG_U_CAL), s.accuracy,
+                         pk_i18n_text(PK_TR_DIAG_U_YAW), (double)s.yaw_deg);
+            }
             /* 校准等级本身就是可信度：cal 0 时航向可以差几十度，数据却照样
-             * "有效"——这正是最该在总览里就看见的。 */
+             * "有效"——这正是最该在总览里就看见的。
+             * 干扰态一律压成琥珀，不看当帧的 accuracy：干扰的定义就是这个数
+             * 在反复跳，截图/扫一眼的那一拍它可能正好停在 3，绿灯配着「磁干扰」
+             * 三个字自相矛盾。 */
             draw_card(fb, 0, 0, card_title(0), buf,
-                      s.accuracy >= 2 ? ST_OK : ST_WARN);
+                      (!jam && s.accuracy >= 2) ? ST_OK : ST_WARN);
         } else {
             draw_card(fb, 0, 0, card_title(0),
                       pk_i18n_text(PK_TR_DIAG_V_IMU_OFFLINE), ST_BAD);
@@ -1044,6 +1068,23 @@ static void draw_detail(uint16_t *fb, int which)
             snprintf(buf, sizeof(buf), "%u / 3", st.accuracy);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_CALIBRATION, buf,
                       st.accuracy >= 2 ? COL_ONLINE : COL_WARN);
+            /*
+             * 磁环境紧跟在校准档位下面：上面那行说「标定到第几档」，这行说
+             * 「这个档位值不值得当真」。分开摆，是因为两者指向的动作相反——
+             * 一个是「拿起来画 8 字」，另一个是「换个地方站，在这儿画也没用」。
+             *
+             * 这是 pk_cal_advisor 判定 jammed 之后**唯一**看得见的地方。干扰
+             * 态下自动弹页和顶栏罗盘图标都被有意关掉了（见 ui_state.h 的
+             * pk_ui_cal_jammed），设备表现为「什么都不提示」；没有这一行，
+             * 一台在机坪上安静的盒子与一台坏了的盒子在屏上完全一样。
+             *
+             * 正常态用绿而不是 COL_VAL 的中性白：这一行只有两个取值，配色
+             * 就该跟着结论走，与同页 SENSOR / 天线自检那两行同一口径。
+             */
+            const bool jam = pk_ui_cal_jammed();
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_MAG_ENV,
+                       jam ? PK_TR_DIAG_V_MAG_JAM : PK_TR_DIAG_V_MAG_OK,
+                       jam ? COL_WARN : COL_ONLINE);
             snprintf(buf, sizeof(buf), "%+.1f", (double)st.roll_deg);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_ROLL, buf, COL_VAL);
             snprintf(buf, sizeof(buf), "%+.1f", (double)st.pitch_deg);

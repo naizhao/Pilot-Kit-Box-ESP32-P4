@@ -575,6 +575,46 @@ STRINGS = [
             "zh": "演示模式：全部飞行数据均为模拟",
         },
     ),
+    # ── 开机进度（boot_splash 的进度条文案）────────────────────────────
+    #
+    # 上电到 PFD 可交互实测 8~9 s，其中 logo 出来之后还有 3~4 s 是在同步扫
+    # /sdcard/maps 下的 pmtiles，屏上只有一个不动的 logo，用户不知道在等什么。
+    # 这四条是那条进度条上的阶段名，调用点见 boot_splash.h 的「调用次序」。
+    #
+    # 用词受**字库子集**约束：屏上的汉字来自 gen_pfd_aa_font.py，码位表就是从
+    # 本文件收集的（见那边 collect_cjk_codes）。这四条刻意只用已有的字，所以
+    # 不必重跑字库——「完成」「就绪」都因为缺字被否掉了，别顺手改回去。
+    (
+        "BOOT_STAGE_START",
+        {
+            "en": "Starting up",
+            "zh": "正在启动",
+        },
+    ),
+    (
+        "BOOT_STAGE_SENSORS",
+        {
+            # BNO085 姿态 + BMP388 气压，两颗都挂在 I²C0 上，一起等
+            "en": "Sensors",
+            "zh": "传感器",
+        },
+    ),
+    (
+        "BOOT_STAGE_MAP",
+        {
+            # 最慢的一步：扫 4 个 pmtiles 实测 3.9 s
+            "en": "Map data",
+            "zh": "地图数据",
+        },
+    ),
+    (
+        "BOOT_STAGE_READY",
+        {
+            # 不用「完成 / 就绪」：那四个字一个都不在 CJK 子集里，见上面
+            "en": "Ready",
+            "zh": "系统可用",
+        },
+    ),
     (
         "TOAST_DEMO_ON",
         {
@@ -779,6 +819,13 @@ STRINGS = [
     ("DIAG_K_SNR",         {"en": "SNR",         "zh": "SNR"}),
     ("DIAG_K_SENSOR",      {"en": "SENSOR",      "zh": "传感器"}),
     ("DIAG_K_CALIBRATION", {"en": "CALIBRATION", "zh": "校准"}),
+    # 磁环境（阶段 C4）。与 CALIBRATION 分成两行而不是并进一行：cal 说的是
+    # 「磁力计自己标定到第几档」，磁环境说的是「周围的磁场稳不稳」。机坪上
+    # cal 在 0↔2 之间反复跳恰恰是后者的症状，混成一行就分不出该画 8 字还是
+    # 该换个地方站——而这两个动作一个有用、一个白费力气。
+    # 英文取 MAG ENV 不取 MAGNETIC ENVIRONMENT：键列宽 224 px，后者 21 字符 ×
+    # 15 px = 315 px 会压进值列（同本节开头 CALIBRATION 那笔宽度账）。
+    ("DIAG_K_MAG_ENV",     {"en": "MAG ENV",     "zh": "磁环境"}),
     # 横滚/俯仰/航向是标准中文航空姿态术语，不是英文直译。
     ("DIAG_K_ROLL",        {"en": "ROLL",        "zh": "横滚"}),
     ("DIAG_K_PITCH",       {"en": "PITCH",       "zh": "俯仰"}),
@@ -876,6 +923,25 @@ STRINGS = [
     # 地址取各自驱动里的常量（imu_task.c IMU_I2C_ADDR / baro_task.c BMP388_ADDR），
     # 不另抄一份数字。
     ("DIAG_V_IMU_HINT",    {"en": "check I2C0 wiring (0x4A)", "zh": "检查 I2C0 接线 (0x4A)"}),
+    # 磁环境两态（阶段 C4）。判定来自 pk_cal_advisor 的 jammed：accuracy 在
+    # 60 s 窗口内反复跨阈 ≥3 次 = 磁场本身在变，不是设备没校准。
+    #
+    # 这一行是那个结论**唯一**的查看入口。干扰态下设备对校准这件事什么都不
+    # 提示——不弹校准页，连顶栏那枚罗盘图标都不给（见 ui_state.h 的
+    # pk_ui_cal_jammed）；若无处可查，一台在机坪上安安静静的盒子看起来就像
+    # 坏了，而排查线索一条都没有。
+    #
+    # 英文取 interference 不取 jammed：jam 在航电语境里先指无线电干扰
+    # （GPS jamming，有人在发射），而这里说的是附近的铁磁体/直流回路把静磁场
+    # 拽偏了，处置动作完全不同。中文「干扰」没有这层歧义。
+    # 「正常」不复用 DIAG_V_ANT_OK：那条的英文是 "OK"（天线自检的口径），
+    # 这一行读作 "MAG ENV  normal" 才通顺，两处共用一条就得让其中一处将就。
+    ("DIAG_V_MAG_OK",      {"en": "normal",       "zh": "正常"}),
+    ("DIAG_V_MAG_JAM",     {"en": "interference", "zh": "干扰"}),
+    # 总览卡片用的短写法，同 SDR / 天线那批 _S 后缀的先例。卡片值行只有 352 px
+    # 且已经占着「校准 N/3」，详情页那对词条塞不下。必须自带「磁」字：卡片上
+    # 没有键名说它在讲磁环境，详情页才有 MAG ENV 那一列。
+    ("DIAG_V_MAG_JAM_S",   {"en": "MAG JAM",      "zh": "磁干扰"}),
     # microSD / 时钟同理：这两页在空态下也各只有一行。
     ("DIAG_V_SD_HINT",     {"en": "insert a microSD card",   "zh": "插入 microSD 卡"}),
     ("DIAG_V_CLK_HINT",    {"en": "waiting for GPS or BLE",  "zh": "等待 GPS 或 BLE 校时"}),

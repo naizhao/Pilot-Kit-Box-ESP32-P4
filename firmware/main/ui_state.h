@@ -38,7 +38,8 @@
 #include <stdint.h>
 
 #include "esp_err.h"
-#include "i18n_catalog.h"   /* pk_tr_id_t — toast 提示按翻译条目 id 记录 */
+#include "i18n_catalog.h"     /* pk_tr_id_t — toast 提示按翻译条目 id 记录 */
+#include "pk_flight_phase.h"  /* pk_flight_phase_t — 校准提示的相位门控 */
 
 typedef enum {
     PK_UI_MODE_PFD = 0,
@@ -72,19 +73,29 @@ void pk_ui_toggle_mode(void);
 void pk_ui_set_mode(pk_ui_mode_t mode);
 
 /*
- * Drive the calibration-wizard auto-trigger state machine. Called
- * once per IMU sample (~100 Hz) from imu_task; pass the latest
- * accuracy field (0..3) and whether the sample was valid.
+ * 驱动校准向导的自动进入/退出。渲染任务每帧调一次（pfd.c），传最近一份 IMU
+ * 样本的 accuracy(0..3)、样本是否有效，以及本机当前飞行相位
+ * （pk_own_sampler_get_phase()）。
  *
- * The wizard auto-enters when accuracy stays at 0 for more than
- * UI_CAL_WIZARD_ENTER_MS, and auto-exits when accuracy stays at
- * ≥ UI_CAL_WIZARD_EXIT_ACCURACY for more than UI_CAL_WIZARD_EXIT_MS.
+ * 判定本身全部在 pk_cal_advisor（纯状态机，host 有单测），本函数只把它的结论
+ * 落成切页。三段判据，缺一条就会退回 2026-08-04 之前那个约 13 s 一轮把用户
+ * 拽回校准页的循环：
  *
- * 自动进入会被"用户手动离开过校准页"这件事挡住，直到 accuracy 真的再上到
- * ≥ UI_CAL_WIZARD_EXIT_ACCURACY 才重新武装——否则室内磁环境下 acc 长期为 0，
- * 用户关一次就被拽回来一次。策略与取舍见 ui_state.c 的 s_cal_auto_suppressed。
+ *   1. 重新武装滞回 —— 「稍后再说」关上的闸门，要等 accuracy **连续保持**在
+ *      阈值之上足够久才解除。旧实现是单帧 acc≥2 就解除，而机坪上这个信号本
+ *      来就在 0↔2 之间抖，等于一帧噪声作废用户的意图。
+ *   2. 飞行相位门控 —— 只有地面静止（含 UNKNOWN，覆盖"刚开机 GPS 还没定位"）
+ *      才允许抢页面；滑行/起飞/空中/落地滑跑一律降级成状态栏图标。飞行中把
+ *      PFD 换成校准向导是安全问题，不是骚扰问题。
+ *   3. 磁干扰识别 —— accuracy 在滑动窗口内反复跨阈说明是磁环境在变，这种地方
+ *      画 8 字物理上救不回来，一律闭嘴（连图标都不给，见 pk_ui_cal_jammed）。
+ *
+ * IMU 断流（valid=false）时不抢页面：读不到姿态的板子弹出一页让人画 8 字毫无
+ * 意义。这一条挡在 ui_state.c 的胶水层，理由写在那边。
+ *
+ * 阈值取值与每个数的依据见 pk_cal_advisor.c 顶部。
  */
-void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy);
+void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase);
 
 /*
  * 用户主动关掉校准页（页内那枚「稍后再说」）。切回 PFD，并关上自动重弹的
@@ -104,9 +115,29 @@ void pk_ui_cal_wizard_dismiss(void);
 void pk_ui_cal_wizard_enter(void);
 
 /* Read the current target accuracy bar used by the wizard renderer.
- * Returns 0..3. Stable across reads — updated only when imu_task
+ * Returns 0..3. Stable across reads — updated only when the render task
  * calls pk_ui_cal_wizard_tick(). */
 uint8_t pk_ui_cal_wizard_last_accuracy(void);
+
+/*
+ * 当前该不该在状态栏画那枚罗盘告警图标（阶段 C3）。
+ *
+ * true 只出现在「精度确实不够，但这一刻不该抢页面」的时候：闸门关着（用户按
+ * 过「稍后再说」）、或不在地面静止。它表达的是"信息还在，只是不打扰你"——
+ * 用户按下「稍后再说」说的是"别抢我的页面"，不是"别再告诉我"。
+ *
+ * 判定为磁干扰环境时恒为 false：那种地方画 8 字救不回来，图标只会让用户以为
+ * 设备坏了而反复去转它（想知道"为什么什么都不提示"的人看 pk_ui_cal_jammed）。
+ */
+bool pk_ui_cal_hint_active(void);
+
+/*
+ * 当前是否判定为强磁干扰环境（诊断页用，阶段 C4）。
+ *
+ * jammed 时设备对校准这件事**什么都不提示**——既不弹页也不给图标。若这个结论
+ * 无处可查，一台在机坪上安静的盒子看起来就像坏了，而排查线索一条都没有。
+ */
+bool pk_ui_cal_jammed(void);
 
 /* Move the list selection by `delta` rows (negative = up, positive =
  * down). The scroll intent is buffered as a pending delta and applied

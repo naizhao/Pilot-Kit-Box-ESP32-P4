@@ -22,6 +22,7 @@ typedef enum {
     PK_BAR_ICON_SD,
     PK_BAR_ICON_SD_ALERT,   /* 没插卡 / 挂不上，红色闪烁 */
     PK_BAR_ICON_ADSB,   /* ADS-B 目标数前缀，替代原来的 "ADSB" 四字母 */
+    PK_BAR_ICON_COMPASS,/* 罗盘精度低：圆环 + 指针，同为告警但取常亮不闪 */
 } pk_bar_icon_t;
 
 /* 电池图标要在七档刻度、低电告警、充电动画之间选形态，输入不止一个值，

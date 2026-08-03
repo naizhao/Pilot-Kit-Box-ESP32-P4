@@ -40,6 +40,8 @@
  *     PK_SIM_NO_BARO=1      BMP388 没接
  *     PK_SIM_NO_GPS=1       GPS 模块没接 / 无定位
  *     PK_SIM_NO_TRAFFIC=1   一架 ADS-B 目标都没收到
+ *     PK_SIM_NO_REC=1       没在录制（顶栏 REC 灭）
+ *     PK_SIM_NO_TEMP=1      芯片温度正常（顶栏 TEMP 灭）
  *     PK_SIM_TFC_FAR=1      收到了目标但全部在量程外（与上一条观感同、成因异）
  *     PK_SIM_TFC_BARE=1     目标只有位置，呼号/高度/速度全缺（各列降级）
  *     PK_SIM_NO_APPDESC=1   读不到 app 描述符（关于页版本显示 "?"）
@@ -131,6 +133,7 @@
 
 /* 模拟器主循环频率。真机 PFD 约 30 FPS，这里也按 30 跑，好让动画
  * 观感和真机一致。 */
+#include "ui_state.h"      /* pk_ui_cal_hint_active —— 顶栏那枚罗盘图标的开关 */
 #define TARGET_FPS 30
 
 /* ------------------------------------------------------------------ */
@@ -155,7 +158,7 @@ typedef struct {
  *   星数 / 定位      ← ATGM336H (PK_SIM_NO_GPS)
  */
 typedef struct {
-    bool no_imu, no_own, no_gps, no_baro, no_traffic, empty;
+    bool no_imu, no_own, no_gps, no_baro, no_traffic, no_rec, no_temp, empty;
 } sim_lack_t;
 
 static sim_lack_t sim_lack(void)
@@ -173,6 +176,15 @@ static sim_lack_t sim_lack(void)
     return l;
 }
 
+        /* 顶栏中段这两项单独可关。默认（满载）压的是"装不下就按优先级丢"，
+         * 但真机常态恰恰是这两项都灭着——rec_active 至今没有数据源（pfd.c 的
+         * TODO(P2-1)），temp_warn 只在超温时为真。中段只有 200 px 硬预留
+         * （BAR_MID_GUARANTEED_W），满载时它俩把后面的项全挤掉了，于是"真机
+         * 上到底看不看得见"这一档在模拟器里根本摆不出来。
+         * pk_sim_flag 会让 PK_SIM_EMPTY 一并把它们置真，与原先直接读 .empty
+         * 的行为逐位相同。 */
+        .no_rec     = pk_sim_flag("PK_SIM_NO_REC"),
+        .no_temp    = pk_sim_flag("PK_SIM_NO_TEMP"),
 static void mock_fill(const sim_state_t *st,
                       pk_pfd_imu_t *imu, pk_pfd_hsi_t *hsi,
                       pk_pfd_alt_tape_t *alt, pk_pfd_speed_tape_t *spd,
@@ -205,7 +217,7 @@ static void mock_fill(const sim_state_t *st,
     stat->gps_have_fix   = !k.no_gps;
     stat->gps_sats       = k.no_gps ? 0 : 17;
     /* 满载：所有状态位同时点亮并取最坏宽度，用于验证顶栏是否溢出。 */
-    stat->rec_active     = !k.empty;
+    stat->rec_active     = !k.no_rec;
     stat->ble_connected  = !k.empty;
     stat->batt_valid     = true;   /* 电池在板上，没有「没接」这一说 */
     /* 电量图标有七档刻度 + 低电告警 + 充电动画，逐档验证需要能改电量而
@@ -225,8 +237,13 @@ static void mock_fill(const sim_state_t *st,
 
     /* 把本帧姿态推给运行时桩，交通目标才会随航向绕罗盘转。 */
     pk_mock_update(hsi->yaw_deg, alt->altitude_ft, anim_us);
-    stat->temp_warn      = !k.empty;
-    stat->temp_c         = k.empty ? 42 : 78;
+    stat->temp_warn      = !k.no_temp;
+    stat->temp_c         = k.no_temp ? 42 : 78;
+    /* 罗盘校准提示：走真实的 pk_ui_cal_hint_active()（page_stub.c 里由
+     * PK_SIM_CAL_HINT 摆），理由同上面的 sd_mounted——交通/地图/列表三页的顶栏
+     * 是 pk_ui_topbar_status_collect() 自己去问这个函数的，PFD 这边如果另造一路
+     * 假数据，同一次截图里 PFD 有图标而别的页没有。 */
+    stat->cal_hint       = pk_ui_cal_hint_active();
 }
 
 /*

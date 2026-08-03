@@ -58,6 +58,7 @@
 #include "settings_page.h"
 #include "traffic_page.h"
 #include "map_page.h"
+#include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 校准提示的相位门控 */
 #include "ui_state.h"
 #include "i18n.h"
 
@@ -157,7 +158,10 @@ static void pfd_task(void *arg)
 
         pk_imu_sample_t s;
         bool have = pk_imu_sample_get(&s);
-        pk_ui_cal_wizard_tick(have, have ? s.accuracy : 0);
+        /* 相位一并传进去：自动弹整页校准向导只允许在地面静止时发生，
+         * 飞行中一律降级成状态栏图标（见 pk_ui_cal_wizard_tick 的注释）。 */
+        pk_ui_cal_wizard_tick(have, have ? s.accuracy : 0,
+                              pk_own_sampler_get_phase());
 
         pk_ui_mode_t mode = pk_ui_get_mode();
 

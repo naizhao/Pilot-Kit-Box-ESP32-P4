@@ -93,6 +93,19 @@ ICONS = [
     ("BATT_CHG_5",   "battery_android_frame_5",    0xF253, 0),
     ("BATT_CHG_6",   "battery_android_frame_6",    0xF252, 0),
     ("BATT_CHG_FULL","battery_android_frame_full", 0xF24F, 0),
+    # 罗盘精度低的顶栏提示（pk_cal_advisor 给出 HINT 时）。
+    #
+    # 取 explore（圆环 + 指针）而不是 compass_calibration：后者画的是三道弧线的
+    # 扇形，渲出来跟 Wi-Fi 信号一个样，30 px 下没人会读成罗盘。
+    #
+    # 唯一一个**告警语义却取 FILL=0** 的图标，理由同电池那批：explore 填成实心
+    # 后指针被一起吃掉，只剩一枚圆饼——而"指针在圆环里"正是它说得清自己是罗盘
+    # 的全部依据。同组的 SD/TEMP/SAT 走 FILL=1 是因为它们的轮廓本身就是形状。
+    #
+    # 追加在末尾而不是插到 TEMP 旁边：电量九档靠 BATT_ALERT+step 取，虽是相对
+    # 偏移插在前面也不会错，但整张 4bpp 位图表会整体平移，生成的 pfd_icon_font.c
+    # 变成一份 12 KB 的全文件 diff，读的人分不出哪几行是真的新东西。
+    ("COMPASS",   "explore",             0xE87A, 0),
 ]
 
 # 图标不能与文字等高。图形内部留白远多于字母笔画（fiber_manual_record

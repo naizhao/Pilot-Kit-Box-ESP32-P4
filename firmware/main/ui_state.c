@@ -14,6 +14,8 @@
 #include "esp_timer.h"
 #include "sdkconfig.h"
 
+#include "pk_cal_advisor.h"   /* 校准提示的全部判定都在那边，这里只切页 */
+
 static const char *TAG = "ui";
 
 #define UI_LIST_PENDING_DELTA_MAX  999   /* upper saturation on the
@@ -29,15 +31,6 @@ static const char *TAG = "ui";
 #define UI_ABOUT_SCROLL_MAX_PX      40
 #define UI_DIAG_SCROLL_STEP_PX      24
 #define UI_DIAG_SCROLL_MAX_PX      300   /* 诊断页比 about 长(GPS 多行 + 每星座一行 SNR 柱状图) */
-
-/* Calibration-wizard auto-trigger thresholds. The 10 s enter window
- * is long enough that we don't bother the user with the wizard
- * during a brief acc=0 dip on first boot before fusion converges
- * normally; the 3 s exit window with acc≥2 confirms fusion has
- * really converged before we dismiss. */
-#define UI_CAL_WIZARD_ENTER_MS        10000
-#define UI_CAL_WIZARD_EXIT_MS          3000
-#define UI_CAL_WIZARD_EXIT_ACCURACY    2
 
 #define UI_TOAST_DURATION_US      (1500 * 1000)  /* toast 在屏幕上停留 1.5s */
 
@@ -67,45 +60,36 @@ static uint32_t          s_tfc_selected_icao;
 static uint32_t          s_own_icao_runtime;
 static bool              s_own_icao_set;
 
-/* Calibration wizard state. acc_first_low_us = first time we saw
- * acc=0 in the current "low streak"; acc_first_high_us = first time
- * we saw acc≥2 in the current "high streak". 0 = no current streak. */
-static int64_t           s_cal_acc_first_low_us;
-static int64_t           s_cal_acc_first_high_us;
+/* 校准向导渲染用的精度条（cal_wizard.c:282 / settings_draw.c:431 是消费方）。
+ * 只是把最近一次 tick 看到的 accuracy 存下来，不参与任何判定。 */
 static uint8_t           s_cal_last_accuracy;
 
 /*
- * 自动弹出校准页的"闸门"。true = 本次开机内不再自动进入。
+ * 「要不要提示校准」的全部判定状态。三段判据（重新武装滞回 / 飞行相位门控 /
+ * 磁干扰识别）与每个阈值的依据都写在 pk_cal_advisor.c，本文件只负责按它的
+ * 结论切页——判定和切页搅在一起正是骚扰循环的成因（见 pk_cal_advisor.h 文件
+ * 头列的三条实测依据）。
  *
- * 为什么需要它
- * ------------
- * 下面的 tick 只要看到 acc=0 连续 10 s 就把 s_mode 强拽成 CAL_WIZARD，进入
- * 后计时器清零、acc 仍是 0 就重新计时。于是用户**无论用什么方式离开**（点
- * 页内的「稍后再说」、或 FAB → 导航网格切到别的页），10 s 后都会被原样拽
- * 回来。真机实测：室内磁环境 + 刚重装的 IMU，acc 连续 40 s 都是 0。旧版的
- * 退路是物理 MODE 键，4.3″ 板上那个键已经没有了。
- *
- * 抑制到什么时候：**直到磁力计精度真的上过 UI_CAL_WIZARD_EXIT_ACCURACY**
- * （见下面 tick 里那句 s_cal_auto_suppressed = false）。
- *
- * 为什么不是"抑制 N 分钟"
+ * 为什么闸门不是"抑制 N 分钟"
  *   N 到期时磁环境多半没变（用户还在同一间屋里），于是再弹一次、再被关掉，
  *   只是把骚扰的周期拉长，循环并没有断。用户按下"稍后再说"表达的是"我知道
- *   没校准，现在不想弄"，这个意图不该被一个计时器推翻。
- *
- * 为什么重新武装的条件是"acc 曾经 ≥2"而不是"重启"
- *   acc 上过 2 说明设备确实完成过一次校准；此后再掉回 0 是**新的一次**退化
- *   （换了环境、靠近了磁干扰源），那时候提示是有信息量的，不是重复骚扰。
+ *   没校准，现在不想弄"，这个意图不该被一个计时器推翻。所以解除闸门的条件
+ *   是"精度真的连续好起来"（advisor 的 PK_CAL_REARM_MS）。
  *
  * 为什么是 RAM-only（不落 NVS）
  *   开机时用户正处在"准备飞行"的场景，提醒一次是合理的；把"不想校准"写进
  *   NVS 会让一台从此再也不提示的盒子看起来像坏了，而排查线索只有一条藏在
  *   NVS 里的布尔量。
  *
- * 注意：这只挡**自动进入**。手动进入（导航网格里的入口）与自动退出
- * （acc≥2 持续 3 s 回 PFD）的逻辑一个字都没动。
+ * 与 s_mode 共用 s_lock：advisor 自己无静态变量、不加锁，本文件是它唯一的
+ * 持有者，所有读写都在锁内完成。
  */
-static bool              s_cal_auto_suppressed;
+static pk_cal_advisor_t  s_cal_advisor;
+
+/* 最近一次 tick 的建议等级，供 pk_ui_cal_hint_active() 读（阶段 C3 的状态栏
+ * 图标）。存结论而不是每次现算：advice 是**电平**，重算要带上当前时刻，而
+ * 状态栏取数的那一拍与 tick 不是同一拍。 */
+static pk_cal_advice_t   s_cal_advice;
 
 /* Transient toast. s_toast_until_us == 0 (or now past it) → no toast.
  * s_toast_blink_times>0 时按 400 ms 一拍闪烁（阶段 5b，见 ui_state.h
@@ -125,6 +109,10 @@ esp_err_t pk_ui_init(void)
         ESP_LOGE(TAG, "mutex alloc failed");
         return ESP_ERR_NO_MEM;
     }
+    /* 静态存储的零值恰好就是 advisor 的正确初值，这句因此是冗余的——留着是
+     * 因为"初值由谁定"该有一个看得见的答案，而不是靠读者自己去确认
+     * pk_cal_advisor_reset() 只是一句 memset(0)。 */
+    pk_cal_advisor_reset(&s_cal_advisor);
     ESP_LOGI(TAG, "ui_state ready (default mode: PFD)");
     return ESP_OK;
 }
@@ -153,6 +141,15 @@ static const char *mode_name(pk_ui_mode_t m)
     }
 }
 
+/* advisor 的时基是 uint32 毫秒，esp_timer 给的是 int64 微秒。
+ * 先在 int64 上整除再截断——反过来（先截 32 位再除 1000）会在开机 71 分钟
+ * 后把时刻算错。截断本身是有意的：advisor 的时间比较全是无符号差值，
+ * 49.7 天回绕照样正确（见 pk_cal_advisor.h 文件头与测试 SC8）。 */
+static uint32_t cal_now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
 void pk_ui_toggle_mode(void)
 {
     if (s_lock == NULL) return;
@@ -174,9 +171,9 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;
                                  /* 手动离开校准页 = 用户明确表示"现在不想
                                   * 校准"，关掉自动重弹的闸门，理由见
-                                  * s_cal_auto_suppressed 的注释。 */
-                                 s_cal_auto_suppressed = true;
-                                 s_cal_acc_first_low_us = 0;    break;
+                                  * s_cal_advisor 的注释。 */
+                                 pk_cal_advisor_dismiss(&s_cal_advisor,
+                                                        cal_now_ms());  break;
     default:                     s_mode = PK_UI_MODE_PFD;       break;
     }
     pk_ui_mode_t new_mode = s_mode;
@@ -194,8 +191,7 @@ void pk_ui_set_mode(pk_ui_mode_t mode)
      * set_mode 都抑制"，用户开机后随便切一次页，这一整轮开机就再也不会提示
      * 校准了。 */
     if (s_mode == PK_UI_MODE_CAL_WIZARD && mode != PK_UI_MODE_CAL_WIZARD) {
-        s_cal_auto_suppressed  = true;
-        s_cal_acc_first_low_us = 0;
+        pk_cal_advisor_dismiss(&s_cal_advisor, cal_now_ms());
     }
     s_mode = mode;
     /* 进入 About/Diag 时复位各自滚动位置 —— 与 toggle 路径行为一致。 */
@@ -216,14 +212,14 @@ void pk_ui_set_mode(pk_ui_mode_t mode)
 void pk_ui_cal_wizard_dismiss(void)
 {
     if (s_lock == NULL) return;
+    uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_mode                 = PK_UI_MODE_PFD;
-    s_cal_auto_suppressed  = true;
-    s_cal_acc_first_low_us = 0;
+    s_mode = PK_UI_MODE_PFD;
+    pk_cal_advisor_dismiss(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "mode → PFD (user dismissed cal wizard; auto-enter "
-                  "suppressed until acc≥%u is seen again)",
-             UI_CAL_WIZARD_EXIT_ACCURACY);
+                  "suppressed until acc≥%u holds for >%ums)",
+             (unsigned)PK_CAL_EXIT_ACCURACY, (unsigned)PK_CAL_REARM_MS);
 }
 
 /*
@@ -231,91 +227,103 @@ void pk_ui_cal_wizard_dismiss(void)
  *
  * 为什么不让设置页直接调 pk_ui_set_mode(PK_UI_MODE_CAL_WIZARD)
  * ---------------------------------------------------------
- * 那样只切页，不动闸门。而 s_cal_auto_suppressed 一旦被「稍后再说」/切走
- * 那两条路径置上，就要等磁力计精度真的上到 UI_CAL_WIZARD_EXIT_ACCURACY 才会
- * 复位（见该变量的注释）——恰恰是"还没校准好"的时候它一直关着。用户此刻的
- * 动作说明他改主意了，闸门必须跟着重新武装：不然他在这一页没转够就退出去，
- * 本次开机内既不会自动提醒、也不会有第二次提示。
+ * 那样只切页，不动闸门。而闸门（advisor 的 suppressed）一旦被「稍后再说」/
+ * 切走那两条路径置上，就要等磁力计精度真的**连续**好起来才会复位（见
+ * pk_cal_advisor.h 的 PK_CAL_REARM_MS）——恰恰是"还没校准好"的时候它一直
+ * 关着。用户此刻的动作说明他改主意了，闸门必须跟着重新武装：不然他在这一页
+ * 没转够就退出去，本次开机内既不会自动提醒、也不会有第二次提示。
  *
- * 闸门的开关一律留在本文件：s_cal_auto_suppressed 是私有状态，让设置页去改
- * 就得把它导出去，"谁在什么时候动过闸门"就散进各个页面了。页面只表达意图。
+ * 闸门的开关一律留在本文件：s_cal_advisor 是私有状态，让设置页去改就得把它
+ * 导出去，"谁在什么时候动过闸门"就散进各个页面了。页面只表达意图。
  *
- * 两个计时器也一并清零，各有各的原因：
- *   - s_cal_acc_first_low_us：进来之后 tick 的自动进入分支本来就不该再触发
- *     （已经在这一页了），清零与自动进入路径的做法一致。
- *   - s_cal_acc_first_high_us：**不清零会让这一页当场闪一下就跑掉**。设备
- *     若已经校准好（acc≥2 持续了几分钟），tick 的自动退出分支下一拍就满足
- *     "acc≥2 超过 3 s"，用户刚点开就被弹回 PFD。清零后至少有 3 s 的窗口；
- *     3 s 后仍然自动退回是**有意保留**的——精度已经够了，这一页没事可做，
- *     而真正需要校准（acc<2）时自动退出根本不会触发，页面会一直等着他。
+ * pk_cal_advisor_user_open() 顺手把两条连续段计时器一并清零，各有各的原因
+ * （下面这段真机结论原样搬进了 advisor，那边照抄了同一段推理）：
+ *   - 低精度那条：进来之后自动进入分支本来就不该再触发（已经在这一页了），
+ *     清零与自动进入路径的做法一致。
+ *   - 高精度那条：**不清零会让这一页当场闪一下就跑掉**。设备若已经校准好
+ *     （acc≥2 持续了几分钟），自动退出下一拍就满足"acc≥2 超过 3 s"，用户刚
+ *     点开就被弹回 PFD。清零后至少有 3 s 的窗口；3 s 后仍然自动退回是**有意
+ *     保留**的——精度已经够了，这一页没事可做，而真正需要校准（acc<2）时
+ *     自动退出根本不会触发，页面会一直等着他。
  */
 void pk_ui_cal_wizard_enter(void)
 {
     if (s_lock == NULL) return;
+    uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_mode                  = PK_UI_MODE_CAL_WIZARD;
-    s_cal_auto_suppressed   = false;
-    s_cal_acc_first_low_us  = 0;
-    s_cal_acc_first_high_us = 0;
+    s_mode = PK_UI_MODE_CAL_WIZARD;
+    pk_cal_advisor_user_open(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "mode → CAL_WIZARD (user opened it from settings; "
                   "auto-enter re-armed)");
 }
 
-void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy)
+void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase)
 {
     if (s_lock == NULL) return;
 
-    int64_t now = esp_timer_get_time();
+    uint32_t now_ms = cal_now_ms();
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_cal_last_accuracy = valid ? accuracy : 0;
 
-    if (valid && accuracy == 0) {
-        if (s_cal_acc_first_low_us == 0) s_cal_acc_first_low_us = now;
-        s_cal_acc_first_high_us = 0;
-    } else if (valid && accuracy >= UI_CAL_WIZARD_EXIT_ACCURACY) {
-        if (s_cal_acc_first_high_us == 0) s_cal_acc_first_high_us = now;
-        s_cal_acc_first_low_us = 0;
-        /* 精度真的上来过 → 重新武装自动弹出。之后再掉回 0 是**新的一次**
-         * 退化（换了环境/受了磁干扰），那时候提示是有信息量的。 */
-        s_cal_auto_suppressed = false;
-    } else {
-        /* acc=1 or invalid: don't progress either timer, but
-         * don't reset them either — fusion is in transit. */
-    }
+    pk_cal_advice_t advice = pk_cal_advisor_update(&s_cal_advisor, now_ms,
+                                                   valid, accuracy, phase);
+    s_cal_advice = advice;
 
-    /* Auto-enter wizard from any non-wizard mode if acc has been
-     * stuck at 0 for the enter window. s_cal_auto_suppressed 是用户手动
-     * 关过之后的闸门——没有它，「稍后再说」按下去 10 s 就白按了。 */
-    if (s_mode != PK_UI_MODE_CAL_WIZARD &&
-        !s_cal_auto_suppressed &&
-        s_cal_acc_first_low_us != 0 &&
-        (now - s_cal_acc_first_low_us) / 1000 >= UI_CAL_WIZARD_ENTER_MS) {
+    /*
+     * IMU 断流（valid=false）时只是不抢页面，其余照常。
+     *
+     * 为什么挡在这一层而不是改状态机：advisor 的低精度累计走的是墙钟差值，
+     * valid=false 的样本既不推进也不清零计时器（这是从旧实现原样搬过去的
+     * 行为——"这一拍没取到数"不等于"磁环境变了"）。于是一个在断流之前就已
+     * 起算的低精度连续段，会在断流期间照样走满 ENTER 窗口给出 WIZARD。
+     * 这不是判定错：advisor 回答的是"该不该提示校准"，而"要不要为此换页"
+     * 是页面层的事——一块读不到姿态的板子弹出一页让人画 8 字毫无意义，
+     * 进度条也只会停在 0。让状态机去分辨这件事就得把 valid 的语义从"这一拍
+     * 没取到数"扩成"IMU 是不是活着"，那需要另一条超时判据，纯属为一行胶水
+     * 加一个状态。
+     */
+    bool take_page = (advice == PK_CAL_ADVICE_WIZARD) && valid;
+
+    if (take_page && s_mode != PK_UI_MODE_CAL_WIZARD) {
         s_mode = PK_UI_MODE_CAL_WIZARD;
-        s_cal_acc_first_low_us = 0;       /* reset so we don't re-trigger immediately */
         xSemaphoreGive(s_lock);
-        ESP_LOGW(TAG, "mode → CAL_WIZARD (auto: acc=0 for >%dms — "
-                       "device needs figure-8 motion)",
-                 UI_CAL_WIZARD_ENTER_MS);
+        ESP_LOGW(TAG, "mode → CAL_WIZARD (auto: acc=0 for >%ums, parked and "
+                       "no magnetic jamming — device needs figure-8 motion)",
+                 (unsigned)PK_CAL_ENTER_MS);
         return;
     }
 
-    /* Auto-exit wizard back to PFD when acc has been ≥2 for the
-     * exit window. */
     if (s_mode == PK_UI_MODE_CAL_WIZARD &&
-        s_cal_acc_first_high_us != 0 &&
-        (now - s_cal_acc_first_high_us) / 1000 >= UI_CAL_WIZARD_EXIT_MS) {
+        pk_cal_advisor_should_exit_wizard(&s_cal_advisor)) {
         s_mode = PK_UI_MODE_PFD;
-        s_cal_acc_first_high_us = 0;
         xSemaphoreGive(s_lock);
-        ESP_LOGI(TAG, "mode → PFD (auto: acc≥%u for >%dms — "
-                       "fusion converged, dismissing wizard)",
-                 UI_CAL_WIZARD_EXIT_ACCURACY, UI_CAL_WIZARD_EXIT_MS);
+        ESP_LOGI(TAG, "mode → PFD (auto: acc≥%u for >%ums — fusion converged, "
+                       "dismissing wizard)",
+                 (unsigned)PK_CAL_EXIT_ACCURACY, (unsigned)PK_CAL_EXIT_MS);
         return;
     }
 
     xSemaphoreGive(s_lock);
+}
+
+bool pk_ui_cal_hint_active(void)
+{
+    if (s_lock == NULL) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool v = (s_cal_advice == PK_CAL_ADVICE_HINT);
+    xSemaphoreGive(s_lock);
+    return v;
+}
+
+bool pk_ui_cal_jammed(void)
+{
+    if (s_lock == NULL) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool v = pk_cal_advisor_is_jammed(&s_cal_advisor);
+    xSemaphoreGive(s_lock);
+    return v;
 }
 
 uint8_t pk_ui_cal_wizard_last_accuracy(void)

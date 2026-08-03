@@ -312,9 +312,10 @@ bool pk_cal_wizard_touch(int x, int y)
     if (x < x0 || x >= x1 || y < y0 || y >= y1) return false;
 
     s_btn_down = true;
-    /* 关页 **并** 抑制自动重弹。只关页的话 10 s 后 pk_ui_cal_wizard_tick()
-     * 会把用户原样拽回来——那等于这个按钮没做（成因与抑制策略见 ui_state.c
-     * 里 s_cal_auto_suppressed 的注释）。 */
+    /* 关页 **并** 抑制自动重弹。只关页的话下一轮低精度窗口一满，
+     * pk_ui_cal_wizard_tick() 就把用户原样拽回来——那等于这个按钮没做。
+     * 抑制不是"闭嘴 N 分钟"，而是要等精度真的连续好起来才解除（成因与三段
+     * 判据见 ui_state.c 里 s_cal_advisor 的注释、阈值见 pk_cal_advisor.h）。 */
     pk_ui_cal_wizard_dismiss();
     return true;
 }
