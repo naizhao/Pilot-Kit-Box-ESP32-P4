@@ -7,9 +7,17 @@
  * The driver delivers a fused attitude report at 100 Hz plus a
  * gravity-subtracted linear-acceleration report at 50 Hz to the rest
  * of the firmware. It still doesn't expose raw accelerometer, gyro, or
- * magnetometer streams; it doesn't run calibration commands; it
- * doesn't speak the executable channel for firmware updates. Add those
- * only when a concrete firmware feature needs them.
+ * magnetometer streams and doesn't speak the executable channel for
+ * firmware updates. Add those only when a concrete firmware feature
+ * needs them.
+ *
+ * The one calibration command it does issue on its own is SH-2 Save
+ * DCD (0x06), fired once per boot after the fusion accuracy has been
+ * pegged at 3 for a few seconds, so the magnetometer calibration
+ * survives a power cycle instead of re-converging from scratch every
+ * time. See the DCD block in imu_task.c for the trigger and the
+ * flash-wear throttle. Note this is BNO085-internal flash and is a
+ * different thing from pk_imu_tare_persist()'s NVS blob.
  *
  *   Reset → drain SHTP advertisement → enable "Rotation Vector" report
  *   (Sensor Report ID 0x05) at 10 ms interval + "Linear Acceleration"

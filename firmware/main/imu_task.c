@@ -69,6 +69,7 @@ static const char *TAG = "imu";
 
 #define SH2_CMD_SET_FEATURE      0xFD
 #define SH2_CMD_REQUEST          0xF2
+#define SH2_CMD_RESPONSE         0xF1   /* 芯片对 0xF2 的回执，走控制通道 */
 #define SH2_REPORT_ROTATION_VECTOR      0x05
 #define SH2_REPORT_LINEAR_ACCELERATION  0x04  /* gravity already removed by SH-2 */
 
@@ -633,6 +634,78 @@ static esp_err_t bno_bring_up(void)
     return bno_enable_linear_acceleration();
 }
 
+/* --- DCD 落盘（磁场动态校准数据 → BNO085 内部 flash） ----------------- *
+ *
+ * 为什么必须显式存：融合引擎运行时一直在更新 DCD（磁力计硬铁偏置等），
+ * 但**只在收到 Save DCD 命令时**才写进芯片自己的 flash。此前固件从来没发
+ * 过这条命令（0x06 只有宏定义、没有调用点），于是每次上电磁场融合都从零
+ * 开始。2026-08-03 真机日志：盒子静止放桌上 48 秒 acc 全程 0，校准页照样
+ * 在 t=31.7s 弹出——磁力计静止时物理上就无法自校准，不给它一份开机就能
+ * 恢复的校准，用户永远在等一个等不来的收敛。
+ *
+ * 注意跟 pk_imu_tare_persist() 不是一回事：那个存的是软件 tare 四元数、
+ * 落在 ESP32 的 NVS，明确不碰 DCD（见 imu_task.h 的说明）。这里存的是芯片
+ * 自己的校准数据、落在芯片自己的 flash。 */
+
+/* acc 必须连续这么多秒都是 3（最高档）才落盘。
+ *
+ * 用 3 不用 2：存一份半吊子校准进 flash，下次开机恢复出来的还是半吊子，
+ * 还不如让它重新收敛。
+ *
+ * 5 秒这个时长取自真机日志——acc 是一档一档往上爬的（t=36.4s acc=1 →
+ * 38.4s acc=2 → 40.4s acc=3，每档约 2 秒），连续 5 秒读到 3 说明已经越过
+ * 整个爬升过程稳定停在顶档，而不是路过。多等这几秒没有代价，早存一次的
+ * 代价是一份写死在 flash 里、下次开机还要拖累收敛的坏校准。 */
+#define IMU_DCD_SAVE_DWELL_S     5
+
+/* 本次开机是否已经存过。BNO08x 的 FRS flash 有写入寿命，所以判据是"每次
+ * 开机最多一次"，而不是"只要 acc=3 就周期性存"——后者会在一次长途飞行里
+ * 写掉成百上千次。
+ *
+ * volatile：置位在 imu_task，清零在 pk_imu_factory_reset()（另一个任务）。
+ * 单字节读写在 RV32 上是原子的，两边交错最坏也就是多存/少存一次，不值得
+ * 为它引一把锁。 */
+static volatile bool s_dcd_saved;
+
+static esp_err_t bno_save_dcd(void)
+{
+    /* SH-2 Command 0x06 "Save DCD Now" 不带参数，9 个参数字节全 0——
+     * 写法与 bno_clear_persisted_dcd() 一致。 */
+    uint8_t p[9] = {0};
+    return sh2_send_command(SH2_COMMAND_SAVE_DCD, p);
+}
+
+/* --- Save DCD 的 Command Response 观察点 ------------------------------ *
+ *
+ * sh2_send_command() 的返回值只能证明那 12 个字节被 I²C 发出去了，证明不了
+ * 芯片真的把 DCD 写进了 flash；而 flash 里有什么在盒子上没有任何可见现象。
+ * 所以多看一眼芯片的回执。Command Response 走控制通道，布局见 SH-2
+ * Reference Manual §6.4：
+ *
+ *   byte 0:  0xF1（report ID）
+ *   byte 1:  SHTP 序号
+ *   byte 2:  command —— 回显我们发的命令码；用它过滤掉芯片复位后自己发的
+ *            那些响应（Initialize 等），否则每次 bring-up 都要刷一片日志
+ *   byte 3:  command sequence（回显 sh2_send_command 里的 s_cmd_seq）
+ *   byte 4:  response sequence
+ *   byte 5+: R0..R10；对 0x06 而言 R0 = status，0 = 成功
+ *
+ * 只打日志，不参与任何判据：万一 R0 的语义与手册理解有出入，代价也只是一行
+ * 多余的日志，落盘逻辑与节流都不受影响。 */
+static void imu_note_save_dcd_response(const uint8_t *cargo, size_t len)
+{
+    if (len < 6) return;
+    if (cargo[0] != SH2_CMD_RESPONSE)      return;
+    if (cargo[2] != SH2_COMMAND_SAVE_DCD)  return;
+
+    uint8_t r0 = cargo[5];
+    if (r0 == 0) {
+        ESP_LOGI(TAG, "BNO: Save DCD 回执 R0=%u（0 = 芯片已写入 flash）", r0);
+    } else {
+        ESP_LOGW(TAG, "BNO: Save DCD 回执 R0=%u（非 0 = 芯片拒绝写入）", r0);
+    }
+}
+
 /* --- IMU polling task ------------------------------------------------ *
  *
  * Polls SHTP at 200 Hz, parses Rotation Vector reports, logs a 1 Hz
@@ -677,6 +750,10 @@ static void imu_task(void *arg)
     uint32_t recv_not_found     = 0;   /* shtp_recv returned ESP_ERR_NOT_FOUND (no data this tick) */
     uint32_t recv_i2c_err       = 0;   /* shtp_recv returned a real I²C bus error */
     uint32_t recv_wrong_channel = 0;   /* SHTP frame received but channel != 3 (CH 0/1/2/4 etc.) */
+
+    /* acc 已经连续读到 3 多少秒（在 1 Hz 那一段累加，掉档即清零）。
+     * 攒够 IMU_DCD_SAVE_DWELL_S 就落盘一次，见下面的调用点。 */
+    uint32_t dcd_dwell_s = 0;
 
     while (1) {
         /* --- 总线被别人救回来了？先把自己重新初始化，再谈轮询 --- */
@@ -723,6 +800,11 @@ static void imu_task(void *arg)
                 }
             } else {
                 recv_wrong_channel++;
+                /* 控制通道上唯一还关心的东西：Save DCD 的回执。其余照旧
+                 * 只计数、DEBUG 一行然后丢掉。 */
+                if (channel == SHTP_CH_CONTROL) {
+                    imu_note_save_dcd_response(cargo, cargo_len);
+                }
                 ESP_LOGD(TAG, "shtp ch=%u cargo=%u (ignored)",
                          channel, (unsigned)cargo_len);
             }
@@ -780,10 +862,14 @@ static void imu_task(void *arg)
 
             pk_imu_sample_t s;
             pk_imu_sample_get(&s);
+            /* vib 也一起打出来：下一步要做"盒子静止时不提示校准"，而判静止
+             * 的阈值只能用真机实测值定——pk_vib.h 只保证 0=不可用、真正静止
+             * 是一个小的非零值，到底是 1 还是 5 谁也没量过。有了这个观测点，
+             * 烧一次就能顺带把静止/运动两种状态的基线采下来。 */
             ESP_LOGI(TAG, "rpy = %+7.2f / %+7.2f / %7.2f  "
                           "raw_q(w,i,j,k) = %+0.4f %+0.4f %+0.4f %+0.4f  "
                           "(acc=%u valid=%lu parse_fail=%lu "
-                          "nf=%lu i2c_err=%lu wrong_ch=%lu)",
+                          "nf=%lu i2c_err=%lu wrong_ch=%lu vib=%u)",
                      s.roll_deg, s.pitch_deg, s.yaw_deg,
                      s_last_raw_qw, s_last_raw_qi, s_last_raw_qj, s_last_raw_qk,
                      s.accuracy,
@@ -791,7 +877,51 @@ static void imu_task(void *arg)
                      (unsigned long)parse_fail,
                      (unsigned long)recv_not_found,
                      (unsigned long)recv_i2c_err,
-                     (unsigned long)recv_wrong_channel);
+                     (unsigned long)recv_wrong_channel,
+                     s.vib_level);
+
+            /* --- acc 稳定到顶档就把 DCD 存进芯片 flash（每次开机一次） --- *
+             *
+             * 落点选在这里而不是 parse_rotation_vector()：那边跑在 100 Hz 的
+             * 轮询回路里、而且正持着 s_sample_lock，在锁内做一笔阻塞的
+             * i2c_master_transmit 会把所有 pk_imu_sample_get() 的消费者
+             * （PFD、交通页、看板…）一起卡住。这里既没持锁，1 Hz 的节奏又
+             * 天然就是 dwell 计数器要的刻度；而且和收发 SHTP 的是同一个任务，
+             * s_tx_seq / s_cmd_seq 这些没有互斥保护的序号不会被并发写。 */
+            if (!s_dcd_saved) {
+                /* 判据必须取**芯片真实状态**，不能复用上面那份 s：演示模式下
+                 * pk_imu_sample_get() 整个被 demo_data 接管、accuracy 硬编码
+                 * 成 3（demo_data.c 的 pk_demo_imu_sample），拿它当判据会在
+                 * 根本没插 IMU 的演示机上白烧掉一次 flash 写入。 */
+                uint8_t hw_acc;
+                bool    hw_valid;
+                xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+                hw_acc   = s_sample.accuracy;
+                hw_valid = s_sample.valid;
+                xSemaphoreGive(s_sample_lock);
+
+                if (hw_valid && hw_acc == 3) dcd_dwell_s++;
+                else                         dcd_dwell_s = 0;
+
+                if (dcd_dwell_s >= IMU_DCD_SAVE_DWELL_S) {
+                    /* 先置位再发：发失败也不重试。失败要么是总线坏了（stall
+                     * watchdog 会去修，修完芯片一复位 acc 归零、这轮校准本来
+                     * 就没了），要么是芯片状态不对——两种情况下反复重发都只是
+                     * 在消耗 flash 写入寿命。 */
+                    s_dcd_saved = true;
+                    esp_err_t derr = bno_save_dcd();
+                    if (derr == ESP_OK) {
+                        ESP_LOGI(TAG, "BNO: 已发出 Save DCD（acc=3 连续 %u s）"
+                                      "— 磁场校准写入芯片 flash，下次开机应直接高 acc",
+                                 (unsigned)IMU_DCD_SAVE_DWELL_S);
+                    } else {
+                        ESP_LOGW(TAG, "BNO: Save DCD 发送失败: %s "
+                                      "— 本次开机不再重试，下次开机磁场仍需重新收敛",
+                                 esp_err_to_name(derr));
+                    }
+                }
+            }
+
             valid_count        = 0;
             parse_fail         = 0;
             recv_not_found     = 0;
@@ -1098,6 +1228,12 @@ esp_err_t pk_imu_factory_reset(void)
                       "continuing", esp_err_to_name(err));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* 重新武装 DCD 落盘：刚把 flash 里的 DCD 擦掉，用户接下来做 8 字校准把
+     * acc 重新跑到 3，那份新校准值得存。不清这个标志的话，"每次开机最多存
+     * 一次"的节流会把 factory reset 之后的重新校准挡在门外——用户白做一遍
+     * 8 字，还得再重启一次才能生效。 */
+    s_dcd_saved = false;
 
     /* Step 5: hard reset + replay init so the chip rebuilds fusion
      * state from now-clean flash. */
