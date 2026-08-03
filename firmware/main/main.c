@@ -533,8 +533,10 @@ void app_main(void)
         ESP_LOGW(TAG, "display init failed (%s) — running headless",
                  esp_err_to_name(lcd_err));
     } else {
-        pk_boot_splash_render(pk_display_framebuffer());
-        (void)pk_display_flush_full();
+        /* splash 第一帧就带进度条（0/3）。用户从这一刻起看到的不再是一张
+         * 静止的 logo，而是"机器在干什么、还剩几步"——出 logo 到能操作之间
+         * 还有 3 s，那 3 s 以前是纯白等。 */
+        pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_START), 0, 3);
         /* 走档位而不是裸占空比：设置页的高亮读的是同一个 s_bl_step，
          * 开机点亮就必须落在某一档上，否则第一次进设置页三段全不高亮。 */
         pk_backlight_step_set(PK_BL_STEP_MID);
@@ -543,6 +545,7 @@ void app_main(void)
 
     /* BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
+    pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_SENSORS), 1, 3);
     esp_err_t imu_err = pk_imu_init();
     if (imu_err != ESP_OK) {
         ESP_LOGW(TAG, "IMU init failed (%s) — PFD will run without attitude",
@@ -553,6 +556,34 @@ void app_main(void)
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
+
+    /*
+     * 地图扫描放在 splash 期间 —— 这是**产品决定压过时序最优**的一处，改之前
+     * 先读完这段，别照着"哪个数字小选哪个"又挪回去。
+     *
+     * pk_map_store_scan() 同步扫 /sdcard/maps 下 4 个 pmtiles 约 3.9 s。位置
+     * 实测过四个点：
+     *
+     *   ① app_main 中段（最初）—— 把 hosted 握手和点屏一起往后顶，出 logo
+     *      要 10.3 s，其间背光已亮（BL_EN 被 100 kΩ 上拉，上电即通），就是
+     *      "亮着一块空屏"。
+     *   ② app_main 最末（SDR 之后）—— 扫描的 SD I/O 撞上 RTL-SDR 的 4 MB/s
+     *      IQ 流，每扫一个包丢一次、单次丢到 282 KB。
+     *   ③ PFD 之后、SDR 之前 —— 时序最漂亮：PFD 8.40 s 可交互、丢包 0。
+     *   ④ 这里（splash 期间）—— PFD 11.37 s、丢包 8 次，都比 ③ 差。
+     *
+     * 仍然选 ④，因为 ③ 有个数字之外的代价：PFD 一起来 splash 就没了，扫描
+     * 退到后台，**进度条照不到它**。而这 3.9 s 恰恰是开机最长的一段等待，
+     * 用户要的正是"别让我白等"。摆在进度条里的 4 s，比藏在后台的 4 s 好过。
+     *
+     * ④ 的两笔代价都可接受：PFD 晚 3 s，但这 3 s 屏幕上有明确进度、不是空等；
+     * 丢包 8 次发生在开机瞬间，此时 ADS-B 还没有任何目标可丢。
+     *
+     * 依赖：只要求晚于 pk_sdcard_init()（早就调过了）。
+     */
+    pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_MAP), 2, 3);
+    pk_tile_loader_init();
+    pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_READY), 3, 3);
 
     /* UI state lives in its own module so the button callback can flip
      * the mode without touching the render task directly. Default mode

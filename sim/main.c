@@ -70,6 +70,13 @@
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
  *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
  *
+ * 开机画面的进度条（PK_SIM_PAGE=splash 才有意义）：
+ *     PK_SIM_SPLASH_STAGE=<0..3>  停在第几个阶段（0 正在启动 / 1 传感器 /
+ *                                 2 地图数据 / 3 系统可用），走真机同一条
+ *                                 pk_boot_splash_progress()
+ *     PK_SIM_SPLASH_DONE=<n>      覆盖"已完成步数"
+ *     PK_SIM_SPLASH_TOTAL=<n>     覆盖"总步数"（两者一起用来压位数最多的计数）
+ *
  * 磁力计校准向导（这一页用户**点不进去**，acc=0 满 10 s 才自动弹）：
  *     PK_SIM_CAL=1           渲染校准页（= PK_SIM_PAGE=cal 的简写）
  *     PK_SIM_CAL_ACC=<0..3>  进度条档位：0 橙 / 1 黄 / 2、3 绿
@@ -126,6 +133,7 @@
 #include "pfd_statusbar.h"
 #include "pfd_tape.h"
 #include "pk_sdcard.h"
+#include "ui_state.h"      /* pk_ui_cal_hint_active —— 顶栏那枚罗盘图标的开关 */
 
 /* 窗口放大倍数。真机 320×240 在 Retina 上太小看不清细节，放大 3 倍
  * 观察；改到 800×480 之后可以调成 1~2。 */
@@ -133,7 +141,6 @@
 
 /* 模拟器主循环频率。真机 PFD 约 30 FPS，这里也按 30 跑，好让动画
  * 观感和真机一致。 */
-#include "ui_state.h"      /* pk_ui_cal_hint_active —— 顶栏那枚罗盘图标的开关 */
 #define TARGET_FPS 30
 
 /* ------------------------------------------------------------------ */
@@ -169,13 +176,6 @@ static sim_lack_t sim_lack(void)
         .no_gps     = pk_sim_flag("PK_SIM_NO_GPS"),
         .no_baro    = pk_sim_flag("PK_SIM_NO_BARO"),
         .no_traffic = pk_sim_flag("PK_SIM_NO_TRAFFIC"),
-        /* 总开关本身也当一路用：录制、蓝牙连接、超温这几项不是「传感器缺数据」
-         * 而是「什么都还没发生」，出厂开机一律是灭的。 */
-        .empty      = pk_sim_flag("PK_SIM_EMPTY"),
-    };
-    return l;
-}
-
         /* 顶栏中段这两项单独可关。默认（满载）压的是"装不下就按优先级丢"，
          * 但真机常态恰恰是这两项都灭着——rec_active 至今没有数据源（pfd.c 的
          * TODO(P2-1)），temp_warn 只在超温时为真。中段只有 200 px 硬预留
@@ -185,6 +185,13 @@ static sim_lack_t sim_lack(void)
          * 的行为逐位相同。 */
         .no_rec     = pk_sim_flag("PK_SIM_NO_REC"),
         .no_temp    = pk_sim_flag("PK_SIM_NO_TEMP"),
+        /* 总开关本身也当一路用：录制、蓝牙连接、超温这几项不是「传感器缺数据」
+         * 而是「什么都还没发生」，出厂开机一律是灭的。 */
+        .empty      = pk_sim_flag("PK_SIM_EMPTY"),
+    };
+    return l;
+}
+
 static void mock_fill(const sim_state_t *st,
                       pk_pfd_imu_t *imu, pk_pfd_hsi_t *hsi,
                       pk_pfd_alt_tape_t *alt, pk_pfd_speed_tape_t *spd,
@@ -348,6 +355,10 @@ static int run_headless(float at_sec, const char *out)
     /* 经 LVGL 走一遍，而不是直接看 PFD 写的那块缓冲：截图要反映的是**合成
      * 之后**的画面，叠上 FAB / toast / DEMO 标识才不会漏掉图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
+    /* boot_splash 的进度接口自己调 pk_display_framebuffer() 取缓冲（真机上
+     * 那是 display.c 的 PSRAM framebuffer），sim 里得把这块画布交给桩，
+     * 否则进度条画到一块没人看的内存上。见 compat/page_stub.c 那一段。 */
+    pk_sim_display_set_framebuffer(fb);
     pk_ui_nav_init();
     /* 演示模式标识。放在这里、在页面渲染**之前**，是为了让它像真机一样压在
      * 任何一页之上——真机由 pfd.c 每帧同步，模拟器一帧就够。 */
@@ -446,7 +457,41 @@ static int run_headless(float at_sec, const char *out)
                 }
             }
         } else if (strcmp(page, "splash") == 0) {
-            pk_boot_splash_render(fb);
+            /*
+             * PK_SIM_SPLASH_STAGE=<0..3> 摆开机进度条的某一阶段，走**真机
+             * 同一条** pk_boot_splash_progress()：它自己取 framebuffer
+             * （上面已经把 sim 的画布交给 display 桩了）、重画、推屏，与
+             * app_main 里那几行一模一样。不给这个开关就是"没报过进度"的原始
+             * 版面——既有基线图 ui-4.3-splash / demo-4.3-splash 走的正是它。
+             *
+             * 阶段名取 catalog 词条而不是写字面量：手写的汉字不保证在字库
+             * 子集里（gen_pfd_aa_font.py 按 catalog 抽子集），那样截出来的图
+             * 会用一套真机上不存在的字形，见 PK_SIM_TOAST_REC 那处的教训。
+             *
+             * PK_SIM_SPLASH_DONE / _TOTAL 覆盖计数，用来压"位数最多"的一版
+             * （默认按 done=阶段序号、total=3，与 boot_splash.h 建议的调用
+             * 次序一致）。
+             */
+            const char *stg = getenv("PK_SIM_SPLASH_STAGE");
+            if (stg != NULL && stg[0] != '\0') {
+                static const pk_tr_id_t kStages[] = {
+                    PK_TR_BOOT_STAGE_START,
+                    PK_TR_BOOT_STAGE_SENSORS,
+                    PK_TR_BOOT_STAGE_MAP,
+                    PK_TR_BOOT_STAGE_READY,
+                };
+                const int n = (int)(sizeof(kStages) / sizeof(kStages[0]));
+                int idx = atoi(stg);
+                if (idx < 0)  idx = 0;
+                if (idx >= n) idx = n - 1;
+                const char *d = getenv("PK_SIM_SPLASH_DONE");
+                const char *t = getenv("PK_SIM_SPLASH_TOTAL");
+                pk_boot_splash_progress(pk_i18n_text(kStages[idx]),
+                                        d ? atoi(d) : idx,
+                                        t ? atoi(t) : n - 1);
+            } else {
+                pk_boot_splash_render(fb);
+            }
         } else if (strcmp(page, "traffic") == 0) {
             pk_traffic_page_render(fb);
         } else if (strcmp(page, "list") == 0) {
@@ -853,6 +898,7 @@ int main(int argc, char **argv)
     /* PFD 写入的是 LVGL canvas 的缓冲；窗口上显示的是 LVGL 合成之后的结果。
      * 两者分开，叠上 FAB / toast / DEMO 标识才看得出图层间的相互影响。 */
     uint16_t *fb = pk_sim_lv_init();
+    pk_sim_display_set_framebuffer(fb);   /* 同 run_headless()，见那边的注释 */
     pk_sim_lv_attach_mouse(ZOOM);   /* 鼠标当触摸用，验证 FAB 的点击与拖动 */
     pk_ui_nav_init();
     pk_ui_nav_set_demo(pk_demo_enabled());

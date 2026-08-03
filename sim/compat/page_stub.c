@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/time.h>          /* gettimeofday：墙钟冻结，见下方诊断页那一段 */
 
+#include "display.h"           /* pk_display_framebuffer / _flush_full 的原型 */
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_timer.h"         /* 单调时钟冻结 + GPS 时间戳按 now 反推 */
@@ -79,7 +80,6 @@ uint8_t pk_ui_cal_wizard_last_accuracy(void)
     return (uint8_t)a;
 }
 
-/* 关校准页：模拟器里没有"页面切换"这回事（截哪一页由 PK_SIM_PAGE 决定），
 /*
  * 顶栏那枚罗盘图标点不点亮。固件里是 pk_cal_advisor 的判定结论（低精度满窗、
  * 但因为在飞/闸门关着/而没抢页面的那一档），模拟器里没有那条时间轴，做成
@@ -109,6 +109,7 @@ bool pk_ui_cal_jammed(void)
     return sim_env("PK_SIM_CAL_JAM", 0) != 0;
 }
 
+/* 关校准页：模拟器里没有"页面切换"这回事（截哪一页由 PK_SIM_PAGE 决定），
  * 同 pk_ui_set_mode 一样只是个空壳。留着是为了让 cal_wizard.c 的命中判定
  * 原样编译——那段代码本身要被验的是坐标，不是它调了谁。 */
 void pk_ui_cal_wizard_dismiss(void) { }
@@ -586,3 +587,31 @@ void pk_rec_store_get_health(pk_rec_store_health_t *out)
 /* PK_SIM_DIAG_DETAIL=<卡片序号> 直接打开该子系统的详情页，用来截图核对
  * 版面——详情是点击才进的第二层，没有这个开关就只能截到总览。 */
 void pk_diag_sim_open_detail(void);
+
+/* ── display.c 的两个入口 ────────────────────────────────────────
+ *
+ * boot_splash.c 的 pk_boot_splash_progress() 要"自己取 framebuffer + 推屏"
+ * （调用方一行搞定，见 boot_splash.h），于是它引用了 pk_display_framebuffer()
+ * 与 pk_display_flush_full()。真机的 display.c 是 DSI/PPA/LDO 那一整套，
+ * host 上跑不起来也不进 sim 的源文件表——桩掉这两个数据接口，渲染代码就能
+ * 原样编进来，和 mock_runtime / 本文件其余部分是同一个原则。
+ *
+ * framebuffer 由 main.c 在 pk_sim_lv_init() 之后交进来：sim 的画布是 LVGL 的
+ * canvas 缓冲，桩自己再开一块的话，进度条会画到一块没人看的内存里，截图上
+ * 什么都不会有。flush 是空操作——sim 每帧本来就会把整块缓冲送进 SDL 纹理。 */
+static uint16_t *s_sim_fb;
+
+void pk_sim_display_set_framebuffer(uint16_t *fb)
+{
+    s_sim_fb = fb;
+}
+
+uint16_t *pk_display_framebuffer(void)
+{
+    return s_sim_fb;
+}
+
+esp_err_t pk_display_flush_full(void)
+{
+    return ESP_OK;
+}

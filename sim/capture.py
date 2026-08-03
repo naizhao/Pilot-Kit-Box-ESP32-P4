@@ -254,6 +254,32 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_LANG": "en"},                "演示模式 · 开机画面横幅（英文）"),
     ("ui-4.3-splash",       {"PK_SIM_PAGE": "splash"},            "开机画面（演示模式关）"),
 
+    # ── 开机进度条 ──────────────────────────────────────────────────
+    #
+    # logo 出来之后还有 3 秒多在扫地图包，屏上此前只有一个不动的 logo，用户
+    # 反馈「白等」。这几张核对的是那条进度条：0% 那一帧不能看着像坏了（空槽
+    # 是深色，靠边框吃色）、阶段名与计数一左一右钉在条的两端不随文案跳、
+    # 中英文最长文案都不撞到一起、以及**最糟情况**——演示模式那条红横幅在场时
+    # 三行构建信息仍然收得住（实测收在 y=423，横幅上沿 432）。
+    #
+    # -en 那张刻意把计数摆成 12/12：英文最长阶段名（"Starting up"）配位数最多
+    # 的计数，是这一行能排出来的最宽组合。真机当前只有 3 步，但那是调用点的事，
+    # 版面不能只在 1 位数下成立。
+    ("ui-4.3-splash-boot0", {"PK_SIM_PAGE": "splash",
+                             "PK_SIM_SPLASH_STAGE": "0"},         "开机进度 0/3：空槽 + 蓝色边框（不能看着像坏了）"),
+    ("ui-4.3-splash-boot-map", {"PK_SIM_PAGE": "splash",
+                             "PK_SIM_SPLASH_STAGE": "2"},         "开机进度 2/3：最慢的一步（扫 pmtiles，实测 3.9 s）"),
+    ("ui-4.3-splash-boot-ready", {"PK_SIM_PAGE": "splash",
+                             "PK_SIM_SPLASH_STAGE": "3"},         "开机进度 3/3：满条，PFD 起来前的最后一帧"),
+    ("ui-4.3-splash-boot-en", {"PK_SIM_PAGE": "splash",
+                             "PK_SIM_SPLASH_STAGE": "0",
+                             "PK_SIM_SPLASH_DONE": "12",
+                             "PK_SIM_SPLASH_TOTAL": "12",
+                             "PK_SIM_LANG": "en"},                "开机进度（英文最长文案 + 位数最多的计数）"),
+    ("demo-4.3-splash-boot", {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "splash",
+                             "PK_SIM_SPLASH_STAGE": "2"},         "演示模式 · 开机进度：进度条与红色横幅同屏（最糟情况）"),
+
     # 地图功能类场景一律钉 PK_SIM_ORIENT=north。默认朝向是**机头朝上**，而
     # 演示模式现在跟着真实航班轨迹飞（demo_track.c），本机航向随轨迹变 →
     # 地图旋转角跟着变 → 这些图每次重跑都 diff，作为回归基线就废了。钉成

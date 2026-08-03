@@ -39,3 +39,12 @@ void pk_mock_set_enabled(bool own_valid, bool traffic_valid);
  * 或用单项开关只掐一样，定位「只缺这一个」时该页降级成什么样。
  */
 bool pk_sim_flag(const char *key);
+
+/*
+ * 把 sim 的画布交给 display.c 的桩（实现在 compat/page_stub.c）。
+ *
+ * boot_splash.c 的进度接口自己调 pk_display_framebuffer() 取缓冲再推屏，
+ * 真机上那是 display.c 里的 PSRAM framebuffer；sim 里必须是 LVGL 的 canvas
+ * 缓冲，否则进度条画进一块没人看的内存，截图上什么都没有。
+ */
+void pk_sim_display_set_framebuffer(uint16_t *fb);
