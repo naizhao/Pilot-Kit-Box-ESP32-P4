@@ -162,6 +162,11 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_LANG": "en"},                "演示模式 · 开机画面横幅（英文）"),
     ("ui-4.3-splash",       {"PK_SIM_PAGE": "splash"},            "开机画面（演示模式关）"),
 
+    # 地图功能类场景一律钉 PK_SIM_ORIENT=north。默认朝向是**机头朝上**，而
+    # 演示模式现在跟着真实航班轨迹飞（demo_track.c），本机航向随轨迹变 →
+    # 地图旋转角跟着变 → 这些图每次重跑都 diff，作为回归基线就废了。钉成
+    # 北朝上后每张图只测它该测的那一件事（标签避让/地面符号/相位显著性/
+    # overzoom），朝向本身由下面 northup / headingup 两张专用图覆盖。
     # ── SD 离线地图页 ────────────────────────────────────────────────
     #
     # PK_SIM_SET_SD=1：地图页第一步就检查 pk_sdcard_is_mounted()，不给这个
@@ -177,7 +182,8 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # own_ship 落在 prd_pilot 试点包范围内（22.54N,113.90E，见
     # sim/compat/mock_runtime.c 的 MAP_DEMO_OWN_LAT/LON 注释），Z10 正好是
     # 该包的高清区间，默认场景应该是清晰底图，不是 overzoom 马赛克。
-    ("ui-4.3-map",          {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map",          {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps")},
                                                                    "地图页正常态：底图 + 本机 + 5 个 ADS-B 目标"),
@@ -200,12 +206,14 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_HDG": "60"},
                                                                    "地图朝向=heading-up：底图整体反向旋转 60°，本机符号垂直"
                                                                    "指向屏幕正上方，指北箭头偏离正上方 60°，铬层不转"),
-    ("ui-4.3-map-clump",    {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-clump",    {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_CLUMP": "1"},
                                                                    "地图页目标扎堆：验证标签防遮挡（只留一个标签）"),
-    ("ui-4.3-map-no-gps",   {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-no-gps",   {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_NO_OWN": "1"},
@@ -222,7 +230,8 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 提示——这与「缩放拉到超出包数据」是同一件事：不是 UI 缩放挡位超限
     # （挡位上限 12，见 map_page.c 的 MAP_ZOOM_MAX），而是当前位置的底图精度
     # 不够深，provider 只能用更粗的父瓦片放大凑数。
-    ("ui-4.3-map-overzoom", {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-overzoom", {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_OWN_LAT": "-33.9",
@@ -232,7 +241,8 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 无气压高度）与两架空中目标（实心剪影）混排在同一屏，验证"一眼可辨"——
     # 分开两张各截一种反而验不出对比度，见 mock_runtime.c map_demo_traffic()
     # 的 PK_SIM_MAP_GROUND 分支注释。
-    ("ui-4.3-map-ground",   {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-ground",   {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1"},
@@ -243,13 +253,15 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # 阶段 4d：显著性跟随本机相位。同一份地面态数据（三架地面+两架空中）分别
     # 用本机在地面 / 在空中两种相位截图，只对比压暗方向对不对——数据、镜头
     # 位置全部与 ui-4.3-map-ground 一致，唯一变量是 PK_SIM_OWN_PHASE。
-    ("ui-4.3-map-phase-ground", {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-phase-ground", {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1",
                              "PK_SIM_OWN_PHASE": "ground"},
                                                                    "地图页显著性：本机在地面——地面目标全亮，空中目标压暗 45%"),
-    ("ui-4.3-map-phase-air",    {"PK_SIM_PAGE": "map",
+    ("ui-4.3-map-phase-air",    {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1",
