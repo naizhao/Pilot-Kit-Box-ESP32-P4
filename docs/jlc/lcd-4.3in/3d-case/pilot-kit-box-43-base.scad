@@ -55,7 +55,10 @@ align_origin = true;  // true = 输出平移到包围盒角点(0,0,0)，方便�
                       // 内部坐标系不变（原点=屏板 X-/Y- 角）
 
 /* ---------- 打印公差 ---------- */
-fit_glass = 0.4;      // 玻璃四周单边间隙
+fit_glass = 0.10;     // 玻璃四周单边间隙。9600 树脂实测：模型 115.2x67.68
+                      // 印出 115.4~115.6 x 67.6~67.9，即 X 向偏大 0.2~0.4、
+                      // Y 向 -0.08~+0.22。取 0.1 是让最坏一档(Y 偏小 0.08)
+                      // 仍有 0.12 总间隙；取 0 会装不进去。
 $fn = 64;
 
 /* ---------- 屏组件（微雪板）---------- */
@@ -69,6 +72,7 @@ glass_ov_y  = (glass_w - scr_pcb_w) / 2;                  // 3.4
 // 方位约定（面朝屏幕，PCB 在后）：左=C6 侧(X-)，右=USB H1/H2 侧(X+)，
 // 顶=SD/按键边(Y+)。开孔位一律以玻璃边缘实测值标注。
 glass_left = -glass_ov_xm;     // 玻璃左边缘 x（内部坐标）
+glass_bot  = -glass_ov_y;      // 玻璃下(40PIN)边缘 y
 
 /* ---------- 扩展板 ---------- */
 exp_t = 1.6;
@@ -87,6 +91,18 @@ screw_d    = 2.9;     // M2.5 通孔
 cb_d       = 5.6;     // 底面沉孔（圆柱头/盘头）
 cb_depth   = 1.4;
 corner_r   = 3.0;
+slot_r     = 2.0;     // 开孔圆角上限（原自动取 min(w,h)/2，孔成胶囊形）
+
+/* ---------- 开孔标识凸字 ---------- */
+emb_h    = 0.4;       // 凸起高度
+emb_sink = 0.1;       // 字根沉入墙面量（保证与墙体实体相交）
+emb_sz   = 1.8;       // 字号（大写字高约 1.3）
+emb_font = "Liberation Sans:style=Bold";
+lbl_z    = 13.0;      // 统一基线高度（字缩小后上移贴近开孔；下缘留 0.6+）
+lbl_pwr  = "PWR";
+lbl_sd   = "SD";
+lbl_usb  = "USB";     // H1 = USB TO UART；想标 UART 改这里
+lbl_sma  = ["GPS", "ADS-B"];   // 对应 sma_y 的两个孔，顺序可对调
 
 /* ---------- 玻璃支撑舌 ---------- */
 tab_w = 8;            // 舌宽
@@ -99,10 +115,11 @@ tab_p_left = 5.0;     // 左(C6)侧加深：该侧玻璃悬出最大，多托一
    不做定位挡墙。注意躲开扩展板底面 x≥76 的 SDR 悬垂区。 */
 
 /* ---------- USB H1（X+ 壁）---------- */
-h1_y     = scr_pcb_w - 21.4;   // 中心 y=38.6
-usb_w    = 12.0;  usb_h = 8.0; // 直插穿墙孔：公头包胶(宽11)整体穿入，
+h1_y     = glass_bot + 41.25;  // 量尺 y=43.20（距玻璃下边 41.25）
+usb_w    = 11.5;  usb_h = 7.0; // 直插穿墙孔：公头包胶(宽11)整体穿入，
                                // 实测插满时包胶面与玻璃边平齐，故不做外沉槽
-usb_glass_d = 9.0;             // 实测：玻璃面到孔顶边 5 / 底边 13 → 中心 9
+usb_glass_d = 9.35;            // 量尺 z=19.80
+usb_rec  = [14.5, 10];         // 外侧圆角浅沉槽：四周统一 1.5 边框
 usb_zoff = glass_t + scr_glass_gap + scr_pcb_t - usb_glass_d;  // -2.35
 rec_depth = 0.5;               // SD 外沉深度（1.8 壁余厚 1.3）
 
@@ -111,21 +128,30 @@ rec_depth = 0.5;               // SD 外沉深度（1.8 壁余厚 1.3）
 btn_power_x = glass_left + 31;     // 22.8，离 SD 最远
 btns        = [btn_power_x];       // 需要 RESET 时加 glass_left+47
 btn_d       = 4.1;                 // 导孔（配打印按压销）
-btn_glass_d = 8.5;                 // 实测：玻璃面到键帽中心深度
-btn_zoff    = glass_t + scr_glass_gap + scr_pcb_t - btn_glass_d;  // -1.35
-btn_pkt_d   = 6.6;                 // 内壁沉窝：卡按压销法兰
-btn_pkt_dp  = 0.8;
+btn_glass_d = 8.85;                // 量尺 z=20.30
+btn_rec_d   = 8.0;                 // 外侧圆形浅凹（深 rec_depth）
+btn_zoff    = glass_t + scr_glass_gap + scr_pcb_t - btn_glass_d;
+btn_key_depth = 3.2;               // 键帽面到玻璃边缘。两次实测标定：
+                                   // ① 旧件销尾静止凸 1.95/触发 1.51 → 行程 0.44
+                                   // ② 旧件销总长 7.80 预压按键，削到 7.65 正常
+                                   // 回代旧几何（法兰止位 64.84）得键帽 y≈60.25，
+                                   // 即距玻璃边 3.2。原假设 4.0 偏深 0.8。
+// 防倾斜：原来导向孔只剩 0.8mm（壁 1.8 减去 1.0 深沉窝），销子能歪 26°。
+// 改为内壁加一段导向套，导向长度 = wall_t + btn_bore_in，法兰退到套内沉腔止位。
+btn_boss_d  = 9.0;                 // 导向套外径（沉腔 6.6 外留 1.2 壁厚）
+btn_guide   = 2.3;                 // 导向套自内壁面伸入长度（末端离键帽 1.1）
+btn_bore_in = 0.95;                // 其中做导向孔的前段（其余为法兰沉腔）
+btn_pkt_d   = 6.6;                 // 法兰沉腔直径（法兰 6.2，留 0.4 活动量）
 pl_shaft_d  = 3.7;                 // 按压销杆径
-pl_flange_d = 6.2;  pl_flange_t = 2.5;
-pl_nose     = 2.0;                 // 法兰前的 φ 杆径顶鼻。实测键帽面距玻璃边
-                                   // 4.0 → 按压面停在其前 0.7，行程需求 ~0.95
-pl_proud    = 2.0;                 // 静止时销尾高出外壁量
+pl_flange_d = 6.2;  pl_flange_t = 1.0;
+pl_nose     = 1.0;                 // 顶鼻：够长才不会按到底时法兰撞屏板边缘
+pl_proud    = 1.2;                 // 静止时销尾高出外壁量（原 2.0 太凸）
 n_plungers  = 4;                   // 一体打印的按键销数量（1 用 2 备）
 
 /* ---------- SD 卡槽（Y+ 壁）---------- */
 sd_cx    = glass_left + 59;    // 50.8。实测：卡座中心=玻璃左+59
 sd_w     = 16.0;  sd_h = 3.5;
-sd_glass_d = 9.0;              // 实测：玻璃面到卡座中心深度
+sd_glass_d = 9.35;             // 量尺 z=19.80
 sd_zoff  = glass_t + scr_glass_gap + scr_pcb_t - sd_glass_d;      // -1.85
 sd_rec   = [22, 8];            // 外侧圆角沉槽（深 rec_depth）
 sd_notch = 10;                 // 指甲槽宽（圆角，贯穿余壁）
@@ -135,6 +161,24 @@ sma_y = [19, 41];     // 两孔中心 y
 sma_z = 19;           // 孔中心高（自内部坐标系底面；盒子变矮后下调留口沿余量）
 sma_d = 6.4;          // 面板 SMA 螺纹穿孔
 sma_cb_d = 9.5;  sma_cb_dp = 0.6;   // 内侧沉窝：留平面好上螺母
+sma_rec_d = 9.45; sma_rec_dp = 0.5;  // 外侧圆凹：卡垫片（深度按垫片厚度调）
+
+/* ---------- 1/4"-20 云台转接板（外挂盒底，与 4 颗底部螺丝共用）----------
+   载荷路径：云台螺柱自板底旋入 → 螺母坐在板内六角腔 → 腔底实体承拉。
+   螺母腔开口朝上，装到盒底后被盒体外底面封住，螺母跑不掉。
+   打印时用断颈筋悬在盒内，一个文件一个价；装配前掰下来。 */
+mount_plate = true;
+mp_t        = 6.0;    // 板厚
+mp_nut_af   = 11.3;   // 1/4-20 螺母对边（标准 11.11 + 0.2 装配间隙）
+mp_nut_t    = 3.4;    // 螺母腔深：配 3.2 薄螺母。换 5.56 标准螺母则改 5.8，
+                      // 同时 mp_t 加到 8.5、螺丝加长 2.5
+mp_stud_d   = 7.0;    // 云台螺柱过孔（φ6.35 + 间隙）
+mp_arm_w    = 12;     // 臂宽
+mp_pad_d    = 12;     // 螺丝端圆盘直径
+mp_hub_d    = 24;     // 中央凸台直径
+mp_cb_d     = 5.6;  mp_cb_dp = 1.4;   // 板底沉孔（容螺丝头）
+mp_z        = 16;     // 打印时悬在盒内的高度
+mp_tab      = 1.6;    // 断颈连接筋截面（斜口钳剪断）
 
 /* ---------- 底面 ---------- */
 foot_d = 8;  foot_h = 1.2;  foot_inset = 5.5;  // 外凸脚，高过螺丝头余量
@@ -170,10 +214,38 @@ boss_xy = [[hx0, hy0], [hx0 + hole_dx, hy0],
 echo(str("盒体外形: ", box_l, " x ", box_w, " x ", box_h, " mm"));
 echo(str("扩展板底面 z=", z_exp_bot, "  屏板底面 z=", z_scr_bot,
          "  玻璃底 z=", z_glass_b));
+mp_cx = (box_x0 + box_x1) / 2;
+mp_cy = (box_y0 + box_y1) / 2;
+assert(mp_t - mp_nut_t >= 2.0, "转接板螺母腔下方肉太薄：加大 mp_t 或减小 mp_nut_t");
+echo(str("云台板: ", mp_t, " 厚  1/4-20 螺母腔 对边", mp_nut_af, " 深", mp_nut_t,
+         "  腔底承拉肉 ", mp_t - mp_nut_t,
+         "  装板后总高 ", box_h + mp_t,
+         "  螺丝需 ≈ ", mp_t - mp_cb_dp + floor_t + bat_h + exp_t
+                        + (stack_h - pillar_len) + 3));
 echo(str("螺丝参考长度 ≈ ",
          floor_t - cb_depth + bat_h + exp_t + (stack_h - pillar_len) + 3,
          " mm（含悬空 ", stack_h - pillar_len, " + 旋入铜柱 3）"));
 assert(z_glass_b > z_scr_bot, "高度链错误");
+
+// 按键几何自检（y 向，越小越靠近屏板中心）
+// 关键：屏组件由玻璃在口内定位，而玻璃有 ±fit_glass 的游动量，所以键帽的
+// y 位置不是一个点而是一段区间。旧件"松着能按、拧紧就顶住"就是这么来的
+// （旧 fit_glass=0.4 → 游动 0.8，足够把键帽推到销子上）。两端都要校验。
+btn_key_y  = gy1 - btn_key_depth;                             // 键帽面（玻璃居中）
+btn_key_wc = gy1 + fit_glass - btn_key_depth;                 // 玻璃靠按键壁：最易预压
+btn_key_bc = gy1 - fit_glass - btn_key_depth;                 // 玻璃靠对侧：最费行程
+btn_tip_y  = cav_y1 - btn_bore_in - pl_flange_t - pl_nose;    // 顶鼻静止位
+btn_gap    = btn_tip_y - btn_key_y;
+btn_gap_wc = btn_tip_y - btn_key_wc;
+btn_travel = (btn_tip_y - btn_key_bc) + 0.25;
+echo(str("按键: 导向长 ", wall_t + btn_bore_in, "  静止间隙 ", btn_gap,
+         "（最坏 ", btn_gap_wc, "）  需行程 ", btn_travel, " / 可用 ", pl_proud,
+         "  销总长 ", pl_nose + pl_flange_t + wall_t + btn_bore_in + pl_proud));
+assert(btn_gap_wc > 0.1, "玻璃偏向按键壁时销子会预压按键：减小 pl_nose");
+assert(btn_travel < pl_proud, "行程不够：加大 pl_proud");
+assert(cav_y1 - btn_bore_in - pl_flange_t - btn_travel > scr_pcb_w + 0.3,
+       "按到底时法兰会撞屏板边缘：加大 pl_nose");
+assert(cav_y1 - btn_guide > btn_key_y + 1.0, "导向套会顶到键帽：缩短 btn_guide");
 
 /* ---------- 基础形 ---------- */
 module rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w]); }
@@ -236,12 +308,12 @@ module boss_bores() {  // 通孔 + 底面沉孔，最后统一减去
 module slot_cut_x(y, z, w, h, from_x, len) {  // 沿 +X 切
     translate([from_x, y, z]) rotate([0, 90, 0]) rotate([0, 0, 90])
         linear_extrude(len)
-            translate([-w / 2, -h / 2]) rrect(w, h, min(h, w) / 2 - 0.01);
+            translate([-w / 2, -h / 2]) rrect(w, h, min(slot_r, min(h, w) / 2 - 0.01));
 }
 module slot_cut_y(x, z, w, h, from_y, len) {  // 沿 +Y 切
     translate([x, from_y, z]) rotate([-90, 0, 0])
         linear_extrude(len)
-            translate([-w / 2, -h / 2]) rrect(w, h, min(h, w) / 2 - 0.01);
+            translate([-w / 2, -h / 2]) rrect(w, h, min(slot_r, min(h, w) / 2 - 0.01));
 }
 
 cut_len = wall_t + max(glass_ov_xm, glass_ov_xp, glass_ov_y) + 4;
@@ -250,13 +322,17 @@ module wall_cutouts() {
     /* --- H1 Type-C（X+）：穿墙槽 + 外侧浅沉槽 --- */
     z_usb = z_scr_bot + usb_zoff;
     slot_cut_x(h1_y, z_usb, usb_w, usb_h, cav_x1 - 1, cut_len);
+    slot_cut_x(h1_y, z_usb, usb_rec[0], usb_rec[1],
+               box_x1 - rec_depth, rec_depth + 1);
 
-    /* --- POWER 按键（Y+）：导孔 + 内壁沉窝（卡按压销法兰）--- */
+    /* --- POWER 按键（Y+）：长导向孔 + 套内法兰沉腔 --- */
     z_btn = z_scr_bot + btn_zoff;
     for (bx = btns) {
-        slot_cut_y(bx, z_btn, btn_d, btn_d, cav_y1 - 1, cut_len);
-        translate([bx, cav_y1 - btn_pkt_dp, z_btn])
-            rotate([-90, 0, 0]) cylinder(d = btn_pkt_d, h = btn_pkt_dp + 1);
+        slot_cut_y(bx, z_btn, btn_d, btn_d, cav_y1 - btn_bore_in, cut_len);
+        translate([bx, cav_y1 - btn_guide - 0.5, z_btn]) rotate([-90, 0, 0])
+            cylinder(d = btn_pkt_d, h = btn_guide - btn_bore_in + 0.5);
+        translate([bx, box_y1 - rec_depth, z_btn]) rotate([-90, 0, 0])
+            cylinder(d = btn_rec_d, h = rec_depth + 0.01);
     }
 
     /* --- SD 卡槽（Y+）：穿墙槽 + 外侧圆角浅沉槽 + 圆角指甲槽 --- */
@@ -264,8 +340,6 @@ module wall_cutouts() {
     slot_cut_y(sd_cx, z_sd, sd_w, sd_h, cav_y1 - 1, cut_len);
     slot_cut_y(sd_cx, z_sd, sd_rec[0], sd_rec[1],
                box_y1 - rec_depth, rec_depth + 1);
-    // 指甲槽：竖向圆角槽，贯穿，与卡槽成十字
-    slot_cut_y(sd_cx, z_sd, sd_notch, sd_rec[1] + 5, cav_y1 - 1, cut_len);
 
     /* --- SMA ×2（X- 壁）：穿孔 + 内侧沉窝 --- */
     for (sy = sma_y) {
@@ -273,6 +347,8 @@ module wall_cutouts() {
             rotate([0, 90, 0]) cylinder(d = sma_d, h = wall_t + 2);
         translate([cav_x0 - sma_cb_dp, sy, sma_z])
             rotate([0, 90, 0]) cylinder(d = sma_cb_d, h = sma_cb_dp + 1);
+        translate([box_x0 - 0.01, sy, sma_z])
+            rotate([0, 90, 0]) cylinder(d = sma_rec_d, h = sma_rec_dp + 0.01);
     }
 }
 
@@ -292,10 +368,47 @@ module feet() {
             cylinder(d1 = foot_d, d2 = foot_d + 2, h = foot_h + 0.01);
 }
 
-/* ---------- 按键按压销（法兰卡进内壁沉窝）---------- */
-module plunger() {  // 自下而上：顶鼻(按压面) → 法兰 → 穿墙杆
-    shaft_len = (wall_t - btn_pkt_dp) + pl_proud;
-    cylinder(d = pl_shaft_d, h = pl_nose + pl_flange_t + shaft_len);
+/* ---------- 开孔标识凸字（外壁，0.4 凸起）----------
+   face: 0=Y+壁(PWR/SD)  1=X+壁(USB)  2=X-壁(SMA)。
+   三种朝向的旋转分别让字面法线指向 +y / +x / -x，从外面看正读。 */
+module wall_text(txt, u, z, face) {
+    // 起点沉入墙面 emb_sink：与墙必须有实体重叠，仅共面会被算成独立体
+    if (face == 0)
+        translate([u, box_y1 - emb_sink, z]) rotate([-90, 0, 0]) rotate([0, 0, 180])
+            linear_extrude(emb_h + emb_sink)
+                text(txt, size = emb_sz, font = emb_font,
+                     halign = "center", valign = "center");
+    else if (face == 1)
+        translate([box_x1 - emb_sink, u, z]) rotate([90, 0, 90])
+            linear_extrude(emb_h + emb_sink)
+                text(txt, size = emb_sz, font = emb_font,
+                     halign = "center", valign = "center");
+    else
+        translate([box_x0 + emb_sink, u, z]) rotate([90, 0, -90])
+            linear_extrude(emb_h + emb_sink)
+                text(txt, size = emb_sz, font = emb_font,
+                     halign = "center", valign = "center");
+}
+module labels() {
+    wall_text(lbl_pwr, btn_power_x, lbl_z, 0);
+    wall_text(lbl_sd,  sd_cx,       lbl_z, 0);
+    wall_text(lbl_usb, h1_y,        lbl_z, 1);
+    wall_text(lbl_sma[0], sma_y[0], lbl_z, 2);
+    wall_text(lbl_sma[1], sma_y[1], lbl_z, 2);
+}
+
+/* ---------- 按键导向套（内壁，加长导向防倾斜）---------- */
+module btn_guides() {
+    z_btn = z_scr_bot + btn_zoff;
+    for (bx = btns)
+        translate([bx, cav_y1 - btn_guide, z_btn]) rotate([-90, 0, 0])
+            cylinder(d = btn_boss_d, h = btn_guide + 0.01);
+}
+
+/* ---------- 按键按压销（法兰止位于导向套内沉腔）---------- */
+module plunger() {  // 自下而上：顶鼻(按压面) → 法兰 → 导向杆
+    out_len = wall_t + btn_bore_in + pl_proud;
+    cylinder(d = pl_shaft_d, h = pl_nose + pl_flange_t + out_len);
     translate([0, 0, pl_nose]) cylinder(d = pl_flange_d, h = pl_flange_t);
 }
 
@@ -306,11 +419,47 @@ module main_box() {
             box_shell();
             glass_tabs();
             bosses();
+            btn_guides();
+            labels();
             feet();
         }
         boss_bores();
         wall_cutouts();
         floor_slats();
+    }
+}
+
+/* ---------- 1/4"-20 云台转接板 ---------- */
+module mp_profile() {                 // 2D：中央凸台 + 4 条锥形臂到螺丝盘
+    union() {
+        translate([mp_cx, mp_cy]) circle(d = mp_hub_d);
+        for (q = boss_xy)
+            hull() {
+                translate(q) circle(d = mp_pad_d);
+                translate([mp_cx, mp_cy]) circle(d = mp_arm_w);
+            }
+    }
+}
+module mount_plate_body() {
+    difference() {
+        linear_extrude(mp_t) mp_profile();
+        for (q = boss_xy) translate([q[0], q[1], -0.01]) {
+            cylinder(d = screw_d, h = mp_t + 0.02);          // 螺丝过孔
+            cylinder(d = mp_cb_d, h = mp_cb_dp + 0.01);      // 板底沉孔
+        }
+        translate([mp_cx, mp_cy, -0.01])                     // 云台螺柱过孔
+            cylinder(d = mp_stud_d, h = mp_t + 0.02);
+        translate([mp_cx, mp_cy, mp_t - mp_nut_t])           // 六角螺母腔（朝上）
+            cylinder(d = mp_nut_af / cos(30), h = mp_nut_t + 0.01, $fn = 6);
+    }
+}
+module mp_tabs() {                    // 4 根断颈筋：焊盘外缘 → 最近内壁
+    for (q = boss_xy) {
+        low = q[1] < scr_pcb_w / 2;   // 两端各多咬 0.6/1.0，避免只相切
+        ya  = low ? cav_y0 - 0.6 : q[1] + mp_pad_d / 2 - 1.0;
+        yb  = low ? q[1] - mp_pad_d / 2 + 1.0 : cav_y1 + 0.6;
+        translate([q[0] - mp_tab / 2, ya, mp_z + mp_t / 2 - mp_tab / 2])
+            cube([mp_tab, yb - ya, mp_tab]);
     }
 }
 
@@ -329,14 +478,51 @@ module print_plate() {
         translate([px, py, floor_t - 0.01])
             cylinder(d1 = 2.2, d2 = 0.8, h = 0.5 + 0.01);
     }
+    if (mount_plate) {
+        translate([0, 0, mp_z]) mount_plate_body();
+        mp_tabs();
+    }
 }
 
 ozero = align_origin ? [-box_x0, -box_y0, foot_h] : [0, 0, 0];
+/* ---------- 数字尺子：全部特征的绝对坐标 ----------
+   基准角 = 盒体【外底壁面】× C6 侧外壁 × 40PIN 侧外壁。
+   即：盒子正放，从左下外角量起；z 不含凸脚（凸脚只在四角，另凸 foot_h）。 */
+function AX(v) = v - box_x0;   // x: 0 = C6 侧（面朝屏幕的左）外壁
+function AY(v) = v - box_y0;   // y: 0 = 40PIN 侧（屏幕下）外壁
+function AZ(v) = v;            // z: 0 = 盒底外壁面
+echo("======== 量尺表（基准=盒底外壁面 × 左下外角，mm）========");
+echo(str("外形 ", box_l, " x ", box_w, " x ", box_h, "  凸脚另凸 ", foot_h, "（仅四角）"));
+echo(str("玻璃边: 左x=", AX(gx0), " 右x=", AX(gx1),
+         " 下y=", AY(gy0), " 上y=", AY(gy1), " 面z=", AZ(box_h)));
+echo(str("层高 z: 盒外底0 / 盒内底", AZ(floor_t), " / 扩展板底", AZ(z_exp_bot),
+         " / 屏板底", AZ(z_scr_bot), " / 玻璃底", AZ(z_glass_b),
+         " / 口沿=玻璃面", AZ(box_h)));
+echo(str("POWER 孔  x=", AX(btn_power_x), "  z=", AZ(z_scr_bot + btn_zoff),
+         " (距玻璃面 ", btn_glass_d, ")  φ", btn_d,
+         "  外凹φ", btn_rec_d, "深", rec_depth, "  在 y=", AY(box_y1), " 壁"));
+echo(str("SD 槽     x=", AX(sd_cx), "  z=", AZ(z_scr_bot + sd_zoff),
+         " (距玻璃面 ", sd_glass_d, ")  ", sd_w, "x", sd_h,
+         "  外框", sd_rec[0], "x", sd_rec[1], " 深", rec_depth));
+echo(str("USB 孔    y=", AY(h1_y), "  z=", AZ(z_scr_bot + usb_zoff),
+         " (距玻璃面 ", usb_glass_d, ")  ", usb_w, "(y向)x", usb_h,
+         "(z向)  外框", usb_rec[0], "x", usb_rec[1], "深", rec_depth,
+         "  在 x=", AX(box_x1), " 壁"));
+echo(str("SMA 孔    y=", AY(sma_y[0]), " 和 ", AY(sma_y[1]),
+         "  z=", AZ(sma_z), " (距玻璃面 ", box_h - sma_z, ")  φ", sma_d,
+         "  外凹φ", sma_rec_d, "深", sma_rec_dp, "  在 x=", AX(box_x0), " 壁"));
+echo(str("螺柱中心  x=", AX(boss_xy[0][0]), "/", AX(boss_xy[1][0]),
+         "  y=", AY(boss_xy[0][1]), "/", AY(boss_xy[2][1]),
+         "  柱顶z=", AZ(floor_t + bat_h), "  孔φ", screw_d));
+echo(str("玻璃口    ", cav_x1 - cav_x0, " x ", cav_y1 - cav_y0,
+         "  单边间隙", fit_glass, "  台阶面z=", AZ(z_glass_b)));
+echo("===================================================");
 echo(str("align_origin=", align_origin,
          "  屏板原点@", [-box_x0, -box_y0, foot_h + floor_t] , " (盒内底面高)"));
 
 translate(ozero) {
     if (part == "print") print_plate();
+if (part == "plate") translate([0, 0, mp_z]) mount_plate_body();
     if (part == "box") main_box();
     if (part == "section")
         difference() {
