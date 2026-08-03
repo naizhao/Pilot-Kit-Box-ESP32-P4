@@ -50,7 +50,6 @@
 #include "pfd_aa_font.h"
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
-#include "pfd_icon_font.h"
 #include "pfd_layout.h"
 #include "pfd_statusbar.h"   /* pk_ui_topbar_right_limit —— 给 DEMO 徽标让位 */
 #include "pk_ui_nav.h"       /* pk_ui_nav_fab_rect —— FAB 头上的触摸要放行 */
@@ -255,10 +254,11 @@ static bool       s_sort_desc;
  * 说明文字右对齐排在它左边（起点由实测文本宽度算，不写死——中英文长度
  * 差得多，写死的那个数只对其中一种语言成立）。 */
 /* 右界不是常量：演示模式下顶栏右侧多一枚常驻 DEMO 徽标（画在控件层、压在本页
- * 之上），RESET 与它左边那行排序说明必须整体左移，否则被盖住的正好是「现在按
- * 什么排的」这句话。做成函数而不是 #define 是因为它每帧都可能变——用户在设置页
- * 一开演示模式，回到本页就得是新的位置。 */
-#define RESET_X1      pk_ui_topbar_right_limit(CONTENT_R + 8)
+ * 之上），现在还常驻一整组设备状态图标（SAT/ADSB/…/SD，见 draw_header 里的
+ * pk_ui_topbar_status_render），RESET 与它左边那行排序说明必须整体左移，
+ * 否则被盖住的正好是「现在按什么排的」这句话。做成函数而不是 #define 是因为
+ * 它每帧都可能变——用户在设置页一开演示模式，回到本页就得是新的位置。 */
+#define RESET_X1      pk_ui_topbar_content_right_limit(CONTENT_R + 8)
 /* 按钮宽度按 header 统一字号（M）下的最宽文案算：英文 "RESET" 5×PK_AA_M_W
  * = 75，中文「重置」2×PK_AA_M_CJK_W = 44，取大者 + 左右各 8 px 内边距 = 91，
  * 进位到 92。原来是 66，那是 XS 档（"RESET" 只有 50 px）的尺寸——顶栏统一到
@@ -517,18 +517,14 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
     LST_PUTS(fb, PAD_L, ty, pk_i18n_text(PK_TR_LIST_TITLE),
              PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
 
-    /* 目标数用 PFD 状态栏那枚 connecting_airports——同一台设备上「ADS-B 目标
-     * 数」只该有一个符号。绿=有效在线，与状态栏、交通页一致。 */
-    const uint16_t COL_ADSB = pk_rgb565(0, 220, 60);
-    const uint8_t *ic = pk_icon_bitmap
-                      + (size_t)PK_ICON_ADSB
-                        * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
-    pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                    200, (PFD_BAR_BOT - PK_ICON_H) / 2,
-                    ic, PK_ICON_W, PK_ICON_H, COL_ADSB);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", n);
-    LST_PUTS(fb, 200 + PK_ICON_W + 6, ty, buf, COL_ADSB, PK_AA_M);
+    /* 卫星数 / ADS-B 目标数 / SD 卡状态等"设备状态组"，PFD/交通/地图同款，
+     * 见 pk_ui_topbar_status_render 头注——四页画在同一个 x 上。原来本页
+     * 单独画的一枚 connecting_airports + 目标数（x=200）被它取代。 */
+    {
+        pk_pfd_status_t stat = { .aircraft_count = (size_t)(n > 0 ? n : 0) };
+        pk_ui_topbar_status_collect(&stat);
+        pk_ui_topbar_status_render(fb, &stat);
+    }
 
     /*
      * 右上角：当前排序 + 重置。
@@ -552,7 +548,12 @@ static void draw_header(uint16_t *fb, int n, uint16_t col_dim)
      * 同一条 header 里三种字号——产品决策：header 内不分主次，视觉一致优先，
      * 主次交给颜色（标题白 / 排序暗灰 / RESET 琥珀）去表达。 */
     const int sw = pk_aa_text_width(sbuf, PK_UI_TITLE_SIZE);
-    LST_PUTS(fb, RESET_X0 - 10 - sw, PK_UI_TITLE_Y, sbuf,
+    /* 默认排序时 RESET 不画，右界就不该再照 RESET 的盒子留白——RESET_W
+     * (92 px) 在设备状态组占掉大半顶栏之后是笔用得起的余量，默认状态
+     * （最常见的状态）省下来才有地方摆这一行。非默认排序时仍然让在
+     * RESET 左边，位置不变。 */
+    const int sort_right = sort_is_default() ? RESET_X1 : RESET_X0 - 10;
+    LST_PUTS(fb, sort_right - sw, PK_UI_TITLE_Y, sbuf,
              col_dim, PK_UI_TITLE_SIZE);
 
     if (!sort_is_default()) {

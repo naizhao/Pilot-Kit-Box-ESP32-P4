@@ -284,45 +284,21 @@ static void pfd_task(void *arg)
                 }
             }
 
-            pk_gps_state_t gps;
-            pk_gps_get(&gps);
-
-            /* 顶栏状态位。rec / batt / temp 三项尚无数据源，留默认 false，
-             * 顶栏的降级逻辑会自动不显示它们 —— 详见 IMPLEMENTATION_PLAN.md
-             * 的「P2 · 顶栏状态位数据源接入」：
-             *   TODO(P2-1): rec_active   ← record_sink_file_stats() 加时间窗
-             *   （P2-2 batt_* 已接：battery.c 读 GPIO20 BAT_ADC）
+            /* 顶栏状态位。GPS/BLE/SD/电量/温度这一批"设备自身状态"字段与
+             * 交通/地图/列表三页共用同一份取数逻辑，收在
+             * pk_ui_topbar_status_collect（pfd_statusbar.c）里，四页只有
+             * 这一处实现，不再各自抄一份容易分叉。
              *
-             * temp（P2-3）已接：soc_temp.c 读片内结温，1 Hz 采样 + 滞回。
-             * 注意不能改用 baro 的温度——那是 BMP388 测的座舱环境温度，与
-             * 「设备自己在过热」是两回事，暴晒时能差二三十度。*/
+             * rec 尚无数据源，pk_ui_topbar_status_collect 里留默认 false，
+             * 顶栏的降级逻辑会自动不显示它 —— 详见 IMPLEMENTATION_PLAN.md 的
+             * 「P2 · 顶栏状态位数据源接入」TODO(P2-1)：
+             *   rec_active ← record_sink_file_stats() 加时间窗 */
             pk_pfd_status_t stat = {
                 .imu_valid      = yaw_valid,
                 .yaw_deg        = yaw_deg,
                 .aircraft_count = n_aircraft,
-                .gps_have_fix   = gps.have_fix,
-                .gps_sats       = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats)),
-                .ble_connected  = ble_gatt_is_connected(),
-                .sd_mounted     = pk_sdcard_is_mounted(),
-                /* 1.2 s 周期（600 ms 半周期），比 400 ms 的 ADS-B LOST 慢——
-                 * 没插卡不是需要立刻处置的飞行告警，用与它相同的急促闪烁会
-                 * 抢错注意力。 */
-                .sd_alert_blink_on = ((now_us / 600000) & 1) != 0,
-                /* 顶栏动效（充电动画）的相位基准，必须是单调时钟而非帧计数。 */
-                .uptime_ms      = (uint32_t)(now_us / 1000),
             };
-            stat.temp_warn = pk_soc_temp_get(&stat.temp_c);
-
-            /* 电池。放在这里而不是只在诊断页取：顶栏那枚电池图标每帧都要画，
-             * 而且采样挪到公共路径上之后，电量在任何页面都是活的——原先
-             * pk_batt_get() 只在诊断页渲染时被调用，切到别的页电量就停更了。 */
-            {
-                pk_batt_t b;
-                pk_batt_get(&b);
-                stat.batt_valid    = b.valid;
-                stat.batt_pct      = (uint8_t)b.pct;
-                stat.batt_charging = b.charging;
-            }
+            pk_ui_topbar_status_collect(&stat);
             pk_pfd_hsi_t hsi = {
                 .imu_valid = yaw_valid,
                 .yaw_deg   = yaw_deg,

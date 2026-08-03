@@ -429,6 +429,17 @@ static void draw_no_data_state(uint16_t *fb, bool sd_mounted)
 
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, col_bg);
 
+    /* 没插卡 / 没瓦片包的占位态也是"地图页"，顶栏一样要有标题 + 设备状态组
+     * ——SD 图标此时恰好是红色闪烁，与正文提示（"插卡"/"缺瓦片"）说的是
+     * 同一件事，不冲突。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L, PK_UI_TITLE_Y,
+              pk_i18n_text(PK_TR_MAP_TITLE), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+    {
+        pk_pfd_status_t stat = {0};
+        pk_ui_topbar_status_collect(&stat);
+        pk_ui_topbar_status_render(fb, &stat);
+    }
+
     const char *title = pk_i18n_text(PK_TR_MAP_NO_DATA_TITLE);
     const char *hint  = pk_i18n_text(sd_mounted ? PK_TR_MAP_HINT_NO_PACK
                                                 : PK_TR_MAP_HINT_NO_CARD);
@@ -475,7 +486,7 @@ static void draw_north_ind(uint16_t *fb, int cx, int cy, float map_rot_deg)
 }
 
 /* ── 顶栏 / 底部铬层 ── */
-static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg)
+static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg, size_t n_aircraft)
 {
     draw_north_ind(fb, 34, MAP_TOP + 34, map_rot_deg);
 
@@ -484,11 +495,22 @@ static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg)
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, MAP_TOP, pk_rgb565(7, 10, 16));
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L, PK_UI_TITLE_Y,
               pk_i18n_text(PK_TR_MAP_TITLE), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
+
+    /* 卫星数 / ADS-B 目标数 / SD 卡状态等"设备状态组"，PFD/交通/列表同款，
+     * 见 pk_ui_topbar_status_render 头注——四页画在同一个 x 上。 */
+    {
+        pk_pfd_status_t stat = { .aircraft_count = n_aircraft };
+        pk_ui_topbar_status_collect(&stat);
+        pk_ui_topbar_status_render(fb, &stat);
+    }
+
     char zbuf[8];
     snprintf(zbuf, sizeof(zbuf), "Z%u", s_zoom);
     const int zw = pk_aa_text_width(zbuf, PK_UI_TITLE_SIZE);
+    /* 右界走 pk_ui_topbar_content_right_limit：除了 DEMO 徽标，现在还要给
+     * 常驻的设备状态组让位，否则 Z10 会被压在 SD 图标底下。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-              pk_ui_topbar_right_limit(PK_DISPLAY_W - 24) - zw, PK_UI_TITLE_Y,
+              pk_ui_topbar_content_right_limit(PK_DISPLAY_W - 24) - zw, PK_UI_TITLE_Y,
               zbuf, pk_rgb565(205, 214, 228), PK_UI_TITLE_SIZE);
 
     /* 底部铬层：署名 + 比例尺，压一层暗底保证在任何底图颜色上可读——
@@ -894,7 +916,7 @@ void pk_map_page_render(uint16_t *fb)
     /* ── 拔卡提示留给 pk_tile_loader.c 的 toast（pfd.c 统一叠加），本页
      * 不重复画——两处都画会互相压。 ── */
 
-    draw_chrome(fb, mpp, map_rot_deg);
+    draw_chrome(fb, mpp, map_rot_deg, n);
 }
 
 /* ── 触摸 ─────────────────────────────────────────────────────────── */

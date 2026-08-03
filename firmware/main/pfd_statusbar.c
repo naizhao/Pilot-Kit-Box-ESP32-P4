@@ -13,6 +13,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_timer.h"
+
 #include "config_demo.h"   /* pk_demo_enabled —— 中段要给 DEMO 徽标让宽度 */
 #include "display.h"
 #include "pfd_layout.h"
@@ -20,6 +22,14 @@
 #include "pfd_statusbar_icons.h"
 #include "pfd_icon_font.h"
 #include "pfd_draw.h"
+
+/* pk_ui_topbar_status_collect 汇总的数据源——与 pfd.c PFD 分支同一批取法，
+ * 见 pfd_statusbar.h 里该函数的头注。 */
+#include "battery.h"
+#include "ble_gatt.h"
+#include "gps.h"
+#include "pk_sdcard.h"
+#include "soc_temp.h"
 
 #define STATUSBAR_TOP   0
 #define STATUSBAR_BOT  PFD_BAR_BOT
@@ -61,27 +71,88 @@ int pk_ui_topbar_right_limit(int dflt)
     return dflt < lim ? dflt : lim;
 }
 
-void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
-{
-    pk_pfd_fill_rect(fb, 0, STATUSBAR_TOP, PK_DISPLAY_W, STATUSBAR_BOT, COL_BG);
+/* 中段"保底两项"（SAT/ADSB——罩哥点名要常驻的三个图标里除 SD 之外的两个）
+ * 的 worst-case 宽度——与上面 BAR_RIGHT_W 同一个道理：按可能出现的最长
+ * 文案预留，不随当前实际显示了几项而伸缩。
+ *
+ * 这一份宽度要在 PFD / 交通 / 地图 / 列表四页之间共用同一个左边界（见下面
+ * pk_ui_status_group_left_x），只有边界是固定值，四页在同一帧读到的才会是
+ * 完全相同的 x。
+ *
+ *   SAT   "NO FIX"（6 字符，比两位数星数更长；有定位时是数字，NO FIX 与
+ *          数字互斥，不会同时出现，6 字符已经是这一项的真实上限）
+ *   ADSB  2 位数目标数——AIRCRAFT_TABLE_CAPACITY=64，两位数已经封顶，不必
+ *          按 3 位留
+ *
+ * REC/TEMP 不在保底之列：把它们也按 worst-case 算的话，四页公用的这一整块
+ * 会占掉小屏（800 宽）三分之一还多，挤得交通页的量程、列表页的排序说明+
+ * RESET 几乎没有立足之地（实测非默认排序 + 英文列名时 RESET 会被推出
+ * 屏幕）。它们仍然会画——中段自带的"装不下就按优先级丢"会在当前 avail
+ * 里自然地把它们排进去，只是不作为四页布局都要让路的硬预留；REC/TEMP
+ * 本身也比 SAT/ADSB 少见得多（REC 只在录制时出现，TEMP 只在超温时出现），
+ * 换来的是 RESET/NM 这类页面自身部件始终有真实可用的空间，不必对着一个
+ * 几乎不会同时占满的 worst-case 让路。 */
+#define BAR_MID_GUARANTEED_W ( \
+      pk_bar_icon_width(PK_BAR_ICON_SAT)  + BAR_TEXT_W(6) \
+    + PFD_BAR_GAP_WORD \
+    + pk_bar_icon_width(PK_BAR_ICON_ADSB) + BAR_TEXT_W(2) )
 
+/*
+ * 顶栏「设备状态组」（中段 + 右段整体）的左界。
+ *
+ * 从右边界（pk_ui_topbar_right_limit，已经处理了 DEMO 徽标让位）往左依次
+ * 减去右段 worst-case 宽度、段间词距、中段保底宽度——全部是固定量，不看 s
+ * 里的任何字段。这正是四个页面能共用同一个 x 的原因：只要屏宽和 DEMO 开关
+ * 相同，这个函数在哪一页调用结果都一样。
+ *
+ * 这里退出来的宽度**正好等于** BAR_MID_GUARANTEED_W（下面 avail 的推导），
+ * 不多留：中段能且只能保证画出 SAT+ADSB，REC/TEMP 能不能挤进去看当前文案
+ * 的实际长度，挤不进去就被现有的优先级丢弃逻辑吃掉。 */
+static int pk_ui_status_group_left_x(void)
+{
+    const int right_edge = pk_ui_topbar_right_limit(PK_DISPLAY_W - PFD_BAR_MARGIN_R);
+    const int right_start = right_edge - BAR_RIGHT_W - PFD_BAR_GAP_WORD;
+    /* avail = right_start - left_end - 2*GAP_WORD 要求 == BAR_MID_GUARANTEED_W，
+     * 反解出 left_end。 */
+    return right_start - 2 * PFD_BAR_GAP_WORD - BAR_MID_GUARANTEED_W;
+}
+
+int pk_ui_topbar_content_right_limit(int dflt)
+{
+    const int lim = pk_ui_status_group_left_x() - PFD_BAR_GAP_WORD;
+    return dflt < lim ? dflt : lim;
+}
+
+void pk_ui_topbar_status_collect(pk_pfd_status_t *st)
+{
+    const int64_t now_us = esp_timer_get_time();
+
+    pk_gps_state_t gps;
+    pk_gps_get(&gps);
+    st->gps_have_fix = gps.have_fix;
+    st->gps_sats     = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats));
+
+    st->ble_connected = ble_gatt_is_connected();
+    st->sd_mounted     = pk_sdcard_is_mounted();
+    /* 1.2 s 周期（600 ms 半周期），与 pfd.c PFD 分支同一个相位公式——
+     * 各页必须算出同一个相位，否则闪烁在切页时会跳一下，且非 PFD 页会
+     * 显得"没在闪"或"恒定"，见 IMPLEMENTATION_PLAN 的验收要求。 */
+    st->sd_alert_blink_on = ((now_us / 600000) & 1) != 0;
+    st->uptime_ms = (uint32_t)(now_us / 1000);
+
+    st->temp_warn = pk_soc_temp_get(&st->temp_c);
+
+    pk_batt_t b;
+    pk_batt_get(&b);
+    st->batt_valid    = b.valid;
+    st->batt_pct      = (uint8_t)b.pct;
+    st->batt_charging = b.charging;
+}
+
+void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)
+{
     char      buf[12];
     const int ty = PFD_BAR_TEXT_Y;
-
-    /* ── 左段：HDG + 航向，左对齐 ───────────────────────────── */
-    {
-        int x = PFD_BAR_MARGIN_L;
-        BAR_PUTS(fb, x, ty, "HDG", COL_LABEL);
-        x += BAR_TEXT_W(3) + PFD_BAR_GAP_LABEL;
-
-        if (s->imu_valid) {
-            int hdg = ((int)s->yaw_deg + 360) % 360;
-            snprintf(buf, sizeof(buf), "%03d~", hdg);
-            BAR_PUTS(fb, x, ty, buf, COL_GREEN);
-        } else {
-            BAR_PUTS(fb, x, ty, "---~", COL_STALE);
-        }
-    }
 
     /* ── 中段：状态位，按优先级填充可用宽度 ──────────────────
      *
@@ -142,8 +213,10 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
             n++;
         }
 
-        /* 中段可用区间：左端 HDG 之后、右端设备状态之前，各留一个词距。 */
-        int left_end   = PFD_BAR_MARGIN_L + BAR_TEXT_W(3 + 4) + PFD_BAR_GAP_LABEL;
+        /* 中段可用区间：左端是四页共用的固定锚点（见 pk_ui_status_group_left_x
+         * 头注——不是量出来的 HDG/标题宽度，否则四页各不相同）、右端设备状态
+         * 之前，各留一个词距。 */
+        int left_end   = pk_ui_status_group_left_x();
         /* 右段自身在演示模式下已经整体左移（见下面那段），中段跟着一起退——
          * 顶栏本来就有一套「装不下就按优先级丢」的机制，把新的可用宽度告诉它
          * 就够了，不必另写一套避让。 */
@@ -248,4 +321,29 @@ void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
             }
         }
     }
+}
+
+void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s)
+{
+    pk_pfd_fill_rect(fb, 0, STATUSBAR_TOP, PK_DISPLAY_W, STATUSBAR_BOT, COL_BG);
+
+    char      buf[12];
+    const int ty = PFD_BAR_TEXT_Y;
+
+    /* ── 左段：HDG + 航向，左对齐 ───────────────────────────── */
+    {
+        int x = PFD_BAR_MARGIN_L;
+        BAR_PUTS(fb, x, ty, "HDG", COL_LABEL);
+        x += BAR_TEXT_W(3) + PFD_BAR_GAP_LABEL;
+
+        if (s->imu_valid) {
+            int hdg = ((int)s->yaw_deg + 360) % 360;
+            snprintf(buf, sizeof(buf), "%03d~", hdg);
+            BAR_PUTS(fb, x, ty, buf, COL_GREEN);
+        } else {
+            BAR_PUTS(fb, x, ty, "---~", COL_STALE);
+        }
+    }
+
+    pk_ui_topbar_status_render(fb, s);
 }

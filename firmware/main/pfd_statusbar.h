@@ -41,6 +41,48 @@ typedef struct {
 void pk_pfd_statusbar_render(uint16_t *fb, const pk_pfd_status_t *s);
 
 /*
+ * 顶栏「设备状态组」——中段(SAT/ADSB/REC/TEMP，按优先级降级) + 右段(BLE/
+ * 电量/SD)，pk_pfd_statusbar_render 内部用的就是它，只是外面多包了一层
+ * HDG 左段 + 整条背景。
+ *
+ * 供 PFD 之外的整屏页面（交通 / 地图 / 列表）直接调用，让四页头部的这几个
+ * 图标画在**同一个 x**——本函数的左右边界都是与页面内容无关的固定公式
+ * （见 pfd_statusbar.c 里 pk_ui_status_group_left_x 的注释），不随各页
+ * 标题、量程文案等的宽度变化。调用方不必也不该给它传左边界。
+ *
+ * 不清背景：整屏页面早在自己 render 开头把全屏清过一遍，这里只管画图标
+ * 与文字，叠在页面已有的底色之上。
+ */
+void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s);
+
+/*
+ * 页面自己那些右对齐部件（地图 Z10、交通量程+朝向、列表排序说明+RESET）
+ * 的右界：在 pk_ui_topbar_right_limit（给 DEMO 徽标让位）的基础上，再退让
+ * 出设备状态组的 worst-case 宽度——那一组现在紧贴 DEMO 徽标（或紧贴屏幕
+ * 右缘）常驻，页面自己的部件必须整体让到它左边，否则会被状态组的图标压住。
+ *
+ * 用 worst-case 而不是当前实际宽度：SAT/ADSB 常驻、REC/TEMP 时有时无，
+ * 用实际宽度算会让页面自己的部件跟着 REC/TEMP 的出现/消失左右跳动——
+ * 这正是 BAR_RIGHT_W 那段注释警告过的"元素位置必须稳定"。
+ */
+int pk_ui_topbar_content_right_limit(int dflt);
+
+/*
+ * 汇总 pk_pfd_status_t 里"设备自身状态"那一组字段（GPS/SD/BLE/电量/温度/
+ * 时钟相位），供交通/地图/列表三页复用——这些取数逻辑与 pfd.c 里 PFD 分支
+ * 的写法完全一致（同一批数据源，一台设备只有一份真值），不该四页各抄一份、
+ * 抄出四套容易分叉的实现。
+ *
+ * 不填 imu_valid/yaw_deg/aircraft_count/rec_active：
+ *   - 前两个是 PFD 专属的左段数据，与本组无关；
+ *   - aircraft_count 各页快照的时间窗/来源已经各自算好，这里再算一遍只会
+ *     对不上，由调用方填。
+ *   - rec_active 尚无数据源接入（同 pfd.c 的 TODO(P2-1)），本函数也留默认
+ *     false，等 P2-1 落地后两处一起接。
+ */
+void pk_ui_topbar_status_collect(pk_pfd_status_t *st);
+
+/*
  * 演示模式徽标在顶栏里占的槽位。
  *
  * 位置取**顶栏最右端**，与页面标题隔着整条屏。理由是各页顶栏的内容密度天差

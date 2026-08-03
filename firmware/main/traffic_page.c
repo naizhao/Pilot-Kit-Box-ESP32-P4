@@ -894,27 +894,15 @@ void pk_traffic_page_render(uint16_t *fb)
      * 一页之内两个边距，切到 diag/list 更是差 8 px。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, PK_UI_PAD_L, PK_UI_TITLE_Y,
                pk_i18n_text(PK_TR_TFC_TITLE), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
-    if (hdg_valid) {
-        snprintf(buf, sizeof(buf), "HDG %03d~", ((int)lroundf(own_heading) + 360) % 360);
-        TFC_PUTS(fb, 200, TFC_HDR_TY, buf, COL_CYAN);
-    } else {
-        TFC_PUTS(fb, 200, TFC_HDR_TY, "HDG ---~", COL_AMBER);
-    }
-    /* 目标计数用图标而不是 "TFC" 三个字母——PFD 状态栏已经用这枚
-     * connecting_airports 表示 ADS-B 目标数，同一台设备上同一件事该用同一个
-     * 符号。 */
+    /* 卫星数 / ADS-B 目标数 / SD 卡状态等"设备状态组"现在四页common——见
+     * pk_ui_topbar_status_render（pfd_statusbar.c）。原来本页在这里另画的
+     * "HDG nnn°" 文字与一枚独立的 ADS-B 目标计数（分别在 x=200/392）都被它
+     * 取代了：HDG 由下方的 HSI 罗盘扇区连续可视，不需要再重复一份文字；
+     * 目标计数与 PFD/列表统一到同一枚图标、同一个 x，不再各页各画一次。 */
     {
-        const uint8_t *ic = pk_icon_bitmap
-                          + (size_t)PK_ICON_ADSB
-                            * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
-        /* 绿色取自 PFD 状态栏的 COL_GREEN——那里的星数、目标数都是这个绿。
-         * 绿在本项目里表示「有效且在线」，灰是「数据失效」，用错色等于说谎。 */
-        const uint16_t COL_ADSB = pk_rgb565(0, 220, 60);
-        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                        392, (PFD_BAR_BOT - PK_ICON_H) / 2,
-                        ic, PK_ICON_W, PK_ICON_H, COL_ADSB);
-        snprintf(buf, sizeof(buf), "%d", (int)n);
-        TFC_PUTS(fb, 392 + PK_ICON_W + 6, TFC_HDR_TY, buf, COL_ADSB);
+        pk_pfd_status_t stat = { .aircraft_count = n };
+        pk_ui_topbar_status_collect(&stat);
+        pk_ui_topbar_status_render(fb, &stat);
     }
     /* 右上角：地图朝向 + 量程。
      *
@@ -939,10 +927,10 @@ void pk_traffic_page_render(uint16_t *fb)
          * 「机头朝上」算成 12 格，整块读数被推出屏幕右缘。 */
         const int nm_w = pk_aa_text_width(buf, PK_UI_TITLE_SIZE);
         const int om_w = pk_aa_text_width(om,  PK_UI_TITLE_SIZE);
-        /* 右界走 pk_ui_topbar_right_limit：演示模式下顶栏右侧多了一枚常驻的
-         * DEMO 徽标，它画在控件层、压在本页之上，不退让的话「北向朝上」会被
-         * 盖掉一半。 */
-        const int nm_x = pk_ui_topbar_right_limit(PK_DISPLAY_W - 24) - nm_w;
+        /* 右界走 pk_ui_topbar_content_right_limit：演示模式下顶栏右侧多了一枚
+         * 常驻的 DEMO 徽标，现在还常驻一整组设备状态图标（SAT/ADSB/…/SD），
+         * 不退让的话「北向朝上」会被压在它们下面。 */
+        const int nm_x = pk_ui_topbar_content_right_limit(PK_DISPLAY_W - 24) - nm_w;
 
         TFC_PUTS(fb, nm_x, TFC_HDR_TY, buf, COL_GREY);
         /* 同档同高，与量程共用 TFC_HDR_TY(=PK_UI_TITLE_Y) 即可对齐基线。 */
