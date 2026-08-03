@@ -114,11 +114,28 @@ def parse_row_cells(row_text: str) -> list[str]:
     column 0; the cell value extends to the next cell-start line or to
     the end of the chunk. Lines that begin with a space (template
     continuations, indented references) are treated as continuation
-    of the current cell."""
+    of the current cell.
+
+    一个 `|` 在列 0 不一定是新单元格——它也可能是**跨行模板**的参数分隔。
+    Lucky Air（祥鹏航空，ICAO=LKE）那一行的 IATA 单元格长这样：
+
+        |8L<ref>{{cite web|url=https://www.iata.org/...|title=Airline and Airport Code Search
+        |website=www.iata.org}}</ref>
+        |LKE
+
+    第二行的 `|website=` 是 cite 模板的参数，却顶在列 0。按"列 0 的 |
+    就是新单元格"切，整行的列全部右移一格：ICAO 位取到的是
+    "website=www.iata.org"，`isalpha()` 不过，**整条被丢掉**。屏上表现
+    就是祥鹏航空的航班查不到航司——不是数据没更新，是这一条从来没进过表。
+
+    所以按 `{{`/`}}` 与 `<ref>`/`</ref>` 记嵌套深度，深度不为 0 时列 0 的
+    `|` 一律当作当前单元格的续行。
+    """
     cells: list[str] = []
     cur: list[str] = []
+    depth = 0
     for line in row_text.split("\n"):
-        if line.startswith("|"):
+        if line.startswith("|") and depth == 0:
             if cur:
                 cells.append("\n".join(cur))
                 cur = []
@@ -128,22 +145,61 @@ def parse_row_cells(row_text: str) -> list[str]:
             # Continuation of the current cell.
             if cur:
                 cur.append(line)
+        # 深度在处理完本行之后再更新：本行**开头**的 `|` 该不该算新单元格，
+        # 取决于走到这一行之前的深度，而不是本行结束时的深度。
+        depth += line.count("{{") - line.count("}}")
+        # 自闭合 <ref ... /> 不开新层级，先从 `<ref` 计数里扣掉。
+        depth += (line.count("<ref") - line.count("</ref>")
+                  - len(re.findall(r"<ref[^>]*/\s*>", line)))
+        if depth < 0:
+            depth = 0
     if cur:
         cells.append("\n".join(cur))
     return cells
 
 
-DEFUNCT_RE = re.compile(
-    r"\b(became|defunct|ceased|out of business|closed|bankrupt|"
-    r"merged|absorbed|dissolved|former|renamed)\b",
+# 备注栏里"这家公司本身已经没了"的**硬证据**。命中即永久丢弃。
+#
+# 注意这里**不含** "no longer allocated" / "withdrawn" 这类说"代码停用"的话。
+# 试过，代价是 65 条被删，其中包括 AXM——维基备注写着 "ICAO code no longer
+# allocated"，可 AirAsia 今天就在用 AXM / 呼号 RED CAP 飞。维基对代码停用的
+# 记载明显有陈旧的，按它删等于自己制造"查不到航司"。同类被误删的还有
+# CJG 浙江航空、CYN 中原航空。代码停不停用不影响我们查表——没在用的码本来
+# 就不会出现在空中，留着零成本；删错了却直接让屏上显示 "---"。
+DEFUNCT_HARD_RE = re.compile(
+    r"\b(defunct|ceased|out of business|bankrupt|dissolved|liquidat\w*)\b",
+    re.IGNORECASE,
+)
+
+# 只表示"改过名 / 并过谁 / 有过旧代码"的**软证据**。命中的行降级为备选：
+# 同一个 ICAO 若别处有干净行就用干净行，没有才拿它兜底。
+#
+# 为什么不能像以前那样直接丢：备注里写 "Former IATA code: ..."、
+# "Renamed from ..."、"merged into X" 的行里，有相当一批是**至今在飞**的公司，
+# 历史只是背景说明。实测被误杀的有 ABX Air（美国货运，备注写的是它 2003 年
+# 接手 "former Airborne Express" 的业务）、AirBridgeCargo(ABW)、Scoot(TGW)、
+# Rossiya(SDM)、ASL Airlines Ireland(ABR)、African Express(AXK) 等 43 个码。
+#
+# 但这个过滤当初是有正当理由的，不能简单删掉：Wikipedia 按**航司名**分页，
+# D 页的 "Deutsche Luft Hansa | Became Lufthansa" 与 L 页的 "Lufthansa"
+# 共用 ICAO=DLH，而 D 排在 L 前面，先到先得的话历史名会赢。
+#
+# 降级（而不是丢弃）同时满足两头：DLH 有 L 页的干净行，干净行优先，
+# 仍然显示 "Lufthansa"；ABX 没有任何干净行，于是软行兜底把它救回来。
+DEFUNCT_SOFT_RE = re.compile(
+    r"\b(became|closed|merged|absorbed|former|formerly|renamed|"
+    r"no longer allocated|no longer used|withdrawn)\b",
     re.IGNORECASE,
 )
 
 
-def parse_page(letter: str, wikitext: str) -> list[tuple[str, str, str]]:
-    """Return list of (icao3, iata2, name) tuples. Skips entries whose
-    comments cell looks defunct."""
-    out: list[tuple[str, str, str]] = []
+def parse_page(letter: str, wikitext: str) -> list[tuple[str, str, str, int]]:
+    """Return list of (icao3, iata2, name, tier) tuples.
+
+    tier 0 = 备注干净，首选；tier 1 = 备注只有改名/合并/旧代码一类软证据，
+    仅在该 ICAO 没有 tier 0 行时兜底。硬性停业的行直接不返回。
+    """
+    out: list[tuple[str, str, str, int]] = []
     chunks = ROW_SEP_RE.split(wikitext)
     for chunk in chunks:
         cells = parse_row_cells(chunk)
@@ -164,18 +220,14 @@ def parse_page(letter: str, wikitext: str) -> list[tuple[str, str, str]]:
             iata = ""
         if not name:
             continue
-        # Skip entries whose comments mark them defunct / merged / renamed.
-        # The current operator usually has its own row elsewhere in the
-        # table (e.g. "Deutsche Luft Hansa | Became Lufthansa" on the D
-        # page is shadowed by "Lufthansa" on the L page with the same
-        # ICAO DLH). Without this filter the historic name wins because
-        # alphabetical ordering puts D before L.
-        if DEFUNCT_RE.search(comments):
+        # 硬性停业：永久丢弃。软证据：降级到 tier 1 兜底。详见两条正则的注释。
+        if DEFUNCT_HARD_RE.search(comments):
             continue
+        tier = 1 if DEFUNCT_SOFT_RE.search(comments) else 0
         # Trim parenthetical disambiguators like "Air China (cargo)" — keep
         # the lead but drop the (...) tail to keep entries short.
         name = re.sub(r"\s*\([^)]+\)\s*$", "", name).strip()
-        out.append((icao, iata, name))
+        out.append((icao, iata, name, tier))
     return out
 
 
@@ -184,6 +236,13 @@ def parse_page(letter: str, wikitext: str) -> list[tuple[str, str, str]]:
 # regional cargo / charter operators. Sourced from each airline's own
 # Wikipedia page (which exists, just isn't linked from the per-letter
 # code lists) or from public flight-tracker airline DBs.
+#
+# 现状核对（重跑生成器时顺手复核）：HGO / JDL / URC 维基至今没有，必须留；
+# TBA / UEA / OKA / RLH 维基有条目但 IATA 栏是空的，留着是为了补 IATA；
+# DKH / CKK / CSS / CYZ / YZR / EPA / AHK / HKC 这 8 条维基已收录且 IATA
+# 一致，严格说可以删——留着只是因为这里的名字更常用（"Juneyao Airlines"
+# vs 维基的 "Juneyao Air"、"AHK Air Hong Kong" vs "Air Hong Kong"）。
+# 删它们不会丢数据，只会让屏上换个叫法。
 MANUAL_ADDITIONS: list[tuple[str, str, str]] = [
     ("HGO", "HE", "One Air"),                        # UK cargo charter (2021)
     ("JDL", "JD", "Jingdong Cargo Airlines"),        # 京东货运 (2019)
@@ -227,7 +286,12 @@ def main() -> int:
 
     os.makedirs(args.cache_dir, exist_ok=True)
 
-    all_rows: dict[str, tuple[str, str, str]] = {}    # ICAO → (icao, iata, name)
+    # ICAO → (icao, iata, name)。tier 0 与 tier 1 分开收，最后再合并，
+    # 保证"L 页的干净 Lufthansa"永远压过"D 页的 Became Lufthansa"，
+    # 与字母页的先后顺序无关。
+    all_rows: dict[str, tuple[str, str, str]] = {}
+    soft_rows: dict[str, tuple[str, str, str]] = {}
+    per_letter: dict[str, tuple[int, int]] = {}
     for L in letters:
         cache_path = os.path.join(args.cache_dir, f"{L}.wikitext")
         if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
@@ -241,11 +305,23 @@ def main() -> int:
             time.sleep(1.0)   # be polite
 
         rows = parse_page(L, wt)
-        sys.stderr.write(f"  {L}: {len(rows)} entries\n")
-        for icao, iata, name in rows:
+        n0 = sum(1 for r in rows if r[3] == 0)
+        n1 = len(rows) - n0
+        per_letter[L] = (n0, n1)
+        sys.stderr.write(f"  {L}: {len(rows)} entries ({n0} primary, {n1} soft)\n")
+        for icao, iata, name, tier in rows:
             # First occurrence wins (alphabetical letter pages are in the
             # right order, and duplicates across pages are rare).
-            all_rows.setdefault(icao, (icao, iata, name))
+            (all_rows if tier == 0 else soft_rows).setdefault(
+                icao, (icao, iata, name))
+
+    # 软行只填 tier 0 没覆盖到的空缺。
+    n_soft_used = 0
+    for icao, row in soft_rows.items():
+        if icao not in all_rows:
+            all_rows[icao] = row
+            n_soft_used += 1
+    sys.stderr.write(f"  +{n_soft_used} soft-tier fallbacks used\n")
 
     # Splice in the manual fixup entries. Manual wins on conflict — these
     # were added precisely because Wikipedia's entry was wrong / missing.
