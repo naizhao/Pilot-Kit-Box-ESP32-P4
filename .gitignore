@@ -70,6 +70,9 @@ __pycache__
 *.d
 *.a
 
+# 例外：3D 外壳的 .obj 是几何模型（嘉立创下单用），不是编译中间产物
+!docs/jlc/**/*.obj
+
 # EasyEDA raw-export backups (kept locally, not tracked)
 *.ori
 
