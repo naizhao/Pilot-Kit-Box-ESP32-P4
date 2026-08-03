@@ -12,10 +12,23 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 本机基准位置：北京首都机场以北一点。纬度值只影响经度方向的缩放，取多少都
- * 行，但取真实值可顺带验证磁偏角查表没走进死区。 */
-#define DEMO_OWN_LAT   40.0
-#define DEMO_OWN_LON  116.6
+#include "demo_track.h"
+
+/* 轨迹表取不出来时的兜底位置：ZGGG 停机坪，也就是轨迹的起点。
+ * 只有在 demo_track_data.c 没生成（表为空）时才会走到，等于"演示模式退化成
+ * 老的静止行为"——宁可不动，也不要让各页拿到未初始化的经纬度。 */
+#define DEMO_FALLBACK_LAT   23.3853
+#define DEMO_FALLBACK_LON  113.2924
+
+/* now_us → 本机状态。纯查表 + 插值，没有任何缓存（见 demo_track.h 的无状态
+ * 约束）。578 条记录的二分查找是 10 次比较，比缓存带来的不可复现划算。 */
+static void own_state(int64_t now_us, pk_demo_track_state_t *st)
+{
+    if (pk_demo_track_at(now_us, st)) return;
+    memset(st, 0, sizeof(*st));
+    st->lat = DEMO_FALLBACK_LAT;
+    st->lon = DEMO_FALLBACK_LON;
+}
 
 /* now_us → 秒。用 double 中转再落到 float：直接 (float)now_us 在开机 4 小时后
  * 就丢掉毫秒位（float 只有 24 位尾数），动画会开始一顿一顿地跳。 */
@@ -24,24 +37,42 @@ static float demo_t(int64_t now_us)
     return (float)((double)now_us / 1000000.0);
 }
 
-float pk_demo_roll_deg(int64_t now_us)  { return 25.0f * sinf(demo_t(now_us) * 0.37f); }
-float pk_demo_pitch_deg(int64_t now_us) { return 10.0f * sinf(demo_t(now_us) * 0.23f); }
-float pk_demo_yaw_deg(int64_t now_us)   { return fmodf(demo_t(now_us) * 6.0f, 360.0f); }
+float pk_demo_roll_deg(int64_t now_us)
+{
+    pk_demo_track_state_t st; own_state(now_us, &st); return st.roll_deg;
+}
+
+float pk_demo_pitch_deg(int64_t now_us)
+{
+    pk_demo_track_state_t st; own_state(now_us, &st); return st.pitch_deg;
+}
+
+float pk_demo_yaw_deg(int64_t now_us)
+{
+    pk_demo_track_state_t st; own_state(now_us, &st); return st.track_deg;
+}
 
 int pk_demo_own_alt_ft(int64_t now_us)
 {
-    return 23225 + (int)(1200.0f * sinf(demo_t(now_us) * 0.11f));
+    pk_demo_track_state_t st; own_state(now_us, &st); return (int)st.alt_ft;
 }
 
 int pk_demo_own_gs_kt(int64_t now_us)
 {
-    return 378 + (int)(60.0f * sinf(demo_t(now_us) * 0.17f));
+    pk_demo_track_state_t st; own_state(now_us, &st); return (int)st.gs_kt;
 }
 
-void pk_demo_own_pos(double *lat, double *lon)
+int pk_demo_own_vs_fpm(int64_t now_us)
 {
-    if (lat) *lat = DEMO_OWN_LAT;
-    if (lon) *lon = DEMO_OWN_LON;
+    pk_demo_track_state_t st; own_state(now_us, &st); return st.vs_fpm;
+}
+
+void pk_demo_own_pos(int64_t t_us, double *lat, double *lon)
+{
+    pk_demo_track_state_t st;
+    own_state(t_us, &st);
+    if (lat) *lat = st.lat;
+    if (lon) *lon = st.lon;
 }
 
 /* ── IMU ──────────────────────────────────────────────────────────── */
@@ -61,21 +92,40 @@ bool pk_demo_imu_sample(int64_t now_us, pk_imu_sample_t *out)
 }
 
 /* ── 气压 ─────────────────────────────────────────────────────────── */
+/* 高度（m）→ ISA 标准大气压（Pa）。对流层 + 平流层下段两段式，
+ * 覆盖 0–20 km，够本轨迹的 0–12.7 km。 */
+static float isa_pressure_pa(float alt_m)
+{
+    if (alt_m < 11000.0f)
+        return 101325.0f * powf(1.0f - 2.25577e-5f * alt_m, 5.25588f);
+    return 22632.1f * expf(-(alt_m - 11000.0f) / 6341.62f);
+}
+
 bool pk_demo_baro(int64_t now_us, pk_baro_state_t *out)
 {
     if (!out) return false;
+    pk_demo_track_state_t st;
+    own_state(now_us, &st);
+
     memset(out, 0, sizeof(*out));
-    out->valid       = true;
-    out->pressure_pa = 40000.0f;                        /* ≈ 23 000 ft 标准大气 */
-    out->temp_c      = -30.0f;
+    out->valid = true;
     /* 与本机权威高度差 120 ft。真实飞行里气压高度与 ADS-B/GPS 高度本来就对不
      * 齐（QNH 设定、几何高 vs 气压高），两个数完全相等反而是假的。 */
-    out->alt_ft      = pk_demo_own_alt_ft(now_us) - 120;
-    /* 升降率**不取**本机高度曲线的真实导数：那条曲线（±1200 ft / 周期 57 s）
-     * 是为了让高度带的进位滚动被反复压到而选的，它的导数高达 ±7900 fpm，屏上
-     * 是个一眼假的读数。这里另给一条量级合理的独立曲线。 */
-    out->vs_fpm      = (int)(700.0f * sinf(demo_t(now_us) * 0.13f));
-    out->updated_us  = now_us;
+    out->alt_ft = (int)st.alt_ft - 120;
+    /* 气压随高度走，不能再钉死在 40 000 Pa：本机现在从停机坪一路爬到 FL410，
+     * 一个恒定的舱压读数与旁边那个正在滚动的高度带自相矛盾，而诊断页把两个
+     * 数并排显示。 */
+    out->pressure_pa = isa_pressure_pa((float)out->alt_ft * 0.3048f);
+    /* 外温同样跟着高度走：对流层每千米 −6.5 °C，11 km 以上恒定 −56.5 °C。 */
+    {
+        const float h_km = (float)out->alt_ft * 0.0003048f;
+        out->temp_c = (h_km < 11.0f) ? 15.0f - 6.5f * h_km : -56.5f;
+    }
+    /* 升降率现在就是轨迹高度的真实导数（±4000 fpm 以内，见 demo_track）。
+     * 早先那条曲线的导数高达 ±7900 fpm，只好另给一条独立的假曲线；真实轨迹
+     * 没有这个问题，VS 与高度带的滚动方向从此永远一致。 */
+    out->vs_fpm     = st.vs_fpm;
+    out->updated_us = now_us;
     return true;
 }
 
@@ -83,13 +133,17 @@ bool pk_demo_baro(int64_t now_us, pk_baro_state_t *out)
 bool pk_demo_gps(int64_t now_us, pk_gps_state_t *out)
 {
     if (!out) return false;
+    pk_demo_track_state_t st;
+    own_state(now_us, &st);
+
     memset(out, 0, sizeof(*out));
     out->have_fix        = true;
-    pk_demo_own_pos(&out->lat, &out->lon);
+    out->lat             = st.lat;
+    out->lon             = st.lon;
     out->have_altitude   = true;
-    out->altitude_ft     = pk_demo_own_alt_ft(now_us);
-    out->ground_speed_kt = pk_demo_own_gs_kt(now_us);
-    out->track_deg       = (int)pk_demo_yaw_deg(now_us);
+    out->altitude_ft     = (int)st.alt_ft;
+    out->ground_speed_kt = (int)st.gs_kt;
+    out->track_deg       = (int)st.track_deg;
     out->sats            = 11;
     out->updated_us      = now_us;
 
@@ -133,7 +187,7 @@ bool pk_demo_gps(int64_t now_us, pk_gps_state_t *out)
 static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
                   bool have_alt, int alt_ft, bool have_vel, int track_deg,
                   const char *callsign, int squawk, int age_s,
-                  int64_t now_us, float own_yaw_deg)
+                  int64_t now_us, int64_t pos_us, float own_yaw_deg)
 {
     memset(a, 0, sizeof(*a));
     a->icao24        = icao;
@@ -155,8 +209,12 @@ static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
         a->squawk      = squawk;
     }
 
+    /* 目标的绝对经纬度 = **此刻的**本机位置 + 相对方位 + 距离。
+     * 本机现在沿真实轨迹飞，这里必须用同一个动画时钟取位置，否则飞机一起飞
+     * 就把整片目标留在了广州上空——这正是"假目标跟着本机走"的实现方式，
+     * 一行专门的跟随代码都不需要。 */
     double own_lat, own_lon;
-    pk_demo_own_pos(&own_lat, &own_lon);
+    pk_demo_own_pos(pos_us, &own_lat, &own_lon);
     float brg_true = own_yaw_deg + rel_deg;
     float rad      = brg_true * (float)M_PI / 180.0f;
     double dlat    = (double)(dist_nm / 60.0f) * cos(rad);
@@ -254,7 +312,7 @@ size_t pk_demo_traffic(aircraft_t *out, size_t cap,
               bare ? false : SET[i].have_alt, own_alt_ft + SET[i].alt,
               bare ? false : SET[i].have_vel, SET[i].track,
               bare ? NULL : SET[i].call, bare ? -1 : SET[i].sqk,
-              SET[i].age, now_us, own_yaw_deg);
+              SET[i].age, now_us, anim_us, own_yaw_deg);
     }
     return n;
 }

@@ -68,6 +68,10 @@ idf_component_register(
         "config_ble.c"
         "config_demo.c"
         "demo_data.c"
+        # 演示模式的真实飞行轨迹回放 + 生成的常量表
+        # （firmware/scripts/gen_demo_track.py，见 demo_track.h 文件头）。
+        "demo_track.c"
+        "demo_track_data.c"
         "config_devname.c"
         "traffic_page.c"
         "pk_pmtiles.c"

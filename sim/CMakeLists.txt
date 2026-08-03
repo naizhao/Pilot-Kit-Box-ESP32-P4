@@ -102,6 +102,8 @@ set(FW_DRAW_SRC
     # 演示模式的合成数据。它同时是模拟器的 mock 源——两边共用一份，模拟器上
     # 压出来的极值真机演示时才压得到同一批（见 demo_data.h 的文件头）。
     ${FW}/demo_data.c
+    ${FW}/demo_track.c
+    ${FW}/demo_track_data.c
     ${FW}/traffic_geom.c
     ${FW}/mag_var.c
     ${FW}/geo.c

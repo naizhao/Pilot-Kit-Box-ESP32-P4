@@ -128,7 +128,7 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
             out->lat = lat_e ? atof(lat_e) : MAP_DEMO_OWN_LAT;
             out->lon = lon_e ? atof(lon_e) : MAP_DEMO_OWN_LON;
         } else {
-            pk_demo_own_pos(&out->lat, &out->lon);
+            pk_demo_own_pos(s_now_us, &out->lat, &out->lon);
         }
         out->have_altitude = true;
         out->altitude_ft   = s_own_alt;
@@ -157,10 +157,16 @@ bool pk_baro_get(pk_baro_state_t *out)
 
 /*
  * 地图页专用的目标表：pk_demo_traffic() 按"本机方位+距离"合成，内部又调
- * pk_demo_own_pos() 算基准点——那是北京，与地图页覆盖范围内的本机位置
- * （MAP_DEMO_OWN_LAT/LON，珠三角）对不上，两者一叠加，目标会画在离本机
- * 几千公里外。所以地图页不能复用 pk_demo_traffic，这里另起一份直接产
- * 绝对经纬度的合成数据，同样只在 PK_SIM_PAGE=map 时启用。
+ * pk_demo_own_pos() 算基准点——那是**沿真实 GPX 轨迹飞行**的本机位置
+ * （demo_track，ZGGG→ZBAA），与地图页钉死的那个本机位置
+ * （MAP_DEMO_OWN_LAT/LON，珠三角）对不上：轨迹只有开头几分钟在珠三角，
+ * 之后一路北上，两者一叠加，目标会画在离本机上千公里外。所以地图页不能
+ * 复用 pk_demo_traffic，这里另起一份直接产绝对经纬度的合成数据，同样只在
+ * PK_SIM_PAGE=map 时启用。
+ *
+ * （真机不吃这条：真机的地图页与 PFD 用的是同一个会动的本机位置，
+ *   假目标自然跟着走。这个岔路纯粹是为了让 sim 的地图截图落在
+ *   有真实瓦片的珠三角试点包里。）
  *
  * PK_SIM_MAP_CLUMP=1：把目标全部挤进一小片区域（呼号扎堆），用来验证
  * map_page.c 的标签防遮挡规则（见其文件头注释「按距屏幕中心近→远占位，

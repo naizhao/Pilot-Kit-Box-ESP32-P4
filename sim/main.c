@@ -231,7 +231,8 @@ static void mock_fill(const sim_state_t *st,
  */
 static void mock_fill_boxes(pk_pfd_infobox_t *ib, pk_pfd_leftbox_t *lb,
                             const pk_pfd_alt_tape_t *alt,
-                            const pk_pfd_speed_tape_t *spd)
+                            const pk_pfd_speed_tape_t *spd,
+                            int64_t anim_us)
 {
     const sim_lack_t k = sim_lack();
 
@@ -242,7 +243,11 @@ static void mock_fill_boxes(pk_pfd_infobox_t *ib, pk_pfd_leftbox_t *lb,
     ib->alt_ft       = alt->altitude_ft;
     /* 升降率两个来源：ADS-B 报文里的 VS，或气压高度的微分。两条都断了才没有。 */
     ib->vs_valid     = !(k.no_own && k.no_baro);
-    ib->vs_fpm       = -640;
+    /* 早先写死 -640：本机高度当时是一条正弦曲线，它的导数高达 ±7900 fpm，
+     * 屏上是个一眼假的读数，只好另编一个常数。现在本机走真实 GPX 轨迹，
+     * VS 就是那条轨迹高度的真实导数（±4000 fpm 以内），可以直接用——
+     * 常数 VS 与旁边正在滚动的高度带本来就是自相矛盾的两个数。 */
+    ib->vs_fpm       = pk_demo_own_vs_fpm(anim_us);
     ib->vs_from_adsb = !k.no_own;
 
     memset(lb, 0, sizeof(*lb));
@@ -539,7 +544,9 @@ static int run_headless(float at_sec, const char *out)
     {
         pk_pfd_infobox_t ib;
         pk_pfd_leftbox_t lb;
-        mock_fill_boxes(&ib, &lb, &alt, &spd);
+        /* 动画时间与 mock_fill() 里那一份同源（st.t 秒 → 微秒）。 */
+        mock_fill_boxes(&ib, &lb, &alt, &spd,
+                        (int64_t)((double)st.t * 1000000.0));
         pk_pfd_infobox_render(fb, &ib);
         pk_pfd_leftbox_render(fb, &lb);
     }
@@ -873,7 +880,9 @@ int main(int argc, char **argv)
     {
         pk_pfd_infobox_t ib;
         pk_pfd_leftbox_t lb;
-        mock_fill_boxes(&ib, &lb, &alt, &spd);
+        /* 动画时间与 mock_fill() 里那一份同源（st.t 秒 → 微秒）。 */
+        mock_fill_boxes(&ib, &lb, &alt, &spd,
+                        (int64_t)((double)st.t * 1000000.0));
         pk_pfd_infobox_render(fb, &ib);
         pk_pfd_leftbox_render(fb, &lb);
     }
