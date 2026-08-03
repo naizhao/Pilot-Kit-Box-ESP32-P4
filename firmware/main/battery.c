@@ -32,6 +32,9 @@ static int     s_raw_prev;      /* 上一次**原始**读数，阶跃检测用�
 static int64_t s_trend_us;
 static bool    s_charging;
 static bool    s_stat_valid;   /* 曾观察到 STAT=LOW，确认飞线已接 */
+static bool    s_vbus;        /* USB/电源在位。比 charging 更宽：充满停充时
+                               * charging=false 但 vbus 仍为 true，这一档的
+                               * 端电压补偿只看它（见 supply_drop_mv）。 */
 
 void pk_batt_init(void)
 {
@@ -83,6 +86,19 @@ void pk_batt_init(void)
     };
     gpio_config(&stat_cfg);
 
+    /* 开机初始化 s_vbus：没有阶跃可看（阶跃检测要两个采样点），只能用电压
+     * 估。充满维持 / 充电中的端电压 ≥4.10 V，拔电开路通常已回落到这以下。
+     * 阈值取 4100：拔电稳态 4042 mV 在它下面，插电维持 4138 mV 在它上面。
+     * 估错的话下一次阶跃（拔/插）会纠正，最坏只错到下一次插拔。 */
+    {
+        int raw0 = 0;
+        if (adc_oneshot_read(s_adc, s_chan, &raw0) == ESP_OK) {
+            int mv0 = raw0;
+            if (s_cali) adc_cali_raw_to_voltage(s_cali, raw0, &mv0);
+            s_vbus = (mv0 * CONFIG_PK_BATT_DIVIDER_X100 / 100 >= 4100);
+        }
+    }
+
     s_ready = true;
     ESP_LOGI(TAG, "BAT_ADC on GPIO%d (unit %d chan %d), divider x%.2f",
              BATT_ADC_GPIO, (int)unit, (int)s_chan,
@@ -114,42 +130,58 @@ static int mv_to_pct(int mv)
 }
 
 /*
- * 充电时的端电压补偿。
+ * 插着电时的端电压补偿。
  *
- * 上面那张表是**放电曲线**，按静置开路电压标定。充电时测到的是端电压 =
- * 开路电压 + 充电电流 × 内阻，直接查表必然虚高：真机实测插着电显示 99%、
- * 拔掉掉到 88%，跳 11 个百分点。
+ * 上面那张表是**放电曲线**，按静置开路电压标定。而只要 USB 插着，BAT_ADC
+ * 测到的就不是电池开路电压：电池与充电器输出并在同一个 VBAT 节点上，读数被
+ * 抬高，直接查表必然虚高。
  *
- * 这里以前的决定是"不补偿"，理由是压降随充电电流变化、减一个固定值会在别的
- * 阶段引入新的错。理由本身成立，但固定值并不是唯一选择 —— ETA6098 是 CC/CV
- * 充电器，压降怎么变是有形状的：
+ * 判据是「插没插电」而不是「在不在充电」——这一点是 2026-08-04 真机数据逼出来
+ * 的。三个场景，同一块电池：
+ *
+ *     充满**停充**(STAT=HIGH，线还插着)   4138 mV   ← 仍虚高 96 mV
+ *     拔电                                4042 mV   ← 真实开路电压
+ *     重插**充电中**(STAT=LOW)            4170 mV   ← 虚高 128 mV
+ *
+ * 头一行是关键：ETA6098 充满后停止充电、STAT 拉高，但线还插着，VBAT 被充电器
+ * 维持在 4.14 V。此时"没在充电"却依然虚高 96 mV。上一版按 STAT 判断、停充就
+ * 不补偿，于是这一档显示 99%、拔掉掉到 91%，还是跳 8 个点。
+ *
+ * 压降的形状（ETA6098 是 CC/CV 充电器）：
  *
  *   CC 恒流段（端电压还没顶到 4.15 V）：电流恒定，压降 ≈ I×R 也基本恒定；
- *   CV 恒压段（4.15 V 以上）：电压被钳住，电流从满流逐渐降到截止电流，
- *                              压降随之线性趋近 0。
+ *   CV 恒压段：电压被钳住，电流从满流降到截止，压降**收敛到维持值**（不是 0);
+ *   停充维持：电流为 0，只剩充电器维持电压高出开路电压的那一截。
  *
- * 所以补偿量在 CV 区间线性收敛到 0，而不是一刀切。这样快充阶段扣得多、
- * 快充满时几乎不扣，跳变从 11 个百分点压到 2 个左右。
+ * 所以 CV 段是从 CC 压降线性收敛到 HOLD 压降，而不是收敛到 0。用上面三个
+ * 实测点验证，三种状态全部收敛到同一个 91%：
  *
- * BATT_CHG_DROP_MV 是**经验值**，不是测出来的内阻：它等于"插电稳定读数 −
- * 拔电稳定读数"，本机 2026-08-04 实测约 150 mV。换电芯或改充电电流后要重标：
- * esp_log_level_set("batt", ESP_LOG_DEBUG) 会打出补偿前后的电压，插拔一次
- * 取差值填回来即可。
+ *     充电中 4170 − 128 = 4042 → 91%
+ *     停充   4138 −  96 = 4042 → 91%
+ *     拔电   4042 −   0 = 4042 → 91%
  *
- * 仍是估算，做不到电量计那么准 —— 这块板既没有电流采样也没有库仑计。但比
- * 「充电时系统性虚高 10%+」好，而且只在 STAT 确认正在充电时才介入（充满后
- * ETA6098 停充、STAT 拉高，这里就不再扣，不会把满电压成 90%）。
+ * 两个常量都是**经验值**，不是测出来的内阻：
+ *   BATT_CC_DROP_MV   = 充电中稳定读数 − 拔电稳定读数（CC 段）
+ *   BATT_HOLD_DROP_MV = 停充维持读数   − 拔电稳定读数
+ * 换电芯或改充电电流后要重标，把 batt 日志开到 DEBUG，插拔一轮取差值即可。
+ *
+ * 仍是估算——这块板既没有电流采样也没有库仑计。但比「插电时系统性虚高 8~11
+ * 个百分点」好得多。
  */
-#define BATT_CHG_DROP_MV   150
+#define BATT_CC_DROP_MV     150   /* CC 恒流段的 I×R */
+#define BATT_HOLD_DROP_MV    96   /* 停充维持：充电器维持电压 − 开路电压 */
 #define BATT_CV_KNEE_MV    4150   /* CC→CV 拐点 */
-#define BATT_CV_FULL_MV    4200   /* CV 段终点，压降到此归零 */
+#define BATT_CV_FULL_MV    4200   /* CV 段终点，压降收敛到 HOLD */
 
-static int charge_drop_mv(int batt_mv)
+static int supply_drop_mv(int batt_mv, bool vbus, bool charging)
 {
-    if (batt_mv <= BATT_CV_KNEE_MV) return BATT_CHG_DROP_MV;
-    if (batt_mv >= BATT_CV_FULL_MV) return 0;
-    return BATT_CHG_DROP_MV * (BATT_CV_FULL_MV - batt_mv)
-                            / (BATT_CV_FULL_MV - BATT_CV_KNEE_MV);
+    if (!vbus)     return 0;                    /* 拔了：读数就是开路电压 */
+    if (!charging) return BATT_HOLD_DROP_MV;    /* 插着但已停充（充满维持） */
+    if (batt_mv <= BATT_CV_KNEE_MV) return BATT_CC_DROP_MV;
+    if (batt_mv >= BATT_CV_FULL_MV) return BATT_HOLD_DROP_MV;
+    return BATT_CC_DROP_MV - (batt_mv - BATT_CV_KNEE_MV)
+                             * (BATT_CC_DROP_MV - BATT_HOLD_DROP_MV)
+                             / (BATT_CV_FULL_MV - BATT_CV_KNEE_MV);
 }
 
 bool pk_batt_get(pk_batt_t *out)
@@ -173,9 +205,9 @@ bool pk_batt_get(pk_batt_t *out)
              *   LOW  -> 正在充电
              *   HIGH -> 未充电（已充满或未接电源）
              *
-             * 飞线未接时 GPIO21 恒为 HIGH（内部上拉），无法区分"未充电"和
-             * "没接线"。此时回退到阶跃检测 + 30 s 电压趋势——两者都是推断，
-             * 不如 STAT 可靠，但在飞线接上前是唯一手段。
+             * STAT 是开漏，飞线未接时 GPIO21 被内部上拉恒为 HIGH，与"插着
+             * 但充满"无法区分。所以 vbus 在位的最终判据交给阶跃检测（见下）：
+             * 电压陡降 = 拔电。这里只管"此刻在不在充电"。
              */
             const int stat = gpio_get_level(BATT_STAT_GPIO);
             if (stat == 0) {
@@ -190,24 +222,38 @@ bool pk_batt_get(pk_batt_t *out)
                 }
                 s_stat_valid = true;
                 s_charging = true;
+                s_vbus     = true;     /* STAT=LOW 必然有电在喂 */
             } else if (s_stat_valid) {
                 s_charging = false;
+                /* STAT=HIGH 但不在这里清 vbus：充满停充时 vbus 仍在位，
+                 * 端电压仍被维持（见 supply_drop_mv 的 HOLD 一档）。拔电靠
+                 * 下面的阶跃检测翻 s_vbus。 */
+            }
+
+            /*
+             * 阶跃检测：插拔充电线的那一瞬间，引脚电压会跳一个台阶。
+             *
+             * 这一段在 s_stat_valid 为真时**也跑**（不再只在 else 分支里）——
+             * 因为 STAT 分不清"充满停充"和"拔了电源"，两者都是 HIGH，而它们
+             * 的端电压补偿差了一档（HOLD vs 0）。只有电压陡降能区分：拔电
+             * 那一下 VBAT 节点从"被充电器维持"变回"纯电池开路"，掉一截。
+             *
+             * 必须用原始读数判：EMA 1/8 会把台阶压平埋进噪声。阈值 30 mV
+             * （引脚侧）远大于噪声（实测 ±2 mV）。用 s_raw_prev（上一次原始
+             * 读数），不能用 EMA 后的。
+             */
+            if (s_raw_prev != 0) {
+                const int step = mv - s_raw_prev;
+                if (step > 30) {
+                    s_vbus = true;
+                    if (!s_stat_valid) s_charging = true;
+                } else if (step < -30) {
+                    s_vbus     = false;
+                    s_charging = false;
+                }
             }
 
             if (!s_stat_valid) {
-                /* STAT 飞线未确认连接，回退到电压推断 */
-                /*
-                 * 阶跃检测：插拔充电线的那一瞬间，电压会跳一个台阶。
-                 * 罩哥实测：拔掉线的瞬间 100% -> 95%（约 65 mV）。
-                 * 必须用原始读数判：EMA 1/8 会把 65 mV 的阶跃压到 8 mV，
-                 * 埋在噪声里。阈值 30 mV 远大于噪声（实测 +/-2 mV）。
-                 */
-                if (s_raw_prev != 0) {
-                    const int step = mv - s_raw_prev;
-                    if (step > 30)       s_charging = true;
-                    else if (step < -30) s_charging = false;
-                }
-
                 /*
                  * 30 s 长窗口趋势：与 30 秒前比，高 5 mV 就算在充。
                  * 涓流阶段相邻两次差值 <1 mV/s，短窗口检不出；30 s 窗口下
@@ -237,11 +283,11 @@ bool pk_batt_get(pk_batt_t *out)
              * DEBUG。换板子或换电芯要重标时，esp_log_level_set("batt",
              * ESP_LOG_DEBUG) 打开即可，不必回头改代码。 */
             const int batt_mv_dbg = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
-            const int drop_dbg    = s_charging ? charge_drop_mv(batt_mv_dbg) : 0;
-            ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV) chg=%d drop=%d mV "
+            const int drop_dbg    = supply_drop_mv(batt_mv_dbg, s_vbus, s_charging);
+            ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV) vbus=%d chg=%d drop=%d mV "
                           "-> %d mV = %d%%",
                      s_ema_mv, CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
-                     batt_mv_dbg, (int)s_charging, drop_dbg,
+                     batt_mv_dbg, (int)s_vbus, (int)s_charging, drop_dbg,
                      batt_mv_dbg - drop_dbg, mv_to_pct(batt_mv_dbg - drop_dbg));
         }
     }
@@ -250,15 +296,14 @@ bool pk_batt_get(pk_batt_t *out)
         out->raw_mv   = s_ema_mv;
         out->batt_mv  = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
         /*
-         * 百分比按**扣掉充电压降后**的电压算，见 charge_drop_mv() 顶部那段
-         * 推导。batt_mv 本身仍report 实测值——它是标定分压比和排查用的原始
+         * 百分比按**扣掉端电压抬升后**的电压算，见 supply_drop_mv() 顶部那段
+         * 推导。batt_mv 本身仍 report 实测值——它是标定分压比和排查用的原始
          * 量，补偿只影响"给人看的电量"。
          *
-         * 只在 s_charging 时扣。这个标志优先取自 STAT 引脚（TP1 飞线，硬件
-         * 信号）；飞线没接时退化成电压推断，那种情况下补偿也跟着不可靠——
-         * 但那时本来就没有可靠的充电状态可言。
+         * 补偿看 s_vbus（插没插电），不看 s_charging（在不在充电）：充满停充
+         * 时充电器仍在维持电压，读数照样虚高一档。见 supply_drop_mv 的 HOLD。
          */
-        const int drop = s_charging ? charge_drop_mv(out->batt_mv) : 0;
+        const int drop = supply_drop_mv(out->batt_mv, s_vbus, s_charging);
         out->pct      = mv_to_pct(out->batt_mv - drop);
         /* 满电仍如实报充电状态：阶跃检测能证明线插着，不必再靠"电压还在涨"
          * 来推断，上一版那条 <4150 的抑制反而会把已知事实盖掉。 */
