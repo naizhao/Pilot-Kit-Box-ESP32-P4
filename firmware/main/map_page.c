@@ -36,6 +36,8 @@
 #include "pfd_icon_font.h"
 
 #include "aircraft_state.h"
+#include "imu_task.h"   /* pk_imu_sample_get —— 本机符号旋转的 IMU 航向来源 */
+#include "mag_var.h"    /* 磁->真 修正，见 own_heading_true_deg 注释 */
 #include "own_ship.h"
 #include "pk_aero_layer.h"
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
@@ -588,6 +590,28 @@ void pk_map_page_render(uint16_t *fb)
     pk_aero_layer_render_labels(fb, s_center_lat, s_center_lon, s_zoom,
                                 s_occ, &nocc, (int)(sizeof(s_occ) / sizeof(s_occ[0])));
 
+    /* 本机符号的旋转角。地图是 **north-up 且以真北为基准**，而
+     * pk_own_heading_resolve() 的输出基准随来源变：ADS-B 地面航迹与 GPS
+     * track 本来就是真北，IMU yaw 是**磁北**。直接把磁航向画上去，机头会
+     * 偏掉一整个磁偏角（国内 3~10°，高纬更多），而且屏幕上完全看不出错。
+     * 所以 IMU 这一路必须加磁偏角转真北（mag_var.h：东偏为正，真=磁+偏）。
+     *
+     * 拿不到航向就保持 0（朝北）——这是既有行为，不是新引入的降级。 */
+    float own_rot_deg = 0.0f;
+    if (own_valid) {
+        pk_imu_sample_t imu;
+        bool imu_ok = pk_imu_sample_get(&imu) && imu.valid;
+        float hdg = 0.0f;
+        pk_hdg_src_t hsrc = PK_HDG_SRC_NONE;
+        if (pk_own_heading_resolve(own_valid, src, &own,
+                                   imu_ok, imu_ok ? imu.yaw_deg : 0.0f,
+                                   &hdg, &hsrc)) {
+            if (hsrc == PK_HDG_SRC_IMU)
+                hdg += pk_mag_var_lookup(own.lat, own.lon);
+            own_rot_deg = hdg;
+        }
+    }
+
     /* ── 本机符号：跟随模式画在视口中心；手动平移模式画在它真实的地理投影位置
      * （可能滚出视口之外，此时自然不画——离开可见范围本来就不该出现）。
      * GPS 无 fix：灰显于上次已知位置；从未有过位置则整个不画（同 traffic 页的
@@ -605,7 +629,7 @@ void pk_map_page_render(uint16_t *fb)
             const uint8_t *ac = pk_icon_bitmap
                               + (size_t)PK_ICON_OWNSHIP * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
             pk_aa_blit_4bpp_rot(fb, PK_DISPLAY_W, PK_DISPLAY_H, ox, oy, ac, PK_ICON_W, PK_ICON_H,
-                               0.0f, pk_rgb565(255, 255, 255));
+                               own_rot_deg, pk_rgb565(255, 255, 255));
         }
     } else if (s_have_last_own) {
         double owx, owy;
@@ -615,6 +639,8 @@ void pk_map_page_render(uint16_t *fb)
         if (ox >= 0 && ox < PK_DISPLAY_W && oy >= MAP_TOP && oy < PK_DISPLAY_H) {
             const uint8_t *ac = pk_icon_bitmap
                               + (size_t)PK_ICON_OWNSHIP * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+            /* 陈旧位置：位置本身已经不可信，航向更不可信（可能是几分钟前的），
+             * 保持朝北而不是画一个会误导的角度。 */
             pk_aa_blit_4bpp_rot(fb, PK_DISPLAY_W, PK_DISPLAY_H, ox, oy, ac, PK_ICON_W, PK_ICON_H,
                                0.0f, pk_rgb565(140, 148, 158));
         }
