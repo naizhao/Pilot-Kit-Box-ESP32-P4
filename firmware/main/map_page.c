@@ -88,9 +88,19 @@
  * 再抄一遍相交判定，而这一堆的总高 3×56+2×10 = 188，从 FOOTER_Y0−8 往上排
  * 到 y=266，离 MAP_TOP(48) 还远，摆得下。 */
 #define BTN_SEARCH_X   BTN_ZOUT_X
-static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y)
+/* 左列自下而上：朝向切换（常驻）→ 回中（仅手动平移时出现）。
+ *
+ * 朝向钮放最下面而不是回中——它与交通页左下角那枚是同一个功能、同一套图标，
+ * 位置也该一致，用户在两页之间切换时手不用重新找。回中是条件出现的，摆在它
+ * 上方，出现/消失不会把朝向钮挤走。 */
+#define BTN_ORIENT_X   BTN_M
+#define BTN_ORIENT_Y_DEF BTN_RECENTER_Y_DEF
+
+static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y,
+                       int *orient_y)
 {
-    int zo = BTN_ZOUT_Y_DEF, zi = BTN_ZOUT_Y_DEF - BTN_D - 10, rc = BTN_RECENTER_Y_DEF;
+    int zo = BTN_ZOUT_Y_DEF, zi = BTN_ZOUT_Y_DEF - BTN_D - 10;
+    int ori = BTN_ORIENT_Y_DEF, rc = BTN_ORIENT_Y_DEF - BTN_D - 10;
     int fx, fy, fw, fh;
     if (pk_ui_nav_fab_rect(&fx, &fy, &fw, &fh)) {
         const int gap = 10;
@@ -106,15 +116,22 @@ static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y)
                 zo = zi + BTN_D + 10;
             }
         }
-        if (left_col && fy < rc + BTN_D + gap && fy + fh > rc - gap) {
-            rc = fy - gap - BTN_D;
-            if (rc < MAP_TOP + gap) rc = fy + fh + gap;
+        /* 左列同样按**整堆**上沿算（回中在朝向之上一格），否则 FAB 停在回中
+         * 那一格时整堆不动、回中被压住点不着——右列踩过一次的同一个坑。 */
+        if (left_col && fy < ori + BTN_D + gap && fy + fh > rc - gap) {
+            ori = fy - gap - BTN_D;
+            rc  = ori - BTN_D - 10;
+            if (rc < MAP_TOP + gap) {          /* 上方不够就整堆翻到 FAB 下方 */
+                rc  = fy + fh + gap;
+                ori = rc + BTN_D + 10;
+            }
         }
     }
     if (search_y) *search_y = zi - BTN_D - 10;
     if (zin_y) *zin_y = zi;
     if (zout_y) *zout_y = zo;
     if (recenter_y) *recenter_y = rc;
+    if (orient_y) *orient_y = ori;
 }
 
 #define TILE_PX        256
@@ -506,8 +523,8 @@ static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg)
         }
     }
 
-    int search_y, zin_y, zout_y, rc_y;
-    btn_layout(&search_y, &zin_y, &zout_y, &rc_y);
+    int search_y, zin_y, zout_y, rc_y, orient_y;
+    btn_layout(&search_y, &zin_y, &zout_y, &rc_y, &orient_y);
     draw_btn_plate(fb, BTN_SEARCH_X, search_y, s_btn_down == 3);
     draw_search_icon(fb, BTN_SEARCH_X + BTN_D / 2, search_y + BTN_D / 2);
     draw_btn_plate(fb, BTN_ZIN_X, zin_y, s_btn_down == 1);
@@ -521,6 +538,21 @@ static void draw_chrome(uint16_t *fb, double meters_per_px, float map_rot_deg)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                   BTN_ZOUT_X + (BTN_D - cw) / 2, zout_y + (BTN_D - PK_AA_L_H) / 2,
                   "-", ink, PK_AA_L);
+    }
+
+    /* 朝向切换：图标而非文字，与交通页同一套。"HDG UP"/"N UP" 这类缩写要先读
+     * 再想它什么意思；导航箭头与指南针是通用符号，扫一眼就懂。图标含义是
+     * **当前朝向**（不是"点了会变成什么"），与交通页保持一致。 */
+    draw_btn_plate(fb, BTN_ORIENT_X, orient_y, s_btn_down == 4);
+    {
+        const pk_icon_id_t oid = (pk_map_orient_get() == PK_MAP_HEADING_UP)
+                                   ? PK_ICON_NAV_HDG : PK_ICON_NAV_NORTH;
+        const uint8_t *oic = pk_icon_bitmap
+                           + (size_t)oid * (((size_t)PK_ICON_W * PK_ICON_H + 1) / 2);
+        pk_aa_blit_4bpp(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                        BTN_ORIENT_X + (BTN_D - PK_ICON_W) / 2,
+                        orient_y + (BTN_D - PK_ICON_H) / 2,
+                        oic, PK_ICON_W, PK_ICON_H, pk_rgb565(225, 235, 248));
     }
 
     if (!s_follow) {
@@ -883,8 +915,8 @@ bool pk_map_page_touch(int x, int y)
     }
 
     if (!s_press_active) {
-        int search_y, zin_y, zout_y, rc_y;
-        btn_layout(&search_y, &zin_y, &zout_y, &rc_y);
+        int search_y, zin_y, zout_y, rc_y, orient_y;
+        btn_layout(&search_y, &zin_y, &zout_y, &rc_y, &orient_y);
         /* 命中按钮同样要把这次按压标记为 active：触摸驱动在手指按住期间会
          * 持续上报，不置位的话每一帧都重新走一遍这里——一次点击涨好几级
          * zoom（罩哥 2026-08-01 实测）。s_btn_down 之后充当"本次按压已归属
@@ -908,6 +940,14 @@ bool pk_map_page_touch(int x, int y)
             s_btn_down = 2;
             if (s_zoom > MAP_ZOOM_MIN) { s_zoom--; pk_tile_loader_bump_view(); }
             s_press_active = true;
+            return true;
+        }
+        /* 朝向切换：在两种投影间来回切，与交通页左下角那枚同一行为
+         * （traffic_page.c 的 BTN_ORI 分支）。 */
+        if (hit_btn(x, y, BTN_ORIENT_X, orient_y)) {
+            s_btn_down = 4;
+            pk_map_orient_set(pk_map_orient_get() == PK_MAP_HEADING_UP
+                                  ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP);
             return true;
         }
         if (!s_follow && hit_btn(x, y, BTN_RECENTER_X, rc_y)) {
