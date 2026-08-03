@@ -112,17 +112,36 @@
  * Identity body fix (chip body == aircraft body):
  *     W=1, X=0, Y=0, Z=0
  *
- * Current build — chip face toward pilot, header on the pilot's left,
- * VCC pin at the top edge, board vertical. Mapping:
- *     chip +X  →  aircraft up    (= -aircraft +Z)
- *     chip +Y  →  aircraft left  (= -aircraft +Y)
- *     chip +Z  →  aircraft back  (= -aircraft +X)
- * Rotation: 180° around (1, 0, -1)/√2  →  q = (0, √2/2, 0, -√2/2).
+ * Current build (re-soldered 2026-08-03) — chip face still toward the
+ * display, but the breakout was rotated 180° about the board normal
+ * relative to the previous build:
+ *
+ *     previous:  VCC at top-left,     PS0 at bottom-left
+ *     current:   VCC at bottom-right, PS0 at top-right
+ *
+ * The board normal is unchanged, so only the chip's X and Y axes flip;
+ * Z stays put:
+ *     chip +X  →  aircraft down   (= +aircraft +Z)   [was: up]
+ *     chip +Y  →  aircraft right  (= +aircraft +Y)   [was: left]
+ *     chip +Z  →  aircraft back   (= -aircraft +X)   [unchanged]
+ * That R_chip→aircraft is a 90° rotation about the aircraft Y axis,
+ * NOT a 180° one.
+ *
+ * ⚠ Consequence: unlike the previous 180° mount, this matrix is NOT its
+ * own inverse. q_body_fix is R_aircraft→chip = the INVERSE of the
+ * mapping above  →  q = (√2/2, 0, √2/2, 0). Don't "simplify" it by
+ * storing R_chip→aircraft directly the way the old 180° value allowed.
  *
  * Math sanity check: for "level facing N" pose in the above mounting,
- * BNO outputs q_bno = (0.5, 0.5, -0.5, 0.5); applying the sandwich
- * with the q's below yields q_aircraft = (-1, 0, 0, 0), which is
- * identity as a rotation, so quat_to_euler() returns (0, 0, 0). ✓ */
+ * BNO outputs q_bno = (0.5, 0.5, 0.5, -0.5); applying the sandwich
+ * with the q's below yields q_aircraft = (1, 0, 0, 0), so
+ * quat_to_euler() returns (0, 0, 0). ✓
+ *
+ * Regression test: firmware/test/test_imu_mount.c derives the expected
+ * q_bno for four poses straight from the physical axis mapping (it does
+ * NOT reuse the macros below), so a wrong constant here turns it red.
+ *     cc -std=c11 -O2 -I firmware/main -I sim/compat \
+ *        -o /tmp/test_imu_mount firmware/test/test_imu_mount.c -lm */
 
 /* q_world_fix — DO NOT EDIT unless quat_to_euler() changes. */
 #define PK_IMU_WORLD_FIX_W             0.0f
@@ -131,10 +150,10 @@
 #define PK_IMU_WORLD_FIX_Z             0.0f
 
 /* q_body_fix — set this to match the physical chip mounting. */
-#define PK_IMU_MOUNT_QUAT_W            0.0f
-#define PK_IMU_MOUNT_QUAT_X            0.7071068f
-#define PK_IMU_MOUNT_QUAT_Y            0.0f
-#define PK_IMU_MOUNT_QUAT_Z           -0.7071068f
+#define PK_IMU_MOUNT_QUAT_W            0.7071068f
+#define PK_IMU_MOUNT_QUAT_X            0.0f
+#define PK_IMU_MOUNT_QUAT_Y            0.7071068f
+#define PK_IMU_MOUNT_QUAT_Z            0.0f
 
 typedef struct {
     int64_t  ts_us;        /* esp_timer_get_time() at sample */

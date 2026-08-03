@@ -467,13 +467,43 @@ The current Pilot Kit firmware does not initialize the audio subsystem.
 The current driver supports address `0x4A`; wire AD0 low. GPIO20 must not be
 used for BNO085 INT: it is not on J3 and is hardwired to BAT_ADC.
 
-The current firmware mounting transform assumes the IMU board is vertical,
-with the chip face toward the pilot, its header on the pilot's left and VCC
-at the top. Under that installation, chip +X maps to aircraft up, chip +Y to
-aircraft left and chip +Z to aircraft back. The firmware applies
-`q_body_fix = (0, 0.7071068, 0, -0.7071068)`. If the sensor is mounted in the
-canonical aircraft axes instead, update the transform and revalidate attitude
-before flight.
+The current firmware mounting transform matches the breakout as re-soldered
+on 2026-08-03: the chip face still points at the display, but the whole
+board was rotated 180° about its normal.
+
+| | Previous | Current |
+|---|---|---|
+| VCC | top-left | **bottom-right** |
+| PS0 | bottom-left | **top-right** |
+| Chip face | toward display | toward display (unchanged) |
+
+The board normal did not move, so only the chip's X and Y axes flip:
+
+| Chip axis | Previous | Current |
+|---|---|---|
+| +X | aircraft up | **down** (+Z) |
+| +Y | aircraft left | **right** (+Y) |
+| +Z | back (−X) | back (−X, unchanged) |
+
+The firmware applies `q_body_fix = (0.7071068, 0, 0.7071068, 0)`.
+
+⚠ Unlike the previous value, the current R_chip→aircraft is a 90° rotation
+about the aircraft Y axis, **not a 180° one**, so the matrix is no longer its
+own inverse: `q_body_fix` must hold the **inverse** (R_aircraft→chip). Do not
+"simplify" it by storing R_chip→aircraft the way the old 180° mount allowed.
+
+The regression test `firmware/test/test_imu_mount.c` derives the expected
+BNO085 quaternion for four poses straight from the physical axis mapping
+(it does not reuse the macros under test), so a wrong constant turns it red:
+
+```bash
+cc -std=c11 -O2 -I firmware/main -I sim/compat \
+   -o /tmp/test_imu_mount firmware/test/test_imu_mount.c -lm && /tmp/test_imu_mount
+```
+
+If the mounting changes again, update the transform, update
+`chip_axes_in_aircraft()` in that test, and revalidate attitude before flight
+— not just the docs.
 
 ### BMP388 barometer
 
