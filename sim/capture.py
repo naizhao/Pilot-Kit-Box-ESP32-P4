@@ -298,14 +298,14 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1",
                              "PK_SIM_OWN_PHASE": "ground"},
-                                                                   "地图页显著性：本机在地面——地面目标全亮，空中目标压暗 45%"),
+                                                                   "地图页显著性：本机在地面——地面目标全亮，空中目标压暗 75%"),
     ("ui-4.3-map-phase-air",    {"PK_SIM_ORIENT": "north",
                              "PK_SIM_PAGE": "map",
                              "PK_SIM_SET_SD": "1",
                              "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
                              "PK_SIM_MAP_GROUND": "1",
                              "PK_SIM_OWN_PHASE": "airborne"},
-                                                                   "地图页显著性：本机在空中——空中目标全亮，地面目标压暗 45%"),
+                                                                   "地图页显著性：本机在空中——空中目标全亮，地面目标压暗 75%"),
 ]
 
 

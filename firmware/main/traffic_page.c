@@ -254,8 +254,10 @@ static uint16_t target_color(const pk_traffic_rel_t *rel, bool selected,
 }
 
 /* 显著性跟随本机相位（阶段 4d）：数值与判定逻辑跟 map_page.c 是同一套
- * （45% 亮度、unknown 两侧都不压暗），头注见该文件对应处，这里不重复。 */
-#define TFC_SALIENCY_DIM_PCT 45
+ * （75% 亮度、unknown 两侧都不压暗），头注见该文件对应处，这里不重复。
+ * 75 是 2026-08-04 真机实测从 45 提上来的——理由写在 map_page.c 那份头注里，
+ * 两边必须保持同值，否则同一架飞机在雷达页和地图页的显著性会互相矛盾。 */
+#define TFC_SALIENCY_DIM_PCT 75
 
 static uint8_t own_saliency_pct(pk_flight_phase_t own_phase, bool target_on_ground)
 {

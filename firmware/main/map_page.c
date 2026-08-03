@@ -784,14 +784,20 @@ void pk_map_page_render(uint16_t *fb)
     /*
      * 显著性跟随本机相位（阶段 4d，spec：安全性而非美观——本机在地面时地面
      * 交通才是主要碰撞风险，在空中时反过来）。压暗不隐藏：五边进近时跑道
-     * 上的目标正是要看的，隐藏=误导性缺失。45% 亮度是折中——暗到一眼看出
-     * "次要"，又不会暗到看不见。
+     * 上的目标正是要看的，隐藏=误导性缺失。
+     *
+     * 数值曾是 45%，2026-08-04 真机实测改成 75%：本机在地面看空中目标
+     * "基本不可见"。深色底图上**亮度就是可见度**，拿亮度当"次要"的编码通道
+     * 本身选错了——45% 把青色 (0,210,235) 压到 (0,94,105)，标签那边还要再
+     * 叠一层 darken_rect(120)，两层下来就没了。次要目标看不见 = 这个功能在
+     * 制造它本想避免的风险。75% 只做"能察觉的差别"，不做"退到背景里"；
+     * 主次的强区分交给形状（空中实心 / 地面空心剪影）而不是亮度。
      *
      * 相位 unknown（开机瞬间/IMU 未接/GPS 丢失/状态机没判出来）时两侧都不
      * 压暗：宁可信息多，也不能因为状态机猜错方向而在错误时刻把该看的目标
      * 压暗——那比不做这个功能更危险，见 pk_own_sampler_get_phase() 头注。
      */
-    const uint8_t MAP_SALIENCY_DIM_PCT = 45;
+    const uint8_t MAP_SALIENCY_DIM_PCT = 75;
     const pk_flight_phase_t own_phase = pk_own_sampler_get_phase();
     const bool own_on_ground = pk_flight_phase_is_ground_family(own_phase);
     const bool own_airborne  = (own_phase == PK_PHASE_AIRBORNE);
