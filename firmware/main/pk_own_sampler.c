@@ -21,8 +21,9 @@
  *
  * 机型分类（ac_category）阶段 5a 起已接上设置页：每 tick 读一次
  * pk_ac_category_get()（config_ac_category.c，volatile + portMUX，热路径
- * 可放心调）。"机场范围内"（near_airport）仍是占位——需要航空数据库距离
- * 查询，不在本阶段范围内。缺省 false 不会导致相位判定错误地放宽，只是少
+ * 可放心调）。"机场范围内"（near_airport）已接入 pk_aero_db 查询——GPS
+ * 有 fix 时查最近机场，≤ 2 NM 置 true（罩哥 2026-08-04 拍板阈值）。航空
+ * 库未就绪/无 GPS fix 时自然 false（安全默认，与占位行为一致），只是少
  * 享受 UC7"不封段"的优待，按 pk_flight_phase.h 的说明是安全默认。
  */
 #include "pk_own_sampler.h"
@@ -46,6 +47,7 @@
 #include "pk_rec_store.h"
 #include "pk_clock.h"
 #include "config_ac_category.h"
+#include "pk_aero_db.h"
 #include "ui_state.h"       /* pk_ui_get_own_icao() */
 #include "aircraft_state.h" /* aircraft_state_get_own() —— 绑定机 on_ground 位 */
 
@@ -60,6 +62,8 @@ static const char *TAG = "own_sampler";
  * 数据"，相位状态机的 bound_valid 置 false，退回自主传感器判定
  * （UC6：绑错飞机/数据陈旧时不信 ADS-B）。 */
 #define OWN_BOUND_MAX_AGE_US            (5LL * 1000000)
+/* 「在机场范围内」判定阈值（设计文档 UC7，罩哥 2026-08-04 拍板 2 NM）。 */
+#define OWN_NEAR_AIRPORT_NM             2.0
 
 static QueueHandle_t s_queue;
 static volatile uint32_t s_dropped;
@@ -74,6 +78,36 @@ static volatile pk_flight_phase_t s_current_phase = PK_PHASE_UNKNOWN;
  * ——按内存红线一律 EXT_RAM_BSS_ATTR，别让它挤内部 .bss（见
  * check_early_heap.py 的 66000 B 阈值）。 */
 static EXT_RAM_BSS_ATTR pk_flight_phase_state_t s_phase_state;
+
+/* ── 本机航迹 ring（地图飞行轨迹线）──────────────────────────────────
+ * 按飞行段记录：taxi 起算、ground_stopped 滞回清空（见 own_sample_task 里）。
+ * 存 1Hz 全量（与 own.trk 落盘一致），最坏 2h = 7200 点，取 8192（2 的幂）。
+ * 8192×16 = 128 KB，放 PSRAM（EXT_RAM_BSS_ATTR）；内部 .bss 余量 1.5KB 绝不进内部
+ * （见 project_early_heap_cliff）。轨迹不依赖 ADS-B 绑定，数据源是本机 GPS。 */
+/* 2048 槽 × 16B = 32 KB。权衡：PSRAM 紧张（瓦片缓存水位线 3MB，free 仅 ~6MB），
+ * 128KB(8192) 会压破水位线致瓦片淘汰风暴（实测 free 2.9MB→evicts 39）；
+ * 32KB(2048) ≈ 34 分钟 1Hz 全量，配合渲染降采样（飞行 15s/地面 60s）够画一段
+ * 完整轨迹，PSRAM 占用可控。更长轨迹靠 own.trk 落盘回放（设计 defer）。 */
+#define PK_OWN_TRAIL_CAP 2048u
+static EXT_RAM_BSS_ATTR struct {
+    pk_own_trail_point_t pt[PK_OWN_TRAIL_CAP];
+    uint32_t head;   /* 下一个写入位置（裸递增，取模靠 & (CAP-1)） */
+    uint32_t count;  /* 有效点数（≤ CAP） */
+} s_trail;
+
+/* ── trail_push：向 ring 写入一个采样点（文件内 static）────────────── */
+static void trail_push(uint32_t ts_ms, int32_t lat_e7, int32_t lon_e7, uint8_t phase)
+{
+    s_trail.pt[s_trail.head & (PK_OWN_TRAIL_CAP - 1)] = (pk_own_trail_point_t){
+        .ts_1k = ts_ms, .lat_e7 = lat_e7, .lon_e7 = lon_e7, .phase = phase,
+    };
+    s_trail.head++;
+    if (s_trail.count < PK_OWN_TRAIL_CAP) s_trail.count++;
+}
+
+/* ── 飞行段清空决策的持久状态（own_sample_task 跨 tick 使用）────────── */
+static pk_flight_phase_t s_prev_trail_phase = PK_PHASE_UNKNOWN;
+static uint32_t s_gs_steady_since_ms = 0;   /* ground_stopped 滞回计时 */
 
 /* --- pk_clock 校时回调：直接同步写一条时间修正记录 -------------------- */
 
@@ -136,13 +170,54 @@ static void own_sample_task(void *arg)
         in.vib_level        = imu_ok ? imu.vib_level : 0;
         in.bound_valid      = bound_valid;
         in.bound_on_ground  = bound_valid && own_ac.on_ground;
-        in.near_airport     = false;                    /* 见文件头说明 */
+        /* near_airport：喂给相位状态机，影响 UC7「跑道口排队 10 分钟不封段」
+         * 的不降级优待（设计文档「用户场景」UC7 + pk_flight_phase.h:26）。
+         * 罩哥 2026-08-04 拍板阈值 2 NM。pk_aero_db_nearest_airports 是毫秒级
+         * 全程持锁查询（pk_aero_db.h:97），但 own_sampler 是 1Hz 独立任务、不在
+         * 渲染热路径上，每秒一次查询可接受。航空库未就绪/无 GPS fix 时自然
+         * false（安全默认，与占位行为一致）。 */
+        in.near_airport = false;
+        if (gps_fix) {
+            pk_aero_near_t near[1];
+            int na = pk_aero_db_nearest_airports((double)gps.lat, (double)gps.lon,
+                                                  near, 1);
+            in.near_airport = (na >= 1 && near[0].dist_nm <= OWN_NEAR_AIRPORT_NM);
+        }
         pk_ac_category_t ac_cat = pk_ac_category_get();
         in.ac_category      = ac_cat;
 
         pk_flight_phase_debug_t dbg = {0};
         pk_flight_phase_t phase = pk_flight_phase_update(&s_phase_state, &in, &dbg);
         s_current_phase = phase;   /* 渲染层的读快照，见头文件线程安全说明 */
+
+        /* ── 本机航迹 ring 写入 / 飞行段清空 ──────────────────────────
+         * taxi 起算（运动开始）、ground_stopped 滞回 60s 清空（落地停稳后清）。
+         * takeoff_roll/landing_rollout 虽属 ground_family，但它们是飞行段中间
+         * 态（起飞滑跑/着陆滑跑），必须继续画轨迹——只有在 ground_stopped 停稳
+         * 才算飞行段结束。taxi 是飞行段的起点（滑出位开始要画）。
+         * ground_stopped 滞回 60s：避免触地复飞（UC8）中间瞬态 ground_stopped
+         * 误清轨迹——触地复飞里 landing_rollout 会直接弹回 takeoff_roll，不会
+         * 停在 ground_stopped 达 60s，但保守起见用滞回更稳。
+         * trail_push 数据源是本机 GPS，与 ADS-B 绑定无关。 */
+        const bool moving = (phase == PK_PHASE_TAXI)
+                            || !pk_flight_phase_is_ground_family(phase);
+        if (moving && s_prev_trail_phase == PK_PHASE_GROUND_STOPPED) {
+            s_trail.head = 0; s_trail.count = 0;   /* 新飞行段，清空 */
+        }
+        if (phase == PK_PHASE_GROUND_STOPPED) {
+            /* 滞回：连续 ground_stopped 达 60s 才清（避免触地复飞 UC8 误清）。
+             * 清完保持不清，直到下次进入 moving 再开新段。 */
+            if (s_gs_steady_since_ms == 0) s_gs_steady_since_ms = (uint32_t)ts_ms;
+            if ((uint32_t)ts_ms - s_gs_steady_since_ms >= 60000) {
+                s_trail.head = 0; s_trail.count = 0;
+            }
+        } else {
+            s_gs_steady_since_ms = 0;
+        }
+        if (moving && gps_fix) {
+            trail_push((uint32_t)ts_ms, in.lat_e7, in.lon_e7, (uint8_t)phase);
+        }
+        s_prev_trail_phase = phase;
 
         pk_own_sample_t rec = {0};
         rec.ts_ms  = (uint64_t)ts_ms;
@@ -233,4 +308,15 @@ bool pk_own_sampler_stats(uint32_t *out_written, uint32_t *out_dropped)
 pk_flight_phase_t pk_own_sampler_get_phase(void)
 {
     return s_current_phase;
+}
+
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count)
+{
+    /* 返回连续数组视图：ring 未满时 pt[0]..pt[count-1] 是写入顺序（最老→最新）。
+     * ring 满了（count==CAP）后 head 回绕，pt[0] 不再是最老的点——这是已知简化：
+     * CAP=8192 而 2 小时才 7200 点，正常飞行不会写满。即使极端场景写满了，
+     * 渲染层逐个投影+降采样，多画/乱序几个共线点无视觉影响（见 .h 注释）。
+     * count 读取可能在 push 时变动，多读一个点无影响（追加式 ring）。 */
+    if (out_count) *out_count = s_trail.count;
+    return s_trail.pt;
 }

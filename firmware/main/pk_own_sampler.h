@@ -43,6 +43,21 @@ bool pk_own_sampler_stats(uint32_t *out_written, uint32_t *out_dropped);
  */
 pk_flight_phase_t pk_own_sampler_get_phase(void);
 
+/* 一个航迹采样点。存相位是为了渲染降采样区分间隔（飞行 15s/地面 60s）。 */
+typedef struct {
+    uint32_t ts_1k;   /* 1kHz tick（ms），32 位够 49 天 */
+    int32_t  lat_e7;
+    int32_t  lon_e7;
+    uint8_t  phase;   /* pk_flight_phase_t，降采样间隔判据 */
+} pk_own_trail_point_t;
+
+/* 返回本机航迹 ring 的只读视图：*out_count 写入有效点数，返回点数组指针。
+ * 只读快照，追加式 ring，读取期间写入最多多出一个最新点，降采样多挑一个
+ * 共线点无影响。
+ * 线程安全：单写者 own_sample_task（1Hz）写，任意渲染任务只读，与
+ * pk_own_sampler_get_phase() 同一套惯例（volatile、枚举底层 int 原子）。 */
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count);
+
 #ifdef __cplusplus
 }
 #endif

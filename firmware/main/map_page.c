@@ -934,6 +934,62 @@ void pk_map_page_render(uint16_t *fb)
                                 s_occ, &nocc, (int)(sizeof(s_occ) / sizeof(s_occ[0])),
                                 map_rot_deg);
 
+    /* ── 本机航迹线（飞行段，GPS 驱动，不依赖 ADS-B 绑定）──────────────
+     * 从 pk_own_sampler 的 ring 取全量点，按相位自适应降采样挑点画（飞行 15s/
+     * 地面 60s），避免长轨迹每帧重画上千段拖帧。用 pk_pfd_draw_line（整数
+     * Bresenham），禁用 AA 版——AA 画线在地图热路径上是性能陷阱（见 :362 注释）。
+     * 轨迹画在本机符号之下、ADS-B 目标之上。 */
+    {
+        /* Garmin 风格航迹紫：高饱和品红紫，在深色底图上醒目，与 ADS-B 亮青
+         * (0,210,235)、FIX 偏蓝紫 (160,110,235) 色相区分。Garmin Pilot/G3X 的
+         * 飞行轨迹即用此色系。 */
+        const uint16_t TRAIL_COL = pk_rgb565(220, 40, 210);
+        uint32_t tn;
+        const pk_own_trail_point_t *tr = pk_own_sampler_get_trail(&tn);
+        if (tr && tn >= 2) {
+            int prev_sx = -1, prev_sy = -1;
+            uint32_t last_drawn_ts = 0;
+            /* 可视区外扩 4px（3px 粗线 + 1px 余量），线段两端都在外扩框外且
+             * 不穿过它时整段跳过——pk_pfd_draw_line 虽逐点裁剪（put_pixel 有
+             * 边界检查），但屏外长线段会白跑完整条 Bresenham 循环，地图缩小时
+             * 大部分轨迹在屏外，这是掉帧主因。 */
+            const int clip_x0 = -4, clip_x1 = PK_DISPLAY_W + 4;
+            const int clip_y0 = -4, clip_y1 = PK_DISPLAY_H + 4;
+            for (uint32_t i = 0; i < tn; i++) {
+                /* 降采样：跳过未到间隔的中间点（首尾点必画，轨迹连到当前位置）。
+                 * 注意 continue 在投影之前——跳过的点不做昂贵的 lonlat_to_world。 */
+                const bool ground = pk_flight_phase_is_ground_family(
+                                        (pk_flight_phase_t)tr[i].phase);
+                const uint32_t interval = ground ? 60000u : 15000u;
+                if (i > 0 && i < tn - 1 && tr[i].ts_1k - last_drawn_ts < interval)
+                    continue;
+                double wx, wy;
+                lonlat_to_world((double)tr[i].lon_e7 / 1e7, (double)tr[i].lat_e7 / 1e7,
+                                s_zoom, &wx, &wy);
+                int sx, sy;
+                world_to_screen_rot(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
+                if (prev_sx >= 0) {
+                    /* 屏外整段剔除：两端同在外扩框一侧（且线段不穿过）→ 跳过。
+                     * 这是廉价的包围盒测试，不画屏外的 3 遍 draw_line。 */
+                    const bool p_out_x = (prev_sx < clip_x0 && sx < clip_x0) ||
+                                         (prev_sx >= clip_x1 && sx >= clip_x1);
+                    const bool p_out_y = (prev_sy < clip_y0 && sy < clip_y0) ||
+                                         (prev_sy >= clip_y1 && sy >= clip_y1);
+                    if (!p_out_x && !p_out_y) {
+                        /* 3 px 粗线：对角偏移画三遍（照 :386 手柄图标的粗线范例）。
+                         * 不用 draw_line_aa 的 width 参数——AA 在地图热路径是性能陷阱。 */
+                        for (int k = -1; k <= 1; ++k)
+                            pk_pfd_draw_line(fb, prev_sx + k, prev_sy + k,
+                                             sx + k, sy + k, TRAIL_COL);
+                    }
+                }
+                prev_sx = sx; prev_sy = sy;
+                last_drawn_ts = tr[i].ts_1k;
+            }
+        }
+    }
+
+
     /* ── 本机符号：跟随模式画在视口中心；手动平移模式画在它真实的地理投影位置
      * （可能滚出视口之外，此时自然不画——离开可见范围本来就不该出现）。
      * GPS 无 fix：灰显于上次已知位置；从未有过位置则整个不画（同 traffic 页的
