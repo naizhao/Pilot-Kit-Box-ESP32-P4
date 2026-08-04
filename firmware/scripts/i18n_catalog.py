@@ -1053,6 +1053,9 @@ STRINGS = [
     ("LIST_D_SQUAWK",  {"en": "SQUAWK",   "zh": "应答机"}),
     ("LIST_D_LAST_SEEN", {"en": "LAST SEEN", "zh": "上次报文"}),
     ("LIST_D_AGO",     {"en": "s ago",    "zh": "秒前"}),
+    # 抽屉底部的「绑定为本机」/「取消绑定」按钮。
+    ("LIST_D_BIND",   {"en": "BIND AS OWN", "zh": "绑定为本机"}),
+    ("LIST_D_UNBIND", {"en": "UNBIND OWN",  "zh": "取消绑定"}),
 
     # ══════════════════════════════════════════════════════════════════
     # 交通页（traffic_page.c，spec §5.2）

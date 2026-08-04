@@ -15,6 +15,7 @@
 #include "sdkconfig.h"
 
 #include "pk_cal_advisor.h"   /* 校准提示的全部判定都在那边，这里只切页 */
+#include "config_own_icao.h"  /* own ICAO 绑定落盘 */
 
 static const char *TAG = "ui";
 
@@ -476,6 +477,9 @@ void pk_ui_set_own_icao(uint32_t icao24)
     s_own_icao_runtime = icao24 & 0xFFFFFF;
     s_own_icao_set     = true;
     xSemaphoreGive(s_lock);
+    /* NVS 写操作放在释放 mutex 之后——照 config_ac_category.c 的范式
+     * （portEXIT_CRITICAL 之后才碰 nvs），避免在持锁期间做阻塞 IO。 */
+    pk_config_own_icao_set(icao24 & 0xFFFFFF);
     ESP_LOGI(TAG, "own ICAO bound at runtime → %06lX",
              (unsigned long)(icao24 & 0xFFFFFF));
 }
@@ -497,6 +501,7 @@ void pk_ui_clear_own_icao(void)
     s_own_icao_runtime = 0;
     s_own_icao_set     = true;   /* 显式置位 → getter 返回 0 而非 Kconfig 默认 */
     xSemaphoreGive(s_lock);
+    pk_config_own_icao_clear();   /* 解绑也落盘，释放 mutex 后调 */
     ESP_LOGI(TAG, "own ICAO cleared at runtime");
 }
 

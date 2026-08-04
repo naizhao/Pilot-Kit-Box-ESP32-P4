@@ -71,6 +71,22 @@
 #define DRAWER_TOP    (PK_DISPLAY_H - DRAWER_H)      /* 250 */
 #define DRAWER_ROWS   ((DRAWER_TOP - ROW0_Y) / ROW_H)
 
+/* 抽屉底部的「绑定为本机」按钮。
+ *
+ * 键值矩阵：y0=DRAWER_TOP+62(=312)、line_h=34、4 行，矩阵底在 312+4*34=448。
+ * 抽屉底=480，剩 32 px。按钮取 h=30（紧凑但可点），y0=448，底部=478（还留 2 px
+ * 到屏底）。按钮上方与矩阵第 4 行文字（实际渲染到 ~444）有 4 px 间隙——不压字。
+ * 命中区在 y 方向往上放宽 12 px（到 436）、往下到 480（屏底），x 方向往外各放
+ * 16 px——手指比按钮胖（apt_detail_page.c 的 HIT 范式）。 */
+#define DRAWER_BIND_Y0   (DRAWER_TOP + 198)             /* 448 */
+#define DRAWER_BIND_H    30
+#define DRAWER_BIND_W    240
+#define DRAWER_BIND_X0   ((PK_DISPLAY_W - DRAWER_BIND_W) / 2)   /* 280 */
+#define DRAWER_BIND_HIT_Y0 (DRAWER_BIND_Y0 - 12)        /* 436 */
+#define DRAWER_BIND_HIT_Y1  PK_DISPLAY_H                /* 480（屏底） */
+#define DRAWER_BIND_HIT_X0 (DRAWER_BIND_X0 - 16)
+#define DRAWER_BIND_HIT_X1 (DRAWER_BIND_X0 + DRAWER_BIND_W + 16)
+
 /* 整页左边距走 pfd_layout.h 的共用 token（值仍是 16）。反过来说：本页是把
  * PK_UI_PAD_L 钉在 16 的那个页面——BRG 列最宽 71 px，从 16 起画到 87，右边的
  * 分隔线 SEP_CALL 钉在 95，只剩 8 px 余量。改 PK_UI_PAD_L 之前先看这里。 */
@@ -827,6 +843,19 @@ static void put_val(uint16_t *fb, int x, int y_top, int avail,
     LST_PUTS(fb, x, y, tmp, col, sz);
 }
 
+/* 一枚按钮：圆角底 + 居中文字。照抄 apt_detail_page.c:479 的 draw_button
+ * （同一套视觉语言，各页各留一份 static 函数）。 */
+static void draw_button(uint16_t *fb, int x0, int y0, int w, int h,
+                        const char *label, uint16_t bg, uint16_t fg,
+                        pk_aa_size_t size)
+{
+    pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + h, 10, bg);
+    const int tw = pk_aa_text_width(label, size);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               x0 + (w - tw) / 2, y0 + (h - pk_aa_cell_h(size)) / 2,
+               label, fg, size);
+}
+
 static void draw_drawer(uint16_t *fb, const row_t *r,
                         uint16_t col_key, uint16_t col_val, uint16_t col_dim)
 {
@@ -939,6 +968,20 @@ static void draw_drawer(uint16_t *fb, const row_t *r,
             (void)col_dim;
         }
     #undef KEY_GAP
+
+    /* 绑定为本机按钮：未绑定该机 → 蓝底「绑定为本机」；已绑定 → 绿底「取消绑定」。
+     * 照搬 main.c 旧 TARE 处理的切换语义（现已改用屏幕触摸入口）。 */
+    {
+        const bool is_own = (pk_ui_get_own_icao() == s_drawer_icao);
+        const pk_tr_id_t label = is_own ? PK_TR_LIST_D_UNBIND
+                                        : PK_TR_LIST_D_BIND;
+        const uint16_t bg = is_own ? pk_rgb565( 60, 160,  80)   /* 绿：已绑定 */
+                                   : pk_rgb565( 40, 100, 200);   /* 蓝：可绑定 */
+        draw_button(fb, DRAWER_BIND_X0, DRAWER_BIND_Y0,
+                    DRAWER_BIND_W, DRAWER_BIND_H,
+                    pk_i18n_text(label), bg, pk_rgb565(255, 255, 255),
+                    PK_AA_S);
+    }
 }
 
 void pk_adsb_list_render(uint16_t *fb)
@@ -1250,8 +1293,24 @@ void pk_adsb_list_touch_up(void)
         return;
     }
 
-    /* 抽屉自身：点在上面不做事，但要吃掉（in_list_area 已保证走到这里）。 */
-    if (s_drawer_icao && y >= DRAWER_TOP) return;
+    /* 抽屉区域。先检测绑定按钮命中，其余区域只吃掉点击不做反应。 */
+    if (s_drawer_icao && y >= DRAWER_TOP) {
+        if (x >= DRAWER_BIND_HIT_X0 && x <  DRAWER_BIND_HIT_X1 &&
+            y >= DRAWER_BIND_HIT_Y0 && y <  DRAWER_BIND_HIT_Y1) {
+            /* 照搬 main.c 旧 TARE 短按的切换逻辑。 */
+            const uint32_t drawer = s_drawer_icao;
+            if (pk_ui_get_own_icao() == drawer) {
+                pk_ui_clear_own_icao();
+                pk_ui_toast_show(PK_TR_TOAST_OWN_CLEARED, false);
+                /* 解绑留在列表，不跳页 */
+            } else {
+                pk_ui_set_own_icao(drawer);
+                pk_ui_toast_show(PK_TR_TOAST_OWN_BOUND, false);
+                pk_ui_set_mode(PK_UI_MODE_PFD);  /* 绑定后跳 PFD 看效果 */
+            }
+        }
+        return;   /* 抽屉吃掉这次点击，不继续别的分派 */
+    }
 
     /* 表头：切排序列 / 翻方向。 */
     if (y >= HDR_HIT_TOP && y < HDR_HIT_BOT) {

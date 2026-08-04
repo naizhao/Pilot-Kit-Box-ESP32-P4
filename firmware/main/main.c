@@ -33,6 +33,7 @@
 #include "config_storage.h"
 #include "config_traffic.h"
 #include "config_ac_category.h"
+#include "config_own_icao.h"
 #include "pk_aero_db.h"
 #include "pk_win.h"
 #include "pk_aero_layer.h"
@@ -40,6 +41,7 @@
 #include "nav_grid_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
+#include "demo_track_sd.h"
 #include "pk_rec_store.h"
 #include "pk_rec_ingest.h"
 #include "pk_own_sampler.h"
@@ -206,7 +208,13 @@ void app_main(void)
      * 已就绪——它们分别在下面才 start（GPS 已在 aircraft_state_init() 之后
      * 起了，IMU/baro 还要再等一两百行），采样器每 tick best-effort 取值。 */
     pk_own_sampler_start();
-    pk_tile_loader_init();   /* 地图页瓦片加载任务，须晚于 pk_sdcard_init() */
+    /* pk_tile_loader_init() **故意不在这里**——它内部的 pk_map_store_scan()
+     * 是同步的，实测扫 4 个 pmtiles 要 4 秒，卡在这里会把后面的 hosted 握手
+     * 和点屏一起往后推，开机要 10 秒才出 logo。已挪到 app_main 末尾，见那边。 */
+    /* 演示模式的自定义轨迹：SD 卡 /sdcard/demo/ 里有 .gpx 就换过去，没有就
+     * 继续播编进固件的内置轨迹。只创建一次性后台任务、零 IO，须晚于
+     * pk_sdcard_init()（任务靠 pk_sdcard_is_mounted() 决定何时开读）。 */
+    pk_demo_track_sd_init();
     /* SD 航空数据库懒加载：只创建后台任务、零 IO（开机不加载是定案）。
      * 须晚于 pk_sdcard_init()——任务靠 pk_sdcard_is_mounted() 决定何时
      * 开始分块加载 /sdcard/aero/pk_aero.bin。 */
@@ -409,6 +417,14 @@ void app_main(void)
     if (ui_err != ESP_OK) {
         ESP_LOGW(TAG, "ui_state init failed (%s)", esp_err_to_name(ui_err));
     }
+    /* 从 NVS 恢复本机 ICAO 绑定（用户上次在 ADS-B 列表里选的"这架是我"）。
+     * 必须排在 pk_ui_init() 之后：恢复走 pk_ui_set_own_icao()，它内部
+     * xSemaphoreTake(s_lock)——s_lock 在 pk_ui_init() 里才建，之前调会因
+     * s_lock==NULL 静默退化（pk_ui_set_own_icao 头部的 NULL 守卫），绑定
+     * 根本没恢复。sink 轮询（record_sinks_install_defaults，上面 :252）靠
+     * have_last_own 标志位在首次轮询必触发，不依赖 load 的先后。 */
+    pk_config_own_icao_load();
+
     /* pk_i18n_init() 已提前到 splash 之前，见那里的注释。 */
 
     /* PFD render task. Starts after the display + IMU init

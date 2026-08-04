@@ -26,6 +26,7 @@ idf_component_register(
         "config_storage.c"
         "config_traffic.c"
         "config_ac_category.c"
+        "config_own_icao.c"
         "pk_sdcard.c"
         "pk_rec_format.c"
         "pk_rec_idx.c"
@@ -54,6 +55,9 @@ idf_component_register(
         # recover 才碰 i2c_master_bus_reset()。见 pk_i2c0_recover.h 文件头。
         "pk_i2c0_policy.c"
         "pk_i2c0_recover.c"
+        # button_task.c 故意不编译：它写死的 GPIO26/GPIO23 在 Rev1.2
+        # 4.3 寸上是背光 PWM 和触摸复位，配成输入上拉会打死背光和触摸。
+        # 详见 button_task.h 顶部说明。
         "ui_state.c"
         "i18n.c"
         "i18n_catalog.c"

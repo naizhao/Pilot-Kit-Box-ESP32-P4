@@ -308,6 +308,8 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DIAG_V_MAG_OK] = "normal",
         [PK_TR_DIAG_V_MAG_JAM] = "interference",
         [PK_TR_DIAG_V_MAG_JAM_S] = "MAG JAM",
+        [PK_TR_LIST_D_BIND] = "BIND AS OWN",
+        [PK_TR_LIST_D_UNBIND] = "UNBIND OWN",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -612,6 +614,8 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DIAG_V_MAG_OK] = "正常",
         [PK_TR_DIAG_V_MAG_JAM] = "干扰",
         [PK_TR_DIAG_V_MAG_JAM_S] = "磁干扰",
+        [PK_TR_LIST_D_BIND] = "绑定为本机",
+        [PK_TR_LIST_D_UNBIND] = "取消绑定",
     },
 };
 

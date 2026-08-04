@@ -318,6 +318,8 @@
     "DIAG_K_MAG_ENV": 298,
     "DIAG_V_MAG_OK": 299,
     "DIAG_V_MAG_JAM": 300,
-    "DIAG_V_MAG_JAM_S": 301
+    "DIAG_V_MAG_JAM_S": 301,
+    "LIST_D_BIND": 302,
+    "LIST_D_UNBIND": 303
   }
 }

@@ -313,6 +313,8 @@ typedef enum {
     PK_TR_DIAG_V_MAG_OK = 299,
     PK_TR_DIAG_V_MAG_JAM = 300,
     PK_TR_DIAG_V_MAG_JAM_S = 301,
+    PK_TR_LIST_D_BIND = 302,
+    PK_TR_LIST_D_UNBIND = 303,
     PK_TR_COUNT,
 } pk_tr_id_t;
 
