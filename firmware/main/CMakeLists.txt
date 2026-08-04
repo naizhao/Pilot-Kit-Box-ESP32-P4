@@ -92,6 +92,7 @@ idf_component_register(
         "pk_map_store.c"
         "pk_tile_cache.c"
         "pk_tile_loader.c"
+        "pk_jpeg_dec.c"
         "third_party/pk_lodepng.c"
         "map_page.c"
         "about_page.c"
@@ -147,6 +148,7 @@ idf_component_register(
         esp_lcd                  # MIPI-DSI DBI/DPI + panel ops
         espressif__esp_lcd_st7701 # ST7701 DSI panel wrapper
         esp_driver_ppa           # 800×480 → 480×800 硬件旋转
+        esp_driver_jpeg          # 瓦片 JPEG 硬件解码（pk_jpeg_dec.c）
         esp_driver_ledc          # 板载 AP3032 FB 注入式反相 PWM
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
         esp_driver_gpio          # BNO085 RST pin

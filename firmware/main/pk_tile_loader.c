@@ -17,6 +17,8 @@
  * 与 LVGL 任务并发进其分配器会撞（真机实测:进地图页卡死）。本文件从此不碰
  * 任何 LVGL API。 */
 #include "third_party/pk_lodepng.h"
+#include "pk_jpeg_dec.h"     /* 硬件 JPEG 解码（JPEG 包走这条路） */
+#include "pk_pmtiles.h"      /* PK_PMTILES_TYPE_JPEG */
 
 /* lodepng 的错误码表里 83 = "memory allocation failed"（pk_lodepng.c:6991，
  * 上游没给这些码起名字，这里补一个，别在业务代码里写裸 83）。 */
@@ -464,38 +466,61 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
         return FETCH_TRANSIENT;
     }
 
-    unsigned char *rgba = NULL;
-    unsigned pw = 0, ph = 0;
-    unsigned err = lodepng_decode32(&rgba, &pw, &ph, png, loc.length);
-    free(png);
-    if (err != 0 || rgba == NULL) {
-        ESP_LOGW(TAG, "PNG 解码失败 z%u(%u,%u): lodepng err=%u", z, x, y, err);
-        free(rgba);
-        /* lodepng 的 83 = "memory allocation failed"（它自己的错误码表）。
-         * 这条是内存紧张的信号，不是 PNG 坏了，绝不能记成"确认缺失"。 */
-        return (err == LODEPNG_ERR_OUT_OF_MEMORY) ? FETCH_TRANSIENT : FETCH_MISSING;
-    }
-    if (pw != PK_TILE_PIXELS || ph != PK_TILE_PIXELS) {
-        ESP_LOGW(TAG, "瓦片尺寸异常 z%u(%u,%u): %ux%u（期望 %dx%d）",
-                z, x, y, pw, ph, PK_TILE_PIXELS, PK_TILE_PIXELS);
-        free(rgba);
-        return FETCH_MISSING;
-    }
+    /* decode 分发：按 PMTiles header 的 tile_type 决定走硬件 JPEG 还是
+     * lodepng。两种包能在同一张 SD 卡上共存（迁移期安全）。解码产物都
+     * 是 RGB565 swapped，写入同一个瓦片缓存槽，下游 blit 路径无感知。 */
+    uint8_t tile_type = pack->pm.header.tile_type;
 
     /* acquire 会在 PSRAM 触及水位线时先淘汰最久未用的瓦片——缓存自己把
-     * 内存让出来，而不是把内存耗光再让别人失败。持锁调用是它的契约。 */
+     * 内存让出来，而不是把内存耗光再让别人失败。持锁调用是它的契约。
+     * 提到 decode 之前：两条路径都要这个 buf，提前 acquire 避免解码成功
+     * 却没槽可放。 */
     xSemaphoreTake(s_lock, portMAX_DELAY);
     uint16_t *buf = pk_tile_cache_acquire_buffer(&s_cache);
     xSemaphoreGive(s_lock);
     if (buf == NULL) {
-        free(rgba);
+        free(png);
         return FETCH_TRANSIENT;
     }
-    for (int i = 0; i < PK_TILE_BUF_PIXELS; i++) {
-        const unsigned char *p = &rgba[(size_t)i * 4];
-        buf[i] = pk_rgb565(p[0], p[1], p[2]);
+
+    if (tile_type == PK_PMTILES_TYPE_JPEG) {
+        /* 硬件 JPEG 解码：JPEG 字节 → RGB565 swapped（pk_jpeg_dec 内部做
+         * RGB888→RGB565 转换）。png 这个变量名是历史遗留（原 PNG 路径），
+         * 这里装的是 JPEG 压缩数据，语义不变。 */
+        if (!pk_jpeg_decode_tile(png, loc.length, buf)) {
+            free(png);
+            free(buf);
+            ESP_LOGW(TAG, "JPEG 解码失败 z%u(%u,%u) len=%u", z, x, y, (unsigned)loc.length);
+            return FETCH_TRANSIENT;
+        }
+        free(png);
+    } else {
+        /* PNG 路径：lodepng 软解 → RGBA32 → RGB565。原逻辑不动。 */
+        unsigned char *rgba = NULL;
+        unsigned pw = 0, ph = 0;
+        unsigned err = lodepng_decode32(&rgba, &pw, &ph, png, loc.length);
+        free(png);
+        if (err != 0 || rgba == NULL) {
+            ESP_LOGW(TAG, "PNG 解码失败 z%u(%u,%u): lodepng err=%u", z, x, y, err);
+            free(rgba);
+            free(buf);
+            /* lodepng 的 83 = "memory allocation failed"（它自己的错误码表）。
+             * 这条是内存紧张的信号，不是 PNG 坏了，绝不能记成"确认缺失"。 */
+            return (err == LODEPNG_ERR_OUT_OF_MEMORY) ? FETCH_TRANSIENT : FETCH_MISSING;
+        }
+        if (pw != PK_TILE_PIXELS || ph != PK_TILE_PIXELS) {
+            ESP_LOGW(TAG, "瓦片尺寸异常 z%u(%u,%u): %ux%u（期望 %dx%d）",
+                    z, x, y, pw, ph, PK_TILE_PIXELS, PK_TILE_PIXELS);
+            free(rgba);
+            free(buf);
+            return FETCH_MISSING;
+        }
+        for (int i = 0; i < PK_TILE_BUF_PIXELS; i++) {
+            const unsigned char *p = &rgba[(size_t)i * 4];
+            buf[i] = pk_rgb565(p[0], p[1], p[2]);
+        }
+        free(rgba);
     }
-    free(rgba);
 
     pk_tile_key_t key = { .pack_id = (uint32_t)pack_index, .z = z, .x = x, .y = y };
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -720,6 +745,12 @@ void pk_tile_loader_init(void)
     pk_tile_cache_init(&s_cache);
     memset(&s_store, 0, sizeof(s_store));
     pk_sdcard_register_pre_unmount_cb(sd_close_files_cb);
+
+    /* 硬件 JPEG 引擎：JPEG 包走这条路。初始化失败不致命——PNG 包照常
+     * 用 lodepng，只是 JPEG 包会解码失败（fetch_and_decode 里报 TRANSIENT）。 */
+    if (!pk_jpeg_dec_init()) {
+        ESP_LOGW(TAG, "JPEG 硬件解码器未就绪，仅支持 PNG 瓦片包");
+    }
 
     if (pk_sdcard_is_mounted()) {
         size_t n = pk_map_store_scan(&s_store, MAP_DIR);
