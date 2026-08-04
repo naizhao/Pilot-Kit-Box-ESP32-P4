@@ -155,8 +155,10 @@ void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint3
  * 临时负缓存（map_page 退避期间走 ancestor blit），成功后清零。
  * 见 pk_tile_cache.h 顶部 PK_TILE_CACHE_TEMP_NEG_* 常量的说明。 */
 
-/* 递增 key 的连续 IO 失败计数。找不到既有条目时占一个空槽、计数置 1
- * （不淘汰真实瓦片——退避条目本身就要能占住槽位才挡得住每帧重试）。
+/* 递增 key 的连续 IO 失败计数。找不到既有条目时占一个空槽、计数置 1；
+ * 48 槽全满（地图活跃时常态）时复用 find_slot_for_insert，会 LRU 淘汰最旧
+ * 的真瓦片——退避条目必须占住槽位才挡得住每帧重试，这是可接受代价（被淘汰
+ * 的瓦片会重新加载，远好过退避条目无处放导致每帧重试）。
  * 返回递增后的计数（供调用方判断是否到退避阈值）。 */
 uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
 

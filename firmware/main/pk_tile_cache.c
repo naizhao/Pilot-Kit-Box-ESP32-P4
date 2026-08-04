@@ -242,9 +242,10 @@ uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, ui
 {
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) {
-        /* 找不到既有条目：占一个槽位起头计数。不调 find_slot_for_insert——那条
-         * 路径会 LRU 淘汰真实瓦片，而退避条目的整点就是占住槽位挡住每帧重试，
-         * 不该为它牺牲一张真瓦片。优先复用过期的负缓存/临时负缓存槽。 */
+        /* 找不到既有条目：占一个槽位起头计数。复用 find_slot_for_insert——它
+         * 优先挑空槽/陈旧 generation 槽，全满才 LRU 淘汰最旧的真实瓦片。退避
+         * 条目必须占住槽位才能挡住每帧重试，48 槽全满时淘汰一张最旧瓦片是可
+         * 接受代价（它会被重新加载），远好过退避条目没地方放导致每帧重试。 */
         s = find_slot_for_insert(cache);
         slot_free_data(s);
         memset(s, 0, sizeof(*s));
@@ -266,7 +267,10 @@ void pk_tile_cache_put_temp_negative(pk_tile_cache_t *cache, pk_tile_key_t key, 
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) return;   /* 没有计数条目 = 没 bump 过，不该插临时负缓存 */
     /* 保留 sd_fail_count（退避升级靠它），只置临时负缓存态 + 刷新时间戳。
-     * slot_free_data 不需要——计数条目本来就没有瓦片 data。 */
+     * 槽里可能装着之前 read 成功的真瓦片（put 存的、sd_fail_count 当时清 0；
+     * 后来该 key fetch 连续失败、bump 累积到阈值）——覆盖 data 前必须先释放，
+     * 否则那 64KB PSRAM 再无人持有、无法回收（review 2026-08-04）。 */
+    slot_free_data(s);
     s->temp_negative   = true;
     s->negative        = false;
     s->data            = NULL;

@@ -1,8 +1,10 @@
 /*
  * pk_win_nearest.h — 窗口 nearest 查询的纯算法核心（不依赖任何 IDF 头）。
  *
- * 与 pk_aero_reader.c 的 nearest_generic 是同一套算法（3×3 格遍历 +
- * approx 粗排 + 精算重排 + 方位补齐），区别只在数据来源：
+ * 与 pk_aero_reader.c 的 nearest_generic 同属"3×3 格内找最近"，但**省掉
+ * approx 粗排阶段**：窗口驻留格记录少（视口内几个格、每格几十条），直接全
+ * 精算 Haversine + 有序插入，不需要 nearest_generic 那套"粗排选 N → 精算重排"
+ * （那是因为全量库单格可能上千条）。区别只在数据来源：
  *   nearest_generic 读 db->payload（全量库，段内全局下标 idx）；
  *   本文件读调用方传入的「按格记录回调」（窗口驻留格，idx = 格首记录 + 段内偏移）。
  *

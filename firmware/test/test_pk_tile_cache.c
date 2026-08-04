@@ -210,6 +210,38 @@ static void test_temp_negative_backoff(void)
     pk_tile_cache_deinit(&c);
 }
 
+/* put_temp_negative 必须释放槽里既有的真瓦片（review 2026-08-04 抓的 PSRAM
+ * 泄漏 bug：先 put 真瓦片、后连续失败触发 put_temp_negative 时，漏 slot_free_data
+ * 会把 64KB PSRAM 指针直接覆盖成 NULL、再无人持有）。用 ASan 跑能直接抓到。*/
+static void test_temp_negative_frees_real_tile(void)
+{
+    printf("-- put_temp_negative 释放既有真瓦片（防 PSRAM 泄漏）--\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+    pk_tile_key_t k = mk_key(3, 9, 100, 200);
+
+    /* 1. 先成功装入一块真瓦片（模拟 read 成功）*/
+    uint16_t *tile = mk_tile(0xBEEF);
+    chk_true("装入真瓦片", tile != NULL);
+    pk_tile_cache_put(&c, k, tile);
+    bool neg = true;
+    chk_true("put 后命中真瓦片", pk_tile_cache_get(&c, k, 1000, &neg) != NULL && !neg);
+    chk_u32("put 后 sd_fail_count=0", pk_tile_cache_bump_sd_fail(&c, k, 1000), 1);
+    /* bump 命中既有槽，data 仍指向真瓦片（没被清）——这是 Bug 2 的前提 */
+
+    /* 2. 连续失败到阈值，put_temp_negative。旧实现这里 data 被覆盖成 NULL 不 free → 泄漏 */
+    pk_tile_cache_bump_sd_fail(&c, k, 1000);   /* 2 */
+    pk_tile_cache_bump_sd_fail(&c, k, 1000);   /* 3 */
+    pk_tile_cache_put_temp_negative(&c, k, 1000);
+    neg = false;
+    chk_true("put_temp_negative 后 is_negative=true", pk_tile_cache_get(&c, k, 1100, &neg) == NULL && neg);
+
+    /* 3. deinit 会 free 所有 used 槽的 data；若 put_temp_negative 漏 free，
+     *    那 64KB 块就丢了指针 → ASan 在进程退出报 leak。这里 deinit 不崩即过。*/
+    pk_tile_cache_deinit(&c);
+    chk_true("deinit 后无泄漏（ASan 抓）", true);
+}
+
 static void test_put_overwrites_same_key(void)
 {
     printf("-- 同一 key 重复 put 不留旧数据 --\n");
@@ -358,6 +390,7 @@ int main(void)
     test_lru_promotion_on_get();
     test_negative_cache_and_expiry();
     test_temp_negative_backoff();
+    test_temp_negative_frees_real_tile();
     test_put_overwrites_same_key();
     test_generation_bump_clears_all();
     test_evict_lru();
