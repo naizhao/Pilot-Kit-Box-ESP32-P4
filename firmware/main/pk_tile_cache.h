@@ -65,6 +65,17 @@ extern "C" {
  * 确认缺失"一个不至于永久卡死的有效期，防止极端场景下的误判长期粘住。 */
 #define PK_TILE_CACHE_NEGATIVE_TTL_MS (30u * 1000u)
 
+/* 临时负缓存（IO 失败退避，2026-08-04）。与上面那条"瓦片真缺失"的 30s 负缓存
+ * 是两条独立的路——真机抓包证实 sdmmc_read_blocks 0x106（SD 并发过载超时）
+ * 被标 TRANSIENT 每帧重试，会刷屏 + 火上浇油抢更多 SD。临时负缓存给 IO 类
+ * 失败一个短 TTL 退避：这段时间内 map_page 走 ancestor blit（糊但不空白）、
+ * 不再 request → 不再抢 SD。失败计数到阈值才插（偶发 1-2 次不插，只计数），
+ * 持续失败（≥5 次）升级到长 TTL。read 成功后计数清零——一次 SD 拥塞不该
+ * 永久污染这块瓦片。 */
+#define PK_TILE_CACHE_TEMP_NEG_TTL_MS      (2u * 1000u)   /* 3-4 次连续失败 */
+#define PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS (5u * 1000u)   /* ≥5 次持续失败 */
+#define PK_TILE_CACHE_SD_FAIL_BACKOFF      3u              /* 计数到这开始退避 */
+
 typedef struct {
     uint32_t pack_id;   /* 调用方定义的稳定包标识（例如 pk_map_store 里的包下标或路径哈希） */
     uint8_t  z;
@@ -74,11 +85,13 @@ typedef struct {
 typedef struct {
     bool          used;
     bool          negative;          /* true: 确认缺失（data 恒 NULL） */
+    bool          temp_negative;     /* true: IO 失败退避（短 TTL，区别于上面的 30s） */
     pk_tile_key_t key;
     uint16_t     *data;              /* used&&!negative 时非 NULL，PK_TILE_BUF_BYTES 字节 */
     uint32_t      generation;
     uint32_t      last_used_seq;     /* LRU：数值越大越新近使用 */
-    uint32_t      neg_timestamp_ms;  /* 仅 negative 时有意义 */
+    uint32_t      neg_timestamp_ms;  /* negative 或 temp_negative 时有意义 */
+    uint8_t       sd_fail_count;     /* 连续 IO(0x106) 失败次数；read 成功后清零 */
 } pk_tile_cache_slot_t;
 
 typedef struct {
@@ -135,6 +148,27 @@ void pk_tile_cache_put(pk_tile_cache_t *cache, pk_tile_key_t key, uint16_t *data
 /* 标记 key 为"确认缺失"（例如包路由/查目录未命中，或 PNG 解码失败）。
  * 同样参与 LRU 淘汰（满槽时可能挤掉最久未用的条目，含负缓存）。 */
 void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
+
+/* ── IO 失败退避（临时负缓存，2026-08-04）────────────────────────────
+ * 真机抓包：sdmmc_read_blocks 0x106（SD 并发过载）被标 TRANSIENT 每帧重试，
+ * 刷屏且火上浇油。这三个函数让 IO 类连续失败先累积计数、到阈值再插短 TTL
+ * 临时负缓存（map_page 退避期间走 ancestor blit），成功后清零。
+ * 见 pk_tile_cache.h 顶部 PK_TILE_CACHE_TEMP_NEG_* 常量的说明。 */
+
+/* 递增 key 的连续 IO 失败计数。找不到既有条目时占一个空槽、计数置 1
+ * （不淘汰真实瓦片——退避条目本身就要能占住槽位才挡得住每帧重试）。
+ * 返回递增后的计数（供调用方判断是否到退避阈值）。 */
+uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
+
+/* 按 key 当前的 sd_fail_count 插临时负缓存：3-4 次→短 TTL，≥5 次→长 TTL。
+ * 必须在 bump_sd_fail 之后调（它读 count 决定 TTL）。幂等：重复插只刷新
+ * 时间戳。调用方仍要 return TRANSIENT（临时负缓存不等于"确认缺失"，
+ * 只是"这段时间内别再 request"）。 */
+void pk_tile_cache_put_temp_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
+
+/* read 成功后清掉 key 的失败计数（一次 SD 拥塞不该永久污染这块瓦片）。
+ * 找不到条目时空操作。 */
+void pk_tile_cache_reset_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key);
 
 /* ── 诊断 ────────────────────────────────────────────────────────────
  * 「地图整片瓦片缺失」这类问题里，光看屏幕分不清是"没请求""读失败"还是

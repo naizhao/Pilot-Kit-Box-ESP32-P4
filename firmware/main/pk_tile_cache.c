@@ -169,11 +169,29 @@ const uint16_t *pk_tile_cache_get(pk_tile_cache_t *cache, pk_tile_key_t key,
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) return NULL;
 
-    if (s->negative) {
-        uint32_t age = now_ms - s->neg_timestamp_ms; /* 无符号回绕对 30s 量级 TTL 无影响 */
-        if (age > PK_TILE_CACHE_NEGATIVE_TTL_MS) {
-            /* 过期：腾出槽位，当作未命中处理，让调用方重新发起加载。 */
-            memset(s, 0, sizeof(*s));
+    if (s->negative || s->temp_negative) {
+        uint32_t age = now_ms - s->neg_timestamp_ms; /* 无符号回绕对 TTL 量级无影响 */
+        uint32_t ttl;
+        if (s->temp_negative) {
+            /* 临时负缓存 TTL 看失败次数：≥5 次升级到长 TTL，否则短 TTL。
+             * 短(2s) < 长(5s)，短到期先返回 not-negative（允许重试）。 */
+            ttl = (s->sd_fail_count >= 5) ? PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS
+                                          : PK_TILE_CACHE_TEMP_NEG_TTL_MS;
+        } else {
+            ttl = PK_TILE_CACHE_NEGATIVE_TTL_MS;   /* 真缺失：30s */
+        }
+        if (age > ttl) {
+            /* 过期：当作未命中，让调用方重新发起加载。
+             * 真缺失负缓存(negative)：整个槽回收（memset）。
+             * 临时负缓存(temp_negative)：只清标志，**保留 sd_fail_count 和槽位**——
+             * 清零是 read 成功后 reset_sd_fail 的职责；过期重试若又失败，count
+             * 要从原值继续往上走，退避升级路径才成立。槽位留着占住，避免下次
+             * bump 又重新找位。 */
+            if (s->temp_negative) {
+                s->temp_negative = false;
+            } else {
+                memset(s, 0, sizeof(*s));
+            }
             return NULL;
         }
         if (out_is_negative) *out_is_negative = true;
@@ -196,11 +214,13 @@ void pk_tile_cache_put(pk_tile_cache_t *cache, pk_tile_key_t key, uint16_t *data
 
     s->used             = true;
     s->negative          = false;
+    s->temp_negative     = false;   /* 真瓦片到了，IO 退避态作废 */
     s->key               = key;
     s->data              = data;
     s->generation        = cache->generation;
     s->last_used_seq     = ++cache->seq_counter;
     s->neg_timestamp_ms  = 0;
+    s->sd_fail_count     = 0;       /* 成功 → 计数清零，一次拥塞不永久污染 */
 }
 
 void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
@@ -216,4 +236,54 @@ void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint3
     s->generation        = cache->generation;
     s->last_used_seq     = ++cache->seq_counter;
     s->neg_timestamp_ms  = now_ms;
+}
+
+uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
+{
+    pk_tile_cache_slot_t *s = find_slot(cache, key);
+    if (!s) {
+        /* 找不到既有条目：占一个槽位起头计数。不调 find_slot_for_insert——那条
+         * 路径会 LRU 淘汰真实瓦片，而退避条目的整点就是占住槽位挡住每帧重试，
+         * 不该为它牺牲一张真瓦片。优先复用过期的负缓存/临时负缓存槽。 */
+        s = find_slot_for_insert(cache);
+        slot_free_data(s);
+        memset(s, 0, sizeof(*s));
+        s->used          = true;
+        s->key           = key;
+        s->generation    = cache->generation;
+        s->last_used_seq = ++cache->seq_counter;
+        s->sd_fail_count = 0;
+    }
+    /* 上限保护：uint8_t 不会溢出到 0（255 后 bump 留在 255），且阈值是 3/5，
+     * 远在这之下。 */
+    if (s->sd_fail_count < 255) s->sd_fail_count++;
+    (void)now_ms;
+    return s->sd_fail_count;
+}
+
+void pk_tile_cache_put_temp_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
+{
+    pk_tile_cache_slot_t *s = find_slot(cache, key);
+    if (!s) return;   /* 没有计数条目 = 没 bump 过，不该插临时负缓存 */
+    /* 保留 sd_fail_count（退避升级靠它），只置临时负缓存态 + 刷新时间戳。
+     * slot_free_data 不需要——计数条目本来就没有瓦片 data。 */
+    s->temp_negative   = true;
+    s->negative        = false;
+    s->data            = NULL;
+    s->neg_timestamp_ms = now_ms;
+    s->last_used_seq   = ++cache->seq_counter;
+}
+
+void pk_tile_cache_reset_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key)
+{
+    pk_tile_cache_slot_t *s = find_slot(cache, key);
+    if (!s) return;
+    /* 成功了：计数清零，临时负缓存态也清。槽位本身可以留着（万一马上又失败，
+     * 不用重新占位），但既不再是负缓存也不再占数据。 */
+    s->sd_fail_count  = 0;
+    s->temp_negative  = false;
+    /* 如果这个槽只用来记过失败计数、从没装过真瓦片，回收它腾给真正需要的 key。 */
+    if (!s->negative && s->data == NULL) {
+        memset(s, 0, sizeof(*s));
+    }
 }

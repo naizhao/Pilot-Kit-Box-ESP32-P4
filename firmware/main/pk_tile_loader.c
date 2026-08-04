@@ -422,13 +422,45 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
     int64_t t_read = esp_timer_get_time();
     if (!ok) {
         free(png);
-        /* SD 读失败是环境问题（卡忙、内存不够 → sdmmc 回 ESP_ERR_NO_MEM），
-         * 不是"这块瓦片不存在"。句柄多半已被 FatFs 钉死，重开它。 */
-        ESP_LOGW(TAG, "读瓦片 z%u(%u,%u) 失败", z, x, y);
-        xSemaphoreTake(s_io_lock, portMAX_DELAY);
-        pack->pm.io_error = true;
-        reopen_faulted_packs(pack_count);
-        xSemaphoreGive(s_io_lock);
+        /* SD 读失败（sdmmc 0x106 超时 / NO_MEM 等）：环境问题，不是"瓦片不存在"。
+         *
+         * 退避（2026-08-04）：真机抓包发现 0x106 在 SD 并发过载时密集重试——
+         * 旧逻辑每次失败都 reopen（reopen 本身要读 FAT 表，火上浇油），且
+         * TRANSIENT 不进负缓存、每帧重试 → "失败-重开-再失败"死循环刷屏。
+         * 现在改为：
+         *   - 只在首次失败 reopen（清 FatFs 粘滞），后续退避期间不重复 reopen；
+         *   - 计数到阈值(3)插临时负缓存：这段时间内 map_page 走 ancestor blit
+         *     （糊但不空白）、不再 request → 不再抢 SD，给卡喘息；
+         *   - 持续失败(≥5)升级到长 TTL。read 成功后 reset 清零（见 FETCH_OK 路径）。
+         * 仍 return TRANSIENT：临时负缓存 ≠ "确认缺失"，只是"这段时间别再 request"。*/
+        pk_tile_key_t fkey = { .pack_id = (uint32_t)pack_index, .z = z, .x = x, .y = y };
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        uint8_t fails;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        fails = pk_tile_cache_bump_sd_fail(&s_cache, fkey, now_ms);
+        if (fails >= PK_TILE_CACHE_SD_FAIL_BACKOFF) {
+            pk_tile_cache_put_temp_negative(&s_cache, fkey, now_ms);
+        }
+        xSemaphoreGive(s_lock);
+
+        /* reopen 与 cache 操作用不同的锁，不能嵌套（锁序约定 io→s）。
+         * 首次失败才 reopen：清 FatFs 粘滞；后续退避期不重复——reopen 要读
+         * SD（FAT 表），过载期反复重开只会加剧争抢。 */
+        if (fails == 1) {
+            xSemaphoreTake(s_io_lock, portMAX_DELAY);
+            pack->pm.io_error = true;
+            reopen_faulted_packs(pack_count);
+            xSemaphoreGive(s_io_lock);
+        }
+
+        if (fails >= PK_TILE_CACHE_SD_FAIL_BACKOFF) {
+            ESP_LOGW(TAG, "读瓦片 z%u(%u,%u) 失败（第 %u 次，退避 %lus）",
+                     z, x, y, fails,
+                     (unsigned long)(fails >= 5 ? PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS
+                                                : PK_TILE_CACHE_TEMP_NEG_TTL_MS) / 1000);
+        } else {
+            ESP_LOGW(TAG, "读瓦片 z%u(%u,%u) 失败（第 %u 次）", z, x, y, fails);
+        }
         return FETCH_TRANSIENT;
     }
 

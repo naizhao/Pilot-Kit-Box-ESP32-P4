@@ -155,6 +155,61 @@ static void test_negative_cache_and_expiry(void)
     pk_tile_cache_deinit(&c);
 }
 
+/* ---- 临时负缓存（0x106 退避，2026-08-04）------------------------------
+ * 真机抓包：SD 并发过载时 sdmmc_read_blocks 返 0x106，fetch_and_decode 标
+ * TRANSIENT 不进负缓存、每帧重试 → "失败-重开句柄-再失败"死循环刷屏。
+ * 临时负缓存给 IO 类失败一个短 TTL 退避：map_page 这段时间内走 ancestor
+ * blit（糊但不空白）、不再 request → 不再抢 SD。与"瓦片真缺失"那条 30s
+ * 负缓存是两条独立的路。*/
+static void test_temp_negative_backoff(void)
+{
+    printf("-- 临时负缓存：IO 失败退避 + 计数升级 + 成功清零 --\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+    pk_tile_key_t k = mk_key(2, 10, 841, 394);
+
+    /* 第 1-2 次失败：偶发，不退避（计数累积但还没插临时负缓存）。
+     * bump_sd_fail 返回当前累计次数。 */
+    chk_u32("第 1 次 IO 失败: count→1", pk_tile_cache_bump_sd_fail(&c, k, 1000), 1);
+    bool neg = true;
+    /* 还没到退避阈值，get 不该看到负缓存（该走重试） */
+    const uint16_t *r = pk_tile_cache_get(&c, k, 1000, &neg);
+    chk_true("计数 1 时未插临时负缓存: get 返回 NULL 但 is_negative=false", r == NULL && !neg);
+
+    chk_u32("第 2 次 IO 失败: count→2", pk_tile_cache_bump_sd_fail(&c, k, 1000), 2);
+
+    /* 第 3 次失败：达到退避阈值，插临时负缓存（短 TTL） */
+    uint32_t t = 2000;
+    chk_u32("第 3 次 IO 失败: count→3（触发退避）", pk_tile_cache_bump_sd_fail(&c, k, t), 3);
+    pk_tile_cache_put_temp_negative(&c, k, t);
+    neg = false;
+    r = pk_tile_cache_get(&c, k, t + 100, &neg);   /* 退避期内 */
+    chk_true("退避期内 is_negative=true（走 ancestor blit）", r == NULL && neg);
+
+    /* 临时负缓存短 TTL（2s）过期后：又能重试 */
+    neg = true;
+    r = pk_tile_cache_get(&c, k, t + PK_TILE_CACHE_TEMP_NEG_TTL_MS + 1, &neg);
+    chk_true("临时负缓存过期后 is_negative=false（允许重试）", r == NULL && !neg);
+
+    /* 持续失败 ≥5 次：升级到长 TTL（5s）退避 */
+    pk_tile_cache_bump_sd_fail(&c, k, t);  /* 4 */
+    t = 10000;
+    chk_u32("第 5 次: count→5（升级退避）", pk_tile_cache_bump_sd_fail(&c, k, t), 5);
+    pk_tile_cache_put_temp_negative(&c, k, t);
+    neg = false;
+    r = pk_tile_cache_get(&c, k, t + PK_TILE_CACHE_TEMP_NEG_TTL_MS + 1, &neg);
+    chk_true("count≥5 后短 TTL 已过期但长 TTL 仍负缓存", r == NULL && neg);
+    neg = false;
+    r = pk_tile_cache_get(&c, k, t + PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS + 1, &neg);
+    chk_true("长 TTL 过期后允许重试", r == NULL && !neg);
+
+    /* 成功后计数必须清零——不能让一次 SD 拥塞永久污染这块瓦片 */
+    pk_tile_cache_reset_sd_fail(&c, k);
+    chk_u32("成功后 count 清零", pk_tile_cache_bump_sd_fail(&c, k, 20000), 1);
+
+    pk_tile_cache_deinit(&c);
+}
+
 static void test_put_overwrites_same_key(void)
 {
     printf("-- 同一 key 重复 put 不留旧数据 --\n");
@@ -302,6 +357,7 @@ int main(void)
     test_lru_eviction_order();
     test_lru_promotion_on_get();
     test_negative_cache_and_expiry();
+    test_temp_negative_backoff();
     test_put_overwrites_same_key();
     test_generation_bump_clears_all();
     test_evict_lru();
