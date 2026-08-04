@@ -24,6 +24,7 @@
 #include "pk_aero_span.h"
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
+#include "pk_win_nearest.h"    /* W1.4：nearest 纯算法（pk_win_nearest_compute）*/
 
 #if PK_WIN_SELFTEST
 #include "pk_aero_db.h"        /* 自检的对拍基准：全量加载路径 */
@@ -983,6 +984,52 @@ bool pk_win_cell_records(uint16_t cell, uint16_t sec_type,
     return true;
 }
 
+/* ── 窗口 nearest（W1.4）──────────────────────────────────────────────
+ * pk_win_nearest.c 的纯算法要一个 pk_win_rec_fn 回调；这里把 cell_records
+ * 包成那个签名。ctx 透传 sec_type（rec_fn 按 cell 查时要知道取哪个段）。 */
+typedef struct { uint16_t sec_type; } wn_ctx_t;
+static bool wn_rec_fn(uint16_t cell, const uint8_t **recs,
+                      uint32_t *n, uint32_t *first, void *ctx)
+{
+    return pk_win_cell_records(cell, ((wn_ctx_t *)ctx)->sec_type, recs, n, first);
+}
+
+int pk_win_nearest(uint16_t sec_type, double lat, double lon,
+                   pk_aero_near_t *out, int max)
+{
+    /* 跑道/频率没有经纬度，查无意义；同 cell_records 的 default 分支拒掉。 */
+    if (sec_type != PK_AERO_SEC_AIRPORTS &&
+        sec_type != PK_AERO_SEC_NAVAIDS  &&
+        sec_type != PK_AERO_SEC_WAYPOINTS_FIX) return 0;
+
+    const pk_aero_section_t *sec = pk_aero_span_section(sec_type);
+    if (sec == NULL || sec->rec_size == 0) return 0;
+
+    /* query 点的 3×3 格号（与 nearest_generic 同一套 floor+90 / %360 环绕）。
+     * 扫哪些格只取决于 query 点，与本机/窗口中心无关——窗口只是"这些格里
+     * 哪些已驻留"的过滤器（回调对未驻留格返回 false）。 */
+    uint16_t cells[9];
+    int nc = 0;
+    int row0 = (int)floor(lat) + 90;
+    if (row0 < 0)   row0 = 0;
+    if (row0 > 179) row0 = 179;
+    int col0 = ((int)floor(lon) + 180) % 360;
+    if (col0 < 0) col0 += 360;
+    for (int dr = -1; dr <= 1; dr++) {
+        int row = row0 + dr;
+        if (row < 0 || row > 179) continue;
+        for (int dc = -1; dc <= 1; dc++)
+            cells[nc++] = (uint16_t)(row * 360 + (col0 + dc + 360) % 360);
+    }
+
+    wn_ctx_t ctx = { .sec_type = sec_type };
+    pk_win_lock();
+    int n = pk_win_nearest_compute(cells, nc, sec->rec_size, lat, lon,
+                                wn_rec_fn, &ctx, out, max);
+    pk_win_unlock();
+    return n;
+}
+
 void pk_win_resident_cells(pk_win_cellset_t *out)
 {
     if (out == NULL) return;
@@ -1027,5 +1074,8 @@ void pk_win_set_viewport(double a, double b, double c, double d)
 { (void)a; (void)b; (void)c; (void)d; }
 void pk_win_debug_override(bool on, double lat, double lon, double t)
 { (void)on; (void)lat; (void)lon; (void)t; }
+int pk_win_nearest(uint16_t sec_type, double lat, double lon,
+                   pk_aero_near_t *out, int max)
+{ (void)sec_type; (void)lat; (void)lon; (void)out; (void)max; return 0; }
 
 #endif /* PK_WIN_ENABLE */

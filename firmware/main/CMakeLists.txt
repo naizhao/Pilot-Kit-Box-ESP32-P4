@@ -47,6 +47,7 @@ idf_component_register(
         "pk_win_geom.c"
         "pk_aero_span.c"
         "pk_win.c"
+        "pk_win_nearest.c"
         "display.c"
         "imu_task.c"
         "pk_vib.c"

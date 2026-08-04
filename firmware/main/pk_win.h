@@ -112,6 +112,22 @@ void pk_win_set_viewport(double min_lat, double min_lon,
 /* 调试用：强制窗口中心（自检与 host 联调）。on=false 恢复跟随本机。 */
 void pk_win_debug_override(bool on, double lat, double lon, double track_deg);
 
+/* 窗口 nearest 查询（W1.4，2026-08-04）。
+ *
+ * 语义同 pk_aero_db_nearest_*：在 query 点 (lat,lon) 的 3×3 格里找最近的 max
+ * 条记录，按距离升序写入 out（含 dist_nm + brg_deg）。sec_type 只接受
+ * AIRPORTS / NAVAIDS / WAYPOINTS_FIX（跑道/频率没有经纬度，查无意义）。
+ *
+ * 与全量的差异：只扫窗口**已驻留**的格——query 的 3×3 里有格还没被窗口加载
+ * 到（query 点离本机远、超出椭圆预取范围）时，那格静默跳过，返回值可能少于
+ * 全量查询。调用方据此判断要不要 fallback 到全量库（W1.4 阶段全量仍在）。
+ *
+ * 线程安全：内部 pk_win_lock/unlock。纯内存（pk_win_cell_records 不读盘），
+ * 渲染线程可调。算法核心在 pk_win_nearest.c（不依赖 IDF，host 对拍验证过与
+ * 全量 nearest_generic 逐条等价）。 */
+int pk_win_nearest(uint16_t sec_type, double lat, double lon,
+                   pk_aero_near_t *out, int max);
+
 #ifdef __cplusplus
 }
 #endif
