@@ -176,8 +176,13 @@ static void btn_layout(int *search_y, int *zin_y, int *zout_y, int *recenter_y,
 
 /* ── 状态（跨帧持久，单渲染任务，无需加锁）───────────────────────── */
 static uint8_t  s_zoom        = MAP_ZOOM_DEFAULT;
-static double   s_center_lon  = 0.0;
-static double   s_center_lat  = 0.0;
+/* 无 GPS fix 时的默认地图中心：ZGGG（广州白云）跑道区。开机没定位就把地图
+ * 摆在这里，而不是停在 (0,0) 那个没意义的点（几内亚湾外海）。一旦拿到 fix
+ * 且 s_follow=true，中心自动跳到本机位置（见 render 里 own_valid 分支）。 */
+#define MAP_DEFAULT_CENTER_LAT  23.3924   /* ZGGG 跑道中线 */
+#define MAP_DEFAULT_CENTER_LON  113.2989
+static double   s_center_lat  = MAP_DEFAULT_CENTER_LAT;
+static double   s_center_lon  = MAP_DEFAULT_CENTER_LON;
 static bool     s_follow      = true;    /* true=本机居中跟随；false=手动平移 */
 static bool     s_have_last_own = false; /* 是否曾经有过一次有效本机位置 */
 static double   s_last_own_lat, s_last_own_lon;
