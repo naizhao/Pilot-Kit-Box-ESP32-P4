@@ -307,6 +307,7 @@ static void name_ellipsize(char *dst, size_t dst_sz, const char *src)
 #include "pfd_draw.h"
 #include "mag_var.h"        /* 罗盘玫瑰要按磁差旋转 */
 #include "pk_aero_db.h"
+#include "pk_win.h"          /* pk_win_nearest（W1.5：窗口数据源）*/
 
 #ifndef PK_AERO_LAYER_SIM_IMPL
 static const char *TAG = "aero_layer";
@@ -406,9 +407,11 @@ static void fill_airports(snapshot_t *s, const pk_aero_lod_t *lod,
                           double lat, double lon)
 {
     pk_aero_near_t near[PK_AERO_NEAR_MAX];
-    /* 一律按上限取回再过滤，而不是把 lod->airport_limit 直接当 max：过滤会
-     * 淘汰掉一部分（低 zoom 尤其狠），先要满再筛才填得满一屏。 */
-    int n = pk_aero_db_nearest_airports(lat, lon, near, PK_AERO_NEAR_MAX);
+    /* W1.5（2026-08-04）：先走窗口 nearest（只扫窗口驻留格，纯内存），返回 0
+     * 时（窗口未启用/未覆盖/未就绪）回退全量库。详情查询 airport_get 仍走
+     * 全量库——窗口 idx 与全量 idx 同体系（pk_win.h out_first 注释）。 */
+    int n = pk_win_nearest(PK_AERO_SEC_AIRPORTS, lat, lon, near, PK_AERO_NEAR_MAX);
+    if (n == 0) n = pk_aero_db_nearest_airports(lat, lon, near, PK_AERO_NEAR_MAX);
     for (int i = 0; i < n && s->n_apt < lod->airport_limit; i++) {
         pk_aero_airport_t a;
         if (!pk_aero_db_airport_get(near[i].idx, &a)) continue;
@@ -432,7 +435,8 @@ static void fill_navaids(snapshot_t *s, const pk_aero_lod_t *lod,
                          double lat, double lon)
 {
     pk_aero_near_t near[PK_AERO_NEAR_MAX];
-    int n = pk_aero_db_nearest_navaids(lat, lon, near, PK_AERO_NEAR_MAX);
+    int n = pk_win_nearest(PK_AERO_SEC_NAVAIDS, lat, lon, near, PK_AERO_NEAR_MAX);
+    if (n == 0) n = pk_aero_db_nearest_navaids(lat, lon, near, PK_AERO_NEAR_MAX);
     for (int i = 0; i < n && s->n_nav < lod->navaid_limit; i++) {
         pk_aero_navaid_t v;
         if (!pk_aero_db_navaid_get(near[i].idx, &v)) continue;
@@ -447,7 +451,8 @@ static void fill_fixes(snapshot_t *s, const pk_aero_lod_t *lod,
                        double lat, double lon)
 {
     pk_aero_near_t near[PK_AERO_NEAR_MAX];
-    int n = pk_aero_db_nearest_fixes(lat, lon, near, PK_AERO_NEAR_MAX);
+    int n = pk_win_nearest(PK_AERO_SEC_WAYPOINTS_FIX, lat, lon, near, PK_AERO_NEAR_MAX);
+    if (n == 0) n = pk_aero_db_nearest_fixes(lat, lon, near, PK_AERO_NEAR_MAX);
     for (int i = 0; i < n && s->n_fix < lod->fix_limit; i++) {
         pk_aero_fix_t f;
         if (!pk_aero_db_fix_get(near[i].idx, &f)) continue;

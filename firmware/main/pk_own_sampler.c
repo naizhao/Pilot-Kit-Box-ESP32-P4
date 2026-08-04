@@ -48,6 +48,7 @@
 #include "pk_clock.h"
 #include "config_ac_category.h"
 #include "pk_aero_db.h"
+#include "pk_win.h"          /* pk_win_nearest（W1.5：跟本机、窗口必覆盖）*/
 #include "ui_state.h"       /* pk_ui_get_own_icao() */
 #include "aircraft_state.h" /* aircraft_state_get_own() —— 绑定机 on_ground 位 */
 
@@ -172,14 +173,17 @@ static void own_sample_task(void *arg)
         in.bound_on_ground  = bound_valid && own_ac.on_ground;
         /* near_airport：喂给相位状态机，影响 UC7「跑道口排队 10 分钟不封段」
          * 的不降级优待（设计文档「用户场景」UC7 + pk_flight_phase.h:26）。
-         * 罩哥 2026-08-04 拍板阈值 2 NM。pk_aero_db_nearest_airports 是毫秒级
-         * 全程持锁查询（pk_aero_db.h:97），但 own_sampler 是 1Hz 独立任务、不在
-         * 渲染热路径上，每秒一次查询可接受。航空库未就绪/无 GPS fix 时自然
-         * false（安全默认，与占位行为一致）。 */
+         * 罩哥 2026-08-04 拍板阈值 2 NM。W1.5（2026-08-04）：走窗口 nearest
+         *（跟本机、椭圆必覆盖，不需 fallback）；窗口未就绪时回退全量。
+         * own_sampler 是 1Hz 独立任务、不在渲染热路径上。航空库未就绪/无 GPS
+         * fix 时自然 false（安全默认，与占位行为一致）。 */
         in.near_airport = false;
         if (gps_fix) {
             pk_aero_near_t near[1];
-            int na = pk_aero_db_nearest_airports((double)gps.lat, (double)gps.lon,
+            int na = pk_win_nearest(PK_AERO_SEC_AIRPORTS,
+                                    (double)gps.lat, (double)gps.lon, near, 1);
+            if (na == 0)
+                na = pk_aero_db_nearest_airports((double)gps.lat, (double)gps.lon,
                                                   near, 1);
             in.near_airport = (na >= 1 && near[0].dist_nm <= OWN_NEAR_AIRPORT_NM);
         }
