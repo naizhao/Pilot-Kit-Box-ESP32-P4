@@ -274,6 +274,21 @@ void pk_win_status_get(pk_win_status_t *out)
     out->loads  = out->n_ready;
 }
 
+/* 窗口视口约束 + nearest 查询（W1.4）。模拟器的航空数据由本文件的全量内存表
+ * 提供，不依赖 pk_win 的窗口驻留集，故这里 viewport 无操作、nearest 返回 0
+ * 条——pk_aero_layer 拿到 0 会 fallback 到全量 pk_aero_db 查询。 */
+void pk_win_set_viewport(double min_lat, double min_lon,
+                         double max_lat, double max_lon)
+{
+    (void)min_lat; (void)min_lon; (void)max_lat; (void)max_lon;
+}
+int pk_win_nearest(uint16_t sec_type, double lat, double lon,
+                   pk_aero_near_t *out, int max)
+{
+    (void)sec_type; (void)lat; (void)lon; (void)out; (void)max;
+    return 0;
+}
+
 /* 大写化 + 前缀比较（桩表里的代码本来就全大写）。 */
 static bool has_prefix(const char *s, const char *pfx)
 {

@@ -24,6 +24,7 @@
 #include "demo_data.h"
 #include "imu_task.h"
 #include "own_ship.h"
+#include "ui_state.h"          /* pk_ui_get_own_icao —— 让本机 ICAO 跟绑定走 */
 #include "pk_own_sampler.h"
 
 static float s_yaw_deg   = 0.0f;
@@ -116,7 +117,11 @@ bool pk_own_ship_resolve(int64_t now_us, int64_t max_age_us,
     if (!s_own_ok) return false;
     if (out) {
         memset(out, 0, sizeof(*out));
-        out->icao24        = 0x780ABC;
+        /* 本机 ICAO 跟绑定走（与固件 own_ship.c 同源）；未绑定时退回 0x780ABC，
+         * 保持既有截图基线不变。设 PK_SIM_OWN_ICAO=<hex>（例如某架 demo 交通的
+         * 3C0000+i）即可在列表里把那架判成本机，验证「本机行青染+徽章」。 */
+        const uint32_t bound = pk_ui_get_own_icao();
+        out->icao24        = bound ? bound : 0x780ABC;
         out->have_position = true;
         if (sim_uses_map_own_pos()) {
             /* PK_SIM_MAP_OWN_LAT/LON：挪出珠三角试点包覆盖范围，用来压
@@ -317,4 +322,12 @@ pk_flight_phase_t pk_own_sampler_get_phase(void)
     if (strcmp(e, "taxi")     == 0) return PK_PHASE_TAXI;
     if (strcmp(e, "airborne") == 0) return PK_PHASE_AIRBORNE;
     return PK_PHASE_UNKNOWN;
+}
+
+/* 本机轨迹（map_page 的本机航迹线）。模拟器不采样真实轨迹，返回空——
+ * map_page 拿到 count=0 就不画线，其余渲染不受影响。 */
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count)
+{
+    if (out_count) *out_count = 0;
+    return NULL;
 }

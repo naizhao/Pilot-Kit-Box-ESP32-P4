@@ -312,6 +312,32 @@ void pk_ui_list_scroll(int delta) { (void)delta; }
 
 uint32_t pk_ui_list_get_selected_icao(void) { return 0; }
 
+/* 本机 ICAO 绑定（固件里 ui_state.c 走 NVS + FreeRTOS 互斥，host 跑不起来）。
+ * 用静态变量顶掉：pk_ui_set/clear 真改 pk_ui_get 的返回值，列表页的绑定抽屉
+ * 与本机行 is_own 判定在模拟器里就能演示。PK_SIM_OWN_ICAO=<hex> 首次取值时
+ * 种子，便于截图验证「本机行青染+徽章」那一态（不设则默认未绑定）。 */
+static uint32_t s_sim_own_icao;
+static int      s_sim_own_inited;
+static void sim_own_init(void)
+{
+    if (s_sim_own_inited) return;
+    s_sim_own_inited = 1;
+    const char *e = getenv("PK_SIM_OWN_ICAO");
+    if (e) s_sim_own_icao = (uint32_t)strtoul(e, NULL, 16);
+}
+void     pk_ui_set_own_icao(uint32_t icao24) { s_sim_own_inited = 1; s_sim_own_icao = icao24; }
+uint32_t pk_ui_get_own_icao(void)            { sim_own_init(); return s_sim_own_icao; }
+void     pk_ui_clear_own_icao(void)          { s_sim_own_inited = 1; s_sim_own_icao = 0; }
+
+/* toast：模拟器不弹窗。get 恒返回 false（无激活 toast），渲染循环据此不画。 */
+void pk_ui_toast_show(pk_tr_id_t id, bool is_error) { (void)id; (void)is_error; }
+bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error)
+{
+    (void)out_id; (void)out_error;
+    return false;
+}
+bool pk_ui_toast_blink_visible(void) { return false; }
+
 /* ── 设置页要的那几样 ──────────────────────────────────────────────
  * 全是 getter：设置页的绘制层只读状态。写操作留在 settings_page.c，
  * 那个文件依赖 FreeRTOS，不进模拟器。
