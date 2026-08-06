@@ -439,6 +439,7 @@ typedef struct {
     aircraft_t       *ac;
     pk_traffic_rel_t  rel;
     int               age_s;   /* 距上次收到报文的秒数，0..60 */
+    bool              is_own;  /* 本机：BRG/DIST 显 ---、不进威胁判定、行底微染 */
 } row_t;
 
 /*
@@ -658,15 +659,20 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
     const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
     const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
     const uint16_t COL_THR  = pk_rgb565(120,  26,  26);   /* 威胁行底 */
+    const uint16_t COL_OWN  = pk_rgb565( 18,  44,  64);   /* 本机行底（青蓝微染） */
 
     const aircraft_t *a = r->ac;
     const bool threat = is_threat(&r->rel);
 
-    /* 行底：威胁红底 > 选中亮底 > 斑马纹。
+    /* 行底：威胁红底 > 本机青染 > 选中亮底 > 斑马纹。本机 rel.valid 恒 false，
+     * 不会和威胁叠加；青染对应雷达页把本机画成独立中心符号的语义。
      * 斑马纹不是装饰——七列横跨 768 px，没有底色区分时视线很容易串行。 */
     if (threat)
         pk_pfd_fill_rect(fb, PAD_L - 8, y0, CONTENT_R + 8,
                          y0 + ROW_H - 2, COL_THR);
+    else if (r->is_own)
+        pk_pfd_fill_rect(fb, PAD_L - 8, y0, CONTENT_R + 8,
+                         y0 + ROW_H - 2, COL_OWN);
     else
         pk_pfd_darken_rect(fb, PAD_L - 8, y0, CONTENT_R + 8,
                            y0 + ROW_H - 2, sel ? 110 : 200);
@@ -708,6 +714,19 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
         pk_pfd_fill_rect(fb, tx - 4, tyy - 3, tx + tw + 3, tyy + PK_AA_XS_H + 2,
                          COL_EMG);
         LST_PUTS(fb, tx, tyy, tag, pk_rgb565(255, 255, 255), PK_AA_XS);
+    }
+
+    /* 本机徽章：与紧急码标签同一格（COL_FLAG_X），但安全优先级更低——
+     * 该行有紧急码时让位给红徽章。复用 PFD 信息框的 OWN 词条；青底与行底
+     * 微染同系，宽度按渲染器算（中文「本机」2 字 30 px，与英文 OWN 同宽）。 */
+    if (!tag && r->is_own) {
+        const char *otag = pk_i18n_text(PK_TR_PFD_IB_OWN);
+        const int otx = COL_FLAG_X;
+        const int otw = pk_aa_text_width(otag, PK_AA_XS);
+        const int otyy = y0 + (ROW_H - 2 - PK_AA_XS_H) / 2;
+        pk_pfd_fill_rect(fb, otx - 4, otyy - 3, otx + otw + 3,
+                         otyy + PK_AA_XS_H + 2, pk_rgb565(0, 150, 180));
+        LST_PUTS(fb, otx, otyy, otag, pk_rgb565(255, 255, 255), PK_AA_XS);
     }
 
     /* ── DIST ── */
@@ -1046,8 +1065,13 @@ void pk_adsb_list_render(uint16_t *fb)
 
     for (size_t i = 0; i < n; ++i) {
         aircraft_t *t = &s_scratch[i];
-        if (own_valid && own.icao24 != 0 && t->icao24 == own.icao24) continue;
-        s_rows[nr].ac = t;
+        /* 本机不再 continue 跳过：列表没有雷达页那种中心符号，剔掉就彻底看不见。
+         * 本机对自身的距离/方位无意义，下面把 rel.valid 置 false——BRG/DIST 因此
+         * 自然显 ---，is_threat()（首项即 rel.valid）也因此不会把本机标红。 */
+        const bool is_own = (own_valid && own.icao24 != 0 &&
+                             t->icao24 == own.icao24);
+        s_rows[nr].ac     = t;
+        s_rows[nr].is_own = is_own;
         /* 上次收到报文距今多少秒。快照窗口是 60 s（AIRCRAFT_STALE_AGE_US），
          * 所以恒为两位数以内。 */
         {
@@ -1059,6 +1083,7 @@ void pk_adsb_list_render(uint16_t *fb)
             own_valid, own.lat, own.lon, own_heading, mag_var, own_palt,
             t->have_position, t->lat, t->lon,
             t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+        if (is_own) s_rows[nr].rel.valid = false;
         nr++;
     }
 
