@@ -202,7 +202,8 @@ static void own_sample_task(void *arg)
          * ground_stopped 滞回 60s：避免触地复飞（UC8）中间瞬态 ground_stopped
          * 误清轨迹——触地复飞里 landing_rollout 会直接弹回 takeoff_roll，不会
          * 停在 ground_stopped 达 60s，但保守起见用滞回更稳。
-         * trail_push 数据源是本机 GPS，与 ADS-B 绑定无关。 */
+         * trail_push 位置源见下方：优先绑定机 ADS-B，退回 GPS（与地图/PFD 的
+         * pk_own_ship_resolve 同源）——否则 GPS 没定位时轨迹 ring 永远空。 */
         const bool moving = (phase == PK_PHASE_TAXI)
                             || !pk_flight_phase_is_ground_family(phase);
         if (moving && s_prev_trail_phase == PK_PHASE_GROUND_STOPPED) {
@@ -218,8 +219,21 @@ static void own_sample_task(void *arg)
         } else {
             s_gs_steady_since_ms = 0;
         }
-        if (moving && gps_fix) {
-            trail_push((uint32_t)ts_ms, in.lat_e7, in.lon_e7, (uint8_t)phase);
+        /* 轨迹位置源：优先绑定机 ADS-B（与地图/PFD 的 pk_own_ship_resolve 同源），
+         * 绑定机无位置时退回 GPS。GPS 全丢时相位机走 UC9 保持上一态（UNKNOWN/
+         * AIRBORNE 都非 ground_family → moving=true），故门控只再把"GPS 有 fix"
+         * 换成"位置可得"即可——否则座舱内 GPS 没定位、却已绑定本机时，地图靠
+         * ADS-B 跟着飞、轨迹 ring 却永远空。相位机输入 in.lat_e7 仍走 GPS，不动。 */
+        const bool trail_from_bound = bound_valid && own_ac.have_position;
+        const bool trail_pos_ok     = trail_from_bound || gps_fix;
+        const int32_t trail_lat_e7  = trail_from_bound
+            ? (int32_t)lround(own_ac.lat * 1e7)
+            : (gps_fix ? (int32_t)lround(gps.lat * 1e7) : 0);
+        const int32_t trail_lon_e7  = trail_from_bound
+            ? (int32_t)lround(own_ac.lon * 1e7)
+            : (gps_fix ? (int32_t)lround(gps.lon * 1e7) : 0);
+        if (moving && trail_pos_ok) {
+            trail_push((uint32_t)ts_ms, trail_lat_e7, trail_lon_e7, (uint8_t)phase);
         }
         s_prev_trail_phase = phase;
 
