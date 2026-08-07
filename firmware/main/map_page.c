@@ -51,6 +51,7 @@
 #include "mag_var.h"    /* 磁->真 修正，见 own_heading_true_deg 注释 */
 #include "own_ship.h"
 #include "pk_aero_layer.h"
+#include "pk_win.h"           /* pk_win_set_viewport（W1.5：视口格钉住）*/
 #include "pk_callsign.h"    /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 #include "pk_sdcard.h"
@@ -754,6 +755,43 @@ void pk_map_page_render(uint16_t *fb)
     s_map_rot_deg = map_rot_deg;   /* touch_up() 命中测试要用同一份，见其声明处注释 */
     const double rot_rad = (double)map_rot_deg * M_PI / 180.0;
     const double cos_r = cos(rot_rad), sin_r = sin(rot_rad);
+
+    /* 告知窗口模块当前视口范围（W1.5，2026-08-04）：把屏上可见的格钉进窗口
+     * 不卸载，这样 pk_aero_layer 走 pk_win_nearest 时视口内的格一定在窗口里，
+     * 不会因窗口只跟本机椭圆而漏掉用户拖到的远处。
+     *
+     * 取四角的 lon/lat min/max。屏幕角→世界坐标走 world_to_screen_rot 的逆
+     * （绕视口中心反向旋转，与正变换互为转置，见 heading-up 扫描线那段注释）：
+     *   wdx = sdx·cos − sdy·sin；wdy = sdx·sin + sdy·cos
+     * 其中 sdx=±PK_DISPLAY_W/2、sdy=±(PK_DISPLAY_H−MAP_TOP)/2 是屏幕角相对
+     * 视口中心 (MCX,MCY) 的偏移，视口中心对应世界 (cwx,cwy)。
+     *   north-up（cos=1,sin=0）退化为轴对齐四角，bbox 精确；
+     *   heading-up 时四角围成旋转可见矩形，其 lon/lat 外接框 ⊃ 实际可见区域，
+     * 钉的格只会多不会少（墨卡托下 lon 只看 wx、lat 只看 wy，四角 min/max 即
+     * 整条边的 min/max）。
+     *   注：不能像旧写法那样只取对角两角 + 第三角——lat 只依赖 wy，对角两角
+     * 的 wy 一北一南，但赋值时 min/max 名字写反，第三角校正又只修了 min_lat，
+     * max_lat 永远卡在南边，bbox 退化成零纬度高度（host 回归见
+     * firmware/test/test_pk_map_viewport_bbox.c，镜像本段几何）。 */
+    {
+        const double hw = (double)(PK_DISPLAY_W / 2);
+        const double hh = (double)((PK_DISPLAY_H - MAP_TOP) / 2);
+        double min_lat = 1e9, max_lat = -1e9, min_lon = 1e9, max_lon = -1e9;
+        for (int ix = -1; ix <= 1; ix += 2) {
+            for (int iy = -1; iy <= 1; iy += 2) {
+                const double sdx = ix * hw, sdy = iy * hh;
+                const double wdx = sdx * cos_r - sdy * sin_r;
+                const double wdy = sdx * sin_r + sdy * cos_r;
+                double lon, lat;
+                world_to_lonlat(cwx + wdx, cwy + wdy, s_zoom, &lon, &lat);
+                if (lat < min_lat) min_lat = lat;
+                if (lat > max_lat) max_lat = lat;
+                if (lon < min_lon) min_lon = lon;
+                if (lon > max_lon) max_lon = lon;
+            }
+        }
+        pk_win_set_viewport(min_lat, min_lon, max_lat, max_lon);
+    }
 
     /* ── 底图：可见范围内的瓦片 blit（含缺瓦片占位）──
      * map_rot_deg==0（north-up，或 heading-up 但暂时没有航向数据）时走原来的
