@@ -145,17 +145,17 @@
         "min_copper_edge_clearance": 0.5,
         "min_groove_width": 0.0,
         "min_hole_clearance": 0.25,
-        "min_hole_to_hole": 0.25,
+        "min_hole_to_hole": 0.2,
         "min_microvia_diameter": 0.2,
         "min_microvia_drill": 0.1,
         "min_resolved_spokes": 2,
         "min_silk_clearance": 0.0,
         "min_text_height": 0.8,
         "min_text_thickness": 0.08,
-        "min_through_hole_diameter": 0.3,
+        "min_through_hole_diameter": 0.2,
         "min_track_width": 0.13,
-        "min_via_annular_width": 0.15,
-        "min_via_diameter": 0.5,
+        "min_via_annular_width": 0.1,
+        "min_via_diameter": 0.4,
         "solder_mask_to_copper_clearance": 0.0,
         "use_height_for_length_calcs": true
       },
@@ -501,8 +501,8 @@
         "schematic_color": "rgba(0, 0, 0, 0.000)",
         "track_width": 0.15,
         "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3
+        "via_diameter": 0.4,
+        "via_drill": 0.2
       },
       {
         "bus_width": 12,
@@ -519,9 +519,20 @@
         "schematic_color": "rgba(0, 0, 0, 0.000)",
         "track_width": 0.5,
         "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3,
+        "via_diameter": 0.4,
+        "via_drill": 0.2,
         "wire_width": 6
+      },
+      {
+        "clearance": 0.15,
+        "name": "POWER_LO",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": -1,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.25,
+        "tuning_profile": "",
+        "via_diameter": 0.4,
+        "via_drill": 0.2
       },
       {
         "bus_width": 12,
@@ -538,8 +549,8 @@
         "schematic_color": "rgba(0, 0, 0, 0.000)",
         "track_width": 0.34,
         "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3,
+        "via_diameter": 0.4,
+        "via_drill": 0.2,
         "wire_width": 6
       }
     ],
@@ -659,47 +670,47 @@
       },
       {
         "netclass": "POWER",
-        "pattern": "3V3_DIG"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "3V3_GNSS"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "3V3_RF"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "GNSS_EXT_FUSE"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "GNSS_INT_FUSE"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "RF1090_FUSE"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "RP_1V1"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "SUBG_FUSE"
-      },
-      {
-        "netclass": "POWER",
-        "pattern": "SUBG_VDDR"
-      },
-      {
-        "netclass": "POWER",
         "pattern": "USB_VBUS"
       },
       {
         "netclass": "POWER",
         "pattern": "VCC_5V"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "3V3_DIG"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "3V3_GNSS"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "3V3_RF"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "GNSS_EXT_FUSE"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "GNSS_INT_FUSE"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "RF1090_FUSE"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "RP_1V1"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "SUBG_FUSE"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "SUBG_VDDR"
       }
     ]
   },
