@@ -488,7 +488,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "expansion-board-v1.kicad_pro",
+    "filename": "expansion-board-v3.1.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -837,8 +837,8 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "expansion-board-v1.kicad_sch",
-        "name": "expansion-board-v1",
+        "filename": "expansion-board-v3.1.kicad_sch",
+        "name": "expansion-board-v3.1",
         "uuid": "00000000-0000-0000-0000-000000000000"
       }
     ],

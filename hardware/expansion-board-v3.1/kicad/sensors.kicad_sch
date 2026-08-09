@@ -1506,7 +1506,7 @@
 				)
 				(embedded_fonts no)
 			)
-		(symbol "expansion-board-v1:ATGM336H"
+		(symbol "expansion-board-v3.1:ATGM336H"
 				(pin_names (offset 1.016))
 				(exclude_from_sim no)
 				(in_bom yes)
@@ -1519,7 +1519,7 @@
 					(at -15.24 22.86 0)
 					(effects (font (size 1.27 1.27)) (justify left))
 				)
-				(property "Footprint" "expansion-board-v1:ATGM336H_LCC-18"
+				(property "Footprint" "expansion-board-v3.1:ATGM336H_LCC-18"
 					(at 0 -20.32 0)
 					(effects (font (size 1.27 1.27)) (justify left)
 						(hide yes))
@@ -1651,7 +1651,7 @@
 					)
 				)
 			)
-		(symbol "expansion-board-v1:BMP388"
+		(symbol "expansion-board-v3.1:BMP388"
 				(pin_names (offset 1.016))
 				(exclude_from_sim no)
 				(in_bom yes)
@@ -1664,7 +1664,7 @@
 					(at -15.24 15.24 0)
 					(effects (font (size 1.27 1.27)) (justify left))
 				)
-				(property "Footprint" "expansion-board-v1:BMP388_LGA-10"
+				(property "Footprint" "expansion-board-v3.1:BMP388_LGA-10"
 					(at 0 -12.7 0)
 					(effects (font (size 1.27 1.27)) (justify left)
 						(hide yes))
@@ -1748,7 +1748,7 @@
 					)
 				)
 			)
-		(symbol "expansion-board-v1:BNO085"
+		(symbol "expansion-board-v3.1:BNO085"
 				(pin_names (offset 1.016))
 				(exclude_from_sim no)
 				(in_bom yes)
@@ -1761,7 +1761,7 @@
 					(at -15.24 27.94 0)
 					(effects (font (size 1.27 1.27)) (justify left))
 				)
-				(property "Footprint" "expansion-board-v1:BNO085_LGA-28"
+				(property "Footprint" "expansion-board-v3.1:BNO085_LGA-28"
 					(at 0 -25.4 0)
 					(effects (font (size 1.27 1.27)) (justify left)
 						(hide yes))
@@ -1953,7 +1953,7 @@
 					)
 				)
 			)
-		(symbol "expansion-board-v1:QMC5883P"
+		(symbol "expansion-board-v3.1:QMC5883P"
 				(pin_names (offset 1.016))
 				(exclude_from_sim no)
 				(in_bom yes)
@@ -1966,7 +1966,7 @@
 					(at -15.24 22.86 0)
 					(effects (font (size 1.27 1.27)) (justify left))
 				)
-				(property "Footprint" "expansion-board-v1:QMC5883P_LGA-16"
+				(property "Footprint" "expansion-board-v3.1:QMC5883P_LGA-16"
 					(at 0 -20.32 0)
 					(effects (font (size 1.27 1.27)) (justify left)
 						(hide yes))
@@ -2088,7 +2088,7 @@
 			)
 	)
 	(symbol
-		(lib_id "expansion-board-v1:BNO085")
+		(lib_id "expansion-board-v3.1:BNO085")
 		(at 76.2 76.2 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -2104,7 +2104,7 @@
 			(at 76.2 78.74 0)
 			(effects (font (size 1.27 1.27)))
 		)
-		(property "Footprint" "expansion-board-v1:BNO085_LGA-28"
+		(property "Footprint" "expansion-board-v3.1:BNO085_LGA-28"
 			(at 76.2 81.28 0)
 			(effects (font (size 1.27 1.27))
 				(hide yes))
@@ -2199,7 +2199,7 @@
 			(uuid "3f10aefd-04c0-4547-8939-115d7baf1526")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "U4")
 					(unit 1)
@@ -2383,7 +2383,7 @@
 			(uuid "e4c2144b-29e3-4e6c-8425-3dc8f8366492")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C10")
 					(unit 1)
@@ -2437,7 +2437,7 @@
 			(uuid "aa4ab45b-f2c6-4c23-b62a-b6a06491ebfe")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C11")
 					(unit 1)
@@ -2491,7 +2491,7 @@
 			(uuid "6ae29b66-7676-49bc-9a3d-5691785989c3")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C12")
 					(unit 1)
@@ -2545,7 +2545,7 @@
 			(uuid "f0fb2a4d-a85d-4d6c-b1d3-7bfe54c09dc2")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "R1")
 					(unit 1)
@@ -2599,7 +2599,7 @@
 			(uuid "87692a44-5664-4d1a-8687-608784dfd925")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "R2")
 					(unit 1)
@@ -2653,7 +2653,7 @@
 			(uuid "fc34658c-706a-4bbf-8f7d-885a665a2e44")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "R3")
 					(unit 1)
@@ -2674,7 +2674,7 @@
 		(uuid "92c5e896-9eed-484e-9a52-e16eadf89571")
 	)
 	(symbol
-		(lib_id "expansion-board-v1:BMP388")
+		(lib_id "expansion-board-v3.1:BMP388")
 		(at 76.2 137.16 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -2690,7 +2690,7 @@
 			(at 76.2 139.7 0)
 			(effects (font (size 1.27 1.27)))
 		)
-		(property "Footprint" "expansion-board-v1:BMP388_LGA-10"
+		(property "Footprint" "expansion-board-v3.1:BMP388_LGA-10"
 			(at 76.2 142.24 0)
 			(effects (font (size 1.27 1.27))
 				(hide yes))
@@ -2731,7 +2731,7 @@
 			(uuid "f1a116d9-4e7d-49be-b4dc-7dc12ac7d918")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "U5")
 					(unit 1)
@@ -2833,7 +2833,7 @@
 			(uuid "a0cc9fea-04f4-4f4e-9ff7-24a393b97bfd")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C13")
 					(unit 1)
@@ -2887,7 +2887,7 @@
 			(uuid "4625349c-0270-40f2-bff5-ac5462497107")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C14")
 					(unit 1)
@@ -2908,7 +2908,7 @@
 		(uuid "71d5603d-ec9d-4c33-b634-927db8461d14")
 	)
 	(symbol
-		(lib_id "expansion-board-v1:QMC5883P")
+		(lib_id "expansion-board-v3.1:QMC5883P")
 		(at 76.2 185.42 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -2983,7 +2983,7 @@
 			(uuid "32058b78-7191-4de8-9dbf-1749953afa01")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "U6")
 					(unit 1)
@@ -3101,7 +3101,7 @@
 			(uuid "491f3f6c-a85b-4974-af3e-6dd4b52bef03")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C15")
 					(unit 1)
@@ -3155,7 +3155,7 @@
 			(uuid "c508886f-2ac6-4379-ac96-49223fe62b98")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C16")
 					(unit 1)
@@ -3176,7 +3176,7 @@
 		(uuid "855bc7bc-cea0-4d56-a95f-485c3dcb3350")
 	)
 	(symbol
-		(lib_id "expansion-board-v1:ATGM336H")
+		(lib_id "expansion-board-v3.1:ATGM336H")
 		(at 190.5 137.16 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -3192,7 +3192,7 @@
 			(at 190.5 139.7 0)
 			(effects (font (size 1.27 1.27)))
 		)
-		(property "Footprint" "expansion-board-v1:ATGM336H_LCC-18"
+		(property "Footprint" "expansion-board-v3.1:ATGM336H_LCC-18"
 			(at 190.5 142.24 0)
 			(effects (font (size 1.27 1.27))
 				(hide yes))
@@ -3257,7 +3257,7 @@
 			(uuid "0a1b0de2-82e0-41a3-a804-0f9a5fbc1a56")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "U7")
 					(unit 1)
@@ -3391,7 +3391,7 @@
 			(uuid "8ab66b40-2c04-4b34-8d0e-b4865a10e321")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C57")
 					(unit 1)
@@ -3457,7 +3457,7 @@
 			(uuid "9af147e1-5850-416a-8c37-3fea9b8741d4")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "U17")
 					(unit 1)
@@ -3535,7 +3535,7 @@
 			(uuid "433008f5-b127-40b7-bc8e-0601dc56393f")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C58")
 					(unit 1)
@@ -3592,7 +3592,7 @@
 			(uuid "b4d06322-10aa-4597-a95d-47a5d3c71e7b")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "Q4")
 					(unit 1)
@@ -3652,7 +3652,7 @@
 			(uuid "e0cb8b03-c22c-41c1-8148-83f3b82633a6")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "F4")
 					(unit 1)
@@ -3706,7 +3706,7 @@
 			(uuid "69e22eb0-9241-4a97-a0bd-eb3ef646b2d9")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "L2")
 					(unit 1)
@@ -3760,7 +3760,7 @@
 			(uuid "4a11a6f9-91c6-4580-a596-220971b8e983")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C59")
 					(unit 1)
@@ -3817,7 +3817,7 @@
 			(uuid "408eefcd-d024-4d48-86c4-8a1444d64f6f")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "Q5")
 					(unit 1)
@@ -3877,7 +3877,7 @@
 			(uuid "0e3da7d4-c2c5-42aa-ab6f-20368df55e60")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "F5")
 					(unit 1)
@@ -3931,7 +3931,7 @@
 			(uuid "94defe8b-556f-40a1-9b89-33054f52a616")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "L15")
 					(unit 1)
@@ -3985,7 +3985,7 @@
 			(uuid "18e94548-6f12-47ce-bbb1-f2ffc6586079")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "J8")
 					(unit 1)
@@ -4039,7 +4039,7 @@
 			(uuid "0de8663c-8699-48e4-9a6f-2d731419ddeb")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "R26")
 					(unit 1)
@@ -4093,7 +4093,7 @@
 			(uuid "dd4b7edd-4db4-4846-a9ff-f894a10e9560")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "R27")
 					(unit 1)
@@ -4147,7 +4147,7 @@
 			(uuid "da5a4a0f-3d94-44e8-be48-a89f12cee9eb")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C17")
 					(unit 1)
@@ -4201,7 +4201,7 @@
 			(uuid "529e9ab7-48f6-4421-afde-97c1f3eb2e0d")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "C18")
 					(unit 1)
@@ -4255,7 +4255,7 @@
 			(uuid "e0511384-0c8d-4b0f-85ff-d60789d1f3ee")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000005"
 					(reference "J2")
 					(unit 1)

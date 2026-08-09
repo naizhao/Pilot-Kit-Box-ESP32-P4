@@ -12,13 +12,13 @@ PY=~/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/
 CLI=~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli
 JAVA=/Applications/ServBay/package/openjdk/25/25.0.4/bin/java
 FR=~/Applications/freerouting-2.2.4.jar
-PCB="$D/kicad/expansion-board-v1.kicad_pcb"
+PCB="$D/kicad/expansion-board-v3.1.kicad_pcb"
 q() { grep -vE "Debug:|stdpbase|wxApp|memory leak|ctor found"; }
 
 if [ "$1" != "--keep" ]; then
   echo "── ① 从原理图重建网表 ──"
   "$CLI" sch export netlist --format kicadxml -o /tmp/expansion.net.xml \
-      "$D/kicad/expansion-board-v1.kicad_sch" >/dev/null 2>&1
+      "$D/kicad/expansion-board-v3.1.kicad_sch" >/dev/null 2>&1
   echo "── ② 按 PLACEMENT.py 摆位 + 覆铜 + 电源岛 ──"
   "$PY" "$D/tools/gen_pcb.py" 2>&1 | q | tail -2
   echo "── ③ 丝印 ──"

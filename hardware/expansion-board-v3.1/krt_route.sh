@@ -30,7 +30,7 @@ JAVA=/Applications/ServBay/package/openjdk/25/25.0.4/bin/java
 FR=~/Applications/freerouting-2.2.4.jar
 KRT=/tmp/krt
 KPY=/tmp/krtenv/bin/python
-PCB="$D/kicad/expansion-board-v1.kicad_pcb"
+PCB="$D/kicad/expansion-board-v3.1.kicad_pcb"
 q() { grep -vE "Debug:|stdpbase|wxApp|memory leak|ctor found|GetWidth called"; }
 
 # 关掉 KRT 的 per-net rescue（env_knobs.py:74）：它对布不通的网络会拿 100 万+ 次
@@ -47,7 +47,7 @@ RF_W=$(for n in $RF; do printf "0.34 "; done)
 if [ "$1" != "--keep" ]; then
   echo "── ① 网表 ──"
   "$CLI" sch export netlist --format kicadxml -o /tmp/expansion.net.xml \
-      "$D/kicad/expansion-board-v1.kicad_sch" >/dev/null 2>&1
+      "$D/kicad/expansion-board-v3.1.kicad_sch" >/dev/null 2>&1
   echo "── ② 摆位 + 覆铜 ──";  "$PY" "$D/tools/gen_pcb.py"  2>&1 | q | tail -1
   echo "── ③ 丝印 ──";        "$PY" "$D/tools/gen_silk.py" 2>&1 | q | grep 位号
   echo "── ④ 缝合过孔 ──";    "$PY" "$D/tools/route_rf.py" 2>&1 | q | grep -E "缝合|覆铜"
@@ -55,7 +55,7 @@ fi
 
 mkdir -p "$KRT/kicad_files"
 cp "$PCB" "$KRT/kicad_files/w.kicad_pcb"
-cp "$D/kicad/expansion-board-v1.kicad_pro" "$KRT/kicad_files/w.kicad_pro"
+cp "$D/kicad/expansion-board-v3.1.kicad_pro" "$KRT/kicad_files/w.kicad_pro"
 
 # --power-nets 拿的是"粗线主干 + 细间距焊盘处自动 neck-down"这个行为：
 # 射频线全程死宽 0.34mm 在 0.4mm pitch 封装旁边被相邻焊盘加间距夹死，

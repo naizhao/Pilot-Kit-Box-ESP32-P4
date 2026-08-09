@@ -699,7 +699,7 @@
 			(uuid "4bbf8c35-07ec-4e18-ba4e-ae939c594213")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "U1")
 					(unit 1)
@@ -778,7 +778,7 @@
 			(uuid "6792bc18-549f-4cac-be15-8535c60570af")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "U2")
 					(unit 1)
@@ -857,7 +857,7 @@
 			(uuid "ee2d5524-570b-4cb1-ae44-0ecdf4167c3e")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "U3")
 					(unit 1)
@@ -927,7 +927,7 @@
 			(uuid "ca290303-c843-4c93-adf0-7ffe78ba5119")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C1")
 					(unit 1)
@@ -981,7 +981,7 @@
 			(uuid "44060db8-6cfa-49cf-99f6-962766e367b4")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C2")
 					(unit 1)
@@ -1035,7 +1035,7 @@
 			(uuid "583d58e2-09a1-47e9-ae75-66a9682d6768")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C3")
 					(unit 1)
@@ -1089,7 +1089,7 @@
 			(uuid "2c6974c2-58b8-4ee1-8f34-4ff78a7c7de8")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C4")
 					(unit 1)
@@ -1143,7 +1143,7 @@
 			(uuid "51bf1089-ba04-4ae9-8ac6-8671b304c9ba")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C5")
 					(unit 1)
@@ -1197,7 +1197,7 @@
 			(uuid "fe119bca-d148-43a8-9ce7-4c270512ebb5")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "C6")
 					(unit 1)
@@ -1248,7 +1248,7 @@
 			(uuid "2363cbc9-6450-44df-bfc6-fca3bd6b3659")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "#FLG01")
 					(unit 1)
@@ -1293,7 +1293,7 @@
 			(uuid "2dde0ed3-429d-4252-94a7-dc56be531a4a")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001"
 					(reference "#FLG02")
 					(unit 1)

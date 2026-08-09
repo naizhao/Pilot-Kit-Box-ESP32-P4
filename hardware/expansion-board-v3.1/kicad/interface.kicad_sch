@@ -1420,7 +1420,7 @@
 			(uuid "d47894de-f2f0-46e1-a7ea-6de800260b0a")
 		)
 		(instances
-			(project "expansion-board-v1"
+			(project "expansion-board-v3.1"
 				(path "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000006"
 					(reference "J1")
 					(unit 1)

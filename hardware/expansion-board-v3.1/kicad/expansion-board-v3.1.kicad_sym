@@ -15,7 +15,7 @@
 			(at -15.24 27.94 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:BNO085_LGA-28"
+		(property "Footprint" "expansion-board-v3.1:BNO085_LGA-28"
 			(at 0 -25.4 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -220,7 +220,7 @@
 			(at -15.24 15.24 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:AD8319_LFCSP-8-EP"
+		(property "Footprint" "expansion-board-v3.1:AD8319_LFCSP-8-EP"
 			(at 0 -12.7 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -311,7 +311,7 @@
 			(at -15.24 15.24 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:BMP388_LGA-10"
+		(property "Footprint" "expansion-board-v3.1:BMP388_LGA-10"
 			(at 0 -12.7 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -408,7 +408,7 @@
 			(at -15.24 22.86 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:QMC5883P_LGA-16"
+		(property "Footprint" "expansion-board-v3.1:QMC5883P_LGA-16"
 			(at 0 -20.32 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -541,7 +541,7 @@
 			(at -15.24 22.86 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:ATGM336H_LCC-18"
+		(property "Footprint" "expansion-board-v3.1:ATGM336H_LCC-18"
 			(at 0 -20.32 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -686,7 +686,7 @@
 			(at -15.24 10.16 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:MM8930-2620"
+		(property "Footprint" "expansion-board-v3.1:MM8930-2620"
 			(at 0 -7.62 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
@@ -741,7 +741,7 @@
 			(at -15.24 12.7 0)
 			(effects (font (size 1.27 1.27)) (justify left))
 		)
-		(property "Footprint" "expansion-board-v1:TA0970A_SMD3838-6"
+		(property "Footprint" "expansion-board-v3.1:TA0970A_SMD3838-6"
 			(at 0 -10.16 0)
 			(effects (font (size 1.27 1.27)) (justify left)
 				(hide yes))
