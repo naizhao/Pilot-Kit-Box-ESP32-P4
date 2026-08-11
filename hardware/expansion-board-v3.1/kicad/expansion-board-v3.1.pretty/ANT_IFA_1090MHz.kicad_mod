@@ -28,7 +28,7 @@
 		)
 	)
 	(zone
-		(net 0) (net_name "") (layers "F.Cu" "In1.Cu" "In2.Cu" "B.Cu")
+		(net 0) (net_name "") (layers "F.Cu" "In1.Cu" "In2.Cu" "In3.Cu" "In4.Cu" "B.Cu")
 		(name "ifa_keepout") (hatch edge 0.5)
 		(connect_pads (clearance 0))
 		(min_thickness 0.25) (filled_areas_thickness no)
