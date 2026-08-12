@@ -93,12 +93,6 @@ cb_depth   = 1.4;
 corner_r   = 3.0;
 slot_r     = 2.0;     // 开孔圆角上限（原自动取 min(w,h)/2，孔成胶囊形）
 
-/* ---------- 开孔标识凸字 ---------- */
-emb_h    = 0.4;       // 凸起高度
-emb_sink = 0.1;       // 字根沉入墙面量（保证与墙体实体相交）
-emb_sz   = 1.8;       // 字号（大写字高约 1.3）
-emb_font = "Liberation Sans:style=Bold";
-lbl_z    = 13.0;      // 统一基线高度（字缩小后上移贴近开孔；下缘留 0.6+）
 lbl_pwr  = "PWR";
 lbl_sd   = "SD";
 lbl_usb  = "USB";     // H1 = USB TO UART；想标 UART 改这里
@@ -368,24 +362,37 @@ module feet() {
             cylinder(d1 = foot_d, d2 = foot_d + 2, h = foot_h + 0.01);
 }
 
-/* ---------- 开孔标识凸字（外壁，0.4 凸起）----------
+/* ---------- 开孔标识凹字（外壁，0.8 深，笔画≥0.8）----------
+   JLC 审核要求：凸起/凹陷特征树脂≥0.8mm。原凸字 emb_h=0.4/笔画0.36
+   双不达标，且凸字 polygon 三角化产生零面积退化面（JLC 报"反向三角面"）。
+   改凹字：①深度 0.8 达标 ②笔画 size=4→宽0.8 达标 ③凹槽有阴影更醒目
+   ④墙1.8 挖0.8 留1.0 肉，安全。
    face: 0=Y+壁(PWR/SD)  1=X+壁(USB)  2=X-壁(SMA)。
-   三种朝向的旋转分别让字面法线指向 +y / +x / -x，从外面看正读。 */
+   凹字从墙面外测起挖穿 emb_h+0.1（多挖0.1保证完全贯穿墙面，不留薄膜）。*/
+emb_h    = 0.8;       // 凹槽深度（审核最低要求）
+emb_sz   = 4.0;       // 字号（笔画宽=0.2×size=0.8mm，达标）
+emb_cut  = 0.1;       // 起挖面外移量（保证挖穿，配合 difference）
+emb_font = "Liberation Sans:style=Bold";
+lbl_z    = 13.0;      // 统一基线高度（字缩小后上移贴近开孔；下缘留 0.6+）
 module wall_text(txt, u, z, face) {
-    // 起点沉入墙面 emb_sink：与墙必须有实体重叠，仅共面会被算成独立体
-    if (face == 0)
-        translate([u, box_y1 - emb_sink, z]) rotate([-90, 0, 0]) rotate([0, 0, 180])
-            linear_extrude(emb_h + emb_sink)
+    // 凹字：作为 difference 切割体。挤出沿墙面外法线（凸字同向，已验证），
+    // 起点退到墙内 emb_h+emb_cut 处，挤出 emb_h+2*emb_cut 穿出外墙面，
+    // 净效果：从外壁面往墙内挖 emb_h 深的凹槽。
+    _d = emb_h + 2 * emb_cut;
+    _back = emb_h + emb_cut;        // 起点退入量（从外墙面算）
+    if (face == 0)      // Y+ 壁：外法线 +y，起点退到 box_y1-_back
+        translate([u, box_y1 - _back, z]) rotate([-90, 0, 0]) rotate([0, 0, 180])
+            linear_extrude(_d)
                 text(txt, size = emb_sz, font = emb_font,
                      halign = "center", valign = "center");
-    else if (face == 1)
-        translate([box_x1 - emb_sink, u, z]) rotate([90, 0, 90])
-            linear_extrude(emb_h + emb_sink)
+    else if (face == 1) // X+ 壁：外法线 +x，起点退到 box_x1-_back
+        translate([box_x1 - _back, u, z]) rotate([90, 0, 90])
+            linear_extrude(_d)
                 text(txt, size = emb_sz, font = emb_font,
                      halign = "center", valign = "center");
-    else
-        translate([box_x0 + emb_sink, u, z]) rotate([90, 0, -90])
-            linear_extrude(emb_h + emb_sink)
+    else                // X- 壁：外法线 -x，起点退到 box_x0+_back
+        translate([box_x0 + _back, u, z]) rotate([90, 0, -90])
+            linear_extrude(_d)
                 text(txt, size = emb_sz, font = emb_font,
                      halign = "center", valign = "center");
 }
@@ -420,12 +427,12 @@ module main_box() {
             glass_tabs();
             bosses();
             btn_guides();
-            labels();
             feet();
         }
         boss_bores();
         wall_cutouts();
         floor_slats();
+        labels();          // 凹字：从外墙面挖入 emb_h 深
     }
 }
 
