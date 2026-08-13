@@ -143,4 +143,9 @@
 	(fp_circle (center 5.9 4.4) (end 6.05 4.4)
 		(stroke (width 0.15) (type solid)) (fill no) (layer "F.SilkS")
 	)
+	(model "${KIPRJMOD}/expansion-board-v3.1.3dshapes/ATGM336H_LCC-18.wrl"
+		(offset (xyz 0 0 0))
+		(scale (xyz 1 1 1))
+		(rotate (xyz 0 0 0))
+	)
 )

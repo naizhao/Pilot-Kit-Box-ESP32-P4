@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# BNO085_LGA-28 —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# CEVA BNO08X Datasheet Rev1.17: 28-pin LGA 3.8x5.2x1.1mm
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 3.80 x 5.20 x 1.10 mm
+Transform {
+  translation 0 0 0.216535
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.20 0.20 0.22
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 1.496063 2.047244 0.433071 }
+    }
+  ]
+}

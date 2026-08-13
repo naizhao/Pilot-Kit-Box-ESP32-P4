@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# AD8319_LFCSP-8-EP —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# ADI CP-8-23 outline: LFCSP 3x2mm, 高度 0.80/0.75/0.70 (max/nom/min)
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 3.00 x 2.00 x 0.80 mm
+Transform {
+  translation 0 0 0.157480
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.22 0.22 0.24
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 1.181102 0.787402 0.314961 }
+    }
+  ]
+}

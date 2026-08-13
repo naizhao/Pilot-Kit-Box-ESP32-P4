@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# TA0970A_SMD3838-6 —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# TST TA0970A Rev3.0: 本体 3.8mm SQ(+0.20/-0.10)；outline 未标高度，取编带 Section A-A 口袋深度 1.3mm 作为上限
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 3.80 x 3.80 x 1.30 mm
+Transform {
+  translation 0 0 0.255906
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.80 0.78 0.72
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 1.496063 1.496063 0.511811 }
+    }
+  ]
+}

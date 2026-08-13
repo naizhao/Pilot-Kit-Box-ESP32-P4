@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# ATGM336H_LCC-18 —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# 中科微 ATGM336H-5N 用户手册: 模块 9.7x10.1x2.4mm（含屏蔽罩）
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 10.10 x 9.70 x 2.40 mm
+Transform {
+  translation 0 0 0.472441
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.15 0.30 0.15
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 3.976378 3.818898 0.944882 }
+    }
+  ]
+}
