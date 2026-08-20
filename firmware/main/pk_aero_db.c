@@ -130,23 +130,21 @@ static volatile uint32_t s_err_generation;
  * 加载成功，state 会绕一圈又回到 READY，而 s_buf 早已换成另一块内存。 */
 static volatile uint32_t s_generation;
 
-/* ---- dev key -----------------------------------------------------------
- * AES-128 开发密钥（devkey，与导出脚本 --key-env PK_AERO_KEY 一致，
- * 非量产密钥）。拆成两半异或存放，不让整串出现在 .rodata 喂 `strings`；
- * 这只是防轻易提取的混淆——真正的保护是量产前打开 P4 flash encryption +
- * secure boot（届时镜像不可读，密钥随之受保护），见设计文档
- * 「加密的诚实边界」。 */
+/* ---- 数据库密钥 --------------------------------------------------------
+ * AES-128 密钥不再写在源码里。pk_aero_key.h 由 scripts/gen_aero_key.py 在
+ * 构建时从 .env 的 PK_AERO_KEY 生成，该头文件已 gitignore。
+ *
+ * 为什么改：原来密钥直接以字节数组躺在这里（而且 pk_aero_span.c 还存了
+ * 一份逐字节相同的副本）。拆成两半异或确实能防住 `strings`，但防不住
+ * **本仓库是公开的**——git clone 就能读到。2026-08-20 已轮换。
+ *
+ * 混淆强度没有变弱：生成的头文件同样是两半异或，而且 mask 每次构建重随机。
+ * 真正的保护仍然是量产时的 flash encryption + secure boot。 */
+#include "pk_aero_key.h"
+
 static void aero_key_assemble(uint8_t out[16])
 {
-    static const uint8_t a[16] = {
-        0x22, 0x8B, 0x75, 0x90, 0xBA, 0x42, 0x72, 0x79,
-        0xAA, 0x97, 0x51, 0x3E, 0x42, 0xAC, 0xFB, 0x5D,
-    };
-    static const uint8_t b[16] = {
-        0x5A, 0xC3, 0x3C, 0xA5, 0x96, 0x69, 0xF0, 0x0F,
-        0x1E, 0xE1, 0x2D, 0xD2, 0x4B, 0xB4, 0x87, 0x78,
-    };
-    for (int i = 0; i < 16; i++) out[i] = a[i] ^ b[i];
+    pk_aero_key_assemble(out);
 }
 
 /* ---- 加载 -------------------------------------------------------------- */

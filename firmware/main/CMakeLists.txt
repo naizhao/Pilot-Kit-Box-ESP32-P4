@@ -172,3 +172,22 @@ set_source_files_properties(
     "third_party/pk_lodepng.c" "pk_pmtiles.c" "pk_tile_loader.c"
     PROPERTIES COMPILE_OPTIONS "-O2")
 
+
+# ── 航空数据库密钥 ────────────────────────────────────────────────────
+# pk_aero_key.h 不在版本控制里（含 AES-128 密钥），必须每次配置时现生成，
+# 否则 clone 下来直接编译失败。
+#
+# 脚本的取值顺序：环境变量 PK_AERO_KEY → 仓库根 .env → 公开占位密钥。
+# 外部开发者没有 .env，会拿到占位密钥 + 一条 #warning：固件照常能编能跑，
+# 只是解不开官方分发的数据文件——这正是期望行为，不该让构建直接失败。
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/../scripts/gen_aero_key.py
+    RESULT_VARIABLE _aero_key_rc
+    OUTPUT_VARIABLE _aero_key_out
+    ERROR_VARIABLE  _aero_key_err
+)
+if(NOT _aero_key_rc EQUAL 0)
+    message(FATAL_ERROR "生成 pk_aero_key.h 失败:\n${_aero_key_out}${_aero_key_err}")
+endif()
+message(STATUS "aero key: ${_aero_key_out}")

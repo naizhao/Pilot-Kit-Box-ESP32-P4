@@ -63,18 +63,13 @@ static uint32_t rd_u32(const uint8_t *p)
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-/* 与 pk_aero_db.c 的 aero_key_assemble 逐字节相同（同一把 devkey）。 */
+/* 与 pk_aero_db.c 用同一把密钥。两边都从 pk_aero_key.h 取——
+ * 这里原本存着一份逐字节手抄的副本，是典型的"改一处漏一处"隐患。 */
+#include "pk_aero_key.h"
+
 static void span_key_assemble(uint8_t out[16])
 {
-    static const uint8_t a[16] = {
-        0x22, 0x8B, 0x75, 0x90, 0xBA, 0x42, 0x72, 0x79,
-        0xAA, 0x97, 0x51, 0x3E, 0x42, 0xAC, 0xFB, 0x5D,
-    };
-    static const uint8_t b[16] = {
-        0x5A, 0xC3, 0x3C, 0xA5, 0x96, 0x69, 0xF0, 0x0F,
-        0x1E, 0xE1, 0x2D, 0xD2, 0x4B, 0xB4, 0x87, 0x78,
-    };
-    for (int i = 0; i < 16; i++) out[i] = a[i] ^ b[i];
+    pk_aero_key_assemble(out);
 }
 
 /* ---- 打开 / 关闭 ---- */

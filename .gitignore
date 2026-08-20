@@ -106,3 +106,9 @@ hardware/expansion-board-v3/fab/
 # 一旦被 git add -A 扫进去、推上去，按 SHA 永远能取回。
 *-login.png
 taobao-*.png
+
+# ── 航空数据库密钥 ────────────────────────────────────────────────────
+# 由 firmware/scripts/gen_aero_key.py 从 .env 的 PK_AERO_KEY 构建时生成。
+# 含 AES-128 密钥（虽然拆成两半异或，但异或两半都在文件里，等于明文）。
+# 本仓库是公开的，这个文件绝不能进去。
+firmware/main/pk_aero_key.h
