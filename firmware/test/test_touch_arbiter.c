@@ -1,7 +1,7 @@
 /* test_touch_arbiter.c — host proof for pk_touch_arbiter.
  *   cc -std=c11 -O2 -I firmware/main -o /tmp/test_ta firmware/test/test_touch_arbiter.c && /tmp/test_ta
  *
- * 这组用例复刻的是罩哥 2026-08-01 在真机上撞到的那一下：列表页按住右侧 FAB
+ * 这组用例复刻的是 2026-08-01 在真机上撞到的那一下：列表页按住右侧 FAB
  * 想拖到左边，手指划过列表内容区右缘之后，列表把按压抢走、FAB 脱手、整张表
  * 反倒跟着手指滚。判据不是「像素对不对」，而是**一次按压的归属有没有中途改变**。
  */

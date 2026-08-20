@@ -1,8 +1,8 @@
 /*
  * pk_win.h — 以本机为中心的滚动窗口：**状态机 + 增量加载 + 驻留内存**。
  *
- * 设计依据 docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md，
- * 本模块落地的是 §5 的 **W1 阶段**（窗口骨架，只做机场/导航台/FIX）：
+ * 设计依据窗口化数据架构设计（内部文档），
+ * 本模块落地的是其中的 **W1 阶段**（窗口骨架，只做机场/导航台/FIX）：
  *   W1.1 格集合求交 + 48 槽表 + 1.3× 迟滞 + 60 s 最短驻留   → 本文件 + pk_win_geom
  *   W1.2 常驻文件句柄 + pre-unmount 回调                     → pk_aero_span
  *   W1.3 按格区间读 + AES-CTR 随机解密                       → pk_aero_span

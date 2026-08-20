@@ -2,7 +2,7 @@
 
 > 目标文件：`docs/jlc/lcd-4.3in/3d-case/pilot-kit-box-43-base.scad`
 > 状态：**待办，未开工**。用户已确认外壳可改（后续本来也要动：SMA 开口、减薄等）。
-> 相关：[[BASEBOARD_REF.md]]（机械基准）、`docs/internal/2026-08-01-integrated-expansion-board-zh_CN.md` §11（天线方案）
+> 相关：[[BASEBOARD_REF.md]]（机械基准）、集成扩展板设计（内部文档，天线方案一节）
 
 ## 现有高度链（scad 实算，改动前基准）
 

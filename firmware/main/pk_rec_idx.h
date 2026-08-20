@@ -1,7 +1,7 @@
 /*
  * pk_rec_idx.h — traffic.idx 按机摘要：内存表维护 + 从 traffic.trk 重建。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「traffic.idx」节 + 文末「实现记录」第 9 条（3a 只搭骨架，3b 补构建/重建）。
  *
  * 本文件**不依赖任何 IDF 头**——固件（pk_rec_store_fs.c，运行期在线维护 +

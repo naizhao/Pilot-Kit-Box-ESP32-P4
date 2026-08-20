@@ -14,7 +14,7 @@
  * 开关：**PK_SIM_AERO=1 才有数据**，否则 pk_aero_db_state() 返回 ABSENT，
  * 叠加层静默不画——既有的 ui-4.3-map* 截图场景一张都不受影响。
  *
- * 数据摆的是"最糟情况"（见 ~/.claude 记忆 feedback_ui_worst_case_first）：
+ * 数据摆的是"最糟情况"——UI 一律先按最糟情况验收，理想数据下踩不到坑：
  *   - 各类型齐全：管制大场 / 非管制小场 / 直升机坪 / 水上机场 /
  *     VOR / VOR-DME / VORTAC / NDB / NDB-DME / DME / 航路 FIX；
  *   - 前 5 个机场、2 个导航台、2 个 FIX **故意压在 sim 那 5 个 ADS-B 假目标
@@ -459,7 +459,7 @@ bool pk_aero_db_fix_get(uint32_t idx, pk_aero_fix_t *out)
  * 桩的仍然是**数据源**：业务序排序、哨兵处置、版面与滚动都在
  * apt_detail_page.c 那份真实代码里跑，这里只负责"给出符合语义的记录"。
  *
- * 数据按"最糟情况优先"摆（见 ~/.claude 记忆 feedback_ui_worst_case_first）：
+ * 数据按"最糟情况优先"摆（理想数据下踩不到坑）：
  *   - ZGGG（idx 1）= 真库实测的量：**10 条跑道方向 + 63 条频率**，用来验
  *     滚动条、长列表到底、以及业务序把 TWR 从第 40 条提到第 1 条；
  *   - 缺字段全都真的缺：约 81% 的跑道方向没有入口坐标、部分没有磁航向，

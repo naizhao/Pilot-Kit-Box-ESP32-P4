@@ -84,7 +84,7 @@ static uint32_t    s_reinit_attempts;       /* consecutive failed re-inits */
  * Dongle 状态查询（诊断页用）。
  *
  * 为什么必须有这个：在它之前，诊断页把 SDR 一律显示成"在线"——注释里明写着
- * "dongle 未插无法区分"。2026-07-29 罩哥把 dongle 插到了 USB-C 口（那是
+ * "dongle 未插无法区分"。2026-07-29 实测时把 dongle 插到了 USB-C 口（那是
  * GPIO24/25 的 FS PHY，即 USB Serial/JTAG；host 栈跑在 HS 控制器上，两者是
  * 两套 PHY），屏幕上什么异常都看不出来，只能靠抓串口日志才发现从头到尾没有
  * 枚举事件。一台带诊断页的设备不该让人干这种事。

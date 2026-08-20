@@ -1,7 +1,7 @@
 /*
  * pk_aero_db.h — SD 卡航空数据库（/sdcard/aero/pk_aero.bin）懒加载 + 查询。
  *
- * 设计定案（docs/internal/2026-08-01-sd-aero-db-design-zh_CN.md）：
+ * 设计定案（航空数据库设计（内部文档））：
  *   - 开机不加载。低优先级后台任务等 UI 起来、SD 挂载后再分块 fread +
  *     PSA 流式 AES-128-CTR 解密到 PSRAM，SHA-256 校验通过才置 READY，
  *     全程不挡 PFD 渲染（v2 全量库 9.88 MB 实测加载约 2 s）。

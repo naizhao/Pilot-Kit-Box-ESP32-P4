@@ -1,7 +1,7 @@
 /*
  * pk_rec_format.h — ADS-B / 本机航迹落盘的二进制记录格式：编解码。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * （v5）「记录格式」一节。字段偏移严格照 spec 的表格，不得自行调整。
  *
  * 本文件刻意**不依赖任何 IDF 头**——固件与 host 单测共用同一份源码

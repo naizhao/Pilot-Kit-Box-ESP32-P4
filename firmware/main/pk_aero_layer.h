@@ -1,7 +1,7 @@
 /*
  * pk_aero_layer.h — 地图页的航空数据叠加层（机场 / 导航台 / FIX）。
  *
- * 设计依据 docs/internal/2026-08-02-aero-map-search-design-zh_CN.md §2。
+ * 设计依据航空图搜索设计（内部文档）。
  * 一句话架构：**后台任务查库写快照，渲染线程只读快照**。
  *
  *   [aero_layer 任务，prio 2/core 0]        [map_page render，30 FPS]

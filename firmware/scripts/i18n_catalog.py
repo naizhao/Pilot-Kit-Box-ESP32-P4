@@ -709,7 +709,7 @@ STRINGS = [
     (
         "AC_CAT_PISTON",
         {
-            # 默认档（罩哥拍板：本产品用户主流是轻型活塞）。
+            # 默认档（评审拍板：本产品用户主流是轻型活塞）。
             "en": "PISTON",
             "zh": "活塞",
         },
@@ -959,7 +959,7 @@ STRINGS = [
     ("DIAG_V_DOWN",        {"en": "down",          "zh": "中断"}),
     # 阶段 5b：LOG 卡片常驻显示 pk_rec_store 的降级档位/失效 sink 数——与
     # 上面的 sink down（record_sink_file，别人飞机那条日志）是两个独立
-    # 写入管线，共用同一张卡片只是版面上不再多开一格（罩哥要求"复用现有
+    # 写入管线，共用同一张卡片只是版面上不再多开一格（评审要求"复用现有
     # 实现"）。缩写要短：卡片值行宽度有限，被这三个词占满就顶不下前半句
     # 的 "microSD w N" 了。
     ("DIAG_V_REC_NORAW",   {"en": "raw off",       "zh": "限流"}),
@@ -1144,7 +1144,7 @@ STRINGS = [
     ("MAP_OVERZOOM_FMT", {"en": "OVERZOOM x%d", "zh": "越级放大 x%d"}),
     # 底图署名——FlightMate 把这行画成黑底黑字看不见的教训,不能重蹈。
     # 两种语言原样一致：地图数据版权声明不译（与 QNH/ICAO 那批术语同一原则）。
-    # 主署名 Pilot Kit Map（罩哥 2026-08-01 定）；OpenStreetMap 保留在后——
+    # 主署名 Pilot Kit Map（2026-08-01 评审定）；OpenStreetMap 保留在后——
     # 底图数据是 OSM(ODbL)，商用去掉 OSM 署名有合规风险，不可只留自家名。
     ("MAP_ATTRIBUTION", {"en": "© Pilot Kit Map  © OpenStreetMap",
                          "zh": "© Pilot Kit Map  © OpenStreetMap"}),

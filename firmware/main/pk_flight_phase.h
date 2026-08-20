@@ -1,7 +1,7 @@
 /*
  * pk_flight_phase.h — 本机飞行相位状态机（开机即录，只标记不做写入闸门）。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * （v5）「相位标记」「机型分类阈值」两节。**本文件的状态枚举与转移图严格
  * 按 spec「相位标记」一节给出的六态图**：
  *
@@ -58,7 +58,7 @@ static inline bool pk_flight_phase_is_ground_family(pk_flight_phase_t p)
 
 /* ------------------------------------------------------------ 机型分类 */
 
-/* 「机型分类阈值」表，罩哥拍板：设置页存 u8，默认 PK_AC_CAT_PISTON_LIGHT。
+/* 「机型分类阈值」表，评审拍板：设置页存 u8，默认 PK_AC_CAT_PISTON_LIGHT。
  * 0 保留为 unknown（own.trk ac_category 字段的约定），枚举从 1 开始。 */
 typedef enum {
     PK_AC_CAT_UNKNOWN            = 0,

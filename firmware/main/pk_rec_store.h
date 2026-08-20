@@ -1,7 +1,7 @@
 /*
  * pk_rec_store.h — ADS-B / 本机数据落盘：session 目录管理 + 文件生命周期。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「落盘布局」「文件句柄预算」「记录格式」三节。本文件是**阶段 3a**的交付：
  * 只管 session 目录怎么建、文件怎么开/滚/关、SD 满了怎么降级——不接
  * dsp_task / own_ship / 相位状态机（3b 的事），本模块自己不产生任何记录

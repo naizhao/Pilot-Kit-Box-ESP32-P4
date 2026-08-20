@@ -32,8 +32,8 @@ Python 侧调了一个容差、修了一个边界，C 那边没跟上，于是"�
     python3 firmware/scripts/check_demo_track_parity.py <input.gpx>
     python3 firmware/scripts/check_demo_track_parity.py <input.gpx> --keep-cc
 
-不带参数时用仓库约定的那份源 GPX（见 DEFAULT_GPX），找不到就跳过并返回 0——
-这份 GPX 在 Pilot-Kit-aero 仓库里，本仓库单独 clone 时不该因此红掉。
+源 GPX 不随本仓库分发：需要对拍时把它的路径作为位置参数传进来，不传就跳过
+并返回 0——本仓库单独 clone 时不该因此红掉。
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ import gen_demo_track as G  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FW_MAIN = os.path.normpath(os.path.join(HERE, "..", "main"))
-DEFAULT_GPX = os.path.expanduser(
-    "~/hosts/Pilot-Kit-aero/data/demo-gpx/ZGGG-Full-Flight-20251113.gpx")
+# 源 GPX 不随本仓库分发，默认留空；用位置参数传入路径即可对拍。
+DEFAULT_GPX = ""
 
 FIELDS = ("lat_e7", "lon_e7", "t_s", "alt_m", "roll_ddeg", "trk_ddeg", "gs_kt")
 
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if not os.path.exists(args.gpx):
-        print(f"SKIP: 找不到 {args.gpx}（源 GPX 在 Pilot-Kit-aero 仓库里）")
+        print(f"SKIP: 找不到源 GPX {args.gpx!r}（不随本仓库分发，请用位置参数传入）")
         return 0
 
     work = tempfile.mkdtemp(prefix="demo_parity_")

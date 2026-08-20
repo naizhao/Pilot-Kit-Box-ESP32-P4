@@ -67,7 +67,7 @@ static const lv_font_t *s_font_zh_m;
  * （PK_UI_TITLE_SIZE = PK_AA_M）。具体尺寸与量法见 pk_ui_nav_init()。
  *
  * 不能复用 s_font_zh_m：它是 26 px、且拉丁回退到 Montserrat 28，于是二级页顶
- * 上那条「← DIAGNOSTICS」比总览页自己的「DIAGNOSTICS」大了将近一半——罩哥说的
+ * 上那条「← DIAGNOSTICS」比总览页自己的「DIAGNOSTICS」大了将近一半——评审说的
  * 「点进子页面后字号比外面还大」就是这里，不是子系统名（那个一直是 M）。 */
 static const lv_font_t *s_font_zh_title;
 
@@ -215,7 +215,7 @@ static void fab_event_cb(lv_event_t *e)
          * 进入拖动态：半透明 + 一圈亮边 + 阴影加重，让人看出「它现在跟手了」。
          *
          * **不能用 transform_scale 做微放大**，哪怕它是最自然的表达。踩坑记录
-         * （罩哥 2026-08-02 真机实测「一长按 FAB 就死机」）：
+         * （2026-08-02 真机实测「一长按 FAB 就死机」）：
          *
          *   lv_obj_style.c:1090  transform_scale != 256 → LV_LAYER_TYPE_TRANSFORM
          *   TRANSFORM layer 必须**一次性**拿到整块 buffer，不像 SIMPLE layer 那样

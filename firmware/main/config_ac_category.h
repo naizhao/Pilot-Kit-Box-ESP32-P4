@@ -1,7 +1,7 @@
 /*
  * config_ac_category.h — 设置页「机型分类」+ NVS 持久化。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「机型分类阈值」一节：设置页加一行分段控件，NVS 存 u8，默认轻型活塞
  * （本产品用户主流）。分类枚举定义在 pk_flight_phase.h（pk_ac_category_t），
  * 阈值表/振动地板初值都已在那边按分类实现——本文件只负责"用户选的是哪一档"

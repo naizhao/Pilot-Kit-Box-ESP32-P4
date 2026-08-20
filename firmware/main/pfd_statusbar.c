@@ -72,7 +72,7 @@ int pk_ui_topbar_right_limit(int dflt)
     return dflt < lim ? dflt : lim;
 }
 
-/* 中段"保底两项"（SAT/ADSB——罩哥点名要常驻的三个图标里除 SD 之外的两个）
+/* 中段"保底两项"（SAT/ADSB——评审点名要常驻的三个图标里除 SD 之外的两个）
  * 的 worst-case 宽度——与上面 BAR_RIGHT_W 同一个道理：按可能出现的最长
  * 文案预留，不随当前实际显示了几项而伸缩。
  *

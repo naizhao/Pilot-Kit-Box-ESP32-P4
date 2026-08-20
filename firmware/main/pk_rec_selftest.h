@@ -1,7 +1,7 @@
 /*
  * pk_rec_selftest.h — ADS-B / 本机数据落盘的注入式自检。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「验证」节：「注入式自检：新增调试入口，把预置 ts-line 样本喂进
  * record_dispatch，走完整写入链路后校验文件内容与索引。不依赖射频，
  * 接收机没插也能证明全链路通」。

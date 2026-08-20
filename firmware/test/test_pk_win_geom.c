@@ -7,7 +7,7 @@
  * （geo.c 不能省：pk_aero_reader.c 的 nearest_generic 要 geo_dist_brg。
  *   原来的命令行少了它，照抄会在链接期报 undefined symbol。）
  *
- * 覆盖 docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md 里
+ * 覆盖窗口化数据架构设计（内部文档）里
  * W1.1 点名要测的四件事 + 风险 R8：
  *   1. 椭圆判据本身（前 100 / 后 40 / 侧 50，以及"沿航迹拉长"确实生效）；
  *   2. 格求交：边界格不漏、格数分布落在文档 §1.2 的实测区间里；

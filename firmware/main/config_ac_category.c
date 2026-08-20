@@ -18,7 +18,7 @@ static const char *TAG = "cfg_accat";
 #define ACCAT_NVS_NAMESPACE  "pk_accat"
 #define ACCAT_NVS_KEY_CAT    "cat"
 
-/* 罩哥拍板：默认轻型活塞（本产品用户主流），设计文档「机型分类阈值」节。 */
+/* 评审拍板：默认轻型活塞（本产品用户主流），设计文档「机型分类阈值」节。 */
 #define ACCAT_DEFAULT  PK_AC_CAT_PISTON_LIGHT
 
 static volatile uint8_t s_cat = (uint8_t)ACCAT_DEFAULT;

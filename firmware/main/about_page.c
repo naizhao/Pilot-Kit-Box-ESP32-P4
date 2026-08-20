@@ -59,7 +59,7 @@
 /* 标题的纵向位置改用 PK_UI_TITLE_Y（pfd_layout.h），本页不再自算——原来那个
  * 手调的 PAD_Y-6 是为 L 档配的，换成 M 档后只会把字顶在栏子上沿。
  * 横向同理走 PK_UI_PAD_L：本页原来自留一份 24，比 diag/list 的 16 多缩 8 px，
- * 在切页时看得出来（罩哥点名「about 标题左边好像多了个空格」）。 */
+ * 在切页时看得出来（评审指出 about 标题左边多了个空格）。 */
 
 #define AB_LEFT_X        PK_UI_PAD_L
 #define AB_LEFT_W       248

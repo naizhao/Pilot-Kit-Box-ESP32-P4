@@ -235,8 +235,8 @@ bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error);
 
 /*
  * 同 pk_ui_toast_show()，多一个"闪 N 次"的强调模式（SD 写失败 / 降级告警
- * 用，阶段 5b：docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
- * 「告警呈现」节，罩哥要求"复用现有实现、闪 3 次、不阻断飞行"）。
+ * 用，阶段 5b：ADS-B 数据持久化设计（内部文档）
+ * 「告警呈现」节，评审要求"复用现有实现、闪 3 次、不阻断飞行"）。
  *
  * blink_times<=0 等价于 pk_ui_toast_show()：不闪、固定 1.5 s。blink_times>0
  * 时时长改为 blink_times × 800 ms（400 ms 一拍，一亮一灭算一次"闪"）——

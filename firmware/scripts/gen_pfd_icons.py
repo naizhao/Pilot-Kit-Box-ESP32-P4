@@ -52,7 +52,7 @@ ICONS = [
     ("TEMP",      "thermometer_alert",   0xFFFFB, 1),
     ("BLE",       "bluetooth",           0xE1A7, 1),
     ("SD",        "sd_card",             0xE1C2, 1),
-    # 没插卡 / 挂不上的告警态。sd_card_alert 与罩哥给的 U+E624 是同一字形
+    # 没插卡 / 挂不上的告警态。sd_card_alert 与评审指定的 U+E624 是同一字形
     # （Material Symbols 别名，fontTools 轮廓 md5 比对确认一致），这里取
     # U+F057 这枚码位。
     ("SD_ALERT",  "sd_card_alert",       0xF057, 1),

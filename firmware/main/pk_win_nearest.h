@@ -16,7 +16,7 @@
  * lat_e7(i32@0) / lon_e7(i32@4)，之后是段特有字段。本算法只读前 8 字节算
  * 距离，不碰段特有字段——那由调用方拿到 idx 后自行解码。
  *
- * 详见 docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md W1.4。
+ * 详见窗口化数据架构设计（内部文档） W1.4。
  */
 #pragma once
 

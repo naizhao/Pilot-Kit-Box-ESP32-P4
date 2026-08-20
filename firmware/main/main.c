@@ -224,7 +224,7 @@ void app_main(void)
      * 窗口，不与它抢 SD 带宽。未就绪时查询返回 NULL，UI 显示 ICAO24。 */
     pk_aircraft_db_init();
     /* 以本机为中心的滚动窗口（W1 骨架，设计见
-     * docs/internal/2026-08-03-window-based-data-architecture-zh_CN.md）。
+     * 窗口化数据架构设计（内部文档））。
      * 与 pk_aero_db 全量加载**并存**：窗口另开一个只读句柄按格区间读，
      * 老路径一个字节没动，UI 侧本轮也还没切过来。只创建后台任务、零 IO，
      * 须晚于 pk_sdcard_init()。PK_WIN_ENABLE=0 时本调用是空函数。 */

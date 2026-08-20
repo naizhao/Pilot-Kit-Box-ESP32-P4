@@ -170,7 +170,7 @@ static void fmt_clock(char *buf, size_t bufsz)
  *
  * 原先有个 ST_BAD 用灰色表示"不适用/未装"，于是 GPS 没插模块显示灰色
  * "no module"，而别的模块离线是红色——同样是"这个功能现在用不了"，却给了
- * 两种视觉权重，扫一眼分不清哪些是真该管的。罩哥要求统一：
+ * 两种视觉权重，扫一眼分不清哪些是真该管的。评审要求统一：
  *
  *   「统一文字颜色为红色，no module 就 no module，no data 那就 no data」
  *
@@ -186,7 +186,7 @@ static void fmt_clock(char *buf, size_t bufsz)
  *
  * 之前一度只有前三态，于是"BLE 正在广播"（正常等待连接）被涂成琥珀、
  * "日志写 flash 但还没写过一条"被涂成红——两个都是正常状态却在喊救命，
- * 而真正的告警反而被稀释了。罩哥指出后加回 ST_IDLE。
+ * 而真正的告警反而被稀释了。评审指出后加回 ST_IDLE。
  *
  * 与更早那次"删掉灰态"不矛盾：那次删的是拿灰表示**模块缺失**（GPS 没插
  * 显示灰、别的模块离线显示红，同样是用不了却给了两种权重）。缺失一律红，
@@ -409,7 +409,7 @@ void pk_diag_page_render(uint16_t *fb)
          * 五种情况必须分开说，它们指向完全不同的处理动作。
          *
          * 上一版只分了「有 fix / 看得见星 / 看不见星」，于是**根本没插 GPS
-         * 板卡**也报成 "no sats - check antenna"——罩哥在真机上一眼看出与
+         * 板卡**也报成 "no sats - check antenna"——评审在真机上一眼看出与
          * 实际不符。模块在不在，看的是有没有收到 NMEA，跟有没有星无关。
          */
         if (g.last_nmea_us == 0) {
@@ -498,7 +498,7 @@ void pk_diag_page_render(uint16_t *fb)
      * 用户在设置页选了哪个（pk_log_store_get）。两者语义本来就不同，而且
      * 改设置只在下次创建 file sink 时生效，即重启后。
      *
-     * 罩哥验收时点出："切到 SD 卡存储后诊断页仍显示 flash"——那不是 bug，
+     * 评审验收时点出："切到 SD 卡存储后诊断页仍显示 flash"——那不是 bug，
      * 是这一格只说了实际后端、没说还有个待生效的设置。诊断页的职责是说实话，
      * 所以两个都说：主体仍是实际后端（说假话会让排查者去 SD 上找不存在的
      * 文件），后面补一句「设为 X」把差异挑明。 */
@@ -506,7 +506,7 @@ void pk_diag_page_render(uint16_t *fb)
         uint32_t written = 0, dropped = 0;
         /* 阶段 5b：这一格再叠一路独立的写入管线——pk_rec_store（rec/ 目录
          * 的 session 持久化，SD 满/写失败降级那条）。它跟 record_sink_file
-         * （"别人飞机"那条 GDL90 日志）是两套完全不同的写入器，但罩哥要求
+         * （"别人飞机"那条 GDL90 日志）是两套完全不同的写入器，但评审要求
          * "复用现有实现"，持续状态不新开卡片，接到这一格的值行末尾——
          * 反复弹同一个 toast 的结果是飞行员学会忽略它，诊断页才是"想看就
          * 有、不想看不用管"的常驻信息源（设计文档「告警呈现」节）。 */
@@ -838,7 +838,7 @@ void pk_diag_page_render(uint16_t *fb)
     /* 顶栏最后画：卡片从它底下滑过去，而不是压在它上面。 */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PFD_BAR_BOT, COL_BG);
     /* 标题走全局层级（pfd_layout.h）。这一页原来用 COL_HEADER 的淡蓝，是五页
-     * 里唯一的蓝标题——罩哥在真机上第一眼就点出来了。 */
+     * 里唯一的蓝标题——评审在真机上第一眼就点出来了。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, CARD_PAD,
                PK_UI_TITLE_Y, pk_i18n_text(PK_TR_DIAG_TITLE),
                PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
@@ -1161,7 +1161,7 @@ static void draw_detail(uint16_t *fb, int which)
             /* 两行分开说，谁都不冒充谁：
              *   当前后端 = record_sink_file_uses_sd()，**现在真在写的那个**；
              *   设置为   = pk_log_store_get()，用户在设置页选的那个。
-             * 只显示前者会让人以为设置没生效（罩哥验收时的原话），只显示
+             * 只显示前者会让人以为设置没生效（验收时的原话），只显示
              * 后者则是诊断页在说谎——日志文件明明写在别处。 */
             const bool on_sd   = record_sink_file_uses_sd();
             const bool want_sd = (pk_log_store_get() == PK_LOG_STORE_SD);

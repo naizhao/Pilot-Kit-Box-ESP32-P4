@@ -1,7 +1,7 @@
 /*
  * record_sink_rec_store.c — ADS-B 原始报文落盘 sink，接到 pk_rec_store。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「写入管线」节：ADS-B 报文走**非阻塞入队（深度 256），满则丢并计数**，
  * 绝不阻塞 DSP 热路径——本文件的 write() 只做入队，真正的 SD I/O 全部
  * 移到 rec_store_sink_task 这个专用写任务上，跟 record_sink_file.c 的

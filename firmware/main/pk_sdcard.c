@@ -92,7 +92,7 @@ static esp_err_t sdmmc_host_deinit_dummy(void) { return ESP_OK; }
 /*
  * 卡槽上电。拔卡时会被 sd_unmount_locked() 拆掉，重挂前再建一次。
  *
- * 为什么要拆了重建：热插拔插入后一直挂不上（2026-07-29 罩哥实测），而**开机
+ * 为什么要拆了重建：热插拔插入后一直挂不上（2026-07-29 实测），而**开机
  * 挂载是成功的**（日志 "microSD mounted at /sdcard: SL32G 29.7 GB"）——同一
  * 套引脚和 LDO 配置，区别只在于开机那次卡是从**冷态**开始的。
  *
@@ -155,8 +155,8 @@ static bool sd_mount_locked(void)
         .format_if_mount_failed = false,   /* 格式化只走用户显式操作 */
         .max_files              = 16,      /* 原 8：ADS-B/本机落盘（pk_rec_store）峰值
                                              * 句柄预算算到 10（地图包上限 16 那条更紧），
-                                             * 详见 docs/internal/2026-08-02-adsb-data-
-                                             * persistence-design-zh_CN.md「文件句柄预算」 */
+                                             * 详见 ADS-B 数据持久化设计
+                                             * （内部文档）「文件句柄预算」节 */
         .allocation_unit_size   = 16 * 1024,
     };
 

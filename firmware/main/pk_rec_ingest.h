@@ -1,7 +1,7 @@
 /*
  * pk_rec_ingest.h — traffic.trk 的位置/身份记录：编码 + 落盘的薄胶水层。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「记录格式」「写入时机」两节。调用方（dsp_task.c 的 CPR fresh 分支 /
  * DF17 ident 分支；以及 pk_rec_selftest.c 的注入式自检，绕开射频直接调用
  * 这两个函数）把已经解出的字段递进来，本文件只管：sentinel 化 + 时间同步
