@@ -1,4 +1,4 @@
-# V3.3 BOM 核对清单（按位号顺序）
+# V3.4 BOM 核对清单（按位号顺序）
 
 > 由 `tools/gen_checklist.py` 生成。手工贴片时拿着这份逐行核对；
 > 按料分组的表见 `BOM_PURCHASE.md` / `BOM_嘉立创SMT.xlsx`。
