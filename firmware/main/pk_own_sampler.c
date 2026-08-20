@@ -22,7 +22,7 @@
  * 机型分类（ac_category）阶段 5a 起已接上设置页：每 tick 读一次
  * pk_ac_category_get()（config_ac_category.c，volatile + portMUX，热路径
  * 可放心调）。"机场范围内"（near_airport）已接入 pk_aero_db 查询——GPS
- * 有 fix 时查最近机场，≤ 2 NM 置 true（罩哥 2026-08-04 拍板阈值）。航空
+ * 有 fix 时查最近机场，≤ 2 NM 置 true（2026-08-04 评审拍板阈值）。航空
  * 库未就绪/无 GPS fix 时自然 false（安全默认，与占位行为一致），只是少
  * 享受 UC7"不封段"的优待，按 pk_flight_phase.h 的说明是安全默认。
  */
@@ -63,7 +63,7 @@ static const char *TAG = "own_sampler";
  * 数据"，相位状态机的 bound_valid 置 false，退回自主传感器判定
  * （UC6：绑错飞机/数据陈旧时不信 ADS-B）。 */
 #define OWN_BOUND_MAX_AGE_US            (5LL * 1000000)
-/* 「在机场范围内」判定阈值（设计文档 UC7，罩哥 2026-08-04 拍板 2 NM）。 */
+/* 「在机场范围内」判定阈值（设计文档 UC7，2026-08-04 评审拍板 2 NM）。 */
 #define OWN_NEAR_AIRPORT_NM             2.0
 
 static QueueHandle_t s_queue;
@@ -88,8 +88,8 @@ static EXT_RAM_BSS_ATTR pk_flight_phase_state_t s_phase_state;
 /* 2048 槽 × 16B = 32 KB。权衡：PSRAM 紧张（瓦片缓存水位线 3MB，free 仅 ~6MB），
  * 128KB(8192) 会压破水位线致瓦片淘汰风暴（实测 free 2.9MB→evicts 39）；
  * 32KB(2048) ≈ 34 分钟 1Hz 全量，配合渲染降采样（飞行 15s/地面 60s）够画一段
- * 完整轨迹，PSRAM 占用可控。更长轨迹靠 own.trk 落盘回放（设计 defer）。 */
-#define PK_OWN_TRAIL_CAP 2048u
+ * 完整轨迹，PSRAM 占用可控。更长轨迹靠 own.trk 落盘回放（设计 defer）。
+ * 容量宏 PK_OWN_TRAIL_CAP 暴露在 .h（渲染层按下标掩码遍历 ring）。 */
 static EXT_RAM_BSS_ATTR struct {
     pk_own_trail_point_t pt[PK_OWN_TRAIL_CAP];
     uint32_t head;   /* 下一个写入位置（裸递增，取模靠 & (CAP-1)） */
@@ -173,7 +173,7 @@ static void own_sample_task(void *arg)
         in.bound_on_ground  = bound_valid && own_ac.on_ground;
         /* near_airport：喂给相位状态机，影响 UC7「跑道口排队 10 分钟不封段」
          * 的不降级优待（设计文档「用户场景」UC7 + pk_flight_phase.h:26）。
-         * 罩哥 2026-08-04 拍板阈值 2 NM。W1.5（2026-08-04）：走窗口 nearest
+         * 2026-08-04 评审拍板阈值 2 NM。W1.5（2026-08-04）：走窗口 nearest
          *（跟本机、椭圆必覆盖，不需 fallback）；窗口未就绪时回退全量。
          * own_sampler 是 1Hz 独立任务、不在渲染热路径上。航空库未就绪/无 GPS
          * fix 时自然 false（安全默认，与占位行为一致）。 */
@@ -328,13 +328,16 @@ pk_flight_phase_t pk_own_sampler_get_phase(void)
     return s_current_phase;
 }
 
-const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count)
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count,
+                                                     uint32_t *out_start)
 {
-    /* 返回连续数组视图：ring 未满时 pt[0]..pt[count-1] 是写入顺序（最老→最新）。
-     * ring 满了（count==CAP）后 head 回绕，pt[0] 不再是最老的点——这是已知简化：
-     * CAP=8192 而 2 小时才 7200 点，正常飞行不会写满。即使极端场景写满了，
-     * 渲染层逐个投影+降采样，多画/乱序几个共线点无视觉影响（见 .h 注释）。
+    /* ring 是循环缓冲：head 单调递增、写在下标 head&(CAP-1)。最老的有效点在
+     * (head - count) & (CAP-1)。ring 未满（count<CAP）时 head==count、start=0，
+     * pt[0..count-1] 即写入顺序；ring 满了（count==CAP）后 head 回绕，pt[0] 是
+     * 较新的点，渲染必须从 start 起绕一圈，否则会在最新点↔最老点之间画一条
+     * 横穿地图的闭口直线（CAP=2048 ≈ 34 分钟 1Hz 就写满，正常飞行必触发）。
      * count 读取可能在 push 时变动，多读一个点无影响（追加式 ring）。 */
     if (out_count) *out_count = s_trail.count;
+    if (out_start) *out_start = (s_trail.head - s_trail.count) & (PK_OWN_TRAIL_CAP - 1);
     return s_trail.pt;
 }

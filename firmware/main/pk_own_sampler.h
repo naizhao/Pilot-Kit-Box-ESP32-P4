@@ -1,7 +1,7 @@
 /*
  * pk_own_sampler.h — 本机 1 Hz 航迹采样，own.trk 的生产者。
  *
- * 设计依据 docs/internal/2026-08-02-adsb-data-persistence-design-zh_CN.md
+ * 设计依据 ADS-B 数据持久化设计（内部文档）
  * 「own.trk」「相位标记」「写入管线」三节。
  */
 #pragma once
@@ -43,6 +43,9 @@ bool pk_own_sampler_stats(uint32_t *out_written, uint32_t *out_dropped);
  */
 pk_flight_phase_t pk_own_sampler_get_phase(void);
 
+/* ring 容量（2 的幂）。渲染层按下标掩码遍历，见 pk_own_sampler_get_trail()。 */
+#define PK_OWN_TRAIL_CAP 2048u
+
 /* 一个航迹采样点。存相位是为了渲染降采样区分间隔（飞行 15s/地面 60s）。 */
 typedef struct {
     uint32_t ts_1k;   /* 1kHz tick（ms），32 位够 49 天 */
@@ -51,12 +54,15 @@ typedef struct {
     uint8_t  phase;   /* pk_flight_phase_t，降采样间隔判据 */
 } pk_own_trail_point_t;
 
-/* 返回本机航迹 ring 的只读视图：*out_count 写入有效点数，返回点数组指针。
- * 只读快照，追加式 ring，读取期间写入最多多出一个最新点，降采样多挑一个
- * 共线点无影响。
+/* 返回本机航迹 ring 的只读视图：*out_count 写入有效点数，*out_start 写入最老
+ * 点的下标（时序起点）。返回值是长度 PK_OWN_TRAIL_CAP 的循环缓冲数组，渲染层
+ * 必须按下标 (start + i) & (PK_OWN_TRAIL_CAP - 1) 遍历 count 个点——ring 满了
+ * 回绕后 pt[0] 不再是最老点，线性遍历会在最新点与最老点之间画一条横穿地图的
+ * 闭口直线。
  * 线程安全：单写者 own_sample_task（1Hz）写，任意渲染任务只读，与
  * pk_own_sampler_get_phase() 同一套惯例（volatile、枚举底层 int 原子）。 */
-const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count);
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count,
+                                                     uint32_t *out_start);
 
 #ifdef __cplusplus
 }

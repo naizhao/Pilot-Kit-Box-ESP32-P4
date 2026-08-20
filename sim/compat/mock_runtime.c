@@ -326,8 +326,10 @@ pk_flight_phase_t pk_own_sampler_get_phase(void)
 
 /* 本机轨迹（map_page 的本机航迹线）。模拟器不采样真实轨迹，返回空——
  * map_page 拿到 count=0 就不画线，其余渲染不受影响。 */
-const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count)
+const pk_own_trail_point_t *pk_own_sampler_get_trail(uint32_t *out_count,
+                                                     uint32_t *out_start)
 {
     if (out_count) *out_count = 0;
+    if (out_start) *out_start = 0;
     return NULL;
 }

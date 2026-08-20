@@ -987,8 +987,8 @@ void pk_map_page_render(uint16_t *fb)
          * (0,210,235)、FIX 偏蓝紫 (160,110,235) 色相区分。Garmin Pilot/G3X 的
          * 飞行轨迹即用此色系。 */
         const uint16_t TRAIL_COL = pk_rgb565(220, 40, 210);
-        uint32_t tn;
-        const pk_own_trail_point_t *tr = pk_own_sampler_get_trail(&tn);
+        uint32_t tn, tstart;
+        const pk_own_trail_point_t *tr = pk_own_sampler_get_trail(&tn, &tstart);
         if (tr && tn >= 2) {
             int prev_sx = -1, prev_sy = -1;
             uint32_t last_drawn_ts = 0;
@@ -999,15 +999,19 @@ void pk_map_page_render(uint16_t *fb)
             const int clip_x0 = -4, clip_x1 = PK_DISPLAY_W + 4;
             const int clip_y0 = -4, clip_y1 = PK_DISPLAY_H + 4;
             for (uint32_t i = 0; i < tn; i++) {
-                /* 降采样：跳过未到间隔的中间点（首尾点必画，轨迹连到当前位置）。
-                 * 注意 continue 在投影之前——跳过的点不做昂贵的 lonlat_to_world。 */
+                /* 循环缓冲：从最老点 tstart 起按下标掩码绕一圈。ring 满回绕后线性
+                 * 遍历会把最新点与最老点连成一条横穿地图的直线（CAP=2048≈34min
+                 * 1Hz 写满）。降采样跳过未到间隔的中间点（首尾点必画，轨迹连到
+                 * 当前位置）；continue 在投影之前——跳过的点不做昂贵的 lonlat_to_world。 */
+                const pk_own_trail_point_t *p =
+                    &tr[(tstart + i) & (PK_OWN_TRAIL_CAP - 1)];
                 const bool ground = pk_flight_phase_is_ground_family(
-                                        (pk_flight_phase_t)tr[i].phase);
+                                        (pk_flight_phase_t)p->phase);
                 const uint32_t interval = ground ? 60000u : 15000u;
-                if (i > 0 && i < tn - 1 && tr[i].ts_1k - last_drawn_ts < interval)
+                if (i > 0 && i < tn - 1 && p->ts_1k - last_drawn_ts < interval)
                     continue;
                 double wx, wy;
-                lonlat_to_world((double)tr[i].lon_e7 / 1e7, (double)tr[i].lat_e7 / 1e7,
+                lonlat_to_world((double)p->lon_e7 / 1e7, (double)p->lat_e7 / 1e7,
                                 s_zoom, &wx, &wy);
                 int sx, sy;
                 world_to_screen_rot(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
@@ -1027,7 +1031,7 @@ void pk_map_page_render(uint16_t *fb)
                     }
                 }
                 prev_sx = sx; prev_sy = sy;
-                last_drawn_ts = tr[i].ts_1k;
+                last_drawn_ts = p->ts_1k;
             }
         }
     }
@@ -1101,8 +1105,8 @@ bool pk_map_page_touch(int x, int y)
 {
     /* FAB 是浮在页面之上的 LVGL 控件，落在它身上的按下必须**不吃**、返回 false
      * 让给 LVGL——touch_gt911 的分发是 `eaten = (mode==MAP && 本函数())` 的短路
-     * 契约，本函数以前无论点哪儿都返回 true，等于把 FAB 的点击全吞了（罩哥
-     * 2026-08-01：点过缩放后发现 dock FAB 点不动）。
+     * 契约，本函数以前无论点哪儿都返回 true，等于把 FAB 的点击全吞了（2026-08-01
+     * 实测：点过缩放后发现 dock FAB 点不动）。
      *
      * 只在"还没拿到这次按压"时让路：已经在拖地图的过程中手指划过 FAB，那次
      * 拖动仍归本页面，不能中途易主。 */
@@ -1118,7 +1122,7 @@ bool pk_map_page_touch(int x, int y)
         btn_layout(&search_y, &zin_y, &zout_y, &rc_y, &orient_y);
         /* 命中按钮同样要把这次按压标记为 active：触摸驱动在手指按住期间会
          * 持续上报，不置位的话每一帧都重新走一遍这里——一次点击涨好几级
-         * zoom（罩哥 2026-08-01 实测）。s_btn_down 之后充当"本次按压已归属
+         * zoom（2026-08-01 实测）。s_btn_down 之后充当"本次按压已归属
          * 某个按钮"的凭据，下面的重复上报据此直接吃掉。 */
         /* 搜索钮。与下面几个一样必须置 s_press_active——触摸驱动在手指按住
          * 期间持续上报，不置位就会每帧重开一次搜索页（历史 bug 8cf64ec 的
