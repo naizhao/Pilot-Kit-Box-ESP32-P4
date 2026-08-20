@@ -98,4 +98,4 @@ hardware/**/.history/
 # KiCad 备份与缓存
 hardware/**/*-backups/
 hardware/**/fp-info-cache
-hardware/expansion-board-v3.1/fab/
+hardware/expansion-board-v3/fab/
