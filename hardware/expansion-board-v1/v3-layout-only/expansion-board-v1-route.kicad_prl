@@ -63,7 +63,7 @@
     "ssh_key": ""
   },
   "meta": {
-    "filename": "expansion-board-v1.kicad_prl",
+    "filename": "expansion-board-v1-route.kicad_prl",
     "version": 5
   },
   "net_inspector_panel": {
