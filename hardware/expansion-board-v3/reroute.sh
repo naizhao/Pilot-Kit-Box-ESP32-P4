@@ -43,7 +43,7 @@ BEST=99999
 rm -f /tmp/exp.ses
 for i in $(seq 1 "$FR_RUNS"); do
   rm -f /tmp/exp-$i.ses
-  FREEROUTING__PROFILE__EMAIL=pilotbra@icloud.com \
+  FREEROUTING__PROFILE__EMAIL="${FREEROUTING_EMAIL:-you@example.com}" \
     "$JAVA" -jar "$FR" -de /tmp/exp.dsn -do /tmp/exp-$i.ses -mp 40 >/tmp/fr-$i.log 2>&1 || true
   N=$(grep -oE "\(([0-9]+) unrouted\)" /tmp/fr-$i.log | tail -1 | tr -dc 0-9)
   [ -n "$N" ] || N=99999

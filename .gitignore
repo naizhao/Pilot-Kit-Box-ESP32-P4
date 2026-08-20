@@ -41,8 +41,9 @@ firmware/build/
 firmware/build_*/
 firmware/network_adapter_esp32c6.bin
 firmware/sdkconfig
-firmware/sdkconfig.old
-firmware/sdkconfig.broken-backup-*
+# sdkconfig 的所有衍生副本一网打尽——原来只列了 .old 和 .broken-backup-*，
+# 结果 sdkconfig.bak 成了漏网之鱼。这类文件会随手产生，逐个补规则追不上。
+firmware/sdkconfig.*
 firmware/managed_components/
 firmware/dependencies.lock
 **/.cache/
@@ -99,3 +100,9 @@ hardware/**/.history/
 hardware/**/*-backups/
 hardware/**/fp-info-cache
 hardware/expansion-board-v3/fab/
+
+# ── 临时截图 / 抓取产物 ────────────────────────────────────────────
+# 本仓库是公开的。截图里常带账号、二维码、订单号这类东西，
+# 一旦被 git add -A 扫进去、推上去，按 SHA 永远能取回。
+*-login.png
+taobao-*.png

@@ -73,7 +73,7 @@ echo "── ⑥ 导 DSN（射频转 keepout + 锁 In1 + 板边内缩）──"
 
 echo "── ⑦ freerouting 布数字段（约 10-15 分钟）──"
 rm -f /tmp/exp.ses
-FREEROUTING__PROFILE__EMAIL=pilotbra@icloud.com \
+FREEROUTING__PROFILE__EMAIL="${FREEROUTING_EMAIL:-you@example.com}" \
   "$JAVA" -jar "$FR" -de /tmp/exp.dsn -do /tmp/exp.ses -mp 40 >/tmp/fr.log 2>&1 || true
 grep -E "session completed" /tmp/fr.log | tail -1 | sed 's/^/  /'
 
