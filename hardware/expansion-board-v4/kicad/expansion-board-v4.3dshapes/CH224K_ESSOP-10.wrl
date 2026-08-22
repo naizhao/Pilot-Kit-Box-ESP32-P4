@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# CH224K_ESSOP-10 —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# CH224 手册 §8：D=4.9 E1=6.0(含引脚) A=1.6
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 6.00 x 4.90 x 1.60 mm
+Transform {
+  translation 0 0 0.314961
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.18 0.18 0.20
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 2.362205 1.929134 0.629921 }
+    }
+  ]
+}

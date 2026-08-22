@@ -1,0 +1,13 @@
+
+# KiCad 本地视图状态（每次开关工程都变，不该入库）
+kicad/*.kicad_prl
+
+# KiCad 打开工程时的锁文件
+kicad/*.lck
+kicad/~*.lck
+
+# 人工布局的应急备份：体积大（每份 1.3M）、只在当次抢救时有用，
+# 真正的历史在 git 提交和 kicad/.history 里。
+kicad/BACKUP-*.kicad_pcb
+tools/*.bak-*
+tools/*.py.bak

@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# D_0402_1005Metric —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# 0402 二极管本体 1.0x0.5，高度取 0.55 上限
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 1.00 x 0.50 x 0.55 mm
+Transform {
+  translation 0 0 0.108268
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.15 0.15 0.16
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.393701 0.196850 0.216535 }
+    }
+  ]
+}

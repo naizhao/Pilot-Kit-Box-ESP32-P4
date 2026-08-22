@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "expansion-board-v4")(type "KiCad")(uri "${KIPRJMOD}/expansion-board-v4.pretty")(options "")(descr "Project custom footprints"))
+)

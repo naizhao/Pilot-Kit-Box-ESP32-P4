@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# USB_C_Receptacle_HRO_TYPE-C-31-M-12 —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# HRO TYPE-C-31-M-12 本体 8.94x7.25，高 3.26（B 面净高 11mm 要靠它判干涉）
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 8.94 x 7.25 x 3.26 mm
+Transform {
+  translation 0 0 0.641732
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.72 0.72 0.75
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 3.519685 2.854331 1.283465 }
+    }
+  ]
+}

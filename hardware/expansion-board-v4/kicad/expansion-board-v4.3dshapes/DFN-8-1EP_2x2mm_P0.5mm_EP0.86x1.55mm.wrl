@@ -1,0 +1,20 @@
+#VRML V2.0 utf8
+# DFN-8-1EP_2x2mm_P0.5mm_EP0.86x1.55mm —— 外形包络（长方体），用于机械干涉与返修可达性判断，不是精细外观。
+# Qorvo QPL9547 DFN-8 2x2mm，高度 max 0.80
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+#    实际尺寸 2.00 x 2.00 x 0.80 mm
+Transform {
+  translation 0 0 0.157480
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.20 0.20 0.22
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.787402 0.787402 0.314961 }
+    }
+  ]
+}

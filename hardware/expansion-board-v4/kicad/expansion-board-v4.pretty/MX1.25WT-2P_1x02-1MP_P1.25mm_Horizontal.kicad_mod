@@ -1,0 +1,79 @@
+(footprint "MX1.25WT-2P_1x02-1MP_P1.25mm_Horizontal"
+	(version 20231120)
+	(generator "hand")
+	(layer "F.Cu")
+	(descr "MX1.25mm 卧贴 2P 电池座（1.25WT-2P），SMD 水平出线带安装脚。焊盘按供货商 PC 板安装尺寸图：信号 0.8x1.7 pitch 1.25、MP 1.8x2.4、MP 外缘距 C=7.50、总高 4.6。注意与 Molex PicoBlade 53261-0271 不通用——那颗 MP 是 2.1x3.0、外缘距 8.44，差 0.94mm 装不进。")
+	(tags "connector MX1.25 1.25WT battery horizontal SMD")
+	(attr smd)
+	(fp_text reference "REF**"
+		(at 0 -2.2 0)
+		(layer "F.SilkS")
+		(effects (font (size 1 1) (thickness 0.15)))
+	)
+	(fp_text value "MX1.25WT-2P"
+		(at 0 5.6 0)
+		(layer "F.Fab")
+		(effects (font (size 1 1) (thickness 0.15)))
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 2.4 0)
+		(layer "F.Fab")
+		(effects (font (size 0.6 0.6) (thickness 0.1)))
+	)
+
+	(fp_line (start -2.2 0.6) (end 2.2 0.6) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 2.2 0.6) (end 2.2 4.2) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 2.2 4.2) (end -2.2 4.2) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start -2.2 4.2) (end -2.2 0.6) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start -2.2 4.2) (end 2.2 4.2) (stroke (width 0.2) (type solid)) (layer "F.Fab"))
+
+	(fp_line (start -2.2 0.6) (end -1.9 0.6) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start 1.9 0.6) (end 2.2 0.6) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start -2.2 0.6) (end -2.2 1.2) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start 2.2 0.6) (end 2.2 1.2) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start -2.2 3.9) (end -2.2 4.3) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start 2.2 3.9) (end 2.2 4.3) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start -2.2 4.3) (end 2.2 4.3) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_circle (center -0.625 -1.45) (end -0.525 -1.45)
+		(stroke (width 0.2) (type solid)) (fill solid) (layer "F.SilkS"))
+
+	(fp_line (start -4.05 -1.2) (end 4.05 -1.2) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start 4.05 -1.2) (end 4.05 4.55) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start 4.05 4.55) (end -4.05 4.55) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start -4.05 4.55) (end -4.05 -1.2) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+
+	(pad "1" smd roundrect
+		(at -0.625 0)
+		(size 0.8 1.7)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+	(pad "2" smd roundrect
+		(at 0.625 0)
+		(size 0.8 1.7)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+	(pad "MP" smd roundrect
+		(at -2.85 2.55)
+		(size 1.8 2.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.1)
+	)
+	(pad "MP" smd roundrect
+		(at 2.85 2.55)
+		(size 1.8 2.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.1)
+	)
+
+	;; 借 Molex PicoBlade 53261 的模型做示意——外形接近但不是同一颗
+	;; （53261 本体更大、MP 2.1x3.0）。按 **MP 焊盘** 对齐：53261 的 MP 在本地
+	;; y=+0.50，本颗在 y=+2.55，差 2.05；3D 的 y 轴与 PCB 相反，故 offset 取 -2.05。
+	;; 只用于目视干涉检查，出装配图/结构件别拿它量尺寸。
+	(model "${KICAD10_3DMODEL_DIR}/Connector_Molex.3dshapes/Molex_PicoBlade_53261-0271_1x02-1MP_P1.25mm_Horizontal.step"
+		(offset (xyz 0 -2.05 0))
+		(scale (xyz 1 1 1))
+		(rotate (xyz 0 0 0))
+	)
+)

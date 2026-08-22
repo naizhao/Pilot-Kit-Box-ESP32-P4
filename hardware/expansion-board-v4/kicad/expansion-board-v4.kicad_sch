@@ -1,0 +1,145 @@
+(kicad_sch
+	(version 20231120)
+	(generator "eeschema")
+	(generator_version "8.0")
+	(uuid "10000000-0000-4000-8000-000000000001")
+	(paper "A3")
+	(title_block
+		(title "Pilot Kit Expansion Board V1 - Root")
+		(date "2026-08-01")
+		(rev "V1")
+		(company "Pilot Kit")
+		(comment 1 "Dual-band ADS-B (1090ES/978UAT) + IMU + BARO + GNSS")
+		(comment 2 "Ref topology: ADSBee 1090U (facts only, GPLv3 firmware NOT copied)")
+	)
+	(sheet
+		(at 25.4 25.4)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000001")
+		(property "Sheetname" "Power"
+			(at 25.4 24.6884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "power.kicad_sch"
+			(at 25.4 51.3846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "2"))
+			)
+		)
+	)
+	(sheet
+		(at 101.6 25.4)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000002")
+		(property "Sheetname" "MCU_RP2040"
+			(at 101.6 24.6884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "mcu.kicad_sch"
+			(at 101.6 51.3846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "3"))
+			)
+		)
+	)
+	(sheet
+		(at 177.8 25.4)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000003")
+		(property "Sheetname" "RF_1090"
+			(at 177.8 24.6884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "rf1090.kicad_sch"
+			(at 177.8 51.3846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "4"))
+			)
+		)
+	)
+	(sheet
+		(at 25.4 76.2)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000004")
+		(property "Sheetname" "SubGHz_978"
+			(at 25.4 75.4884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "subghz.kicad_sch"
+			(at 25.4 102.1846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "5"))
+			)
+		)
+	)
+	(sheet
+		(at 101.6 76.2)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000005")
+		(property "Sheetname" "Sensors_GNSS"
+			(at 101.6 75.4884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "sensors.kicad_sch"
+			(at 101.6 102.1846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "6"))
+			)
+		)
+	)
+	(sheet
+		(at 177.8 76.2)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000006")
+		(property "Sheetname" "Interface_J3"
+			(at 177.8 75.4884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "interface.kicad_sch"
+			(at 177.8 102.1846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "7"))
+			)
+		)
+	)
+	(sheet_instances
+		(path "/" (page "1"))
+	)
+	(embedded_fonts no)
+)
