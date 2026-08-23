@@ -25,7 +25,6 @@
 | 🔴必买指定 | 电源-PD | CH224K | CH224K_ESSOP-10 | 1 | U18 | CH224K | C970725 | PD 诱骗 9V；4-22V 输入 |
 | 🔴必买指定 | 电源-充电 | SY6970 | QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm_ThermalVias | 1 | U19 | SY6970QCC | C5357542 | 5A 充电 + I2C 电量计，1.5MHz |
 | 🔴必买指定 | 电源-升压 | SY7069 | TSOT-23-6 | 1 | U20 | SY7069ADC | 淘宝（立创未见） | 同步升压 5V，I_LIM 3.0A |
-| 🔴必买指定 | 电源-热敏 | 103AT-2 10k NTC | NTC_103AT-2_Leaded_P2.54mm | 1 | RT1 | 103AT-2 10k NTC B=3435（SEMITEC 日本石塚） | — | **轴向引线插件，不是贴片**。玻璃头 ⌀1.5mm 平贴在板面与电池之间（电池仓余量 1.5mm），引线焊在 B 面两个 ⌀0.7 通孔上。SY6970 datasheet 点名推荐这一颗 |
 | 🔴必买指定 | 电源-电感 | 1.5uH | L_Bourns-SRN4018 | 1 | L17 | 1.5uH SRN4018 Isat>=4A | — | SY7069 电感，配 1MHz |
 | 🔴必买指定 | 电源-电感 | 1uH | L_Bourns-SRN4018 | 1 | L16 | 1uH SRN4018 Isat>=5A | — | SY6970 开关电感，配 1.5MHz |
 | 🔴必买指定 | 连接器 | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P1.25mm_Horizontal | 1 | J9 | MX1.25 卧贴 1.25WT-2P | — | 电池座；MP 1.8x2.4/外缘距 7.50，与 PicoBlade 不通用 |
@@ -41,6 +40,7 @@
 | 🟡有推荐 | 晶振 | 12MHz | Crystal_SMD_3225-4Pin_3.2x2.5mm | 1 | Y1 | YXC X322512MSB4SI | C9002 | RP2040 主晶振 |
 | 🟡有推荐 | 晶振 | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_3.2x1.5mm | 1 | Y3 | EPSON Q13FC13500004 | C32346 |  |
 | 🟡有推荐 | 晶振 | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_3.2x2.5mm | 1 | Y2 | Abracon ABM8W-48.0000MHZ-7-D1X-T3 | C6732653 | CC1312R 主晶振，7pF 负载 |
+| 🟡有推荐 | 电源-热敏 | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | 1 | RT1 | Murata NCP18XH103F03RB / TDK NTCG163JF103FT1 / 国产 0603 10K 1% | — | **必须是贴片 NTC，不是普通电阻**。电池用 3M 胶直接贴 B 面、无间隙，插件玻璃头放不下。B25/85=3428K 与 datasheet 的 103AT-2(3435K) 差 0.2%，分压电阻 R39/R40 不用改 |
 | 🟡有推荐 | 电源-电容 | 10uF | C_0603_1608Metric | 3 | C73,C74,C75 | 0603 10uF 16V X5R | — | SYS/BAT 储能；注意 DC bias 衰减 |
 | 🟡有推荐 | 电源-电容 | 22uF | C_1206_3216Metric | 2 | C76,C77 | 1206 22uF 10V X5R | — | SY7069 CIN/COUT，datasheet 要求至少 22uF |
 | 🟡有推荐 | 电源-电容 | 47nF | C_0603_1608Metric | 1 | C70 | 0603 47nF 25V X7R | — | SY6970 BST 自举 |
