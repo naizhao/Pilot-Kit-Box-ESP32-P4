@@ -1,5 +1,8 @@
 # V4.0 BOM 核对清单（按位号顺序）
 
+
+> ⚠️ **两个版本的选贴规则见 [VARIANTS.md](VARIANTS.md)**：带电源版贴满 B 面但**不贴 F 面的 R7/R8**；不带电源版 B 面一个不贴、**R7/R8 必贴**。板上 R7/R8 有丝印框标 `NO-PWR VER`。
+
 > 由 `tools/gen_checklist.py` 生成。手工贴片时拿着这份逐行核对；
 > 按料分组的表见 `BOM_PURCHASE.md` / `BOM_嘉立创SMT.xlsx`。
 
@@ -193,7 +196,7 @@
 | ☐ | **Y3** | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_ | (132.5, 99.4) | D 978 收发 |  |
 | ☐ | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm | (92.6, 106.3) | F 对外接口 |  |
 | ☐ | **J2** | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (54.0, 71.4) | C 传感器 + GNSS |  |
-| ☐ | **J4** | USB-C_16P | USB_C_Receptacle_HRO_T | (144.6, 73.0) | B MCU + Flash |  |
+| ☐ | **J4** | USB-C_16P | USB_C_Receptacle_HRO_T | (145.8, 73.0) | B MCU + Flash |  |
 | ☐ | **J5** | U.FL_978 | U.FL_Hirose_U.FL-R-SMT | (145.5, 88.0) | D 978 收发 |  |
 | ☐ | **J6** | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (120.4, 62.9) | E 1090 接收链 |  |
 | ☐ | **J7** | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT | (98.3, 62.9) | E 1090 接收链 |  |
