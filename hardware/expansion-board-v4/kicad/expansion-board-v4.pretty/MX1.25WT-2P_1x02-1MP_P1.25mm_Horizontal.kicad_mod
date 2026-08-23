@@ -66,11 +66,6 @@
 		(layers "F.Cu" "F.Paste" "F.Mask")
 		(roundrect_rratio 0.1)
 	)
-
-	;; 借 Molex PicoBlade 53261 的模型做示意——外形接近但不是同一颗
-	;; （53261 本体更大、MP 2.1x3.0）。按 **MP 焊盘** 对齐：53261 的 MP 在本地
-	;; y=+0.50，本颗在 y=+2.55，差 2.05；3D 的 y 轴与 PCB 相反，故 offset 取 -2.05。
-	;; 只用于目视干涉检查，出装配图/结构件别拿它量尺寸。
 	(model "${KICAD10_3DMODEL_DIR}/Connector_Molex.3dshapes/Molex_PicoBlade_53261-0271_1x02-1MP_P1.25mm_Horizontal.step"
 		(offset (xyz 0 -2.05 0))
 		(scale (xyz 1 1 1))

@@ -25,7 +25,7 @@
 | 🔴必买指定 | 电源-PD | CH224K | CH224K_ESSOP-10 | 1 | U18 | CH224K | C970725 | PD 诱骗 9V；4-22V 输入 |
 | 🔴必买指定 | 电源-充电 | SY6970 | QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm_ThermalVias | 1 | U19 | SY6970QCC | C5357542 | 5A 充电 + I2C 电量计，1.5MHz |
 | 🔴必买指定 | 电源-升压 | SY7069 | TSOT-23-6 | 1 | U20 | SY7069ADC | 淘宝（立创未见） | 同步升压 5V，I_LIM 3.0A |
-| 🔴必买指定 | 电源-热敏 | 103AT-2 10k NTC | R_0603_1608Metric | 1 | RT1 | 103AT-2 10k NTC B=3435 | — | SY6970 datasheet 点名推荐；装在朝电池那一侧 |
+| 🔴必买指定 | 电源-热敏 | 103AT-2 10k NTC | NTC_103AT-2_Leaded_P2.54mm | 1 | RT1 | 103AT-2 10k NTC B=3435（SEMITEC 日本石塚） | — | **轴向引线插件，不是贴片**。玻璃头 ⌀1.5mm 平贴在板面与电池之间（电池仓余量 1.5mm），引线焊在 B 面两个 ⌀0.7 通孔上。SY6970 datasheet 点名推荐这一颗 |
 | 🔴必买指定 | 电源-电感 | 1.5uH | L_Bourns-SRN4018 | 1 | L17 | 1.5uH SRN4018 Isat>=4A | — | SY7069 电感，配 1MHz |
 | 🔴必买指定 | 电源-电感 | 1uH | L_Bourns-SRN4018 | 1 | L16 | 1uH SRN4018 Isat>=5A | — | SY6970 开关电感，配 1.5MHz |
 | 🔴必买指定 | 连接器 | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P1.25mm_Horizontal | 1 | J9 | MX1.25 卧贴 1.25WT-2P | — | 电池座；MP 1.8x2.4/外缘距 7.50，与 PicoBlade 不通用 |
