@@ -125,19 +125,34 @@ NPTH    4 个 ⌀2.70mm（安装孔）+ 2 个 ⌀0.65mm
    `RP_1V1`(C28.1) / `SUBG_VDDR`(C60.1) 逐个量，都在标称 ±5% 内。
 4. **RP2040 枚举**：USB-C 插电脑，按住 `SW2`(BOOTSEL 焊盘，镊子短接) 上电，
    应该出现 RPI-RP2 U 盘。
-5. **调试口**：`TP1`(SWCLK) / `TP2`(SWDIO) 接调试器。
-6. **解调输出**：`TP3`~`TP6` 是 DEMOD0-3，`TP7` 是 RECOVERED_CLK，接示波器。
+5. **调试口**：~~TP1/TP2 接调试器~~ —— **V4 已删除 SWD 测试点**（2026-08-23）。
+   需要 SWD 时从 RP2040 引脚 `U8.24`(SWCLK) / `U8.25`(SWDIO) 飞线，
+   或直接在已打样的 v3.2 上做（那块板保留了全部 7 个测试点，电路逐条相同）。
+6. **解调输出**：~~TP3~TP7 接示波器~~ —— 同上已删除。
+   DEMOD0–3 / RECOVERED_CLK 是固件里 PIO 状态机的**调试输出**，不在接收链上
+   （接收链 AD8319 → TLV3501 → PULSES → GPIO19）。硬件问题探 `U15.5`(PULSES) 就能看出来；
+   要看解码质量用软件遥测 RSSI(ADC1) / LEVEL_BIAS(ADC0)。
 
 ### 测试点速查
 
 ```
-TP1  SWCLK           TP5  DEMOD2
-TP2  SWDIO           TP6  DEMOD3
-TP3  DEMOD0          TP7  RECOVERED_CLK
-TP4  DEMOD1
-SW1  RP_RUN ↔ GND    （复位，镊子短接）
-SW2  QSPI_SS ↔ GND   （BOOTSEL，镊子短接）
+SW2  QSPI_SS ↔ GND   （BOOTSEL，镊子短接后上电 → 电脑出现 RPI-RP2 U 盘）
 ```
+
+**V4 只剩 SW2 这一个焊盘。** TP1–TP7 与 SW1 已于 2026-08-23 删除，
+判据是那 7 条网络除测试点外没有第三方节点（详见 REVIEW_TODO.md A 节）。
+需要探测时的替代位置：
+
+| 原测试点 | 信号 | 现在探哪里 |
+|---|---|---|
+| TP1 / TP2 | SWCLK / SWDIO | RP2040 引脚 `U8.24` / `U8.25` 飞线；或直接用 v3.2 |
+| TP3–TP6 | DEMOD0–3 | 固件的 PIO 调试输出，**不在接收链上**。硬件问题探 `U15.5`(PULSES) |
+| TP7 | RECOVERED_CLK | 同上；要看时钟恢复用 v3.2 |
+| SW1 | RP_RUN 复位 | R5 已把 RUN 上拉到 3V3；复位靠断电或 `picotool reboot` |
+
+接收链的完整信号流：`AD8319 → SLICER_FAST → TLV3501(U15) → PULSES → RP2040 GPIO19`，
+门限由 `GPIO25/TL_PWM → R34 → LEVEL_BIAS → R33 → SLICER_LEVEL` 闭环控制，
+`RSSI`(ADC1) 与 `LEVEL_BIAS`(ADC0) 都能被 RP2040 直接读回——**优先用软件遥测，别急着上示波器**。
 
 ---
 

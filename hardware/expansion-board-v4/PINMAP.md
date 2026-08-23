@@ -45,7 +45,20 @@
 | XIN | 12MHz 晶振（C9002） | |
 | USB_DP/DM | USB-C 座 | UF2 拖拽刷机 + CDC 调试〔D〕 |
 | RUN + BOOTSEL | 轻触开关 ×2 | 开发板必备〔D〕 |
-| SWD（SWCLK/SWDIO） | 3-pin 测试点 | 调试兜底〔D〕 |
+| SWD（SWCLK/SWDIO） | ~~3-pin 测试点~~ **V4 已删除** | 测试点 TP1–7 于 2026-08-23 移除，理由见 REVIEW_TODO.md A 节；固件调试在已打样的 v3.2 上做 |
+
+### RP2040 的 USB 路径（2026-08-23 查证）
+
+| USB 外设（ESP32-P4） | 默认引脚 | 能否做 host | 微雪 J3 是否引出 |
+|---|---|---|---|
+| USB Serial/JTAG | GPIO24 / 25 | ❌ 纯 device | ✅ pin23 / pin21 |
+| USB 2.0 Full-Speed OTG | GPIO26 / 27 | ✅ | ❌ **未引出** |
+| USB 2.0 High-Speed OTG | 专用脚 49/50 | ✅ | ✅ pin27 / pin25（与 H2 同网） |
+
+⚠️ **J3-23/21 引出的 GPIO24/25 是 USB Serial/JTAG，不是 OTG FS**，不能做 host。
+要切换须烧 eFuse `USB_PHY_SEL`（不可逆且废掉 USB-JTAG）。若要 P4 代刷 RP2040，
+只能用 HS 那组（pin27/25），代价是永久占掉 H2 与载板 USB-A。详见
+[VARIANTS.md](VARIANTS.md) §4–§5。
 
 ## 3. CC1312R（QFN48）逻辑分配〔D；DIO→pin 号建库时从 datasheet 填〕
 
