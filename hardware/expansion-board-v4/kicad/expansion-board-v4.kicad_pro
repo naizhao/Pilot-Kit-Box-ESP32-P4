@@ -602,6 +602,10 @@
       },
       {
         "netclass": "RF50",
+        "pattern": "IFA_MATCH"
+      },
+      {
+        "netclass": "RF50",
         "pattern": "LNA1_IN"
       },
       {
