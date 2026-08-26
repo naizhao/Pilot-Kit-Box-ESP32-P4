@@ -35,11 +35,11 @@
 | GPIO14 / 15 | SUBG_IRQ / SUBG_SYNC | CC1312R 中断 + 同步/bootloader 触发〔A〕 |
 | GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG 代刷 CC1312R 固件〔A〕 |
 | GPIO19 | PULSES | 比较器输出 → PIO0 前导检测〔A〕 |
-| GPIO20–23 | DEMOD0–3 | PIO 解调状态机联络/调试〔A〕 |
-| GPIO24 | RECOVERED_CLK | 调试用恢复时钟〔A〕 |
+| GPIO20–23 | DEMOD0–3 | PIO 解调状态机联络/调试〔A〕。**V4 无落点**：原 TP3–TP6 已删，网络只剩 RP2040 一端 |
+| GPIO24 | RECOVERED_CLK | 调试用恢复时钟〔A〕。**V4 无落点**：原 TP7 已删，同上 |
 | GPIO25 | TL_PWM | 比较器阈值 PWM（RC 滤波成 LEVEL_BIAS）〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | 阈值直流回读〔A〕 |
-| GPIO27 / ADC1 | RSSI | AD8319 VOUT 回读（自适应灵敏度）〔A〕 |
+| GPIO27 / ADC1 | RSSI | AD8313 VOUT 回读（自适应灵敏度）〔A〕 |
 | GPIO28 / ADC2 | 备用 ADC | 预留（如 978 RSSI） |
 | QSPI 专用脚 | W25Q128JVSIQ | 16MB 固件+配置 |
 | XIN | 12MHz 晶振（C9002） | |
@@ -78,7 +78,7 @@
 
 ```
 J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG：RP2040、Flash、CC1312R(经磁珠)、BNO085、BMP388、QMC5883P
-            ├── TPS7A2033 #1 ──────→ 3V3_RF：QPL9547、BGA2817、AD8319/AD8313、MCP 比较器域
+            ├── TPS7A2033 #1 ──────→ 3V3_RF：QPL9547、BGA2817、AD8313、TLV3501 比较器域
             └── TPS7A2033 #2 ──────→ 3V3_GNSS：ATGM336H-6N-74 + 两路天线偏置 Tee
 偏置 Tee（×2：1090 / 978）〔A〕：PMOS 高侧开关 + 6V/200mA 保险丝 + 100nH 馈电电感 + ESD(0.6pF 级)
 ```
@@ -90,11 +90,11 @@ J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG：RP2040、Flash�
                                                 ├→ U16射频开关 → C54 → QPL9547(LNA①)
 J6外接U.FL → 偏置Tee → C30 100pF ─────────────┘
 → C 12pF → TA0970A(SAW①) → 同上匹配 → BGA2817(LNA②) → C 12pF → TA0970A(SAW②)
-→ MM8930-2620RJ4(产测座, 串联) → C 3pF 耦合 → AD8319(主) / AD8313(备, 双封装位)
+→ C 3pF 耦合(C34) → AD8313(U14，2026-08-26 定为唯一检波方案，AD8319 已删)
 → RSSI/VOUT ─┬→ RP2040 ADC1
              └→ TLV3501 IN+；IN- = LEVEL_BIAS(TL_PWM 经 100k+0.1µF RC) + 10k 迟滞〔A〕
 → TLV3501 OUT = PULSES → RP2040 GPIO19
-测试点：W.FL ×2（LNA② 后 / 检波器入口）〔A〕
+测试点：V1 已删 MM8930 产测座与射频段 W.FL（1090MHz 短截线）；板载 IFA 侧保留 J7 调试口
 ```
 
 全部 LC 值为〔A〕起点，V1 每个位号留 0402 可调位；SAW 换型（TFS1090F→TA0970A）后匹配值需在板上实调。
@@ -125,7 +125,7 @@ ZP1=DNP起扫，最终值以装盒实测为准。生成器/封装库/PCB内嵌AN
 6. ~~QPL9547 EN 脚极性~~ **已核实（Qorvo DS Rev.D）：SD 脚 <0.63V=LNA ON，接地使能正确**。
 7. （原理图阶段新增）TLV3501 SHDN 已拉高使能（TI 口径低电平关断），TOKMAS 版本极性一致性复核。
 8. （原理图阶段新增）KiCad 官方 CC1312R 符号无 DIO_0——布 PCB 前逐脚对 TI SWRS210 复核一遍 QFN48 脚位。
-9. （原理图阶段新增）AD8319 CLPF 悬空为 V1 起点（视频带宽最大），若脉冲底噪高则加电容位。
+9. ~~AD8319 CLPF 悬空~~ —— 2026-08-26 改用 AD8313（无 CLPF 脚），本条作废。
 10. ~~978 天线口无 ESD 管~~ **已处理：D3 已入图（与 1090 对齐，航空产品外露端口一律加 ESD）**。
 11. （原理图阶段新增）32k 晶振负载电容 12/15pF 不对称照抄原图，正常应对称——评审讨论项。
 12. （IFA实板待办）冻结输入已同步封装/PCB/馈线；实板dF/dL、装盒偏移、
@@ -136,7 +136,7 @@ ZP1=DNP起扫，最终值以装盒实测为准。生成器/封装库/PCB内嵌AN
 | 器件 | 建库依据的 datasheet 版本 | 采购 SKU | 到货核对点 |
 |---|---|---|---|
 | BNO085 | CEVA 1000-3927 **v1.16**（BNO080/085/086 引脚相同） | 淘宝 ¥56 档散新 | 丝印 "BNO085"（警惕 "BN0085" 仿标）；LGA-28 3.8×5.2mm 实measure |
-| AD8319 | ADI Rev.D | 淘宝 ¥21.9 原装配单档 | 丝印 "Q2"；LFCSP-8 2×3mm 带裸焊盘 |
+| ~~AD8319~~ | — | — | **2026-08-26 弃用**：改 AD8313 单一方案（动态范围 70dB vs 40dB，且实购更便宜） |
 | AD8313 | ADI Rev.F | 立创 C578690（仅此渠道） | 丝印 "J1A"；MSOP-8 |
 | BMP388 | Bosch DS001-07 Rev 1.7 | 立创 C779278 原厂 | LGA-10 2×2mm；到货抽测 CHIP_ID=0x50 |
 | QMC5883P | QST 13-52-19 RevA（**即立创 C2847467 商品页挂的同一份**） | 淘宝 ¥5.5 档或立创 | LGA-16 **3×3mm**（勿与 L 版小封装混）；I2C 0x2C 应答 |

@@ -116,3 +116,7 @@ firmware/main/pk_aero_key.h
 # Excel/LibreOffice 临时锁文件
 .~*.xlsx
 .~lock.*
+
+# freerouting 中间文件
+hardware/*/kicad/freerouting.dsn
+hardware/*/kicad/temp-freerouting.dsn

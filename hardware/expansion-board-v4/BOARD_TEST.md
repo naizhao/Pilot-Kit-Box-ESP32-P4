@@ -110,7 +110,7 @@ footprint 176个
 
 | 网络 | 测这两点 | 距离 | 走线层 |
 |---|---|---|---|
-| RF_DET_OUT | `R35.1` ↔ `U13.5` | 81mm | F + In2 + B |
+| RF_DET_OUT | `R35.1` ↔ `R21.2` | 见最新板 | F + In2 + B |
 | LEVEL_BIAS | `R33.1` ↔ `C49.1` | 53mm | F + In2 + B |
 | GNSS_TXD | `U7.2` ↔ `J1.36` | 50mm | F + In2 |
 | USB_CC2 | `R8.1` ↔ `J4.B5` | 50mm | F + B |
@@ -140,7 +140,7 @@ footprint 176个
    或直接在已打样的 v3.2 上做（那块板保留了全部 7 个测试点，电路逐条相同）。
 6. **解调输出**：~~TP3~TP7 接示波器~~ —— 同上已删除。
    DEMOD0–3 / RECOVERED_CLK 是固件里 PIO 状态机的**调试输出**，不在接收链上
-   （接收链 AD8319 → TLV3501 → PULSES → GPIO19）。硬件问题探 `U15.5`(PULSES) 就能看出来；
+   （接收链 AD8313 → TLV3501 → PULSES → GPIO19）。硬件问题探 `U15.5`(PULSES) 就能看出来；
    要看解码质量用软件遥测 RSSI(ADC1) / LEVEL_BIAS(ADC0)。
 
 ### IFA 专项（制造尺寸同步并完成布线后才执行）
@@ -168,9 +168,14 @@ SW2  QSPI_SS ↔ GND   （BOOTSEL，镊子短接后上电 → 电脑出现 RPI-R
 | TP1 / TP2 | SWCLK / SWDIO | RP2040 引脚 `U8.24` / `U8.25` 飞线；或直接用 v3.2 |
 | TP3–TP6 | DEMOD0–3 | 固件的 PIO 调试输出，**不在接收链上**。硬件问题探 `U15.5`(PULSES) |
 | TP7 | RECOVERED_CLK | 同上；要看时钟恢复用 v3.2 |
+
+> ⚠️ **DEMOD0–3(GPIO20–23) 与 RECOVERED_CLK(GPIO24) 现在是悬空网络**——
+> TP3–TP7 是它们**唯一**的第三方节点，测试点删掉之后这 5 条网络只剩 RP2040 一端，
+> 板上没有任何可探的落点。这不是漏接：它们本来就只是 PIO 状态机往外抛的调试位，
+> 固件不依赖它们工作。真要看，用保留了全部 7 个测试点的 v3.2。
 | SW1 | RP_RUN 复位 | R5 已把 RUN 上拉到 3V3；复位靠断电或 `picotool reboot` |
 
-接收链的完整信号流：`AD8319 → SLICER_FAST → TLV3501(U15) → PULSES → RP2040 GPIO19`，
+接收链的完整信号流：`AD8313 → SLICER_FAST → TLV3501(U15) → PULSES → RP2040 GPIO19`，
 门限由 `GPIO25/TL_PWM → R34 → LEVEL_BIAS → R33 → SLICER_LEVEL` 闭环控制，
 `RSSI`(ADC1) 与 `LEVEL_BIAS`(ADC0) 都能被 RP2040 直接读回——**优先用软件遥测，别急着上示波器**。
 
