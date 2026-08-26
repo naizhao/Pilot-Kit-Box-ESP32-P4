@@ -102,3 +102,58 @@ IFA的0.15mm线按In1参考的纯微带计算；ZS1两侧必须各用一个独�
 - 板框为 **100×62mm**；J1 排母位置与微雪载板 J3 相对位置逐脚对齐（关键！）。
 - 固定孔 4×M2.5，位置避开磁洁净区。
 - 外壳开孔（USB-C、三个 U.FL）与 3d-case v2 的干涉检查 = 投板前置门。
+
+## 9. 布局验收（每次挪完元件都要跑）
+
+### 9.1 电气归属：元件有没有待在它该待的地方
+
+```bash
+~/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 \
+  tools/check_affinity.py            # 只列超标；加 --all 连合格的一起看
+```
+
+判据：每个 R/L/C/Q/D 都有一个**电气锚点**，离锚点太远就是错位。
+
+| 归属方式 | 怎么定锚点 |
+|---|---|
+| 串联 | 该件串在两个节点之间 → 锚点只认 **U 芯片 / J 连接器**，不认相邻的 RLC |
+| 专属 | 该件所有信号网络只通到一颗 U → 锚点是那颗 U |
+| 单端 | 只有一个信号网络（旁路/去耦）→ 锚点是同网最近的 U |
+| 链路+N跳 | 直连网络里没有 U/J（匹配网络的中间节点）→ 沿网络 BFS 到第一个 U/J |
+
+阈值**按网络性质分档，不能一刀切**：
+
+| 档 | 限值 | 依据 |
+|---|---:|---|
+| RF | 5mm | 1090MHz 在 FR4 里 λ≈100mm，5mm 已是 0.05λ |
+| ANALOG | 12mm | 高阻抗节点（判决门限、AGC、检波输出）怕拾噪，不怕相移 |
+| DIGI | 25mm | `BIAS_EN` 这种开关信号拉 30mm 也没事 |
+
+两个反直觉的地方，改判据前先读一遍：
+
+1. **锚点只认 U/J**。若退而取「最近的邻居」，整片网格一起漂移时内部互相都在
+   2mm 内、全判合格，而整片飘在板子另一头——978 匹配网络就是这么漏掉的。
+   同理才要有「链路+N跳」这条，否则 `SUBG_N3/N4/N5` 这些 RLC 接 RLC 的中间
+   节点永远查不出来。
+2. **名字带 ANT/RF 的未必是射频**。`ANT_SEL_*` 是 GPIO；`*_FUSE`/`*_FEED` 是
+   bias-tee 的**直流侧**（射频已被扼流圈挡在另一边），Q3/F3 贴着 F3 是对的。
+   不排除这些会满屏假红。
+
+### 9.2 其余三项
+
+```bash
+$KP tools/check_silk.py                 # 丝印体检
+$KP tools/keepout_report.py             # 芯片扇出净空
+kicad-cli pcb drc --severity-error --severity-warning \
+  --format json -o /tmp/drc.json kicad/expansion-board-v4.kicad_pcb
+```
+
+验收线：DRC **0 error**；courtyard 重叠只剩既存的 `ANT1↔J7`、`R37↔U18`；
+天线禁铺带（y 50.077~58.512 全板宽）内 0 元件。
+
+### 9.3 底层教训
+
+**整齐 ≠ 正确。** 按位号排出来的网格跟「谁属于哪条链」毫无关系：
+L17 离 U20 的 LX 30mm 是它（见 `project_power_loop_vs_tidy_grid`），
+978 匹配网络绕 20mm 再折回也是它，C35 离检波器 33mm 还是它。
+自动布局能排得很好看，但它不知道电流从哪来、到哪去。

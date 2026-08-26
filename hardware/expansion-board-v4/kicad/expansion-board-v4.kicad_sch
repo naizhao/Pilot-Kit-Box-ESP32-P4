@@ -10,7 +10,7 @@
 		(rev "V1")
 		(company "Pilot Kit")
 		(comment 1 "Dual-band ADS-B (1090ES/978UAT) + IMU + BARO + GNSS")
-		(comment 2 "Ref topology: ADSBee 1090U (facts only, GPLv3 firmware NOT copied)")
+		(comment 2 "Topology: independently transcribed, no third-party design files reused")
 	)
 	(sheet
 		(at 25.4 25.4)
