@@ -112,3 +112,7 @@ taobao-*.png
 # 含 AES-128 密钥（虽然拆成两半异或，但异或两半都在文件里，等于明文）。
 # 本仓库是公开的，这个文件绝不能进去。
 firmware/main/pk_aero_key.h
+
+# Excel/LibreOffice 临时锁文件
+.~*.xlsx
+.~lock.*
