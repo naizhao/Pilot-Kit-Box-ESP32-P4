@@ -674,6 +674,18 @@
       },
       {
         "netclass": "POWER",
+        "pattern": "BAT_P"
+      },
+      {
+        "netclass": "POWER",
+        "pattern": "CHG_PMID"
+      },
+      {
+        "netclass": "POWER",
+        "pattern": "SYS_4V"
+      },
+      {
+        "netclass": "POWER",
         "pattern": "USB_VBUS"
       },
       {
@@ -694,6 +706,14 @@
       },
       {
         "netclass": "POWER_LO",
+        "pattern": "BST_LX"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "CHG_LX"
+      },
+      {
+        "netclass": "POWER_LO",
         "pattern": "GNSS_EXT_FUSE"
       },
       {
@@ -711,6 +731,10 @@
       {
         "netclass": "POWER_LO",
         "pattern": "SUBG_FUSE"
+      },
+      {
+        "netclass": "POWER_LO",
+        "pattern": "SUBG_SW"
       },
       {
         "netclass": "POWER_LO",
