@@ -197,11 +197,16 @@ current Rev1.2 4.3-inch board. Legacy EasyEDA sources:
 
 ### 集成扩展板 V4.0（研发中）/ Integrated Expansion Board V4.0 (In Development)
 
+| 正面 / Top | 背面 / Bottom |
+|---|---|
+| <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.0, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.0, bottom side" width="420"> |
+
 上面「必备硬件」里的 RTL-SDR dongle、BNO085、GT-U8 和 BMP388 四个分立模块，
 正在被一块**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
 把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，不再需要
-RTL-SDR dongle**。工程与文档在
-[`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)。
+RTL-SDR dongle**。工程、文档与制造包在
+[`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)（该目录的
+[README](hardware/expansion-board-v4/README.md) 是双语的）。
 
 The four discrete modules listed under Required Hardware above (RTL-SDR dongle,
 BNO085, GT-U8, BMP388) are being replaced by a single **integrated expansion
@@ -378,4 +383,14 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 
 ## 开源协议 / License
 
-MIT License
+MIT License — 完整条款见 [`LICENSE`](LICENSE)。
+Full terms in [`LICENSE`](LICENSE).
+
+硬件设计（`hardware/`）同样以 MIT 发布。其中的 KiCad 工程内嵌了 KiCad 官方库的
+封装，那些库是 CC-BY-SA 4.0，但其例外条款明确允许由此制造的板子不受限制使用，
+不会传染到你的硬件。
+
+The hardware designs under `hardware/` are released under the same MIT terms.
+The KiCad projects embed footprints from the KiCad standard libraries, which are
+CC-BY-SA 4.0 with an exception explicitly permitting unrestricted use of boards
+produced from them.
