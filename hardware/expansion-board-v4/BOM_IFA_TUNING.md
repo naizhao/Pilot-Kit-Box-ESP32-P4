@@ -26,7 +26,7 @@
 | 🔴必买 | 默认直通 | 0R，跳线电阻 | 0603 | 20 | ZS1 | 通用0603 0R | 基线状态使用；优先选低寄生、额定值普通的厚膜0R即可 |
 | 🔴必买 | HFSS 起点 | 3.6nH，RF 高 Q 电感 | 0603 | 20 | ZS1 | **Murata LQW18AN3N6C00D**；或同规格Coilcraft 0603HP-3N6XJRW | Murata该档SRF 6GHz、Q(min) 25；1090MHz余量足够。整盒换值尽量保持同一系列 |
 | 🔴必买 | HFSS 起点 | 3.3pF，C0G/NP0 | 0603 | 20 | ZP2 | **Murata GRM1885C1H3R3BA01D** | 50V、C0G、±0.1pF；ZP1首轮保持DNP |
-| 🔴必买 | 调试接口 | 50Ω U.FL 板端座 | U.FL_Hirose_U.FL-R-SMT-1_Vertical 兼容封装 | 3 | J7 | **Hirose U.FL-R-SMT-1(80)**；立创商城C88374 | 1颗首装、2颗备损；官方规格50Ω、最高8GHz |
+| 🔴必买 | 调试接口 | 50Ω U.FL 板端座 | U.FL_Hirose_U.FL-R-SMT-1_Vertical 兼容封装 | 3 | J7 | 品赞 GT-RF1125A-01G **C5299419**（¥0.24）；原厂 Hirose U.FL-R-SMT-1(80) C88374（¥0.63）亦可 | 1颗首装、2颗备损；50Ω、6GHz（原厂 8GHz），1090/978/1575MHz 都远在带内 |
 | 🟢元件本 | 恢复接收链 | 100pF | 0402 | 20 | C53 | 任意 100pF，**X7R 即可** | VNA测量阶段DNP，匹配定值并拆除测量线后再贴。**不必买 C0G**，理由见下 |
 
 > **C53 为什么不用 C0G**（2026-08-28 与 [`BOM_PURCHASE.md`](BOM_PURCHASE.md) 对齐）：

@@ -23,7 +23,7 @@
 | 🔴必买指定 | 射频-天线口ESD | ESD 3.3V/0.6pF | D_0402_1005Metric | 2 | D2,D3 | TECH PUBLIC TPESD8L3.3CT5G | C2830293 | ⚠️结电容 Cj 0.3pF typ/0.5pF max。普通 5V ESD 管 Cj 20-50pF 直接吃掉射频信号 |
 | 🔴必买指定 | 射频-检波耦合 | 3pF | C_0402_1005Metric | 3 | C34,C35,C43 | 三环 TCC0402COG3R0C500AT（C0G） | C696883 | ⚠️必须 C0G |
 | 🔴必买指定 | 射频-端接 | 52.3R | R_0402_1005Metric | 1 | R19 | YAGEO RC0402FR-0752R3L ±1% | C273696 | 必须 ±1%，不可用 51R±5% 代 |
-| 🔴必买指定 | 射频-级间耦合 | 12pF | C_0402_1005Metric | 3 | C31,C32,C33 | 三环 TCC0402COG120J500AT（C0G） | C696888 | ⚠️必须 C0G |
+| 🔴必买指定 | 射频-级间耦合 | 12pF | C_0402_1005Metric | 3 | C31,C32,C33 | 风华 0402CG120J500NT（C0G，基础库） | C1547 | ⚠️必须 C0G。**嘉立创基础库**——买多少用多少，别换回扩展库同值料 |
 | 🔴必买指定 | 电源-PD | CH224K | CH224K_ESSOP-10 | 1 | U18 | CH224K | C970725 | PD 诱骗 9V；4-22V 输入 |
 | 🔴必买指定 | 电源-充电 | SY6970 | QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm_ThermalVias | 1 | U19 | SY6970QCC | C5357542 | 5A 充电 + I2C 电量计，1.5MHz |
 | 🔴必买指定 | 电源-升压 | SY7069 | TSOT-23-6 | 1 | U20 | SY7069ADC | 淘宝（立创未见） | 同步升压 5V，I_LIM 3.0A |
@@ -31,19 +31,21 @@
 | 🔴必买指定 | 电源-电感 | 1uH | L_Bourns-SRN4018 | 1 | L16 | 1uH SRN4018 Isat>=5A | — | SY6970 开关电感，配 1.5MHz |
 | 🔴必买指定 | 连接器 | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P1.25mm_Horizontal | 1 | J9 | MX1.25 卧贴 1.25WT-2P | — | 电池座；MP 1.8x2.4/外缘距 7.50，与 PicoBlade 不通用 |
 | 🟡有推荐 | CC1312R DCDC | 6.8uH | L_0805_2012Metric | 1 | L7 | TDK MLZ2012N6R8LT000 | C82157 | ⚠️全站 0805 里只有它 DCR<300mΩ 且 Isat≥100mA（250mΩ/110mA，刚压线） |
-| 🟡有推荐 | PMOS 高边开关 | AO3401A | SOT-23 | 4 | Q2,Q3,Q4,Q5 | UMW(友台) AO3401A | C347476 | 立创无 AOS 原厂『AO3401』(不带A)。原厂正片 AOS C15127。避坑：ElecSuper C5224202 是 SOT-23-3L 非标准；GOODWORK C2938368 描述误写 N-Channel |
-| 🟡有推荐 | U.FL 座 | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J6 | 广濑 U.FL-R-SMT-1(80) | C88374 | 4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线 |
-| 🟡有推荐 | U.FL 座 | U.FL_978 | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J5 | 广濑 U.FL-R-SMT-1(80) | C88374 | 4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线 |
-| 🟡有推荐 | U.FL 座 | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J2 | 广濑 U.FL-R-SMT-1(80) | C88374 | 4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线 |
-| 🟡有推荐 | U.FL 座 | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J7 | 广濑 U.FL-R-SMT-1(80) | C88374 | 4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线 |
-| 🟡有推荐 | U.FL 座 | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J8 | 广濑 U.FL-R-SMT-1(80) | C88374 | 4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线 |
+| 🟡有推荐 | PMOS 高边开关 | AO3401A | SOT-23 | 4 | Q2,Q3,Q4,Q5 | UMW(友台) AO3401A | C347476 | 扩展库 loss8/moq5 → 买 16 颗。**无券时改用 AOS 原厂 C15127**（基础库，买 8 颗免上机费）。避坑：ElecSuper C5224202 是 SOT-23-3L 非标准；GOODWORK C2938368 描述误写 N-Channel |
+| 🟡有推荐 | U.FL 座 | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J6 | 聚兴泰 AIPEX-1 | C41432122 | IPEX1 板端内针 50Ω / DC~6GHz / VSWR1.3。**规格书标注 3 PADS TYPE**，焊盘与板上 U.FL_Hirose_U.FL-R-SMT-1_Vertical 完全匹配（跨距4.00/间距1.90/2.20×1.05）。4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线。⚠️ 换牌子必须核对焊盘数——四焊盘款（如品赞 C5299419）会多一脚悬空 |
+| 🟡有推荐 | U.FL 座 | U.FL_978 | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J5 | 聚兴泰 AIPEX-1 | C41432122 | IPEX1 板端内针 50Ω / DC~6GHz / VSWR1.3。**规格书标注 3 PADS TYPE**，焊盘与板上 U.FL_Hirose_U.FL-R-SMT-1_Vertical 完全匹配（跨距4.00/间距1.90/2.20×1.05）。4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线。⚠️ 换牌子必须核对焊盘数——四焊盘款（如品赞 C5299419）会多一脚悬空 |
+| 🟡有推荐 | U.FL 座 | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J2 | 聚兴泰 AIPEX-1 | C41432122 | IPEX1 板端内针 50Ω / DC~6GHz / VSWR1.3。**规格书标注 3 PADS TYPE**，焊盘与板上 U.FL_Hirose_U.FL-R-SMT-1_Vertical 完全匹配（跨距4.00/间距1.90/2.20×1.05）。4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线。⚠️ 换牌子必须核对焊盘数——四焊盘款（如品赞 C5299419）会多一脚悬空 |
+| 🟡有推荐 | U.FL 座 | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J7 | 聚兴泰 AIPEX-1 | C41432122 | IPEX1 板端内针 50Ω / DC~6GHz / VSWR1.3。**规格书标注 3 PADS TYPE**，焊盘与板上 U.FL_Hirose_U.FL-R-SMT-1_Vertical 完全匹配（跨距4.00/间距1.90/2.20×1.05）。4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线。⚠️ 换牌子必须核对焊盘数——四焊盘款（如品赞 C5299419）会多一脚悬空 |
+| 🟡有推荐 | U.FL 座 | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT-1_Vertical | 1 | J8 | 聚兴泰 AIPEX-1 | C41432122 | IPEX1 板端内针 50Ω / DC~6GHz / VSWR1.3。**规格书标注 3 PADS TYPE**，焊盘与板上 U.FL_Hirose_U.FL-R-SMT-1_Vertical 完全匹配（跨距4.00/间距1.90/2.20×1.05）。4 个：1090外接/978/GNSS外接/GNSS内置patch。外接的两个另配 U.FL→SMA 尾线。⚠️ 换牌子必须核对焊盘数——四焊盘款（如品赞 C5299419）会多一脚悬空 |
 | 🟡有推荐 | USB-C | USB-C_16P | USB_C_Receptacle_HRO_TYPE-C-31-M-12 | 1 | J4 | HRO TYPE-C-31-M-12 | — | RP2040 刷机口 |
+| 🟡有推荐 | 储能 | 22uF | C_0805_2012Metric | 2 | C60,C66 | Samsung CL21A226KOQNNNE | C296720 | 16V ±10% X5R（原设计耐压）。扩展库，**无券时改用基础库 C45783**（25V ±20%，免 ¥20 上机费） |
+| 🟡有推荐 | 去耦 | 100nF | C_0603_1608Metric | 19 | C10,C11,C12,C13,C14,C16…(19) | Venkel C0603X7R500-104KNP | C3834556 | 0603/X7R/50V/±10%。扩展库 loss6/moq20 → 买 44 颗，料费 ¥1.79。**无券时改用基础库 C14663**（国巨，买 38 颗 ¥3.08，免 ¥20 上机费） |
 | 🟡有推荐 | 射频开关 | XA17-G4K(或AS179-92LF) | SOT-363_SC-70-6 | 2 | U16,U17 | 信路达 XA17-G4K | C513494 | pin 兼容 AS179-92LF(C83422)，一个封装双源。SOT-363 很小，建议多备 3 颗 |
 | 🟡有推荐 | 晶振 | 12MHz | Crystal_SMD_3225-4Pin_3.2x2.5mm | 1 | Y1 | YXC X322512MSB4SI | C9002 | RP2040 主晶振 |
 | 🟡有推荐 | 晶振 | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_3.2x1.5mm | 1 | Y3 | EPSON Q13FC13500004 | C32346 |  |
 | 🟡有推荐 | 晶振 | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_3.2x2.5mm | 1 | Y2 | Abracon ABM8W-48.0000MHZ-7-D1X-T3 | C6732653 | CC1312R 主晶振，7pF 负载 |
-| 🟡有推荐 | 晶振负载 | 18pF | C_0603_1608Metric | 2 | C68,C69 | 0603 18pF 50V C0G | — | 配 Y3 Q13FC13500004(FC-135) 的 CL=12.5pF。两颗必须同值，⚠️必须 C0G |
-| 🟡有推荐 | 晶振负载 | 33pF | C_0603_1608Metric | 2 | C19,C20 | 0603 33pF 50V C0G | — | 配 Y1 X322512MSB4SI 的 CL=20pF。⚠️必须 C0G——X7R 的容值随温漂，直接变成频漂 |
+| 🟡有推荐 | 晶振负载 | 18pF | C_0603_1608Metric | 2 | C68,C69 | 三星 CL10C180JB8NNNC（基础库） | C1647 | 配 Y3 Q13FC13500004(FC-135) 的 CL=12.5pF → C=(12.5−3)×2=19pF 取标称 18pF。两颗必须同值，⚠️必须 C0G |
+| 🟡有推荐 | 晶振负载 | 33pF | C_0603_1608Metric | 2 | C19,C20 | 三星 CL10C330JB8NNNC（基础库） | C1663 | 配 Y1 X322512MSB4SI 的 CL=20pF → C=(20−3)×2=34pF 取标称 33pF。⚠️必须 C0G——X7R 的容值随温漂，直接变成频漂 |
 | 🟡有推荐 | 电源-热敏 | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | 1 | RT1 | Murata NCP18XH103F03RB / TDK NTCG163JF103FT1 / 国产 0603 10K 1% | — | **必须是贴片 NTC，不是普通电阻**。电池用 3M 胶直接贴 B 面、无间隙，插件玻璃头放不下。B25/85=3428K 与 datasheet 的 103AT-2(3435K) 差 0.2%，分压电阻 R39/R40 不用改 |
 | 🟡有推荐 | 电源-电容 | 22uF | C_1206_3216Metric | 2 | C76,C77 | 1206 22uF 10V X5R | — | SY7069 CIN/COUT，datasheet 要求至少 22uF |
 | 🟡有推荐 | 电源-电容 | 47nF | C_0603_1608Metric | 1 | C70 | 0603 47nF 25V X7R | — | SY6970 BST 自举 |
@@ -54,18 +56,17 @@
 | 🟡有推荐 | 电源-电阻 | 470k | R_0603_1608Metric | 1 | R41 | 0603 470k 1% | — | SY7069 FB 上分压 |
 | 🟡有推荐 | 电源-电阻 | 5.62k | R_0603_1608Metric | 1 | R39 | 0603 5.62k 1% | — | NTC 分压上臂（E96 最近值） |
 | 🟡有推荐 | 电源-电阻 | 6.8k | R_0603_1608Metric | 1 | R37 | 0603 6.8k 1% | — | CH224K CFG1→GND，**选 9V 档，关键件** |
+| 🟡有推荐 | 电阻 | 1k | R_0402_1005Metric | 1 | R30 | 厚声 0402WGF1001TCE（基础库） | C11702 | 1kΩ ±1%。**嘉立创基础库**，免 ¥20 上机费 |
 | 🟡有推荐 | 磁力计储能 | 4.7uF | C_0603_1608Metric | 2 | C15,C71 | Samsung CL10A475KO8NNNC | C19666 | 低 ESR，QMC5883P 要求 |
 | 🟡有推荐 | 自恢复保险丝 | 6V/200mA | Fuse_0805_2012Metric | 4 | F2,F3,F4,F5 | 金瑞 JK-SMD0805-020-30V | C516070 | Ih=200mA，30V 耐压，$0.031，库存 60 万 |
 | 🟢通用/元件本 | IFA 匹配-串联 | 0R 串 | L_0603_1608Metric | 1 | ZS1 | 默认0R直通；调试时换值 | — | 备1-30nH；HFSS首轮可从3.6nH起扫。⚠️量产件Q变化后必须复测 |
 | 🟢通用/元件本 | IFA 匹配-并联 | DNP 并-天线侧 | C_0603_1608Metric | 1 | ZP1 | 调试用，值上板实测确定 | — | 0603便于换值；备C0G 0.5-12pF。默认DNP，HFSS首轮也保持DNP |
 | 🟢通用/元件本 | IFA 匹配-并联 | DNP 并-电台侧 | C_0603_1608Metric | 1 | ZP2 | 调试用，值上板实测确定 | — | 默认DNP；按完整六层rev2 HFSS目标处约20.97Ω结果，首轮可从3.3pF起扫，并备3.6/3.9pF，最终以装盒VNA为准 |
 | 🟢通用/元件本 | 储能 | 10uF | C_0805_2012Metric | 5 | C1,C18,C73,C74,C75 | 任意 10uF X5R 0805 | — | 用元件本 |
-| 🟢通用/元件本 | 储能 | 22uF | C_0805_2012Metric | 2 | C60,C66 | 任意 22uF X5R 0805 | — | 用元件本 |
 | 🟢通用/元件本 | 去耦 | 100nF | C_0402_1005Metric | 2 | C37,C52 | 任意 100nF X7R | — | 用元件本 |
 | 🟢通用/元件本 | 去耦 | 1uF | C_0402_1005Metric | 1 | C5 | 任意 1uF X5R | — | 用元件本 |
 | 🟢通用/元件本 | 实验跳线 | 0R DNP(旁路外接) | R_0402_1005Metric | 1 | R24 | 0R（默认不贴） | — | 拆开关后硬跳外接支路，做「有开关 vs 无开关」灵敏度对比 |
 | 🟢通用/元件本 | 实验跳线 | 0R DNP(旁路板载) | R_0402_1005Metric | 1 | R25 | 0R（默认不贴） | — | 同上，硬跳板载 IFA |
-| 🟢通用/元件本 | 电阻 | 1k | R_0402_1005Metric | 1 | R30 | 任意 1k ±1% | — | 用元件本 |
 | 🟢通用/元件本 | 隔直/旁路 | 100pF | C_0402_1005Metric | 9 | C30,C38,C39,C45,C53,C54…(9) | 任意 100pF（X7R 即可） | — | ✅实算：X7R vs C0G 全路径只差 0.13dB，不值得单买 NP0。可用现有元件本 |
 | ✅已有 | USB 串阻 | 27R | R_0603_1608Metric | 2 | R10,R9 | 0603 电阻本 27R | — | 用现有元件本 |
 | ✅已有 | USB-C CC 下拉 | 5.1k | R_0603_1608Metric | 2 | R7,R8 | 0603 电阻本 5.1k | — | 两颗都要，缺一台机不认 USB |
@@ -86,7 +87,6 @@
 | ✅已有 | 主芯片 | TPS7A2033PDBVR | SOT-23-5 | 2 | U2,U3 | TPS7A2033PDBVR | — | §7 清单已下单 |
 | ✅已有 | 主芯片 | W25Q128JVSIQ | SOIC-8_5.3x5.3mm_P1.27mm | 1 | U9 | W25Q128JVSIQ | — | §7 清单已下单 |
 | ✅已有 | 分压/下拉 | 100k | R_0603_1608Metric | 1 | R33 | 0603 电阻本 100k | — | 用现有元件本 |
-| ✅已有 | 去耦 | 100nF | C_0603_1608Metric | 19 | C10,C11,C12,C13,C14,C16…(19) | 0603 电容本 100nF X7R | — | 用现有元件本 |
 | ✅已有 | 去耦 | 1uF | C_0603_1608Metric | 10 | C2,C28,C29,C3,C4,C6…(10) | 0603 电容本 1uF X5R | — | 用现有元件本 |
 | ✅已有 | 对插排针 | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm_Vertical_SMD | 1 | J1 | 2×20 2.54mm 贴片排针 | — | ✅用户已有（实测 51mm 长 / 贴片脚 2.85 / 配合板间距 7.0） |
 | ✅已有 | 旁路 | 100pF | C_0603_1608Metric | 2 | C55,C56 | 0603 电容本 100pF | — | 用现有元件本 |
