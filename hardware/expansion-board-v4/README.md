@@ -108,24 +108,28 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-kicad-*.zip` | **Preferred for ordering** — full KiCad project incl. custom symbols, footprints, and 3D models |
-| `expansion-board-v4-gerber-*.zip` | Gerber + Excellon drill, for cross-checking |
+| `expansion-board-v4-gerber-JLC-*.zip` | **Use this to order** — RS-274-X, 15 files |
+| `expansion-board-v4-kicad-*.zip` | Archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-*.zip` | ⚠️ Older export in Gerber **X2** format — do not use |
 
 ### ⚠️ Three things that will ruin the board if set wrong
 
-1. **Upload the KiCad project, not the Gerbers.** JLCPCB's process page states
-   that with Gerber uploads the via-treatment option is ignored and vias are
-   produced per the file's own attributes. The EP thermal vias need resin plugging.
+1. **Gerbers must be RS-274-X, not X2.** JLCPCB accepts neither KiCad project
+   files nor Gerber X2. KiCad exports X2 by default, so the release package is
+   regenerated with `--no-x2 --no-netlist`. Because only Gerbers can be
+   uploaded, **the via treatment cannot be selected on the web form — it has to
+   go in the order notes.** Ready-to-paste text is in the order guide below.
 2. **The stackup must be JLC06161H-3313.** All 28 controlled-impedance RF nets
    are 0.15 mm wide because that stackup's L1→In1 dielectric is 0.0994 mm.
    A different stackup silently breaks 50 Ω and degrades 1090/978 sensitivity.
-3. **`J4`'s four `SH` pads must NOT be resin-plugged.** They are ⌀0.60 mm
-   plated through-holes that mechanically anchor the USB-C receptacle. Plug
-   them and the connector will tear off after a few insertions. The soldermask
-   layer already encodes this distinction correctly (SH is opened, the EP vias
-   are tented) — see [`REVIEW_TODO.md`](REVIEW_TODO.md) §0.
+3. **`J4`'s four `SH` holes must NOT be resin-plugged.** They are ⌀0.60 mm
+   plated *slots* (Excellon `G85`) that mechanically anchor the USB-C
+   receptacle. Plug them and the connector will tear off after a few
+   insertions. The soldermask layer already encodes the distinction (SH is
+   opened, the EP thermal vias are tented) — the fab should follow it.
 
-Full parameters: [`release/下单说明.md`](release/).
+Layer mapping, drill breakdown, and the order-notes text:
+[`release/下单说明.md`](release/) (Chinese).
 
 ---
 
