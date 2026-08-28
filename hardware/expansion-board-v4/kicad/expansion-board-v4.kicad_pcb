@@ -2592,7 +2592,7 @@
 				)
 			)
 		)
-		(property "Value" "15pF"
+		(property "Value" "18pF"
 			(at 0 1.43 180)
 			(layer "F.Fab")
 			(uuid "e2f34682-c1e2-487a-b2c6-ae8066d06950")
@@ -5270,7 +5270,7 @@
 				)
 			)
 		)
-		(property "Value" "12pF"
+		(property "Value" "18pF"
 			(at 0 1.43 0)
 			(layer "F.Fab")
 			(uuid "7e5d5a35-1025-4371-8951-78b5f24b7d5b")
@@ -25459,7 +25459,7 @@
 				)
 			)
 		)
-		(property "Value" "15pF"
+		(property "Value" "33pF"
 			(at 0 1.43 90)
 			(layer "F.Fab")
 			(uuid "4673561f-ecaf-4eee-b748-f64915be28ab")
@@ -27292,7 +27292,7 @@
 				)
 			)
 		)
-		(property "Value" "15pF"
+		(property "Value" "33pF"
 			(at 0 1.43 270)
 			(layer "F.Fab")
 			(uuid "e25ef339-e95d-4ede-89a2-59cb6b8376a0")
