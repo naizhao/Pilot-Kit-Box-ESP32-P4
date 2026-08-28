@@ -6,11 +6,21 @@
   网页刷机 / Web flasher: <a href="https://updater.pilotkit.app">updater.pilotkit.app</a>
 </p>
 
-> 当前 `feat/lcd-4.3-touch` 硬件目标是
-> **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** 一体板：ST7701
-> 480×800 MIPI-DSI 面板以 PPA 旋转成 800×480 横屏，GT911 触摸，
-> P4NRW32 + ESP32-C6。`docs/jlc/lcd-2.4in-8pin/` 与下文 2.4 寸载板内容
-> 保留为 v0.8.0 历史 PCB 参考，不再代表本分支的当前固件接线。
+> **分支 `v4`。** 主机是 **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** 一体板：
+> ST7701 480×800 MIPI-DSI 面板以 PPA 旋转成 800×480 横屏，GT911 触摸，
+> P4NRW32 + ESP32-C6。硬件目标是
+> [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/) 的 6 层集成
+> 扩展板——以 HAT 方式直插载板 2×20 排母，把 1090/978 接收链、GNSS、IMU、
+> 气压计和电源整合到一块板上，**自带 1090 接收链，不再需要 RTL-SDR dongle**。
+> 每个硬件版本一个分支；`docs/jlc/lcd-2.4in-8pin/` 与下文 2.4 寸载板内容
+> 保留为 v0.8.0 历史 PCB 参考，不代表本分支的当前接线。
+>
+> **Branch `v4`.** Host board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**.
+> The hardware target is the 6-layer integrated expansion board in
+> [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/), which stacks
+> onto the carrier's 2×20 header and folds the 1090/978 receive chains, GNSS,
+> IMU, barometer, and power onto one board — **no RTL-SDR dongle required**.
+> One branch per hardware revision.
 
 ## 项目概览 / Overview
 
@@ -185,6 +195,47 @@ current Rev1.2 4.3-inch board. Legacy EasyEDA sources:
 | GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；PPS 接 GPIO50 但固件未使用。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; PPS is wired to GPIO50 but unused by firmware. |
 | BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
 
+### 集成扩展板 V4.0（研发中）/ Integrated Expansion Board V4.0 (In Development)
+
+上面「必备硬件」里的 RTL-SDR dongle、BNO085、GT-U8 和 BMP388 四个分立模块，
+正在被一块**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
+把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，不再需要
+RTL-SDR dongle**。工程与文档在
+[`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)。
+
+The four discrete modules listed under Required Hardware above (RTL-SDR dongle,
+BNO085, GT-U8, BMP388) are being replaced by a single **integrated expansion
+board**. It stacks onto the Waveshare carrier's 2×20 header as a HAT and folds
+the receive chains, sensors, and power into one 6-layer PCB — including its own
+**1090 MHz receive chain, so no RTL-SDR dongle is needed**.
+
+| 项目 | Item | 规格 / Specification |
+|---|---|---|
+| 板框 / 层数 | Outline / layers | 100.1 × 62.1 mm，6 层（JLC06161H-3313），L1→In1 介质 0.0994 mm，50Ω 微带 0.15 mm<br>100.1 × 62.1 mm, 6 layers; 0.0994 mm L1→In1 dielectric, 0.15 mm 50Ω microstrip |
+| 1090 MHz 接收 | 1090 MHz receive | QPL9547 LNA + TA0970A SAW + BGA2817 + AD8313 对数检波 + TLV3501 比较器 → RP2040 PIO 解码<br>QPL9547 LNA, TA0970A SAW, BGA2817, AD8313 log detector, TLV3501 comparator into an RP2040 PIO decoder |
+| 978 MHz UAT | 978 MHz UAT | CC1312R1F3RGZR Sub-GHz 收发器 + 差分 LC 匹配<br>CC1312R1F3RGZR sub-GHz transceiver with differential LC matching |
+| 天线 | Antennas | 板载 1090 IFA（PCB 铜箔，π 网络可调）+ 三个 U.FL 外接口（1090 / 978 / GNSS）<br>On-board 1090 IFA (PCB copper, tunable π network) plus three U.FL ports (1090 / 978 / GNSS) |
+| 传感器 | Sensors | ATGM336H-6N-74 GNSS、BNO085 IMU、BMP388 气压计、QMC5883P 磁力计<br>ATGM336H-6N-74 GNSS, BNO085 IMU, BMP388 barometer, QMC5883P magnetometer |
+| 电源（选贴）| Power (optional) | CH224K PD 诱骗 9V + SY6970 充电/电量计 + SY7069 升压 5V + 单节锂电<br>CH224K PD sink at 9V, SY6970 charger/fuel gauge, SY7069 5V boost, single-cell Li-po |
+| 规模 | Scale | 177 个位置、386 个过孔（全部 ≥0.3 mm 钻孔）<br>177 placements, 386 vias (all ≥0.3 mm drill) |
+
+**状态**：布局布线完成，DRC 零违例、未连通 0，Gerber/钻孔可导出；**尚未打样**。
+板载 IFA 天线已落板但**未经实测调谐**，必须装盒后用 VNA 校准，
+见 [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md)。
+
+**Status**: layout and routing complete with zero DRC violations and zero
+unconnected nets; Gerbers and drill files export cleanly. **Not yet fabricated.**
+The on-board IFA antenna is laid out but **not empirically tuned** — it requires
+VNA calibration in the final enclosure.
+
+| 文档 | Document | 内容 / Contents |
+|---|---|---|
+| [`PINMAP.md`](hardware/expansion-board-v4/PINMAP.md) | 权威引脚/网络映射 / Authoritative pin and net map |
+| [`ASSEMBLY.md`](hardware/expansion-board-v4/ASSEMBLY.md) | 手工贴片点位清单（脚本从板子生成）/ Hand-assembly placement list, generated from the board |
+| [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
+| [`LAYOUT_CONSTRAINTS.md`](hardware/expansion-board-v4/LAYOUT_CONSTRAINTS.md) | 布局布线约束与验收脚本 / Layout constraints and verification scripts |
+| [`BOARD_TEST.md`](hardware/expansion-board-v4/BOARD_TEST.md) | 裸板验收测试 / Bare-board acceptance tests |
+
 ### 历史 BOM 成本参考 / Legacy BOM Cost Reference
 
 以下成本表属于旧 2.4 寸 v0.8.0 原型，保留用于历史复盘，**不能**作为当前
@@ -243,6 +294,8 @@ current 4.3-inch integrated board, and prices/exchange rates are not current.
 | `firmware/main/` | `firmware/main/` | 应用层 C 源码和编进固件的识别数据表（航司代码、ICAO24 国家段） / Application C sources and the identity tables compiled into the firmware (airline codes, ICAO24 countries) |
 | `firmware/components/esp32-rtl-sdr/` | `firmware/components/esp32-rtl-sdr/` | RTL-SDR USB/SDR 组件 / RTL-SDR USB/SDR component |
 | `firmware/scripts/` | `firmware/scripts/` | 字体、数据库和测试脚本 / Font, database, and test scripts |
+| `hardware/expansion-board-v4/` | `hardware/expansion-board-v4/` | **当前硬件目标**：6 层集成扩展板 KiCad 工程、生成/校验脚本与装配文档 / **Current hardware target**: 6-layer integrated expansion board — KiCad project, generator/verification scripts, and assembly docs |
+| `hardware/expansion-board-v3/` | `hardware/expansion-board-v3/` | 上一版 4 层扩展板（v3.2 已打样，仍用于固件调试和 IFA 天线研究） / Previous 4-layer expansion board (v3.2 fabricated; still used for firmware debugging and IFA antenna research) |
 | `datafiles/` | `datafiles/` | SD 卡离线数据工作区：`data/` 机型库与航空数据 bin、`maps/` 底图包（内容不进 git，见 `datafiles/README.md`） / microSD offline data workspace: `data/` aircraft and aeronautical binaries, `maps/` basemap packs (contents gitignored, see `datafiles/README.md`) |
 | `docs/` | `docs/` | 构建、协议、架构、用户和硬件文档 / Build, protocol, architecture, user, and hardware docs |
 | `web/flasher/` | `web/flasher/` | ESP Web Tools 网页刷机页面 / ESP Web Tools web flasher |
