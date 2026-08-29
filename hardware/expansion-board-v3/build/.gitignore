@@ -1,0 +1,13 @@
+# 中间产物：可由工具链完全重生成，体积大（norf.kicad_pcb 1.7MB / dsn+ses 各 140KB）
+# 不入库，但**保留在工程目录里**方便随时打开核对，不再散落到 /tmp 被系统清掉。
+# 重生成方式见 reroute.sh；每一步的日志和 DRC 报告也都落在这里。
+*.kicad_pcb
+*.kicad_pro
+*.dsn
+*.ses
+*.net.xml
+*.json
+*.log
+*.txt
+*.kicad_prl
+trial/

@@ -1,0 +1,381 @@
+{
+"_comment": "板级文字与丝印图形。由 silk_texts.py export 生成、import 贴回。元件位号不在这里（那在 PLACEMENT.py）。",
+"texts": [
+{
+"text": "Pilot Kit Avionics Board",
+"layer": "B.SilkS",
+"x": 100.0,
+"y": 74.0,
+"h": 3.0,
+"w": 3.0,
+"thick": 0.51,
+"angle": 0.0,
+"mirror": true,
+"just": 0
+},
+{
+"text": "V3.6   2026-08",
+"layer": "B.SilkS",
+"x": 100.0,
+"y": 80.0,
+"h": 2.0,
+"w": 2.0,
+"thick": 0.34,
+"angle": 0.0,
+"mirror": true,
+"just": 0
+},
+{
+"text": "(c) Pilot Kit",
+"layer": "B.SilkS",
+"x": 100.0,
+"y": 85.0,
+"h": 1.6,
+"w": 1.6,
+"thick": 0.272,
+"angle": 0.0,
+"mirror": true,
+"just": 0
+},
+{
+"text": "1090 / 978 ADS-B  +  GNSS  +  IMU  +  BARO",
+"layer": "B.SilkS",
+"x": 100.0,
+"y": 90.0,
+"h": 1.4,
+"w": 1.4,
+"thick": 0.238,
+"angle": 0.0,
+"mirror": true,
+"just": 0
+},
+{
+"text": "https://air.club",
+"layer": "B.SilkS",
+"x": 100.0,
+"y": 95.0,
+"h": 1.8,
+"w": 1.8,
+"thick": 0.306,
+"angle": 0.0,
+"mirror": true,
+"just": 0
+},
+{
+"text": "SWGNSS",
+"layer": "F.Fab",
+"x": 73.0,
+"y": 55.1,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "SW1090",
+"layer": "F.Fab",
+"x": 114.6,
+"y": 62.1,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "LNA1",
+"layer": "F.Fab",
+"x": 101.6,
+"y": 71.2,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "LNA2",
+"layer": "F.Fab",
+"x": 117.7,
+"y": 71.2,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "AD8319",
+"layer": "F.Fab",
+"x": 133.9,
+"y": 71.2,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "QMC5883",
+"layer": "F.Fab",
+"x": 71.3,
+"y": 77.0,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "BNO085",
+"layer": "F.Fab",
+"x": 63.7,
+"y": 78.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "RP2040",
+"layer": "F.Fab",
+"x": 88.4,
+"y": 80.5,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "BMP388",
+"layer": "F.Fab",
+"x": 71.3,
+"y": 81.2,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "W25Q128",
+"layer": "F.Fab",
+"x": 103.4,
+"y": 82.1,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "AD8313",
+"layer": "F.Fab",
+"x": 114.1,
+"y": 82.1,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "CC1312R",
+"layer": "F.Fab",
+"x": 126.2,
+"y": 85.0,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "TLV3501",
+"layer": "F.Fab",
+"x": 83.1,
+"y": 91.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "3V3-RF",
+"layer": "F.Fab",
+"x": 63.1,
+"y": 93.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "3V3-D",
+"layer": "F.Fab",
+"x": 69.4,
+"y": 93.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "3V3-G",
+"layer": "F.Fab",
+"x": 74.3,
+"y": 93.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.144,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "1090MHz IFA ANT",
+"layer": "F.SilkS",
+"x": 118.5,
+"y": 54.0,
+"h": 0.9,
+"w": 0.9,
+"thick": 0.153,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "1090 IFA",
+"layer": "F.SilkS",
+"x": 103.1,
+"y": 59.2,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "1090 EXT",
+"layer": "F.SilkS",
+"x": 124.3,
+"y": 59.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "GNSS INT",
+"layer": "F.SilkS",
+"x": 50.9,
+"y": 64.6,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 90.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "ATGM336H",
+"layer": "F.SilkS",
+"x": 70.4,
+"y": 66.4,
+"h": 0.95,
+"w": 0.95,
+"thick": 0.15,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "GNSS EXT",
+"layer": "F.SilkS",
+"x": 50.9,
+"y": 74.3,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 90.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "978 UAT",
+"layer": "F.SilkS",
+"x": 145.525,
+"y": 80.5,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+},
+{
+"text": "USB",
+"layer": "F.SilkS",
+"x": 53.525,
+"y": 97.9,
+"h": 0.8,
+"w": 0.8,
+"thick": 0.136,
+"angle": 0.0,
+"mirror": false,
+"just": 0
+}
+],
+"graphics": [
+{
+"kind": "segment",
+"layer": "F.SilkS",
+"start": [
+127.21,
+62.45
+],
+"end": [
+127.21,
+61.75
+],
+"width": 0.2
+},
+{
+"kind": "segment",
+"layer": "F.SilkS",
+"start": [
+139.625,
+85.845
+],
+"end": [
+140.325,
+85.845
+],
+"width": 0.2
+}
+]
+}
