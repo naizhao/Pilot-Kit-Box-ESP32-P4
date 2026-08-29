@@ -1,4 +1,4 @@
-# V4.0 Purchase BOM (single authoritative version, auto-exported from the netlist by tools/gen_bom.py)
+# V4.0 Purchase BOM (single authoritative version, auto-exported from the netlist — do not hand-edit)
 Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 
 > ⚠️ **This file supersedes all purchase tables previously scattered across design doc §7/§12/§13.**

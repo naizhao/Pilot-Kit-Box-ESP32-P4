@@ -124,43 +124,36 @@ Pre-built packages live in [`release/`](release/):
 
 ---
 
-## Rebuilding from source / 从源重建
+## What ships here / 这里交付什么
 
-The board is **generated and verified by scripts**, not hand-maintained. The
-schematic, placement, routing, zones, and silkscreen are all frozen into
-version-controlled data files, so the board can be reproduced bit-for-bit.
+This directory carries the **results**: the KiCad project, the fabrication
+package, and the assembly documents. Open `kicad/` in KiCad 10 to inspect or
+modify the design; send `release/` straight to a board house.
 
-板子由**脚本生成和校验**，不是手工维护。原理图、布局、布线、覆铜和丝印
-全部固化为受版本控制的数据文件，可 1:1 复现。
+本目录交付的是**结果**：KiCad 工程、制造文件包、装配文档。
+要看或改设计，用 KiCad 10 打开 `kicad/`；要打板，把 `release/` 直接发板厂。
 
-```bash
-# Reproduce the board from frozen data (seconds, deterministic)
-# 从固化数据复现（秒级，结果确定）
-bash tools/rebuild.sh
-
-# Re-run the full auto-router from scratch (~10 min, non-deterministic)
-# 从零重新布线（约 10 分钟，结果每次不同）
-bash tools/run_route.sh
-```
-
-Requires KiCad 10 (uses its bundled Python for `pcbnew`).
-需要 KiCad 10（使用其自带 Python 的 `pcbnew`）。
-
-### Verification scripts / 校验脚本
-
-These run as part of both build chains and **fail loudly** rather than
-warning — every one of them exists because something slipped through silently
-at least once.
-
-它们是两条构建链的一部分，**失败即中断**而不是警告——
-每一个都是因为某件事曾经静默溜过去才加上的。
-
-| Script | Guards against |
+| Path | What it is |
 |---|---|
-| `check_route.py` | RF nets leaving F.Cu, vias puncturing the In1 reference plane, sub-0.30 mm drills, connector through-holes losing their soldermask opening |
-| `check_docs_sync.py` | Documentation coordinates drifting from the board; document titles carrying a stale revision |
-| `enforce_via_spec.py` | Library footprints reintroducing sub-spec via-in-pad drills on rebuild |
-| `free_area.py` / `diff_layout.py` | Placement regressions between runs |
+| `kicad/` | Schematic + PCB source, openable and editable in KiCad 10 |
+| `release/` | Gerber, drill, BOM and CPL — ready to send to a fab |
+| `ASSEMBLY_MAP.pdf` | Per-designator placement map with orientation and polarity |
+| `CHECKLIST.md` | Line-by-line check sheet for hand assembly |
+| `SELECTIVE_PLACEMENT.md` | Which designators must **not** simply be populated from the BOM |
+| `BOM_PURCHASE.md` | Parts list with values, packages and selection constraints |
+
+The board was generated and verified by an internal script chain rather than
+hand-maintained, which is why the schematic, placement, routing, zones and
+silkscreen are all internally consistent. Those generators are part of our
+build process, not part of what this board is — they are not published.
+
+板子由内部脚本链生成和校验，不是手工维护的，所以原理图、布局、布线、覆铜
+和丝印彼此严格一致。那套生成器属于我们的构建过程，不是这块板本身，
+因此不在公开范围内。
+
+Requires KiCad 10 to open the project (it uses KiCad 10 file formats).
+打开工程需要 KiCad 10（文件格式为 KiCad 10）。
+
 
 ---
 
