@@ -30,10 +30,13 @@ MODE, TARE, UP or DOWN application buttons on the Rev1.2 board.
 
 A floating action button (FAB) stays near one screen edge.
 
-- Tap **☰** to open the horizontal dock.
-- Choose **PFD**, **Traffic**, **List**, **Setup**, **About** or **Diag**
-  directly. Selecting a page closes the dock.
-- Tap the FAB again, or leave the dock idle for five seconds, to close it.
+- Tap **☰** to open the full-screen navigation grid.
+- Page 1: **PFD**, **Traffic**, **Map**, **List**, **Search**, **Log**,
+  **Tools**; page 2: **Diag**, **Setup**, **About**. Log and Tools are greyed
+  placeholders (the pages are not implemented yet) and do not respond to taps.
+- Swipe left/right to flip grid pages, or keep swiping right on page 1 to
+  close the grid. The grid also closes after six seconds idle, or from the
+  action bar's **Close** button.
 - Hold the FAB for about 200 ms and drag it. It snaps to the left or right
   edge, and its side and vertical position are saved in NVS.
 - On a diagnostic detail page, the FAB becomes **←**. Use it, the title-bar
@@ -42,8 +45,9 @@ A floating action button (FAB) stays near one screen edge.
 
 ### Level the attitude display
 
-Open the dock and hold **Level** for one second. The firmware captures the
-current attitude reference and persists it to NVS. A short tap only displays
+Open the navigation grid and hold **Level** in the bottom action bar for one
+second. The firmware captures the current attitude reference and persists it
+to NVS. A short tap only displays
 “Hold 1 s to level the horizon.”
 
 This touch UI does not expose the old ten-second factory-reset/DCD-wipe
@@ -59,8 +63,8 @@ appears automatically.
    orientations, rather than spinning around one axis.
 3. Continue until accuracy reaches at least 2 and remains stable. The guide
    then closes automatically; **Later** dismisses it without calibrating.
-4. Put the installed unit in its normal level pose, open the dock and hold
-   **Level** for one second.
+4. Put the installed unit in its normal level pose, open the navigation grid
+   and hold **Level** for one second.
 
 BNO085 continuously refines its magnetic calibration while the unit moves.
 Leveling stores the Pilot Kit software attitude reference; it is separate
@@ -77,13 +81,16 @@ and verified; leveling alone cannot correct a wrong axis mapping.
 |---|---|
 | **PFD** | Attitude, pitch and bank, heading/HSI, ground speed, barometric altitude/vertical speed, GPS and traffic status |
 | **Traffic** | 360° traffic radar; touch range/orientation controls and targets for selection/detail |
+| **Map** | Offline basemap with an aviation overlay (airports, navaids, fixes); tap a symbol for its detail page |
 | **List** | Tracked-aircraft table; tap headers to sort, drag to scroll and tap a row to open its detail drawer |
+| **Search** | Search the local aviation databases for airports, navaids and fixes; open details or show one on the map |
 | **Setup** | Language, QNH, map orientation, range, log backend, demo mode and MicroSD formatting controls |
 | **About** | Project version, build information and hardware summary |
 | **Diag** | Live SDR/DSP, BLE, GPS, IMU, barometer, storage, temperature and other subsystem cards; tap a card for detail |
 
-The dock is for the six top-level pages only. Detail pages never show a
-second navigation dock.
+**Log** and **Tools** are greyed placeholders in the grid; those pages are
+not implemented yet. The grid switches top-level pages only; detail pages
+never show a second navigation grid.
 
 ### Storage setting
 

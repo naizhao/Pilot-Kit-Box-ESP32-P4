@@ -59,5 +59,12 @@ Official links:
 not the 4.3-inch Rev1.2 schematic. It describes a different Waveshare
 ESP32-P4-WIFI6 board and must not be used for this target's pin assignments.
 
+## Expansion boards
+
+| Board | Status | Entry point |
+|---|---|---|
+| Expansion board **V4** (6-layer integrated) | Current hardware target — layout complete, not yet fabricated | [`../../hardware/expansion-board-v4/README.md`](../../hardware/expansion-board-v4/README.md) (bilingual; every doc ships as EN + `-zh_CN.md`) |
+| Expansion board **V3** (4-layer) | Archived (v3.2 fabricated; still used for firmware debugging) | [`../../hardware/expansion-board-v3/README.md`](../../hardware/expansion-board-v3/README.md) |
+
 The previous 2.4-inch carrier and its four-button wiring remain historical
 design sources under `docs/jlc/`; they are not the active board.

@@ -21,6 +21,8 @@
 | 硬件资料索引 | [`hardware/README.md`](hardware/README.md) | [`hardware/README-zh_CN.md`](hardware/README-zh_CN.md) | 硬件搭建者 |
 | 板卡引脚 | [`hardware/board_pinout.md`](hardware/board_pinout.md) | [`hardware/board_pinout-zh_CN.md`](hardware/board_pinout-zh_CN.md) | 硬件开发者 |
 | ESP32-C6 slave 烧录 | [`hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) | [`hardware/c6_slave_firmware-zh_CN.md`](hardware/c6_slave_firmware-zh_CN.md) | BLE bring-up |
+| 4.3 寸触摸 UX 规格 | [`ux/box-4.3-ux-spec.md`](ux/box-4.3-ux-spec.md) | [`ux/box-4.3-ux-spec-zh_CN.md`](ux/box-4.3-ux-spec-zh_CN.md) | UI / 固件界面实现者 |
+| 扩展板 V4（当前硬件目标） | [`../hardware/expansion-board-v4/README.md`](../hardware/expansion-board-v4/README.md) | 同一文件（双语） | 装板 / 复刻者 |
 
 ## 当前功能基线
 
@@ -34,8 +36,9 @@
 - LCD 是 **4.3 寸 ST7701 480×800 MIPI-DSI 屏**，通过 PPA 作为 800×480 横屏使用；背光 GPIO26、复位 GPIO27、BL_EN GPIO33。
 - GT911 触摸与其他设备共用 GPIO7/8 的 I²C0，复位 GPIO23；旧四实体键任务（`button_task.c`）已移出编译。
 - IMU 是 **BNO085 / GY-BN008X**，I2C0 使用 GPIO7 / GPIO8，RST GPIO28，地址 `0x4A`；INT 接 GPIO34（J3 pin 28）但驱动轮询。GPIO20 是板载 BAT_ADC。
-- UI 模式循环是 **PFD -> TRAFFIC -> ADS-B LIST -> SETTINGS -> ABOUT -> DIAG -> PFD**。
-- 4.3 寸触摸 FAB dock 可直接选择 PFD、TRAFFIC、ADS-B LIST、SETTINGS、ABOUT 或 DIAG；长按 dock“调平”一秒保存姿态基准。
+- 4.3 寸触摸 FAB 打开**全屏导航网格**直接切页：第 1 页 **PFD、交通、地图、
+  列表、搜索、记录、工具**，第 2 页 **诊断、设置、关于**；网格底部动作条承载
+  长按「调平」。旧的横向 dock 已废弃。
 - GT-U8 GPS/北斗、BMP388 气压高度/升降率、交通雷达和 DIAG 实时诊断均已接入运行时；GPIO50 PPS 已接线但固件不读取。
 - Settings 可调整语言、QNH、地图朝向、雷达量程和日志后端；MicroSD 支持插拔探测、容量状态和受保护格式化。
 - Settings、About、Diagnostics、Compass Calibration 页面已有中英文固件 UI 字符串，配置保存到 NVS。

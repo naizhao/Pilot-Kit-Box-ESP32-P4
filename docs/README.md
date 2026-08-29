@@ -21,6 +21,8 @@ The root project README remains bilingual because it is the public landing page.
 | Hardware reference index | [`hardware/README.md`](hardware/README.md) | [`hardware/README-zh_CN.md`](hardware/README-zh_CN.md) | Hardware builders |
 | Board pinout | [`hardware/board_pinout.md`](hardware/board_pinout.md) | [`hardware/board_pinout-zh_CN.md`](hardware/board_pinout-zh_CN.md) | Hardware developers |
 | ESP32-C6 slave flashing | [`hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) | [`hardware/c6_slave_firmware-zh_CN.md`](hardware/c6_slave_firmware-zh_CN.md) | BLE bring-up |
+| 4.3″ touch UX spec | [`ux/box-4.3-ux-spec.md`](ux/box-4.3-ux-spec.md) | [`ux/box-4.3-ux-spec-zh_CN.md`](ux/box-4.3-ux-spec-zh_CN.md) | UI / firmware UI implementers |
+| Expansion board V4 (hardware target) | [`../hardware/expansion-board-v4/README.md`](../hardware/expansion-board-v4/README.md) | same file (bilingual) | Board builders / replicators |
 
 ## Current Feature Baseline
 
@@ -36,7 +38,10 @@ All public docs should match this baseline:
 - LCD: **4.3-inch ST7701 480x800 MIPI-DSI**, presented as 800x480 landscape through PPA rotation; backlight PWM GPIO26, reset GPIO27, BL_EN GPIO33.
 - GT911 touch shares I2C0 on GPIO7/8 and uses GPIO23 reset. The legacy four-button task (`button_task.c`) is excluded from the build.
 - IMU: **BNO085 / GY-BN008X**, I2C0 on GPIO7 / GPIO8, RST on GPIO28, address `0x4A`; INT is wired to GPIO34 (J3 pin 28) but the driver polls. GPIO20 is board-fixed BAT_ADC.
-- The touch FAB dock directly selects **PFD, TRAFFIC, ADS-B LIST, SETTINGS, ABOUT, or DIAG**.
+- The touch FAB opens the **full-screen nav grid** that directly selects
+  **PFD, TRAFFIC, MAP, LIST, SEARCH, LOG, TOOLS** (page 1) and
+  **DIAG, SETTINGS, ABOUT** (page 2); the grid's action bar carries the
+  long-press Level action. The earlier horizontal dock is retired.
 - Navigation and tare actions are exposed through the 4.3-inch touch UI; references to MODE/TARE tact buttons describe the legacy 2.4-inch carrier only.
 - GT-U8 GPS/BeiDou, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths. GPIO50 PPS is wired but not consumed by firmware.
 - Settings controls language, QNH, map orientation, radar range, and log backend; MicroSD supports insertion/removal detection, capacity status, and guarded formatting.

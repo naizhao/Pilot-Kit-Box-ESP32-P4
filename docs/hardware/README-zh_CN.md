@@ -58,5 +58,12 @@ ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，�
 4.3 寸 Rev1.2 原理图；它描述另一款微雪 ESP32-P4-WIFI6 板，不能用于本
 目标的引脚分配。
 
+## 扩展板
+
+| 板卡 | 状态 | 入口 |
+|---|---|---|
+| 扩展板 **V4**（6 层集成） | 当前硬件目标——布局布线完成，尚未打样 | [`../../hardware/expansion-board-v4/README.md`](../../hardware/expansion-board-v4/README.md)（双语；每份文档均有 EN + `-zh_CN.md`） |
+| 扩展板 **V3**（4 层） | 已归档（v3.2 已打样；仍用于固件调试） | [`../../hardware/expansion-board-v3/README.md`](../../hardware/expansion-board-v3/README.md) |
+
 旧 2.4 寸载板及其四按键接线仅作为历史设计源保存在 `docs/jlc/`，不是当前
 硬件。

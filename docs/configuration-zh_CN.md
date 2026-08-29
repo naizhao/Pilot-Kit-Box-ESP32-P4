@@ -352,9 +352,10 @@ GPIO26/GPIO23 在 Rev1.2 上是 LCD_BL_PWM 和 GT911 TP_RST。
 
 当前 UI 使用 GT911 触摸：
 
-- 点击 FAB 展开六页面 dock；
+- 点击 FAB 打开全屏导航网格（第 1 页：PFD、交通、地图、列表、搜索、记录、
+  工具；第 2 页：诊断、设置、关于；记录/工具为置灰占位）；
 - 长按并拖动 FAB 可改变位置，落点保存到 NVS；
-- 长按 dock 中“调平”一秒调用 `pk_imu_tare_persist()`；
+- 长按网格动作条中“调平”一秒调用 `pk_imu_tare_persist()`；
 - 详情页可用返回 FAB、标题栏返回或右滑。
 
 Key3 POWER 短按开机、长按约两秒关机；Key1 RESET 重启 P4；Key2 BOOT

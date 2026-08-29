@@ -131,10 +131,10 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | PFD HSI 前方交通叠加和后方目标计数 | Forward-traffic overlay and aft-target count on the PFD HSI | 已实现 / Implemented |
 | ADS-B 列表页：ICAO、呼号、国家、ALT、SPD、HDG、VS、SQK、TYPE 和详情面板 | ADS-B list page: ICAO, callsign, country, ALT, SPD, HDG, VS, SQK, TYPE, and detail pane | 已实现 / Implemented |
 | 本地航空识别数据库：航司 ICAO/IATA、运营人名称、ICAO24 国家、注册号、机型和型号 | Local aviation identity databases: airline ICAO/IATA, operator name, ICAO24 country, registration, type, and model | 已实现 / Implemented |
-| BNO085 100 Hz 姿态融合、校准向导和 dock 长按“调平”持久化 | BNO085 100 Hz attitude fusion, calibration wizard, and persistent dock Level action | 已实现 / Implemented |
+| BNO085 100 Hz 姿态融合、校准向导和导航网格长按“调平”持久化 | BNO085 100 Hz attitude fusion, calibration wizard, and persistent nav-grid Level action | 已实现 / Implemented |
 | Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
-| GT911 触摸 FAB/dock 直接切换六页面，FAB 可拖动记忆，详情页三路返回 | GT911 touch FAB/dock selects six pages directly, remembers FAB position, and provides three detail-page back paths | 已实现 / Implemented |
+| GT911 触摸 FAB 打开全屏导航网格直接切页（两页 10 项可翻页），FAB 可拖动记忆，详情页三路返回 | GT911 touch FAB opens a full-screen nav grid (10 items on two swipeable pages), remembers FAB position, and provides three detail-page back paths | 已实现 / Implemented |
 | RTL-SDR IQ stall 触发软重连，多次失败后才重启整机 | RTL-SDR IQ-stall soft re-init before full restart fallback | 已实现 / Implemented |
 
 ## 硬件清单 / Hardware Bill of Materials
@@ -237,7 +237,16 @@ VNA calibration in the final enclosure.
 |---|---|---|
 | [`PINMAP.md`](hardware/expansion-board-v4/PINMAP.md) | 权威引脚/网络映射 / Authoritative pin and net map |
 | [`ASSEMBLY.md`](hardware/expansion-board-v4/ASSEMBLY.md) | 手工贴片点位清单（脚本从板子生成）/ Hand-assembly placement list, generated from the board |
+| [`CHECKLIST.md`](hardware/expansion-board-v4/CHECKLIST.md) | 按位号贴片核对表（另附 .xlsx/.pdf 打印版）/ Per-reference placement checklist (with printable .xlsx/.pdf) |
 | [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
+| [`BOM_PURCHASE.md`](hardware/expansion-board-v4/BOM_PURCHASE.md) | 权威采购清单（脚本从网表生成）/ Authoritative purchasing list, generated from the netlist |
+| [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md) | IFA 调谐备料与装盒 VNA 调试流程 / Antenna tuning kit and the in-enclosure VNA procedure |
+| [`BASEBOARD_REF.md`](hardware/expansion-board-v4/BASEBOARD_REF.md) | 载板机械参数基准 / Mechanical reference for the Waveshare carrier |
+
+以上文档均提供英文正名版与 `-zh_CN.md` 简体中文版；完整索引见
+[`hardware/expansion-board-v4/README.md`](hardware/expansion-board-v4/README.md)。
+Each ships as an English canonical file plus a `-zh_CN.md` Simplified-Chinese
+counterpart; see the v4 README for the full index.
 
 ### 历史 BOM 成本参考 / Legacy BOM Cost Reference
 
@@ -298,7 +307,7 @@ current 4.3-inch integrated board, and prices/exchange rates are not current.
 | `firmware/components/esp32-rtl-sdr/` | `firmware/components/esp32-rtl-sdr/` | RTL-SDR USB/SDR 组件 / RTL-SDR USB/SDR component |
 | `firmware/scripts/` | `firmware/scripts/` | 字体、数据库和测试脚本 / Font, database, and test scripts |
 | `hardware/expansion-board-v4/` | `hardware/expansion-board-v4/` | **当前硬件目标**：6 层集成扩展板 KiCad 工程、生成/校验脚本与装配文档 / **Current hardware target**: 6-layer integrated expansion board — KiCad project, generator/verification scripts, and assembly docs |
-| `hardware/expansion-board-v3/` | `hardware/expansion-board-v3/` | 上一版 4 层扩展板（v3.2 已打样，仍用于固件调试和 IFA 天线研究） / Previous 4-layer expansion board (v3.2 fabricated; still used for firmware debugging and IFA antenna research) |
+| `hardware/expansion-board-v3/` | `hardware/expansion-board-v3/` | 上一版 4 层扩展板（v3.2 已打样，已归档；仍用于固件调试）——见其 [README](hardware/expansion-board-v3/README.md) / Previous 4-layer expansion board (v3.2 fabricated, **archived**; still used for firmware debugging) — see its [README](hardware/expansion-board-v3/README.md) |
 | `datafiles/` | `datafiles/` | SD 卡离线数据工作区：`data/` 机型库与航空数据 bin、`maps/` 底图包（内容不进 git，见 `datafiles/README.md`） / microSD offline data workspace: `data/` aircraft and aeronautical binaries, `maps/` basemap packs (contents gitignored, see `datafiles/README.md`) |
 | `docs/` | `docs/` | 构建、协议、架构、用户和硬件文档 / Build, protocol, architecture, user, and hardware docs |
 | `web/flasher/` | `web/flasher/` | ESP Web Tools 网页刷机页面 / ESP Web Tools web flasher |
@@ -331,6 +340,7 @@ The box uses three local identity databases so ICAO24 addresses and ADS-B callsi
 | 维护航空识别数据库 | Maintain the aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
 | 使用 4.3 寸触摸 UI 和 PFD | Use the 4.3-inch touch UI and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
 | 接 IMU、GPS、BMP388、RTL-SDR 或 J3 扩展 | Wire IMU, GPS, BMP388, RTL-SDR, or J3 expansion | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
+| 装配 / 复刻 V4 扩展板 | Assemble or replicate the V4 expansion board | [`hardware/expansion-board-v4/README.md`](hardware/expansion-board-v4/README.md) | 同左（各文档附 `-zh_CN.md` 中文版）/ same (each doc has a `-zh_CN.md` counterpart) |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |
 | 浏览全部文档语言覆盖 | Browse all docs and language coverage | [`docs/README.md`](docs/README.md) | [`docs/README-zh_CN.md`](docs/README-zh_CN.md) |
 

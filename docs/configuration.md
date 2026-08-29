@@ -246,9 +246,11 @@ and GT911 TP_RST on Rev1.2.
 
 The current UI uses GT911 touch:
 
-- tap the FAB to open the six-page navigation dock;
+- tap the FAB to open the full-screen navigation grid (page 1: PFD, traffic,
+  map, list, search, log, tools; page 2: diag, settings, about; log and
+  tools are greyed placeholders);
 - hold and drag the FAB to move it; its position is stored in NVS;
-- hold **Level** in the dock for one second to run
+- hold **Level** in the grid's action bar for one second to run
   `pk_imu_tare_persist()`;
 - use the back FAB, title-bar back control or right swipe on detail pages.
 
