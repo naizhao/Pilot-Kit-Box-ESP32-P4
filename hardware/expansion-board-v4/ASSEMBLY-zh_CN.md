@@ -2,6 +2,9 @@
 > 由 `tools/gen_assembly.py` 从原理图分页 + PCB 坐标自动生成，改板后重跑。
 
 配套看图：板上位置 `render/top.png`，丝印和 pin1 `render/silk.svg`。
+按装配语义着色的整板装配图见 [`ASSEMBLY_MAP-zh_CN.pdf`](ASSEMBLY_MAP-zh_CN.pdf)
+（英文版 [`ASSEMBLY_MAP.pdf`](ASSEMBLY_MAP.pdf)）；贴装分组与互斥判据见
+[`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)。
 
 ## ⚠️ 装配前先确认做哪个版本
 

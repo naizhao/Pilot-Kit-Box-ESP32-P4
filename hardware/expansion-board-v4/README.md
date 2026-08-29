@@ -87,6 +87,8 @@ authored in. Tables, part numbers, and net names are identical in both.
 | [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map — the single source of truth for the schematic | EN / 中文 |
 | [`VARIANTS.md`](VARIANTS.md) | Powered vs. unpowered assembly variants (inverted logic — read before ordering) | EN / 中文 |
 | [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list, generated from the board | EN / 中文 |
+| [`ASSEMBLY_MAP.pdf`](ASSEMBLY_MAP.pdf) / [`ASSEMBLY_MAP-zh_CN.pdf`](ASSEMBLY_MAP-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
+| [`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md) | Selective-placement groups and **mutex rules** — which parts must never be populated together | EN / 中文 |
 | [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST.xlsx) / [.pdf](CHECKLIST.pdf)) | EN / 中文 |
 | [`BOM_PURCHASE.md`](BOM_PURCHASE.md) | Authoritative purchasing list, generated from the netlist | EN / 中文 |
 | [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |

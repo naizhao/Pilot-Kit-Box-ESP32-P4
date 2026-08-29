@@ -239,6 +239,7 @@ VNA calibration in the final enclosure.
 | [`ASSEMBLY.md`](hardware/expansion-board-v4/ASSEMBLY.md) | 手工贴片点位清单（脚本从板子生成）/ Hand-assembly placement list, generated from the board |
 | [`CHECKLIST.md`](hardware/expansion-board-v4/CHECKLIST.md) | 按位号贴片核对表（另附 .xlsx/.pdf 打印版）/ Per-reference placement checklist (with printable .xlsx/.pdf) |
 | [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
+| [`SELECTIVE_PLACEMENT.md`](hardware/expansion-board-v4/SELECTIVE_PLACEMENT.md) | 贴装分组与互斥规则（贴错会烧板）/ Placement groups and mutex rules |
 | [`BOM_PURCHASE.md`](hardware/expansion-board-v4/BOM_PURCHASE.md) | 权威采购清单（脚本从网表生成）/ Authoritative purchasing list, generated from the netlist |
 | [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md) | IFA 调谐备料与装盒 VNA 调试流程 / Antenna tuning kit and the in-enclosure VNA procedure |
 | [`BASEBOARD_REF.md`](hardware/expansion-board-v4/BASEBOARD_REF.md) | 载板机械参数基准 / Mechanical reference for the Waveshare carrier |

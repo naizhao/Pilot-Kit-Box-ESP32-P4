@@ -93,6 +93,15 @@ __pycache__
 
 # Playwright MCP 会话产物（浏览器快照/日志），非项目资产
 .playwright-mcp/
+.playwright-cli/
+.codex-tmp/
+
+# 本地一次性产物 / 工具缓存：漏在仓库根的散件，不进公开仓库
+/kicad/
+/outputs/
+/jlc_prices.json
+/expansion-board-v3-drc.rpt
+/gerber-top.png
 
 # 硬件工程的中间产物：DSN/SES、布线中间盘、Gerber 对拍、装配图的 SVG/HTML，
 # 以及 headless Chrome 出 PDF 时留下的 profile（一个就 133MB）。
