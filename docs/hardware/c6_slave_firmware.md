@@ -316,8 +316,7 @@ Work it in this order (cheapest first):
 > ✅ **Bring-up status**: fully working as of 2026-05-14 with
 > `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y` + the
 > `connect_to_slave` → `bt_controller_init` → `bt_controller_enable`
-> → `nimble_port_init` sequence in `ble_gatt_init()`. Background
-> writeup in [`c6_bringup_status.md`](c6_bringup_status.md).
+> → `nimble_port_init` sequence in `ble_gatt_init()`.
 
 ### How to confirm C6 itself is healthy (independent of P4 host)
 

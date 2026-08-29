@@ -126,7 +126,7 @@ RTL2832U 范围 225 kSPS – 3.2 MSPS。ADS-B 必须 ≥ 2 MSPS（每比特 1 µ
 
 ## 4. 蓝牙 / BLE / ESP-Hosted
 
-> ✅ **默认 `CONFIG_PK_BLE_ENABLED=y`，BLE 启动时初始化**。Bring-up 已经全链路打通（详细诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)），出厂状态固件会自动跑 `ble_gatt_init()`，板子上电就 advertising。
+> ✅ **默认 `CONFIG_PK_BLE_ENABLED=y`，BLE 启动时初始化**。Bring-up 已经全链路打通，出厂状态固件会自动跑 `ble_gatt_init()`，板子上电就 advertising。
 >
 > **使用 BLE 的前提**：
 > 1. 给 C6 烧 esp_hosted slave 固件（一次性，每块板做一次）— 见 [`docs/BUILD.md` §3](BUILD.md#3-新板首次设置烧-esp32-c6-hosted-slave-固件一次性) 或 [`docs/hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md)
@@ -172,7 +172,7 @@ CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 > 从 P4 软件看 reset 是高有效（拉高时 C6 在 reset，拉低时 C6 在跑）。这点跟 C6 silicon
 > 自身的低有效 EN 相反，也跟 Espressif 官方 ESP32-P4-Function-EV-Board 用的极性相反。
 > 改错了 SDIO CMD5 会一直返回 `0x107 INVALID_RESPONSE`，C6 看起来 boot 了但其实
-> 一直被 hold 在 reset 里。完整诊断见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+> 一直被 hold 在 reset 里。复位极性必须是高有效（`RESET_ACTIVE_HIGH`），不要改。
 
 **改板子要换引脚**：menuconfig 里 Component config → ESP-Hosted config → SDIO Pin Configuration。
 

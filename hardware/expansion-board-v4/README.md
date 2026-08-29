@@ -78,27 +78,19 @@ See [`VARIANTS.md`](VARIANTS.md).
 
 ## Documentation / 文档
 
-⚠️ **Most design documents are written in Simplified Chinese.** They are
-engineering working notes kept in the language they were reasoned in; this
-README is the English entry point. The tables and part numbers are readable
-without Chinese, and pin/net names are all in English.
-
-**多数设计文档为简体中文**——它们是工程工作记录，保留了原始推理语言。
-本 README 是英文入口。表格、料号和网络名都是英文的。
+Every board document ships in two languages: the English original
+(`*.md`) and the Simplified-Chinese working notes (`*-zh_CN.md`) it was
+authored in. Tables, part numbers, and net names are identical in both.
 
 | Document | Contents | Lang |
 |---|---|---|
-| [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map — the single source of truth for the schematic | 中 |
-| [`LAYOUT_CONSTRAINTS.md`](LAYOUT_CONSTRAINTS.md) | Layout/routing constraints and the acceptance scripts that enforce them | 中 |
-| [`VARIANTS.md`](VARIANTS.md) | Powered vs. unpowered assembly variants (inverted logic — read before ordering) | 中 |
-| [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list, generated from the board | 中 |
-| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement | 中 |
-| [`BOM_PURCHASE.md`](BOM_PURCHASE.md) | Authoritative purchasing list, generated from the netlist | 中 |
-| [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | 中 |
-| [`BOARD_TEST.md`](BOARD_TEST.md) | Bare-board acceptance tests — **run these before powering anything** | 中 |
-| [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | 中 |
-| [`REVIEW_TODO.md`](REVIEW_TODO.md) | Pre-fabrication review findings and **§0 manufacturing parameters** | 中 |
-| [`release/下单说明.md`](release/) | Fab-house order parameters (ships with the manufacturing package) | 中 |
+| [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map — the single source of truth for the schematic | EN / 中文 |
+| [`VARIANTS.md`](VARIANTS.md) | Powered vs. unpowered assembly variants (inverted logic — read before ordering) | EN / 中文 |
+| [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list, generated from the board | EN / 中文 |
+| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST.xlsx) / [.pdf](CHECKLIST.pdf)) | EN / 中文 |
+| [`BOM_PURCHASE.md`](BOM_PURCHASE.md) | Authoritative purchasing list, generated from the netlist | EN / 中文 |
+| [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |
+| [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / 中文 |
 
 ---
 
@@ -127,9 +119,6 @@ Pre-built packages live in [`release/`](release/):
    receptacle. Plug them and the connector will tear off after a few
    insertions. The soldermask layer already encodes the distinction (SH is
    opened, the EP thermal vias are tented) — the fab should follow it.
-
-Layer mapping, drill breakdown, and the order-notes text:
-[`release/下单说明.md`](release/) (Chinese).
 
 ---
 

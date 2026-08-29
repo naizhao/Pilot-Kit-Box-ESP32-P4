@@ -1,62 +1,65 @@
-# 图片资源
+# Image Assets
 
-## 4.3″ 触摸屏 UI（`ui-4.3-*.png`）
+Chinese version: [`README-zh_CN.md`](README-zh_CN.md)
 
-由模拟器渲染，**与真机逐像素一致** —— 模拟器编译的就是固件里那批绘制模块
-（`firmware/main/pfd_*.c`、`pk_ui_nav.c`），不是另画一份效果图。
+## 4.3″ Touchscreen UI (`ui-4.3-*.png`)
 
-全部 800×480，与面板逻辑分辨率相同，可直接用于 README 与官网。
+Rendered by the simulator, **pixel-identical to the real device** — the simulator compiles the very same drawing
+modules used in the firmware (`firmware/main/pfd_*.c`, `pk_ui_nav.c`), not a separately drawn mock-up.
 
-| 图 | 场景 |
+All are 800×480, the same as the panel's logical resolution, and can be used directly in the README and on the website.
+
+| Image | Scene |
 |---|---|
-| ![PFD 主页](ui-4.3-pfd.png) | **PFD 主页**。姿态仪、左右速度/高度带、底部 HSI 罗盘与交通目标叠加、左右各三行信息 |
-| ![dock 展开](ui-4.3-dock.png) | **dock 展开**：六个一级页签 + 分隔线 + 动作区「调平」 |
-| ![dock 英文](ui-4.3-dock-en.png) | 同上英文版。英文是变宽字体，页签宽度按这一侧定 |
-| ![FAB 在左](ui-4.3-dock-left.png) | **FAB 吸在左缘**，dock 随之反向铺开 |
-| ![二级页面](ui-4.3-subpage.png) | **二级页面**：顶栏「← 诊断」，FAB 同时变 ← |
-| ![Toast](ui-4.3-toast.png) | **Toast** 提示，压在所有控件之上 |
-| ![低电量](ui-4.3-battery-low.png) | **低电量**：电池图标转 alert 并与数值一同变红 |
-| ![充电中](ui-4.3-charging.png) | **充电中**：电池播放逐帧动画 |
-| ![交通页](ui-4.3-traffic.png) | **交通页正常态**：360° 雷达 + 右侧目标列表 |
-| ![看板](ui-4.3-list.png) | **看板正常态**：八列表格，含威胁行高亮与徽章 |
-| ![诊断](ui-4.3-diag.png) | **诊断总览正常态**：八张子系统卡片全绿 |
-| ![设置](ui-4.3-settings.png) | **设置页底部**：演示模式那一行（关） |
-| ![开机画面](ui-4.3-splash.png) | **开机画面**（演示模式关） |
+| ![PFD home](ui-4.3-pfd.png) | **PFD home**. Attitude indicator, left/right speed/altitude tapes, bottom HSI compass with traffic overlay, three info lines on each side |
+| ![Subpage](ui-4.3-subpage.png) | **Subpage**: top bar "← Diagnostics", FAB changes to ← as well |
+| ![Toast](ui-4.3-toast.png) | **Toast** notification, layered above all controls |
+| ![Low battery](ui-4.3-battery-low.png) | **Low battery**: battery icon switches to alert and turns red along with the value |
+| ![Charging](ui-4.3-charging.png) | **Charging**: battery plays a frame-by-frame animation |
+| ![Traffic page](ui-4.3-traffic.png) | **Traffic page normal state**: 360° radar + target list on the right |
+| ![List board](ui-4.3-list.png) | **List board normal state**: eight-column table, with threat-row highlighting and badges |
+| ![Diagnostics](ui-4.3-diag.png) | **Diagnostics overview normal state**: all eight subsystem cards green |
+| ![Settings](ui-4.3-settings.png) | **Settings page bottom**: the demo mode row (off) |
+| ![Splash](ui-4.3-splash.png) | **Splash screen** (demo mode off) |
 
-## 演示模式（`demo-4.3-*.png`）
+## Demo Mode (`demo-4.3-*.png`)
 
-演示模式把四路数据源整体换成合成值，用于没接外设时在真机上核对正常态。
-它的安全底线是「开着就一定看得见」，而标识画在控件层、与各页的绘制代码互不
-相干 —— **唯一能证明「每一页都在」的办法就是每一页都截一张**。少截一页，就是
-那一页可能没有标识而没人知道。中英各一版：徽标挤在顶栏右端，各页要给它让出
-宽度，而英文文案比中文长得多。
+Demo mode swaps all four data sources for synthetic values, so the normal state can be verified on the real device
+without peripherals attached. Its safety baseline is "if it is on, it must be visible", and the badge is drawn at the
+control layer, independent of each page's drawing code — **the only way to prove the badge is on every page is to
+capture every page**. Miss one page, and that page may lack the badge without anyone knowing. One set each for Chinese
+and English: the badge is squeezed into the right end of the top bar, and each page has to yield width for it, while
+English copy is much longer than Chinese.
 
-| 图 | 场景 |
+| Image | Scene |
 |---|---|
-| ![PFD](demo-4.3-pfd.png) ![PFD 英文](demo-4.3-pfd-en.png) | **PFD**：顶栏右端红底 ⚠ 演示徽标 + 整屏红框；状态位整组左移让位 |
-| ![交通](demo-4.3-traffic.png) ![交通英文](demo-4.3-traffic-en.png) | **交通页**：朝向/量程左移 |
-| ![看板](demo-4.3-list.png) ![看板英文](demo-4.3-list-en.png) | **看板**：排序说明与 RESET 左移 |
-| ![诊断](demo-4.3-diag.png) ![诊断英文](demo-4.3-diag-en.png) | **诊断**：顶栏只有左上角标题，无需让位 |
-| ![设置](demo-4.3-settings.png) ![设置英文](demo-4.3-settings-en.png) | **设置页**：演示模式开关处于「开」，小字提示转红 |
-| ![开机](demo-4.3-splash.png) ![开机英文](demo-4.3-splash-en.png) | **开机画面**：底部红色横幅。真机上这一屏早于 LVGL，只有横幅没有徽标；模拟器把两者一起画出来了 |
+| ![PFD](demo-4.3-pfd.png) ![PFD English](demo-4.3-pfd-en.png) | **PFD**: red-background ⚠ demo badge at the right end of the top bar + red frame around the whole screen; the status group shifts left to make room |
+| ![Traffic](demo-4.3-traffic.png) ![Traffic English](demo-4.3-traffic-en.png) | **Traffic page**: heading/range shift left |
+| ![List board](demo-4.3-list.png) ![List English](demo-4.3-list-en.png) | **List board**: sort hint and RESET shift left |
+| ![Diagnostics](demo-4.3-diag.png) ![Diagnostics English](demo-4.3-diag-en.png) | **Diagnostics**: the top bar only has the title at the top left; no yielding needed |
+| ![Settings](demo-4.3-settings.png) ![Settings English](demo-4.3-settings-en.png) | **Settings page**: demo mode switch is "on", the small hint text turns red |
+| ![Splash](demo-4.3-splash.png) ![Splash English](demo-4.3-splash-en.png) | **Splash screen**: red banner at the bottom. On the real device this screen renders before LVGL, so it has only the banner, no badge; the simulator draws both |
 
-### 重新生成
+### Regenerating
 
 ```bash
-python3 sim/capture.py            # 全部
-python3 sim/capture.py --only dock  # 只出 dock 相关
+python3 sim/capture.py            # all
+python3 sim/capture.py --only dock  # dock-related only
 ```
 
-UI 改动后重跑一次，再用 `git diff --stat images/` 看哪些场景受影响 —— 没变的
-图 git 不会记录，变了的一眼可见，等于一套轻量的视觉回归。
+After a UI change, re-run it once, then use `git diff --stat images/` to see which scenes were affected — unchanged
+images are not recorded by git, while changed ones are obvious at a glance; it amounts to a lightweight visual
+regression suite.
 
-场景定义在 `sim/capture.py` 的 `SCENES` 表里，每一项就是一组模拟器环境变量。
+Scene definitions live in the `SCENES` table of `sim/capture.py`; each entry is just a set of simulator environment
+variables.
 
-> **PFD 主页没有中英两版**：那一屏全是国际通用的符号、数字与固定缩写
-> （HDG / KM/H / ALT / VS），一个 i18n 词条都没有，两种语言渲染逐字节相同。
-> 这与 ICAO 标准仪表不做本地化一致 —— 语言只影响导航与设置这类文字界面。
+> **The PFD home has no Chinese/English pair**: that screen consists entirely of internationally standardized
+> symbols, numbers, and fixed abbreviations (HDG / KM/H / ALT / VS) — not a single i18n string — so both languages
+> render byte-for-byte identical. This matches how ICAO standard instruments are not localized — language only
+> affects text-driven screens such as navigation and settings.
 
-## 2.4″ 版本与硬件（其余文件）
+## 2.4″ Version and Hardware (Remaining Files)
 
-`PFD.jpg` / `radar-traffic.jpg` / `adsb-list.jpg` 是 2.4″ 版本的**实拍**照片；
-`pcb-*` / `3d-case-*` / `assemble*` 是硬件与装配图。
+`PFD.jpg` / `radar-traffic.jpg` / `adsb-list.jpg` are **real photos** of the 2.4″ version;
+`pcb-*` / `3d-case-*` / `assemble*` are hardware and assembly images.

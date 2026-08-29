@@ -148,7 +148,7 @@ Pilot-Kit-Box-ESP32-P4/
 
 ## 3. 新板首次设置：烧 ESP32-C6 hosted slave 固件（**一次性**）
 
-> ✅ **BLE 已经全链路跑通**（`CONFIG_PK_BLE_ENABLED=y` 是默认值）。每块全新的 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 第一次用都要做这一步——出厂的 C6 上面跑的是工厂 AT 命令固件，跟我们 P4 上的 ESP-Hosted / NimBLE host 协议对不上。**这一步耗时 ~30 分钟、每块板只做一次**，做完之后 C6 的 hosted slave 固件**永久驻留**（除非你重新烧 AT 固件覆盖），所有后续 P4 固件迭代都不再碰 C6。bring-up 过程的完整诊断记录见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+> ✅ **BLE 已经全链路跑通**（`CONFIG_PK_BLE_ENABLED=y` 是默认值）。每块全新的 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 第一次用都要做这一步——出厂的 C6 上面跑的是工厂 AT 命令固件，跟我们 P4 上的 ESP-Hosted / NimBLE host 协议对不上。**这一步耗时 ~30 分钟、每块板只做一次**，做完之后 C6 的 hosted slave 固件**永久驻留**（除非你重新烧 AT 固件覆盖），所有后续 P4 固件迭代都不再碰 C6。
 >
 > **能不能跳过？** 可以，但 BLE 就不能用。如果你**确定不要 BLE**（比如只做 ADS-B 数据路径开发、没买 USB-UART 转接器、跑 CI），跳到 Section 4 之前先做：
 >
@@ -635,7 +635,7 @@ CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=12    ← 应该是 54
 
 **原因**：ESP-Hosted 的 `transport_drv_reconfigure()` 在 C6 没有响应（没刷 hosted slave 固件）时返回失败；vhci_drv.c 第 154 行用 `ESP_ERROR_CHECK()` 包裹这个返回值，强制 abort。
 
-**修复**：先按 [§3](#3-新板首次设置烧-esp32-c6-hosted-slave-固件一次性) 烧 C6 hosted slave 固件。已经烧过、还出这个错，再去 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md) 对一下 GPIO54 / SDIO pin / 复位极性。如果暂时不想接 C6，跑：`idf.py menuconfig → Pilot Kit Box → [ ] Initialise BLE GATT server at boot`，或直接编辑 `sdkconfig` 把 `CONFIG_PK_BLE_ENABLED` 改成 `n` 再编。
+**修复**：先按 [§3](#3-新板首次设置烧-esp32-c6-hosted-slave-固件一次性) 烧 C6 hosted slave 固件。已经烧过、还出这个错，再核对 GPIO54 / SDIO pin / 复位极性（`CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y` 是实机验证过的唯一正确值）。如果暂时不想接 C6，跑：`idf.py menuconfig → Pilot Kit Box → [ ] Initialise BLE GATT server at boot`，或直接编辑 `sdkconfig` 把 `CONFIG_PK_BLE_ENABLED` 改成 `n` 再编。
 
 ### CMD5 `sdmmc_init_ocr: send_op_cond returned 0x107` 然后 reboot loop
 
@@ -645,7 +645,7 @@ CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=12    ← 应该是 54
 直连 C6 EN，板上没有 inverter / level shifter，不能再用反相器解释该
 软件选项。
 
-**修复**：sdkconfig.defaults 已经设置 `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`。如果你改过这一项，恢复默认即可。详细排查过程（包括为什么不是 SDIO 时钟、pull-up、LDO 那些常见嫌疑）见 [`docs/hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md)。
+**修复**：sdkconfig.defaults 已经设置 `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`。如果你改过这一项，恢复默认即可（该板复位线为高有效，已实机验证，常见嫌疑如 SDIO 时钟、pull-up、LDO 都已排除）。
 
 ### `BLE_HS_ETIMEOUT_HCI (controller unresponsive)` 反复打印
 

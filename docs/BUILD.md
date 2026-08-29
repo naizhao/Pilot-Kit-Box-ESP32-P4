@@ -319,7 +319,8 @@ On Waveshare ESP32-P4-WIFI6 the C6 reset polarity must be active-high from the P
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 ```
 
-See [`hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md).
+The C6 SDIO reset line on this board is active-high (verified on real
+hardware); keep this default.
 
 ### LittleFS mount fails
 

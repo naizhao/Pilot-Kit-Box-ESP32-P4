@@ -187,7 +187,7 @@ A fatal error occurred: The chip stopped responding.
 
 ### P4 固件启动后 BLE abort
 
-C6 还没烧 hosted slave，或者 IO9 短接没拔。先确认 C6 启动正常，再看 [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) 的 SDIO / reset 极性排障。
+C6 还没烧 hosted slave，或者 IO9 短接没拔。先确认 C6 启动正常，再核对 SDIO 引脚和复位极性——本板要求 `CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y`（sdkconfig.defaults 已设好，不要改）。
 
 ### CMD5 返回 0x107
 

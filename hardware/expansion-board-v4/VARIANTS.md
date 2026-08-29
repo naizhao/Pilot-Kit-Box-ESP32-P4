@@ -1,138 +1,140 @@
-# V4.0 两个版本：带电源 / 不带电源
+# V4.0 Two Variants: Powered / Unpowered
 
-> 2026-08-23。本文件是**变体设计的唯一基准**，BOM_POWER_NEW.md 与 ASSEMBLY.md
-> 的选贴规则都以这里为准。
+Chinese version: [`VARIANTS-zh_CN.md`](VARIANTS-zh_CN.md)
 
-## 1. 划分原则
+> 2026-08-23. This file is the **single source of truth for the variant design**; the selective placement
+> rules in ASSEMBLY-zh_CN.md also defer to this file.
 
-不是「不贴几个件」，而是**两套各自完整的供电系统**：
+## 1. Division principle
 
-| | F 面 | B 面 |
+Not "leave out a few parts", but **two complete, self-contained power systems**:
+
+| | F side | B side |
 |---|---|---|
-| **不带电源版** | 全部传感器 + RP2040 + CC1312R + 射频链 + 三颗 LDO | **零贴装件** |
-| **带电源版** | 同上 | J4(USB-C PD) + CH224K + SY6970 + SY7069 + L16/L17 + J9 电池座 + 阻容 |
+| **Unpowered variant** | All sensors + RP2040 + CC1312R + RF chains + three LDOs | **Zero placed parts** |
+| **Powered variant** | Same as above | J4 (USB-C PD) + CH224K + SY6970 + SY7069 + L16/L17 + J9 battery holder + passives |
 
-不带电源版**连电池座都不装**——供电、电量信息全部走微雪主板（`VCC_5V` 从 J1 pin1/pin3 进来，
-喂 U1/U2/U3 三颗 LDO）。`VCC_5V` 这条网络是双向的，带电源版由 SY7069 输出反灌 J1，
-不带电源版由 J1 输入，同一根走线两种方向，不需要任何跳线或改板。
+The unpowered variant **doesn't even fit the battery holder** — power and battery-level info all go through the Waveshare mainboard (`VCC_5V` enters from J1 pin1/pin3,
+feeding the three LDOs U1/U2/U3). The `VCC_5V` net is bidirectional: on the powered variant SY7069 outputs and back-feeds J1;
+on the unpowered variant it is an input from J1. Same trace, two directions — no jumper or board change needed.
 
-## 2. 为什么要分：成本在 SMT 面数，不在元件费
+## 2. Why split: the cost is in SMT side count, not component fees
 
-嘉立创 SMT 在线计价实测（板 10.00×6.20 cm，5 片，2026-08-23）。
-下表用**相对倍数**表示，绝对报价会随时间和批量变化，下单前请自行询价：
+Measured with JLC SMT online quoting (board 10.00×6.20 cm, 5 pcs, 2026-08-23).
+The table below uses **relative multiples**; absolute quotes change with time and batch size, so get your own quote before ordering:
 
-| 方案 | 贴片层 | 可选档位 | 相对成本 |
+| Option | Placement sides | Available tier | Relative cost |
 |---|---|---|---|
-| 带电源版（697 焊点 / 38 种） | 双面 | **只能标准型** | **2.43×**（基准的 2.43 倍）|
-| 不带电源版（598 焊点 / 32 种），**仍双面** | 双面 | 只能标准型 | 2.30× |
-| 不带电源版（602 焊点 / 33 种），**单面** | 单面 | **经济型** | **1.00×（基准）** |
-| 同上走标准型 | 单面 | 标准型 | 1.57× |
+| Powered variant (697 solder joints / 38 part types) | Double-sided | **Standard only** | **2.43×** (2.43 times the baseline) |
+| Unpowered variant (598 solder joints / 32 part types), **still double-sided** | Double-sided | Standard only | 2.30× |
+| Unpowered variant (602 solder joints / 33 part types), **single-sided** | Single-sided | **Economy** | **1.00× (baseline)** |
+| Same as above on Standard | Single-sided | Standard | 1.57× |
 
-费用构成（这才是关键——差额几乎全在固定费，不在焊点数）：
+Cost structure (this is the key — the difference is almost entirely fixed fees, not solder-joint count):
 
 ```
-                 双面标准型   单面经济型
-工程费              高          低      ← 差额主要来源
-钢网费              有          无      ← 单面免钢网费
-贴片焊点费          ≈           ≈       ← 两者基本相同
-换料费(整盘后)      ≈           ≈
+                 Double-sided Standard   Single-sided Economy
+Engineering fee      High        Low      ← main source of the difference
+Stencil fee          Yes         No       ← single-sided is stencil-free
+Placement joint fee  ≈           ≈        ← essentially identical between the two
+Reel change fee (after full reels) ≈  ≈
 ```
 
-**两条结论**：
+**Two conclusions**:
 
-1. **省钱全靠解锁经济型**——嘉立创的「双面贴片暂不支持经济型」是硬门槛。
-   单面即使走标准型也只省一半，走经济型才吃到全部差额。
-2. **不做到单面，分版本几乎白做**——双面的两个版本只差 5%，省下的焊点费
-   被固定的工程费 + 钢网费吃掉了。
+1. **The savings hinge entirely on unlocking the Economy tier** — JLC's "double-sided placement does not yet support Economy" is a hard gate.
+   Single-sided saves only half even on the Standard tier; only the Economy tier captures the full difference.
+2. **Without getting to single-sided, splitting into variants is almost pointless** — the two double-sided variants differ by only 5%; the saved placement fees
+   are eaten by the fixed engineering fee + stencil fee.
 
-## 3. 什么算「一个贴装面」
+## 3. What counts as "one placement side"
 
-判据是**这一面有没有需要机器贴装的器件**，不是「有没有铜」：
+The criterion is **whether that side has parts that need machine placement**, not "whether it has copper":
 
-| | 占面数 | 说明 |
+| | Occupies a side | Note |
 |---|---|---|
-| SW2（SolderJumper 焊盘跳线） | **不占** | 不贴任何料，无工序、无钢网、无过炉 |
-| 通孔件（若 J9 改弯针） | **不占** | 计在「插件」栏（手工焊点费 ¥2 + 手工工程费 ¥20，固定） |
-| J4 (USB-C，16 个 SMD 触点) | **占** | 只要它在 B 面，这一面就是贴装面 |
-| 电源那 28 个 SMD | 占 | 带电源版必然双面 |
+| SW2 (SolderJumper solder-pad jumper) | **No** | Nothing placed, no process step, no stencil, no oven run |
+| Through-hole parts (if J9 switches to bent-pin) | **No** | Counted in the "through-hole" column (hand-soldering fee ¥2 + hand-assembly engineering fee ¥20, fixed) |
+| J4 (USB-C, 16 SMD contacts) | **Yes** | As long as it sits on the B side, that side is a placement side |
+| The 28 power SMDs | Yes | The powered variant is necessarily double-sided |
 
-所以 SW2 留 B 面对成本零影响，不必为它做任何调整。
+So leaving SW2 on the B side has zero cost impact; no adjustment needs to be made for it.
 
-## 4. 【已实施 2026-08-23】单面可用怎么做到的
+## 4. 【Implemented 2026-08-23】How single-sided usability was achieved
 
-产品原则：**单面可用是保底，双面更优**。所以不带电源版的 B 面必须**零贴装件**。
+Product principle: **single-sided usability is the floor; double-sided is better**. So the unpowered variant's B side must have **zero placed parts**.
 
-做了三件事：
+Three things were done:
 
-| 改动 | 原因 |
+| Change | Reason |
 |---|---|
-| **J4 (USB-C) → F 面右板边** (144.63, 73.00) | 留 B 面的话不带电源版还是双面，只省 ¥35 等于白做。courtyard 右沿贴齐板边 150，开口仍朝 +X（与微雪 H1 同侧）。`USB_DP/DM` 连的 R9/R10 本来就在 F 面 x117，搬过去走线反而更短 |
-| **新增 R7/R8（5.1k CC 下拉）→ F 面**，紧邻 J4 2.2mm | 不带电源版没有 CH224K，CC 悬空则主机根本不认设备（USB-C 规范要求 device 端呈现 Rd）。**与 CH224K 二选一**：带电源版不贴 |
-| R37 从 (138.80,69.84) 挪到 (137.75,70.75) | J4 的通孔安装脚穿到 B 面，落进了 R37 的 courtyard。顺带把它到 CFG1 脚的距离从 2.97mm 缩到 2.56mm |
+| **J4 (USB-C) → F-side right board edge** (144.63, 73.00) | If left on the B side, the unpowered variant would still be double-sided, saving ¥35 — a waste of effort. The courtyard's right edge sits flush with the board edge at 150, and the opening still faces +X (same side as the Waveshare H1). `USB_DP/DM` goes through R9/R10, which were already on the F side at x117; after the move the routing is actually shorter |
+| **Added R7/R8 (5.1k CC pull-downs) → F side**, 2.2mm right next to J4 | The unpowered variant has no CH224K; with CC floating, the host simply won't recognize the device (the USB-C spec requires Rd on the device side). **Either-or with CH224K**: not placed on the powered variant |
+| R37 moved from (138.80,69.84) to (137.75,70.75) | J4's through-hole mounting legs poke through to the B side and landed inside R37's courtyard. This also shrank its distance to the CFG1 pin from 2.97mm to 2.56mm |
 
-**验收：不带电源版的 B 面贴装件 = 0**（只剩 SW2 焊盘跳线和 TP 类不占面数的东西）。
+**Acceptance criterion: the unpowered variant's B-side placed parts = 0** (only the SW2 solder-pad jumper and non-side-counting TP items remain).
 
-代刷方案（原 §4 方案 A）已否决，理由见 §5——GPIO24/25 是 USB Serial/JTAG 不能做 host，
-切换要烧不可逆 eFuse。不冒险，J4 保留。
+The proxy-flashing scheme (former §4 Option A) was rejected; reasons in §5 — GPIO24/25 are USB Serial/JTAG and cannot do host,
+and switching requires burning an irreversible eFuse. No gamble taken; J4 stays.
 
 
-## 5. 查证记录：为什么 GPIO24/25 不能用
+## 5. Verification record: why GPIO24/25 cannot be used
 
-**曾经的错误方案**：把 RP2040 的 USB 接到 J1 的 pin23/21，让 P4 做 host 代刷。
-查 ESP32-P4 datasheet 后**否决**：
+**The former wrong scheme**: wire the RP2040's USB to J1 pin23/21 and let the P4 act as USB host for proxy flashing.
+After checking the ESP32-P4 datasheet, **rejected**:
 
-| USB 外设 | 默认引脚 | 能否 host | J3 是否引出 |
+| USB peripheral | Default pins | Can be host | Brought out on J3? |
 |---|---|---|---|
-| **USB Serial/JTAG** | **GPIO24 / 25** | ❌ 纯 device | ✅ pin23/21 |
-| USB 2.0 **Full-Speed OTG** | **GPIO26 / 27** | ✅ | ❌ **没引出** |
-| USB 2.0 High-Speed OTG | 专用脚 49/50 | ✅ | ✅ pin27/25（与 H2 同网） |
+| **USB Serial/JTAG** | **GPIO24 / 25** | ❌ device only | ✅ pin23/21 |
+| USB 2.0 **Full-Speed OTG** | **GPIO26 / 27** | ✅ | ❌ **not brought out** |
+| USB 2.0 High-Speed OTG | dedicated pins 49/50 | ✅ | ✅ pin27/25 (same nets as H2) |
 
-- 微雪 J3-23/21 引出的 GPIO24/25 是 **USB Serial/JTAG**，固定 device，不能做 host
-- OTG FS 默认在 GPIO26/27，**J3 上没有这两个脚**
-- 要把 OTG FS 切到 GPIO24/25 得烧 eFuse `USB_PHY_SEL`——**一次性不可逆，且烧完 P4 的 USB-JTAG 就废了**，而微雪板已出厂，不是我们能控制的
+- The GPIO24/25 brought out on the Waveshare J3-23/21 are **USB Serial/JTAG**, device-only, cannot act as host
+- OTG FS defaults to GPIO26/27, and **J3 does not bring out those two pins**
+- Switching OTG FS to GPIO24/25 requires burning the eFuse `USB_PHY_SEL` — **one-time and irreversible, and once burned the P4's USB-JTAG is dead**; besides, the Waveshare board already ships from the factory, not under our control
 
-**只剩 HS 那组（J3-27/25）**，但它与 H2 的 USB-C 口同网，且载板 USB-A（RTL-SDR 方案）
-也走这条线，三方只能选一个。
+**Only the HS group (J3-27/25) remains**, but it shares nets with H2's USB-C port, and the carrier board's USB-A (the RTL-SDR option)
+also runs on that line; of the three parties only one can be chosen.
 
-## 6. 为什么 C6 要手工 UART 刷，而 RP2040 不用
+## 6. Why the C6 needs manual UART flashing while the RP2040 doesn't
 
-这个问题决定了「代刷」到底靠不靠谱，答案是**两者的机制完全不同**：
+This question decides whether proxy flashing is actually dependable; the answer is **the two mechanisms are completely different**:
 
-**C6（见 `docs/hardware/c6_slave_firmware-zh_CN.md`）**要外接 USB-UART 接 P1 排针、
-IO9 短地、esptool 写 flash。两个原因：
+**The C6 (see `docs/hardware/c6_slave_firmware-zh_CN.md`)** needs an external USB-UART hooked to the P1 pin header,
+IO9 shorted to ground, and esptool to write the flash. Two reasons:
 
-1. **硬件**：微雪把 C6 的 UART 引到独立的 P1 排针，没接到 P4 的 GPIO，P4 够不着
-2. **鸡生蛋**：P4↔C6 走 ESP-Hosted over SDIO，而 SDIO 要通，前提是 C6 里已经跑着
-   hosted 固件。空白 C6 没固件 → SDIO 不通 → 只能走 ROM 的 UART bootloader，
-   而那需要外部工具握手。所以**首次**必须手工，之后才能 OTA。
+1. **Hardware**: Waveshare routes the C6's UART to a separate P1 pin header, not to the P4's GPIOs — the P4 cannot reach it
+2. **Chicken-and-egg**: P4↔C6 runs ESP-Hosted over SDIO, and for SDIO to come up, the hosted firmware must already be running on
+   the C6. A blank C6 has no firmware → SDIO won't come up → the only path left is the ROM's UART bootloader,
+   which needs an external tool for the handshake. So the **first** flash must be manual; only after that can OTA be used.
 
-**RP2040 没有这个问题**：BOOTSEL 固化在 ROM 里，空片上电（或短接 QSPI_SS）直接
-变成一个 USB MSC U 盘，不需要预装任何固件、不需要握手协议。这是架构性差异，
-不是配置问题。
+**The RP2040 doesn't have this problem**: BOOTSEL is baked into ROM; powering up a blank chip (or shorting QSPI_SS) turns it
+directly into a USB MSC thumb drive, with no pre-installed firmware and no handshake protocol needed. This is an architectural difference,
+not a configuration issue.
 
-## 7. 换主板后（如 RK3506）代刷还成立吗
+## 7. After a mainboard swap (e.g. RK3506), does proxy flashing still hold
 
-代刷只依赖一条：**上级有 USB host + 能挂载 MSC**。
+Proxy flashing depends on exactly one thing: **the upstream has a USB host + can mount MSC**.
 
-| 换成 | 能否代刷 |
+| Swap to | Proxy flashing still works? |
 |---|---|
-| RK3506 等 ARM Linux SoC | ✅ 比 P4 还简单，`mount` + `cp x.uf2` |
-| 树莓派 CM / 任何 Linux/Android 主板 | ✅ |
-| 纯 MCU 且无 USB host | ❌ |
+| RK3506 and other ARM Linux SoCs | ✅ even simpler than the P4, `mount` + `cp x.uf2` |
+| Raspberry Pi CM / any Linux/Android mainboard | ✅ |
+| A pure MCU with no USB host | ❌ |
 
-Pilot Kit 要跑 Flutter UI，主控只会越换越强，这条风险低。且 J1 是 2.54mm 排针，
-**任何时候都能从排针飞两根线接 USB 转接头直连电脑**，不需要板上有 USB 座，
-不占任何 SMT 面数——这是不依赖上级板的兜底路径。
+The Pilot Kit has to run a Flutter UI, so the main SoC will only get stronger with each swap; this risk is low. And J1 is a 2.54mm pin header,
+**so at any time you can run two jumper wires from the header to a USB adapter and connect straight to a computer**; no USB receptacle is needed on the board,
+and no SMT side count is consumed — this is the fallback path that does not depend on the upstream board.
 
-## 8. R7/R8（5.1k CC 下拉）是必需的选贴件
+## 8. R7/R8 (5.1k CC pull-downs) are mandatory selective-placement parts
 
-一度以为不需要——那是建立在「不带电源版没有 J4」的假设上。但按 §4，J4 两个版本
-都要贴（否则没法刷 RP2040 固件），所以 CC 就必须有 Rd：
+For a while it seemed unnecessary — that rested on the assumption that "the unpowered variant has no J4". But per §4, J4 is placed on both variants
+(otherwise there is no way to flash the RP2040 firmware), so CC must have Rd:
 
 | | R7/R8 | CH224K |
 |---|---|---|
-| 带电源版 | ❌ 不贴 | ✅ 贴，内部自带 Rd |
-| 不带电源版 | ✅ **必贴** | ❌ 不贴 |
+| Powered variant | ❌ not placed | ✅ placed; Rd built in |
+| Unpowered variant | ✅ **must place** | ❌ not placed |
 
-**两者互斥**：同时贴会让 CC 阻值错乱、干扰 PD 通信（CH224 手册 §6.1 的 Type-C
-母口参考电路里 CC 就是直连芯片、没有外部下拉）。
+**The two are mutually exclusive**: placing both would scramble the CC resistance and interfere with PD communication (in the Type-C
+receptacle reference circuit of the CH224 manual §6.1, CC connects straight to the chip with no external pull-down).

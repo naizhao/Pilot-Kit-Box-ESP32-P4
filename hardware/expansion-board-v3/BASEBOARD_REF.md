@@ -1,114 +1,116 @@
-# 基准板机械参数（微雪 ESP32-P4-WIFI6-Touch-LCD-4.3）
+# Baseboard Mechanical Reference (Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3)
 
-> 来源：官方尺寸图 + 机械图 + 装配丝印图（2026-08-01 用户提供）。
-> **本文件是扩展板板框/连接器/安装孔的唯一基准**，先于 PCB 布局存在。
+Chinese version: [`BASEBOARD_REF-zh_CN.md`](BASEBOARD_REF-zh_CN.md)
 
-## 1. 板框与安装孔
+> Source: official dimension drawing + mechanical drawing + assembly silkscreen drawing (provided by the user on 2026-08-01).
+> **This file is the single source of truth for the expansion board's board outline/connectors/mounting holes**, and predates the PCB layout.
 
-| 项 | 数值 | 来源 |
+## 1. Board outline and mounting holes
+
+| Item | Value | Source |
 |---|---|---|
-| 基准板尺寸 | **102.50 × 60.00 mm** | 尺寸图标注 |
-| **扩展板取 100 × 62 mm** | X 卡免费档（≤100mm）；Y 上下各 +1mm 给 J3 排针让出走线位（详见 §2a） | 本项目决策 |
-| 扩展板与基准板对位 | 安装孔沿用 92×50 绝对坐标 → 扩展板左右各内缩 1.25 mm（对称） | 100−92=8，两侧各 4；基准 5.25−4=1.25 |
-| 安装孔 | **4×M2.5**，孔间距 **92.0（X）× 50.0（Y）** | 机械图标注 |
-| 左上孔中心 | 距左边 **5.25**，距上边 **5.00** | 尺寸图标注 |
-| 推得四孔坐标（**基准板坐标系**，左上原点，+X 右 / +Y 下） | (5.25, 5.00) (97.25, 5.00) (5.25, 55.00) (97.25, 55.00) | 5.25+92=97.25 与 102.5−97.25=5.25 对称 ✓；5+50=55 与 60−55=5 对称 ✓ |
+| Baseboard dimensions | **102.50 × 60.00 mm** | dimension drawing annotation |
+| **Expansion board is 100 × 62 mm** | X stays in the free fabrication tier (≤100mm); Y gets +1mm top and bottom to give the J3 pin header trace routing room (see §2a) | this project's decision |
+| Expansion-to-baseboard alignment | mounting holes keep the 92×50 absolute coordinates → expansion board inset 1.25 mm on each side, left/right (symmetric) | 100−92=8, 4 per side; base 5.25−4=1.25 |
+| Mounting holes | **4×M2.5**, hole spacing **92.0 (X) × 50.0 (Y)** | mechanical drawing annotation |
+| Top-left hole center | **5.25** from the left edge, **5.00** from the top edge | dimension drawing annotation |
+| Derived four-hole coordinates (**baseboard coordinate system**, origin top-left, +X right / +Y down) | (5.25, 5.00) (97.25, 5.00) (5.25, 55.00) (97.25, 55.00) | 5.25+92=97.25 symmetric with 102.5−97.25=5.25 ✓; 5+50=55 symmetric with 60−55=5 ✓ |
 
-**扩展板沿用同一板框与同一组安装孔**（堆叠对齐）。
+**The expansion board reuses the same board outline and the same set of mounting holes** (stacked alignment).
 
-## 2. J3 扩展排母（我们要配对的连接器）
+## 2. J3 expansion female header (the connector we mate with)
 
-| 项 | 数值 | 状态 |
+| Item | Value | Status |
 |---|---|---|
-| 规格 | 2×20，**2.54 mm 间距**，**贴片排母（母座）** | 用户实物确认；⚠️ 与 `docs/hardware/board_pinout-zh_CN.md:48` 写的"排针"矛盾，以实物为准 |
-| 位置 | **板子下边缘** | 尺寸图/丝印图确认 |
-| 最右列引脚中心 X | 102.50 − 19.70 = **82.80 mm** | 尺寸图 "19.70" 标注 |
-| 最左列引脚中心 X | 82.80 − 19×2.54 = **34.54 mm** | 20 列 × 2.54 推算 |
-| 两排 Y 间距 | 2.54 mm | 标准 |
-| 底部余量 | **焊盘距板下边缘 ≤0.5 mm**（几乎贴边） | 用户实测 |
-| **两排引脚轴 Y 绝对位置** | **54.06 / 56.60**（距上边缘） | ✅ 用户卡尺实测确认 |
-| 插座中心 | 距**下**边缘 **4.67** → 距上边缘 55.33 | 用户实测（量的是插座中心，非单引脚中心） |
-| 塑料件边缘 | 距下边缘 1.55 | 用户实测 |
-| **配合板间距** | **7.0 mm**（HAT 母 3.5 + HAT 公 3.5 对接） | `docs/jlc/lcd-4.3in/3d-case/pilot-kit-box-43-base.scad:80` 实测注释 |
+| Specification | 2×20, **2.54 mm pitch**, **SMD female header (socket)** | confirmed against the physical part; ⚠️ contradicts the "pin header" written in `docs/hardware/board_pinout-zh_CN.md:48` — the physical part wins |
+| Position | **bottom edge of the board** | confirmed by dimension/silkscreen drawings |
+| Rightmost column pin center X | 102.50 − 19.70 = **82.80 mm** | dimension drawing "19.70" annotation |
+| Leftmost column pin center X | 82.80 − 19×2.54 = **34.54 mm** | derived from 20 columns × 2.54 |
+| Row-to-row Y spacing | 2.54 mm | standard |
+| Bottom clearance | **pads ≤0.5 mm from the board's bottom edge** (nearly flush with the edge) | user-measured |
+| **Absolute Y of the two pin rows** | **54.06 / 56.60** (from the top edge) | ✅ confirmed by the user with calipers |
+| Socket center | **4.67** from the **bottom** edge → 55.33 from the top edge | user-measured (measured at the socket center, not individual pin centers) |
+| Plastic body edge | 1.55 from the bottom edge | user-measured |
+| **Mating board spacing** | **7.0 mm** (HAT female 3.5 + HAT male 3.5 butted together) | measured note in `docs/jlc/lcd-4.3in/3d-case/pilot-kit-box-43-base.scad:80` |
 
-> 推算复核：此前按"焊盘距边 ≤0.5mm"反推得 55.4 / 引脚轴 54.13·56.67，
-> 与实测 55.33 / 54.06·56.60 **仅差 0.07mm**，方法可信。**以实测值为准。**
+> Cross-check of the derivation: working backwards from "pads ≤0.5mm from the edge" gave 55.4 / pin rows 54.13·56.67,
+> versus the measured 55.33 / 54.06·56.60 — **only 0.07mm apart**, so the method is trustworthy. **The measured values take precedence.**
 
-## 2a. 板框 Y 方向 +1mm（已采纳）
+## 2a. Board outline +1mm in Y (adopted)
 
-扩展板取 **100 × 62**（上下各比屏板多 1mm），理由与安全性：
+The expansion board is **100 × 62** (1mm more than the display board on each of top and bottom); rationale and safety margin:
 
-| 项 | 数值 | 来源 |
+| Item | Value | Source |
 |---|---|---|
-| 外壳内腔按**玻璃轮廓**做，非屏板轮廓 | 玻璃 66.88 vs 屏板 60，Y 向每边多 **3.44mm** | scad:62-68 `glass_ov_y=(glass_w-scr_pcb_w)/2` |
-| 结论 | +1mm/边 远在 3.44mm 余量内，**不干涉外壳** | — |
-| 收益 | 排针焊盘外缘 y≈59.43，原本距板边仅 0.57mm；+1mm 后有 **1.57mm**，够走 1-2 根线 | 焊盘 ±4.1mm（KiCad SMD 排针几何） |
-| 免费打样 | 100×62 仍 ≤100mm，嘉立创免费档不变 | — |
+| The case's inner cavity is built to the **glass outline**, not the display-board outline | glass 66.88 vs display board 60, **3.44mm** extra per side in Y | scad:62-68 `glass_ov_y=(glass_w-scr_pcb_w)/2` |
+| Conclusion | +1mm per side is well within the 3.44mm margin, **no interference with the case** | — |
+| Benefit | the pin header pads' outer edge is at y≈59.43, originally only 0.57mm from the board edge; after +1mm there is **1.57mm**, enough to route 1-2 traces | pads ±4.1mm (KiCad SMD pin header geometry) |
+| Free prototyping | 100×62 is still ≤100mm, the JLCPCB free tier is unchanged | — |
 
-⚠️ 但要清楚：**这 1mm 只解决"板边贴太近"，不解决细间距 IC 的扇出拥塞**（实测放大板框对后者无效）。
+⚠️ But be clear: **this 1mm only fixes "board edge too close", it does not fix fine-pitch IC fan-out congestion** (measured in practice: enlarging the board outline has no effect on the latter).
 
-## 2b. 配对排针（我们板上用）
+## 2b. Mating pin header (used on our board)
 
-用户实测手头排针：整体长 51 mm、塑料件 5 mm、贴片脚长 2.85 mm、两排脚尖到脚尖 7.7 mm。
-对照 KiCad 官方 `Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical_SMD`：
-40 焊盘、沿长边跨距 48.26 mm（=19×2.54，含塑料件正好 ≈51 mm ✓）、焊盘 3.15×1.0、焊盘中心距 ±2.525。
+The user measured the pin header at hand: overall length 51 mm, plastic body 5 mm, SMD leg length 2.85 mm, tip-to-tip across the two rows 7.7 mm.
+Checked against the official KiCad `Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical_SMD`:
+40 pads, span along the long edge 48.26 mm (=19×2.54; including the plastic body it is exactly ≈51 mm ✓), pads 3.15×1.0, pad center offset ±2.525.
 
-- **配合面是引脚（2.54 间距 / 两排 2.54），属标准件，插合无风险**；贴片脚外张尺寸各厂略有差异
-  （用户量 7.7 vs KiCad 8.2），对 1mm 宽焊盘属可焊范围。
-- 结论：**直接用 KiCad 官方 SMD 排针封装**，下单时按实物型号复核贴片脚跨距即可。
+- **The mating interface is the pins (2.54 pitch / 2.54 row spacing), a standard part, no risk in mating**; the outward splay of the SMD legs varies slightly between manufacturers
+  (user measured 7.7 vs KiCad 8.2), which is within the solderable range for 1mm-wide pads.
+- Conclusion: **use the official KiCad SMD pin header footprint directly**; when ordering, just re-verify the SMD leg span against the actual part.
 
-## 3. 基准板元件分区（影响我们的布局与射频规划）
+## 3. Baseboard component zones (affects our layout and RF planning)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ MIC1  SPK      [SD 卡]   RESET BOOT POWER   C6-UART      │  上边
+│ MIC1  SPK      [SD card]   RESET BOOT POWER   C6-UART    │  top edge
 │                                          ┌──────────────┐│
 │ USB-C(UART)                              │ ESP32-C6-MINI││ ← 2.4GHz WiFi
-│ USB-C(USB)      [DISPLAY FPC]            │ + 板载天线   ││   模块在右上
-│                  ┌──────────────┐        └──────────────┘│
-│  电源/DCDC区      │  ESP32-P4     │  [CAMERA FPC]         │
-│  （左侧）         │  核心模组     │                       │
+│ USB-C(USB)      [DISPLAY FPC]            │ + on-board   ││   module at
+│                  ┌──────────────┐        │   antenna    ││   top-right
+│  Power/DCDC zone │  ESP32-P4    │  [CAMERA FPC]         │
+│  (left side)     │  core module │                       │
 │                  └──────────────┘                        │
-│ MIC2   BAT   ├─── J3 2×20 贴片排母 ───┤        RTC        │  下边
+│ MIC2   BAT   ├─── J3 2×20 SMD female header ───┤   RTC   │  bottom edge
 └──────────────────────────────────────────────────────────┘
 ```
 
-**对我们扩展板的三条约束**：
-1. **J3 在下边** → 我们的贴片排针也必须在下边（此前我摆在上边，整体镜像错误）。
-2. **ESP32-C6 的 2.4GHz WiFi 天线在右上角** → 我们的 1090 板载 IFA 天线、GNSS 天线**必须远离右上**，否则近场强发射会压制 1090 LNA。建议 IFA 放左边缘或左下。
-3. **P4 核心模组在中央** → 数字噪声源在中间，我们的敏感模拟段（检波器、切片器）尽量避开正上方。
+**Three constraints on our expansion board**:
+1. **J3 is on the bottom edge** → our SMD pin header must also be on the bottom edge (I had placed it on the top edge earlier — an overall mirrored placement, wrong).
+2. **The ESP32-C6's 2.4GHz WiFi antenna is at the top-right corner** → our 1090 on-board IFA antenna and GNSS antenna **must stay far away from the top-right**, otherwise the strong near-field transmission will desense the 1090 LNA. Recommend placing the IFA on the left edge or bottom-left.
+3. **The P4 core module is in the center** → a digital noise source sits in the middle; keep our sensitive analog sections (detector, slicer) away from directly above it as much as possible.
 
-## 4. 现有 Pilot Kit 载板（`docs/jlc/lcd-4.3in/`）已有资产
+## 4. Existing assets of the current Pilot Kit carrier board (`docs/jlc/lcd-4.3in/`)
 
-| 器件 | 说明 |
+| Item | Description |
 |---|---|
-| `1090_MHz_IFA_ANT` | 历史板载 IFA 图形；41mm 版本实测约1408MHz，**并未在1090MHz调好** |
-| `IFA_ANT_IPEX` | IPEX 座（外接天线备选路径） |
-| `Z_SER` / `Z_SH1` / `Z_SH2` | IFA 的 π 型匹配网络（串一并二），调频的关键 |
-| `GPS_GT-U8` / `IMU_BNO085` / `PRES_BMP388` | 传感器 |
-| `RTL-SDR` | 经 USB 接入的外挂 SDR（新板要取代它） |
+| `1090_MHz_IFA_ANT` | historical on-board IFA geometry; the 41mm version measured ≈1408MHz, **it was never tuned to 1090MHz** |
+| `IFA_ANT_IPEX` | IPEX receptacle (alternative path for an external antenna) |
+| `Z_SER` / `Z_SH1` / `Z_SH2` | the IFA's π matching network (one series, two shunts), the key to tuning the frequency |
+| `GPS_GT-U8` / `IMU_BNO085` / `PRES_BMP388` | sensors |
+| `RTL-SDR` | external SDR connected via USB (the new board will replace it) |
 
-## 5. 板载 IFA 天线（用户确认：坐标不重要，可重新设计）
+## 5. On-board IFA antenna (user confirmed: exact coordinates don't matter, it can be redesigned)
 
-- 现有设计放在**板子顶部**；新板沿用顶部，但**向左偏置**（x ≈ 8–55），
-  避开基准板右上角的 ESP32-C6 2.4GHz 天线（见 §3 约束 2）。
-- 天线需要**四层全通透的无铜窗**；Y 向 +1mm 正好也给天线净空多一点余量。
-- π 匹配网络（Z_SER 串 + Z_SH1/Z_SH2 双并联）照抄拓扑，元件值上板实调。
+- The existing design sits at the **top of the board**; the new board keeps it at the top but **offset to the left** (x ≈ 8–55),
+  away from the ESP32-C6 2.4GHz antenna at the baseboard's top-right corner (see §3 constraint 2).
+- The antenna needs a **copper-free window clear through all four layers**; the +1mm in Y also conveniently gives the antenna keep-out a little more margin.
+- The π matching network (Z_SER series + Z_SH1/Z_SH2 dual shunt) copies the topology as-is; component values are tuned on the actual board.
 
-⚠️ 仓库内的立创 JSON 是**精简导出**（无焊盘坐标/位号几何），要复用 IFA 的确切走线形状，需要用户重新导出完整工程或提供天线图形。
+⚠️ The JLC/LCEDA JSON in the repo is a **stripped-down export** (no pad coordinates / designator geometry). To reuse the IFA's exact trace shape, the user needs to re-export the full project or provide the antenna geometry.
 
-## 6. 天线方案定稿（2026-08-01，用户确认外壳可改）
+## 6. Antenna plan finalized (2026-08-01, user confirmed the enclosure can be changed)
 
-| 链路 | 内置 | 外接 | 射频开关 | 说明 |
+| Link | Internal | External | RF switch | Notes |
 |---|---|---|---|---|
-| **1090** | 板载 IFA（只复用标准倒F拓扑，不复用41mm尺寸），顶边**偏左** | SMA | ✅ XA17-G4K | 预研尺寸见 `IFA_HFSS_2026-08-24.md`；远离C6 WiFi天线 |
-| **978** | ❌ 不做 | SMA（或 U.FL 尾线） | ❌ 不上 | 与 1090 仅差 10% 频率会强耦合拉偏；且只有美国 GA 用。**整条通道做选贴变体**，国内版省 ¥30 |
-| **GNSS** | 25×25×6.3 有源陶瓷 patch，装外壳**顶边凸包**、朝天，X≈70–95 | SMA | ✅ XA17-G4K | 用户已验证该 patch 信号好；凸包见 [[ENCLOSURE_TODO.md]] TODO-1 |
+| **1090** | on-board IFA (reuses only the standard inverted-F topology, not the 41mm dimensions), top edge **offset left** | SMA | ✅ XA17-G4K | preliminary dimension study in the archived v3 HFSS antenna study (internal engineering notes); keep away from the C6 WiFi antenna |
+| **978** | ❌ not done | SMA (or U.FL pigtail) | ❌ not fitted | only 10% from 1090 in frequency, would strongly couple and pull it off; and only US GA uses it. **Make the entire channel a populate-optional variant**, saving ¥30 on the domestic version |
+| **GNSS** | 25×25×6.3 active ceramic patch, mounted in the enclosure's **top-edge bump**, facing skyward, X≈70–95 | SMA | ✅ XA17-G4K | the user has verified this patch gets a good signal; bump details in the archived v3 enclosure study (internal engineering notes), TODO-1 |
 
-**天线分区理由**：IFA 与 patch 都在顶边，X 方向拉开 ≥15mm 降低互耦（1090/1575 差 45%，比 1090/978 好办）。
-IFA 让给左侧是因为 1090 LNA 是宽带、最怕 C6 的 2.4G 近场；GNSS 模块自带 SAW 滤波，抗扰强些。
+**Rationale for the antenna zones**: both the IFA and the patch sit on the top edge, separated by ≥15mm in X to reduce mutual coupling (1090 vs 1575 differ by 45%, an easier pairing than 1090 vs 978).
+The IFA is given the left side because the 1090 LNA is wideband and most vulnerable to the C6's 2.4G near field; the GNSS module has its own SAW filtering and tolerates interference better.
 
-**GNSS 两路都是有源天线** → 每支路各一个偏置 Tee（开关 RF 口不能过直流），
-两个 PMOS 由同一对 GPIO 互补控制，电源跟着射频一起切。增量 ≈¥1。
+**Both GNSS paths are active antennas** → each branch gets its own bias Tee (the switch's RF port cannot pass DC),
+the two PMOS are controlled complementarily by the same GPIO pair, so power switches together with the RF. Added cost ≈¥1.
 
-⚠️ patch 背后 5mm 就是扩展板完整地平面，会影响方向图与谐振点 → **V1 外壳做可调安装位，实测后 V2 固化**。
+⚠️ 5mm behind the patch is the expansion board's solid ground plane, which will affect the radiation pattern and the resonant point → **make the V1 enclosure's mounting position adjustable, measure it, then freeze it in V2**.

@@ -21,7 +21,6 @@ The root project README remains bilingual because it is the public landing page.
 | Hardware reference index | [`hardware/README.md`](hardware/README.md) | [`hardware/README-zh_CN.md`](hardware/README-zh_CN.md) | Hardware builders |
 | Board pinout | [`hardware/board_pinout.md`](hardware/board_pinout.md) | [`hardware/board_pinout-zh_CN.md`](hardware/board_pinout-zh_CN.md) | Hardware developers |
 | ESP32-C6 slave flashing | [`hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md) | [`hardware/c6_slave_firmware-zh_CN.md`](hardware/c6_slave_firmware-zh_CN.md) | BLE bring-up |
-| ESP32-C6 bring-up status | [`hardware/c6_bringup_status.md`](hardware/c6_bringup_status.md) | [`hardware/c6_bringup_status-zh_CN.md`](hardware/c6_bringup_status-zh_CN.md) | Maintainer troubleshooting |
 
 ## Current Feature Baseline
 

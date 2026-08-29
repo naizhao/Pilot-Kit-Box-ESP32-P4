@@ -238,8 +238,6 @@ VNA calibration in the final enclosure.
 | [`PINMAP.md`](hardware/expansion-board-v4/PINMAP.md) | 权威引脚/网络映射 / Authoritative pin and net map |
 | [`ASSEMBLY.md`](hardware/expansion-board-v4/ASSEMBLY.md) | 手工贴片点位清单（脚本从板子生成）/ Hand-assembly placement list, generated from the board |
 | [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
-| [`LAYOUT_CONSTRAINTS.md`](hardware/expansion-board-v4/LAYOUT_CONSTRAINTS.md) | 布局布线约束与验收脚本 / Layout constraints and verification scripts |
-| [`BOARD_TEST.md`](hardware/expansion-board-v4/BOARD_TEST.md) | 裸板验收测试 / Bare-board acceptance tests |
 
 ### 历史 BOM 成本参考 / Legacy BOM Cost Reference
 

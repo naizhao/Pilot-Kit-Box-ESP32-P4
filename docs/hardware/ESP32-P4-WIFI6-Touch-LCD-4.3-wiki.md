@@ -1,71 +1,73 @@
-# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 — 硬件资料存档
+# Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 — Hardware Documentation Archive
 
-本文是微雪官方 wiki 正文的离线存档 + 从原理图 PDF 实读出的引脚归属。
+Chinese version: [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki-zh_CN.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki-zh_CN.md)
 
-- 官方文档页：<https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3>
-- 资料下载页：<https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3/Resources-And-Documents>
-- 商品页：<https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm>（SKU 33874 = 标准版，33875 = 带 OV5647 摄像头版）
-- 官方例程仓库：<https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4.3>
-- 注：`https://www.waveshare.com/wiki/...` 与 `https://www.waveshare.net/wiki/...` 均已失效（403 / 404），内容已迁移到 `docs.waveshare.com`。
+This document is an offline archive of the official Waveshare wiki content + pin assignments read directly from the schematic PDF.
 
-## 本目录内的配套文件
+- Official documentation page: <https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3>
+- Resources download page: <https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4.3/Resources-And-Documents>
+- Product page: <https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm> (SKU 33874 = standard version, 33875 = version with OV5647 camera)
+- Official example repository: <https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4.3>
+- Note: `https://www.waveshare.com/wiki/...` and `https://www.waveshare.net/wiki/...` are both dead (403 / 404); content has migrated to `docs.waveshare.com`.
 
-| 文件 | 说明 | 来源 |
+## Companion Files in This Directory
+
+| File | Description | Source |
 |---|---|---|
-| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | 官方原理图（Rev1.2，2 页：第 1 页电路图 / 第 2 页装配丝印图），SHA-256 `3697baa3ded0089446baf09705f437d13cf0324874031ccc57fd9b72cd9dfe53` | <https://www.waveshare.net/w/upload/b/b8/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
-| `ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf` | 外形尺寸图（20260411） | 官方 `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` 内解出 |
-| `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` | 官方机械资料包（尺寸 PDF + STEP + DXF），SHA-256 `8209b6aa405d4d3d8a2009e7eb545a4844e456b9cf95d8b8e53529414b03ecaf` | <https://www.waveshare.net/w/upload/3/36/ESP32-P4-WIFI6-Touch-LCD-4.3.zip> |
-| `ST7701-datasheet.pdf` | 屏驱动 IC 规格书（Sitronix ST7701 SPEC V1.2，303 页，含 MIPI-DSI 章节） | Crystalfontz 镜像 <https://www.crystalfontz.com/controllers/uploaded/ST7701.pdf> |
-| `GT911-datasheet.pdf` | Goodix GT911 触控 IC 数据手册 Rev.09 | <https://files.waveshare.com/wiki/common/GT911_EN_Datasheet.pdf> |
-| `GT911-programming-guide.pdf` | GT911 编程指南 Rev.10（寄存器表 / 坐标上报格式） | <https://www.lcd-module.de/fileadmin/eng/pdf/zubehoer/GT911_Programming_Guide_Rev.10.pdf> |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf` | Official schematic (Rev1.2, 2 pages: page 1 circuit diagram / page 2 assembly silkscreen), SHA-256 `3697baa3ded0089446baf09705f437d13cf0324874031ccc57fd9b72cd9dfe53` | <https://www.waveshare.net/w/upload/b/b8/ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf> |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf` | Dimensions drawing (20260411) | Extracted from the official `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` |
+| `ESP32-P4-WIFI6-Touch-LCD-4.3.zip` | Official mechanical package (dimensions PDF + STEP + DXF), SHA-256 `8209b6aa405d4d3d8a2009e7eb545a4844e456b9cf95d8b8e53529414b03ecaf` | <https://www.waveshare.net/w/upload/3/36/ESP32-P4-WIFI6-Touch-LCD-4.3.zip> |
+| `ST7701-datasheet.pdf` | Display driver IC datasheet (Sitronix ST7701 SPEC V1.2, 303 pages, includes MIPI-DSI chapters) | Crystalfontz mirror <https://www.crystalfontz.com/controllers/uploaded/ST7701.pdf> |
+| `GT911-datasheet.pdf` | Goodix GT911 touch IC datasheet Rev.09 | <https://files.waveshare.com/wiki/common/GT911_EN_Datasheet.pdf> |
+| `GT911-programming-guide.pdf` | GT911 programming guide Rev.10 (register table / coordinate report format) | <https://www.lcd-module.de/fileadmin/eng/pdf/zubehoer/GT911_Programming_Guide_Rev.10.pdf> |
 
-## 板载资源（官方 Hardware Description 原文摘译）
+## Onboard Resources (abridged translation of the official Hardware Description)
 
-1. **ESP32-P4-Core** — ESP32-P4NRW32 + 32MB Nor Flash（片内叠封 32MB PSRAM）
-2. **ESP32-C6-MINI-1 模组** — SDIO 接口，提供 Wi-Fi 6 / Bluetooth 5 (LE)
-3. **ES7210** 回声消除芯片
-4. **ES8311** 低功耗音频编解码芯片
-5. **MIPI CSI 接口** — 15PIN / 0.5mm 间距，支持 MIPI 2-lane 摄像头
-6. **2.54mm 4PIN 焊盘** — 用于给 ESP32-C6 烧录固件
-7. **RTC 电池座** — 仅支持可充电 RTC 电池
-8. **POWER 按键** — 长按 2s 关机，短按开机
-9. **BOOT 按键** — 上电/复位时按住进入下载模式
-10. **RESET 按键**
-11. **TF 卡槽** — SDIO 3.0
-12. **MIPI DSI LCD 接口** — 接 MIPI 2-lane 屏
-13. **喇叭座** — GH 1.25 2PIN（带锁），推荐 8Ω 2W
-14. **Type-C（USB TO UART）** — 供电 / 烧录 / 调试
-15. **Type-C（USB OTG）** — USB OTG 2.0 High Speed
-16. **板载双麦克风阵列**
-17. **PWR LED 电源指示灯**
-18. **MX1.25 锂电池座** — 3.7V，支持充放电
-19. **40PIN 排针扩展口** — 2.54mm，兼容部分树莓派 HAT
+1. **ESP32-P4-Core** — ESP32-P4NRW32 + 32MB Nor Flash (32MB PSRAM stacked in-package)
+2. **ESP32-C6-MINI-1 module** — SDIO interface, provides Wi-Fi 6 / Bluetooth 5 (LE)
+3. **ES7210** echo cancellation chip
+4. **ES8311** low-power audio codec chip
+5. **MIPI CSI interface** — 15PIN / 0.5mm pitch, supports MIPI 2-lane cameras
+6. **2.54mm 4PIN pads** — for flashing firmware to the ESP32-C6
+7. **RTC battery holder** — rechargeable RTC batteries only
+8. **POWER button** — hold for 2s to power off, short press to power on
+9. **BOOT button** — hold during power-up/reset to enter download mode
+10. **RESET button**
+11. **TF card slot** — SDIO 3.0
+12. **MIPI DSI LCD interface** — connects MIPI 2-lane displays
+13. **Speaker connector** — GH 1.25 2PIN (locking), 8Ω 2W recommended
+14. **Type-C (USB TO UART)** — power / flashing / debugging
+15. **Type-C (USB OTG)** — USB OTG 2.0 High Speed
+16. **Onboard dual-microphone array**
+17. **PWR LED power indicator**
+18. **MX1.25 lithium battery connector** — 3.7V, supports charging and discharging
+19. **40PIN pin header expansion** — 2.54mm, compatible with some Raspberry Pi HATs
 
-屏幕：4.3 inch 电容触摸 IPS，**480 × 800**。
+Display: 4.3 inch capacitive touch IPS, **480 × 800**.
 
-外形尺寸（来自 dimensions.pdf）：盖板 114.4 × 66.8 mm，可视区 94.4 × 56.96 mm，整体厚 11.15 mm，4×M2.5 安装孔，孔距 92 × 50 mm。
+Dimensions (from dimensions.pdf): cover plate 114.4 × 66.8 mm, active area 94.4 × 56.96 mm, overall thickness 11.15 mm, 4×M2.5 mounting holes, hole spacing 92 × 50 mm.
 
-## 引脚定义（实读自 schematic.pdf 第 1 页 "4.3inch Display" / "4.3 INCH" 区块）
+## Pin Definitions (read directly from the "4.3inch Display" / "4.3 INCH" blocks on page 1 of schematic.pdf)
 
-原理图里屏和触摸的信号全部经 0R 电阻跳接到 P4 的 GPIO：
+In the schematic, all display and touch signals are jumpered to the P4 GPIOs via 0R resistors:
 
-| 网络 | 跳接电阻 | ESP32-P4 GPIO | 说明 |
+| Net | Jumper Resistor | ESP32-P4 GPIO | Notes |
 |---|---|---|---|
-| `ESP_I2C_SCL` / `TP_SCL` | 直连 | **GPIO8** | 与板上 codec 共用同一条 I²C |
-| `ESP_I2C_SDA` / `TP_SDA` | 直连 | **GPIO7** | 同上 |
-| `RESET`（LCD 复位） | R60 = 0R | **GPIO27** | 该网另有 R102 = 10K 下拉到 GND |
-| `BL_EN`（背光使能） | R32 = 0R | **GPIO33** | AP3032 的 EN 脚，已有 R57 = 100K 上拉到 Core_5V，默认使能 |
-| `TP_RST`（触摸复位） | R37 = 0R | **GPIO23** | |
-| `TP_INT`（触摸中断） | R35 = **NC/0R，默认不贴** | GPIO2（贴上才通） | 另引到测试点 TP2 |
-| `LCD_BL_PWM`（背光调光） | R43 = 0R | **GPIO26** | 经 R42 = 10K 注入 AP3032 的 FB 节点 |
+| `ESP_I2C_SCL` / `TP_SCL` | direct connection | **GPIO8** | shares the same I²C bus with the onboard codec |
+| `ESP_I2C_SDA` / `TP_SDA` | direct connection | **GPIO7** | same as above |
+| `RESET` (LCD reset) | R60 = 0R | **GPIO27** | this net also has R102 = 10K pull-down to GND |
+| `BL_EN` (backlight enable) | R32 = 0R | **GPIO33** | EN pin of the AP3032, already has R57 = 100K pull-up to Core_5V, enabled by default |
+| `TP_RST` (touch reset) | R37 = 0R | **GPIO23** | |
+| `TP_INT` (touch interrupt) | R35 = **NC/0R, not populated by default** | GPIO2 (connected only if populated) | also routed to test point TP2 |
+| `LCD_BL_PWM` (backlight dimming) | R43 = 0R | **GPIO26** | injected into the AP3032 FB node via R42 = 10K |
 
-> **背光是「注入 FB」式调光，不是直接开关 LED。** 官方 BSP 里 LEDC 通道配了 `.flags = {.output_invert = 1}`，即 duty 越大 → 引脚实际输出越低 → 越亮。自己写驱动时必须带上这个反相，否则亮度曲线是反的。
+> **Backlight dimming is the "inject into FB" style, not direct LED switching.** The official BSP configures the LEDC channel with `.flags = {.output_invert = 1}`, i.e. higher duty → lower actual pin output → brighter. If you write your own driver you must include this inversion, otherwise the brightness curve is reversed.
 >
-> **`TP_INT` 默认断开**，所以官方 BSP 写的是 `BSP_LCD_TOUCH_INT = GPIO_NUM_NC`，触摸只能轮询。要用中断得自己补贴 R35。
+> **`TP_INT` is disconnected by default**, which is why the official BSP sets `BSP_LCD_TOUCH_INT = GPIO_NUM_NC` and touch can only be polled. To use an interrupt you must populate R35 yourself.
 
-屏 FPC 座 P2（0.5mm 间距 30PIN，后翻盖式，2.0H）：
+Display FPC connector P2 (0.5mm pitch 30PIN, rear flip type, 2.0H):
 
-| Pin | 网络 | Pin | 网络 |
+| Pin | Net | Pin | Net |
 |---|---|---|---|
 | 1 | VLED- | 21 | VCC_1.8V / IOVCC |
 | 2 | VLED+ | 22 | TE |
@@ -76,87 +78,87 @@
 | | | 28 | TP_INT |
 | | | 29 | ESP_3V3 / TP_VDD |
 
-其余板载资源引脚（来自官方 BSP 头文件 `bsp/esp32_p4_wifi6_touch_lcd_4_3.h`）：
+Remaining onboard resource pins (from the official BSP header `bsp/esp32_p4_wifi6_touch_lcd_4_3.h`):
 
-| 功能 | GPIO |
+| Function | GPIO |
 |---|---|
 | I2S SCLK / MCLK / LCLK / DOUT / DSIN | 12 / 13 / 10 / 9 / 11 |
-| 功放使能 `BSP_POWER_AMP_IO` | 53 |
+| Power amp enable `BSP_POWER_AMP_IO` | 53 |
 | SD D0–D3 / CMD / CLK | 39 / 40 / 41 / 42 / 44 / 43 |
 
-## 面板参数（来自官方 BSP，可直接照抄）
+## Panel Parameters (from the official BSP, can be copied as-is)
 
-驱动 IC 是 **ST7701**（BSP 依赖 `espressif/esp_lcd_st7701`），MIPI-DSI 接入：
+The driver IC is **ST7701** (the BSP depends on `espressif/esp_lcd_st7701`), connected via MIPI-DSI:
 
-| 参数 | 值 |
+| Parameter | Value |
 |---|---|
-| 分辨率 | 480 (H) × 800 (V) |
-| MIPI-DSI data lane 数 | 2 |
-| lane bit rate | 500 Mbps |
-| DPI 像素时钟 | 30 MHz |
-| 像素格式 | RGB565（16bpp），可选 RGB888 |
+| Resolution | 480 (H) × 800 (V) |
+| Number of MIPI-DSI data lanes | 2 |
+| Lane bit rate | 500 Mbps |
+| DPI pixel clock | 30 MHz |
+| Pixel format | RGB565 (16bpp), RGB888 optional |
 | hsync back / pulse / front porch | 42 / 12 / 42 |
 | vsync back / pulse / front porch | 2 / 8 / 60 |
-| DSI PHY 供电 | LDO_VO3 通道 3，2500 mV |
-| DBI 命令位宽 | cmd 8 bit / param 8 bit |
+| DSI PHY power supply | LDO_VO3 channel 3, 2500 mV |
+| DBI command bit width | cmd 8 bit / param 8 bit |
 
-厂商初始化序列（39 条命令，`0xFF` 换页 + `0xB0/0xB1` gamma + `0xC0~0xCC` 等）在官方仓库
+The vendor-specific initialization sequence (39 commands, `0xFF` page switching + `0xB0/0xB1` gamma + `0xC0~0xCC` etc.) is in the official repository
 `examples/esp-idf/08_lvgl_demo_v9/components/esp32_p4_wifi6_touch_lcd_4_3/esp32_p4_wifi6_touch_lcd_4_3.c`
-第 24–73 行 `vendor_specific_init_default[]`，配合 `ST7701-datasheet.pdf` 的寄存器章节对照阅读。
+at lines 24–73, `vendor_specific_init_default[]`; read it side by side with the register chapters of `ST7701-datasheet.pdf`.
 
-## 触摸（GT911）
+## Touch (GT911)
 
-- I²C 总线与 codec / 其它 I²C 从机共用：SCL = GPIO8，SDA = GPIO7
-- 地址：官方 BSP 先探 **0x5D**（`ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS`），探不到再退到 **0x14**（`..._ADDRESS_BACKUP`）——这块板两种都可能，必须做探测
-- 复位：GPIO23；中断：默认 NC（见上）
-- 坐标上报格式、状态寄存器 `0x814E`、配置区 `0x8047–0x80FE` 校验和刷新流程见 `GT911-programming-guide.pdf`
+- The I²C bus is shared with the codec / other I²C slaves: SCL = GPIO8, SDA = GPIO7
+- Address: the official BSP probes **0x5D** first (`ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS`), falling back to **0x14** (`..._ADDRESS_BACKUP`) — either address is possible on this board, so probing is mandatory
+- Reset: GPIO23; interrupt: NC by default (see above)
+- For the coordinate report format, the status register `0x814E`, and the config-area `0x8047–0x80FE` checksum refresh flow, see `GT911-programming-guide.pdf`
 
-## 本项目迁移结果（对照 `board_pinout.md`）
+## Migration Results for This Project (see `board_pinout.md`)
 
-下表中的“旧用途”只描述迁移前 2.4 寸载板；当前 Rev1.2 4.3 寸固件已经
-解除这些冲突。
+The "old use" column in the table below only describes the pre-migration 2.4-inch carrier board; the current Rev1.2 4.3-inch firmware has already
+resolved these conflicts.
 
-| GPIO | 旧 2.4 寸用途 | Rev1.2 板载用途 | 当前处理 |
+| GPIO | Old 2.4-inch Use | Rev1.2 Onboard Use | Current Handling |
 |---|---|---|---|
-| 7 / 8 | I²C0（BNO085） | GT911 + audio + camera 共享 I²C | BNO085/BMP388 继续共享，地址不冲突 |
-| 20 | BNO085 INT | BAT_ADC，且未从 J3 引出 | BNO085 INT 改接 GPIO34（J3-28，载板网络 `IMU_INT`）；固件仍轮询 |
-| 23 | DOWN 按键 | TP_RST | 旧四按键任务停用 |
-| 26 | TARE 按键 | LCD_BL_PWM | 调平迁移到触摸 UI |
-| 27 | BMP388 INT | LCD RESET | BMP388 INT 改接 GPIO31（J3-24，载板网络 `BARO_INT`）；固件仍轮询 |
-| 33 | GPS RX | BL_EN | GPS 的 P4 侧 RX 改用 GPIO51（不占用 GPIO33）；GPIO50 留给 PPS |
+| 7 / 8 | I²C0 (BNO085) | GT911 + audio + camera shared I²C | BNO085/BMP388 continue to share, no address conflict |
+| 20 | BNO085 INT | BAT_ADC, and not broken out on J3 | BNO085 INT moved to GPIO34 (J3-28, carrier board net `IMU_INT`); firmware still polls |
+| 23 | DOWN button | TP_RST | legacy four-button task disabled |
+| 26 | TARE button | LCD_BL_PWM | leveling migrated to the touch UI |
+| 27 | BMP388 INT | LCD RESET | BMP388 INT moved to GPIO31 (J3-24, carrier board net `BARO_INT`); firmware still polls |
+| 33 | GPS RX | BL_EN | GPS P4-side RX moved to GPIO51 (GPIO33 not occupied); GPIO50 reserved for PPS |
 
-必须同时区分以下接口：
+The following connectors must also be distinguished:
 
-- H1：P4 烧录/串口日志的 `USB TO UART` Type-C。
-- H2：P4 原生 USB 2.0 HS OTG Type-C，与 J3-25/27 同网。装上 Pilot Kit
-  载板时 RTL-SDR 插载板的 USB-A（走 J3-27/25），H2 必须空置；只有裸板
-  台面调试才把 dongle 接 H2。
-- P1：C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB。
-- H4：喇叭座，不是 C6 调试排针。
+- H1: the `USB TO UART` Type-C used for P4 flashing / serial logging.
+- H2: the P4 native USB 2.0 HS OTG Type-C, on the same nets as J3-25/27. When the Pilot Kit
+  carrier board is installed, the RTL-SDR plugs into the carrier board's USB-A (routed via J3-27/25), and H2 must be left empty; only for bare-board
+  bench debugging should the dongle be plugged into H2.
+- P1: the C6's `TX RX IO9 GND` UART download pin header, not USB.
+- H4: the speaker connector, not a C6 debug header.
 
-## J3 引脚再分配（2026-07-31，因 60mm PCB 走线）
+## J3 Pin Reassignment (2026-07-31, due to 60mm PCB routing)
 
-原始引脚分配中，IMU_RST（GPIO21/Pin15）、GPS_RX（GPIO32/Pin31）、GPS_PPS（GPIO46/Pin35）都在
-J3 下排（奇数 pin）。由于 60mm 窄板下排紧贴 PCB 边缘没有走线空间，将这三个功能信号与相邻上排
-引脚对调：
+In the original pin assignment, IMU_RST (GPIO21/Pin15), GPS_RX (GPIO32/Pin31) and GPS_PPS (GPIO46/Pin35) were all on
+the bottom row of J3 (odd pins). Since the bottom row of the narrow 60mm board sits right against the PCB edge with no routing space, these three function signals were swapped with the adjacent top-row
+pins:
 
-| 功能信号 | 原 GPIO / Pin | 新 GPIO / Pin |
+| Function Signal | Old GPIO / Pin | New GPIO / Pin |
 |---|---|---|
-| IMU_RST | GPIO21 / Pin15（下排） | GPIO28 / Pin16（上排） |
-| GPS_RX | GPIO32 / Pin31（下排） | GPIO49 / Pin32（上排） |
-| GPS_PPS | GPIO46 / Pin35（下排） | GPIO50 / Pin34（上排） |
+| IMU_RST | GPIO21 / Pin15 (bottom row) | GPIO28 / Pin16 (top row) |
+| GPS_RX | GPIO32 / Pin31 (bottom row) | GPIO49 / Pin32 (top row) |
+| GPS_PPS | GPIO46 / Pin35 (bottom row) | GPIO50 / Pin34 (top row) |
 
-GPS_TX 保留在 Pin36（GPIO51，上排），未变动。固件中的引脚定义已同步更新。
+GPS_TX remains at Pin36 (GPIO51, top row), unchanged. Pin definitions in the firmware have been updated accordingly.
 
-> 本节的 `GPS_RX` / `GPS_TX` 是**载板 PCB 的网络名**，采用模块视角：
-> `GPS_RX`（GPIO49）是 GPS 模块的 RX，也就是 **P4 的 TX**；`GPS_TX`
-> （GPIO51）是 GPS 模块的 TX，也就是 **P4 的 RX**。`board_pinout.md`
-> 与固件常量一律用 P4 视角，两者方向相反，不要混用。
+> The `GPS_RX` / `GPS_TX` in this section are **carrier board PCB net names**, using the module's perspective:
+> `GPS_RX` (GPIO49) is the RX of the GPS module, i.e. the **P4's TX**; `GPS_TX`
+> (GPIO51) is the TX of the GPS module, i.e. the **P4's RX**. `board_pinout.md`
+> and the firmware constants consistently use the P4 perspective; the two directions are opposite, do not mix them.
 
-## FAQ（官方原文摘译）
+## FAQ (abridged translation from the official text)
 
-- **推荐的 ESP-IDF 版本？** v5.5.1 ~ v5.5.4。
-- **烧录报 `bootloader.bin requires chip revision in range [v3.1 - v3.99] (this chip is revision v1.3)` 怎么办？** 在 menuconfig 里改 chip revision。
-- **ESP32-P4 最大支持多大摄像头？** 200 万像素。P4 内置 ISP 与 H.264 编码器，编码性能上限 1080p@30fps。
-- **怎么给 ESP32-C6 烧固件？** 上电时把 `C6_IO9` 拉低让 C6 进下载模式，同时让 P4 也进下载模式，然后通过 `C6_U0RXD` / `C6_U0TXD` 烧录。C6 出厂已带固件。
-- **能用 PlatformIO / MicroPython 吗？** 暂不推荐，官方建议现阶段用 ESP-IDF。
+- **Recommended ESP-IDF version?** v5.5.1 ~ v5.5.4.
+- **Flashing reports `bootloader.bin requires chip revision in range [v3.1 - v3.99] (this chip is revision v1.3)` — what to do?** Change the chip revision in menuconfig.
+- **What is the maximum camera resolution supported by the ESP32-P4?** 2 megapixels. The P4 has a built-in ISP and H.264 encoder, with encoding performance capped at 1080p@30fps.
+- **How to flash firmware to the ESP32-C6?** Pull `C6_IO9` low at power-up to put the C6 into download mode, put the P4 into download mode as well, then flash via `C6_U0RXD` / `C6_U0TXD`. The C6 ships with firmware preloaded.
+- **Can PlatformIO / MicroPython be used?** Not recommended for now; the official recommendation is to use ESP-IDF at this stage.

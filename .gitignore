@@ -1,6 +1,13 @@
 docs/internal/*
 docs/kickstarter/
 
+# 扩展板 V4 的内部过程文档：review 待办、验板草案、采购/下单/勘误、外壳待办等。
+# 这些是开发过程记录，不是给最终用户的交付物，永远不进公开仓库。
+hardware/expansion-board-v4/internal/
+
+# 扩展板 V3（已归档）同理：验板/交接/天线研究/约束/采购记录只留本地。
+hardware/expansion-board-v3/internal/
+
 # Per-developer plan / spec working directory (superpowers workflow).
 # Each agent / developer accumulates plans + specs locally; these are
 # work-in-progress notes, not project deliverables, and should never

@@ -47,7 +47,6 @@ ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，�
 |---|---|
 | [`board_pinout.md`](board_pinout.md) / [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md) | 完整 J3、GPIO0–54、接口及 Pilot 接线参考 |
 | [`c6_slave_firmware.md`](c6_slave_firmware.md) / [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md) | 使用 P1 首次烧录 C6 slave |
-| [`c6_bringup_status.md`](c6_bringup_status.md) / [`c6_bringup_status-zh_CN.md`](c6_bringup_status-zh_CN.md) | 已验证的 ESP-Hosted SDIO/VHCI bring-up 记录 |
 | [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **板级最高依据：**Rev1.2 原理图和装配图 |
 | [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | 官方资料离线摘要及 BSP 参数 |
 | [`ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-dimensions.pdf) | 机械尺寸：114.4 × 66.8 mm，4 × M2.5 |

@@ -1,203 +1,220 @@
-# firmware/scripts —— i18n 词条与字库生成
+# firmware/scripts — i18n Catalog and Font Glyph Set Generation
 
-本目录放固件的代码/资源生成脚本。本文说明**多语言词条**这条链路：
-词条源 → 批量翻译 → 重生成字库 → 编进固件。
+Chinese version: [`README-zh_CN.md`](README-zh_CN.md)
+
+This directory holds the firmware's code/asset generation scripts. This document describes the **multilingual i18n
+catalog** pipeline: catalog source → batch translation → font glyph set regeneration → compiled into the firmware.
 
 ```
-i18n_catalog.py            词条唯一真源（KEY + 各语言译文）
+i18n_catalog.py            single source of truth for the catalog (KEY + translations per language)
       │
-      ├── translate_catalog.py    ① 批量补齐缺失语言的译文（调 LLM，回填本文件）
+      ├── translate_catalog.py    ① batch-fill missing-language translations (calls an LLM, writes back into this file)
       │
-      ├── gen_i18n_assets.py      ② 生成 C 查表（**只有**这一样）
+      ├── gen_i18n_assets.py      ② generates the C lookup table (**only** that)
       │                              → firmware/main/i18n_catalog.{h,c}
       │
-      ├── gen_pfd_aa_font.py      ③ 生成屏上真正在用的字形（含 CJK 子集）
+      ├── gen_pfd_aa_font.py      ③ generates the glyphs actually used on screen (including the CJK subset)
       │                              → firmware/main/pfd_aa_font.c
       │
-      └── gen_lv_font.py          ④ 生成 LVGL 控件用的字体（toast 等）
+      └── gen_lv_font.py          ④ generates the font for LVGL widgets (toast, etc.)
                                      → firmware/main/lv_font_zh.c
 ```
 
-> **字体管线有三套，不是一套。**②③④ 各管一摊，漏跑哪一个的症状都不一样：
-> 漏 ③ 是**直绘页面**（PFD/设置/关于…）上的汉字整片空白（查表落空只推进
-> 宽度、不画），漏 ④ 是 LVGL 控件（toast）变豆腐块。②不产任何字形——
-> 2026-08-03 之前它还生成 `text_font_cjk*.{h,c}`，那两档随最后一个调用者
-> `text.c` 一起删了（见 `gen_i18n_assets.py` 文件头）。
+> **The font pipeline is three pipelines, not one.** ②③④ each cover their own territory, and the symptoms of skipping
+> any one of them differ: skipping ③ leaves Chinese characters blank across **directly drawn pages** (PFD/settings/
+> about…; a failed lookup only advances the width without drawing), while skipping ④ turns LVGL widgets (toast) into
+> tofu boxes. ② produces no glyphs at all —
+> before 2026-08-03 it also generated `text_font_cjk*.{h,c}`, and those two tiers were deleted along with their last
+> caller `text.c` (see the file header of `gen_i18n_assets.py`).
 
-> **注意**：`translate_catalog.py` 按要求列在 `.gitignore` 里，只在本地保留，
-> 不随仓库分发（脚本本身不含任何密钥，见 `.gitignore` 里那段说明）。
-> 克隆仓库后如果找不到这个文件，找维护者要一份，或按本文的接口说明重写：
-> 它只读 `i18n_catalog.py`、调一个 OpenAI 兼容端点、把译文插回原文件。
+> **Note**: as required, `translate_catalog.py` is listed in `.gitignore` and kept locally only; it is not distributed
+> with the repo (the script itself contains no secrets — see that section in `.gitignore`).
+> If you cannot find this file after cloning the repo, ask a maintainer for a copy, or rewrite it following the
+> interface described here: it only reads `i18n_catalog.py`, calls one OpenAI-compatible endpoint, and inserts the
+> translations back into the original file.
 
 ---
 
-## 1. 配 .env
+## 1. Set Up .env
 
-翻译脚本**不含任何密钥**，key 只从环境变量或仓库根 `.env` 读。
-**变量名和 5 级 provider fallback 沿用我们其它项目里同类翻译脚本的既有约定**
-（不是这里临时发明的一套），同一份 `.env` 跨仓库通用，维护的人不用学两套。
+The translation script **contains no secrets**; keys are read only from environment variables or the repo-root `.env`.
+**The variable names and the 5-level provider fallback follow the existing convention of similar translation scripts in
+our other projects** (not something invented here), so the same `.env` works across repos and maintainers do not have to
+learn a second scheme.
 
 ```bash
-cp .env.example .env      # 在仓库根目录
-# 编辑 .env，填 ZHIPU_API_KEY 和/或 GEMINI_API_KEY
+cp .env.example .env      # at the repo root
+# Edit .env, fill in ZHIPU_API_KEY and/or GEMINI_API_KEY
 ```
 
-5 级 provider chain（前一级额度耗尽/限流后**自动切下一级**，缺 key 的级别跳过）：
+The 5-level provider chain (**automatically falls through to the next level** when the previous one is exhausted/rate
+limited; levels without a key are skipped):
 
-| 级 | provider | 模型（可覆盖） | key |
+| Level | Provider | Model (overridable) | Key |
 |---|---|---|---|
-| 1 | 智谱 GLM Coding Plan（付费，主力） | `ZHIPU_CODING_MODEL` = `glm-5.2` | `ZHIPU_API_KEY` |
-| 2 | Google Gemma（免费，RPD 宽） | `GEMMA_MODEL` = `gemma-4-31b-it` | `GEMINI_API_KEY` |
-| 3 | Google Gemini flash（免费，质量顶） | `GEMINI_TIER2_MODEL` = `gemini-3.5-flash` | `GEMINI_API_KEY` |
-| 4 | Google Gemini flash（免费，更快） | `GEMINI_TIER3_MODEL` = `gemini-3.6-flash` | `GEMINI_API_KEY` |
-| 5 | 智谱免费兜底 | `ZHIPU_FREE_MODEL` = `glm-4.5-flash` | `ZHIPU_API_KEY` |
+| 1 | Zhipu GLM Coding Plan (paid, primary) | `ZHIPU_CODING_MODEL` = `glm-5.2` | `ZHIPU_API_KEY` |
+| 2 | Google Gemma (free, generous RPD) | `GEMMA_MODEL` = `gemma-4-31b-it` | `GEMINI_API_KEY` |
+| 3 | Google Gemini flash (free, top quality) | `GEMINI_TIER2_MODEL` = `gemini-3.5-flash` | `GEMINI_API_KEY` |
+| 4 | Google Gemini flash (free, faster) | `GEMINI_TIER3_MODEL` = `gemini-3.6-flash` | `GEMINI_API_KEY` |
+| 5 | Zhipu free fallback | `ZHIPU_FREE_MODEL` = `glm-4.5-flash` | `ZHIPU_API_KEY` |
 
-只填一个 key 也能跑：只填 `ZHIPU_API_KEY` 就用第 1、5 级，只填 `GEMINI_API_KEY`
-就用第 2、3、4 级。**两个都不填也能跑 `--dry-run`**（provider chain 是惰性构造的）。
+It also runs with only one key filled in: with only `ZHIPU_API_KEY`, levels 1 and 5 are used; with only `GEMINI_API_KEY`,
+levels 2, 3, and 4 are used. **With neither key, `--dry-run` still works** (the provider chain is constructed lazily).
 
-其它可选项：`LLM_TIMEOUT`（默认 300）、`LLM_MAX_TOKENS`（默认 8192）、
-各级 `*_BASE_URL`（把 `GEMINI_BASE_URL` 指到 `http://127.0.0.1:11580/v1`
-就统一走本机 ServBay AI Gateway）。完整清单见 `.env.example`。
+Other options: `LLM_TIMEOUT` (default 300), `LLM_MAX_TOKENS` (default 8192),
+per-level `*_BASE_URL` (point `GEMINI_BASE_URL` at `http://127.0.0.1:11580/v1` to route everything through the local
+ServBay AI Gateway). See `.env.example` for the full list.
 
-想临时钉死一个模型、绕开 fallback：`--model` / `--base-url`（逃生口，一旦指定
-就只用这一个 provider）。
+To temporarily pin one model and bypass the fallback: `--model` / `--base-url` (escape hatch; once specified, only that
+one provider is used).
 
-`.env` / `.env.local` 已在 `.gitignore` 里。**任何时候都不要把真实 key 写进
-`.env.example`、脚本、文档或提交信息。**
+`.env` / `.env.local` are already in `.gitignore`. **Never put real keys into
+`.env.example`, scripts, documentation, or commit messages.**
 
 ---
 
-## 2. 加一种新语言
+## 2. Adding a New Language
 
-以日语 `ja` 为例，四步：
+Using Japanese `ja` as an example, four steps:
 
-### ① 先 dry-run 看要翻什么
+### ① Dry-run first to see what will be translated
 
 ```bash
 python3 firmware/scripts/translate_catalog.py --lang ja --dry-run
 ```
 
-不发任何请求、不写任何文件，打印三份清单：
+Sends no requests and writes no files; prints three lists:
 
-- **已有译文**：一个字都不会碰；
-- **需翻译**：本次要送 LLM 的条目，以及每条命中的受保护术语；
-- **术语原样保留**：直接复制英文，不送翻译（见第 3 节）。
+- **Existing translations**: not a single character is touched;
+- **To translate**: the entries to be sent to the LLM this run, plus the protected terms hit by each entry;
+- **Verbatim terms**: copied as English, not sent for translation (see Section 3).
 
-### ② 真跑
+### ② The real run
 
 ```bash
 python3 firmware/scripts/translate_catalog.py --lang ja
 ```
 
-- **分批**：默认每批 ≤25 条、≤4000 字符（`--batch-size` / `--batch-max-chars`）。
-- **限速**：批与批之间默认停 1 秒（`--sleep`，0 = 不等）。免费级 Gemini 的 RPM
-  很紧，连发会直接吃 429 把整级熔断掉。
-- **重试 / fallback**：单批失败重试 2 次、指数退避（`--retries`）；
-  遇到额度耗尽或限流**不算失败**，当前 provider 就地熔断、自动换下一级接着翻。
-  五级全熔断才落盘退出（退出码 2）。
-- **断点续跑**：每批成功后立刻把结果写进
-  `firmware/scripts/.i18n_translate_cache/<lang>.json`。额度耗尽、网络断、
-  Ctrl-C 之后**重跑同一条命令**即可接着翻，已翻的不会重复花钱。全部回填成功后
-  该检查点自动删除。
-- **逐条校验才收下**（见第 4 节）：占位符对不上、术语被翻掉、单行翻出换行的
-  条目直接驳回，不写进 catalog，留给下次重跑。
-- **回填**：按行插进 `i18n_catalog.py` 对应条目，注释、缩进、排版一律不动；
-  同时把新语言加进 `LANGS`（不想自动加就用 `--no-update-langs`）。
-- **写盘前自检**：重新解析文件并逐条断言——条目数没变、其它语言的原值没被
-  动过、目标语言的值等于本次译文。任一条不过就放弃写入并报错。
+- **Batching**: by default ≤25 entries and ≤4000 characters per batch (`--batch-size` / `--batch-max-chars`).
+- **Rate limiting**: a default 1-second pause between batches (`--sleep`, 0 = no wait). Free-tier Gemini RPM is tight;
+  rapid-fire requests will eat a 429 and trip the whole level's breaker.
+- **Retry / fallback**: a failed batch is retried 2 times with exponential backoff (`--retries`);
+  quota exhaustion or rate limiting does **not** count as failure — the current provider trips its breaker in place and
+  translation continues automatically at the next level.
+  Only when all five levels are tripped does it persist state and exit (exit code 2).
+- **Resume from checkpoint**: after each successful batch, the result is immediately written to
+  `firmware/scripts/.i18n_translate_cache/<lang>.json`. After quota exhaustion, a network drop, or Ctrl-C, **re-run the
+  same command** to continue; already-translated entries will not be paid for twice. The checkpoint deletes itself once
+  everything is written back successfully.
+- **Per-entry validation before acceptance** (see Section 4): entries with mismatched placeholders, translated protected
+  terms, or line breaks introduced into single-line entries are rejected outright, not written into the catalog, and
+  left for the next re-run.
+- **Write-back**: inserted line by line into the corresponding entries in `i18n_catalog.py`; comments, indentation, and
+  layout are left untouched; the new language is also added to `LANGS` (use `--no-update-langs` to skip that).
+- **Self-check before writing**: the file is re-parsed and asserted entry by entry — the entry count is unchanged, other
+  languages' original values are untouched, and the target language's value equals this run's translation. Any failed
+  assertion aborts the write with an error.
 
-想先小范围试水：`--limit 10` 只送前 10 条去翻译（术语条目不受此限，
-它们不花额度，照样全部回填）。
-只想把术语条目（英文原样）补上、完全不调 API：`--verbatim-only`。
+To try it on a small scale first: `--limit 10` sends only the first 10 entries for translation (verbatim-term entries
+are exempt — they cost no quota and are all written back as usual).
+To fill in only the verbatim-term entries (English as-is) without calling the API at all: `--verbatim-only`.
 
-多语言一次跑：`--lang ja --lang ko` 或 `--lang ja,ko`。
+Multiple languages in one run: `--lang ja --lang ko` or `--lang ja,ko`.
 
-### ③ 重生成词条表与字库（**三条都不能跳过**）
+### ③ Regenerate the catalog table and font glyph sets (**none of the three may be skipped**)
 
 ```bash
-python3 firmware/scripts/gen_i18n_assets.py    # 词条表
-python3 firmware/scripts/gen_pfd_aa_font.py    # 直绘页面的字形（含 CJK）
-python3 firmware/scripts/gen_lv_font.py        # LVGL 控件的字体
+python3 firmware/scripts/gen_i18n_assets.py    # catalog table
+python3 firmware/scripts/gen_pfd_aa_font.py    # glyphs for directly drawn pages (including CJK)
+python3 firmware/scripts/gen_lv_font.py        # font for LVGL widgets
 ```
 
-字模是**按 catalog 里实际出现的字符**做子集的
-（`gen_pfd_aa_font.py` 的 `collect_cjk_codes()`，另外并进八个方向箭头）。
-新语言的字形不在子集里，屏上就是空白。后两条需要 ImageMagick 的 `magick`
-命令与 `fontTools`。
+Glyph subsets are built **from the characters that actually appear in the catalog**
+(`collect_cjk_codes()` in `gen_pfd_aa_font.py`, plus the eight directional arrows merged in).
+A new language's glyphs are not in the subset, and on screen they would be blank. The latter two need ImageMagick's `magick`
+command and `fontTools`.
 
-### ④ 目测检查
+### ④ Visual inspection
 
-用 `sim/` 或直接上机看一遍：
+Use `sim/` or go straight to the device and check:
 
-- 有没有渲染成空白的字。`pfd_aa_text.c` 查表落空时**只推进宽度、不画**
-  （宁可留白也不画错位字形），所以症状是"少了几个字"而不是豆腐块；
-- 列宽有没有被撑破。非 ASCII 码位一律按该档的 `PK_AA_*_CJK_W` 宽格排版——
-  西里尔字母、带音标的拉丁字母（`é` / `ü` / `ã`）也走这条宽格路径，不是只有
-  汉字。列表页的列宽有一组 `_Static_assert` 钉着（见 `adsb_list.c` 顶部），
-  撑破了编译就会报。
-
----
-
-## 3. 术语不译表在哪
-
-两层，都在 `translate_catalog.py` 里：
-
-1. **按条目判定（主）**——`is_verbatim_entry()`：某条的 `zh` 与 `en` **完全相同**，
-   说明人工已经判定「这条是术语，不译」，于是对**所有**语言原样保留英文。
-   当前 catalog 里有 24 条这样的词条（QNH / IMU / PFD / ALT / TRK / GS / V/S /
-   ICAO / ESP-IDF / LVGL / microSD …）。
-
-   为什么按条目而不是按词面：同一个词面在不同语境里处置不同。
-   `DIAG_CARD_IMU` 是 `en=IMU / zh=IMU`（诊断卡片标题，不译），
-   而 `ABOUT_IMU` 是 `en=IMU / zh=姿态`（关于页的说明行，要译）。
-   按词面一刀切会把后者也变成 `IMU`，覆盖掉人工决策。
-
-2. **词面表 `KEEP_VERBATIM_TERMS`（辅）**——只做两件事：
-
-   - 给**还没有 `zh` 译文**的新条目兜底（整条正好是一个术语 → 不译）；
-   - **整句里的术语保护**：把句子里命中的术语按条塞进 prompt 的
-     `keep_verbatim` 字段，要求模型原样保留。例如 `"QNH REF"` 会提示保留
-     `QNH`，`"int WDT"` 会提示保留 `WDT`。
-
-   匹配带字母数字边界，所以 `SETTINGS` 不会误命中 `GS`、`left` 不会误命中 `ft`。
-   整条正好等于某个术语时**不**发提示——能走到翻译流程说明人工已判定它要译
-   （如 `LIST_D_SQUAWK` 的 `zh` 是「应答机」），再提示 keep verbatim 就自相矛盾。
-
-翻译原则的原始出处在 `i18n_catalog.py:500-509` 的注释里（航电术语不译 /
-状态描述要译 / 带数字的行不做整句格式串）。改动术语策略前先读那段。
+- Any characters rendered as blank. When a lookup misses, `pfd_aa_text.c` **only advances the width without drawing**
+  (better to leave a blank than draw a misaligned glyph), so the symptom is "a few characters missing" rather than tofu
+  boxes;
+- Any column widths being blown out. All non-ASCII code points are laid out using that tier's wide `PK_AA_*_CJK_W`
+  format —
+  Cyrillic letters and accented Latin letters (`é` / `ü` / `ã`) also take this wide-format path, not just Chinese
+  characters. The list page's column widths are pinned by a set of `_Static_assert`s (see the top of `adsb_list.c`),
+  so blowing one out fails the build.
 
 ---
 
-## 4. 译文校验（模型返回后、写进 catalog 之前）
+## 3. Where the Do-Not-Translate Term Table Lives
 
-每一条译文都要过 `validate_value()` 才会被收下。硬规矩三条，任一条不过就**驳回
-这一条**（不是整批），驳回的留在检查点外面，下次重跑再翻：
+Two layers, both in `translate_catalog.py`:
 
-| 检查 | 为什么 |
+1. **Per-entry decision (primary)** — `is_verbatim_entry()`: if an entry's `zh` and `en` are **exactly identical**, a
+   human has already decided "this entry is a term; do not translate", so English is kept as-is for **all** languages.
+   The current catalog has 24 such entries (QNH / IMU / PFD / ALT / TRK / GS / V/S /
+   ICAO / ESP-IDF / LVGL / microSD …).
+
+   Why per entry rather than per surface form: the same surface form is handled differently in different contexts.
+   `DIAG_CARD_IMU` is `en=IMU / zh=IMU` (diagnostics card title, not translated),
+   while `ABOUT_IMU` is `en=IMU / zh=姿态` (the description line on the about page, translated).
+   A blanket per-surface rule would turn the latter into `IMU` too, overriding the human decision.
+
+2. **Surface-form table `KEEP_VERBATIM_TERMS` (auxiliary)** — does only two things:
+
+   - Backstops **new entries that do not yet have a `zh` translation** (an entry that is exactly one term → not
+     translated);
+   - **In-sentence term protection**: terms hit within a sentence are passed per entry in the prompt's
+     `keep_verbatim` field, instructing the model to keep them as-is. For example, `"QNH REF"` prompts keeping
+     `QNH`, and `"int WDT"` prompts keeping `WDT`.
+
+   Matching uses alphanumeric boundaries, so `SETTINGS` does not falsely match `GS`, and `left` does not falsely match
+   `ft`. When an entry exactly equals a term, the hint is **not** sent — reaching the translation flow at all means a
+   human has already decided it should be translated (e.g. `LIST_D_SQUAWK`'s `zh` is 「应答机」); hinting keep verbatim
+   then would be self-contradictory.
+
+The original source of the translation principles is the comment at `i18n_catalog.py:500-509` (avionics terms are not
+translated / status descriptions are translated / lines with numbers are not whole-sentence format strings). Read that
+section before changing term policy.
+
+---
+
+## 4. Translation Validation (after the model returns, before writing into the catalog)
+
+Every translation must pass `validate_value()` to be accepted. Three hard rules; failing any one **rejects that entry**
+(not the whole batch); rejected entries stay outside the checkpoint and are re-translated on the next run:
+
+| Check | Why |
 |---|---|
-| printf 占位符集合必须与源一致（`%d` / `%s` / `%.1f` / `%02d`） | C 侧 `snprintf` 的参数写死了，占位符多一个少一个就是**越界读栈** |
-| `keep_verbatim` 里的术语必须原样出现在译文里 | 模型偶尔会把 `QNH REF` 整句意译掉，航电缩写不能翻 |
-| 源是单行时译文不许有换行 | 屏上是定高单行控件，`\n` 会画成方框 |
+| printf placeholder set must match the source (`%d` / `%s` / `%.1f` / `%02d`) | The C-side `snprintf` arguments are hard-coded; one extra or missing placeholder means an **out-of-bounds stack read** |
+| Terms in `keep_verbatim` must appear verbatim in the translation | The model occasionally paraphrases `QNH REF` wholesale; avionics abbreviations must not be translated |
+| If the source is single-line, the translation must contain no line break | The screen uses fixed-height single-line widgets; `\n` renders as boxes |
 
-外加一条软规矩：译文比源长过 `--max-len-ratio`（默认 1.6）倍时**只告警不驳回**
-——德语/俄语天然就长，一刀切会把好译文也扔掉，但值得上机看一眼列宽。
+Plus one soft rule: when the translation is longer than `--max-len-ratio` (default 1.6) times the source, it is
+**warned about but not rejected**
+— German/Russian are naturally longer, and a blanket cut would discard good translations, but the column widths are
+worth a look on the device.
 
-收下之前还会先做一次清洗（`sanitize_value()`）：剥掉代码围栏 ` ```…``` ` 和
-首尾成对引号，这是模型最爱多加的两样东西。
+Before acceptance there is also a cleanup pass (`sanitize_value()`): it strips code fences ` ```…``` ` and matching
+leading/trailing quotes — the two things models most love to add.
 
-> 这一套「响应必须通过校验，否则视为失败」的思路来自我们另一个项目里翻译
-> release note 的脚本（那份校验译文必须以 `##` 开头、必须含版本号、
-> 只能有一个版本块）——模型偶尔会返回结构正确但内容跑偏的东西，
-> 不校验就会静默污染产物。
+> This "response must pass validation, otherwise treat it as failed" approach comes from a script in another of our
+> projects that translates release notes (its validation required translations to start with `##`, contain a version
+> number, and have exactly one version block) — models occasionally return something structurally correct but off in
+> content, and without validation it silently pollutes the artifacts.
 
 ---
 
-## 5. 加词条（不涉及新语言）时
+## 5. When Adding Catalog Entries (No New Language Involved)
 
-改 `i18n_catalog.py` 加 `("KEY", {"en": ..., "zh": ...})` 之后，**必须**重跑
-第 2 节 ③ 那三条命令：漏 `gen_i18n_assets.py` 是新词条根本没有枚举值（编译期
-报错，看得见）；漏 `gen_pfd_aa_font.py` 是新汉字不在字模子集里、屏上那几个字
-直接消失（**静默**，只有肉眼看得出）。
+After editing `i18n_catalog.py` to add `("KEY", {"en": ..., "zh": ...})`, you **must** re-run the three commands from
+Section 2 ③: skipping `gen_i18n_assets.py` means the new entries have no enum values at all (a compile-time error,
+visible); skipping `gen_pfd_aa_font.py` means the new Chinese characters are not in the glyph subset, and those
+characters simply vanish on screen (**silent** — only visible to the eye).
 
-新汉字如果全部已经在既有子集里（比如复用「校」「准」这种别处已经出现过的
-字），字库文件重跑后不会变，`git diff` 是空的——这不是没跑成功。
+If the new Chinese characters are all already in the existing subset (e.g. reusing 「校」「准」, characters that already
+appear elsewhere), the font files will not change after re-running, and `git diff` is empty — that does not mean the
+run failed.

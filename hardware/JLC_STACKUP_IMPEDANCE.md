@@ -1,106 +1,108 @@
-# 嘉立创叠层与阻抗速查（板级通用参考）
+# JLC Stackup & Impedance Quick Reference (Board-Level General Reference)
 
-> 数据来源：**嘉立创阻抗计算神器**官方截图，项目维护者 2026-08-23 提供。
-> 本文只记**官方一手数据**和从它反标定出来的量，公式推算值一律标注出处。
-> 适用范围：`expansion-board-v3` / `v4` 以及后续所有板子。天线专属讨论见
-> [`expansion-board-v3/IFA_ANTENNA.md`](expansion-board-v3/IFA_ANTENNA.md) §3。
+Chinese version: [`JLC_STACKUP_IMPEDANCE-zh_CN.md`](JLC_STACKUP_IMPEDANCE-zh_CN.md)
 
----
-
-## 0. 三条规则（先看这个）
-
-1. **换叠层必须重算所有阻抗线宽。** 外层微带阻抗只由 **L1–L2 介质厚 h** 和线宽决定，
-   跟总板厚、层数都没关系。同一根 0.34mm 线，4 层板上 51.5Ω，6 层板上只有 31.8Ω。
-2. **线宽以官方计算器为准，不要用裸微带公式下结论。** 手算公式不含阻焊层，绿油拉高
-   有效介电常数，算出来的线一律偏粗（本板这个量级偏 4.6%）。
-3. **下单必须勾「阻抗控制」。** 6 层板 50Ω 只有 0.15mm，属细线，不勾的话线宽公差直接
-   吃掉阻抗精度。
+> Data source: official screenshots of the **JLC impedance calculator**, provided by the project maintainer on 2026-08-23.
+> This document records only **official first-hand data** and the quantities back-solved from it; any formula-derived value is always labeled with its source.
+> Applies to: `expansion-board-v3` / `v4` and all subsequent boards. For antenna-specific discussion, see
+> §3 of the archived v3 antenna study (internal engineering notes).
 
 ---
 
-## 1. 50Ω 外层微带线宽速查
+## 0. Three Rules (Read This First)
 
-外层铜厚 1oz。**h = L1–L2 介质厚**。
+1. **Changing the stackup requires recalculating every impedance trace width.** The outer-layer microstrip impedance is determined only by the **L1–L2 dielectric thickness h** and the trace width,
+   total board thickness and layer count are irrelevant. The same 0.34mm trace is 51.5Ω on a 4-layer board but only 31.8Ω on a 6-layer board.
+2. **Take trace widths from the official calculator; never settle a value with the bare microstrip formula.** Hand-calc formulas omit the solder mask, and solder mask raises the
+   effective Dk, so formula-derived traces always come out too wide (4.6% too wide at this board's scale).
+3. **Always tick "Impedance Control" when ordering.** On a 6-layer board, 50Ω needs only 0.15mm — a fine trace; without that option, trace width tolerance eats the
+   impedance precision directly.
 
-| 叠层 | 层数 | 成品板厚 | 收费 | L1–L2 介质 | **h (mm)** | **官方 50Ω 线宽** |
+---
+
+## 1. 50Ω Outer-Layer Microstrip Trace Width Quick Reference
+
+Outer-layer copper is 1oz. **h = L1–L2 dielectric thickness**.
+
+| Stackup | Layers | Finished thickness | Fee | L1–L2 dielectric | **h (mm)** | **Official 50Ω trace width** |
 |---|---|---|---|---|---|---|
-| `JLC0216A` | 2 | 1.34~1.64mm | 通用 | 芯板 1.5mm 1/1OZ | **1.4300** | **2.6916mm** |
-| `JLC04161H-7628` | 4 | 1.59mm ±10% | 通用 | 7628 RC49% 8.6mil | **0.2104** | **0.3586mm** |
-| `JLC06161H-3313` | 6 | 1.54mm ±10% | **免费** | 3313 RC57% 4.2mil | **0.0994** | **0.1509mm** |
-| `JLC06161H-1080C` | 6 | 1.56mm ±10% | 特殊加钱 | 1080 RC67% 3.3mil | **0.0764** | **0.1072mm** |
+| `JLC0216A` | 2 | 1.34~1.64mm | Standard | Core 1.5mm 1/1OZ | **1.4300** | **2.6916mm** |
+| `JLC04161H-7628` | 4 | 1.59mm ±10% | Standard | 7628 RC49% 8.6mil | **0.2104** | **0.3586mm** |
+| `JLC06161H-3313` | 6 | 1.54mm ±10% | **Free** | 3313 RC57% 4.2mil | **0.0994** | **0.1509mm** |
+| `JLC06161H-1080C` | 6 | 1.56mm ±10% | Extra fee | 1080 RC67% 3.3mil | **0.0764** | **0.1072mm** |
 
-四行全部是官方计算器直接给出的正算结果（阻抗模式：单端阻抗·外层，L1 为阻抗层、
-L2 为下参考层，阻值公差 0.5）。前三行来自本次三张截图，1080C 那行来自 `51849d0`。
+All four rows are forward-calculation results given directly by the official calculator (impedance mode: single-ended impedance · outer layer, with L1 as the impedance layer and
+L2 as the lower reference layer, impedance tolerance 0.5). The first three rows come from this batch of three screenshots; the 1080C row comes from `51849d0`.
 
-> 🔴 **勘误（2026-08-23，本次）**：`JLC06161H-3313` 这格此前记的是 **≈0.158mm**，
-> 那是用等效 Dk 4.5 推算的，不是官方值。官方正算是 **0.1509mm**，推算值偏粗 4.6%。
-> 详见 §3。
-
----
-
-## 2. 三份叠层的完整层结构
-
-### 2.1 JLC04161H-7628（4 层，通用，成品板厚 1.59mm ±10%）
-
-内层铜厚 0.5oz，外层铜厚 1oz，总厚度范围 **1.43 ~ 1.74mm**。
-
-| 层 | 材料 | 参数 | 厚度 (mil) | 厚度 (mm) |
-|---|---|---|---|---|
-| L1 | 铜箔 | 1oz | 1.38 | 0.0350 |
-| | 半固化片 | 7628 RC49% 8.6mil | 8.28 | **0.2104** |
-| L2 | 芯板铜 | 1.1mm H/HOZ 含铜 | 0.60 | 0.0152 |
-| | 芯板介质 | | 41.93 | 1.0650 |
-| L3 | 芯板铜 | | 0.60 | 0.0152 |
-| | 半固化片 | 7628 RC49% 8.6mil | 8.28 | 0.2104 |
-| L4 | 铜箔 | 1oz | 1.38 | 0.0350 |
-
-求和 = 1.5862mm ✅ 与标称 1.59mm 一致。
-
-### 2.2 JLC0216A（2 层，成品板厚 1.6mm 档）
-
-外层铜厚 1oz，总厚度范围 **1.34 ~ 1.64mm**。
-
-| 层 | 材料 | 参数 | 厚度 (mil) | 厚度 (mm) |
-|---|---|---|---|---|
-| L1 | 芯板铜 | 1.5mm 1/1OZ 含铜 | 1.18 | 0.0300 |
-| | 芯板介质 | | 56.30 | **1.4300** |
-| L2 | 芯板铜 | | 1.18 | 0.0300 |
-
-求和 = 1.49mm ✅ 正好是厚度范围中值。
-
-> ⚠️ 2 层的外层铜是芯板自带的 **0.0300mm**，不是另外三个叠层的 0.0350mm。
-> 反标定 Dk 时别混用。
-
-### 2.3 JLC06161H-3313（6 层，免费叠层，成品板厚 1.54mm ±10%）
-
-**v3 / v4 当前在用的就是这个。** 内层 0.5oz，外层 1oz，总厚度范围 **1.38 ~ 1.69mm**。
-
-| 层 | 材料 | 参数 | 厚度 (mil) | 厚度 (mm) |
-|---|---|---|---|---|
-| L1 | 铜箔 | 1oz | 1.38 | 0.0350 |
-| | 半固化片 | 3313 RC57% 4.2mil | 3.91 | **0.0994** |
-| L2 | 芯板铜 | 0.55mm H/H 不含铜 | 0.60 | 0.0152 |
-| | 芯板介质 | | 21.65 | 0.5500 |
-| L3 | 芯板铜 | | 0.60 | 0.0152 |
-| | 半固化片 | 2116 RC54% 4.9mil | 4.28 | 0.1088 |
-| L4 | 芯板铜 | 0.55mm H/H 不含铜 | 0.60 | 0.0152 |
-| | 芯板介质 | | 21.65 | 0.5500 |
-| L5 | 芯板铜 | | 0.60 | 0.0152 |
-| | 半固化片 | 3313 RC57% 4.2mil | 3.91 | 0.0994 |
-| L6 | 铜箔 | 1oz | 1.38 | 0.0350 |
-
-求和 = 1.5384mm ✅ 与标称 1.54mm 一致。
-
-> 这个叠层是**对称**的：L1–L2 和 L5–L6 都是 0.0994mm。所以底层（L6）走 50Ω 微带，
-> 参考面取 L5，线宽同样是 0.1509mm。
+> 🔴 **Erratum (2026-08-23, this update)**: the `JLC06161H-3313` cell previously recorded **≈0.158mm**,
+> which was derived from an equivalent Dk of 4.5, not an official value. The official forward calculation gives **0.1509mm**; the derived value is 4.6% too wide.
+> See §3 for details.
 
 ---
 
-## 3. 等效 Dk：为什么不能只记一个 4.5
+## 2. Full Layer Structure of the Three Stackups
 
-材料标称 Dk 是 **4.1**，但官方计算器的行为等价于一个更高的 Dk——差值来自**阻焊层**
-（绿油拉高有效介电常数，同阻抗需要更细的线）。用 Hammerstad-Jensen 裸微带公式
-（`tools/microstrip_z0.py`）从每个官方数据点反解：
+### 2.1 JLC04161H-7628 (4 layers, standard, finished thickness 1.59mm ±10%)
+
+Inner-layer copper is 0.5oz and outer-layer copper is 1oz; total thickness range **1.43 ~ 1.74mm**.
+
+| Layer | Material | Spec | Thickness (mil) | Thickness (mm) |
+|---|---|---|---|---|
+| L1 | Copper foil | 1oz | 1.38 | 0.0350 |
+| | Prepreg | 7628 RC49% 8.6mil | 8.28 | **0.2104** |
+| L2 | Core copper | 1.1mm H/HOZ with copper | 0.60 | 0.0152 |
+| | Core dielectric | | 41.93 | 1.0650 |
+| L3 | Core copper | | 0.60 | 0.0152 |
+| | Prepreg | 7628 RC49% 8.6mil | 8.28 | 0.2104 |
+| L4 | Copper foil | 1oz | 1.38 | 0.0350 |
+
+Sum = 1.5862mm ✅ Matches the nominal 1.59mm.
+
+### 2.2 JLC0216A (2 layers, finished thickness 1.6mm class)
+
+Outer-layer copper is 1oz; total thickness range **1.34 ~ 1.64mm**.
+
+| Layer | Material | Spec | Thickness (mil) | Thickness (mm) |
+|---|---|---|---|---|
+| L1 | Core copper | 1.5mm 1/1OZ with copper | 1.18 | 0.0300 |
+| | Core dielectric | | 56.30 | **1.4300** |
+| L2 | Core copper | | 1.18 | 0.0300 |
+
+Sum = 1.49mm ✅ Exactly the midpoint of the thickness range.
+
+> ⚠️ On the 2-layer board, the outer copper is the core's own **0.0300mm**, not the 0.0350mm of the other three stackups.
+> Don't mix them when back-solving Dk.
+
+### 2.3 JLC06161H-3313 (6 layers, the free stackup, finished thickness 1.54mm ±10%)
+
+**This is the one v3 / v4 currently use.** Inner layers 0.5oz, outer layers 1oz; total thickness range **1.38 ~ 1.69mm**.
+
+| Layer | Material | Spec | Thickness (mil) | Thickness (mm) |
+|---|---|---|---|---|
+| L1 | Copper foil | 1oz | 1.38 | 0.0350 |
+| | Prepreg | 3313 RC57% 4.2mil | 3.91 | **0.0994** |
+| L2 | Core copper | 0.55mm H/H without copper | 0.60 | 0.0152 |
+| | Core dielectric | | 21.65 | 0.5500 |
+| L3 | Core copper | | 0.60 | 0.0152 |
+| | Prepreg | 2116 RC54% 4.9mil | 4.28 | 0.1088 |
+| L4 | Core copper | 0.55mm H/H without copper | 0.60 | 0.0152 |
+| | Core dielectric | | 21.65 | 0.5500 |
+| L5 | Core copper | | 0.60 | 0.0152 |
+| | Prepreg | 3313 RC57% 4.2mil | 3.91 | 0.0994 |
+| L6 | Copper foil | 1oz | 1.38 | 0.0350 |
+
+Sum = 1.5384mm ✅ Matches the nominal 1.54mm.
+
+> This stackup is **symmetric**: both L1–L2 and L5–L6 are 0.0994mm. So a 50Ω microstrip on the bottom layer (L6),
+> referencing L5, likewise uses a 0.1509mm trace width.
+
+---
+
+## 3. Equivalent Dk: Why a Single 4.5 Won't Do
+
+The materials' nominal Dk is **4.1**, yet the official calculator behaves as if the Dk were higher — the difference comes from the **solder mask**
+(solder mask raises the effective Dk, so the same impedance requires a narrower trace). Back-solving each official data point with the Hammerstad-Jensen bare microstrip formula
+(`tools/microstrip_z0.py`):
 
 ```
 叠层                           h        W     官方Z0     反标定Dk
@@ -111,44 +113,44 @@ JLC06161H-3313  6层      0.0994   0.3400  31.8238     4.540
 JLC06161H-1080C 6层      0.0764   0.1072  50.0000     4.936
 ```
 
-**等效 Dk 不是常数，它随介质变薄而升高**：4.42 → 4.52 → 4.73 → 4.94。
+**The equivalent Dk is not a constant — it rises as the dielectric gets thinner**: 4.42 → 4.52 → 4.73 → 4.94.
 
-物理上讲得通：阻焊厚度是固定的（约 0.02mm），h 越薄，绿油在总介质里占的比重越大，
-等效 Dk 就越高。同一叠层内也一样——6 层 3313 上宽线（0.34mm）反标定 4.54，窄线
-（0.1509mm）反标定 4.73，因为窄线的边缘场更多走表面的绿油。
+This is physically sound: solder mask thickness is fixed (about 0.02mm), so the thinner h is, the larger a share of the total dielectric the solder mask becomes,
+and the higher the equivalent Dk. The same holds within one stackup — on the 6-layer 3313, a wide trace (0.34mm) back-solves to 4.54 while a narrow trace
+(0.1509mm) back-solves to 4.73, because a narrow trace's fringe fields travel more through the surface solder mask.
 
-> 🔴 **这推翻了「等效 Dk 4.5 全局自洽」的旧结论。**
-> 4.5 只在 h ≥ 0.2mm 时准（4 层误差 0.3%）。在 h ≈ 0.1mm 的薄介质上，它会把 50Ω
-> 线算成 0.158mm，而官方是 0.1509mm——**偏粗 4.6%**。
-> 用法修正为：**每个叠层单独反标定一次，跨叠层不要外推。**
+> 🔴 **This overturns the old conclusion that "an equivalent Dk of 4.5 is globally self-consistent."**
+> 4.5 is accurate only when h ≥ 0.2mm (0.3% error on the 4-layer). On a thin dielectric with h ≈ 0.1mm, it computes the 50Ω
+> trace as 0.158mm while the official value is 0.1509mm — **4.6% too wide**.
+> Corrected usage: **back-solve once per stackup, and never extrapolate across stackups.**
 
-### 3.1 板上实际用的 0.15mm 是多少欧
+### 3.1 How Many Ohms Is the 0.15mm Actually Used on the Board
 
-按本叠层自己的标定值 Dk = 4.725：
+Using this stackup's own calibration value, Dk = 4.725:
 
-| 线宽 | Z₀ | 说明 |
+| Trace width | Z₀ | Notes |
 |---|---|---|
-| **0.1509mm** | **50.0Ω** | 官方严格解 |
-| **0.15mm（板上实际值）** | **≈50.1Ω** | 偏差 0.3%，远在 ±10% 公差内 |
-| 0.34mm | 31.8Ω | 4 层板的旧值，6 层上严重失配 |
+| **0.1509mm** | **50.0Ω** | Official exact solution |
+| **0.15mm (actual board value)** | **≈50.1Ω** | 0.3% off, well within the ±10% tolerance |
+| 0.34mm | 31.8Ω | Old 4-layer value; badly mismatched on 6 layers |
 
-**0.15mm 是对的，不用改。** 顺带更正一处：IFA 文档早期写的「50Ω → 0.1509mm」
-本来就是官方值，昨天按 Dk 4.5 推的 0.158 才是偏的。
+**0.15mm is correct — no change needed.** One related correction: the "50Ω → 0.1509mm" written early in the archived v3 antenna study (internal engineering notes)
+was the official value all along; it was yesterday's 0.158, derived from Dk 4.5, that was off.
 
 ---
 
-## 4. 复算工具
+## 4. Recalculation Tool
 
 ```bash
 python3 hardware/tools/microstrip_z0.py                    # 官方数据点 + 反标定 Dk
 python3 hardware/tools/microstrip_z0.py 0.15 0.0994 4.725  # W h Dk -> Z0
 ```
 
-换叠层时的正确流程：
+Correct procedure when changing stackups:
 
-1. 在[嘉立创阻抗计算器](https://tools.jlc.com/#/impedanceCalculation)选新叠层，
-   **正算**一次 50Ω 线宽 —— 这个值直接用。
-2. 想在同一叠层里推别的阻抗（差分、别的线宽），先用第 1 步的数据点
-   `solve_er()` 反标定 Dk，再用那个 Dk 插值。
-3. 改完线宽，**全仓库 grep 一遍旧值**——写死的副本已经害过我们四次
-   （见 v3/v4 的 `LAYOUT_CONSTRAINTS.md`）。
+1. In the [JLC impedance calculator](https://tools.jlc.com/#/impedanceCalculation), select the new stackup and
+   **forward-calculate** the 50Ω trace width once — use that value directly.
+2. To derive other impedances within the same stackup (differential pairs, other trace widths), first back-solve the Dk from the step-1 data point
+   with `solve_er()`, then interpolate using that Dk.
+3. After changing trace widths, **grep the entire repo for the old value** — hardcoded copies have burned us four times already
+   (see the archived v3/v4 layout constraints, internal engineering notes).

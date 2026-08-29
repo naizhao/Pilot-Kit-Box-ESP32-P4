@@ -1,65 +1,68 @@
-# datafiles/ — 盒子离线数据工作区
+# datafiles/ — Box Offline Data Workspace
 
-盒子跑起来要读的离线数据，统一放这里，不再散落在 `tmp/`、`firmware/main/` 各处。
+Chinese version: [`README-zh_CN.md`](README-zh_CN.md)
 
-**这些文件不进 git**（根 `.gitignore` 里忽略 `datafiles/**/*.bin` 与
-`datafiles/**/*.pmtiles`），只有目录结构和这份说明进。理由是体积：四个底图包
-合计 3.4 GB，单包最大 1.4 GB；数据 bin 每个 8~17 MB。全部是脚本可再生的产物，
-没有一个是手写的源码。
+All offline data the box reads at runtime lives here, instead of being scattered across `tmp/`, `firmware/main/`, and elsewhere.
+
+**These files are not committed to git** (the root `.gitignore` ignores `datafiles/**/*.bin` and
+`datafiles/**/*.pmtiles`); only the directory structure and this document are tracked. The reason is size: the four
+basemap packages total 3.4 GB, with the largest single package at 1.4 GB; each data bin is 8~17 MB. All of them are
+artifacts regenerable by scripts — not a single one is hand-written source.
 
 ```
 datafiles/
-├── README.md      ← 本文件
-├── data/          航空/机型数据 bin，对应 SD 卡的 /aero/
-└── maps/          离线底图 pmtiles 包，对应 SD 卡的 /maps/
+├── README.md      ← this file
+├── data/          aviation/aircraft data bins, corresponding to /aero/ on the SD card
+└── maps/          offline basemap pmtiles packages, corresponding to /maps/ on the SD card
 ```
 
 ---
 
-## SD 卡上的目录结构
+## Directory Layout on the SD Card
 
-盒子把卡挂在 `/sdcard`，只认下面这几个固定路径（都是固件里写死的常量）：
+The box mounts the card at `/sdcard` and only recognizes the following fixed paths (all hard-coded constants in the firmware):
 
-| SD 卡路径 | 本仓库来源 | 固件里的常量 |
+| SD Card Path | Source in This Repo | Constant in Firmware |
 |---|---|---|
-| `/aero/pk_aero.bin`  | `datafiles/data/pk_aero.bin`  | `AERO_BIN_PATH`（`firmware/main/pk_aero_db.c:56`） |
-| `/aero/pk_actdb.bin` | `datafiles/data/pk_actdb.bin` | `ACTDB_PATH`（`firmware/main/aircraft_db.c:67`） |
-| `/maps/*.pmtiles`    | `datafiles/maps/*.pmtiles`    | `MAP_DIR`（`firmware/main/pk_tile_loader.c:30`） |
+| `/aero/pk_aero.bin`  | `datafiles/data/pk_aero.bin`  | `AERO_BIN_PATH` (`firmware/main/pk_aero_db.c:56`) |
+| `/aero/pk_actdb.bin` | `datafiles/data/pk_actdb.bin` | `ACTDB_PATH` (`firmware/main/aircraft_db.c:67`) |
+| `/maps/*.pmtiles`    | `datafiles/maps/*.pmtiles`    | `MAP_DIR` (`firmware/main/pk_tile_loader.c:30`) |
 
-刷卡就是把 `data/` 里的两个现役 bin 拷进 `/aero/`、`maps/` 里的包拷进 `/maps/`，
-文件名保持不变（`/maps` 是扫目录的，文件名不参与路由，但另外两个是写死的路径）。
+Flashing the card means copying the two active bins from `data/` into `/aero/` and the packages from `maps/` into `/maps/`,
+keeping the file names unchanged (`/maps` is scanned as a directory, so file names are not part of routing, but the other
+two are hard-coded paths).
 
-microSD 必须插在 Slot 0——ESP-Hosted 占掉了唯一的 SDMMC 控制器，插错槽任何卡都
-识别不出来。
+The microSD must be inserted in Slot 0 — ESP-Hosted occupies the only SDMMC controller; in the wrong slot no card will
+be detected at all.
 
 ---
 
-## data/ — 航空 / 机型数据
+## data/ — Aviation / Aircraft Data
 
-| 文件 | 大小 | 格式 | 状态 |
+| File | Size | Format | Status |
 |---|---|---|---|
-| `pk_aero.bin` | 11,450,416 B (10.92 MB) | `PKAER1` v3，cycle `2026-02`，9 段 | **现役**，与盒子里那张卡上的一致 |
-| `pk_actdb.bin` | 8,604,583 B (8.21 MB) | `PKACT1` 容器 + `PKADB1` v2，cycle `20260802` | **现役** |
-| `pk_aero_v4.bin` | 17,438,040 B (16.63 MB) | `PKAER1` v4，cycle `2026-08`，14 段 | **固件尚未适配，先别拷进 SD 卡** |
-| `aircraft_db.bin` | 8,560,452 B (8.16 MB) | 裸 `PKADB1` v2 载荷（无容器），570,141 条 | **历史遗留，已不参与构建** |
+| `pk_aero.bin` | 11,450,416 B (10.92 MB) | `PKAER1` v3, cycle `2026-02`, 9 segments | **Active**, matches the card inside the box |
+| `pk_actdb.bin` | 8,604,583 B (8.21 MB) | `PKACT1` container + `PKADB1` v2, cycle `20260802` | **Active** |
+| `pk_aero_v4.bin` | 17,438,040 B (16.63 MB) | `PKAER1` v4, cycle `2026-08`, 14 segments | **Firmware does not support it yet; do not copy it to the SD card** |
+| `aircraft_db.bin` | 8,560,452 B (8.16 MB) | Bare `PKADB1` v2 payload (no container), 570,141 records | **Legacy, no longer part of the build** |
 
-### pk_aero.bin — 航空数据（机场/跑道/导航台/航路点/空域）
+### pk_aero.bin — Aviation Data (airports/runways/navaids/waypoints/airspace)
 
-生成端不在本仓库：是 Pilot-Kit 仓的
-`scripts/aero_data_pipeline/export_box_bin.py`。格式的权威定义以那个脚本为准，
-本仓库这侧的解析器是 `firmware/main/pk_aero_reader.c/.h`，两边靠文件头注释对齐。
-按 AIRAC 28 天周期更新。
+The generator does not live in this repo: it is
+`scripts/aero_data_pipeline/export_box_bin.py` in the Pilot-Kit repo. The authoritative format definition is that script;
+the parser on this repo's side is `firmware/main/pk_aero_reader.c/.h`, and the two sides stay aligned via file-header
+comments. Updated on the 28-day AIRAC cycle.
 
-**v4 那份先别用**：`firmware/main/pk_aero_reader.h:26` 写着 init 只接受
-`version ∈ {2, 3}`，v4 的 header 里 version=4、段数从 9 涨到 14，直接拷进卡里
-固件会拒绝加载。留在这里是为了固件适配时手边有一份真实样本。
+**Do not use the v4 file yet**: `firmware/main/pk_aero_reader.h:26` states that init only accepts
+`version ∈ {2, 3}`; the v4 header has version=4 and the segment count grows from 9 to 14. Copying it straight to the card
+will make the firmware refuse to load it. It is kept here so that a real sample is at hand when adapting the firmware.
 
-### pk_actdb.bin — ICAO24 机型库
+### pk_actdb.bin — ICAO24 Aircraft Database
 
-本仓库自己出：
+Produced by this repo itself:
 
 ```bash
-# 1) 抓上游 tar1090-db（脚本在 --db-dir 不存在时会把这段配方打出来）
+# 1) Fetch the upstream tar1090-db (the script prints this recipe if --db-dir does not exist)
 mkdir -p /tmp/tar1090-db && cd /tmp/tar1090-db
 curl -sL https://api.github.com/repos/wiedehopf/tar1090-db/contents/db \
   | python3 -c "import sys,json;[print(i['name']) for i in json.load(sys.stdin) if i['name'].endswith('.js')]" \
@@ -67,57 +70,58 @@ curl -sL https://api.github.com/repos/wiedehopf/tar1090-db/contents/db \
 curl -sL https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types.js \
   | gunzip > /tmp/types.json
 
-# 2) 出包（--out 默认就是 datafiles/data/pk_actdb.bin，不用写）
+# 2) Build the package (--out defaults to datafiles/data/pk_actdb.bin, no need to specify)
 firmware/scripts/gen_aircraft_db.py --db-dir /tmp/tar1090-db --types /tmp/types.json
 ```
 
-上游那张 Doc 8643 类型表挪过位置：老地址（仓库根的 `icao_aircraft_types.json`）
-现在是 404，新地址在 `db/icao_aircraft_types.js` 且是 gzip，所以上面要 `gunzip`
-成纯 JSON 再喂给 `--types`。tar1090-db 周更，与 pk_aero.bin 的 28 天 AIRAC 周期
-不同步——两个文件故意分开，就是不想让其中一个等另一个。
+The upstream Doc 8643 type table has moved: the old address (`icao_aircraft_types.json` at the repo root)
+is now a 404; the new address is `db/icao_aircraft_types.js` and it is gzip-compressed, hence the `gunzip`
+into plain JSON before feeding it to `--types`. tar1090-db updates weekly, out of sync with pk_aero.bin's 28-day AIRAC
+cycle — the two files are deliberately kept separate so that neither one has to wait for the other.
 
-### aircraft_db.bin — 已退役
+### aircraft_db.bin — Retired
 
-原先走 `EMBED_FILES` 嵌进固件 `.rodata`，占掉 factory 分区一大块。机型库改到 SD
-卡懒加载后（见 `firmware/main/aircraft_db.c` 文件头），`EMBED_FILES` 那行已删，
-全仓已无 `_binary_aircraft_db_bin` 引用，分区占用率从 91% 降到 23%。
+It used to be embedded into the firmware `.rodata` via `EMBED_FILES`, taking up a large chunk of the factory partition.
+After the aircraft database moved to the SD card with lazy loading (see the file header of `firmware/main/aircraft_db.c`), the `EMBED_FILES` line was deleted,
+no `_binary_aircraft_db_bin` reference remains anywhere in the repo, and partition usage dropped from 91% to 23%.
 
-它是**裸载荷**、没有 64 字节容器头，与 `pk_actdb.bin` 不是同一种文件，不能拷进
-SD 卡。留着只有一个用途：新出的库跟这份老快照做 diff 对账（`gen_aircraft_db.py
---no-container` 出来的才是可比对的同构文件）。确认不再需要对账即可删。
-
----
-
-## maps/ — 离线底图
-
-PMTiles 格式的栅格底图包，深色主题。固件启动扫 `/sdcard/maps`，按 (z,x,y) 在多
-个包之间路由：重叠区选 maxzoom 最深的那个，够不到就用父瓦片放大（overzoom）并
-打提示徽标。
-
-| 文件 | 大小 | 覆盖 |
-|---|---|---|
-| `pk_map_global.pmtiles` | 584,152,227 B (557 MB) | 全球 z0-9 |
-| `pk_map_cn.pmtiles` | 1,459,408,344 B (1.36 GB) | 中国 z10-12 |
-| `pk_map_us_conus.pmtiles` | 1,365,682,229 B (1.27 GB) | 美国本土 z10-12 |
-| `pk_map_prd_pilot.pmtiles` | 14,016,795 B (13.4 MB) | 珠三角试点 z0-12，bounds `112.5,21.5,114.6,23.5` |
-
-出包链路：tileserver-gl 渲染 → MBTiles → `pmtiles convert`。也可以直接从已刷好
-的 SD 卡 `/maps/` 拷回来。
+It is a **bare payload** without the 64-byte container header — not the same kind of file as `pk_actdb.bin`, and it must
+not be copied to the SD card. There is exactly one reason to keep it: diffing a newly generated database against this
+old snapshot for reconciliation (`gen_aircraft_db.py
+--no-container` produces the comparable isomorphic file). Once reconciliation is no longer needed, it can be deleted.
 
 ---
 
-## 谁会读这个目录
+## maps/ — Offline Basemap
 
-移动这些文件之前先看一眼，下面几处的默认路径都指着这里：
+Raster basemap packages in PMTiles format, dark theme. At startup the firmware scans `/sdcard/maps` and routes by (z,x,y)
+across multiple packages: in overlapping areas the one with the deepest maxzoom wins; where nothing reaches, the parent
+tile is zoomed in (overzoom) and a hint badge is shown.
 
-| 位置 | 默认值 | 覆盖方式 |
+| File | Size | Coverage |
 |---|---|---|
-| `firmware/test/test_pk_pmtiles.c` | `datafiles/maps` | 环境变量 `PK_MAP_TEST_DATA_DIR` |
-| `firmware/test/test_pk_map_store.c` | `datafiles/maps` | 环境变量 `PK_MAP_TEST_DATA_DIR` |
-| `sim/compat/pk_tile_loader_sim.c` | `datafiles/maps` | 环境变量 `PK_SIM_MAPS_DIR` |
-| `sim/capture.py` | `<repo>/datafiles/maps` | 改脚本里的 `PK_SIM_MAPS_DIR` |
+| `pk_map_global.pmtiles` | 584,152,227 B (557 MB) | Global z0-9 |
+| `pk_map_cn.pmtiles` | 1,459,408,344 B (1.36 GB) | China z10-12 |
+| `pk_map_us_conus.pmtiles` | 1,365,682,229 B (1.27 GB) | CONUS z10-12 |
+| `pk_map_prd_pilot.pmtiles` | 14,016,795 B (13.4 MB) | Pearl River Delta pilot z0-12, bounds `112.5,21.5,114.6,23.5` |
+
+Package pipeline: tileserver-gl rendering → MBTiles → `pmtiles convert`. You can also copy the packages straight back
+from a flashed SD card's `/maps/`.
+
+---
+
+## Who Reads This Directory
+
+Before moving these files, take a look here — the default paths below all point here:
+
+| Location | Default | How to Override |
+|---|---|---|
+| `firmware/test/test_pk_pmtiles.c` | `datafiles/maps` | Environment variable `PK_MAP_TEST_DATA_DIR` |
+| `firmware/test/test_pk_map_store.c` | `datafiles/maps` | Environment variable `PK_MAP_TEST_DATA_DIR` |
+| `sim/compat/pk_tile_loader_sim.c` | `datafiles/maps` | Environment variable `PK_SIM_MAPS_DIR` |
+| `sim/capture.py` | `<repo>/datafiles/maps` | Edit `PK_SIM_MAPS_DIR` in the script |
 | `firmware/scripts/gen_aircraft_db.py` | `<repo>/datafiles/data/pk_actdb.bin` | `--out` |
 
-两个 host 测试的默认值是**相对仓库根**的路径，所以那几行一行式 `cc` 命令要在仓库
-根目录下跑。样本包缺失时它们整段 SKIP、不算失败——所以跑完记得看一眼输出里是不是
-真的跑了用例，别把 SKIP 当通过。
+The defaults of the two host tests are paths **relative to the repo root**, so those one-line `cc` commands must be run
+from the repo root. When the sample packages are missing, they SKIP the whole case without counting as a failure — so
+after running them, check the output to confirm the cases actually ran; do not mistake a SKIP for a pass.
