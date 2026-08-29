@@ -8,25 +8,8 @@ Chinese version: [`box-4.3-ux-spec-zh_CN.md`](box-4.3-ux-spec-zh_CN.md)
 directly in the browser, includes a display calibration tool. **Synced to v2.1**; the two agree.
 Where they disagree, this file and the code are authoritative.
 
-### v2.1 revision summary (2026-08-02)
-
-The horizontal dock **overflowed by 41 px** at 800×480 (7 tabs = 761 px, usable width only 720;
-the leftmost tab rendered as "FD"). Replaced with a **full-screen nav grid**. Implemented and
-walked through on real hardware.
-
-| Section | Change |
-|---|---|
-| §3.2 | FAB + dock → FAB + full-screen grid; three exits; swipe paging; the rule "dock expands away from the FAB edge" **no longer exists** |
-| §4.1 | Page classification table: top-level pages switch via the grid; the modal layer gains the nav grid |
-| §6 | Level moves from the dock action area to the grid's bottom action bar; long-press 1 s semantics unchanged |
-| Visual mockup | §2/§3/§3.5/§11–§16 all redrawn; §3 adds the original dock-overflow arithmetic |
-| §5.1 · §5.5 · §7.2 · all mockup screens | **Top bar rewritten to match the implementation**: the `●GPS ●REC ●BLE 🔋` dot-character layout is long obsolete; it is now an icon-based status bar (`pfd_statusbar.c`). §5.1 adds the slot table, degradation rules, and battery/temperature special states; corrected ">75 ℃ red warning" (actually triggers at 85 ℃ / clears at 78 ℃, warning orange) and "top bar uses the LVGL widget tree" (actually hand-drawn into the framebuffer) |
-
 The layout source of truth lives in the constants section of `firmware/main/nav_grid_page.h` —
 this file describes intent; that file holds the numbers.
-
-The two remaining states of §6 Level (long-press progress fill, green flash on completion) were
-completed on 2026-08-02; all four states now match this file.
 
 ---
 
@@ -79,14 +62,14 @@ The shared home page is "PFD + translucent radar overlay along the bottom".
 **Any font size below 18 px (2.1 mm) is forbidden.** The old panel's 8×8 CJK glyphs (1.22 mm)
 map to a mere 10 px on the new panel — permanently retired.
 
-### Resulting capacity revisions
+### Per-page capacity (from the 4.3″ measured glyph heights)
 
-| Page | Before (wrong) | After |
-|---|---|---|
-| ATC board | 9 columns × 10 rows | **7 columns × 7 rows** (type column cut; squawk into details) |
-| Radar right column | 5 cards | **4 cards** |
-| Diagnostic cards | 3 value lines per card | **1 core value line per card** (details on a separate page) |
-| Settings page | 6 rows | **7 rows fill the screen**; the 8th item requires scrolling |
+| Page | Capacity |
+|---|---|
+| ATC board | **7 columns × 7 rows** (type and squawk live in details) |
+| Radar right column | **4 cards** |
+| Diagnostic cards | **1 core value line per card** (details on a separate page) |
+| Settings page | **7 rows fill the screen**; the 8th item requires scrolling |
 
 ---
 
@@ -108,23 +91,20 @@ GPIOs freed: peripheral needs drop from 10 lines to 6 (IMU INT/RST ×2, BARO_INT
 |---|---|
 | FAB = **☰** tap opens the full-screen nav grid | FAB = **←** tap goes back |
 
-#### Why not a horizontal dock (2026-08-02 revision)
+#### Why not a horizontal dock
 
-The first version (finalized 2026-07-27) used a **horizontal dock** sliding out from the FAB's
-side: N nav tabs ×94 px | separator | action area "Level". It simply **did not fit** at 800×480:
+A horizontal dock sliding out from the FAB's side (nav tabs ×94 px | separator | action area
+"Level") simply **does not fit** at 800×480:
 
 ```
 7 tabs × 94 ＋ separator 8 ＋ action area 94 = 761 px
 usable width after FAB side margins          = 720 px      → 41 px overflow
 ```
 
-The 8th item (search) could never fit, and the tabs were already down to 94 px. Thinner tabs push
-touch targets below the 44 px floor; wrapping defeats the horizontal-dock form factor itself.
-**Prototypes A/C of the full-screen grid went through review; C was chosen**
-(layout source of truth `sim/proto-navgrid/proto.c`).
-
-This history stays here because "tap the FAB to pop a horizontal toolbar" is a very natural
-suggestion — before proposing it again, redo the three-line width arithmetic above.
+The 8th item never fits, and the tabs are already down to 94 px — thinner breaks the 44 px touch
+floor, and wrapping defeats the form factor itself. Hence the **full-screen nav grid**
+(layout source of truth `sim/proto-navgrid/proto.c`). Before proposing "tap the FAB to pop a
+horizontal toolbar" again, redo the three-line width arithmetic above.
 
 #### Grid layout (`nav_grid_page.c`)
 
@@ -314,7 +294,7 @@ as usual (the battery is soldered to the board; "not connected" is not a state).
 
 **Temperature**: reads the **SoC junction temperature** (`soc_temp.c`, 1 Hz sampling), not the
 BMP388 that measures cabin ambient — in direct sun the two can differ by 20–30 ℃, and "the device
-itself is overheating" is a different matter. Threshold `CONFIG_PK_SOC_TEMP_WARN_C`, currently
+itself is overheating" is a different matter. Threshold `CONFIG_PK_SOC_TEMP_WARN_C`: currently
 **85 ℃ trigger / 78 ℃ clear** (7 ℃ hysteresis, so the slot does not flicker in and out and train
 the pilot to ignore it). The 78 ℃ in photos is a mock value that forces the slot lit in the
 simulator (`sim/main.c`), not the real trigger point.
@@ -386,8 +366,7 @@ when a Garmin dies of heat", so its own temperature must be visible. When over-t
 **PFD top bar's middle segment gains a "thermometer icon + junction temp" slot** (warning orange,
 not red; in this project red is reserved for "already broken" like `NO FIX` / `REC` / low
 battery). Threshold `CONFIG_PK_SOC_TEMP_WARN_C`: currently **85 ℃ trigger / 78 ℃ clear** (see
-`soc_temp.c`, 7 ℃ hysteresis). An earlier draft said ">75 ℃ red warning", which did not match the
-implementation and has been corrected.
+`soc_temp.c`, 7 ℃ hysteresis).
 
 **Tapping a card opens the subsystem details page**; the details must keep the full depth the
 existing `diag_page.c` already has, notably:
@@ -414,7 +393,7 @@ this button a user in a magnetically disturbed environment would be **permanentl
 page**. Tapping it suppresses auto-open for the rest of the power cycle (reset on reboot).
 This page shows no FAB.
 
-> **Added 2026-08-03**: once "later" disables auto-open, a **manual entry point** must remain,
+> Once "later" disables auto-open, a **manual entry point** must remain,
 > otherwise a user who later wants to calibrate has no path (the auto gate only resets after acc
 > actually exceeds 2). The entry lives on the **settings page's second-to-last row, "compass
 > calibration"**: item name on the left; the value box on the right shows the current accuracy
@@ -504,39 +483,16 @@ point them at the `lv_canvas` buffer and they work.
 > framebuffer directly, and LVGL is reserved for the small widgets: FAB, back bar, toast, DEMO
 > badge.
 
-### 7.3 Font overhaul
+### 7.3 Font system
 
-Today five coexisting font sets total about 200 KB:
+The early 320×240 era had five coexisting hand-rolled fonts totalling about 200 KB — not a design
+choice but a compromise forced by the small panel (the `pfd_font_aa.h` comment says so, citing
+"gray antialiasing fringes or TTF hinting artifacts"). They, their generators, and their
+renderers have all been deleted; two remain:
 
-```
-pfd_font.c           11.4 KB   5×7   ASCII bitmap
-pfd_font_aa.c        31.5 KB   12×16 1-bit cockpit glyph subset
-text_font_cjk.c      61.0 KB   16×16 CJK
-text_font_cjk_ui.c   67.6 KB   12×12 CJK UI
-text_font_cjk_body.c 18.6 KB   8×8   CJK body
-```
-
-This **was not a design choice; it was a compromise forced by 320×240** (the `pfd_font_aa.h`
-comment says so, citing "gray antialiasing fringes or TTF hinting artifacts").
-
-> **Progress, 2026-07-30**: `pfd_font_aa.c`, its generator `gen_pfd_cockpit_font.py`, and its
-> tests were deleted (the small-panel compatibility preview was retired with them); measured
-> saving 4 784 B of flash. The same day `text_font_cjk_ui.c` was deleted too (it only fed the
-> three legacy renderers in `text.c`).
->
-> **Progress, 2026-08-03**: the remaining `text_font_cjk.c` / `text_font_cjk_body.c` and their
-> only renderer `text.c` were all deleted — the last caller was the magnetometer calibration
-> wizard, which moved to `pfd_aa_text`'s `pk_aa_puts` during the 4.3″ layout rework. **Flash
-> unchanged** (0 B): all three had zero callers left and `-Wl,--gc-sections` already excluded
-> them; what was saved is 1.85 MB of source and one unmaintained generation pipeline.
->
-> The table above now reduces to `pfd_font.c` (5×7, reserved for tiny 1–2 character annotations)
-> and the TTF-derived `pfd_aa_font.c` (`gen_pfd_aa_font.py`; one set for CJK+Latin, four
-> anti-aliasing steps). The "unified font system" milestone has landed; this section is kept as a
-> process record.
-
-At the larger sizes the problem evaporates, but the point stands: **consolidate into one font
-system**, otherwise five small font sets merely become five large ones.
+- `pfd_font.c` (5×7 ASCII bitmap): reserved for tiny 1–2 character annotations
+- `pfd_aa_font.c` (generated by `gen_pfd_aa_font.py`, TTF-derived): one set for CJK+Latin, four
+  anti-aliasing steps
 
 - unified `lv_font_conv` generation, 5 steps per the type scale
 - **the i18n catalog subsetting mechanism stays** (`i18n_catalog.py` → `gen_i18n_assets.py`);
