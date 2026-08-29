@@ -1,15 +1,12 @@
 # V4.0 BOM 核对清单（按位号顺序）
 
-英文版：[`CHECKLIST.md`](CHECKLIST.md)
-
-
 
 > ⚠️ **两个版本的选贴规则见 [VARIANTS.md](VARIANTS.md)**：带电源版贴满电源区（U18/U19/U20/L16/L17/J9/RT1/C70-C80/R37-R46）但**不贴 F 面的 R7/R8**；不带电源版电源区一个不贴、**R7/R8 必贴**。板上 R7/R8 有丝印框标 `NO-PWR VER`。
 
 > ⚠️ 别按面别记这组件——「不铺 B 面」定为原则后电源区 26 件已搬到 F 面，B 面只剩 `J9`/`RT1`（+ 不贴料的 `SW2` 焊盘跳线）。按位号认。
 
 > 由 `tools/gen_checklist.py` 生成。手工贴片时拿着这份逐行核对；
-> 按料分组的表见 `BOM_PURCHASE-zh_CN.md`，SMT 贴片用 `release/smt/BOM-*.csv`。
+> 按料分组的表见 `BOM_PURCHASE.md` / `BOM_嘉立创SMT.xlsx`。
 
 > **IFA 状态（2026-08-24）**：生成器、封装库、`ifa_geom.py`和PCB内嵌ANT1
 > 已统一为52.0mm PCB画长/53.5mm外包络；taper、5.103mm馈电路径、π网络与J7已落板；
