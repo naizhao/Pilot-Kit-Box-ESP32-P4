@@ -94,6 +94,11 @@ __pycache__
 # Playwright MCP 会话产物（浏览器快照/日志），非项目资产
 .playwright-mcp/
 
+# 硬件工程的中间产物：DSN/SES、布线中间盘、Gerber 对拍、装配图的 SVG/HTML，
+# 以及 headless Chrome 出 PDF 时留下的 profile（一个就 133MB）。
+# 全是可再生成的，而且这个仓库是公开的 —— 漏进去代价大。
+hardware/*/build/
+
 # PC 模拟器构建产物
 # 用 build*/ 通配：按分辨率会开多个构建目录（build = 320，build800 = 4.3″），
 # 只写死 build/ 会把新开的那个漏进版本库。
