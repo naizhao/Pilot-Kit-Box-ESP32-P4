@@ -4,7 +4,7 @@
 	(layer "F.Cu")
 	(attr smd allow_missing_courtyard)
 	(net_tie_pad_groups "1, 2")
-	(descr "1090MHz 板载 IFA（V3.5-r2）。主臂 45.0mm(可切短) / 脚 6.0mm / 两脚中心距 4.988mm / 全段 1.5mm 等宽 / 四周净空 2.0mm。包络 46.5x7.5mm。脚全程在净空内，末端撞入 GND 铺铜。已 X 镜像使开路端远离 C6 2.4G 天线。")
+	(descr "1090MHz 板载 IFA（完整六层rev2预研冻结画长）。主臂 52.0mm(名义切1.8mm至50.2mm；连续铜箔可按VNA继续切短) / 脚 6.0mm / 两脚中心距 4.988mm / 全段 1.5mm 等宽 / 四周净空 2.0mm。包络 53.5x7.5mm。脚全程在净空内，末端撞入 GND 铺铜。馈电腿铜箔外沿后含1.5mm长 1.5→0.15mm taper（几何rev2）。已 X 镜像使开路端远离 C6 2.4G 天线。")
 	(tags "antenna IFA 1090MHz ADS-B")
 	(property "Reference" "J**" (at 0 3.5 0) (layer "F.SilkS")
 		(effects (font (size 1 1) (thickness 0.15))))
@@ -15,7 +15,8 @@
 		(options (clearance outline) (anchor rect))
 		(primitives
 			(gr_poly (pts (xy -0.75 3.75) (xy 0.75 3.75) (xy 0.75 -3.75) (xy -0.75 -3.75)) (width 0) (fill yes))
-			(gr_poly (pts (xy -4.25 -3.75) (xy 40.75 -3.75) (xy 40.75 -2.25) (xy -4.25 -2.25)) (width 0) (fill yes))
+			(gr_poly (pts (xy -4.25 -3.75) (xy 47.75 -3.75) (xy 47.75 -2.25) (xy -4.25 -2.25)) (width 0) (fill yes))
+			(gr_poly (pts (xy -0.75 3.75) (xy 0.75 3.75) (xy 0.075 5.25) (xy -0.075 5.25)) (width 0) (fill yes))
 		)
 	)
 	(pad "2" smd custom (at -4.988 -2.988)
@@ -35,7 +36,7 @@
 		(placement (enabled no) (sheetname ""))
 		(fill (thermal_gap 0.5) (thermal_bridge_width 0.5))
 		(polygon (pts
-			(xy -7.738 -7.673) (xy 42.762 -7.673) (xy 42.762 0.762) (xy 0.612 0.762) (xy 0.612 0.012) (xy -0.588 0.012) (xy -0.588 0.762) (xy -7.738 0.762)
+			(xy -7.738 -7.673) (xy 49.762 -7.673) (xy 49.762 0.762) (xy 1.212 0.762) (xy 1.212 0.012) (xy -1.188 0.012) (xy -1.188 0.762) (xy -7.738 0.762)
 		))
 	)
 	(zone
@@ -48,8 +49,8 @@
 		(placement (enabled no) (sheetname ""))
 		(fill (thermal_gap 0.5) (thermal_bridge_width 0.5))
 		(polygon (pts
-			(xy -0.588 0.012) (xy 0.612 0.012) (xy 0.612 2.262) (xy -0.588 2.262)
+			(xy -1.188 0.012) (xy 1.212 0.012) (xy 1.212 2.262) (xy -1.188 2.262)
 		))
 	)
-	(fp_rect (start -5.738 -6.738) (end 40.762 0.762) (stroke (width 0.1) (type default)) (fill no) (layer "F.Fab"))
+	(fp_rect (start -5.738 -6.738) (end 47.762 0.762) (stroke (width 0.1) (type default)) (fill no) (layer "F.Fab"))
 )
