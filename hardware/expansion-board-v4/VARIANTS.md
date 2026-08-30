@@ -1,4 +1,4 @@
-# V4.1 Two Variants: Powered / Unpowered
+# V4.2 Two Variants: Powered / Unpowered
 
 Chinese version: [`VARIANTS-zh_CN.md`](VARIANTS-zh_CN.md)
 

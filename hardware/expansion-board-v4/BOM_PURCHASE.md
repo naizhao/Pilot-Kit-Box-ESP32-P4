@@ -1,4 +1,4 @@
-# V4.1 Purchase BOM (single authoritative version, auto-exported from the netlist — do not hand-edit)
+# V4.2 Purchase BOM (single authoritative version, auto-exported from the netlist — do not hand-edit)
 Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 
 > ⚠️ **This file supersedes all purchase tables previously scattered across design doc §7/§12/§13.**
@@ -8,7 +8,7 @@ Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 > **IFA**: the 52.0mm drawn length / 53.5mm outer envelope is already on the PCB; the default 0R/DNP is just a pass-through, and 3.6nH/3.3pF is only the first-round sweep starting point from the full six-layer rev2 HFSS, not a production value.
 
 
-170 components / 85 distinct part numbers in total.
+175 components / 87 distinct part numbers in total.
 
 
 | Purchase | Category | Value/Spec | Footprint | Qty | Ref Des | Recommended Part | LCSC Part No. | Notes |
@@ -20,6 +20,8 @@ Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 | 🔴Must-buy (specified) | RF-978 matching | 6.8nH | L_0402_1005Metric | 2 | L11,L12 | muRata LQW15AN6N8G00D (wirewound high-Q) | C82919 | Domestic alternative Sunltech SCW1005C6N8JST C330847 |
 | 🔴Must-buy (specified) | RF-978 matching | 7.5nH | L_0402_1005Metric | 2 | L13,L9 | muRata LQW15AN7N5G00D (wirewound high-Q) | C82918 | Domestic alternative Sunltech SCW1005C7N5JST C330848 |
 | 🔴Must-buy (specified) | RF-bias choke | 100nH | L_0402_1005Metric | 2 | L14,L8 | DDY WI0402IFR10KST-HF (wirewound) | C18221115 | ⚠️SRF 1.4GHz. Common multilayer types have SRF of only 600-700MHz; by 1090MHz they already act as capacitors and short RF into the supply |
+| 🔴Must-buy (specified) | RF-LNA bias | 3.32k | R_0402_1005Metric | 1 | R11 | 0402 3.32k ±1% | — | QPL9547 pin1 Vbias; use the evaluation-board value, never a 0Ω tie to 3V3_RF |
+| 🔴Must-buy (specified) | RF-LNA feed choke | 18nH 0402CS-18NXGRW | L_0402_1005Metric | 1 | L1 | Coilcraft 0402CS-18NXGRW or equivalent high-SRF wirewound 18nH | — | QPL9547 pin7 VDD feed; any substitute must remain inductive at 1090MHz |
 | 🔴Must-buy (specified) | RF-bias choke | 33nH | L_0402_1005Metric | 2 | L15,L2 | APV AHW1005C-33NJTF (wirewound) | C6807986 | ⚠️SRF 2.35GHz. GNSS 1575MHz requires SRF≥2GHz; multilayer types do not qualify |
 | 🔴Must-buy (specified) | RF-antenna-port ESD | ESD 3.3V/0.6pF | D_0402_1005Metric | 2 | D2,D3 | TECH PUBLIC TPESD8L3.3CT5G | C2830293 | ⚠️Junction capacitance Cj 0.3pF typ/0.5pF max. Ordinary 5V ESD diodes with Cj 20-50pF swallow the RF signal outright |
 | 🔴Must-buy (specified) | RF-detector coupling | 3pF | C_0402_1005Metric | 3 | C34,C35,C43 | CCTC (三环/Sanring) TCC0402COG3R0C500AT (C0G) | C696883 | ⚠️Must be C0G |
@@ -50,7 +52,7 @@ Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 | 🟡Recommended option | Power-thermistor | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | 1 | RT1 | Murata NCP18XH103F03RB / TDK NTCG163JF103FT1 / domestic 0603 10K 1% | — | **Must be an SMD NTC, not an ordinary resistor**. The battery is 3M-taped directly onto the B side with no gap; a through-hole glass-head type won't fit. B25/85=3428K differs by 0.2% from the datasheet's 103AT-2 (3435K); divider resistors R39/R40 need no change |
 | 🟡Recommended option | Power-capacitor | 22uF | C_1206_3216Metric | 2 | C76,C77 | 1206 22uF 10V X5R | — | SY7069 CIN/COUT; the datasheet requires at least 22uF |
 | 🟡Recommended option | Power-capacitor | 47nF | C_0603_1608Metric | 1 | C70 | 0603 47nF 25V X7R | — | SY6970 BST bootstrap |
-| 🟡Recommended option | Power-capacitor | 6.8uF | C_1206_3216Metric | 1 | C72 | 1206 6.8uF 25V X5R | — | SY6970 PMID, on the 9V side so the **voltage rating must be 25V**. At the 25V rating, 0603 capacitance tops out at only 1~2.2µF and 6.8µF is unobtainable, hence upsized to 1206 |
+| 🟡Recommended option | Power-capacitor | 10uF | C_1206_3216Metric | 1 | C72 | 1206 10uF 25V X5R/X7R | — | SY6970 PMID; the datasheet requires 10µF. Verify effective capacitance under 9V DC bias |
 | 🟡Recommended option | Power-resistor | 150k | R_0603_1608Metric | 1 | R42 | 0603 150k 1% | — | FB lower divider; 470k/150k → 4.96V |
 | 🟡Recommended option | Power-resistor | 180R | R_0603_1608Metric | 1 | R38 | 0603 180R 1% | — | SY6970 R_ILIM; K_ILIM=360A·Ω → 2A |
 | 🟡Recommended option | Power-resistor | 31.6k | R_0603_1608Metric | 1 | R40 | 0603 31.6k 1% | — | NTC divider lower leg (nearest E96 value) |
@@ -65,10 +67,10 @@ Chinese version: [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md)
 | 🟢General/parts bin | IFA matching-parallel | DNP shunt-radio side | C_0603_1608Metric | 1 | ZP2 | For tuning; value fixed by on-board measurement | — | Default DNP; per the full six-layer rev2 HFSS result of about 20.97Ω at the target, the first round can start sweeping from 3.3pF with 3.6/3.9pF on hand; the final value is subject to the in-enclosure VNA |
 | 🟢General/parts bin | Energy storage | 10uF | C_0805_2012Metric | 5 | C1,C18,C73,C74,C75 | Any 10uF X5R 0805 | — | Use the parts bin |
 | 🟢General/parts bin | Decoupling | 100nF | C_0402_1005Metric | 2 | C37,C52 | Any 100nF X7R | — | Use the parts bin |
-| 🟢General/parts bin | Decoupling | 1uF | C_0402_1005Metric | 1 | C5 | Any 1uF X5R | — | Use the parts bin |
+| 🟢General/parts bin | Decoupling | 1uF | C_0402_1005Metric | 2 | C48,C5 | Any 1uF X5R | — | Use the parts bin |
 | 🟢General/parts bin | Experimental jumper | 0R DNP (bypass external) | R_0402_1005Metric | 1 | R24 | 0R (not populated by default) | — | After removing the switch, hard-jump the external branch for a "with-switch vs without-switch" sensitivity comparison |
 | 🟢General/parts bin | Experimental jumper | 0R DNP (bypass onboard) | R_0402_1005Metric | 1 | R25 | 0R (not populated by default) | — | Same as above; hard-jump the onboard IFA |
-| 🟢General/parts bin | DC block/bypass | 100pF | C_0402_1005Metric | 9 | C30,C38,C39,C45,C53,C54…(9) | Any 100pF (X7R is fine) | — | ✅Actual calculation: X7R vs C0G differs by only 0.13dB over the full path; not worth buying NP0 separately. The existing parts bin suffices |
+| 🟢General/parts bin | DC block/bypass | 100pF | C_0402_1005Metric | 11 | C21,C30,C36,C38,C39,C45…(11) | Any 100pF (X7R is fine) | — | ✅Actual calculation: X7R vs C0G differs by only 0.13dB over the full path; not worth buying NP0 separately. The existing parts bin suffices |
 | ✅Already have | USB series resistor | 27R | R_0603_1608Metric | 2 | R10,R9 | 0603 resistor bin 27R | — | Use the existing parts bin |
 | ✅Already have | USB-C CC pull-down | 5.1k | R_0603_1608Metric | 2 | R7,R8 | 0603 resistor bin 5.1k | — | Both required; if either is missing the host won't recognize USB |
 | ✅Already have | Pull-up/pull-down | 10k | R_0603_1608Metric | 13 | R1,R17,R18,R26,R27,R32…(13) | 0603 resistor bin 10k | — | Use the existing parts bin |

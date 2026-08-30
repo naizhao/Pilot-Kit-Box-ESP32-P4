@@ -1,4 +1,4 @@
-# V4.1 BOM Verification Checklist (in designator order)
+# V4.2 BOM Verification Checklist (in designator order)
 
 Chinese version: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
@@ -37,7 +37,7 @@ Designators are assigned by hand, not auto-numbered, hence the gaps.
 **This is not a missing part** — it is re-checked on every board revision, with the result attached below.
 
 
-Current gaps: `C` missing C7, C8, C9, C21, C36, C48, C50; `R` missing R11, R12, R13, R14, R15, R16, R20, R28, R29; `L` missing L1, L3, L4, L5, L6; `D` missing D1; `F` missing F1; `Q` missing Q1; `U` missing U13; `J` missing J3; `SW` missing SW1.
+Current gaps: `C` missing C7, C8, C9, C50; `R` missing R12, R13, R14, R15, R16, R20, R28, R29; `L` missing L3, L4, L5, L6; `D` missing D1; `F` missing F1; `Q` missing Q1; `U` missing U13; `J` missing J3; `SW` missing SW1.
 
 Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS external), Q5+F5 (GNSS built-in patch) are **four paired sets** of antenna bias circuits (PMOS high-side switch + self-recovering fuse); each set shares one *_FUSE net, none left single. Q1/F1 never appear anywhere in the full git history — it is a numbering habit, not something deleted.
 
@@ -61,6 +61,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **C18** | 10uF | C_0805_2012Metric | (74.4, 80.8) | C Sensors + GNSS | 🔴 silkscreen on the board reads `C6` |
 | ☐ | **C19** | 33pF | C_0603_1608Metric | (88.4, 69.1) | B MCU + Flash |  |
 | ☐ | **C20** | 33pF | C_0603_1608Metric | (80.0, 69.1) | B MCU + Flash |  |
+| ☐ | **C21** | 100pF | C_0402_1005Metric | (103.6, 59.7) | E 1090 Receive Chain | QPL9547 Vbias bypass |
 | ☐ | **C22** | 100nF | C_0603_1608Metric | (94.5, 79.5) | B MCU + Flash |  |
 | ☐ | **C23** | 100nF | C_0603_1608Metric | (94.5, 74.9) | B MCU + Flash |  |
 | ☐ | **C24** | 100nF | C_0603_1608Metric | (80.0, 78.4) | B MCU + Flash |  |
@@ -75,6 +76,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **C33** | 12pF | C_0402_1005Metric | (120.4, 63.2) | E 1090 Receive Chain |  |
 | ☐ | **C34** | 3pF | C_0402_1005Metric | (117.1, 73.4) | E 1090 Receive Chain |  |
 | ☐ | **C35** | 3pF | C_0402_1005Metric | (115.1, 71.1) | E 1090 Receive Chain |  |
+| ☐ | **C36** | 100pF | C_0402_1005Metric | (106.0, 64.3) | E 1090 Receive Chain | QPL9547 supply bypass |
 | ☐ | **C37** | 100nF | C_0402_1005Metric | (113.9, 77.0) | E 1090 Receive Chain |  |
 | ☐ | **C38** | 100pF | C_0402_1005Metric | (111.6, 77.0) | E 1090 Receive Chain |  |
 | ☐ | **C39** | 100pF | C_0402_1005Metric | (118.2, 92.8) | D 978 Transceiver |  |
@@ -86,6 +88,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **C45** | 100pF | C_0402_1005Metric | (110.7, 90.2) | D 978 Transceiver |  |
 | ☐ | **C46** | 3pF | C_0603_1608Metric | (104.9, 78.5) | E 1090 Receive Chain | 🔴 silkscreen on the board reads `C47`, **same package size — a real mix-up is possible** |
 | ☐ | **C47** | 200pF | C_0603_1608Metric | (104.9, 80.4) | E 1090 Receive Chain | 🔴 silkscreen on the board reads `C46`, **same package size — a real mix-up is possible** |
+| ☐ | **C48** | 1uF | C_0402_1005Metric | (107.4, 64.3) | E 1090 Receive Chain | QPL9547 supply decoupling |
 | ☐ | **C49** | 100nF | C_0603_1608Metric | (77.0, 75.8) | E 1090 Receive Chain |  |
 | ☐ | **C51** | 1nF | C_0603_1608Metric | (77.0, 81.0) | E 1090 Receive Chain |  |
 | ☐ | **C52** | 100nF | C_0402_1005Metric | (99.6, 82.3) | E 1090 Receive Chain |  |
@@ -108,7 +111,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **C69** | 18pF | C_0603_1608Metric | (110.1, 85.0) | D 978 Transceiver |  |
 | ☐ | **C70** | 47nF | C_0603_1608Metric | (135.7, 80.2) | A Power |  |
 | ☐ | **C71** | 4.7uF | C_0603_1608Metric | (133.4, 79.0) | A Power |  |
-| ☐ | **C72** | 6.8uF | C_1206_3216Metric | (130.9, 79.2) | A Power |  |
+| ☐ | **C72** | 10uF | C_1206_3216Metric | (130.9, 79.2) | A Power |  |
 | ☐ | **C73** | 10uF | C_0805_2012Metric | (141.3, 88.1) | A Power |  |
 | ☐ | **C74** | 10uF | C_0805_2012Metric | (143.3, 84.9) | A Power |  |
 | ☐ | **C75** | 10uF | C_0805_2012Metric | (139.1, 88.1) | A Power |  |
@@ -127,6 +130,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **R8** | 5.1k | R_0603_1608Metric | (143.6, 64.8) | B MCU + Flash |  |
 | ☐ | **R9** | 27R | R_0603_1608Metric | (87.9, 83.3) | B MCU + Flash |  |
 | ☐ | **R10** | 27R | R_0603_1608Metric | (85.3, 83.3) | B MCU + Flash |  |
+| ☐ | **R11** | 3.32k | R_0402_1005Metric | (105.1, 59.7) | E 1090 Receive Chain | QPL9547 Vbias resistor |
 | ☐ | **R17** | 10k | R_0603_1608Metric | (121.8, 98.7) | D 978 Transceiver |  |
 | ☐ | **R18** | 10k | R_0603_1608Metric | (91.4, 71.4) | E 1090 Receive Chain |  |
 | ☐ | **R19** | 52.3R | R_0402_1005Metric | (115.1, 73.4) | E 1090 Receive Chain |  |
@@ -154,6 +158,7 @@ Checked using Q/F as the example: Q2+F2 (978 UAT), Q3+F3 (1090), Q4+F4 (GNSS ext
 | ☐ | **R44** | 10k | R_0603_1608Metric | (137.0, 69.5) | A Power |  |
 | ☐ | **R45** | 10k | R_0603_1608Metric | (129.2, 84.0) | A Power |  |
 | ☐ | **R46** | 10k | R_0603_1608Metric | (129.2, 86.5) | A Power |  |
+| ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain | QPL9547 pin7 VDD feed choke |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
 | ☐ | **L8** | 100nH | L_0402_1005Metric | (119.3, 90.3) | D 978 Transceiver |  |

@@ -1,4 +1,4 @@
-# V4.1 Onboard 1090MHz IFA Tuning Spares Purchase List
+# V4.2 Onboard 1090MHz IFA Tuning Spares Purchase List
 Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 
 > Purpose: solely for trimming the v4 onboard 1090MHz IFA, in-enclosure VNA tuning, and matching-network component swaps.

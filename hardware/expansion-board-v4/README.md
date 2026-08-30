@@ -1,10 +1,10 @@
-# Pilot Kit Avionics Board V4.1
+# Pilot Kit Avionics Board V4.2
 
 **Integrated ADS-B / GNSS / IMU expansion board for the Pilot Kit Box**
 集成 ADS-B / GNSS / IMU 扩展板
 
 <p align="center">
-  <img src="render/top.png" alt="Expansion board V4.1 top side" width="900">
+  <img src="render/top.png" alt="Expansion board V4.2 top side" width="900">
 </p>
 
 A 6-layer, 100.1 × 62.1 mm HAT that stacks onto the Waveshare
@@ -21,20 +21,22 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 
 ## ⚠️ Status / 当前状态
 
-> **This board has never been fabricated.** The design is complete and passes
-> every automated check listed below, but **no physical board exists yet** and
-> nothing here has been validated against hardware.
+> **V4.0 has been fabricated; V4.2 is the corrected manufacturing revision.**
+> V4.2 passes the automated schematic/PCB checks below, but the corrected revision
+> itself still requires physical bring-up. Owners of V4.0 boards must follow the
+> internal rework record before powering the 1090 MHz chain.
 >
-> **这块板从未打样。** 设计已完成并通过下列全部自动检查，
-> 但**实物尚不存在**，所有内容都未经硬件验证。
+> **V4.0 已经打样；V4.2 是修正后的制造版本。** V4.2 已通过下列原理图与 PCB
+> 自动检查，但修正版仍待实物 bring-up。V4.0 实物在开启 1090 MHz 链路前必须先按
+> 内部返修记录处理。
 
 | | Status / 状态 |
 |---|---|
 | Schematic / 原理图 | ✅ Complete / 完成 |
 | Layout & routing / 布局布线 | ✅ Complete — 0 DRC violations, 0 unconnected nets / 零违例、未连通 0 |
 | Manufacturing files / 制造文件 | ✅ Gerber + drill export cleanly / 可正常导出 |
-| **Fabrication / 打样** | ❌ **Not yet ordered / 尚未下单** |
-| **Bring-up / 上电验证** | ❌ **Not started / 未开始** |
+| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.2 not yet fabricated / V4.0 已打样，V4.2 待打样 |
+| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.2 pending / V4.0 返修流程已就绪，V4.2 待验证 |
 | **On-board IFA antenna / 板载 IFA 天线** | ⚠️ **Laid out but NOT tuned / 已落板但未调谐** |
 
 **About the IFA antenna** — the 1090 MHz inverted-F antenna is drawn at
@@ -64,14 +66,14 @@ shift the resonance. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 177 placements, 390 vias (all ≥0.30 mm drill), 1386 track segments |
+| **Scale** | 179 placements, 395 vias (all ≥0.30 mm drill), 1394 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
 两个装配变体（带/不带板载电源），选贴规则见该文档。
 
 <p align="center">
-  <img src="render/bottom.png" alt="Expansion board V4.1 bottom side" width="900">
+  <img src="render/bottom.png" alt="Expansion board V4.2 bottom side" width="900">
 </p>
 
 ---
@@ -102,8 +104,10 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.1-20260830.zip` | **Use this to order** — V4.1 GNSS ECO, RS-274-X, 15 files |
-| `expansion-board-v4-kicad-V4.1-20260830.zip` | Matching V4.1 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.2-20260830.zip` | **Use this to order** — V4.2 QPL9547/power/GNSS corrections, RS-274-X, 15 files |
+| `expansion-board-v4-kicad-V4.2-20260830.zip` | Matching V4.2 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.1-20260830.zip` | ⚠️ Superseded before the QPL9547 bias and power corrections — do not order |
+| `expansion-board-v4-kicad-V4.1-20260830.zip` | ⚠️ Matching superseded V4.1 source archive — do not use |
 | `expansion-board-v4-gerber-JLC-20260830.zip` | ⚠️ Superseded: electrically includes the ECO but carries the stale V4.0 silkscreen — do not order |
 | `expansion-board-v4-kicad-20260830.zip` | ⚠️ Matching stale-V4.0 source archive — do not use as the release source |
 | `expansion-board-v4-gerber-JLC-20260828.zip` | ⚠️ Superseded before the GNSS antenna-bias ECO — do not use for a new order |

@@ -1,4 +1,4 @@
-# V4.1 Manual SMT Placement List
+# V4.2 Manual SMT Placement List
 
 Chinese version: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 
@@ -86,7 +86,7 @@ So within each stage below, parts are **sorted by footprint area, largest first*
 | **U20** | SY7069 | TSOT-23-6 | (139.2, 95.0) | 0° | ★   Leads exposed, iron can touch up |
 | **U1** | ME6211C33M5 | SOT-23-5 | (74.7, 97.8) | 90° | ★   Leads exposed, iron can touch up |
 | **U3** | TPS7A2033PDBVR | SOT-23-5 | (89.2, 97.8) | 90° | ★   Leads exposed, iron can touch up |
-| **C72** | 6.8uF | C_1206_3216Metric | (130.9, 79.2) | 90° | ★   Standard |
+| **C72** | 10uF | C_1206_3216Metric | (130.9, 79.2) | 90° | ★   Standard |
 | **C77** | 22uF | C_1206_3216Metric | (141.2, 99.7) | -90° | ★   Standard |
 | **C76** | 22uF | C_1206_3216Metric | (134.4, 96.3) | 180° | ★   Standard |
 | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (120.9, 82.0) | 90° | ★   Standard |
@@ -236,7 +236,7 @@ CC1312R and its two crystals: 48MHz / 32.768kHz.
   ③ After flashing firmware, have the RP2040 read the CC1312R ID itself and print it over UART.
   - If it fails to start, measure `C60.1` for SUBG_VDDR (internal DC/DC output, approx. 1.7V) and `C67.1` for SUBG_DCOUPL (approx. 1.28V)
 
-## Stage E: 1090 Receive Chain (43 Parts)
+## Stage E: 1090 Receive Chain (48 Parts)
 **The most expensive stretch of the board** (QPL9547 ¥8.5 / TA0970A ¥7.5×2 / AD8313), scheduled last — these go on the board only after the four previous stages have been verified.
 
 | Designator | Part | Footprint | Board Position | Rotation | Hand-Solder Difficulty |
@@ -273,6 +273,7 @@ CC1312R and its two crystals: 48MHz / 32.768kHz.
 | **L14** | 100nH | L_0402_1005Metric | (101.1, 70.6) | 0° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **R19** | 52.3R | R_0402_1005Metric | (115.1, 73.4) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **R30** | 1k | R_0402_1005Metric | (96.8, 77.2) | 180° | ★★  0402, easily blown away by hot air, turn airflow down |
+| **R11** | 3.32k | R_0402_1005Metric | (105.1, 59.7) | 0° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C54** | 100pF | C_0402_1005Metric | (103.9, 61.7) | 0° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C31** | 12pF | C_0402_1005Metric | (111.3, 62.2) | -90° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C52** | 100nF | C_0402_1005Metric | (99.6, 82.3) | -90° | ★★  0402, easily blown away by hot air, turn airflow down |
@@ -283,6 +284,10 @@ CC1312R and its two crystals: 48MHz / 32.768kHz.
 | **C32** | 12pF | C_0402_1005Metric | (114.3, 62.2) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C33** | 12pF | C_0402_1005Metric | (120.4, 63.2) | 0° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C35** | 3pF | C_0402_1005Metric | (115.1, 71.1) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
+| **C21** | 100pF | C_0402_1005Metric | (103.6, 59.7) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
+| **C36** | 100pF | C_0402_1005Metric | (106.0, 64.3) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
+| **C48** | 1uF | C_0402_1005Metric | (107.4, 64.3) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
+| **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | 90° | ★★  0402, easily blown away by hot air, turn airflow down |
 | **C38** | 100pF | C_0402_1005Metric | (111.6, 77.0) | -90° | ★★  0402, easily blown away by hot air, turn airflow down |
 
 **Verification after placement**: ~~TP3~TP6 / TP7 to an oscilloscope~~ — **V4 removed these test points**. Instead:
