@@ -3600,7 +3600,7 @@
 			)
 		)
 	)
-	(global_label "ANT_SEL_GNSS_B"
+	(global_label "ANT_SEL_GNSS_A"
 		(shape passive)
 		(at 274.32 88.9 180)
 		(effects (font (size 1.27 1.27)) (justify right))
@@ -3825,7 +3825,7 @@
 			)
 		)
 	)
-	(global_label "ANT_SEL_GNSS_A"
+	(global_label "ANT_SEL_GNSS_B"
 		(shape passive)
 		(at 274.32 114.3 180)
 		(effects (font (size 1.27 1.27)) (justify right))
