@@ -14,6 +14,7 @@
 
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -76,10 +77,53 @@ def export_pin_nets(board: str) -> dict[tuple[str, str], str]:
     return result
 
 
+def extract_sexpr(text: str, start: int) -> str:
+    """提取从 ``start`` 左括号开始的一个完整 KiCad S-expression。"""
+    depth = 0
+    quoted = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise ValueError(f"未闭合的 S-expression，起点 {start}")
+
+
+def load_pcb_pad_nets(board: str) -> dict[tuple[str, str], str]:
+    pcb = ROOT / "hardware" / board / "kicad" / f"{board}.kicad_pcb"
+    text = pcb.read_text(encoding="utf-8")
+    result: dict[tuple[str, str], str] = {}
+    for reference in ("Q4", "Q5"):
+        marker = f'(property "Reference" "{reference}"'
+        marker_at = text.index(marker)
+        footprint_at = text.rfind("\n\t(footprint ", 0, marker_at) + 2
+        footprint = extract_sexpr(text, footprint_at)
+        for match in re.finditer(r'\(pad "([^"]+)" ', footprint):
+            pad = extract_sexpr(footprint, match.start())
+            net_match = re.search(r'\(net "([^"]+)"\)', pad)
+            if net_match:
+                result[(reference, match.group(1))] = net_match.group(1)
+    return result
+
+
 class GnssSwitchContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.pin_nets = {board: export_pin_nets(board) for board in BOARDS}
+        cls.pcb_pad_nets = {board: load_pcb_pad_nets(board) for board in BOARDS}
 
     def test_actual_spdt_pin_contract(self):
         expected = {
@@ -107,6 +151,18 @@ class GnssSwitchContractTest(unittest.TestCase):
             with self.subTest(board=board):
                 self.assertEqual(
                     {key: pin_nets[key] for key in expected},
+                    expected,
+                )
+
+    def test_final_pcb_gate_pad_nets_match_schematic(self):
+        expected = {
+            ("Q4", "1"): "ANT_SEL_GNSS_A",
+            ("Q5", "1"): "ANT_SEL_GNSS_B",
+        }
+        for board, pad_nets in self.pcb_pad_nets.items():
+            with self.subTest(board=board):
+                self.assertEqual(
+                    {key: pad_nets[key] for key in expected},
                     expected,
                 )
 
