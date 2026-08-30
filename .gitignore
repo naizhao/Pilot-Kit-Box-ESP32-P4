@@ -141,3 +141,19 @@ firmware/main/pk_aero_key.h
 # freerouting 中间文件
 hardware/*/kicad/freerouting.dsn
 hardware/*/kicad/temp-freerouting.dsn
+
+# ── 本地工具工作区 / 散件（与 v4 分支同名规则保持一致）───────────────
+.codex-tmp/
+.playwright-cli/
+/kicad/
+/outputs/
+/jlc_prices.json
+/expansion-board-v3-drc.rpt
+/gerber-top.png
+
+# KiCad 会话锁
+*.kicad_pro.lck
+
+# v4 的工具链在 v4 分支已转内部；v3 分支上它们只是本地残留文件，
+# 不跟踪——否则一次 git add -A 就会把整套构建过程扫进公开树
+hardware/expansion-board-v4/tools/
