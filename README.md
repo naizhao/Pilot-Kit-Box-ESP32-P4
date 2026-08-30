@@ -287,7 +287,7 @@ counterpart; see the v4 README for the full index.
 | 项目 / Item | 金额 / Cost | 说明 / Notes |
 |---|---:|---|
 | 嘉立创 SMT 贴装（`full` 方案，2 片）<br>JLC SMT assembly (`full` profile, 2 boards) | **实付 ¥51.06**<br>**¥51.06 paid** | 46 种 / 126 件 / 252 焊点；工程费、焊盘费、换料费优惠券后为 0<br>46 parts / 126 placements; setup & fees waived by coupons |
-| 手贴件：贵价射频 IC、电源 IC、B 面件等<br>Hand-placed: pricier RF/Power ICs, B-side parts | 另计<br>extra | 数量与料号见 `BOM_PURCHASE.md` 的 ☐ 标记；按 `VARIANTS.md` 的选贴规则取用<br>see `BOM_PURCHASE.md` ☐ marks; quantities per `VARIANTS.md` |
+| 手贴件：贵价射频 IC、电源 IC、B 面件等<br>Hand-placed: pricier RF/Power ICs, B-side parts | 另计<br>extra | 数量与料号见 `BOM_PURCHASE.md` 中未列入嘉立创 SMT 贴装（手贴）的行；按 `VARIANTS.md` 的选贴规则取用<br>see the hand-placed (non-SMT) rows in `BOM_PURCHASE.md`; quantities per `VARIANTS.md` |
 | 6 层 PCB 打样（JLC06161H-3313，含盘中孔工艺）<br>6-layer PCB fab (JLC06161H-3313, via-in-pad) | 另计<br>extra | 叠层与阻抗依据 [`JLC_STACKUP_IMPEDANCE.md`](hardware/JLC_STACKUP_IMPEDANCE.md) / see stackup doc |
 | 外壳 / Enclosure | 另计<br>extra | 3D 打印（嘉立创） / 3D printed (JLC) |
 
