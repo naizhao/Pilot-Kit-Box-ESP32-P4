@@ -1,4 +1,4 @@
-# V3.4 BOM 核对清单（按位号顺序）
+# V3.7 BOM 核对清单（按位号顺序）
 
 英文版：[`CHECKLIST.md`](CHECKLIST.md)
 

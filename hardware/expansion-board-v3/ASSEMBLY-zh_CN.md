@@ -1,4 +1,4 @@
-# V3.4 手工贴片点位清单
+# V3.7 手工贴片点位清单
 
 英文版：[`ASSEMBLY.md`](ASSEMBLY.md)
 

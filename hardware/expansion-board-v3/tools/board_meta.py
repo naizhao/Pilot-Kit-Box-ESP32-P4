@@ -32,10 +32,14 @@
                  gen_ifa_footprint.py 文件头）：辐射臂加长 5.8mm、短路脚改成
                  引线+隔离槽（实测 R 25.79→57.56Ω 的因果已闭合）、开路端净空
                  1.0→3.95mm。天线整体左移 6mm 腾空间，ANT_TOP 区右边界跟着退让
+  V3.5  → V3.6   固化最终人工布局、走线与重建快照；此前只改了 PCB 丝印，遗漏了
+                 本元数据源和公开文档，V3.7 修订时一并收敛
+  V3.6  → V3.7   GNSS 有源天线 bias Gate 修正：Q4→A/V1、Q5→B/V2，并重布
+                 两条控制线；RF 路径、bias tee、器件位置和参考面不变
 """
 
 BOARD_NAME = "Pilot Kit Avionics Board"
-BOARD_REV = "V3.5"
+BOARD_REV = "V3.7"
 BOARD_DATE = "2026-08"
 COPYRIGHT = "(c) Pilot Kit"
 WEBSITE = "https://air.club"

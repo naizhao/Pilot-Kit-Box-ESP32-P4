@@ -1,4 +1,4 @@
-# V3.4 Manual Assembly Placement List
+# V3.7 Manual Assembly Placement List
 
 Chinese version: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 
