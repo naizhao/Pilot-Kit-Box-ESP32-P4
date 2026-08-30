@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """v3/v4 PCB revision、公开文档和制造包的一致性回归测试。"""
 
+from __future__ import annotations
+
 from pathlib import Path
 import os
 import re
