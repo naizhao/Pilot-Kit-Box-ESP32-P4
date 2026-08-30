@@ -1,4 +1,4 @@
-# V4.0 Manual SMT Placement List
+# V4.1 Manual SMT Placement List
 
 Chinese version: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 

@@ -1,4 +1,4 @@
-# V4.0 BOM Verification Checklist (in designator order)
+# V4.1 BOM Verification Checklist (in designator order)
 
 Chinese version: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 

@@ -1,10 +1,10 @@
-# Pilot Kit Avionics Board V4.0
+# Pilot Kit Avionics Board V4.1
 
 **Integrated ADS-B / GNSS / IMU expansion board for the Pilot Kit Box**
 集成 ADS-B / GNSS / IMU 扩展板
 
 <p align="center">
-  <img src="render/top.png" alt="Expansion board V4.0 top side" width="900">
+  <img src="render/top.png" alt="Expansion board V4.1 top side" width="900">
 </p>
 
 A 6-layer, 100.1 × 62.1 mm HAT that stacks onto the Waveshare
@@ -71,7 +71,7 @@ See [`VARIANTS.md`](VARIANTS.md).
 两个装配变体（带/不带板载电源），选贴规则见该文档。
 
 <p align="center">
-  <img src="render/bottom.png" alt="Expansion board V4.0 bottom side" width="900">
+  <img src="render/bottom.png" alt="Expansion board V4.1 bottom side" width="900">
 </p>
 
 ---
@@ -102,8 +102,10 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-20260830.zip` | **Use this to order** — GNSS ECO included, RS-274-X, 15 files |
-| `expansion-board-v4-kicad-20260830.zip` | Matching source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.1-20260830.zip` | **Use this to order** — V4.1 GNSS ECO, RS-274-X, 15 files |
+| `expansion-board-v4-kicad-V4.1-20260830.zip` | Matching V4.1 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-20260830.zip` | ⚠️ Superseded: electrically includes the ECO but carries the stale V4.0 silkscreen — do not order |
+| `expansion-board-v4-kicad-20260830.zip` | ⚠️ Matching stale-V4.0 source archive — do not use as the release source |
 | `expansion-board-v4-gerber-JLC-20260828.zip` | ⚠️ Superseded before the GNSS antenna-bias ECO — do not use for a new order |
 | `expansion-board-v4-gerber-20260828.zip` | ⚠️ Older export in Gerber **X2** format — do not use |
 

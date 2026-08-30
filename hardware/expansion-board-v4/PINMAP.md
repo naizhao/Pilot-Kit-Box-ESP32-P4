@@ -1,4 +1,4 @@
-# Expansion Board V4.0 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
+# Expansion Board V4.1 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 

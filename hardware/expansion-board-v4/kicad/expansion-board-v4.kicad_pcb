@@ -35381,7 +35381,7 @@
 			(justify mirror)
 		)
 	)
-	(gr_text "V4.0 (2026-08)"
+	(gr_text "V4.1 (2026-08)"
 		(at 63.254166 102.46 0)
 		(layer "B.SilkS")
 		(uuid "4e69d596-42ed-43a3-b47a-04ca914448fe")
