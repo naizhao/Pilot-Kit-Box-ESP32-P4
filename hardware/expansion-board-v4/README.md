@@ -64,7 +64,7 @@ shift the resonance. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 177 placements, 386 vias (all ≥0.30 mm drill), 1381 track segments |
+| **Scale** | 177 placements, 390 vias (all ≥0.30 mm drill), 1386 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
@@ -102,9 +102,10 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-*.zip` | **Use this to order** — RS-274-X, 15 files |
-| `expansion-board-v4-kicad-*.zip` | Archive / further development. **Not accepted by the fab** |
-| `expansion-board-v4-gerber-*.zip` | ⚠️ Older export in Gerber **X2** format — do not use |
+| `expansion-board-v4-gerber-JLC-20260830.zip` | **Use this to order** — GNSS ECO included, RS-274-X, 15 files |
+| `expansion-board-v4-kicad-20260830.zip` | Matching source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-20260828.zip` | ⚠️ Superseded before the GNSS antenna-bias ECO — do not use for a new order |
+| `expansion-board-v4-gerber-20260828.zip` | ⚠️ Older export in Gerber **X2** format — do not use |
 
 ### ⚠️ Three things that will ruin the board if set wrong
 
