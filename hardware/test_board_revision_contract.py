@@ -2,6 +2,7 @@
 """v3/v4 PCB revision、公开文档和制造包的一致性回归测试。"""
 
 from pathlib import Path
+import os
 import re
 import unittest
 import zipfile
@@ -12,10 +13,12 @@ EXPECTED = {
     "expansion-board-v3": "V3.7",
     "expansion-board-v4": "V4.1",
 }
-BOARDS = tuple(
+AVAILABLE_BOARDS = tuple(
     board for board in EXPECTED
     if (ROOT / "hardware" / board / "kicad" / f"{board}.kicad_pcb").is_file()
 )
+REQUESTED_BOARDS = tuple(filter(None, os.environ.get("PK_TEST_BOARDS", "").split(",")))
+BOARDS = REQUESTED_BOARDS or AVAILABLE_BOARDS
 VERSION = re.compile(r"\bV[34]\.\d+\b")
 
 
@@ -43,6 +46,15 @@ def current_doc_titles(board: str) -> dict[str, str]:
 
 
 class BoardRevisionContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        unknown = set(BOARDS) - set(EXPECTED)
+        missing = set(BOARDS) - set(AVAILABLE_BOARDS)
+        if unknown or missing:
+            raise AssertionError(
+                f"PK_TEST_BOARDS 无效：unknown={sorted(unknown)}, missing={sorted(missing)}"
+            )
+
     def test_metadata_and_pcb_silkscreen_match_target_revision(self):
         for board in BOARDS:
             expected = EXPECTED[board]
