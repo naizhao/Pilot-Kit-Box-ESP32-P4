@@ -55,12 +55,17 @@ AS_BUILT_SILK_SWAPS = {
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PCB = os.path.join(T, "kicad", "expansion-board-v3.kicad_pcb")
 SCH = os.path.join(T, "kicad", "expansion-board-v3.kicad_sch")
-NET = "/tmp/expansion.net.xml"
+NET = os.path.join(T, "build", "netlist-docs.xml")
 # v3 已归档：根目录的 ASSEMBLY.md 是冻结的公开快照（英文正名），
 # 归档管线的再生成产物一律落 internal/，不覆盖公开文件
 OUT = os.path.join(T, "internal", "ASSEMBLY.md")
 
-if not os.path.exists(NET):
+newest_schematic = max(
+    os.path.getmtime(path)
+    for path in __import__("glob").glob(os.path.join(T, "kicad", "*.kicad_sch"))
+)
+if not os.path.exists(NET) or os.path.getmtime(NET) < newest_schematic:
+    os.makedirs(os.path.dirname(NET), exist_ok=True)
     CLI = os.path.expanduser("~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
     subprocess.run([CLI, "sch", "export", "netlist", "--format", "kicadxml",
                     "-o", NET, SCH], check=True, capture_output=True)
@@ -154,7 +159,9 @@ def find_silk_swaps(parts):
     for i in range(len(ks)):
         for j in range(i + 1, len(ks)):
             a, c = parts[ks[i]], parts[ks[j]]
-            if not (a.get("tvis") and c.get("tvis")):
+            if not (a.get("tvis") and c.get("tvis")
+                    and a.get("tlayer") in ("F.Silkscreen", "B.Silkscreen")
+                    and c.get("tlayer") in ("F.Silkscreen", "B.Silkscreen")):
                 continue
             # 互换 = A 的文字更贴 B 的本体，同时 B 的文字更贴 A 的本体
             if (d2box(a["t"], c["bx"]) < d2box(a["t"], a["bx"]) and
@@ -201,6 +208,7 @@ for f in board.GetFootprints():
         "t": (f.Reference().GetPosition().x / 1e6,
               f.Reference().GetPosition().y / 1e6),
         "tvis": f.Reference().IsVisible(),
+        "tlayer": board.GetLayerName(f.Reference().GetLayer()),
     }
 
 skip = {}

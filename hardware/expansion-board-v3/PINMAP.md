@@ -1,4 +1,4 @@
-# Expansion Board V1 — Authoritative Pin/Net Mapping (single source of truth over the schematic)
+# Expansion Board V3.8 — Authoritative Pin/Net Mapping (single source of truth over the schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -90,15 +90,15 @@ All LC values are 〔A〕 starting points; V1 keeps a 0402 tunable position at e
 
 | Device | Bus/pins | Notes |
 |---|---|---|
-| BNO085 | I2C addr 0x4A/0x4B + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 pulled low selects I2C mode; addr pin wiring decided when building the symbol |
+| BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 are tied low; CLKSEL0 and H_CSN are tied high; V3.8 footprint rotation is 0° |
 | BMP388 | I2C addr 0x76 (baro_task.c:29) + BARO_INT(GPIO31) | case keeps a vent hole |
-| QMC5883P | I2C (addr decided from the datasheet when building the symbol) | keep away from inductors / high-current traces |
+| QMC5883P | I2C address 0x2C | keep away from inductors / high-current traces; pins and support network verified against the datasheet |
 | ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3; 1PPS → GPIO50; VCC_RF feeds the active antenna | 18-pin LCC, pinout verified (manual §2.3) |
 | GNSS antenna | third U.FL | V1 all-external antennas |
 
 ## 7. Known conflicts / items to verify
 
-1. BNO085 I2C address pin (SA0) and PS0/PS1 wiring — verify against the CEVA datasheet when building the symbol.
+1. ~~BNO085 I2C address and mode straps~~ **verified in the exported netlist: SA0/PS0/PS1=GND, address 0x4A, I2C mode.**
 2. CC1312R on-chip 48M load-capacitance array range → decides Abracon 7pF or KDS 12pF.
 3. TA0970A input/output impedance and matching values (recalculate once the datasheet is in hand; current values are placeholders only).
 4. After stacking the J3 header, interference check between the USB-C (RP2040 flashing port) opening direction and the 4.3-inch case (docs/jlc/lcd-4.3in/3d-case) — done at the PCB stage.

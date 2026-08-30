@@ -35,11 +35,12 @@
   V3.5  → V3.6   固化最终人工布局、走线与重建快照；此前只改了 PCB 丝印，遗漏了
                  本元数据源和公开文档，V3.7 修订时一并收敛
   V3.6  → V3.7   GNSS 有源天线 bias Gate 修正：Q4→A/V1、Q5→B/V2，并重布
+  V3.7  → V3.8   QPL9547 pin7 馈电/pin1 偏置网络补齐；BNO085 旋转与 v4 对齐
                  两条控制线；RF 路径、bias tee、器件位置和参考面不变
 """
 
 BOARD_NAME = "Pilot Kit Avionics Board"
-BOARD_REV = "V3.7"
+BOARD_REV = "V3.8"
 BOARD_DATE = "2026-08"
 COPYRIGHT = "(c) Pilot Kit"
 WEBSITE = "https://air.club"

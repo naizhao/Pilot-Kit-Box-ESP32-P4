@@ -40,11 +40,16 @@ from gen_assembly import AS_BUILT_SILK_SWAPS, STAGES     # noqa: E402
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PCB = os.path.join(T, "kicad", f"{PCB_BASENAME}.kicad_pcb")
 SCH = os.path.join(T, "kicad", f"{PCB_BASENAME}.kicad_sch")
-NET = "/tmp/expansion.net.xml"
+NET = os.path.join(T, "build", "netlist-docs.xml")
 # v3 已归档：根目录的 CHECKLIST.md 是冻结的公开快照，再生成产物落 internal/
 OUT = os.path.join(T, "internal", "CHECKLIST.md")
 
-if not os.path.exists(NET):
+newest_schematic = max(
+    os.path.getmtime(path)
+    for path in __import__("glob").glob(os.path.join(T, "kicad", "*.kicad_sch"))
+)
+if not os.path.exists(NET) or os.path.getmtime(NET) < newest_schematic:
+    os.makedirs(os.path.dirname(NET), exist_ok=True)
     CLI = os.path.expanduser("~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
     subprocess.run([CLI, "sch", "export", "netlist", "--format", "kicadxml",
                     "-o", NET, SCH], check=True, capture_output=True)

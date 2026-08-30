@@ -1,4 +1,8 @@
-# V3.7 手工贴片点位清单
+# V3.8 手工贴片点位清单
+
+> V3.8 新增 QPL9547 偏置网络：`R11` 3.32k、`C21` 100pF、
+> `L1` Coilcraft 0402CS-18NXGRW 18nH、`C36` 100pF、`C48` 1uF。
+> 这 5 颗是 1090 MHz 接收链的必贴件。
 
 英文版：[`ASSEMBLY.md`](ASSEMBLY.md)
 

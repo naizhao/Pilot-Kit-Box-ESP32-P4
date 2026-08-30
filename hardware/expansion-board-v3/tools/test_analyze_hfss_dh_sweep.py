@@ -165,7 +165,13 @@ class OutputAndRegressionTest(unittest.TestCase):
                 for row in csv.DictReader(stream)
             }
 
-        self.assertEqual(computed, reported)
+        self.assertEqual(set(computed), set(reported))
+        for key in sorted(computed):
+            with self.subTest(case=key):
+                for actual, expected in zip(computed[key], reported[key]):
+                    # CPython 3.9/3.13 的复数运算在最后 1 ULP 可不同；CSV 是十进制
+                    # 序列化结果，比较物理数值而不是要求二进制浮点逐位相同。
+                    self.assertAlmostEqual(actual, expected, places=12)
 
 
 if __name__ == "__main__":

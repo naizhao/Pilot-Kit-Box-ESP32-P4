@@ -138,7 +138,7 @@ assert lay["In1.Cu"] == 0, f"In1.Cu 上有 {lay['In1.Cu']} 段走线——射频
 assert lay["In4.Cu"] == 0, f"In4.Cu 上有 {lay['In4.Cu']} 段走线——第二 GND 平面被开槽了"
 # ANT_GNSS_INT 允许 In2 借道(v3 布局极限:U17/C58/L2 密集区 F.Cu 无路,仅 3.9mm In2 段+2 via,2026-08-29)
 off = {k: v for k, v in rf_lay.items() if k != "F.Cu"}
-if rf_lay_netnames.get("In2.Cu") <= {"ANT_GNSS_INT"}:
+if rf_lay_netnames.get("In2.Cu", set()) <= {"ANT_GNSS_INT"}:
     off.pop("In2.Cu")
 assert not off, f"射频段跑出 F.Cu: {off}"
 # ANT_GNSS_INT 豁免(2026-08-29):U17/C58/L2 密集区 F.Cu 无路,In2 借道+2via;GNSS 接收弱信号代价远小于布不通。

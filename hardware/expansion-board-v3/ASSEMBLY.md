@@ -1,4 +1,8 @@
-# V3.7 Manual Assembly Placement List
+# V3.8 Manual Assembly Placement List
+
+> V3.8 adds the QPL9547 bias network: `R11` 3.32k, `C21` 100pF,
+> `L1` Coilcraft 0402CS-18NXGRW 18nH, `C36` 100pF, and `C48` 1uF.
+> These five parts are mandatory for the 1090 MHz receive chain.
 
 Chinese version: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 

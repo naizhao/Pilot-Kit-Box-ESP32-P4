@@ -144,7 +144,7 @@ MEMBERS = {
     "GNSS_BIAS": ["R22", "R23", "C55", "C56", "R24", "R25"],   # 含 1090 开关控制脚
                                               # （Q4/F4/L2/Q5/F5/L15/R26/R27 已收拢左条，走 PLACEMENT 固定坐标）
     # 顺序 = 信号流向，装箱器按序左→右
-    "CHAIN1090": ["U11", "C31", "FL1", "C32", "U12", "C33", "FL2", "C34",
+    "CHAIN1090": ["C36", "C48", "R11", "C21", "U11", "L1", "C31", "FL1", "C32", "U12", "C33", "FL2", "C34",
                   "U13", "R19", "C35", "R20", "U14", "R21"],
     "LEFT_COL":  ["U7", "U4", "U6", "U5"],   # GNSS 模块 + IMU + 气压计（U1-U3 是电源，随页归 PWR）
     # 978 射频件按信号流向连续摆放（顺序即拓扑，缩短自动布线距离）
@@ -515,11 +515,14 @@ except ImportError:
     print("⚠️ 没有 PLACEMENT.py，全部走区域装箱（首次生成才应如此）")
 
 _placed = 0
-for _ref, (_x, _y, _rot) in _FIXED.items():
+for _ref, _t in _FIXED.items():
     if _ref not in FPS:
         continue
+    _x, _y, _rot = _t[0], _t[1], _t[2]
     FPS[_ref].SetPosition(pcbnew.VECTOR2I_MM(float(_x), float(_y)))
     FPS[_ref].SetOrientationDegrees(_rot)
+    if len(_t) > 3 and _t[3] == "B" and not FPS[_ref].IsFlipped():
+        FPS[_ref].Flip(FPS[_ref].GetPosition(), False)
     _placed += 1
 if _FIXED:
     _stale = sorted(set(_FIXED) - set(FPS) - {"H1", "H2", "H3", "H4"})

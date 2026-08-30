@@ -28,15 +28,19 @@
 """
 import json
 import os
+import re
 import sys
 
 import pcbnew
+
+from board_meta import BOARD_REV
 
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BDIR = os.environ.get("PK_BOARD_DIR") or os.path.join(T, "kicad")
 PCB = os.path.join(BDIR, "expansion-board-v3.kicad_pcb")
 OUT = os.environ.get("PK_SILK_SNAPSHOT") or os.path.join(T, "tools", "SILK.json")
 MODE = sys.argv[1] if len(sys.argv) > 1 else "export"
+REVISION = re.compile(r"\bV[34]\.\d+\b")
 
 board = pcbnew.LoadBoard(PCB)
 mm = pcbnew.ToMM
@@ -106,7 +110,9 @@ elif MODE == "import":
             old_graphics += 1
     for it in data["texts"]:
         t = pcbnew.PCB_TEXT(board)
-        t.SetText(it["text"])
+        # SILK.json 固化几何与排版，版本号由 board_meta.py 单独管理；小版本升级时
+        # 不得把旧快照里的 V3.x/V4.x 原样印回板上。
+        t.SetText(REVISION.sub(BOARD_REV, it["text"]))
         t.SetPosition(pcbnew.VECTOR2I_MM(it["x"], it["y"]))
         t.SetLayer(LID[it["layer"]])
         t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(it["w"]), pcbnew.FromMM(it["h"])))

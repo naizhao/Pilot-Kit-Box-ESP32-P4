@@ -11,23 +11,38 @@ PARTS 表里集中维护，改一处即可全表重生成。
   ANY   🟢 通用件，按价格挑 / 用现有元件本
   HAVE  ✅ 用户已有
 
-用法: gen_bom.py   （读 /tmp/expansion.net.xml，写 ../BOM_PURCHASE.md）
+用法: gen_bom.py   （读 build/netlist-docs.xml，写 internal/BOM_PURCHASE.md）
 断言：网表里每个 (值,封装) 组合都必须在 PARTS 表里有归类，否则报错——防止漏项。
 """
 import os
+import subprocess
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NET = "/tmp/expansion.net.xml"
+NET = os.path.join(T, "build", "netlist-docs.xml")
 # v3 已归档：采购清单属内部文档 → 落 internal/
 OUT = os.path.join(T, "internal", "BOM_PURCHASE.md")
+
+schematic = os.path.join(T, "kicad", "expansion-board-v3.kicad_sch")
+newest_schematic = max(
+    os.path.getmtime(path)
+    for path in __import__("glob").glob(os.path.join(T, "kicad", "*.kicad_sch"))
+)
+if not os.path.exists(NET) or os.path.getmtime(NET) < newest_schematic:
+    os.makedirs(os.path.dirname(NET), exist_ok=True)
+    cli = os.path.expanduser("~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
+    subprocess.run([cli, "sch", "export", "netlist", "--format", "kicadxml",
+                    "-o", NET, schematic], check=True, capture_output=True)
 
 # key = (value, footprint后缀) → (类别, 采购等级, 推荐型号, 立创料号, 备注)
 P = {
     # ============ 射频关键件（必须指定料号）============
     ("100nH", "L_0402_1005Metric"): ("射频-偏置扼流", "MUST", "DDY WI0402IFR10KST-HF（绕线）", "C18221115",
         "⚠️SRF 1.4GHz。常见的叠层款 SRF 仅 600-700MHz，在 1090MHz 已变电容会把射频短到电源"),
+    ("18nH 0402CS-18NXGRW", "L_0402_1005Metric"): ("射频-LNA馈电扼流", "MUST",
+        "Coilcraft 0402CS-18NXGRW 或同等高 SRF 绕线 18nH", "—",
+        "QPL9547 pin7 VDD 馈电；替代料必须核对 1090MHz 时仍为感性"),
     ("33nH", "L_0402_1005Metric"): ("射频-偏置扼流", "MUST", "APV AHW1005C-33NJTF（绕线）", "C6807986",
         "⚠️SRF 2.35GHz。GNSS 1575MHz 要求 SRF≥2GHz，叠层款不合格"),
     ("ESD 3.3V/0.6pF", "D_0402_1005Metric"): ("射频-天线口ESD", "MUST", "TECH PUBLIC TPESD8L3.3CT5G", "C2830293",
@@ -109,6 +124,8 @@ P = {
     ("4.7k", "R_0402_1005Metric"): ("I2C 上拉", "ANY", "任意 4.7k", "—", "用元件本"),
     ("5.1k", "R_0402_1005Metric"): ("USB CC 下拉", "ANY", "任意 5.1k ±1%", "—", "用元件本"),
     ("100k", "R_0402_1005Metric"): ("电阻", "ANY", "任意 100k", "—", "用元件本"),
+    ("3.32k", "R_0402_1005Metric"): ("射频-LNA偏置", "MUST", "0402 3.32k ±1%", "—",
+        "QPL9547 pin1 Vbias；按原厂评估板值，禁止用 0Ω 直连 3V3_RF"),
     ("18k(1090实调)", "R_0402_1005Metric"): ("AD8319 温补", "ANY", "任意 18k", "—", "1090MHz 实调，备 8k/12k/18k"),
     # ============ IFA 匹配调试位（0603，配合用户元件本手调）============
     ("DNP 并-天线侧", "C_0603_1608Metric"): ("IFA 匹配-并联", "ANY", "调试用，值上板实测确定", "—",

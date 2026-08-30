@@ -55,9 +55,13 @@ for r in rf:
 print(f"射频走线贴回: {len(rf)} 段" if rf else "plain 模式：射频由 freerouting 布，无需贴回")
 
 pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-filled = sum(1 for z in board.Zones() if z.IsFilled())
-assert filled == len(board.Zones()), f"覆铜填充 {filled}/{len(board.Zones())} 区未全填"
-print(f"覆铜重灌: {filled}/{len(board.Zones())} 区")
+# KiCad 把规则禁布区也暴露在 Zones() 中，但它们没有、也不应该有覆铜。
+# 这里只统计实际铜区，避免把合法的 rule area 误报为填充失败。
+fillable_zones = [z for z in board.Zones() if not z.GetIsRuleArea()]
+filled = sum(1 for z in fillable_zones if z.IsFilled())
+assert filled == len(fillable_zones), \
+    f"覆铜填充 {filled}/{len(fillable_zones)} 区未全填"
+print(f"覆铜重灌: {filled}/{len(fillable_zones)} 区")
 
 # 四条硬约束当场核对，别等到出图才发现（check_route.py 里有同样的判据，
 # 那边是给人看的报告，这里是流水线的闸门）。

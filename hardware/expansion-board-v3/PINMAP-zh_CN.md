@@ -1,4 +1,4 @@
-# 扩展板 V1 — 权威引脚/网络映射（原理图单一事实来源）
+# 扩展板 V3.8 — 权威引脚/网络映射（原理图单一事实来源）
 
 英文版：[`PINMAP.md`](PINMAP.md)
 
@@ -91,15 +91,15 @@ ANT1090(U.FL) → 偏置Tee → C 100pF 隔直 → L 27nH 串 + 82nH 偏置馈�
 
 | 器件 | 总线/脚 | 备注 |
 |---|---|---|
-| BNO085 | I2C addr 0x4A/0x4B + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 拉低选 I2C 模式；addr 脚接法建库时定 |
+| BNO085 | I2C addr 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1/SA0 均接地，CLKSEL0/H_CSN 拉高；V3.8 封装旋转 0° |
 | BMP388 | I2C addr 0x76（baro_task.c:29）+ BARO_INT(GPIO31) | 壳体留通气孔 |
-| QMC5883P | I2C（addr 建库时从 datasheet 定）| 远离电感/大电流走线 |
+| QMC5883P | I2C addr 0x2C | 远离电感/大电流走线；引脚与外围已按手册复核 |
 | ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3；1PPS → GPIO50；VCC_RF 馈有源天线 | 18 脚 LCC，pin 图已核（手册 §2.3）|
 | GNSS 天线 | 第三个 U.FL | V1 全外置天线 |
 
 ## 7. 已知冲突/待核清单
 
-1. BNO085 的 I2C 地址脚（SA0）与 PS0/PS1 接法 — 建库时从 CEVA datasheet 核。
+1. ~~BNO085 的 I2C 地址与模式绑带~~ **已用导出网表复核：SA0/PS0/PS1=GND，地址 0x4A，I2C 模式。**
 2. CC1312R 片内 48M 负载电容阵列范围 → 决定 Abracon 7pF 或 KDS 12pF。
 3. TA0970A 的输入/输出阻抗与匹配值（datasheet 拿到后重算，当前值仅为占位）。
 4. J3 排母堆叠后 USB-C（RP2040 刷机口）的开口方向与 4.3 寸外壳（docs/jlc/lcd-4.3in/3d-case）干涉检查 — PCB 阶段做。

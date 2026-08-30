@@ -1,6 +1,6 @@
 {
 "_comment": "布线快照。字段：tracks=[net,layer,x1,y1,x2,y2,width] vias=[net,x,y,width,drill]，单位 mm。由 export_routes.py 生成，import_routes.py 贴回。元件位置在 PLACEMENT.py，两者合起来才是完整的板。",
-"source": "route_cleanup.py",
+"source": "expansion-board-v3.kicad_pcb",
 "tracks": [
 [
 "3V3_DIG",

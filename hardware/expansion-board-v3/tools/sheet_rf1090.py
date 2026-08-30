@@ -111,9 +111,22 @@ s.place("R25", "Device", "R", 175.26, 58.42, {"1": "SW1_J3", "2": "SW1_J1"},
         value="0R DNP(旁路板载)", footprint=R0402)
 
 # ================= 接收链 =================
+# QPL9547 的 RF Out(pin7) 同时是 VDD 供电脚。按 QPL9547EVB-01：18nH
+# 从去耦后的 3V3_RF 馈入 pin7；Vbias(pin1) 经 3.32k 设定偏置电流并用
+# 100pF 旁路。C31 继续承担 pin7 到 SAW 的隔直。
 s.place("U11", "RF_Amplifier", "QPL9547", 63.5, 88.9, {
-    "2": "LNA1_IN", "7": "LNA1_OUT", "1": "3V3_RF", "GND": "GND", "~{EN}": "GND",
+    "2": "LNA1_IN", "7": "LNA1_OUT", "1": "LNA1_VBIAS", "GND": "GND", "~{EN}": "GND",
 }, value="QPL9547TR7", footprint="Package_DFN_QFN:DFN-8-1EP_2x2mm_P0.5mm_EP0.86x1.55mm")
+s.place("L1", "Device", "L", 63.5, 101.6, {"1": "3V3_RF", "2": "LNA1_OUT"},
+        value="18nH 0402CS-18NXGRW", footprint=L0402)
+s.place("R11", "Device", "R", 76.2, 101.6, {"1": "3V3_RF", "2": "LNA1_VBIAS"},
+        value="3.32k", footprint=R0402)
+s.place("C21", "Device", "C", 88.9, 101.6, {"1": "LNA1_VBIAS", "2": "GND"},
+        value="100pF", footprint=C0402)
+s.place("C36", "Device", "C", 101.6, 101.6, {"1": "3V3_RF", "2": "GND"},
+        value="100pF", footprint=C0402)
+s.place("C48", "Device", "C", 114.3, 101.6, {"1": "3V3_RF", "2": "GND"},
+        value="1uF", footprint=C0402)
 s.place("C31", "Device", "C", 101.6, 76.2, {"1": "LNA1_OUT", "2": "SAW1_IN"}, value="12pF", footprint=C0402)
 s.place("FL1", PRJ, "TA0970A", 127, 88.9, {"B": "SAW1_IN", "E": "SAW1_OUT",
         "A": "GND", "C": "GND", "D": "GND", "F": "GND"},

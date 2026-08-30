@@ -1,4 +1,7 @@
-# V3.7 BOM Checklist (in reference designator order)
+# V3.8 BOM Checklist (in reference designator order)
+
+> V3.8 mandatory QPL9547 ECO parts: `R11` 3.32k, `C21` 100pF,
+> `L1` 18nH 0402CS-18NXGRW, `C36` 100pF, and `C48` 1uF.
 
 Chinese version: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
@@ -28,7 +31,7 @@ Designators were written by hand in `tools/sheet_*.py`, not auto-numbered, hence
 **This is not missing parts** — every board revision re-verifies this, with the result attached below.
 
 
-Current gaps: `C` missing C7, C8, C9, C21, C36, C48, C50; `R` missing R11, R12, R13, R14, R15, R16, R28, R29; `L` missing L1, L3, L4, L5, L6; `F` missing F1; `Q` missing Q1; `J` missing J3, J7.
+Current gaps: `C` missing C7, C8, C9, C50; `R` missing R12, R13, R14, R15, R16, R28, R29; `L` missing L3, L4, L5, L6; `F` missing F1; `Q` missing Q1; `J` missing J3, J7.
 
 Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS external), Q5+F5(GNSS on-board patch) are **four paired** antenna bias circuits (PMOS high-side switch + self-recovering fuse), each pair sharing one *_FUSE net — no stragglers. Q1/F1 never appears anywhere in the full git history — a numbering habit, not a deleted part.
 
@@ -52,6 +55,7 @@ Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS e
 | ☐ | **C18** | 10uF | C_0805_2012Metric | (78.9, 64.6) | C Sensors + GNSS | 🔴 silkscreen on board reads `C6` |
 | ☐ | **C19** | 15pF | C_0603_1608Metric | (104.6, 87.7) | B MCU + Flash |  |
 | ☐ | **C20** | 15pF | C_0603_1608Metric | (107.6, 87.7) | B MCU + Flash |  |
+| ☐ | **C21** | 100pF | C_0402_1005Metric | (100.0, 64.5) | E 1090 RX chain | QPL9547 Vbias bypass, B side |
 | ☐ | **C22** | 100nF | C_0603_1608Metric | (95.7, 95.2) | B MCU + Flash |  |
 | ☐ | **C23** | 100nF | C_0603_1608Metric | (99.8, 95.2) | B MCU + Flash |  |
 | ☐ | **C24** | 100nF | C_0603_1608Metric | (103.8, 95.2) | B MCU + Flash |  |
@@ -66,6 +70,7 @@ Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS e
 | ☐ | **C33** | 12pF | C_0402_1005Metric | (120.9, 71.2) | E 1090 RX chain |  |
 | ☐ | **C34** | 3pF | C_0402_1005Metric | (129.4, 71.2) | E 1090 RX chain |  |
 | ☐ | **C35** | 3pF | C_0402_1005Metric | (141.2, 71.2) | E 1090 RX chain |  |
+| ☐ | **C36** | 100pF | C_0402_1005Metric | (102.0, 64.5) | E 1090 RX chain | QPL9547 supply bypass, B side |
 | ☐ | **C37** | 100nF | C_0402_1005Metric | (109.6, 85.0) | E 1090 RX chain |  |
 | ☐ | **C38** | 100pF | C_0402_1005Metric | (137.3, 69.2) | E 1090 RX chain |  |
 | ☐ | **C39** | 100pF | C_0402_1005Metric | (140.0, 83.6) | D 978 TX/RX |  |
@@ -77,6 +82,7 @@ Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS e
 | ☐ | **C45** | 100pF | C_0402_1005Metric | (119.2, 84.3) | D 978 TX/RX |  |
 | ☐ | **C46** | 3pF | C_0603_1608Metric | (118.8, 86.2) | E 1090 RX chain | 🔴 silkscreen on board reads `C47`; **same size — a real mix-up risk** |
 | ☐ | **C47** | 200pF | C_0603_1608Metric | (118.7, 88.4) | E 1090 RX chain | 🔴 silkscreen on board reads `C46`; **same size — a real mix-up risk** |
+| ☐ | **C48** | 1uF | C_0402_1005Metric | (103.5, 64.5) | E 1090 RX chain | QPL9547 supply decoupling, B side |
 | ☐ | **C49** | 100nF | C_0603_1608Metric | (55.6, 79.9) | E 1090 RX chain |  |
 | ☐ | **C51** | 1nF | C_0603_1608Metric | (55.6, 84.5) | E 1090 RX chain |  |
 | ☐ | **C52** | 100nF | C_0402_1005Metric | (60.4, 96.2) | E 1090 RX chain |  |
@@ -107,6 +113,7 @@ Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS e
 | ☐ | **R8** | 5.1k | R_0603_1608Metric | (107.8, 98.3) | B MCU + Flash |  |
 | ☐ | **R9** | 27R | R_0603_1608Metric | (92.5, 87.7) | B MCU + Flash |  |
 | ☐ | **R10** | 27R | R_0603_1608Metric | (95.6, 87.7) | B MCU + Flash |  |
+| ☐ | **R11** | 3.32k | R_0402_1005Metric | (98.4, 64.5) | E 1090 RX chain | QPL9547 Vbias resistor, B side |
 | ☐ | **R17** | 10k | R_0603_1608Metric | (121.4, 105.2) | D 978 TX/RX |  |
 | ☐ | **R18** | 10k | R_0603_1608Metric | (136.2, 62.1) | E 1090 RX chain |  |
 | ☐ | **R19** | 52.3R | R_0402_1005Metric | (138.5, 71.2) | E 1090 RX chain |  |
@@ -125,6 +132,7 @@ Cross-checked with Q/F as the example: Q2+F2(978 UAT), Q3+F3(1090), Q4+F4(GNSS e
 | ☐ | **R34** | 10k | R_0603_1608Metric | (55.6, 77.5) | E 1090 RX chain |  |
 | ☐ | **R35** | 10k | R_0603_1608Metric | (55.6, 82.3) | E 1090 RX chain |  |
 | ☐ | **R36** | 1k | R_0603_1608Metric | (61.4, 103.5) | E 1090 RX chain |  |
+| ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (105.5, 69.8) | E 1090 RX chain | QPL9547 pin7 VDD feed choke |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (92.1, 62.1) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (131.5, 93.1) | D 978 TX/RX |  |
 | ☐ | **L8** | 100nH | L_0402_1005Metric | (142.6, 87.0) | D 978 TX/RX |  |

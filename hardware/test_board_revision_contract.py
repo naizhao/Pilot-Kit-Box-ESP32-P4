@@ -12,8 +12,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "expansion-board-v3": "V3.7",
-    "expansion-board-v4": "V4.1",
+    "expansion-board-v3": "V3.8",
+    "expansion-board-v4": "V4.2",
 }
 AVAILABLE_BOARDS = tuple(
     board for board in EXPECTED

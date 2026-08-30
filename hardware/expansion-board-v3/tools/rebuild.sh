@@ -46,6 +46,9 @@ $KP "$T/tools/route_ifa_feed.py" 2>&1 | filt | grep -E '重布|馈电总路径'
 echo; echo "════════ ③ 贴回 ROUTES.json 的唯一布线基线 ════════"
 $KP "$T/tools/import_routes.py" 2>&1 | filt | grep -v "^⚠️"
 
+echo; echo "════════ ③b 重放 V3.8 局部 ECO（QPL9547）════════"
+$KP "$T/tools/route_eco_v38.py" 2>&1 | filt
+
 echo; echo "════════ ④ 丝印（gen_pcb 从零建板不生成这些，必须补）════════"
 # ⚠️ gen_pcb.py 是 pcbnew.NewBoard()，只放元件/覆铜/板框，**板级丝印不生成**。
 # 2026-08-13 评审发现"背后的版权没有了"，根因就是这里：生成品牌丝印的工具
@@ -58,6 +61,7 @@ $KP "$T/tools/silk_size.py" 0.8 2>&1 | filt | head -2
 # 方向。gen_pcb 从封装库重建时那个圆点会回来、粗标记线不会，所以必须在这里补。
 $KP "$T/tools/gen_polarity_marks.py" 2>&1 | filt | sed -n '1,8p'
 PK_PRESERVE_SILK_REF=1 $KP "$T/tools/fix_silk_drc.py" 2>&1 | filt | head -12
+$KP "$T/tools/fix_eco_silk_v38.py" 2>&1 | filt
 
 echo; echo "════════ ⑤ 顶部全层禁铜带（板左/右缘→天线禁铜区，v4 同构）════════"
 # gen_pcb 是 NewBoard 从零重建，文本插入的顶部 zone 每次都会丢——必须重放。
