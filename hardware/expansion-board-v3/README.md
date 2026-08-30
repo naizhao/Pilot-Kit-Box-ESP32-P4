@@ -1,5 +1,9 @@
 # Expansion Board V3 (Archived)
 
+<p align="center">
+  <img src="render/top.png" alt="Expansion board V3 top side" width="760">
+</p>
+
 > **This board is superseded by [Expansion Board V4](../expansion-board-v4/).**
 > V3.2 was fabricated and remains useful as a firmware-debugging and
 > antenna-research reference, but no further hardware work happens here.
@@ -17,6 +21,10 @@ constraints, purchasing history) are kept out of the public tree.
 ---
 
 # 扩展板 V3（已归档）
+
+<p align="center">
+  <img src="render/top.png" alt="扩展板 V3 顶面渲染" width="760">
+</p>
 
 > **本板已被[扩展板 V4](../expansion-board-v4/) 取代。**
 > V3.2 已打样，仍可作为固件调试与天线研究的参考，但硬件工作不再在这里发生。

@@ -24,6 +24,21 @@
 
 ## 硬件版本与分支 / Hardware Versions & Branches
 
+项目包含**硬件（扩展板）**与**软件（固件）**两条相互独立的版本线：
+
+- **硬件**按板代走分支：`v1` → `v2` → `v3` → `v4`，每代一个分支；
+- **固件**按发布标签走：`v0.5.0` / `v0.6.0` / `v0.8.0`（见 Releases），
+  在任何硬件分支上发布，与板代无关。
+
+The project has **two independent version lines**: the **hardware (expansion
+boards)** evolves through branches `v1` → `v2` → `v3` → `v4` (one branch per
+board generation), while the **firmware** releases via tags `v0.5.0` /
+`v0.6.0` / `v0.8.0` (see Releases), cut from whichever hardware branch.
+
+### 四代扩展板 / Four Generations
+
+![Pilot Kit Box 扩展板四代同堂：v1 2.4寸大板、v2 Waveshare 4.3 SDR RTL 镂空板、v3 首个 KiCad 完整扩展板、v4 加电源版](images/four-generations.png)
+
 每个硬件版本一个分支，从旧到新 / One branch per hardware revision, oldest first:
 
 | 分支 Branch | 板子 / Board | EDA | 说明 / Notes |
@@ -32,8 +47,6 @@
 | [`v2`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v2) | 微雪 4.3 屏配套的 SDR RTL 镂空板 / RTL-SDR cutout board for the Waveshare 4.3 | 嘉立创 EDA | 归档：仅打样 Gerber + 说明，EDA 源不在 git / archive: fabrication Gerbers only, EDA sources not in git |
 | [`v3`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v3) | 脱离 SDR 的完整扩展板（KiCad、expansion-board 命名起点）/ SDR-free integrated expansion board (KiCad, where the expansion-board naming starts) | KiCad | 归档：只维护 v3 硬件，不携带 v4 / archived: v3 hardware only |
 | [`v4`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v4) | v3 + 电源部分 + 布局优化（当前硬件目标）/ v3 plus power section and layout rework (current target) | KiCad | **本分支 / this branch**；公开区只留最终结果 / public tree keeps final results only |
-
-整机固件发布标签 / firmware release tags: `v0.5.0` · `v0.6.0` · `v0.8.0`。
 
 ## 项目概览 / Overview
 
@@ -162,15 +175,19 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 |---|---|
 | <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
 
-### 历史载板与外壳 / Legacy Carrier Board & Enclosure
+### v1 载板与外壳实物 / v1 Carrier Board & Enclosure
 
-以下 2.4 寸载板照片和设计只记录 v0.8.0 历史原型，不是当前 Rev1.2
-4.3 寸板的装配或接线指南。历史立创EDA 工程见
+以下 2.4 寸载板（**v1 大板**，嘉立创 EDA 绘制，见
+[`v1` 分支](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v1)）照片
+与设计文件记录的是 v0.8.0 历史原型。它们不是当前 Rev1.2 4.3 寸板的装配或
+接线指南。历史立创EDA 工程见
 [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/)。
 
-The following 2.4-inch carrier photos and design files document the legacy
-v0.8.0 prototype. They are not assembly or wiring instructions for the
-current Rev1.2 4.3-inch board. Legacy EasyEDA sources:
+The following 2.4-inch carrier photos and design files document the
+**v1 board** (the legacy v0.8.0 prototype, drawn in JLC EDA — see the
+[`v1` branch](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v1)).
+They are not assembly or wiring instructions for the current Rev1.2 4.3-inch
+board. Legacy EasyEDA sources:
 [`docs/jlc/lcd-2.4in-8pin/`](docs/jlc/lcd-2.4in-8pin/).
 
 | 载板 3D · 正面 / PCB 3D Front | 载板 3D · 背面（电池面）/ PCB 3D Back (battery side) |
@@ -262,32 +279,21 @@ VNA calibration in the final enclosure.
 Each ships as an English canonical file plus a `-zh_CN.md` Simplified-Chinese
 counterpart; see the v4 README for the full index.
 
-### 历史 BOM 成本参考 / Legacy BOM Cost Reference
+### 硬件成本参考 / Hardware Cost Reference
 
-以下成本表属于旧 2.4 寸 v0.8.0 原型，保留用于历史复盘，**不能**作为当前
-4.3 寸一体板的采购清单。价格、汇率和供应情况也没有更新。
+以 **v4 扩展板**为准（两片用量、含备损；完整料号与选型依据见
+[`BOM_PURCHASE.md`](hardware/expansion-board-v4/BOM_PURCHASE.md)）：
 
-The following costs belong to the legacy 2.4-inch v0.8.0 prototype and remain
-only for historical review. They are **not** a procurement list for the
-current 4.3-inch integrated board, and prices/exchange rates are not current.
+| 项目 / Item | 金额 / Cost | 说明 / Notes |
+|---|---:|---|
+| 嘉立创 SMT 贴装（`full` 方案，2 片）<br>JLC SMT assembly (`full` profile, 2 boards) | **实付 ¥51.06**<br>**¥51.06 paid** | 46 种 / 126 件 / 252 焊点；工程费、焊盘费、换料费优惠券后为 0<br>46 parts / 126 placements; setup & fees waived by coupons |
+| 手贴件：贵价射频 IC、电源 IC、B 面件等<br>Hand-placed: pricier RF/Power ICs, B-side parts | 另计<br>extra | 数量与料号见 `BOM_PURCHASE.md` 的 ☐ 标记；按 `VARIANTS.md` 的选贴规则取用<br>see `BOM_PURCHASE.md` ☐ marks; quantities per `VARIANTS.md` |
+| 6 层 PCB 打样（JLC06161H-3313，含盘中孔工艺）<br>6-layer PCB fab (JLC06161H-3313, via-in-pad) | 另计<br>extra | 叠层与阻抗依据 [`JLC_STACKUP_IMPEDANCE.md`](hardware/JLC_STACKUP_IMPEDANCE.md) / see stackup doc |
+| 外壳 / Enclosure | 另计<br>extra | 3D 打印（嘉立创） / 3D printed (JLC) |
 
-| 物料 | Part | 人民币参考 / RMB Reference | 美元估算 / USD Estimate | 备注 / Notes |
-|---|---|---:|---:|---|
-| 微雪 ESP32P4C6 | Waveshare ESP32P4C6 | ¥76 | ~$11.40 | ESP32-P4 + ESP32-C6 |
-| BNO085 IMU | BNO085 | ¥76 | ~$11.40 | 9 轴姿态融合 / 9-axis fusion |
-| 气压计 BMP388 | BMP388 barometer | ¥13 | ~$1.95 | `v0.8.0` 新增 / Added in `v0.8.0` |
-| GPS GT-U8（ATGM336H） | GT-U8 (ATGM336H) GNSS | ¥25 | ~$3.75 | GPS / 北斗；u-blox M9N 可替代但成本更高 / GPS + BeiDou |
-| RTL-SDR FC0013 | RTL-SDR FC0013 | ¥10 | ~$1.50 | 1090 MHz ADS-B |
-| IPEX、MCX、SMA 线座 | RF cables and adapters | ¥2 | ~$0.30 | 天线与 SDR 连接 / Antenna and SDR interconnect |
-| 5V 2A / 2.4A Type-C 充电模块 | 5V Type-C charging module | ¥4 | ~$0.60 | 电池供电 / Battery power |
-| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh Li-ion battery | ¥25 | ~$3.75 | |
-| 2.4 寸半透反射屏 | 2.4-inch transflective LCD | ¥38 | ~$5.70 | |
-| USB-A 母座 | USB-A socket | ¥0.3 | ~$0.05 | |
-| 嘉立创 PCB | JLCPCB carrier PCB | ¥7 | ~$1.05 | 裸板参考 / Bare PCB reference |
-| **电子件小计** | **Electronics subtotal** | **约 ¥276.3** | **约 $41.45** | |
-| 嘉立创 3D 打印外壳 | JLC 3D-printed enclosure | ¥50 | ~$7.50 |  |
-| 嘉立创面板打印 | JLC faceplate print | ¥10 | ~$1.50 |  |
-| **原型合计（全部）** | **Complete prototype total** | **约 ¥336.3** | **约 $50.45** | |
+> 2026-07-31 之前的 2.4 寸载板（v1）时代旧成本表已随 **`v1` 分支**归档，可在
+> 该分支的本文件历史中查阅。The legacy v1-era cost table is archived with the
+> `v1` branch (see that branch's history of this file).
 
 ### 首次设置或选配 / Setup And Optional
 
