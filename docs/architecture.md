@@ -6,6 +6,11 @@ Snapshot of the current 4.3-inch touch runtime topology, including ADS-B,
 BLE, GPS NMEA/RMC, barometer, dual storage backends, local traffic UI,
 diagnostics, IMU and i18n.
 
+> Scope note: the receive path documented here is the **RTL-SDR USB source**
+> (v1/v2 carriers and bare-board builds). The v3/v4 expansion boards carry an
+> onboard 1090 MHz chain decoded by an RP2040 that feeds this same on-device
+> pipeline; that source is additional to what this page details.
+
 ## Big picture
 
 ```mermaid

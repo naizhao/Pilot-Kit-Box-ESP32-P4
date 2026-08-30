@@ -6,6 +6,10 @@
 Host、Mode-S DSP 解码、LittleFS / MicroSD / UART / BLE 输出、GT-U8
 GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于和诊断页面。
 
+> 范围说明：本文记载的接收路径是 **RTL-SDR USB 数据源**（v1/v2 载板与裸板
+> 方案）。v3/v4 扩展板自带 1090 MHz 接收链、由 RP2040 解码后馈入同一套
+> 板上处理管线；该数据源是本文所述内容之外的补充路径。
+
 ## 总览
 
 ```mermaid

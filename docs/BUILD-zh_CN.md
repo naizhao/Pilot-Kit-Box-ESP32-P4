@@ -28,7 +28,7 @@
 
 | 选配硬件 | 用途 | 对应功能 |
 |----------|------|-------------|
-| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收；当前推荐 FC0013，主要因为成本低 | ADS-B 数据链路 |
+| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收，**适用于 v1/v2 载板或裸板方案**；当前推荐 FC0013，主要因为成本低。**v4 扩展板方案不需要**——它自带 1090 MHz 接收链 | ADS-B 数据链路 |
 | USB-C OTG 转接头或有源 USB Hub | 仅裸板需要：把 H2 原生 USB HS Type-C 转成 USB-A 母座接 RTL-SDR。Pilot Kit 载板自带 USB-A 插头（走 J3-27/25），不需要转接头 | ADS-B USB 数据链路 |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |

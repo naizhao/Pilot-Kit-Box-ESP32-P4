@@ -56,13 +56,13 @@ board generation), while the **firmware** releases via tags `v0.5.0` /
 
 它的核心价值不是单纯“看天上有哪些飞机”，而是帮助用户低成本记录、理解和管理自己的飞行数据。它可以随飞机一起使用，记录每一次飞行中的关键数据，用于飞行日志、回放、分享和分析；也可以接收附近飞机公开广播的 ADS-B / Mode-S 信号，在本机屏幕上显示周边交通信息。
 
-你可以把它理解成一个“飞行员自己的小型数据记录与接收盒子”：它既能独立工作，也能和 Pilot Kit 紧密结合；未来也可以通过标准航空数据格式与 Garmin Pilot、ForeFlight 等第三方 EFB 软件配合使用。
+你可以把它理解成一个“飞行员自己的小型数据记录与接收盒子”：它既能独立工作，也能和 Pilot Kit 紧密结合；并已支持通过标准航空数据格式（GDL90 over BLE）与 Garmin Pilot、ForeFlight 等第三方 EFB 软件配合使用。
 
 Pilot Kit Box can work as a standalone device or integrate closely with [Pilot Kit](https://air.club). If you know products such as Stratux, Sentry, Garmin GDL, or uAvionix ping, Pilot Kit Box is best understood as a more open, lower-cost, builder-friendly flight data and ADS-B box. It is intended for pilots, student pilots, aviation enthusiasts, and general-aviation developers who want local flight recording, attitude display, nearby traffic reception, and data they can later review or share.
 
 The main point is not just watching aircraft overhead. Pilot Kit Box is meant to help users record, understand, and manage their own flying at a much lower cost. It can record each flight for logs, replay, sharing, and analysis; it can also receive public ADS-B / Mode-S broadcasts from nearby aircraft and show surrounding traffic on the built-in display.
 
-Think of it as a pilot's own small flight data recorder and receiver: it can run independently, integrate tightly with Pilot Kit, and evolve toward standard aviation data outputs for third-party EFB apps such as Garmin Pilot and ForeFlight.
+Think of it as a pilot's own small flight data recorder and receiver: it can run independently, integrate tightly with Pilot Kit, and already speaks standard aviation data (GDL90 over BLE) for third-party EFB apps such as Garmin Pilot and ForeFlight.
 
 ## 使用场景 / Use Cases
 
@@ -75,7 +75,7 @@ Pilot Kit Box is designed to give pilots, student pilots, and aviation enthusias
 - 接收附近飞机的 ADS-B / Mode-S 广播，显示周边交通、航班号、国家、航司、机型和注册号等信息。<br>Receive nearby ADS-B / Mode-S traffic and show callsign, country, airline, aircraft type, and registration when known.
 - 在没有互联网的情况下，本地接收和记录航空数据，而不是依赖在线航班网站。<br>Receive and record aviation data locally without relying on online flight-tracking websites.
 - 与 Pilot Kit 软件结合，把硬件采集到的数据用于更完整的飞行记录、回放、分析和分享体验。<br>Use captured device data with Pilot Kit for richer flight records, replay, analysis, and sharing.
-- 作为通用飞行数据盒子继续扩展；路线图中的 GDL90 over Wi-Fi 目标是连接 Garmin Pilot、ForeFlight 等 EFB。<br>Continue evolving as a general-purpose flight data box; the roadmap GDL90 over Wi-Fi path targets EFBs such as Garmin Pilot and ForeFlight.
+- 作为通用飞行数据盒子继续扩展；GDL90 已通过 BLE 输出（Ownship / Traffic / Heartbeat / Raw），Wi-Fi GDL90 在路线图中，目标是连接 Garmin Pilot、ForeFlight 等 EFB。<br>Continue evolving as a general-purpose flight data box; GDL90 already ships over BLE (ownship / traffic / heartbeat / raw), with Wi-Fi GDL90 on the roadmap targeting EFBs such as Garmin Pilot and ForeFlight.
 - 给通航、航电、嵌入式和 SDR 爱好者提供一个完整、开源、可学习的参考实现。<br>Provide a complete open-source reference for general aviation, avionics, embedded systems, and SDR builders.
 
 ## 为什么要做这个设备 / Why Build This
@@ -97,7 +97,7 @@ Portable ADS-B receivers and flight data boxes already exist, including Stratux,
 Pilot Kit Box focuses on:
 
 - **Low cost**: ESP32-P4, RTL-SDR, display, IMU, and common power modules keep the hardware approachable.
-- **General-purpose use**: it is not locked to one app; it can run on its own and evolve toward standard aviation data interfaces.
+- **General-purpose use**: it is not locked to one app; it can run on its own and already speaks standard aviation data interfaces (GDL90).
 - **Tight Pilot Kit integration**: Pilot Kit can use Box data for richer flight records, replay, analysis, and sharing.
 - **Local recording**: flight data can be recorded on the device for review and personal archives.
 - **Situational awareness**: the same box can receive nearby ADS-B / Mode-S traffic and help users understand surrounding airspace.
@@ -106,9 +106,9 @@ Pilot Kit Box focuses on:
 
 ## 技术概览 / Technical Overview
 
-当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构：ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR，实时接收 1090 MHz ADS-B / Mode-S 信号，在本机完成 dump1090 派生的 DSP 解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口以及 LittleFS / MicroSD 文件输出给移动端或调试工具。
+当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构。1090 MHz 接收按板代有两种形态：**v1/v2 载板**由 ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR dongle；**v3/v4 扩展板**自带 1090 MHz 接收链（QPL9547 LNA + TA0970A SAW + AD8313 对数检波 + TLV3501 比较器），由 RP2040 解码后馈给 P4。两条路径都在本机完成 dump1090 派生的解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口以及 LittleFS / MicroSD 文件输出给移动端或调试工具。
 
-The ESP32-P4 edition removes the Linux SBC from the ADS-B path: the P4 drives an RTL-SDR receiver over native USB 2.0 HS, decodes 1090 MHz ADS-B / Mode-S frames on-device, fuses per-aircraft state, and publishes traffic over BLE GATT, serial output, and LittleFS or MicroSD logs.
+The ESP32-P4 edition removes the Linux SBC from the ADS-B path. The 1090 MHz receive chain comes in two board-generation flavors: on the **v1/v2 carriers** the P4 drives an RTL-SDR receiver over native USB 2.0 HS, while the **v3/v4 expansion boards** carry their own 1090 MHz receive chain (QPL9547 LNA + TA0970A SAW + AD8313 log detector + TLV3501 comparator) decoded by an RP2040 and fed to the P4. Both paths decode dump1090-derived frames on-device, fuse per-aircraft state, and publish traffic over BLE GATT, serial output, and LittleFS or MicroSD logs.
 
 ## 安全与适航边界 / Safety And Certification Boundary
 
@@ -142,7 +142,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | 功能 | Feature | 状态 / Status |
 |---|---|---|
 | ESP32-P4 + FreeRTOS 固件，无 Linux 启动链路 | ESP32-P4 + FreeRTOS firmware, no Linux boot chain | 已实现 / Implemented |
-| USB 2.0 HS 直连 RTL-SDR，1090 MHz，2 MSPS IQ8 数据流 | USB 2.0 HS RTL-SDR path at 1090 MHz, 2 MSPS IQ8 | 已实现 / Implemented |
+| USB 2.0 HS 直连 RTL-SDR，1090 MHz，2 MSPS IQ8 数据流（v1/v2 载板路径） | USB 2.0 HS RTL-SDR path at 1090 MHz, 2 MSPS IQ8 (v1/v2 carrier path) | 已实现 / Implemented |
 | 512 KiB IQ ring buffer、非阻塞 USB 回调、DSP 任务解码 | 512 KiB IQ ring buffer, non-blocking USB callback, DSP decode task | 已实现 / Implemented |
 | dump1090 派生 Mode-S 解码、CRC 过滤、CPR 全球定位 | dump1090-derived Mode-S decode, CRC filtering, CPR global position decode | 已实现 / Implemented |
 | 最多同时跟踪 64 个 ADS-B / Mode-S 目标，并聚合呼号、高度、位置、速度、垂直速度、应答机码和机型信息 | Tracks up to 64 ADS-B / Mode-S targets at once, aggregating callsign, altitude, position, velocity, vertical rate, squawk, and aircraft type | 已实现 / Implemented |
@@ -161,7 +161,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
 | GT911 触摸 FAB 打开全屏导航网格直接切页（两页 10 项可翻页），FAB 可拖动记忆，详情页三路返回 | GT911 touch FAB opens a full-screen nav grid (10 items on two swipeable pages), remembers FAB position, and provides three detail-page back paths | 已实现 / Implemented |
-| RTL-SDR IQ stall 触发软重连，多次失败后才重启整机 | RTL-SDR IQ-stall soft re-init before full restart fallback | 已实现 / Implemented |
+| RTL-SDR IQ stall 触发软重连，多次失败后才重启整机（v1/v2 载板路径） | RTL-SDR IQ-stall soft re-init before full restart fallback (v1/v2 carrier path) | 已实现 / Implemented |
 
 ## 硬件清单 / Hardware Bill of Materials
 

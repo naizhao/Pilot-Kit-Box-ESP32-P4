@@ -20,7 +20,7 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 
 | Item | Purpose |
 |---|---|
-| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception. FC0013 is currently recommended because it keeps BOM cost low. |
+| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception for **v1/v2 carrier or bare-board builds**. FC0013 is currently recommended because it keeps BOM cost low. **Not needed with the v4 expansion board** — it carries an onboard 1090 MHz chain. |
 | USB-C OTG adapter or powered USB hub | Bare-board only: connects the H2 native USB HS port to a USB-A RTL-SDR dongle. The Pilot Kit carrier already carries a USB-A plug on J3-27/25 and needs no adapter. |
 | BNO085 / GY-BN008X IMU module | Attitude fusion for the PFD. |
 | USB-UART adapter | Required once per fresh board to flash the ESP32-C6 hosted slave firmware for BLE. |

@@ -30,7 +30,7 @@
 
 - 安全边界：Pilot Kit Box 不是经过适航认证的航电设备，文档不得把它写成主飞行仪表、备用仪表、导航源或防撞系统。
 - 目标开发板是 **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**。P4 负责 USB、DSP、UI 和存储；C6 负责 BLE。
-- RTL-SDR 走原生 USB 2.0 HS 差分对：装上 Pilot Kit 载板时，dongle 插载板的 USB-A（J3-27/25），H2 保持空置；裸 Waveshare 板则用 H2 Type-C 加 OTG 转接头或 Hub。两者同网，只能二选一。默认 1090 MHz、2 MSPS。
+- ADS-B 接收按板代分两种形态：**v1/v2 载板与裸板**把 RTL-SDR dongle 接到原生 USB 2.0 HS 差分对（装载板时插载板 USB-A，走 J3-27/25；裸 Waveshare 板则用 H2 Type-C 加 OTG 转接头或 Hub；两者同网，只能二选一），而 **v3/v4 扩展板**自带 1090 MHz 接收链、由 RP2040 解码。dongle 路径默认 1090 MHz、2 MSPS。
 - 当前推荐的 SDR dongle tuner 是 **FC0013**，主要原因是 BOM 成本低。
 - 识别数据库：ICAO24 飞机数据库随 microSD 卡分发，路径 `/sdcard/aero/pk_actdb.bin`（仓库内产物 `datafiles/data/pk_actdb.bin`，读取端 `firmware/main/aircraft_db.c`），更新是拷文件、不是刷固件；`firmware/main/airline_codes.c` 的航司代码表和 `firmware/main/icao_country.c` 的 ICAO24 国家地址段表仍编进固件。
 - LCD 是 **4.3 寸 ST7701 480×800 MIPI-DSI 屏**，通过 PPA 作为 800×480 横屏使用；背光 GPIO26、复位 GPIO27、BL_EN GPIO33。
