@@ -77,7 +77,8 @@ s.place("U7", PRJ, "ATGM336H", 190.5, 137.16, {
 }, value="ATGM336H-6N-74", footprint=f"{PRJ}:ATGM336H_LCC-18")
 # ---- GNSS 天线切换：内置 patch(外壳顶边凸包) ↔ 外接 SMA，两路都是有源天线 ----
 # 开关 RF 口不能过直流 → 每支路各一个偏置 Tee，且都在隔直电容外侧。
-# PMOS 栅极交叉接到对侧选择脚：选中哪路就给哪路供电，无需额外反相器。
+# AS179/XA17 真值表：V1低/V2高选J2，V1高/V2低选J3。
+# 高边 PMOS 低有效，因此外接 J2 的 Q4 栅极接 V1/A，内置 J3 的 Q5 栅极接 V2/B。
 s.place("C57", "Device", "C", 215.9, 71.12, {"1": "GNSS_RF_IN", "2": "SW2_J1"},
         value="100pF", footprint=C0402)
 s.place("U17", "RF_Switch", "AS179-92LF", 241.3, 88.9, {
@@ -91,7 +92,7 @@ s.place("U17", "RF_Switch", "AS179-92LF", 241.3, 88.9, {
 s.place("C58", "Device", "C", 266.7, 71.12, {"1": "ANT_GNSS_EXT", "2": "SW2_J2"},
         value="100pF", footprint=C0402)
 s.place("Q4", "Transistor_FET", "AO3401A", 279.4, 88.9,
-        {"G": "ANT_SEL_GNSS_B", "S": "3V3_GNSS", "D": "GNSS_EXT_FUSE"},
+        {"G": "ANT_SEL_GNSS_A", "S": "3V3_GNSS", "D": "GNSS_EXT_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
 s.place("F4", "Device", "Polyfuse", 292.1, 71.12, {"1": "GNSS_EXT_FUSE", "2": "GNSS_EXT_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")
@@ -101,7 +102,7 @@ s.place("L2", "Device", "L", 304.8, 71.12, {"1": "GNSS_EXT_FEED", "2": "ANT_GNSS
 s.place("C59", "Device", "C", 266.7, 96.52, {"1": "ANT_GNSS_INT", "2": "SW2_J3"},
         value="100pF", footprint=C0402)
 s.place("Q5", "Transistor_FET", "AO3401A", 279.4, 114.3,
-        {"G": "ANT_SEL_GNSS_A", "S": "3V3_GNSS", "D": "GNSS_INT_FUSE"},
+        {"G": "ANT_SEL_GNSS_B", "S": "3V3_GNSS", "D": "GNSS_INT_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
 s.place("F5", "Device", "Polyfuse", 292.1, 96.52, {"1": "GNSS_INT_FUSE", "2": "GNSS_INT_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")
