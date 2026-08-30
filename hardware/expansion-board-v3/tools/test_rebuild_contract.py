@@ -69,6 +69,11 @@ class RebuildContractTest(unittest.TestCase):
             text = (SCRIPT.parent / filename).read_text(encoding="utf-8")
             self.assertNotIn('NET = "/tmp/expansion.net.xml"', text, filename)
 
+    def test_pcb_generator_refreshes_netlist_when_any_child_sheet_changes(self):
+        text = (SCRIPT.parent / "gen_pcb.py").read_text(encoding="utf-8")
+        self.assertIn("newest_schematic", text)
+        self.assertIn('glob(os.path.join(T, "kicad", "*.kicad_sch"))', text)
+
     def test_silk_swap_audit_ignores_fabrication_reference_layers(self):
         text = (SCRIPT.parent / "gen_assembly.py").read_text(encoding="utf-8")
         self.assertIn('"tlayer": board.GetLayerName', text)

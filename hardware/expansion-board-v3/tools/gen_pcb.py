@@ -175,8 +175,12 @@ def size_mm(fp):
 #
 # 这份文件此前没有任何脚本负责刷新（只有本脚本读、没人写），全靠人记得手动导。
 _SCH = os.path.join(T, "kicad", "expansion-board-v3.kicad_sch")
+newest_schematic = max(
+    os.path.getmtime(path)
+    for path in __import__("glob").glob(os.path.join(T, "kicad", "*.kicad_sch"))
+)
 if (not os.path.exists(NETXML)
-        or os.path.getmtime(NETXML) < os.path.getmtime(_SCH)):
+        or os.path.getmtime(NETXML) < newest_schematic):
     import subprocess
     _CLI = os.path.expanduser("~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
     _r = subprocess.run([_CLI, "sch", "export", "netlist", "--format", "kicadxml",
