@@ -22,6 +22,19 @@
 > IMU, barometer, and power onto one board — **no RTL-SDR dongle required**.
 > One branch per hardware revision.
 
+## 硬件版本与分支 / Hardware Versions & Branches
+
+每个硬件版本一个分支，从旧到新 / One branch per hardware revision, oldest first:
+
+| 分支 Branch | 板子 / Board | EDA | 说明 / Notes |
+|---|---|---|---|
+| [`v1`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v1) | 2.4 寸大板：所有模块插在板上，含板载 1090 天线版 / 2.4-inch carrier, all modules plug in, on-board 1090 antenna revision | 嘉立创 EDA | 与 `main` 同源（v0.8.0 时代）/ same lineage as `main` (v0.8.0 era) |
+| [`v2`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v2) | 微雪 4.3 屏配套的 SDR RTL 镂空板 / RTL-SDR cutout board for the Waveshare 4.3 | 嘉立创 EDA | 归档：仅打样 Gerber + 说明，EDA 源不在 git / archive: fabrication Gerbers only, EDA sources not in git |
+| [`v3`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v3) | 脱离 SDR 的完整扩展板（KiCad、expansion-board 命名起点）/ SDR-free integrated expansion board (KiCad, where the expansion-board naming starts) | KiCad | 归档：只维护 v3 硬件，不携带 v4 / archived: v3 hardware only |
+| [`v4`](https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4/tree/v4) | v3 + 电源部分 + 布局优化（当前硬件目标）/ v3 plus power section and layout rework (current target) | KiCad | **本分支 / this branch**；公开区只留最终结果 / public tree keeps final results only |
+
+整机固件发布标签 / firmware release tags: `v0.5.0` · `v0.6.0` · `v0.8.0`。
+
 ## 项目概览 / Overview
 
 **Pilot Kit Box** 是一个开源、低成本、便携式的飞行数据盒子和航空态势感知设备，可与 [Pilot Kit](https://air.club) 深度结合使用，也可以作为独立设备运行。
