@@ -12,8 +12,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "expansion-board-v3": "V3.8",
-    "expansion-board-v4": "V4.2",
+    "expansion-board-v3": "V3.9",
+    "expansion-board-v4": "V4.3",
 }
 AVAILABLE_BOARDS = tuple(
     board for board in EXPECTED
@@ -98,10 +98,19 @@ class BoardRevisionContractTest(unittest.TestCase):
 
         expected = EXPECTED[board]
         release = board_root(board) / "release"
-        stamp = "20260830"
-        gerber = release / f"expansion-board-v4-gerber-JLC-{expected}-{stamp}.zip"
+        # 日期戳不写死：发布日期是发布那天才知道的，写死会让「按时发布」变成
+        # 合同的一部分。改成按版本号找，但要求**恰好一个**——同一版本堆着两个
+        # 日期的包，下单时挑错哪个都不会有人发现。
+        candidates = sorted(
+            release.glob(f"expansion-board-v4-gerber-JLC-{expected}-*.zip")
+        )
+        self.assertEqual(
+            len(candidates), 1,
+            f"{expected} 的 Gerber 包应当恰好一个，实际 {[p.name for p in candidates]}",
+        )
+        gerber = candidates[0]
+        stamp = gerber.stem.rsplit("-", 1)[1]
         source = release / f"expansion-board-v4-kicad-{expected}-{stamp}.zip"
-        self.assertTrue(gerber.is_file(), gerber)
         self.assertTrue(source.is_file(), source)
 
         readme = (board_root(board) / "README.md").read_text(encoding="utf-8")
