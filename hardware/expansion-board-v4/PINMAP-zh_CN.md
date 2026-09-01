@@ -1,4 +1,4 @@
-# 扩展板 V4.2 — 权威引脚/网络映射（原理图单一事实来源）
+# 扩展板 V4.3 — 权威引脚/网络映射（原理图单一事实来源）
 
 英文版：[`PINMAP.md`](PINMAP.md)
 
@@ -112,7 +112,7 @@ ZP1=DNP起扫，最终值以装盒实测为准。生成器/封装库/PCB内嵌AN
 
 | 器件 | 总线/脚 | 备注 |
 |---|---|---|
-| BNO085 | I2C addr 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1/SA0 均接地，CLKSEL0/H_CSN 拉高；V4.2 封装旋转 90° |
+| BNO085 | I2C addr 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1/SA0 均接地，CLKSEL0/H_CSN 拉高；V4.3 封装旋转 90° |
 | BMP388 | I2C addr 0x76（baro_task.c:29）+ BARO_INT(GPIO31) | 壳体留通气孔 |
 | QMC5883P | I2C addr 0x2C | 远离电感/大电流走线；引脚与外围已按手册复核 |
 | ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3；1PPS → GPIO50；VCC_RF 馈有源天线 | 18 脚 LCC，pin 图已核（手册 §2.3）|

@@ -1,4 +1,4 @@
-# V4.2 Onboard 1090MHz IFA Tuning Spares Purchase List
+# V4.3 Onboard 1090MHz IFA Tuning Spares Purchase List
 Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 
 > Purpose: solely for trimming the v4 onboard 1090MHz IFA, in-enclosure VNA tuning, and matching-network component swaps.
@@ -27,7 +27,7 @@ Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 | 🔴Must-buy | Default pass-through | 0R jumper resistor | 0603 | 20 | ZS1 | Generic 0603 0R | Used in the baseline state; any generic thick-film 0R with low parasitics and ordinary ratings is fine |
 | 🔴Must-buy | HFSS starting point | 3.6nH, RF high-Q inductor | 0603 | 20 | ZS1 | **Murata LQW18AN3N6C00D**; or same-spec Coilcraft 0603HP-3N6XJRW | For this value Murata gives SRF 6GHz, Q(min) 25; ample margin at 1090MHz. When swapping values across the whole set, keep the same series as much as possible |
 | 🔴Must-buy | HFSS starting point | 3.3pF, C0G/NP0 | 0603 | 20 | ZP2 | **Murata GRM1885C1H3R3BA01D** | 50V, C0G, ±0.1pF; keep ZP1 DNP in the first round |
-| 🔴Must-buy | Tuning interface | 50Ω U.FL board-end receptacle | Footprint compatible with U.FL_Hirose_U.FL-R-SMT-1_Vertical | 3 | J7 | 品赞 (Pinzan) GT-RF1125A-01G **C5299419** (¥0.24); the original Hirose U.FL-R-SMT-1(80) C88374 (¥0.63) also works | 1 for first build, 2 spares for damage; 50Ω, 6GHz (original 8GHz), with 1090/978/1575MHz far inside band |
+| 🔴Must-buy | Tuning interface | 50Ω U.FL board-end receptacle | Footprint compatible with U.FL_Hirose_U.FL-R-SMT-1_Vertical | 3 | J7 | Juxingtai AIPEX-1 **C41432122** (three-pad); original Hirose U.FL-R-SMT-1(80) C88374 also works | 1 for first build and 2 spares. Use a three-pad part; Pinzan C5299419 has four pads and does not match this PCB footprint |
 | 🟢Parts bin | Restoring the receive chain | 100pF | 0402 | 20 | C53 | Any 100pF, **X7R is fine** | DNP during the VNA measurement phase; populate after the matching values are fixed and the measurement cable is removed. **No need to buy C0G**; reasoning below |
 
 > **Why C53 does not need C0G** (aligned with [`BOM_PURCHASE.md`](BOM_PURCHASE.md) on 2026-08-28):

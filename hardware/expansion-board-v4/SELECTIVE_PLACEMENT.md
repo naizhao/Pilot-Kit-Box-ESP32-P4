@@ -1,4 +1,4 @@
-# V4.2 Selective Placement / Mutually Exclusive Parts Reference
+# V4.3 Selective Placement / Mutually Exclusive Parts Reference
 
 Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
