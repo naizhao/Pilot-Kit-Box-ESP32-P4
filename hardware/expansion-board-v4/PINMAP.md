@@ -91,10 +91,10 @@ Bias tees (×2: 1090 / 978)〔A〕: PMOS high-side switch + 6V/200mA fuse + 100n
 Onboard IFA → ZP1 shunt → ZS1 series → ZP2 shunt → C53 100pF ─┐
                                                               ├→ U16 RF switch → C54 → QPL9547 (LNA①)
 J6 external U.FL → bias tee → C30 100pF ─────────────────────┘
-→ C 12pF → TA0970A (SAW①) → matching as above → BGA2817 (LNA②) → C 12pF → TA0970A (SAW②)
-→ C 3pF coupling (C34) → AD8313 (U14, set on 2026-08-26 as the sole detector scheme; AD8319 removed)
+→ C 100pF → TA0970A (SAW①) → matching as above → BGA2817 (LNA②) → C 100pF → TA0970A (SAW②)
+→ C 100pF C0G coupling (C34/C35) → AD8313 (U14, set on 2026-08-26 as the sole detector scheme; AD8319 removed)
 → RSSI/VOUT ─┬→ RP2040 ADC1
-             └→ TLV3501 IN+; IN- = LEVEL_BIAS (TL_PWM via 100k+0.1µF RC) + 10k hysteresis〔A〕
+             └→ TLV3501 IN+; IN- = LEVEL_BIAS (TL_PWM via 10k+100nF RC) + 10k hysteresis〔A〕
 → TLV3501 OUT = PULSES → RP2040 GPIO19
 Test points: V1 removed the MM8930 production-test socket and the RF-section W.FL (1090MHz stub); the onboard-IFA side keeps the J7 debug port
 ```

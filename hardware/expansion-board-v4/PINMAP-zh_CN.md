@@ -92,10 +92,10 @@ J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG：RP2040、Flash�
 板载IFA → ZP1并 → ZS1串 → ZP2并 → C53 100pF ─┐
                                                 ├→ U16射频开关 → C54 → QPL9547(LNA①)
 J6外接U.FL → 偏置Tee → C30 100pF ─────────────┘
-→ C 12pF → TA0970A(SAW①) → 同上匹配 → BGA2817(LNA②) → C 12pF → TA0970A(SAW②)
-→ C 3pF 耦合(C34) → AD8313(U14，2026-08-26 定为唯一检波方案，AD8319 已删)
+→ C 100pF → TA0970A(SAW①) → 同上匹配 → BGA2817(LNA②) → C 100pF → TA0970A(SAW②)
+→ C 100pF C0G 耦合(C34/C35) → AD8313(U14，2026-08-26 定为唯一检波方案，AD8319 已删)
 → RSSI/VOUT ─┬→ RP2040 ADC1
-             └→ TLV3501 IN+；IN- = LEVEL_BIAS(TL_PWM 经 100k+0.1µF RC) + 10k 迟滞〔A〕
+             └→ TLV3501 IN+；IN- = LEVEL_BIAS(TL_PWM 经 10k+100nF RC) + 10k 迟滞〔A〕
 → TLV3501 OUT = PULSES → RP2040 GPIO19
 测试点：V1 已删 MM8930 产测座与射频段 W.FL（1090MHz 短截线）；板载 IFA 侧保留 J7 调试口
 ```

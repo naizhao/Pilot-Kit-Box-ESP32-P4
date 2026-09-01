@@ -600,7 +600,14 @@ class ComponentContractTest(unittest.TestCase):
                 # 地脚落在哪都在铜面里。这是物理事实不是 bug（GND 平面本就覆盖
                 # 全板），但意味着地脚这一半几乎恒真。若将来 F.Cu 不再整面铺地，
                 # 这条才会重新有鉴别力。
-                for cap in ("C82", "C83", "C84", "C85", "C86"):
+                # ⚠️ 2026-09-02 扩容：此前这个循环**只有 C82-C86**，
+                # C22-C29 从来没被任何合同检查过——外部复核指出这个盲区。
+                # C22-C27 是 RP2040 六个 IOVDD 引脚的专属 100nF，C28/C29 是
+                # VREG_VOUT/DVDD 的 1uF，漏检它们意味着「RP2040 去耦已审查」
+                # 这句话本身是不成立的。现在 13 颗全覆盖。
+                RP2040_DECOUPLING = ("C22", "C23", "C24", "C25", "C26", "C27",
+                                     "C28", "C29", "C82", "C83", "C84", "C85", "C86")
+                for cap in RP2040_DECOUPLING:
                     for pad in ("1", "2"):
                         with self.subTest(cap=cap, pad=pad, check="接入平面"):
                             reached, why = pad_reaches_plane(board, cap, pad)
