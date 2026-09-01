@@ -104,8 +104,8 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.3-20260901.zip` | **Use this to order** — V4.3 QPL9547/comparator/detector/power/debug corrections, RS-274-X, 15 files |
-| `expansion-board-v4-kicad-V4.3-20260901.zip` | Matching V4.3 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.3-20260902.zip` | **Use this to order** — V4.3 QPL9547/comparator/detector/power/debug corrections, RS-274-X, 15 files |
+| `expansion-board-v4-kicad-V4.3-20260902.zip` | Matching V4.3 source archive / further development. **Not accepted by the fab** |
 | `expansion-board-v4-gerber-JLC-V4.1-20260830.zip` | ⚠️ Superseded before the QPL9547 bias and power corrections — do not order |
 | `expansion-board-v4-kicad-V4.1-20260830.zip` | ⚠️ Matching superseded V4.1 source archive — do not use |
 | `expansion-board-v4-gerber-JLC-20260830.zip` | ⚠️ Superseded: electrically includes the ECO but carries the stale V4.0 silkscreen — do not order |
