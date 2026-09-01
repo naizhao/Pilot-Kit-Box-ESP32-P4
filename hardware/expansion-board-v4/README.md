@@ -66,7 +66,7 @@ shift the resonance. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 207 placements, 415 vias (all ≥0.30 mm drill), 1607 track segments |
+| **Scale** | 207 placements, 416 vias (all ≥0.30 mm drill), 1537 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
