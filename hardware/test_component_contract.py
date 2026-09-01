@@ -873,7 +873,9 @@ class ComponentContractTest(unittest.TestCase):
         v4_root = ROOT / "hardware" / "expansion-board-v4"
         if v4_root.is_dir():
             rebuild = (v4_root / "internal" / "tools" / "rebuild.sh").read_text(encoding="utf-8")
-            self.assertNotIn("route_eco_v42.py", rebuild)
+            # 判「有没有被调用」，不判「字符串出没出现」：rebuild.sh 的注释里
+            # 会引用这个脚本名说明退役理由，裸 assertNotIn 会误杀那段注释。
+            self.assertNotIn('$KP "$TOOLS/route_eco_v42.py"', rebuild)
             retired = (v4_root / "internal" / "tools" / "route_eco_v42.py").read_text(encoding="utf-8")
             self.assertIn("PK_ALLOW_RETIRED_V42_ECO", retired)
 
