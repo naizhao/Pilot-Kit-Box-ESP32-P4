@@ -3501,7 +3501,7 @@
 			)
 		)
 	)
-	(footprint "Package_DFN_QFN:QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm_ThermalVias"
+	(footprint "expansion-board-v4:QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm_ThermalVias"
 		(layer "F.Cu")
 		(uuid "1b729b85-7a7d-40e7-bdef-c536c2905067")
 		(at 134.478 83.678)
