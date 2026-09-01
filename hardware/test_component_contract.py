@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import csv
 import json
 import math
 import os
@@ -389,6 +390,29 @@ def pad_to_plane_via(board: str, reference: str, pad_number: str) -> float:
     return min(math.dist((px, py), point) for point in same_net)
 
 
+def pcb_placements(board: str) -> dict[str, tuple[float, float, bool]]:
+    """全板每个位号的 (中心x, 中心y, 是否DNP)。给 CPL 校验用。
+
+    走整份文件遍历，不复用 pcb_footprint()——那个按位号定位，一次只取一个，
+    207 个封装要重读 207 次文件。
+    """
+    pcb = ROOT / "hardware" / board / "kicad" / f"{board}.kicad_pcb"
+    text = pcb.read_text(encoding="utf-8")
+    result: dict[str, tuple[float, float, bool]] = {}
+    for match in re.finditer(r"\n\t\(footprint ", text):
+        block = extract_sexpr(text, match.start() + 2)
+        reference = re.search(r'\(property "Reference" "([^"]*)"', block)
+        at = re.search(r"\n\t\t\(at ([-0-9.]+) ([-0-9.]+)", block)
+        if not reference or not at:
+            continue
+        result[reference.group(1)] = (
+            float(at.group(1)), float(at.group(2)), "(dnp yes)" in block
+        )
+    if not result:
+        raise AssertionError(f"{board} 一个封装都没解析出来，正则该更新了")
+    return result
+
+
 def schematic_symbol(board: str, sheet: str, reference: str) -> str:
     path = ROOT / "hardware" / board / "kicad" / f"{sheet}.kicad_sch"
     text = path.read_text(encoding="utf-8")
@@ -637,6 +661,77 @@ class ComponentContractTest(unittest.TestCase):
                             f"{cap} 在 {cap_island}、U8.{pin} 在 {pin_island}，"
                             f"不是同一块铜面——去耦回路要绕路，扩散电感的推导不成立",
                         )
+                # ── 本地距离：锁住 2026-09-02 那次搬迁 ──────────────────────
+                # 上面三条（接入平面 / 同块平面 / 平面连续）验的都是**接入质量**，
+                # 一条都不管电容摆在哪。外部复核点破了这个洞：C22-C27 在 30.6-34.0mm
+                # 的那版旧布局，上面三条全过。判据必须能把那版判死，否则「本地去耦
+                # 已合规」这句话是空的。
+                #
+                # 判据做成**双向**，因为单向哪一边都能被绕过：
+                #   · 只查「每个脚有近电容」→ 在 U8 正中放一颗就能覆盖全部 9 个脚
+                #     （QFN-56 是 7×7mm，中心到最远脚约 5mm），其余五颗扔到板边也过。
+                #   · 只查「每颗电容离脚近」→ 六颗全挤在同一侧也过，另一侧的脚
+                #     一颗都没有。
+                #
+                # 但**别把它当成分布性判据**：反例实测，六颗全部叠放到 U8 几何中心
+                # 这一点上，双向判据照样全过（每颗都离脚近、每个脚也都离容近）。
+                # 挡住这种情况的是 DRC 的 courtyards_overlap（同一反例报 21 条），
+                # 不是这里。这是分工，不是漏洞——但如果哪天有人放宽了 courtyard
+                # 规则，这条判据不会替它补位。
+                #
+                # 反例标定（沙箱里改副本跑的，真板未动）：
+                #   C27 沿背离 U8 方向外推 1.0mm → 仍过（在设计余量内）
+                #                        1.5mm → 报警 6.75≥6.5 ✓
+                #   C22-C27 整体还原到 30mm 那版旧布局 → 报警 15 条 ✓
+                #
+                # 候选池按**网络**分，不是按外部复核给的那份清单。复核把 C82-C86
+                # 一并称作「豁免五颗」，但实测 C82/C83 挂在 RP_1V1 上、离 U8 只有
+                # 6.10/7.65mm —— U8.23(DVDD) 的最近电容就是 C83(6.10mm)，而不是
+                # C28/C29(9.45mm)。C82/C83 是本地去耦的一部分，不是豁免。
+                # 真正远置的只有 3V3_DIG 上的 C84/C85/C86（20.09/23.11/34.11mm），
+                # 它们不进候选池，也就不会替任何脚背书。
+                #
+                # 阈值＝实测值 + 约 1.2-1.4mm（一颗 0603 的长度）。这是**回归阈值**
+                # 不是 datasheet 数字：RP2040 手册 §2.9 只说 "as close as possible"
+                # 没给毫米数。留这点余量是允许布线微调，不允许搬家。
+                if board == "expansion-board-v4":
+                    u8_nets = pcb_pad_nets(board, "U8")
+                    for net, caps, pin_limit, cap_limit, measured in (
+                        # 网络      候选电容                          脚→容  容→脚  (实测覆盖, 实测锚定)
+                        ("3V3_DIG", ("C22", "C23", "C24", "C25", "C26", "C27"),
+                         6.0, 6.5, (4.97, 5.25)),
+                        ("RP_1V1", ("C28", "C29", "C82", "C83"),
+                         7.5, 9.0, (6.10, 7.65)),
+                    ):
+                        pins = [p for p, n in u8_nets.items() if n == net]
+                        self.assertTrue(pins, f"U8 上找不到 {net} 引脚")
+                        # 覆盖侧：每个电源脚都得有一颗近电容
+                        for pin in sorted(pins, key=int):
+                            with self.subTest(pin=f"U8.{pin}", net=net, check="脚有本地电容"):
+                                near, cap = min(
+                                    (pad_distance(board, ("U8", pin), (c, "1")), c)
+                                    for c in caps
+                                )
+                                self.assertLess(
+                                    near, pin_limit,
+                                    f"U8.{pin}({net}) 最近的去耦是 {cap} {near:.2f}mm，"
+                                    f"超过 {pin_limit}mm；实测基线 {measured[0]}mm",
+                                )
+                        # 锚定侧：每颗电容都得贴着某个电源脚
+                        for cap in caps:
+                            with self.subTest(cap=cap, net=net, check="电容在本地"):
+                                near, pin = min(
+                                    (pad_distance(board, (cap, "1"), ("U8", p)), p)
+                                    for p in pins
+                                )
+                                self.assertLess(
+                                    near, cap_limit,
+                                    f"{cap}({net}) 离最近的 U8.{pin} 有 {near:.2f}mm，"
+                                    f"超过 {cap_limit}mm；实测基线 {measured[1]}mm",
+                                )
+                # V3 不套这条：它的 3V3_DIG 侧同口径实测锚定 22.80mm / 覆盖 19.68mm，
+                # 就是 V4 搬迁前的那种布局（RP_1V1 侧反而更好，6.64/3.52mm）。
+                # 已列入 V3.9 回灌清单，回灌后再把上面的 board 判断去掉。
                 # 平面本身必须连续。碎成多块时上面那条同块断言仍可能通过（两者
                 # 恰好在同一小块里），但整个平面的阻抗已经不是当初论证的那个了。
                 for plane_net, plane_layer in (("3V3_DIG", "In3.Cu"), ("RP_1V1", "B.Cu")):
@@ -680,6 +775,56 @@ class ComponentContractTest(unittest.TestCase):
                 for net in ("SWCLK", "SWDIO", "DEMOD0", "DEMOD1", "DEMOD2", "DEMOD3",
                             "RECOVERED_CLK"):
                     self.assertIn({"netclass": "FINE", "pattern": net}, assignments)
+
+    def test_smt_release_cpl_matches_current_board(self):
+        """release/smt/ 里的三套 CPL 必须是**当前板**导出的。
+
+        2026-09-02 抓到的真实事故：`gen_jlc_smt.py` 有 minimal/passives/full
+        三个方案，命令行不带参数只会重出 passives。搬完 C22-C27 之后我只跑了
+        默认那次，`CPL-minimal.csv` 就留在了搬迁前——里面 C22 还写着 X=121.25，
+        而板上已经是 93.218。外部复核当时查了 CPL-full 是对的，就没往下查，
+        三套里坏掉的那套一路活到了发布目录。
+
+        位号数和 DNP 泄漏都查不出这个：旧文件的位号集合、行数、DNP 全是对的，
+        **只有坐标是旧的**。所以这里比的是坐标本身。
+
+        嘉立创 CPL 的口径：Mid X = 封装中心 x，Mid Y = **负的**中心 y。
+        """
+        for board in BOARDS:
+            smt = ROOT / "hardware" / board / "release" / "smt"
+            if not smt.is_dir():
+                continue
+            placements = pcb_placements(board)
+            dnp = {ref for ref, (_x, _y, is_dnp) in placements.items() if is_dnp}
+            files = sorted(smt.glob("CPL-*.csv"))
+            with self.subTest(board=board, check="CPL 文件齐全"):
+                self.assertEqual(
+                    [path.name for path in files],
+                    ["CPL-full.csv", "CPL-minimal.csv", "CPL-passives.csv"],
+                    "三个方案的 CPL 要么都在，要么就是有人漏跑了 gen_jlc_smt.py",
+                )
+            for path in files:
+                rows = list(csv.DictReader(path.open(encoding="utf-8-sig")))
+                with self.subTest(cpl=path.name, check="非空"):
+                    self.assertTrue(rows, f"{path.name} 是空的")
+                for row in rows:
+                    ref = row["Designator"].strip()
+                    with self.subTest(cpl=path.name, ref=ref):
+                        self.assertIn(ref, placements, f"{ref} 不在板上")
+                        self.assertNotIn(
+                            ref, dnp, f"{path.name} 把 DNP 件 {ref} 发给贴片了",
+                        )
+                        x, y, _ = placements[ref]
+                        self.assertAlmostEqual(
+                            float(row["Mid X"]), x, delta=0.01,
+                            msg=f"{path.name} 的 {ref} X={row['Mid X']}，"
+                                f"板上是 {x:.3f}——这套 CPL 不是当前板导出的",
+                        )
+                        self.assertAlmostEqual(
+                            float(row["Mid Y"]), -y, delta=0.01,
+                            msg=f"{path.name} 的 {ref} Y={row['Mid Y']}，"
+                                f"板上是 {-y:.3f}——这套 CPL 不是当前板导出的",
+                        )
 
     def test_v4_pd_configuration_power_stage_and_debug_access(self):
         if "expansion-board-v4" not in BOARDS:
