@@ -35,9 +35,17 @@ VBUS_SENSE = {
     "expansion-board-v4": {
         "r_top": "30k", "r_bottom": "10k", "max_vbus": 10.0, "window": (2.2, 2.5),
     },
-    # V3 仍是 100k/100k，Task 13（V3-BACKPORT）回灌为 10k/10k 后窗口收紧到 (2.5, 2.7)。
+    # V3 于 2026-09-02 阶段 C3 回灌为 10k/10k，窗口随之收紧。
+    #
+    # 换掉 100k/100k 不是为了改分压比（两者都是 2.0），是为了降源阻抗：
+    # 100k/100k 的戴维南源阻抗 50k，RP2040 的 ADC 采样电容在采样窗内充不满，
+    # 读数偏低而且随采样率变化。10k/10k 降到 5k，同时 ADC 那 100k 输入阻抗的
+    # 并联影响也从"吃掉 1/3"变成"只差几个百分点"。
+    #
+    # V3 只有 USB 一路 5V（没有 CH224K 的 9V 诱骗），所以 max_vbus 取 5.5 而非 10.0，
+    # 分压比也就用 2.0 而不是 V4 的 4.0；固件按 board profile 选倍率。
     "expansion-board-v3": {
-        "r_top": "100k", "r_bottom": "100k", "max_vbus": 5.5, "window": (1.7, 2.0),
+        "r_top": "10k", "r_bottom": "10k", "max_vbus": 5.5, "window": (2.5, 2.7),
     },
 }
 
@@ -542,15 +550,11 @@ class ComponentContractTest(unittest.TestCase):
             _, values = self.schematic["expansion-board-v3"]
             self.assertEqual(values.get("U14"), "AD8313ARMZ")
             self.assertEqual(values.get("R21"), "0R")
-            self.assertIn(
-                "(dnp yes)",
-                schematic_symbol("expansion-board-v3", "rf1090", "U13"),
-            )
-            self.assertIn(
-                "dnp",
-                pcb_footprint("expansion-board-v3", "U13")
-                .split("(attr", 1)[1].split(")", 1)[0],
-            )
+            # 这里原本还断言「U13 必须带 DNP」——那是双检波位时代的判据：
+            # AD8319(U13) 与 AD8313(U14) 并存，靠 DNP 表达"默认不贴哪个"。
+            # 2026-09-02 整条 AD8319 支路已从设计中删除，U13 不存在了，
+            # 再去取它的符号只会抛 ValueError。
+            # 「删干净了没有」由 test_v3_ad8319_experimental_branch_is_gone 负责。
 
     def test_rp2040_core_decoupling_crystal_and_usb_protection(self):
         expected_nets = {
@@ -729,9 +733,17 @@ class ComponentContractTest(unittest.TestCase):
                                     f"{cap}({net}) 离最近的 U8.{pin} 有 {near:.2f}mm，"
                                     f"超过 {cap_limit}mm；实测基线 {measured[1]}mm",
                                 )
-                # V3 不套这条：它的 3V3_DIG 侧同口径实测锚定 22.80mm / 覆盖 19.68mm，
-                # 就是 V4 搬迁前的那种布局（RP_1V1 侧反而更好，6.64/3.52mm）。
-                # 已列入 V3.9 回灌清单，回灌后再把上面的 board 判断去掉。
+                # V3 不套这条，理由是**候选池对不上**，不是 V3 布局差。
+                #
+                # 更正一处误测：此处原写「V3 同口径实测锚定 22.80mm / 覆盖 19.68mm，就是
+                # V4 搬迁前那种布局」——错的。那是把 V4 的候选池 C22-C27 直接套到 V3 上量的，
+                # 而 V3 的 C22-C27 根本不是 RP2040 去耦，量的是一组不相干的电容。
+                # 用 V3 真正的去耦件重测：C84→U8.44 1.46mm、C85→U8.49 3.87mm、
+                # C86→U8.44 3.75mm、C82→U8.23 3.52mm、C83→U8.50 1.51mm，**本来就是好的**。
+                #
+                # 两版去耦结构不同：V4 是 6 颗 IOVDD 专属 + 2 颗 VREG + 5 颗共 13 颗，
+                # V3 只有 C82-C86 五颗。要给 V3 加同类判据得按它自己的结构另立候选池，
+                # 照抄这段会再犯一次同样的错。已列入 V3.9 回灌清单。
                 # 平面本身必须连续。碎成多块时上面那条同块断言仍可能通过（两者
                 # 恰好在同一小块里），但整个平面的阻抗已经不是当初论证的那个了。
                 for plane_net, plane_layer in (("3V3_DIG", "In3.Cu"), ("RP_1V1", "B.Cu")):
@@ -825,6 +837,80 @@ class ComponentContractTest(unittest.TestCase):
                             msg=f"{path.name} 的 {ref} Y={row['Mid Y']}，"
                                 f"板上是 {-y:.3f}——这套 CPL 不是当前板导出的",
                         )
+
+    def test_v3_ad8319_experimental_branch_is_gone(self):
+        """阶段 B：AD8319 实验支路必须从设计里物理消失。
+
+        V3 曾经把 AD8319(U13) 和 AD8313(U14) 并排放成"二选一"的双检波实验位，默认贴
+        AD8319。产品决策后来统一到 AD8313（两版同料，固件不必按检波器型号翻 RSSI 斜率），
+        但 U13/R20/DET_TADJ 一直留在生成源里，制造输出还在指示"贴 AD8319、不贴 AD8313"
+        ——**方向正好相反**，照着贴就是错的。
+
+        这里同时锁住"删干净"和"没删过头"：R19/C34/C35/R54/C37/C38 属于保留的
+        AD8313 通路，不能跟着一起被删。
+        """
+        if "expansion-board-v3" not in BOARDS:
+            self.skipTest("当前分支不维护 v3")
+        pin_nets, values = self.schematic["expansion-board-v3"]
+        for gone in ("U13", "R20"):
+            with self.subTest(reference=gone, check="已从网表消失"):
+                self.assertNotIn(gone, values, f"{gone} 仍在网表里")
+        with self.subTest(check="DET_TADJ 网络已消失"):
+            self.assertNotIn("DET_TADJ", set(pin_nets.values()))
+        with self.subTest(check="AD8313 是唯一通路"):
+            self.assertEqual(values.get("U14"), "AD8313ARMZ")
+            self.assertEqual(values.get("R21"), "0R")
+            self.assertNotIn("DNP", values.get("R21", ""))
+        for kept in ("R19", "C34", "C35", "R54", "C37", "C38"):
+            with self.subTest(reference=kept, check="保留件没被误删"):
+                self.assertIn(kept, values, f"{kept} 属于 AD8313 通路，不该删")
+        with self.subTest(check="RF_DET_OUT 仍连通下游"):
+            for ref, pad in (("R21", "2"), ("R30", "1"), ("R31", "1"),
+                             ("R32", "1"), ("R35", "1")):
+                self.assertEqual(
+                    pin_nets.get((ref, pad)), "RF_DET_OUT",
+                    f"{ref}.{pad} 掉出了 RF_DET_OUT",
+                )
+        # 生成源也要干净——网表干净但脚本里还留着，下次重新生成就会长回来
+        tools = ROOT / "hardware" / "expansion-board-v3" / "tools"
+        for script in ("sheet_rf1090.py", "route_rf.py", "PLACEMENT.py"):
+            body = (tools / script).read_text(encoding="utf-8")
+            with self.subTest(script=script, check="生成源不再产出 U13/R20"):
+                self.assertNotRegex(
+                    body, r'["\']U13["\']',
+                    f"{script} 里还在引用 U13，重新生成会把它带回来",
+                )
+        # 制造输出的方向性错误：不能再出现"默认贴 U13 / AD8313 不贴"。
+        #
+        # 查的是 `internal/` 下的**生成产物**，不是仓库根目录那几份。V3 已归档，
+        # 根目录的 CHECKLIST.md / ASSEMBLY.md 是冻结的公开快照（gen_checklist.py
+        # 的注释写明了这件事），拿它们当判据只会一直红。
+        #
+        # "跳号"那一行要放过：删掉 U13/R20 之后位号确实缺号，产物如实记录
+        # `U 缺 U13`，那是对的，不是残留。
+        internal = ROOT / "hardware" / "expansion-board-v3" / "internal"
+        for doc in ("CHECKLIST.md", "ASSEMBLY.md", "BOM_PURCHASE.md"):
+            path = internal / doc
+            if not path.is_file():
+                continue
+            offenders = [
+                line for line in path.read_text(encoding="utf-8").splitlines()
+                if ("U13" in line or "AD8319" in line) and "跳号" not in line
+            ]
+            with self.subTest(doc=doc, check="不再指示贴 AD8319"):
+                self.assertFalse(
+                    offenders,
+                    f"internal/{doc} 仍在提 AD8319/U13：{offenders[:2]}",
+                )
+        # U14 必须落在"要贴"那一侧。它曾被 gen_bom_smt.py 的 SKIP_REF 整个跳过，
+        # 板子回来会没有检波器——这是本阶段最实际的一个后果。
+        checklist = internal / "CHECKLIST.md"
+        if checklist.is_file():
+            u14 = [line for line in checklist.read_text(encoding="utf-8").splitlines()
+                   if "**U14**" in line]
+            with self.subTest(check="U14 是必贴项"):
+                self.assertTrue(u14, "CHECKLIST 里找不到 U14")
+                self.assertNotIn("不贴", u14[0], f"U14 仍被标成不贴：{u14[0]}")
 
     def test_v4_pd_configuration_power_stage_and_debug_access(self):
         if "expansion-board-v4" not in BOARDS:

@@ -38,7 +38,10 @@ from board_meta import BOARD_REV, PCB_BASENAME          # noqa: E402
 from gen_assembly import AS_BUILT_SILK_SWAPS, STAGES     # noqa: E402
 
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PCB = os.path.join(T, "kicad", f"{PCB_BASENAME}.kicad_pcb")
+# 允许用 PK_PCB 指定板子。V3.9 回灌期间正式板还是 V3.8 的中间态，
+# 候选板在 internal/work/v3.9/ 下，文档要按候选板生成才对得上。
+# 不设这个变量时行为不变，仍读 kicad/ 下的正式板。
+PCB = os.environ.get("PK_PCB") or os.path.join(T, "kicad", f"{PCB_BASENAME}.kicad_pcb")
 SCH = os.path.join(T, "kicad", f"{PCB_BASENAME}.kicad_sch")
 NET = os.path.join(T, "build", "netlist-docs.xml")
 # v3 已归档：根目录的 CHECKLIST.md 是冻结的公开快照，再生成产物落 internal/
@@ -58,7 +61,7 @@ if not os.path.exists(NET) or os.path.getmtime(NET) < newest_schematic:
 PREFIX_ORDER = ["C", "R", "L", "D", "F", "Q", "U", "FL", "Y", "J",
                 "ANT", "ZP", "ZS", "SW", "TP", "H"]
 
-def polarity_note(prefix, fp):
+def polarity_note(ref, prefix, fp):
     """有极性 / 有方向的器件。两脚的阻容感物理对称、随便贴，这些贴反就废了。
 
     ⚠️ **不能只看位号前缀**——同一个前缀底下可能混着不同封装：
@@ -73,6 +76,8 @@ def polarity_note(prefix, fp):
     9 个 0402 电感中间，外观几乎一样，但有极性。
     """
     if prefix == "D":
+        if ref in {"D2", "D3", "D4", "D5"}:
+            return ""
         return "⚠️ 有极性，认阴极标记带"
     if prefix == "Y":
         # 4 脚无源晶体**不用分方向**，这点反直觉但是查过接线的：
@@ -96,12 +101,14 @@ def polarity_note(prefix, fp):
     return ""
 
 tree = ET.parse(NET)
-sheet, value = {}, {}
+sheet, value, dnp = {}, {}, set()
 for c in tree.iter("comp"):
     r = c.get("ref")
     sp, v = c.find("sheetpath"), c.find("value")
     sheet[r] = sp.get("names") if sp is not None else ""
     value[r] = v.text if v is not None else "?"
+    if any(p.get("name") == "dnp" for p in c.findall("property")):
+        dnp.add(r)
 
 stage_of = {sh: (code, name) for code, name, sh, *_ in STAGES}
 
@@ -122,6 +129,7 @@ for f in board.GetFootprints():
     rows.append({
         "ref": ref, "prefix": prefix, "num": num,
         "val": value.get(ref, "—"), "fp": fp,
+        "dnp": ref in dnp,
         "x": f.GetPosition().x / 1e6, "y": f.GetPosition().y / 1e6,
         "sheet": sheet.get(ref, ""),
     })
@@ -182,15 +190,15 @@ for r in rows:
                 "SolderJumper": "短接焊盘", "ANT_IFA": "板载天线"}[
             next(k for k in ("MountingHole", "TestPoint", "SolderJumper", "ANT_IFA")
                  if k in fp)]
-    elif re.search(r"DNP", val):
+    elif r["dnp"] or re.search(r"DNP", val):
         skip = "DNP"
     elif ref == "U14":
-        skip = "备用检波位（默认贴 U13）"
+        skip = ""   # AD8319(U13) 支路已删，U14 是唯一检波器，不再是"备用位"
 
     if ref in silk_wrong:
         other, fit, rev = silk_wrong[ref]
         notes.append(f"🔴 板上印着 `{other}`" + ("，**尺寸相同会真贴错**" if fit else ""))
-    pol = polarity_note(r["prefix"], fp) if not skip else ""
+    pol = polarity_note(ref, r["prefix"], fp) if not skip else ""
     if pol:
         notes.append(pol)
     # 警示色只给「贴反了真会坏」的。晶振那条说的是"不用分方向"，
@@ -229,9 +237,12 @@ os.makedirs(os.path.dirname(JSON_OUT), exist_ok=True)
 json.dump({"rev": BOARD_REV, "rows": export_rows},
           open(JSON_OUT, "w"), ensure_ascii=False, indent=1)
 
+# 这里原本还有一个 `or r["ref"] == "U14"`，把 AD8313 算进"不贴"那一侧。
+# 那是双检波位时代的残留（默认贴 AD8319、AD8313 当备用）。AD8319 支路已删，
+# U14 是唯一检波器、必贴，所以它只能落在 n_place 里。
 assert n_place + sum(1 for r in rows
                      if any(s in r["fp"] for s in NO_PART)
-                     or re.search(r"DNP", r["val"]) or r["ref"] == "U14") == len(rows), \
+                     or r["dnp"] or re.search(r"DNP", r["val"])) == len(rows), \
     "要贴的 + 不贴的 ≠ 总位号数，有行被漏掉"
 
 print(f"OK: {len(rows)} 个位号（{n_place} 个要贴）→ {OUT}")

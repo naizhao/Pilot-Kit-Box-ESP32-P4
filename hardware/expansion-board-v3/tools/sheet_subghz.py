@@ -37,6 +37,8 @@ s.place("U10", "MCU_Texas_SimpleLink", "CC1312R1F3RGZ", 88.9, 114.3, {
     "DCDC_SW": "SUBG_SW", "DCOUPL": "SUBG_DCOUPL", "GND": "GND",
 }, value="CC1312R1F3RGZR",
    footprint="Package_DFN_QFN:QFN-48-1EP_7x7mm_P0.5mm_EP5.15x5.15mm")
+s.place("R47", "Device", "R", 127, 114.3,
+        {"1": "3V3_DIG", "2": "SUBG_RESET"}, value="10k", footprint=R0402)
 
 # 差分匹配（lattice balun，位号沿用转录以便对图复查）
 s.place("L10", "Device", "L", 165.1, 63.5, {"1": "SUBG_RFP", "2": "SUBG_RFN"}, value="27nH", footprint=L0402)
@@ -55,12 +57,16 @@ s.place("C39", "Device", "C", 228.6, 76.2, {"1": "SUBG_N5", "2": "ANT_978"}, val
 # 偏置 Tee（Q/F/L 参照转录：PMOS→保险丝→100nH→天线节点；978 侧无 ESD）
 s.place("Q2", "Transistor_FET", "AO3401A", 165.1, 101.6, {"G": "BIAS_EN_978", "S": "3V3_GNSS", "D": "SUBG_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
-s.place("R17", "Device", "R", 190.5, 101.6, {"1": "3V3_GNSS", "2": "BIAS_EN_978"}, value="10k", footprint=R0402)
+# 片选上拉。SUBG_CSN 只挂 U10.17 和 RP2040 的 GPIO13，MCU 复位期间那个 GPIO 是
+# 高阻，CC1312R 会被随机选中并把总线噪声当命令吃进去。上拉到驱动侧的 3V3_DIG。
+s.place("R56", "Device", "R", 228.6, 127.0,
+        {"1": "3V3_DIG", "2": "SUBG_CSN"}, value="10k", footprint=R0402)
+s.place("R17", "Device", "R", 190.5, 101.6, {"1": "3V3_DIG", "2": "BIAS_EN_978"}, value="10k", footprint=R0402)
 s.place("F2", "Device", "Polyfuse", 203.2, 101.6, {"1": "SUBG_FUSE", "2": "SUBG_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")
 s.place("L8", "Device", "L", 215.9, 101.6, {"1": "SUBG_FEED", "2": "ANT_978"}, value="100nH", footprint=L0402)
 s.place("D3", "Device", "D_TVS", 254, 114.3, {"A1": "ANT_978", "A2": "GND"},
-        value="ESD 3.3V/0.6pF", footprint="Diode_SMD:D_0402_1005Metric")
+        value="TPESD8L3.3 0.3pFtyp 0.5pFmax", footprint="Diode_SMD:D_0402_1005Metric")
 s.place("J5", "Connector", "Conn_Coaxial", 241.3, 101.6, {"1": "ANT_978", "2": "GND"},
         value="U.FL_978", footprint="Connector_Coaxial:U.FL_Hirose_U.FL-R-SMT-1_Vertical")
 
@@ -82,8 +88,8 @@ s.place("Y2", "Device", "Crystal_GND24", 165.1, 152.4,
         value="48MHz ABM8W-7pF", footprint="Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm")
 s.place("Y3", "Device", "Crystal", 190.5, 152.4, {"1": "SUBG_X32K1", "2": "SUBG_X32K2"},
         value="32.768kHz FC-135", footprint="Crystal:Crystal_SMD_3215-2Pin_3.2x1.5mm")
-s.place("C68", "Device", "C", 203.2, 152.4, {"1": "SUBG_X32K1", "2": "GND"}, value="12pF", footprint=C0402)
-s.place("C69", "Device", "C", 215.9, 152.4, {"1": "SUBG_X32K2", "2": "GND"}, value="15pF", footprint=C0402)
+s.place("C68", "Device", "C", 203.2, 152.4, {"1": "SUBG_X32K1", "2": "GND"}, value="18pF", footprint=C0402)
+s.place("C69", "Device", "C", 215.9, 152.4, {"1": "SUBG_X32K2", "2": "GND"}, value="18pF", footprint=C0402)
 
 # VDDR 由片内 DCDC 经 L7 供电，网络无 power_out 引脚 → PWR_FLAG 声明
 s.place("#FLG03", "power", "PWR_FLAG", 228.6, 152.4, {"1": "SUBG_VDDR"})

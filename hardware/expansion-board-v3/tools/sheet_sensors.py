@@ -6,7 +6,7 @@
   CLKSEL0=1+CLKSEL1(内部下拉)=0→内部振荡器；BOOTN 10k 上拉
 - BMP388: DS001-07 — CSB=VDDIO→I2C 锁定；SDO=GND→0x76（与 baro_task.c:29 一致）
 - QMC5883P: 13-52-19 RevA — C1 脚 4.7µF 储能；SET/RST 电容不需要（内置驱动）
-- ATGM336H: 6N 手册 — ON/OFF 拉高常开；nRESET 可悬空；VCC_RF 经 33nH 馈电给有源天线
+- ATGM336H: 6N 手册 — ON/OFF 拉高常开；nRESET 可悬空；RF_IN 由板上偏置支路供电
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -27,13 +27,18 @@ s.place("U4", PRJ, "BNO085", 76.2, 76.2, {
     "5": "GND", "6": "GND",                 # PS1/PS0 = 00 → I2C
     "10": "3V3_DIG",                          # CLKSEL0=1 → 内部振荡器
     "26": "NC", "27": "NC",                   # CLKSEL1 内部下拉=0；XIN32 不用
+    "15": "BNO_ENV_SCL", "16": "BNO_ENV_SDA",
     "19": "I2C_SCL", "20": "I2C_SDA",
     "17": "GND",                               # SA0=0 → 0x4A
     "18": "3V3_DIG",                           # H_CSN 拉高（I2C 模式不用）
-    "14": "IMU_INT", "15": "NC", "16": "NC",
+    "14": "IMU_INT",
     "1": "NC", "7": "NC", "8": "NC", "12": "NC", "13": "NC",
     "21": "NC", "22": "NC", "23": "NC", "24": "NC",
 }, footprint=f"{PRJ}:BNO085_LGA-28")
+s.place("R52", "Device", "R", 114.3, 76.2,
+        {"1": "3V3_DIG", "2": "BNO_ENV_SCL"}, value="10k", footprint=R0402)
+s.place("R53", "Device", "R", 127.0, 76.2,
+        {"1": "3V3_DIG", "2": "BNO_ENV_SDA"}, value="10k", footprint=R0402)
 s.place("C10", "Device", "C", 127, 50.8, {"1": "3V3_DIG", "2": "GND"}, value="100nF", footprint=C0402)
 s.place("C11", "Device", "C", 139.7, 50.8, {"1": "3V3_DIG", "2": "GND"}, value="100nF", footprint=C0402)
 s.place("C12", "Device", "C", 152.4, 50.8, {"1": "BNO_CAP", "2": "GND"}, value="100nF", footprint=C0402)
@@ -87,7 +92,7 @@ s.place("U17", "RF_Switch", "AS179-92LF", 241.3, 88.9, {
     "5": "SW2_J1",      # 公共口 → GNSS 模块
     "2": "GND",
     "4": "ANT_SEL_GNSS_A", "6": "ANT_SEL_GNSS_B",
-}, value="XA17-G4K(或AS179-92LF)", footprint="Package_TO_SOT_SMD:SOT-363_SC-70-6")
+}, value="XA17-G4K", footprint="Package_TO_SOT_SMD:SOT-363_SC-70-6")
 # 外接支路
 s.place("C58", "Device", "C", 266.7, 71.12, {"1": "ANT_GNSS_EXT", "2": "SW2_J2"},
         value="100pF", footprint=C0402)
@@ -111,9 +116,13 @@ s.place("L15", "Device", "L", 304.8, 96.52, {"1": "GNSS_INT_FEED", "2": "ANT_GNS
 s.place("J8", "Connector", "Conn_Coaxial", 330.2, 96.52, {"1": "ANT_GNSS_INT", "2": "GND"},
         value="U.FL→内置patch", footprint="Connector_Coaxial:U.FL_Hirose_U.FL-R-SMT-1_Vertical")
 # 上电默认两路 PMOS 都关断（栅极上拉），由固件选通
-s.place("R26", "Device", "R", 215.9, 114.3, {"1": "3V3_GNSS", "2": "ANT_SEL_GNSS_A"},
+# 复位上拉。IMU_RST 只挂 U4.11 和 J1.16——后者经排针直连 ESP32-P4 的 GPIO，
+# 主控复位期间是高阻，BNO085 会被随机拉复位。上拉到驱动侧的 3V3_DIG（低有效复位）。
+s.place("R55", "Device", "R", 203.2, 50.8, {"1": "3V3_DIG", "2": "IMU_RST"},
         value="10k", footprint=R0402)
-s.place("R27", "Device", "R", 228.6, 114.3, {"1": "3V3_GNSS", "2": "ANT_SEL_GNSS_B"},
+s.place("R26", "Device", "R", 215.9, 114.3, {"1": "3V3_DIG", "2": "ANT_SEL_GNSS_A"},
+        value="10k", footprint=R0402)
+s.place("R27", "Device", "R", 228.6, 114.3, {"1": "3V3_DIG", "2": "ANT_SEL_GNSS_B"},
         value="10k", footprint=R0402)
 s.place("C17", "Device", "C", 228.6, 71.12, {"1": "3V3_GNSS", "2": "GND"}, value="100nF", footprint=C0402)
 s.place("C18", "Device", "C", 241.3, 71.12, {"1": "3V3_GNSS", "2": "GND"}, value="10uF", footprint="Capacitor_SMD:C_0805_2012Metric")

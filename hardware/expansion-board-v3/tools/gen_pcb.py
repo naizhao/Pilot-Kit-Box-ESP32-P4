@@ -130,7 +130,7 @@ HALO = {
     # 注：试过加到 3.0/2.5 想给信号出线让路，结果 MCU→MCU_TAIL→SUBG→PWR 溢出连锁装不下。
     #     板子整体 53% 填充但局部腾挪空间有限，光环不是解决信号扇出的有效杠杆。
     "U4": 1.2, "U5": 1.2, "U6": 1.2,  # BNO085 LGA-28 / LDO / BMP388 LGA-16
-    "U7": 1.2, "U11": 1.0, "U13": 1.0, "U2": 1.0,
+    "U7": 1.2, "U11": 1.0, "U2": 1.0,
 }
 
 MEMBERS = {
@@ -145,7 +145,7 @@ MEMBERS = {
                                               # （Q4/F4/L2/Q5/F5/L15/R26/R27 已收拢左条，走 PLACEMENT 固定坐标）
     # 顺序 = 信号流向，装箱器按序左→右
     "CHAIN1090": ["C36", "C48", "R11", "C21", "U11", "L1", "C31", "FL1", "C32", "U12", "C33", "FL2", "C34",
-                  "U13", "R19", "C35", "R20", "U14", "R21"],
+                  "R19", "C35", "U14", "R21"],   # U13/R20(AD8319 支路) 2026-09-02 删
     "LEFT_COL":  ["U7", "U4", "U6", "U5"],   # GNSS 模块 + IMU + 气压计（U1-U3 是电源，随页归 PWR）
     # 978 射频件按信号流向连续摆放（顺序即拓扑，缩短自动布线距离）
     "SUBG":      ["L10", "C40", "L13", "C45",           # 交叉耦合/RX_TX
@@ -190,10 +190,14 @@ if (not os.path.exists(NETXML)
 
 tree = ET.parse(NETXML)
 comps = []
+DNP_REFS = set()
 for c in tree.iter("comp"):
-    fp = c.find("footprint"); sh = c.find("sheetpath")
+    fp = c.find("footprint"); sh = c.find("sheetpath"); vl = c.find("value")
     comps.append((c.get("ref"), fp.text if fp is not None else "",
-                  sh.get("names") if sh is not None else "/"))
+                  sh.get("names") if sh is not None else "/",
+                  vl.text if vl is not None and vl.text else ""))
+    if any(p.get("name") == "dnp" for p in c.findall("property")):
+        DNP_REFS.add(c.get("ref"))
 nets = [(n.get("name"), [(x.get("ref"), x.get("pin")) for x in n.iter("node")])
         for n in tree.iter("net")]
 
@@ -202,7 +206,7 @@ SHEET_REGION = {"/Power/": "PWR", "/Sensors_GNSS/": "LEFT_COL", "/MCU_RP2040/": 
                 "/SubGHz_978/": "SUBG", "/RF_1090/": "RF1090_W"}
 _explicit = {r for v in MEMBERS.values() for r in v}
 assigned = {r: list(v) for r, v in MEMBERS.items()}
-for ref, _, sheet in comps:
+for ref, _, sheet, _val in comps:
     if ref in PINNED or ref in _explicit:
         continue
     reg = SHEET_REGION.get(sheet)
@@ -283,15 +287,22 @@ if os.path.exists(_pro):
     # 需要 0.25+0.2=0.45mm 通道，而 U8 引脚 pitch 只有 0.4mm。
     # 低压轨实际电流都很小（3V3_DIG≈150mA，见 export_dsn.py 注释），0.25mm 线
     # 1oz 铜载流约 0.9A，余量 6 倍。VCC_5V/USB_VBUS 是 USB 输入干路，保持 0.5mm。
-    _power_hi = sorted(n for n in _all_nets if n.startswith(("VCC_", "USB_VBUS")))
+    _power_hi = sorted(n for n in _all_nets if n in {"VCC_5V", "USB_VBUS"})
     _power_lo = sorted(n for n in _all_nets
                        if (n.startswith(("3V3_", "RP_1V1", "SUBG_VDDR"))
                            or n.endswith("_FUSE"))
                        and n not in _power_hi)
     _power = _power_hi + _power_lo
+    _fine = sorted({
+        "SWCLK", "SWDIO", "DEMOD0", "DEMOD1", "DEMOD3", "RECOVERED_CLK",
+        "PULSES", "ADSB_RXD", "ADSB_TXD", "GNSS_RXD", "GNSS_PPS", "IMU_INT",
+        "BIAS_EN_1090", "RP_XOUT", "RP_XIN", "RP_XT2", "SUBG_IRQ", "SUBG_TMSC",
+        "SUBG_SCK", "SUBG_MOSI", "DEMOD2",
+    } & _all_nets)
     _pat = ([{"netclass": "RF50", "pattern": n} for n in _rf50]
             + [{"netclass": "POWER", "pattern": n} for n in _power_hi]
-            + [{"netclass": "POWER_LO", "pattern": n} for n in _power_lo])
+            + [{"netclass": "POWER_LO", "pattern": n} for n in _power_lo]
+            + [{"netclass": "FINE", "pattern": n} for n in _fine])
     _stale = [p["pattern"] for p in _pat if p["pattern"] not in _all_nets]
     assert not _stale, f"网络类规则指向不存在的网络（设计已改名？）：{_stale}"
     for _c in _d["net_settings"].get("classes", []):
@@ -349,7 +360,7 @@ if os.path.exists(_pro):
 
     if _d["net_settings"].get("netclass_patterns") != _pat:
         print(f"同步网络类规则: RF50 {len(_rf50)} 条 / POWER {len(_power_hi)} 条"
-              f" / POWER_LO {len(_power_lo)} 条")
+              f" / POWER_LO {len(_power_lo)} 条 / FINE {len(_fine)} 条")
         _d["net_settings"]["netclass_patterns"] = _pat
         _dirty = True
 
@@ -379,9 +390,18 @@ def load_fp(lib, name):
 
 
 FPS = {}
-for ref, fpid, _ in comps:
+for ref, fpid, _, val in comps:
     assert ":" in fpid, f"{ref} 无封装"
     fp = load_fp(*fpid.split(":", 1)); fp.SetReference(ref)
+    # ⚠️ 元件值必须从网表灌进来。封装库加载出来的 Value 是**封装名**
+    # （C10 = "C_0603_1608Metric" 而不是 "100nF"），而这里一直没有 SetValue，
+    # 于是板上 174 个元件的 Value 全是封装名。两个后果：
+    #   · 装配图/板上读值印的是封装名，看板子的人对不上 BOM
+    #   · fanout_channel.py:56 的 `if "DNP" in f.GetValue()` 判据永远为假、
+    #     静默失效——DNP 件从来没被真正排除过
+    # V4 在 2026-08-28 已修（那边是 170 处），V3 拖到 2026-09-02 阶段 D 才补。
+    fp.SetValue(val)
+    fp.SetDNP(ref in DNP_REFS)
     FPS[ref] = fp; board.Add(fp)
 
 # ---------------- 放置：固定件 + 区域装箱 ----------------
@@ -524,9 +544,10 @@ for _ref, _t in _FIXED.items():
         continue
     _x, _y, _rot = _t[0], _t[1], _t[2]
     FPS[_ref].SetPosition(pcbnew.VECTOR2I_MM(float(_x), float(_y)))
-    FPS[_ref].SetOrientationDegrees(_rot)
     if len(_t) > 3 and _t[3] == "B" and not FPS[_ref].IsFlipped():
         FPS[_ref].Flip(FPS[_ref].GetPosition(), False)
+    # Flip() 会镜像当前角度；导出的 _rot 是板上最终绝对角度，必须在翻面后设置。
+    FPS[_ref].SetOrientationDegrees(_rot)
     _placed += 1
 if _FIXED:
     _stale = sorted(set(_FIXED) - set(FPS) - {"H1", "H2", "H3", "H4"})
@@ -589,6 +610,11 @@ for name, nodes in nets:
             if pad.GetNumber() == pin:
                 pad.SetNet(ni); n_assign += 1; hit = True
         assert hit, f"{ref} 无焊盘 {pin}"
+
+# SW2.2 位于板内密集区，花焊盘只能形成 1 根连接，KiCad 报
+# starved_thermal。这是短接开关的 GND 大焊盘，对 F.Cu GND 用实心连接更稳妥。
+_sw2_gnd = next(p for p in by_ref["SW2"].Pads() if p.GetNumber() == "2")
+_sw2_gnd.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
 
 # ---------------- 覆铜：6 层 = 双 GND 平面 + 顶底 GND 覆铜 + 3V3_DIG 在 L4 ----------------
 # F.Cu(L1)/B.Cu(L6) GND 覆铜（信号在间隙）；In1.Cu(L2)/In4.Cu(L5) 完整 GND 平面；

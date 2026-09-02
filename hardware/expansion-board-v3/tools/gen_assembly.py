@@ -7,7 +7,7 @@
 ## 为什么分阶段，而不是一张大表从头贴到尾
 
 这块板有 136 个贴片位、5 个功能域。一次全贴完再上电，出了问题要在 136 个
-焊点里找，而且射频那几颗（QPL9547 ¥8.5、TA0970A ¥7.5×2、AD8319 ¥21.9）
+焊点里找，而且射频那几颗（QPL9547 ¥8.5、TA0970A ¥7.5×2、AD8313 ¥71）
 单价最高、最靠后——前面电源要是有问题，这些就一起烧了。
 
 所以按**电源 → 数字 → 传感器 → 射频**分五阶段，每阶段贴完就能独立验证，
@@ -53,7 +53,10 @@ AS_BUILT_SILK_SWAPS = {
 }
 
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PCB = os.path.join(T, "kicad", "expansion-board-v3.kicad_pcb")
+# 允许用 PK_PCB 指定板子。V3.9 回灌期间正式板还是 V3.8 的中间态，
+# 候选板在 internal/work/v3.9/ 下，文档要按候选板生成才对得上。
+# 不设这个变量时行为不变，仍读 kicad/ 下的正式板。
+PCB = os.environ.get("PK_PCB") or os.path.join(T, "kicad", "expansion-board-v3.kicad_pcb")
 SCH = os.path.join(T, "kicad", "expansion-board-v3.kicad_sch")
 NET = os.path.join(T, "build", "netlist-docs.xml")
 # v3 已归档：根目录的 ASSEMBLY.md 是冻结的公开快照（英文正名），
@@ -99,7 +102,7 @@ STAGES = [
      "  - 起不来先量 `C60.1` 的 SUBG_VDDR（内部 DC/DC 输出，约 1.7V）"
      "和 `C67.1` 的 SUBG_DCOUPL（约 1.28V）"),
     ("E", "1090 接收链", "/RF_1090/",
-     "**全板最贵的一段**（QPL9547 ¥8.5 / TA0970A ¥7.5×2 / AD8319 ¥21.9），"
+     "**全板最贵的一段**（QPL9547 ¥8.5 / TA0970A ¥7.5×2 / AD8313 ¥71），"
      "排最后——前面四级都验过了才让它们上板。",
      "`TP3`~`TP6`(DEMOD0-3) 和 `TP7`(RECOVERED_CLK) 接示波器。\n"
      "  - 射频件方向错了很难看出来，贴之前对着 `render/silk.svg` 核一遍 pin1"),
@@ -116,7 +119,9 @@ DNP = re.compile(r"DNP")
 # 会从清单中静默消失——这正是下面那条 assert 抓到的。
 NO_PART_FP = ("TestPoint_Pad", "SolderJumper", "ANT_IFA", "MountingHole")
 # AD8313 和 AD8319 是二选一的双检波实验位，默认贴 AD8319(U13)。
-ALT_POSITION = {"U14": "AD8313 备用检波位，与 U13(AD8319) 二选一，默认不贴"}
+# 曾有 ALT_POSITION 把 U14 标成"备用检波位、默认不贴"，那是 AD8319 双检波位时代的
+# 残留，方向与产品决策相反。AD8319 支路 2026-09-02 已删，U14 是唯一检波器，必贴。
+ALT_POSITION = {}
 
 # 手工难度。按「有没有藏在底下的焊盘」分——这决定了能不能用烙铁救。
 def difficulty(fp, w, h):
@@ -172,13 +177,15 @@ def find_silk_swaps(parts):
 
 
 tree = ET.parse(NET)
-sheet, value = {}, {}
+sheet, value, dnp = {}, {}, set()
 for c in tree.iter("comp"):
     r = c.get("ref")
     sp = c.find("sheetpath")
     sheet[r] = sp.get("names") if sp is not None else "?"
     v = c.find("value")
     value[r] = v.text if v is not None else "?"
+    if any(p.get("name") == "dnp" for p in c.findall("property")):
+        dnp.add(r)
 
 board = pcbnew.LoadBoard(PCB)
 parts = {}
@@ -199,6 +206,7 @@ for f in board.GetFootprints():
     nb = f.GetBoundingBox(False, False)          # 不含文字，否则位号会把盒子撑大
     parts[r] = {
         "fp": fp, "val": value.get(r, "?"), "sheet": sheet.get(r, "?"),
+        "dnp": r in dnp,
         "x": f.GetPosition().x / 1e6, "y": f.GetPosition().y / 1e6,
         "rot": f.GetOrientationDegrees(),
         "area": (bb.GetWidth() / 1e6) * (bb.GetHeight() / 1e6),
@@ -221,7 +229,7 @@ for r, p in parts.items():
         skip[r] = "短接焊盘，用镊子短接，不贴件"
     elif any(s in p["fp"] for s in NO_PART_FP):
         skip[r] = "板载天线，PCB 走线本身，无器件"
-    elif DNP.search(p["val"]):
+    elif p["dnp"] or DNP.search(p["val"]):
         skip[r] = f"DNP，设计上默认不贴（{p['val']}）"
     elif r in ALT_POSITION:
         skip[r] = ALT_POSITION[r]
@@ -300,7 +308,7 @@ out.append("\n| 位号 | 为什么不贴 |")
 out.append("|---|---|")
 for r in sorted(skip, key=lambda r: (re.sub(r"\d+$", "", r),
                                      int(re.search(r"\d+$", r).group() or 0))):
-    out.append(f"| {r} | {skip[r]} |")
+    out.append(f"| **{r}** | {skip[r]} |")
 
 # 上面拼串时有的带尾部 \n、有的不带，直接 join 会到处出现双空行。统一剥掉再拼。
 open(OUT, "w").write("\n".join(l.rstrip("\n") for l in out) + "\n")

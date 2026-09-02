@@ -36,7 +36,7 @@ s.place("U8", "MCU_RaspberryPi", "RP2040", 101.6, 101.6, {
     "GPIO20": "DEMOD0", "GPIO21": "DEMOD1", "GPIO22": "DEMOD2", "GPIO23": "DEMOD3",
     "GPIO24": "RECOVERED_CLK", "GPIO25": "TL_PWM",
     "GPIO26/ADC0": "LEVEL_BIAS", "GPIO27/ADC1": "RSSI",
-    "GPIO28/ADC2": "NC", "GPIO29/ADC3": "NC",
+    "GPIO28/ADC2": "USB_VBUS_SENSE", "GPIO29/ADC3": "NC",
     # QSPI Flash
     "QSPI_SCLK": "QSPI_SCLK", "QSPI_SD0": "QSPI_SD0", "QSPI_SD1": "QSPI_SD1",
     "QSPI_SD2": "QSPI_SD2", "QSPI_SD3": "QSPI_SD3", "~{QSPI_SS}": "QSPI_SS",
@@ -57,10 +57,11 @@ s.place("U9", "Memory_Flash", "W25Q128JVS", 190.5, 76.2, {
 # 晶振：12MHz 3225 四脚（2/4 = GND 壳）
 s.place("Y1", "Device", "Crystal_GND24", 190.5, 114.3,
         {"1": "RP_XIN", "3": "RP_XT2", "G": "GND"},
-        value="12MHz", footprint="Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm")
+        value="12MHz CL=10pF ABM8-272-T3",
+        footprint="Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm")
 s.place("R4", "Device", "R", 215.9, 114.3, {"1": "RP_XOUT", "2": "RP_XT2"}, value="1k", footprint=R0402)
-s.place("C19", "Device", "C", 228.6, 114.3, {"1": "RP_XIN", "2": "GND"}, value="15pF", footprint=C0402)
-s.place("C20", "Device", "C", 241.3, 114.3, {"1": "RP_XT2", "2": "GND"}, value="15pF", footprint=C0402)
+s.place("C19", "Device", "C", 228.6, 114.3, {"1": "RP_XIN", "2": "GND"}, value="15pF C0G", footprint=C0402)
+s.place("C20", "Device", "C", 241.3, 114.3, {"1": "RP_XT2", "2": "GND"}, value="15pF C0G", footprint=C0402)
 
 # RUN / BOOTSEL
 s.place("R5", "Device", "R", 190.5, 139.7, {"1": "3V3_DIG", "2": "RP_RUN"}, value="10k", footprint=R0402)
@@ -81,15 +82,35 @@ s.place("R7", "Device", "R", 114.3, 190.5, {"1": "USB_CC1", "2": "GND"}, value="
 s.place("R8", "Device", "R", 127, 190.5, {"1": "USB_CC2", "2": "GND"}, value="5.1k", footprint=R0402)
 s.place("R9", "Device", "R", 139.7, 190.5, {"1": "RP_USB_DP", "2": "USB_DP"}, value="27R", footprint=R0402)
 s.place("R10", "Device", "R", 152.4, 190.5, {"1": "RP_USB_DM", "2": "USB_DM"}, value="27R", footprint=R0402)
+s.place("D4", "Device", "D_TVS", 165.1, 203.2, {"A1": "USB_DP", "A2": "GND"},
+        value="TPESD8L3.3 0.3pFtyp 0.5pFmax", footprint="Diode_SMD:D_0402_1005Metric")
+s.place("D5", "Device", "D_TVS", 177.8, 203.2, {"A1": "USB_DM", "A2": "GND"},
+        value="TPESD8L3.3 0.3pFtyp 0.5pFmax", footprint="Diode_SMD:D_0402_1005Metric")
+s.place("R50", "Device", "R", 190.5, 203.2,
+        {"1": "USB_VBUS", "2": "USB_VBUS_SENSE"}, value="10k", footprint=R0402)
+s.place("R51", "Device", "R", 203.2, 203.2,
+        {"1": "USB_VBUS_SENSE", "2": "GND"}, value="10k", footprint=R0402)
+s.place("C87", "Device", "C", 215.9, 203.2,
+        {"1": "USB_VBUS_SENSE", "2": "GND"}, value="10nF C0G", footprint=C0402)
 s.place("D1", "Device", "D_Schottky", 165.1, 190.5, {"A": "USB_VBUS", "K": "VCC_5V"},
         value="B5819W", footprint="Diode_SMD:D_SOD-123")
 
-# 去耦：IOVDD×6 + 1V1×2
+# 去耦：IOVDD×6 + 1V1×2；VREG_VIN、USB_VDD、ADC_AVDD 另设本地去耦。
 for i in range(6):
     s.place(f"C{22+i}", "Device", "C", 63.5 + i * 12.7, 63.5, {"1": "3V3_DIG", "2": "GND"},
             value="100nF", footprint=C0402)
 s.place("C28", "Device", "C", 63.5, 76.2, {"1": "RP_1V1", "2": "GND"}, value="1uF", footprint=C0402)
 s.place("C29", "Device", "C", 76.2, 76.2, {"1": "RP_1V1", "2": "GND"}, value="1uF", footprint=C0402)
+s.place("C82", "Device", "C", 88.9, 76.2, {"1": "RP_1V1", "2": "GND"},
+        value="100nF", footprint=C0402)
+s.place("C83", "Device", "C", 101.6, 76.2, {"1": "RP_1V1", "2": "GND"},
+        value="100nF", footprint=C0402)
+s.place("C84", "Device", "C", 114.3, 76.2, {"1": "3V3_DIG", "2": "GND"},
+        value="1uF", footprint=C0402)
+s.place("C85", "Device", "C", 127.0, 76.2, {"1": "3V3_DIG", "2": "GND"},
+        value="100nF", footprint=C0402)
+s.place("C86", "Device", "C", 139.7, 76.2, {"1": "3V3_DIG", "2": "GND"},
+        value="100nF", footprint=C0402)
 
 # 调试测试点
 TPS = [("TP1", "SWCLK"), ("TP2", "SWDIO"), ("TP3", "DEMOD0"), ("TP4", "DEMOD1"),

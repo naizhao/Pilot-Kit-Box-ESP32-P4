@@ -24,12 +24,12 @@ s = Sheet("rf1090", "Expansion Board V1 - 1090MHz: antenna switch + RX chain")
 s.place("J6", "Connector", "Conn_Coaxial", 38.1, 50.8, {"1": "ANT1090_EXT", "2": "GND"},
         value="U.FL_1090_EXT(经尾线转SMA)", footprint="Connector_Coaxial:U.FL_Hirose_U.FL-R-SMT-1_Vertical")
 s.place("D2", "Device", "D_TVS", 55.9, 50.8, {"A1": "ANT1090_EXT", "A2": "GND"},
-        value="ESD 3.3V/0.6pF", footprint="Diode_SMD:D_0402_1005Metric")
+        value="TPESD8L3.3 0.3pFtyp 0.5pFmax", footprint="Diode_SMD:D_0402_1005Metric")
 # 偏置 Tee（仅此支路！公共口绝不能挂）
 s.place("Q3", "Transistor_FET", "AO3401A", 76.2, 44.45,
         {"G": "BIAS_EN_1090", "S": "3V3_GNSS", "D": "RF1090_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
-s.place("R18", "Device", "R", 95.25, 44.45, {"1": "3V3_GNSS", "2": "BIAS_EN_1090"},
+s.place("R18", "Device", "R", 95.25, 44.45, {"1": "3V3_DIG", "2": "BIAS_EN_1090"},
         value="10k", footprint=R0402)
 s.place("F3", "Device", "Polyfuse", 107.95, 44.45, {"1": "RF1090_FUSE", "2": "RF1090_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")
@@ -92,7 +92,7 @@ s.place("U16", "RF_Switch", "AS179-92LF", 111.76, 58.42, {
     "2": "GND",
     "4": "ANT_SEL_1090_V1",
     "6": "ANT_SEL_1090_V2",
-}, value="XA17-G4K(或AS179-92LF)", footprint="Package_TO_SOT_SMD:SOT-363_SC-70-6")
+}, value="XA17-G4K", footprint="Package_TO_SOT_SMD:SOT-363_SC-70-6")
 s.place("C54", "Device", "C", 132.08, 58.42, {"1": "SW1_J1", "2": "LNA1_IN"},
         value="100pF", footprint=C0402)
 # 控制线：各串 0Ω + 对地旁路，防 RF 经控制脚耦合出去
@@ -123,45 +123,63 @@ s.place("R11", "Device", "R", 76.2, 101.6, {"1": "3V3_RF", "2": "LNA1_VBIAS"},
         value="3.32k", footprint=R0402)
 s.place("C21", "Device", "C", 88.9, 101.6, {"1": "LNA1_VBIAS", "2": "GND"},
         value="100pF", footprint=C0402)
+# Vbias 由 3V3_RF 经 R11 无源馈入；PWR_FLAG 只声明供电语义，消除 ERC 对
+# U11 power-input pin 的误报，不改变电气连接或 PCB。
+s.place("#FLG04", "power", "PWR_FLAG", 88.9, 96.52, {"1": "LNA1_VBIAS"})
 s.place("C36", "Device", "C", 101.6, 101.6, {"1": "3V3_RF", "2": "GND"},
         value="100pF", footprint=C0402)
 s.place("C48", "Device", "C", 114.3, 101.6, {"1": "3V3_RF", "2": "GND"},
         value="1uF", footprint=C0402)
-s.place("C31", "Device", "C", 101.6, 76.2, {"1": "LNA1_OUT", "2": "SAW1_IN"}, value="12pF", footprint=C0402)
+s.place("C31", "Device", "C", 101.6, 76.2, {"1": "LNA1_OUT", "2": "SAW1_IN"}, value="100pF C0G", footprint=C0402)
 s.place("FL1", PRJ, "TA0970A", 127, 88.9, {"B": "SAW1_IN", "E": "SAW1_OUT",
         "A": "GND", "C": "GND", "D": "GND", "F": "GND"},
         footprint=f"{PRJ}:TA0970A_SMD3838-6")
-s.place("C32", "Device", "C", 152.4, 76.2, {"1": "SAW1_OUT", "2": "LNA2_IN"}, value="12pF", footprint=C0402)
+s.place("C32", "Device", "C", 152.4, 76.2, {"1": "SAW1_OUT", "2": "LNA2_IN"}, value="100pF C0G", footprint=C0402)
 s.place("U12", "RF_Amplifier", "BGA2817", 177.8, 88.9, {
     "6": "LNA2_IN", "3": "LNA2_OUT", "1": "3V3_RF", "G": "GND",
 }, value="BGA2817", footprint="Package_TO_SOT_SMD:SOT-363_SC-70-6")
-s.place("C33", "Device", "C", 203.2, 76.2, {"1": "LNA2_OUT", "2": "SAW2_IN"}, value="12pF", footprint=C0402)
+s.place("C81", "Device", "C", 190.5, 101.6, {"1": "3V3_RF", "2": "GND"},
+        value="470pF C0G", footprint=C0402)
+s.place("C33", "Device", "C", 203.2, 76.2, {"1": "LNA2_OUT", "2": "SAW2_IN"}, value="100pF C0G", footprint=C0402)
 s.place("FL2", PRJ, "TA0970A", 228.6, 88.9, {"B": "SAW2_IN", "E": "SAW2_OUT",
         "A": "GND", "C": "GND", "D": "GND", "F": "GND"},
         footprint=f"{PRJ}:TA0970A_SMD3838-6")
-s.place("C34", "Device", "C", 254, 76.2, {"1": "SAW2_OUT", "2": "DET_IN"}, value="3pF", footprint=C0402)
+s.place("C34", "Device", "C", 254, 76.2, {"1": "SAW2_OUT", "2": "DET_IN"},
+        value="100pF C0G", footprint=C0402)
 
-# ================= 双检波位（AD8319 主 / AD8313 备，二选一贴装）=================
+# ================= 检波器：AD8313 单一通路 =================
+# 这里曾经是"双检波位"：AD8319(U13) 与 AD8313(U14) 并排，U13 带 DNP 当实验位，
+# 由 R20 提供 DET_TADJ 温度补偿。2026-09-02 删掉整条 AD8319 支路——
+#
+#   · 产品决策已统一到 AD8313（V3/V4 同料）。留着 U13 的直接后果是固件要按检波器
+#     型号翻 RSSI 斜率，两版走两套标定，而这个分支从来没人真的用过。
+#   · 更糟的是方向：生成出来的 CHECKLIST/ASSEMBLY 一直写着"U13 AD8319(主)"、
+#     "U14 AD8313 备用，默认不贴"——**跟决策正好相反**，照着贴板子就是错的。
+#
+# 保留的是 AD8313 通路本身：R19/C35 的输入分压、R54/C37/C38 的 VPOS 隔离与去耦、
+# R21 把 AD8313_VOUT 接到 RF_DET_OUT。R21 原本是"二选一"的跳线，现在是唯一通路，
+# 因此不能带 DNP。
 s.place("R19", "Device", "R", 279.4, 101.6, {"1": "DET_IN", "2": "DET_INLO"}, value="52.3R", footprint=R0402)
-s.place("C35", "Device", "C", 292.1, 101.6, {"1": "DET_INLO", "2": "GND"}, value="3pF", footprint=C0402)
-s.place("U13", PRJ, "AD8319", 63.5, 152.4, {
-    "1": "DET_IN", "8": "DET_INLO", "7": "3V3_RF", "2": "GND", "9": "GND",
-    "5": "RF_DET_OUT", "4": "RF_DET_OUT",
-    "3": "NC", "6": "DET_TADJ",
-}, value="AD8319ACPZ-R7(主)", footprint=f"{PRJ}:AD8319_LFCSP-8-EP")
-s.place("R20", "Device", "R", 101.6, 139.7, {"1": "DET_TADJ", "2": "GND"}, value="18k(1090实调)", footprint=R0402)
+s.place("C35", "Device", "C", 292.1, 101.6, {"1": "DET_INLO", "2": "GND"},
+        value="100pF C0G", footprint=C0402)
 s.place("U14", "RF_Amplifier", "AD8313xRM", 63.5, 190.5, {
-    "INHI": "DET_IN", "INLO": "DET_INLO", "VPOS": "3V3_RF",
+    "INHI": "DET_IN", "INLO": "DET_INLO", "VPOS": "AD8313_VPOS",
     "PWDN": "GND", "COMM": "GND",
     "VSET": "AD8313_VOUT", "VOUT": "AD8313_VOUT",
-}, value="AD8313ARMZ(备,二选一)", footprint="Package_SO:MSOP-8_3x3mm_P0.65mm")
+}, value="AD8313ARMZ", footprint="Package_SO:MSOP-8_3x3mm_P0.65mm")
 s.place("R21", "Device", "R", 127, 152.4, {"1": "AD8313_VOUT", "2": "RF_DET_OUT"},
-        value="0R DNP(选8313时贴)", footprint=R0402)
-s.place("C37", "Device", "C", 101.6, 152.4, {"1": "3V3_RF", "2": "GND"}, value="100nF", footprint=C0402)
-s.place("C38", "Device", "C", 114.3, 152.4, {"1": "3V3_RF", "2": "GND"}, value="100pF", footprint=C0402)
+        value="0R", footprint=R0402)
+s.place("R54", "Device", "R", 88.9, 152.4,
+        {"1": "3V3_RF", "2": "AD8313_VPOS"}, value="10R", footprint=R0402)
+# AD8313_VPOS 由 3V3_RF 经 R54 无源馈入；用 PWR_FLAG 声明该网的供电语义，
+# 避免把 U14 的 VPOS 误报成“没有 power-output 驱动”。不改变 PCB 网表。
+s.place("#FLG05", "power", "PWR_FLAG", 88.9, 157.48, {"1": "AD8313_VPOS"})
+s.place("C37", "Device", "C", 101.6, 152.4, {"1": "AD8313_VPOS", "2": "GND"}, value="100nF", footprint=C0402)
+s.place("C38", "Device", "C", 114.3, 152.4, {"1": "AD8313_VPOS", "2": "GND"}, value="100pF", footprint=C0402)
 
 # ================= Data Slicer =================
-s.place("R30", "Device", "R", 152.4, 139.7, {"1": "RF_DET_OUT", "2": "3V3_RF"}, value="1k", footprint=R0402)
+s.place("R30", "Device", "R", 152.4, 139.7, {"1": "RF_DET_OUT", "2": "3V3_RF"},
+        value="1k DNP", footprint=R0402, dnp=True)
 s.place("R31", "Device", "R", 165.1, 139.7, {"1": "RF_DET_OUT", "2": "SLICER_FAST"}, value="1k", footprint=R0402)
 s.place("C46", "Device", "C", 177.8, 139.7, {"1": "SLICER_FAST", "2": "GND"}, value="3pF", footprint=C0402)
 s.place("R32", "Device", "R", 190.5, 139.7, {"1": "RF_DET_OUT", "2": "SLICER_LEVEL"}, value="10k", footprint=R0402)
@@ -173,9 +191,16 @@ s.place("R35", "Device", "R", 254, 139.7, {"1": "RF_DET_OUT", "2": "RSSI"}, valu
 s.place("C51", "Device", "C", 266.7, 139.7, {"1": "RSSI", "2": "GND"}, value="1nF", footprint=C0402)
 s.place("U15", "Comparator", "TLV3501AIDBV", 152.4, 177.8, {
     "1": "SLICER_LEVEL", "3": "SLICER_FAST",
-    "2": "GND", "4": "3V3_RF", "5": "PULSES", "6": "3V3_RF",
+    "2": "GND", "4": "3V3_RF", "5": "PULSES_RAW", "6": "GND",
 }, value="TLV3501(TOKMAS)", footprint="Package_TO_SOT_SMD:SOT-23-6")
-s.place("R36", "Device", "R", 190.5, 177.8, {"1": "PULSES", "2": "3V3_DIG"}, value="1k", footprint=R0402)
+# 源端串联阻尼。TLV3501 传播延迟 4.5ns、边沿极陡，而这条线要横跨整块板去 RP2040，
+# 没有阻尼就会有明显过冲和振铃。串阻必须贴在 U15.5 这一侧——放到 MCU 端只会衰减
+# 信号，抑制不了源端发出的反射。插入后源端叫 PULSES_RAW，负载侧仍是 PULSES；
+# R36 那颗 1k 上拉留在负载侧且保持 DNP（串阻和删上拉是两件事）。
+s.place("R57", "Device", "R", 177.8, 177.8, {"1": "PULSES_RAW", "2": "PULSES"},
+        value="33R", footprint=R0402)
+s.place("R36", "Device", "R", 190.5, 177.8, {"1": "PULSES", "2": "3V3_DIG"},
+        value="1k DNP", footprint=R0402, dnp=True)
 s.place("C52", "Device", "C", 203.2, 177.8, {"1": "3V3_RF", "2": "GND"}, value="100nF", footprint=C0402)
 
 s.write()

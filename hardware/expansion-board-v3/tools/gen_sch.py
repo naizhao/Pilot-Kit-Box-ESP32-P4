@@ -54,12 +54,24 @@ FP_0402_TO_0603 = {
     "Capacitor_SMD:C_0402_1005Metric": "Capacitor_SMD:C_0603_1608Metric",
     "Resistor_SMD:R_0402_1005Metric": "Resistor_SMD:R_0603_1608Metric",
 }
+# C21/C37/C38 于 2026-09-02 一并纳入：它们是射频/检波器的本地去耦，
+# 0402 才塞得进引脚旁边。原有的 C82-C86 一个都不能掉，掉了就是回归。
+# 10 元素 = V3 原有的 C82-C86 + 从 V4 回灌的 R52/R53/C21/C37/C38。
+# R52/R53 是 BNO085 ENV 总线上拉，紧贴 U4 引脚；C21/C37/C38 是射频/检波器的
+# 本地去耦。这些位置 0603 塞不进去，也会挤占右侧 QSPI 扇出通道。
+# 原有的 C82-C86 一个都不能掉，掉了就是回归。
+LOCAL_0402_REFS = {"R52", "R53", "C21", "C37", "C38",
+                   "C82", "C83", "C84", "C85", "C86"}
 
 
 def resolve_fp(ref, footprint, nets):
     """非射频位置的 0402 电阻/电容改用 0603。电感/二极管不动——
     它们的选型靠 SRF/结电容等具体参数，本子里的通货不满足，换封装没有意义。"""
     if footprint not in FP_0402_TO_0603:
+        return footprint
+    # RP2040 的 VREG_VIN / USB_VDD / ADC_AVDD 与补充 DVDD 去耦必须贴近引脚；
+    # V3 又是单面装配，0603 会挤占右侧 QSPI 扇出通道，明确保留 0402。
+    if ref in LOCAL_0402_REFS:
         return footprint
     if any(n in RF_NETS for n in nets.values()):
         return footprint
@@ -151,7 +163,8 @@ class Sheet:
         self.body = []      # symbol instances / labels / no_connects
         self.refs = set()
 
-    def place(self, ref, lib, name, x, y, nets, value=None, footprint="", rot=0, mirror=None):
+    def place(self, ref, lib, name, x, y, nets, value=None, footprint="", rot=0, mirror=None,
+              dnp=None):
         """nets: {pin号或pin名: 网络名 | "NC"}，必须覆盖符号全部引脚。"""
         assert ref not in self.refs, f"位号重复 {ref}"
         assert re.match(r'^#?[A-Za-z]+\d+$', ref), f"位号格式非法（须字母+数字结尾）: {ref}"
@@ -177,6 +190,8 @@ class Sheet:
         assert not missing, f"{ref}({name}): 引脚未给网络: {sorted(missing, key=lambda s: (len(s), s))}"
         assert rot in (0, 90, 180, 270)
         footprint = resolve_fp(ref, footprint, nets)
+        if dnp is None:
+            dnp = bool(re.search(r"\bDNP\b", value or name, re.IGNORECASE))
 
         props = [
             ("Reference", ref, x, y - 2.54, False),
@@ -187,7 +202,8 @@ class Sheet:
         s = [f'\t(symbol\n\t\t(lib_id "{lid}")\n\t\t(at {x:g} {y:g} {rot})\n']
         if mirror:
             s.append(f'\t\t(mirror {mirror})\n')
-        s.append('\t\t(unit 1)\n\t\t(exclude_from_sim no)\n\t\t(in_bom yes)\n\t\t(on_board yes)\n\t\t(dnp no)\n')
+        s.append('\t\t(unit 1)\n\t\t(exclude_from_sim no)\n\t\t(in_bom yes)\n\t\t(on_board yes)\n'
+                 f'\t\t(dnp {"yes" if dnp else "no"})\n')
         s.append(f'\t\t(uuid "{_uid()}")\n')
         for k, v, px, py, hide in props:
             h = "\n\t\t\t\t(hide yes)" if hide else ""
