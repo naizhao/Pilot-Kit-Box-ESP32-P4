@@ -19,8 +19,7 @@ fi
 T="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KP=~/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 CLI=~/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli
-FR=~/Applications/freerouting-2.2.4.jar
-# ⚠️ freerouting 2.2.4 是 Java 25 编的（class file 69），PATH 上的 java 是 21，
+# ⚠️ Freerouting 2.3.0 是 Java 25 编的（class file 69），PATH 上的 java 是 21，
 # 直接跑会 UnsupportedClassVersionError。/usr/libexec/java_home 也找不到 25——
 # 它只认 /Library/Java 下的，而本机唯一的 25 在 ServBay 里，所以写死路径。
 JAVA=/Applications/ServBay/package/openjdk/25/current/bin/java
@@ -28,6 +27,11 @@ JAVA=/Applications/ServBay/package/openjdk/25/current/bin/java
 B="$T/build"
 PCB="$T/kicad/expansion-board-v3.kicad_pcb"
 mkdir -p "$B"
+FR="${PK_FREEROUTING_JAR:-$B/tools/freerouting-2.3.0.jar}"
+FR_SHA256="3cf18d608437740bc497db6b8ef5888e2e60a08de0def20691d1bad0c0e0ee24"
+[ -f "$FR" ] || { echo "找不到 Freerouting 2.3.0: $FR"; echo "从官方 GitHub release 下载后用 PK_FREEROUTING_JAR 指定路径"; exit 1; }
+FR_ACTUAL_SHA256="$(/usr/bin/shasum -a 256 "$FR" | /usr/bin/awk '{print $1}')"
+[ "$FR_ACTUAL_SHA256" = "$FR_SHA256" ] || { echo "Freerouting JAR SHA-256 不匹配: $FR_ACTUAL_SHA256"; exit 1; }
 
 # pcbnew 在无 GUI 下会往 stderr 吐一堆 wxApp/Debug 噪音，滤掉才看得见真正的输出
 filt() { grep -vE "Debug:|stdpbase|wxApp|memory leak|ctor|GetWidth called" || true; }
@@ -38,9 +42,9 @@ step() { echo; echo "════════ $* ════════"; }
 # 包括在 KiCad 里手工挪的过孔和手工拉的线。所以先把当前布线导出成快照，
 # 万一跑出来的结果不如现在，可以用 tools/rebuild.sh 原样恢复。
 cp "$PCB" "$B/pcb.before-run.kicad_pcb"
-$KP "$T/tools/export_routes.py" "$PCB" 2>&1 | filt | head -2
-cp "$T/tools/ROUTES.json" "$B/routes.before-run.json"
-echo "（布线快照已存：build/routes.before-run.json）"
+PK_ROUTES_OUT="$B/routes.before-run.json" \
+    $KP "$T/tools/export_routes.py" "$PCB" 2>&1 | filt | head -2
+echo "（布线快照已存：build/routes.before-run.json；tools/ROUTES.json 未动）"
 
 step "① 按 PLACEMENT.py 生成板子"
 $KP "$T/tools/gen_pcb.py" 2>&1 | filt | tail -6
@@ -81,10 +85,17 @@ step "④ freerouting"
 # 它只在轮次跑满之后才输出 SES，被看门狗 kill 掉就什么都没有。
 # 取 3 轮：从上面的实测看收益在快速衰减，而每轮都在变慢的反面——总时长约 12 分钟。
 FR_PASSES="${PK_FR_PASSES:-3}"
+FR_THREADS="${PK_FR_THREADS:-1}"
 # 看门狗仍然保留。45° 死循环这条路虽然堵上了，但 freerouting 还有别的卡死方式
 # （memory: PolylineTrace.combine 无限递归，加 -Xss 没用）。macOS 没有 timeout(1)。
-rm -f "$B/exp.ses"
-"$JAVA" -jar "$FR" -de "$B/exp.dsn" -do "$B/exp.ses" -mp "$FR_PASSES" \
+# 保留上一轮 SES 作为可复核证据，不静默删除。
+if [ -s "$B/exp.ses" ]; then
+    SES_BACKUP="$B/exp.before-run.$(/bin/date +%Y%m%d-%H%M%S).ses"
+    /bin/mv "$B/exp.ses" "$SES_BACKUP"
+    echo "上一轮 SES 已保留: $SES_BACKUP"
+fi
+"$JAVA" -jar "$FR" --gui.enabled=false -de "$B/exp.dsn" -do "$B/exp.ses" \
+    -mp "$FR_PASSES" -mt "$FR_THREADS" \
     > "$B/freerouting.log" 2>&1 &
 FR_PID=$!
 ( sleep "${PK_FR_TIMEOUT:-1500}"; kill "$FR_PID" 2>/dev/null ) & WD_PID=$!

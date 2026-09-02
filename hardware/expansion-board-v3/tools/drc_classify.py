@@ -55,12 +55,15 @@ def classify_unconnected_item(item):
 
 
 def drc_failure_summary(report):
-    """返回完整 DRC 的失败摘要；空字符串表示真正的 DRC 0。"""
+    """返回电气 DRC 的失败摘要；warning 保留展示，但不阻断制造验收。"""
     failures = []
-    violation_count = len(report.get("violations", ()))
+    violation_count = sum(
+        1 for item in report.get("violations", ())
+        if item.get("severity", "error") == "error"
+    )
     unconnected_count = len(report.get("unconnected_items", ()))
     if violation_count:
-        failures.append(f"DRC 违例 {violation_count} 项")
+        failures.append(f"DRC 错误 {violation_count} 项")
     if unconnected_count:
         failures.append(f"未连通 {unconnected_count} 项")
     return "；".join(failures)

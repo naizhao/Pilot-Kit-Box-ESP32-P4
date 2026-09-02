@@ -38,8 +38,17 @@ rf = json.load(open(RF_JSON))
 board = pcbnew.LoadBoard(NORF)
 n_before = len(list(board.GetTracks()))
 assert pcbnew.ImportSpecctraSES(board, SES), "SES 导入失败"
+# Freerouting 2.3 会在自动 neck-down 时输出低于 KiCad 板级下限的线宽。
+# 导入时立即抬到工程硬下限，后续 DRC 会验证加宽后的间距。
+min_track_width = board.GetDesignSettings().m_TrackMinWidth
+normalized = 0
+for track in board.GetTracks():
+    if not isinstance(track, pcbnew.PCB_VIA) and track.GetWidth() < min_track_width:
+        track.SetWidth(min_track_width)
+        normalized += 1
 n_ses = len(list(board.GetTracks()))
 print(f"导入 .ses: {n_before} → {n_ses} 项")
+print(f"线宽低于板级下限的导入段已归一化: {normalized} 段")
 
 # 射频走线原样贴回。坐标/线宽都是导出时的 KiCad 内部单位，没经过浮点往返。
 for r in rf:

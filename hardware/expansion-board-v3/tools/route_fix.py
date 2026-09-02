@@ -33,6 +33,7 @@ import math
 import os
 import re
 import sys
+from array import array
 
 import pcbnew
 
@@ -49,7 +50,17 @@ MODE = sys.argv[1] if len(sys.argv) > 1 else "plan"
 DRC = sys.argv[2] if len(sys.argv) > 2 else os.path.join(BUILD, "drc.json")
 RIPUP_OUT = os.environ.get("PK_RIPUP_OUT", os.path.join(BUILD, "ripup.json"))
 
-GRID = 0.15
+GRID = float(os.environ.get("PK_ROUTE_GRID", "0.15"))
+ROUTE_BUDGET = int(os.environ.get("PK_ROUTE_BUDGET", "400000"))
+ROUTE_NETS = {n.strip() for n in os.environ.get("PK_ROUTE_NETS", "").split(",") if n.strip()}
+ALLOW_IN3_SIGNAL = os.environ.get("PK_ALLOW_IN3_SIGNAL", "0") == "1"
+ROUTE_ORPHANS = os.environ.get("PK_ROUTE_ORPHANS", "0") == "1"
+POWER_LO_WIDTH = float(os.environ.get("PK_POWER_LO_WIDTH", "0.25"))
+assert 0.15 <= POWER_LO_WIDTH <= 0.30, \
+    f"PK_POWER_LO_WIDTH 超出安全范围: {POWER_LO_WIDTH}"
+assert 0.05 <= GRID <= 0.25, f"PK_ROUTE_GRID 超出安全范围: {GRID}"
+assert 10000 <= ROUTE_BUDGET <= 2_000_000, \
+    f"PK_ROUTE_BUDGET 超出安全范围: {ROUTE_BUDGET}"
 X0, Y0, X1, Y1 = 50.0, 50.0, 150.0, 112.0
 EDGE = 0.5
 # 跟 .kicad_pro 的板规保持一致：过孔已从 0.6/0.3 收到 0.4/0.2（嘉立创 6 层标准档
@@ -95,11 +106,12 @@ def clr_of(name):
 # 0.3mm 内层载流 ~0.8A，够 3V3_DIG 这种补碎片用，而 0.5mm 挤不进去。
 PROFILE = {                              # 类 → (线宽, 我方净空)
     "Default":  (0.15, 0.15),
+    "FINE":     (0.13, 0.13),
     "POWER":    (0.30, 0.20),
     # POWER_LO = 低压轨（3V3_*/RP_1V1/SUBG_VDDR/馈电）。类线宽 0.25，净空同
     # Default 的 0.15，所以占用图走 Default 那套（见下方 si_ 的 my_clr>=0.2 判据），
     # 落盘前的连续几何复核传真实半宽，不会因此漏判。
-    "POWER_LO": (0.25, 0.15),
+    "POWER_LO": (POWER_LO_WIDTH, 0.15),
     "RF50":     (0.15, 0.15),   # 0.34→0.15：6 层叠层下 0.34 只有 31.82Ω，见 route_rf.py
 }
 
@@ -125,10 +137,11 @@ def m2g(x, y):
 # clearance 取 max 是 KiCad 的规则，不可分解成两边各自的量，所以只能按我方类分套建。
 # POWER_LO 单独一套而不是复用 POWER：POWER 套是半宽 0.15/净空 0.20，拿它当
 # POWER_LO(半宽 0.125/净空 0.15) 用会保守 0.05mm，白白布不通几条。
-SETS = ["Default", "POWER", "POWER_LO", "RF50", "VIA"]
+SETS = ["Default", "FINE", "POWER", "POWER_LO", "RF50", "VIA"]
 SI = {n: i for i, n in enumerate(SETS)}
 MY = {                                   # 套 → (我方半宽, 我方净空)
     "Default":  (PROFILE["Default"][0] / 2,  PROFILE["Default"][1]),
+    "FINE":     (PROFILE["FINE"][0] / 2,     PROFILE["FINE"][1]),
     "POWER":    (PROFILE["POWER"][0] / 2,    PROFILE["POWER"][1]),
     "POWER_LO": (PROFILE["POWER_LO"][0] / 2, PROFILE["POWER_LO"][1]),
     "RF50":     (PROFILE["RF50"][0] / 2,     PROFILE["RF50"][1]),
@@ -136,7 +149,9 @@ MY = {                                   # 套 → (我方半宽, 我方净空)
 }
 
 CNT = [[bytearray(NW * NH) for _ in range(NL)] for _ in SETS]
-OWN = [[[0] * (NW * NH) for _ in range(NL)] for _ in SETS]
+# `list[int]` 每格约 28 bytes；0.05 mm 精细网格会仅 owner 图就超过 1.6 GB，
+# 被系统直接终止。32-bit 有符号整数还能容纳禁布区的 -1 哨兵，并把图降到约 230 MB。
+OWN = [[array("i", [0]) * (NW * NH) for _ in range(NL)] for _ in SETS]
 
 
 def _stamp(li, cx, cy, r, nc, which):
@@ -268,7 +283,7 @@ TURN, VIA_COST = 3, 400
 FREE = set()                     # 起终点邻域强制放行（端点必压在自己的铜上）
 
 
-def astar(starts, goals, nc, allow_via, si, budget=400000, goal_layers=()):
+def astar(starts, goals, nc, allow_via, si, budget=ROUTE_BUDGET, goal_layers=()):
     """多起点多终点：starts/goals 是连通块覆盖的格子集合。
     goal_layers：该网络有整层覆铜时给出层号——走到那一层就算连上了（过孔即接平面），
     不必千辛万苦横穿到对面那个焊盘。3V3_DIG 在 In3.Cu 是满板平面，U10 的 3V3 引脚
@@ -509,7 +524,7 @@ def seg_seg_dist(a, b, c, d):
 # 实测没这条限制时 USB_VBUS 的补线在 In3 上走了 11 段。
 PLANE_NC_OF_LI = {}
 _in3 = LI.get(pcbnew.In3_Cu)
-if _in3 is not None:
+if _in3 is not None and not ALLOW_IN3_SIGNAL:
     for _z in board.Zones():
         if _z.IsFilled() and _z.GetLayerSet().Contains(pcbnew.In3_Cu):
             PLANE_NC_OF_LI[_in3] = _z.GetNetCode()
@@ -540,7 +555,7 @@ def snap_obstacles():
             # 本模块新布的是盘 0.4。按常量 0.2 算半径，遇上 0.6 的就低估 0.1mm，
             # 复核放行、KiCad 报 actual 0.105 < 0.150。
             vias.append((t.GetNetCode(), (pcbnew.ToMM(p.x), pcbnew.ToMM(p.y)),
-                         clr_of(t.GetNetname()), pcbnew.ToMM(t.GetWidth()) / 2))
+                         clr_of(t.GetNetname()), pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2))
         elif t.GetLayer() in LI:
             trks.append((t.GetNetCode(), LI[t.GetLayer()],
                          (pcbnew.ToMM(t.GetStart().x), pcbnew.ToMM(t.GetStart().y),
@@ -612,6 +627,10 @@ def escape_stub(nc, pad_pos, fp_center, box, li, half, my_clr):
 # ── 从 DRC 报告读活儿 ──────────────────────────────────────────────────
 def load_jobs():
     need, orphan = [], []
+    native = board.GetConnectivity()
+    by_uuid = {t.m_Uuid.AsString(): t for t in board.GetTracks()}
+    for fp in board.GetFootprints():
+        by_uuid.update({p.m_Uuid.AsString(): p for p in fp.Pads()})
     for it in json.load(open(DRC))["unconnected_items"]:
         ds = [x["description"] for x in it["items"]]
         m = extract_net_name(it)
@@ -623,6 +642,11 @@ def load_jobs():
         classification = classify_unconnected_item(it)
         if classification == "plane":
             continue                                  # 覆铜没接上，靠缝合过孔，不是布线
+        if ROUTE_ORPHANS and m in ROUTE_NETS:
+            # 只对调用方点名的网络开放：用于两端均为已确认有效铜块、但 KiCad
+            # 原生连通图因覆铜/过孔边界未把它们判成“含焊盘块”的迁移场景。
+            need.append((m, pts[0], pts[1]))
+            continue
         if classification == "need":
             need.append((m, pts[0], pts[1]))
             continue
@@ -636,10 +660,12 @@ def load_jobs():
         if _net is None:
             orphan.append((m, pts[0], pts[1]))
             continue
-        _b0 = _nearest_block(_net.GetNetCode(), pts[0][0])
-        _b1 = _nearest_block(_net.GetNetCode(), pts[1][0])
-        _has = (_b0 and any(e[0] == "pad" for e in _b0)
-                and _b1 and any(e[0] == "pad" for e in _b1))
+        # 用 KiCad 自己的连通图判定，不再用坐标近似。几何近似看不见覆铜连接，
+        # 也会漏掉落在线段中部的交叉点，曾把电源岛入口误判成孤立碎铜。
+        _objects = [by_uuid.get(x.get("uuid", "")) for x in it["items"]]
+        _has = all(obj is not None and
+                   (isinstance(obj, pcbnew.PAD) or len(native.GetConnectedPads(obj)) > 0)
+                   for obj in _objects)
         (need if _has else orphan).append((m, pts[0], pts[1]))
     return need, orphan
 
@@ -1069,6 +1095,9 @@ def main():
           f"  {NW}×{NH}×{NL}  用时 {time.time()-t0:.1f}s")
 
     need, orphan = load_jobs()
+    if ROUTE_NETS:
+        need = [job for job in need if job[0] in ROUTE_NETS]
+        print(f"仅处理指定网络: {sorted(ROUTE_NETS)}")
     print(f"\n待布 {len(need)} 处真缺线（另有 {len(orphan)} 处孤立断头铜，走 clean 模式）\n")
 
     ok = fail = tot_s = tot_v = 0
@@ -1181,33 +1210,22 @@ def main():
 
 
 def clean():
-    """删碎铜。两类都要清：
-      · unconnected_items 里的 Track↔Track / Track↔Via —— 没接上任何焊盘的孤立铜
-      · violations 里的 track_dangling —— 有一头悬空的线（rip-up 拆完的残端、
-        以及逃逸 stub 拉出去却没接上下文的那一截）
+    """只按 DRC UUID 删除明确的悬空线/过孔。
+
+    `unconnected_items` 两端都不是焊盘时，仍可能是电源岛、覆铜入口或交叉走线
+    组成的有效连通块；不能仅凭端点坐标递归剥铜。此处故意只处理 KiCad 明确
+    标成 dangling 的对象，剩余未连通交给布线器，而不是冒险删除。
     dangling 按 uuid 删，最准，不会误伤同坐标的邻线。"""
     d = json.load(open(DRC))
-    _, orphan = load_jobs()
-    kill = set()
-    for net, (p0, _), (p1, _) in orphan:
-        kill.add((round(p0[0], 3), round(p0[1], 3)))
-        kill.add((round(p1[0], 3), round(p1[1], 3)))
-    dang = {i["uuid"] for v in d["violations"] if v["type"] == "track_dangling"
+    dang = {i["uuid"] for v in d["violations"]
+            if v["type"] in ("track_dangling", "via_dangling")
             for i in v["items"]}
-    n = m = 0
+    m = 0
     for t in list(board.GetTracks()):
         if t.m_Uuid.AsString() in dang:
             board.Remove(t)
             m += 1
-            continue
-        if isinstance(t, pcbnew.PCB_VIA):
-            continue
-        a = (round(pcbnew.ToMM(t.GetStart().x), 3), round(pcbnew.ToMM(t.GetStart().y), 3))
-        b = (round(pcbnew.ToMM(t.GetEnd().x), 3), round(pcbnew.ToMM(t.GetEnd().y), 3))
-        if a in kill or b in kill:
-            board.Remove(t)
-            n += 1
-    print(f"删掉 {n} 段孤立断头铜 + {m} 段悬空线头")
+    print(f"按 DRC UUID 删掉 {m} 个悬空对象")
     board.Save(PCB)
     print("saved:", PCB)
 
