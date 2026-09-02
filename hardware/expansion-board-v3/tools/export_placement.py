@@ -217,7 +217,8 @@ for r in sorted(FPS):
             _gs_n += 1
             _gs_max = max(_gs_max, d)
         x, y = gx, gy
-    rows.append((r, round(x, 3), round(y, 3), round(f.GetOrientationDegrees()) % 360))
+    rows.append((r, round(x, 3), round(y, 3), round(f.GetOrientationDegrees()) % 360,
+                 "B" if f.IsFlipped() else None))
     ref = f.Reference()
     # **只冻结成功的位号**。F.Fab 表示"当时排不下"——那是算法状态，不是设计意图。
     # 冻结它等于把失败也固化：版面后来改了、周围腾出空间了，也永远不再重试。
@@ -258,7 +259,10 @@ gen_pcb.py / gen_silk.py 读它摆位。手工调整版面后重新跑一次 exp
 PLACEMENT = [
 ''')
     for t in rows:
-        fh.write(f"    ({t[0]!r:8s}, {t[1]:7.3f}, {t[2]:7.3f}, {t[3]:3d}),\n")
+        if t[4] is None:
+            fh.write(f"    ({t[0]!r:8s}, {t[1]:7.3f}, {t[2]:7.3f}, {t[3]:3d}),\n")
+        else:
+            fh.write(f"    ({t[0]!r:8s}, {t[1]:7.3f}, {t[2]:7.3f}, {t[3]:3d}, {t[4]!r}),\n")
     fh.write(''']
 
 # (位号, 位号丝印 x, y, 旋转角, 所在层)

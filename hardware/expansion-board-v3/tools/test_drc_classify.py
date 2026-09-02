@@ -72,13 +72,21 @@ class DrcFailureGateTest(unittest.TestCase):
             "",
         )
 
-    def test_any_violation_fails_even_when_it_is_silkscreen(self):
+    def test_warning_does_not_fail_the_electrical_gate(self):
         report = {
-            "violations": [{"type": "silk_overlap"}],
+            "violations": [{"type": "silk_overlap", "severity": "warning"}],
             "unconnected_items": [],
         }
 
-        self.assertEqual(drc_failure_summary(report), "DRC 违例 1 项")
+        self.assertEqual(drc_failure_summary(report), "")
+
+    def test_error_violation_fails(self):
+        report = {
+            "violations": [{"type": "clearance", "severity": "error"}],
+            "unconnected_items": [],
+        }
+
+        self.assertEqual(drc_failure_summary(report), "DRC 错误 1 项")
 
     def test_any_unconnected_item_fails(self):
         report = {
@@ -90,13 +98,16 @@ class DrcFailureGateTest(unittest.TestCase):
 
     def test_violation_and_unconnected_counts_are_both_reported(self):
         report = {
-            "violations": [{"type": "clearance"}, {"type": "silk_overlap"}],
+            "violations": [
+                {"type": "clearance", "severity": "error"},
+                {"type": "silk_overlap", "severity": "warning"},
+            ],
             "unconnected_items": [{"type": "unconnected_items"}],
         }
 
         self.assertEqual(
             drc_failure_summary(report),
-            "DRC 违例 2 项；未连通 1 项",
+            "DRC 错误 1 项；未连通 1 项",
         )
 
 

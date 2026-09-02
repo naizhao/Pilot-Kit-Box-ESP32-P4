@@ -154,6 +154,16 @@ hardware/*/kicad/temp-freerouting.dsn
 # KiCad 会话锁
 *.kicad_pro.lck
 
+# ── 器件手册库 ────────────────────────────────────────────────────────
+# 厂商 PDF 本体不进公开仓库：第三方版权 + 体积（20 多份就几十 MB）。
+# 进 git 的是 hardware/datasheets/INDEX.md —— 从每份手册里提取出来的
+# 引脚定义 / 真值表 / 极性判据。防错靠索引，查证靠本地 PDF。
+hardware/datasheets/*.pdf
+hardware/datasheets/*.PDF
+
 # v4 的工具链在 v4 分支已转内部；v3 分支上它们只是本地残留文件，
 # 不跟踪——否则一次 git add -A 就会把整套构建过程扫进公开树
 hardware/expansion-board-v4/tools/
+hardware/datasheets/BGA2817-pages/
+hardware/datasheets/*.jpg
+hardware/datasheets/*.png

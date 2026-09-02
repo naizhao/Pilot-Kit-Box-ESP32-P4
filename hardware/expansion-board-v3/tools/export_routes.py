@@ -38,7 +38,7 @@ import pcbnew
 T = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BDIR = os.environ.get("PK_BOARD_DIR") or os.path.join(T, "kicad")
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(BDIR, "expansion-board-v3.kicad_pcb")
-OUT = os.path.join(T, "tools", "ROUTES.json")
+OUT = os.environ.get("PK_ROUTES_OUT") or os.path.join(T, "tools", "ROUTES.json")
 
 board = pcbnew.LoadBoard(SRC)
 assert board is not None, f"加载失败: {SRC}"
