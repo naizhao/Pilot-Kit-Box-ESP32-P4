@@ -1,4 +1,4 @@
-# Expansion Board V3.8 — Authoritative Pin/Net Mapping (single source of truth over the schematic)
+# Expansion Board V3.9 — Authoritative Pin/Net Mapping (single source of truth over the schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -90,7 +90,7 @@ All LC values are 〔A〕 starting points; V1 keeps a 0402 tunable position at e
 
 | Device | Bus/pins | Notes |
 |---|---|---|
-| BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 are tied low; CLKSEL0 and H_CSN are tied high; V3.8 footprint rotation is 0° |
+| BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 are tied low; CLKSEL0 and H_CSN are tied high; V3.9 footprint rotation is 0° |
 | BMP388 | I2C addr 0x76 (baro_task.c:29) + BARO_INT(GPIO31) | case keeps a vent hole |
 | QMC5883P | I2C address 0x2C | keep away from inductors / high-current traces; pins and support network verified against the datasheet |
 | ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3; 1PPS → GPIO50; VCC_RF feeds the active antenna | 18-pin LCC, pinout verified (manual §2.3) |
