@@ -92,7 +92,7 @@ authored in. Tables, part numbers, and net names are identical in both.
 | [`ASSEMBLY_MAP.pdf`](ASSEMBLY_MAP.pdf) / [`ASSEMBLY_MAP-zh_CN.pdf`](ASSEMBLY_MAP-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
 | [`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md) | Selective-placement groups and **mutex rules** — which parts must never be populated together | EN / 中文 |
 | [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST.xlsx) / [.pdf](CHECKLIST.pdf)) | EN / 中文 |
-| [`BOM_PURCHASE.md`](BOM_PURCHASE.md) | Authoritative purchasing list, generated from the netlist | EN / 中文 |
+| [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md) | Authoritative purchasing list, generated from the netlist | 中文 |
 | [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / 中文 |
 
@@ -147,7 +147,7 @@ modify the design; send `release/` straight to a board house.
 | `ASSEMBLY_MAP.pdf` | Per-designator placement map with orientation and polarity |
 | `CHECKLIST.md` | Line-by-line check sheet for hand assembly |
 | `SELECTIVE_PLACEMENT.md` | Which designators must **not** simply be populated from the BOM |
-| `BOM_PURCHASE.md` | Parts list with values, packages and selection constraints |
+| `BOM_PURCHASE-zh_CN.md` | Parts list with values, packages and selection constraints |
 
 The board was generated and verified by an internal script chain rather than
 hand-maintained, which is why the schematic, placement, routing, zones and

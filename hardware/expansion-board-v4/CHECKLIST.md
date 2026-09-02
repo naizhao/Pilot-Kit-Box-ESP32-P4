@@ -5,7 +5,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-203 designators in total.
+207 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -25,16 +25,16 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C17** | 100nF | C_0603_1608Metric | (71.4, 81.0) | C Sensors + GNSS |  |
 | ☐ | **C18** | 10uF | C_0805_2012Metric | (74.4, 80.8) | C Sensors + GNSS | Board silkscreen reads C6; use coordinates |
 | ☐ | **C19** | 15pF C0G | C_0603_1608Metric | (88.4, 69.1) | B MCU + Flash |  |
-| ☐ | **C20** | 15pF C0G | C_0603_1608Metric | (80.0, 69.1) | B MCU + Flash |  |
-| ☐ | **C21** | 100pF | C_0603_1608Metric | (102.8, 59.7) | E 1090 Receive Chain |  |
-| ☐ | **C22** | 100nF | C_0603_1608Metric | (94.5, 79.5) | B MCU + Flash |  |
-| ☐ | **C23** | 100nF | C_0603_1608Metric | (94.5, 74.9) | B MCU + Flash |  |
-| ☐ | **C24** | 100nF | C_0603_1608Metric | (80.0, 78.4) | B MCU + Flash |  |
-| ☐ | **C25** | 100nF | C_0603_1608Metric | (82.8, 85.1) | B MCU + Flash | Board silkscreen reads R33; use coordinates |
-| ☐ | **C26** | 100nF | C_0603_1608Metric | (80.0, 75.8) | B MCU + Flash |  |
-| ☐ | **C27** | 100nF | C_0603_1608Metric | (93.2, 81.8) | B MCU + Flash |  |
-| ☐ | **C28** | 1uF | C_0603_1608Metric | (81.3, 82.8) | B MCU + Flash |  |
-| ☐ | **C29** | 1uF | C_0603_1608Metric | (80.0, 81.0) | B MCU + Flash |  |
+| ☐ | **C20** | 15pF C0G | C_0603_1608Metric | (79.8, 69.1) | B MCU + Flash |  |
+| ☐ | **C21** | 100pF | C_0402_1005Metric | (103.6, 59.7) | E 1090 Receive Chain |  |
+| ☐ | **C22** | 100nF | C_0603_1608Metric | (93.2, 75.8) | B MCU + Flash |  |
+| ☐ | **C23** | 100nF | C_0603_1608Metric | (91.8, 81.5) | B MCU + Flash |  |
+| ☐ | **C24** | 100nF | C_0603_1608Metric | (80.9, 80.2) | B MCU + Flash |  |
+| ☐ | **C25** | 100nF | C_0603_1608Metric | (83.2, 71.6) | B MCU + Flash | Board silkscreen reads R33; use coordinates |
+| ☐ | **C26** | 100nF | C_0603_1608Metric | (78.9, 74.6) | B MCU + Flash |  |
+| ☐ | **C27** | 100nF | C_0603_1608Metric | (77.9, 82.5) | B MCU + Flash |  |
+| ☐ | **C28** | 1uF | C_0603_1608Metric | (83.1, 83.3) | B MCU + Flash |  |
+| ☐ | **C29** | 1uF | C_0603_1608Metric | (80.9, 83.3) | B MCU + Flash |  |
 | ☐ | **C30** | 100pF | C_0402_1005Metric | (102.8, 67.5) | E 1090 Receive Chain | Board silkscreen reads L14; use coordinates |
 | ☐ | **C31** | 100pF C0G | C_0402_1005Metric | (111.3, 62.2) | E 1090 Receive Chain |  |
 | ☐ | **C32** | 100pF C0G | C_0402_1005Metric | (114.3, 62.2) | E 1090 Receive Chain |  |
@@ -42,8 +42,8 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C34** | 100pF C0G | C_0402_1005Metric | (117.1, 73.4) | E 1090 Receive Chain |  |
 | ☐ | **C35** | 100pF C0G | C_0402_1005Metric | (115.1, 71.1) | E 1090 Receive Chain |  |
 | ☐ | **C36** | 100pF | C_0402_1005Metric | (106.0, 64.3) | E 1090 Receive Chain |  |
-| ☐ | **C37** | 100nF | C_0603_1608Metric | (113.9, 77.0) | E 1090 Receive Chain |  |
-| ☐ | **C38** | 100pF | C_0603_1608Metric | (111.6, 77.0) | E 1090 Receive Chain |  |
+| ☐ | **C37** | 100nF | C_0402_1005Metric | (113.9, 77.0) | E 1090 Receive Chain |  |
+| ☐ | **C38** | 100pF | C_0402_1005Metric | (111.6, 77.0) | E 1090 Receive Chain |  |
 | ☐ | **C39** | 100pF | C_0402_1005Metric | (118.2, 92.8) | D 978 Transceiver |  |
 | ☐ | **C40** | 3.6pF | C_0402_1005Metric | (110.7, 94.2) | D 978 Transceiver |  |
 | ☐ | **C41** | 2.7pF | C_0402_1005Metric | (115.9, 97.5) | D 978 Transceiver |  |
@@ -54,7 +54,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C46** | 3pF | C_0603_1608Metric | (104.9, 78.5) | E 1090 Receive Chain | Board silkscreen reads C47; use coordinates |
 | ☐ | **C47** | 200pF | C_0603_1608Metric | (104.9, 80.4) | E 1090 Receive Chain | Board silkscreen reads C46; use coordinates |
 | ☐ | **C48** | 1uF | C_0402_1005Metric | (107.4, 64.3) | E 1090 Receive Chain |  |
-| ☐ | **C49** | 100nF | C_0603_1608Metric | (77.0, 75.8) | E 1090 Receive Chain |  |
+| ☐ | **C49** | 100nF | C_0603_1608Metric | (76.7, 75.4) | E 1090 Receive Chain |  |
 | ☐ | **C51** | 1nF | C_0603_1608Metric | (77.0, 81.0) | E 1090 Receive Chain |  |
 | ☐ | **C52** | 100nF | C_0402_1005Metric | (99.6, 82.3) | E 1090 Receive Chain |  |
 | ☐ | **C53** | 100pF | C_0402_1005Metric | (93.6, 62.9) | E 1090 Receive Chain | See the Chinese companion for the detailed engineering note |
@@ -69,7 +69,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C62** | 100nF | C_0603_1608Metric | (105.4, 98.3) | D 978 Transceiver |  |
 | ☐ | **C63** | 100nF | C_0603_1608Metric | (107.1, 84.6) | D 978 Transceiver |  |
 | ☐ | **C64** | 100nF | C_0603_1608Metric | (100.2, 85.8) | D 978 Transceiver |  |
-| ☐ | **C65** | 100nF | C_0603_1608Metric | (99.1, 94.7) | D 978 Transceiver |  |
+| ☐ | **C65** | 100nF | C_0603_1608Metric | (99.0, 94.7) | D 978 Transceiver |  |
 | ☐ | **C66** | 22uF | C_0805_2012Metric | (102.9, 97.2) | D 978 Transceiver |  |
 | ☐ | **C67** | 1uF | C_0603_1608Metric | (103.6, 85.8) | D 978 Transceiver |  |
 | ☐ | **C68** | 18pF | C_0603_1608Metric | (113.2, 85.0) | D 978 Transceiver |  |
@@ -85,12 +85,13 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C78** | 1uF | C_0603_1608Metric | (134.4, 94.2) | A Power |  |
 | ☐ | **C79** | 1uF | C_0603_1608Metric | (130.6, 65.0) | A Power |  |
 | ☐ | **C80** | 1uF 25V | C_0603_1608Metric | (136.3, 74.6) | A Power |  |
-| ☐ | **C81** | 470pF C0G | C_0402_1005Metric | (115.3, 62.3) | E 1090 Receive Chain |  |
-| ☐ | **C82** | 100nF | C_0201_0603Metric | (87.2, 71.8) | B MCU + Flash |  |
-| ☐ | **C83** | 100nF | C_0201_0603Metric | (89.2, 82.1) | B MCU + Flash |  |
-| ☐ | **C84** | 1uF | C_0201_0603Metric | (83.5, 82.2) | B MCU + Flash |  |
-| ☐ | **C85** | 100nF | C_0201_0603Metric | (86.6, 82.2) | B MCU + Flash |  |
-| ☐ | **C86** | 100nF | C_0201_0603Metric | (81.2, 79.5) | B MCU + Flash |  |
+| ☐ | **C81** | 470pF C0G | C_0402_1005Metric | (115.2, 64.5) | E 1090 Receive Chain |  |
+| ☐ | **C82** | 100nF | C_0603_1608Metric | (91.4, 67.5) | B MCU + Flash |  |
+| ☐ | **C83** | 100nF | C_0603_1608Metric | (91.4, 69.8) | B MCU + Flash |  |
+| ☐ | **C84** | 1uF | C_0603_1608Metric | (110.7, 80.5) | B MCU + Flash |  |
+| ☐ | **C85** | 100nF | C_0603_1608Metric | (113.7, 80.5) | B MCU + Flash |  |
+| ☐ | **C86** | 100nF | C_0603_1608Metric | (123.2, 89.6) | B MCU + Flash |  |
+| ☐ | **C87** | 10nF C0G | C_0603_1608Metric | (83.5, 88.5) | B MCU + Flash |  |
 | ☐ | **R1** | 10k | R_0603_1608Metric | (55.2, 84.5) | C Sensors + GNSS |  |
 | ☐ | **R2** | 4.7k | R_0603_1608Metric | (64.1, 97.8) | C Sensors + GNSS |  |
 | ☐ | **R3** | 4.7k | R_0603_1608Metric | (64.1, 95.2) | C Sensors + GNSS |  |
@@ -125,18 +126,21 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R40** | 31.6k | R_0603_1608Metric | (134.6, 88.2) | A Power |  |
 | ☐ | **R41** | 470k | R_0603_1608Metric | (139.1, 98.6) | A Power |  |
 | ☐ | **R42** | 150k | R_0603_1608Metric | (137.4, 98.6) | A Power |  |
-| ☐ | **R43** | 1k | R_0603_1608Metric | (136.3, 72.0) | A Power |  |
+| ☐ | **R43** | 1k | R_0603_1608Metric | (127.5, 65.0) | A Power |  |
 | ☐ | **R44** | 10k | R_0603_1608Metric | (137.0, 69.5) | A Power |  |
 | ☐ | **R45** | 10k | R_0603_1608Metric | (129.2, 84.0) | A Power |  |
 | ☐ | **R46** | 10k | R_0603_1608Metric | (129.2, 86.5) | A Power |  |
-| ☐ | **R47** | 10k | R_0201_0603Metric | (99.5, 92.0) | D 978 Transceiver |  |
-| ☐ | **R48** | 0R | R_0603_1608Metric | (126.8, 67.2) | A Power |  |
+| ☐ | **R47** | 10k | R_0603_1608Metric | (98.5, 91.7) | D 978 Transceiver |  |
+| ☐ | **R48** | 0R | R_0603_1608Metric | (126.8, 67.0) | A Power |  |
 | ☐ | **R49** | 0R | R_0603_1608Metric | (126.8, 69.4) | A Power |  |
-| ☐ | **R50** | 30k | R_0603_1608Metric | (128.5, 79.0) | B MCU + Flash |  |
-| ☐ | **R51** | 10k | R_0603_1608Metric | (94.0, 90.0) | B MCU + Flash |  |
-| ☐ | **R52** | 10k | R_0402_1005Metric | (63.6, 84.0) | C Sensors + GNSS |  |
-| ☐ | **R53** | 10k | R_0402_1005Metric | (64.8, 85.3) | C Sensors + GNSS |  |
+| ☐ | **R50** | 30k | R_0603_1608Metric | (86.5, 92.8) | B MCU + Flash |  |
+| ☐ | **R51** | 10k | R_0603_1608Metric | (85.5, 88.5) | B MCU + Flash |  |
+| ☐ | **R52** | 10k | R_0402_1005Metric | (64.4, 85.0) | C Sensors + GNSS |  |
+| ☐ | **R53** | 10k | R_0402_1005Metric | (64.3, 83.0) | C Sensors + GNSS |  |
 | ☐ | **R54** | 10R | R_0402_1005Metric | (116.5, 77.0) | E 1090 Receive Chain |  |
+| ☐ | **R55** | 10k | R_0603_1608Metric | (57.4, 89.8) | C Sensors + GNSS |  |
+| ☐ | **R56** | 10k | R_0603_1608Metric | (98.5, 90.0) | D 978 Transceiver |  |
+| ☐ | **R57** | 33R | R_0603_1608Metric | (104.0, 82.5) | E 1090 Receive Chain |  |
 | ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain |  |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
@@ -152,8 +156,8 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **L17** | 4.7uH XEL4030-472MEC | L_Coilcraft_XxL4030 | (144.8, 95.0) | A Power |  |
 | ☐ | **D2** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (101.1, 72.6) | E 1090 Receive Chain | Polarized; follow the cathode marking |
 | ☐ | **D3** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (117.5, 89.9) | D 978 Transceiver | Polarized; follow the cathode marking |
-| ☐ | **D4** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.5, 72.6) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
-| ☐ | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.5, 74.0) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
+| ☐ | **D4** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 75.4) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
+| ☐ | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 77.8) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
 | ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (121.9, 92.5) | D 978 Transceiver |  |
 | ☐ | **F3** | 6V/200mA | Fuse_0805_2012Metric | (98.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **F4** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 75.9) | C Sensors + GNSS |  |
@@ -198,15 +202,15 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (79.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (84.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | ☐ | **ZS1** | 0R 串 | L_0603_1608Metric | (81.7, 62.9) | E 1090 Receive Chain | See the Chinese companion for the detailed engineering note |
-| — | **SW1** | RESET短接焊盘 | SolderJumper-2_P1.3mm_ | (140.0, 103.5) | **Not placed** (solder-bridge pad) |  |
+| — | **SW1** | RESET短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 77.5) | **Not placed** (solder-bridge pad) |  |
 | — | **SW2** | BOOTSEL短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 81.0) | **Not placed** (solder-bridge pad) |  |
-| — | **TP1** | TestPoint | TestPoint_Pad_1.0x1.0m | (84.4, 69.5) | **Not placed** (test-point pad) |  |
-| — | **TP2** | TestPoint | TestPoint_Pad_1.0x1.0m | (84.4, 72.7) | **Not placed** (test-point pad) |  |
-| — | **TP3** | TestPoint | TestPoint_Pad_1.0x1.0m | (120.0, 103.5) | **Not placed** (test-point pad) |  |
-| — | **TP4** | TestPoint | TestPoint_Pad_1.0x1.0m | (124.0, 103.5) | **Not placed** (test-point pad) |  |
-| — | **TP5** | TestPoint | TestPoint_Pad_1.0x1.0m | (128.0, 103.5) | **Not placed** (test-point pad) |  |
-| — | **TP6** | TestPoint | TestPoint_Pad_1.0x1.0m | (82.5, 76.6) | **Not placed** (test-point pad) |  |
-| — | **TP7** | TestPoint | TestPoint_Pad_1.0x1.0m | (79.3, 76.1) | **Not placed** (test-point pad) |  |
+| — | **TP1** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 86.0) | **Not placed** (test-point pad) |  |
+| — | **TP2** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 88.5) | **Not placed** (test-point pad) |  |
+| — | **TP3** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 91.0) | **Not placed** (test-point pad) |  |
+| — | **TP4** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 93.5) | **Not placed** (test-point pad) |  |
+| — | **TP5** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 96.0) | **Not placed** (test-point pad) |  |
+| — | **TP6** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 98.5) | **Not placed** (test-point pad) |  |
+| — | **TP7** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 101.0) | **Not placed** (test-point pad) |  |
 | — | **H1** | — | MountingHole_2.7mm_M2. | (54.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H2** | — | MountingHole_2.7mm_M2. | (146.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H3** | — | MountingHole_2.7mm_M2. | (54.0, 106.0) | **Not placed** (mounting hole) |  |
