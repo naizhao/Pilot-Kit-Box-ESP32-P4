@@ -120,6 +120,10 @@ hardware/**/.history/
 # KiCad 备份与缓存
 hardware/**/*-backups/
 hardware/**/fp-info-cache
+# v3 的 fab/ 是本地工作目录（每次跑 gerber.sh 都重出，含中间产物）。
+# **封版交付包放 release/ 并进版本库**——与 v4 同构。V3.9 之前 v3 从未把
+# 制造包纳入版本控制，那时它只是本地产物；封版之后性质变了：
+# 别人 clone 下来必须拿得到可直接下单的 Gerber，否则「封版」只对本机成立。
 hardware/expansion-board-v3/fab/
 
 # ── 临时截图 / 抓取产物 ────────────────────────────────────────────
