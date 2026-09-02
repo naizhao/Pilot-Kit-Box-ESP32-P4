@@ -41,7 +41,7 @@ Firmware-side workload: only one new UART driver (GPIO46/32); zero changes anywh
 | GPIO24 | RECOVERED_CLK | recovered clock for debug 〔A〕 |
 | GPIO25 | TL_PWM | comparator threshold PWM (RC-filtered into LEVEL_BIAS) 〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | DC readback of the threshold 〔A〕 |
-| GPIO27 / ADC1 | RSSI | AD8319 VOUT readback (adaptive sensitivity) 〔A〕 |
+| GPIO27 / ADC1 | RSSI | AD8313 VOUT readback (adaptive sensitivity) 〔A〕 |
 | GPIO28 / ADC2 | Spare ADC | reserved (e.g. 978 RSSI) |
 | QSPI dedicated pins | W25Q128JVSIQ | 16MB firmware + config |
 | XIN | 12MHz crystal (C9002) | |
@@ -67,7 +67,7 @@ Firmware-side workload: only one new UART driver (GPIO46/32); zero changes anywh
 
 ```
 J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG: RP2040, Flash, CC1312R (via ferrite bead), BNO085, BMP388, QMC5883P
-            ├── TPS7A2033 #1 ──────→ 3V3_RF: QPL9547, BGA2817, AD8319/AD8313, MCP comparator domain
+            ├── TPS7A2033 #1 ──────→ 3V3_RF: QPL9547, BGA2817, AD8313, MCP comparator domain
             └── TPS7A2033 #2 ──────→ 3V3_GNSS: ATGM336H-6N-74 + both antenna bias Tees
 Bias Tee (×2: 1090 / 978) 〔A〕: PMOS high-side switch + 6V/200mA fuse + 100nH feed inductor + ESD (0.6pF class)
 ```
@@ -77,7 +77,7 @@ Bias Tee (×2: 1090 / 978) 〔A〕: PMOS high-side switch + 6V/200mA fuse + 100n
 ```
 ANT1090(U.FL) → bias Tee → C 100pF DC block → L 27nH series + 82nH bias feed → QPL9547(LNA①)
 → C 12pF → TA0970A(SAW①) → matching as above → BGA2817(LNA②) → C 12pF → TA0970A(SAW②)
-→ MM8930-2620RJ4 (production test socket, in series) → C 3pF coupling → AD8319 (main) / AD8313 (alternate, dual-footprint position)
+→ MM8930-2620RJ4 (production test socket, in series) → C 3pF coupling → AD8313 (sole detector; the AD8319 branch was removed in V3.9)
 → RSSI/VOUT ─┬→ RP2040 ADC1
              └→ TLV3501 IN+; IN- = LEVEL_BIAS (TL_PWM via 100k+0.1µF RC) + 10k hysteresis 〔A〕
 → TLV3501 OUT = PULSES → RP2040 GPIO19
@@ -106,7 +106,7 @@ All LC values are 〔A〕 starting points; V1 keeps a 0402 tunable position at e
 6. ~~QPL9547 EN pin polarity~~ **verified (Qorvo DS Rev.D): SD pin <0.63V = LNA ON, ground-enable is correct**.
 7. (added at schematic stage) TLV3501 SHDN pulled high to enable (per TI, low = shutdown); cross-check polarity consistency on the TOKMAS version.
 8. (added at schematic stage) the official KiCad CC1312R symbol has no DIO_0 — before PCB layout, re-verify every QFN48 pin against TI SWRS210.
-9. (added at schematic stage) AD8319 CLPF left floating is the V1 starting point (maximum video bandwidth); add a capacitor position if the pulse noise floor is high.
+9. ~~AD8319 CLPF left floating~~ — the AD8319 branch was removed in V3.9; the AD8313 has no equivalent pin, so this note is void.
 10. ~~no ESD device on the 978 antenna port~~ **handled: D3 added to the schematic (aligned with 1090; exposed ports on an aviation product always get ESD)**.
 11. (added at schematic stage) the asymmetric 12/15pF 32k crystal load capacitors were copied as-is from the reference design; symmetric would be normal — item for review discussion.
 
@@ -115,7 +115,7 @@ All LC values are 〔A〕 starting points; V1 keeps a 0402 tunable position at e
 | Device | Datasheet version the symbol was built from | Purchase SKU | Incoming inspection points |
 |---|---|---|---|
 | BNO085 | CEVA 1000-3927 **v1.16** (BNO080/085/086 share the same pinout) | Taobao ¥56 tier, loose new | silkscreen "BNO085" (beware "BN0085" counterfeit markings); measure the actual LGA-28 3.8×5.2mm package |
-| AD8319 | ADI Rev.D | Taobao ¥21.9 original-parts tier | silkscreen "Q2"; LFCSP-8 2×3mm with exposed pad |
+
 | AD8313 | ADI Rev.F | LCSC C578690 (only this channel) | silkscreen "J1A"; MSOP-8 |
 | BMP388 | Bosch DS001-07 Rev 1.7 | LCSC C779278 (factory) | LGA-10 2×2mm; sample-test CHIP_ID=0x50 on arrival |
 | QMC5883P | QST 13-52-19 RevA (**the same document linked on the LCSC C2847467 product page**) | Taobao ¥5.5 tier or LCSC | LGA-16 **3×3mm** (do not mix up with the L-version small package); responds on I2C 0x2C |

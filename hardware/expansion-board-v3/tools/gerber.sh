@@ -89,7 +89,12 @@ echo
 echo "════ 贴片坐标 + BOM ════"
 "$CLI" pcb export pos -o "$OUT/positions.csv" --format csv --units mm --side both "$PCB" 2>&1 | tail -1
 python3 "$T/tools/gen_bom.py" > /dev/null 2>&1 || true
-[ -f "$T/BOM_PURCHASE.md" ] && cp "$T/BOM_PURCHASE.md" "$OUT/" || true
+# ⚠️ 源在 internal/，不在板根目录。gen_bom.py 早就改写 internal/BOM_PURCHASE.md，
+# 而这里一直拷 $T/BOM_PURCHASE.md —— 那个文件不存在，`|| true` 把失败吞掉了，
+# 于是 fab/ 里的采购表停在 2026-08-24：还写着 AD8319、U16 带「或AS179」后缀、
+# 缺 33R / 10nF C0G / 18pF 三条新料。照着它采购会买错料、漏买料。
+# 不用 `|| true` 兜底：拷不到就该报错，静默跳过正是这个 bug 能活半个月的原因。
+cp "$T/internal/BOM_PURCHASE.md" "$OUT/BOM_PURCHASE.md"
 
 echo
 echo "════ 打包 ════"
@@ -118,10 +123,55 @@ with zipfile.ZipFile(dst, "x", zipfile.ZIP_DEFLATED) as z:
         z.write(p, p.name)
 print(f"打包 {len(files)} 个制造文件")
 PYZIP
+# ── KiCad 源码包 ────────────────────────────────────────────────────
+# V3 一直只出 Gerber，没有源码包。板子封版之后别人要复现或改这块板，
+# 光有 Gerber 打不开工程 —— V4 每个版本都配一份，V3 这里补上。
+#
+# **白名单**，不能用 `".kicad_" in name` 那种模糊匹配。V4 在 2026-09-01 被外部
+# 复核抓到三宗罪，全是模糊匹配造成的：把 BACKUP-*.kicad_pcb 打了进去、把
+# .kicad_prl（本地 GUI 状态，属个人配置）打了进去、9 个自制 3D 模型和两张
+# lib-table 一个没进——别人解开满屏都是找不到的封装。
+SOURCE_ZIP="$OUT/expansion-board-v3-kicad-$REV-$STAMP.zip"
+[ ! -e "$SOURCE_ZIP" ] || { echo "不覆盖已有源码包: $SOURCE_ZIP"; exit 1; }
+/Applications/ServBay/bin/python3 - "$T/kicad" "$SOURCE_ZIP" <<'PYSRC'
+from pathlib import Path
+import sys, zipfile
+kicad, dst = Path(sys.argv[1]), Path(sys.argv[2])
+BOARD = "expansion-board-v3"
+FILES = [f"{BOARD}.kicad_pcb", f"{BOARD}.kicad_pro", f"{BOARD}.kicad_sym",
+         "fp-lib-table", "sym-lib-table"]
+DIRS = [f"{BOARD}.pretty", f"{BOARD}.3dshapes"]
+items = []
+for name in FILES:
+    if (kicad / name).is_file():
+        items.append((kicad / name, f"kicad/{name}"))
+for path in sorted(kicad.glob("*.kicad_sch")):          # 根图 + 各页子图
+    items.append((path, f"kicad/{path.name}"))
+for folder in DIRS:
+    base = kicad / folder
+    if base.is_dir():
+        for path in sorted(x for x in base.rglob("*") if x.is_file()):
+            items.append((path, f"kicad/{folder}/{path.relative_to(base)}"))
+present = {arc for _p, arc in items}
+for required in (f"kicad/{BOARD}.kicad_pcb", f"kicad/{BOARD}.kicad_pro",
+                 "kicad/fp-lib-table", "kicad/sym-lib-table"):
+    assert required in present, f"源码包缺 {required}"
+assert sum(1 for a in present if a.endswith(".kicad_sch")) >= 6, "原理图页数不足"
+assert any(a.endswith((".wrl", ".step")) for a in present), \
+    "源码包里一个 3D 模型都没有——3dshapes 没被打进去"
+assert not any("BACKUP" in a or a.endswith((".kicad_prl", ".lck")) for a in present), \
+    "混入了备份或本地状态文件"
+with zipfile.ZipFile(dst, "x", zipfile.ZIP_DEFLATED) as z:
+    for path, arc in items:
+        z.write(path, arc)
+print(f"源码包 {len(items)} 个文件")
+PYSRC
+
 ls -1 "$G" | sed 's/^/  /'
 echo
 echo "✅ 交给嘉立创的文件: $GERBER_ZIP"
-echo "   贴片坐标: $OUT/positions.csv"
+echo "   KiCad 源包: $SOURCE_ZIP"
+ echo "   贴片坐标: $OUT/positions.csv"
 echo
 echo "下单时必须手工确认的四项（默认值不一定对）:"
 echo "  1) 层数 6 层，叠层顺序 F/In1(GND)/In2/In3(3V3)/In4(GND)/B"

@@ -42,7 +42,7 @@
 | GPIO24 | RECOVERED_CLK | 调试用恢复时钟〔A〕 |
 | GPIO25 | TL_PWM | 比较器阈值 PWM（RC 滤波成 LEVEL_BIAS）〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | 阈值直流回读〔A〕 |
-| GPIO27 / ADC1 | RSSI | AD8319 VOUT 回读（自适应灵敏度）〔A〕 |
+| GPIO27 / ADC1 | RSSI | AD8313 VOUT 回读（自适应灵敏度）〔A〕 |
 | GPIO28 / ADC2 | 备用 ADC | 预留（如 978 RSSI） |
 | QSPI 专用脚 | W25Q128JVSIQ | 16MB 固件+配置 |
 | XIN | 12MHz 晶振（C9002） | |
@@ -68,7 +68,7 @@
 
 ```
 J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG：RP2040、Flash、CC1312R(经磁珠)、BNO085、BMP388、QMC5883P
-            ├── TPS7A2033 #1 ──────→ 3V3_RF：QPL9547、BGA2817、AD8319/AD8313、MCP 比较器域
+            ├── TPS7A2033 #1 ──────→ 3V3_RF：QPL9547、BGA2817、AD8313、MCP 比较器域
             └── TPS7A2033 #2 ──────→ 3V3_GNSS：ATGM336H-6N-74 + 两路天线偏置 Tee
 偏置 Tee（×2：1090 / 978）〔A〕：PMOS 高侧开关 + 6V/200mA 保险丝 + 100nH 馈电电感 + ESD(0.6pF 级)
 ```
@@ -78,7 +78,7 @@ J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG：RP2040、Flash�
 ```
 ANT1090(U.FL) → 偏置Tee → C 100pF 隔直 → L 27nH 串 + 82nH 偏置馈电 → QPL9547(LNA①)
 → C 12pF → TA0970A(SAW①) → 同上匹配 → BGA2817(LNA②) → C 12pF → TA0970A(SAW②)
-→ MM8930-2620RJ4(产测座, 串联) → C 3pF 耦合 → AD8319(主) / AD8313(备, 双封装位)
+→ MM8930-2620RJ4(产测座, 串联) → C 3pF 耦合 → AD8313（唯一检波器；V3.9 已删 AD8319 支路）
 → RSSI/VOUT ─┬→ RP2040 ADC1
              └→ TLV3501 IN+；IN- = LEVEL_BIAS(TL_PWM 经 100k+0.1µF RC) + 10k 迟滞〔A〕
 → TLV3501 OUT = PULSES → RP2040 GPIO19
@@ -107,7 +107,7 @@ ANT1090(U.FL) → 偏置Tee → C 100pF 隔直 → L 27nH 串 + 82nH 偏置馈�
 6. ~~QPL9547 EN 脚极性~~ **已核实（Qorvo DS Rev.D）：SD 脚 <0.63V=LNA ON，接地使能正确**。
 7. （原理图阶段新增）TLV3501 SHDN 已拉高使能（TI 口径低电平关断），TOKMAS 版本极性一致性复核。
 8. （原理图阶段新增）KiCad 官方 CC1312R 符号无 DIO_0——布 PCB 前逐脚对 TI SWRS210 复核一遍 QFN48 脚位。
-9. （原理图阶段新增）AD8319 CLPF 悬空为 V1 起点（视频带宽最大），若脉冲底噪高则加电容位。
+9. ~~AD8319 CLPF 悬空~~ —— AD8319 支路已于 V3.9 删除；AD8313 无对应引脚，本条作废。
 10. ~~978 天线口无 ESD 管~~ **已处理：D3 已入图（与 1090 对齐，航空产品外露端口一律加 ESD）**。
 11. （原理图阶段新增）32k 晶振负载电容 12/15pF 不对称照抄原图，正常应对称——评审讨论项。
 
@@ -116,7 +116,7 @@ ANT1090(U.FL) → 偏置Tee → C 100pF 隔直 → L 27nH 串 + 82nH 偏置馈�
 | 器件 | 建库依据的 datasheet 版本 | 采购 SKU | 到货核对点 |
 |---|---|---|---|
 | BNO085 | CEVA 1000-3927 **v1.16**（BNO080/085/086 引脚相同） | 淘宝 ¥56 档散新 | 丝印 "BNO085"（警惕 "BN0085" 仿标）；LGA-28 3.8×5.2mm 实measure |
-| AD8319 | ADI Rev.D | 淘宝 ¥21.9 原装配单档 | 丝印 "Q2"；LFCSP-8 2×3mm 带裸焊盘 |
+
 | AD8313 | ADI Rev.F | 立创 C578690（仅此渠道） | 丝印 "J1A"；MSOP-8 |
 | BMP388 | Bosch DS001-07 Rev 1.7 | 立创 C779278 原厂 | LGA-10 2×2mm；到货抽测 CHIP_ID=0x50 |
 | QMC5883P | QST 13-52-19 RevA（**即立创 C2847467 商品页挂的同一份**） | 淘宝 ¥5.5 档或立创 | LGA-16 **3×3mm**（勿与 L 版小封装混）；I2C 0x2C 应答 |
