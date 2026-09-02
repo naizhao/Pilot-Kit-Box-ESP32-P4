@@ -763,12 +763,18 @@ class ComponentContractTest(unittest.TestCase):
                 )
                 for ref in ("C82", "C83", "C84", "C85", "C86"):
                     self.assertIn(local_fp, pcb_footprint(board, ref))
-                self.assertNotIn(
-                    "0201",
-                    "".join(pcb_footprint(board, ref) for ref in
-                            ("C82", "C83", "C84", "C85", "C86")),
-                    "BOM 里没有 0201，不得引入这个封装",
-                )
+                # 只查 fpid，不要在整段 footprint 文本里搜 "0201"。
+                # 2026-09-03 实测这个粗判据会误报：C82 的一个 UUID 恰好是
+                # `5d03dc64-3800-43de-89e4-80201ddbb589`，中间含 "80201d"，
+                # 于是明明是 C_0402_1005Metric 也被判成引入了 0201。
+                # 假阳性比漏报更坏——它会淹没同一个测试里真正的失败项。
+                for ref in ("C82", "C83", "C84", "C85", "C86"):
+                    fpid = re.search(r'\(footprint "([^"]+)"',
+                                     pcb_footprint(board, ref)).group(1)
+                    self.assertNotIn(
+                        "0201", fpid,
+                        f"{ref} 用了 {fpid}；BOM 里没有 0201，不得引入这个封装",
+                    )
                 self.assertLess(pad_distance(board, ("J4", "A6"), ("D4", "1")), 6.0)
                 self.assertLess(pad_distance(board, ("J4", "A7"), ("D5", "1")), 6.0)
                 project = json.loads(

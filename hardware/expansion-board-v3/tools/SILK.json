@@ -14,7 +14,7 @@
 "just": 0
 },
 {
-"text": "V3.6   2026-08",
+"text": "V3.9   2026-09",
 "layer": "B.SilkS",
 "x": 100.0,
 "y": 80.0,
@@ -340,8 +340,8 @@
 {
 "text": "USB",
 "layer": "F.SilkS",
-"x": 53.525,
-"y": 97.9,
+"x": 54.356,
+"y": 97.663,
 "h": 0.8,
 "w": 0.8,
 "thick": 0.136,
@@ -351,6 +351,32 @@
 }
 ],
 "graphics": [
+{
+"kind": "segment",
+"layer": "F.SilkS",
+"start": [
+61.09,
+90.05
+],
+"end": [
+61.09,
+90.75
+],
+"width": 0.2
+},
+{
+"kind": "segment",
+"layer": "F.SilkS",
+"start": [
+61.09,
+93.25
+],
+"end": [
+61.09,
+93.95
+],
+"width": 0.2
+},
 {
 "kind": "segment",
 "layer": "F.SilkS",

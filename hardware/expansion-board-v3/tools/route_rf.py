@@ -392,9 +392,20 @@ print(f"平面缝合过孔: {n_st} 个（{n_skip} 个焊盘无空位，靠覆铜
 # ---------------- 四层覆铜填充 ----------------
 filler = pcbnew.ZONE_FILLER(board)
 filler.Fill(board.Zones())
-filled = sum(1 for z in board.Zones() if z.IsFilled())
-assert filled == len(board.Zones()), f"覆铜填充 {filled}/{len(board.Zones())} 层未全填"
-print(f"覆铜填充: {filled}/{len(board.Zones())} 区（4 层平面 + 电源岛）")
+# ⚠️ 分母只能算**覆铜区**，不能算全部 zone。keepout（rule area）没有网络、
+# 也不产生填充多边形，IsFilled() 对它永远为假。
+#
+# 这条断言原本写的是 `filled == len(board.Zones())`，一直没出事，是因为当时板上
+# 恰好没有 keepout —— V3.9 之前的板跑过 rebuild.sh，那条链的 gen_pcb 从空板重建，
+# 4 个 RF keepout（ifa_rf50_corridor_* / ANT1090_*_keepout）每跑一次丢一次。
+# V3.9 从 V3.8 母版重建后 keepout 回来了，断言立刻炸成"覆铜填充 7/11 层未全填"，
+# 而实际 7 个覆铜区一个不少、全都填上了。
+pours = [z for z in board.Zones() if not z.GetIsRuleArea()]
+keepouts = len(list(board.Zones())) - len(pours)
+filled = sum(1 for z in pours if z.IsFilled())
+assert filled == len(pours), f"覆铜填充 {filled}/{len(pours)} 区未全填"
+print(f"覆铜填充: {filled}/{len(pours)} 区（4 层平面 + 电源岛）"
+      f"，另有 {keepouts} 个 keepout 不参与填充")
 
 board.Save(PCB)
 print("saved:", PCB)

@@ -46,9 +46,6 @@ $KP "$T/tools/route_ifa_feed.py" 2>&1 | filt | grep -E '重布|馈电总路径'
 echo; echo "════════ ③ 贴回 ROUTES.json 的唯一布线基线 ════════"
 $KP "$T/tools/import_routes.py" 2>&1 | filt | grep -v "^⚠️"
 
-echo; echo "════════ ③b 重放 V3.8 局部 ECO（QPL9547）════════"
-$KP "$T/tools/route_eco_v38.py" 2>&1 | filt
-
 echo; echo "════════ ④ 丝印（gen_pcb 从零建板不生成这些，必须补）════════"
 # ⚠️ gen_pcb.py 是 pcbnew.NewBoard()，只放元件/覆铜/板框，**板级丝印不生成**。
 # 2026-08-13 评审发现"背后的版权没有了"，根因就是这里：生成品牌丝印的工具
@@ -66,7 +63,10 @@ $KP "$T/tools/fix_eco_silk_v38.py" 2>&1 | filt
 echo; echo "════════ ⑤ 顶部全层禁铜带（板左/右缘→天线禁铜区，v4 同构）════════"
 # gen_pcb 是 NewBoard 从零重建，文本插入的顶部 zone 每次都会丢——必须重放。
 # 纯文本手术：pcbnew API 建多层 zone 后 Save 实测 Bus error（KiCad 8 SWIG）。
-/Applications/ServBay/script/alias/python3 "$T/tools/top_keepout_v3.py" "$PCB"
+# top_keepout_v3.py 要 import pcbnew，只有 KiCad 自带的解释器有。
+# 这里原来硬编 /Applications/ServBay/script/alias/python3，那个路径在本机不存在，
+# 重建链跑到这一步就断——两个 ANT1090_*_keepout 因此一直没被重建出来。
+$KP "$T/tools/top_keepout_v3.py" "$PCB"
 $KP -c "import pcbnew;b=pcbnew.LoadBoard('$PCB');pcbnew.ZONE_FILLER(b).Fill(b.Zones());b.Save('$PCB')" 2>/dev/null
 echo; echo "════════ ⑥ 验收 ════════"
 $CLI pcb drc --format json -o "$B/drc-final.json" "$PCB" > /dev/null

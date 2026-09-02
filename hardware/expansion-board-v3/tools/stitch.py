@@ -121,7 +121,10 @@ for (px, py), netname in sorted(targets.items()):
 
 print(f"补缝过孔 {added} 个，{skipped} 个仍无空位")
 pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-assert sum(1 for z in board.Zones() if z.IsFilled()) == len(board.Zones()), \
-    "覆铜未全填"
+# 分母只算覆铜区：keepout(rule area) 没有网络也不产生填充多边形，IsFilled() 恒为假。
+# 同 route_rf.py 那处——V3.9 从 V3.8 母版找回 4 个 RF keepout 之后，
+# 用 len(board.Zones()) 当分母会误报"覆铜未全填"。
+_pours = [z for z in board.Zones() if not z.GetIsRuleArea()]
+assert sum(1 for z in _pours if z.IsFilled()) == len(_pours), "覆铜未全填"
 board.Save(PCB)
 print("saved:", PCB)

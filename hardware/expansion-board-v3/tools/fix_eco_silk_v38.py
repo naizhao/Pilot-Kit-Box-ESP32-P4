@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""处理 V3.8 新增 QPL9547 无源件附近的丝印净空。"""
+"""V3.8 丝印 ECO —— 已退役（2026-09-03），保留文件只为记录去向。
 
-import os
+原来做的事：把 C31 / C21 / C36 / C48 / R11 五个位号的层设成 F.Fab（或 B.Fab）。
+理由是 V3.8 新增 QPL9547 那批无源件之后，这几颗附近挤不下位号，把它们藏进
+装配层是当时的腾挪手段。
 
-import pcbnew
+为什么退役：
 
+  · **它会撤销人工排版。** 这个脚本在 rebuild.sh 里，硬编了一份位号列表，每跑
+    一次就把这 5 个重新推回 Fab。罩哥 2026-09-02 手工把它们挪回丝印层之后，
+    只要有人跑一次重建，那部分工作就白做了——而且不报任何错。
+  · **前提已经不成立。** V3.9 重新排过丝印，这 5 个位号现在都在 F.Silkscreen
+    且可见，全板丝印 DRC 违规为 0。当年挤不下的情况不存在了。
+  · 位号在 Fab 层意味着**板子上印不出来**。V3.8 已经打样过，那批实物上这 5 个
+    位置是没有位号的——手工贴片只能靠装配图数位置，这不是想要的结果。
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BDIR = os.environ.get("PK_BOARD_DIR") or os.path.join(ROOT, "kicad")
-PCB = os.path.join(BDIR, "expansion-board-v3.kicad_pcb")
-
-board = pcbnew.LoadBoard(PCB)
-for ref in ("C31", "C21", "C36", "C48", "R11"):
-    footprint = board.FindFootprintByReference(ref)
-    assert footprint, f"找不到 {ref}"
-    footprint.Reference().SetLayer(pcbnew.F_Fab if not footprint.IsFlipped()
-                                   else pcbnew.B_Fab)
-board.Save(PCB)
-print("V3.8 丝印 ECO：C31/C21/C36/C48/R11 位号移到装配层")
+将来若又出现丝印挤不下的情况，正确做法是挪位号的**位置**（tools/ 下有按白名单
+重排的脚本），而不是把它移出丝印层。
+"""
+print("V3.8 丝印 ECO 已退役：不再把 C31/C21/C36/C48/R11 的位号移出丝印层。")
+print("  这 5 个位号现在都在 F.Silkscreen，全板丝印 DRC 为 0；理由见本文件 docstring。")

@@ -386,6 +386,13 @@ def load_fp(lib, name):
     p = PROJECT_FP if lib == "expansion-board-v3" else os.path.join(OFFICIAL_FP, lib + ".pretty")
     fp = pcbnew.FootprintLoad(p, name)
     assert fp, f"封装加载失败: {lib}:{name}"
+    # FootprintLoad 是按**路径**加载的，返回对象的 FPID 只有封装名、没有库名。
+    # 不补这一句，板上 178 个 fpid 全是裸名（`R_0603_1608Metric`），而原理图侧
+    # 带库（`Resistor_SMD:R_0603_1608Metric`）。后果不是"报一堆不匹配"，而是
+    # **schematic parity 整项静默失效**——KiCad 定位不到库，footprint_symbol_mismatch
+    # 压根不跑，parity 报 0 看着一切正常。V4 在 2026-09-01 踩过同一个坑
+    # （补前缀后 parity 从 0 变 212），V3 这边是 196。
+    fp.SetFPID(pcbnew.LIB_ID(lib, name))
     return fp
 
 

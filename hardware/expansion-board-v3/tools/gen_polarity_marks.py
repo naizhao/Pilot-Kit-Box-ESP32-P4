@@ -66,10 +66,32 @@ if os.path.exists(lck):
 board = pcbnew.LoadBoard(PCB)
 
 targets, existing, dropped = [], [], []
-for f in board.GetFootprints():
+pending_drop = []
+# ⚠️ 必须 list() 快照。下面会在循环体内调 f.Remove(g) 删封装圆点，那个删除会让
+# board.GetFootprints() 的 SWIG 迭代器失效——后续拿到的 f 退化成裸 SwigPyObject，
+# 连 Pads() 都不能迭代。内层的 list(f.GraphicalItems()) 只保护了内层，保护不了这里。
+#
+# 原来没暴露，是因为当时 D4/D5 被跳过、删除只发生在遍历后期。2026-09-03 取消
+# 那个例外后，D4 成了第一个触发删除的器件，重建链当场炸在 f.Pads()。
+for f in list(board.GetFootprints()):
     ref = f.GetReference().strip()
     fp = f.GetFPIDAsString().split(":")[-1]
     pads = {p.GetNumber(): p.GetPosition() for p in f.Pads()}
+    # D4/D5 曾经被排除在外，理由是"双向 TVS 没有安装极性，画阴极会误导装配"。
+    # 2026-09-03 取消这个例外，四颗 TPESD8L3.3 统一处理：
+    #
+    #   · D2/D3 与 D4/D5 是**同一颗料**，都是双向管。既然 D2/D3 画了而 D4/D5 不画，
+    #     板上四颗一模一样的器件长得却不一样，装配的人反而要停下来想为什么。
+    #   · 这条线的实际作用不是"指示电流方向"，而是"这个位置是二极管不是电容"——
+    #     0402 的 ESD 管混在 22 颗 0402 电容和 9 颗 0402 电感中间，外观完全一样。
+    #     对双向管来说按标记摆放不会摆错，不标反而更容易被当成电容漏贴。
+    #   · 本文件开头就写着"以后新增任何 D* 两脚器件也会自动进入同一审计，
+    #     不再依赖封装名称白名单"，这个例外与那个设计意图是冲突的。
+    #
+    # 旧注释的另一条理由"删封装圆点会触发 SWIG 迭代器失效"**是真的**，取消例外
+    # 之后当场复现了（D4 成了第一个触发删除的器件，重建链炸在 f.Pads()）。
+    # 处理方式不是继续回避，而是修掉根因：外层遍历加 list() 快照 + 删除延后到
+    # 遍历结束。见文件上方那段说明。
     if not is_diode_target(ref, pads):
         continue
     c = f.GetPosition()
@@ -111,8 +133,14 @@ for f in board.GetFootprints():
             rad = math.hypot(g.GetEnd().x - g.GetStart().x,
                              g.GetEnd().y - g.GetStart().y) / 1e6
             if rad < 0.15:                      # 只删这种当标记用的小点
-                f.Remove(g)
-                dropped.append(f"{ref} 的 pin1 圆点(r={rad:.2f}mm)")
+                # 收集不删。真正的 Remove 放到遍历结束后统一做——
+                # 在循环里删会让外层迭代器失效（见上面那段说明）。
+                pending_drop.append((f, g, ref, rad))
+
+# 圆点统一在这里删——遍历已经结束，不会再动 GetFootprints() 的迭代器。
+for _f, _g, _ref, _rad in pending_drop:
+    _f.Remove(_g)
+    dropped.append(f"{_ref} 的 pin1 圆点(r={_rad:.2f}mm)")
 
 # 幂等：先删掉上一轮画的。判据是「线宽等于本脚本的 WIDTH_MM，且两端点与这次
 # 要画的位置吻合」——只按线宽会误删别的丝印，只按位置又漏掉线宽改过的情况。
