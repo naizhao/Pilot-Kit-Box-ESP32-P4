@@ -17,6 +17,7 @@
 | [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map for the V3.9 design | EN / [中文](PINMAP-zh_CN.md) |
 | [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list | EN / [中文](ASSEMBLY-zh_CN.md) |
 | [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist (also [.xlsx](CHECKLIST.xlsx) / [.pdf](CHECKLIST.pdf)) | EN / [中文](CHECKLIST-zh_CN.md) |
+| [`ASSEMBLY_MAP.pdf`](ASSEMBLY_MAP.pdf) | Color-coded assembly map — every designator's position, orientation and category (2 pages) | PDF |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / [中文](BASEBOARD_REF-zh_CN.md) |
 
 Engineering working notes (board bring-up records, antenna studies, layout
@@ -41,6 +42,7 @@ constraints, purchasing history) are kept out of the public tree.
 | [`PINMAP.md`](PINMAP.md) | V3.9 设计权威引脚/网络映射 | [EN](PINMAP.md) / 中文 |
 | [`ASSEMBLY.md`](ASSEMBLY.md) | 手工贴片点位清单 | [EN](ASSEMBLY.md) / 中文 |
 | [`CHECKLIST.md`](CHECKLIST.md) | 按位号贴片核对表（另附 [.xlsx](CHECKLIST.xlsx) / [.pdf](CHECKLIST.pdf)） | [EN](CHECKLIST.md) / 中文 |
+| [`ASSEMBLY_MAP.pdf`](ASSEMBLY_MAP.pdf) / [`-zh_CN`](ASSEMBLY_MAP-zh_CN.pdf) | 彩色装配图：逐位号的位置/方向/类别，含位号速查表（2 页） | PDF |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | 微雪载板机械参数基准 | [EN](BASEBOARD_REF.md) / 中文 |
 
 工程过程记录（bring-up 记录、天线研究、布线约束、采购历史）不进公开目录。
