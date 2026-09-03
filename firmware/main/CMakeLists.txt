@@ -1,3 +1,22 @@
+# 板型必须在 configure 阶段就被人看见一次。选错板型的症状是 PFD 横滚整体偏 90°
+# ——照样有姿态、照样跟着动，桌上看不出来，所以"没提示"本身就是缺陷。
+# configure 会在首次构建和每次 menuconfig / sdkconfig 变动后重跑，正好是人在场的
+# 那两个时刻。第二道提示在开机日志（imu_task.c 的 load_board_mount）。
+#
+# 注意：IDF 会跑两遍 configure，第一遍在 Kconfig 生成之前，那时 CONFIG_* 还都
+# 没定义。所以这里对"两个都没定义"保持沉默——那是 bootstrap 遍，不是配置缺失。
+# 真的没选中板型走不到这里（Kconfig choice 必选其一），而且 pk_board.c 里还有
+# 一道 #error 兜底。
+if(CONFIG_PK_BOARD_PROFILE_V3)
+    set(PK_BOARD_PROFILE_NAME "v3 (expansion-board-v3)")
+elseif(CONFIG_PK_BOARD_PROFILE_V4)
+    set(PK_BOARD_PROFILE_NAME "v4 (expansion-board-v4)")
+endif()
+if(DEFINED PK_BOARD_PROFILE_NAME)
+    message(STATUS "Pilot Kit: expansion board profile = ${PK_BOARD_PROFILE_NAME}"
+                   "  (改：idf.py menuconfig -> Pilot Kit Box -> Expansion board profile)")
+endif()
+
 idf_component_register(
     SRCS
         "main.c"
@@ -49,6 +68,10 @@ idf_component_register(
         "pk_win.c"
         "pk_win_nearest.c"
         "display.c"
+        # 板型 profile：v3/v4 板系的传感器安装角不同，且 U4 与 U5/U6 转向相反，
+        # 不能抽象成整板旋转。必须排在 imu_task.c 之前被链接的语义无关，但
+        # 它是 imu_task/未来 qmc5883p 的共同依赖，放在一起看得见。
+        "pk_board.c"
         "imu_task.c"
         "pk_vib.c"
         "baro_task.c"

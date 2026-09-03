@@ -11,6 +11,15 @@ on:
         description: "Version label used for packaged ESP32-P4 assets"
         required: true
         default: "manual-esp32p4"
+      board_profile:
+        description: "Which expansion board to build (tag pushes always build both)"
+        required: false
+        default: both
+        type: choice
+        options:
+          - both
+          - v3
+          - v4
 
 permissions:
   contents: write
@@ -21,6 +30,15 @@ concurrency:
 
 env:
   RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  # 要构建的板型列表。tag 推送恒为两版——发布不允许只发一半：Pages 上两个
+  # 板型各占一个 manifest 目录，刷机页两个按钮各指一个，少一半就有用户点到 404。
+  # 手动触发可以只编一版用于验证/排障；board_profile 是 choice 型输入，取值由
+  # GitHub 限定在下拉项里，不会把任意字符串带进 shell。
+  BOARD_PROFILES: ${{ (github.event_name == 'workflow_dispatch' && inputs.board_profile != 'both') && inputs.board_profile || 'v3 v4' }}
+  # 只有两版都编出来才算完整构建，才允许发布站点和 Release 资产。
+  BUILD_IS_COMPLETE: ${{ (github.event_name != 'workflow_dispatch' || inputs.board_profile == 'both') && 'true' || 'false' }}
+  # 产物名后缀。BOARD_PROFILES 完整构建时含空格，不适合直接进 artifact 名。
+  BOARD_LABEL: ${{ (github.event_name == 'workflow_dispatch' && inputs.board_profile != 'both') && inputs.board_profile || 'both' }}
 
 jobs:
   build:
@@ -45,30 +63,65 @@ jobs:
             RELEASE_VERSION="${{ env.RELEASE_VERSION }}"
             RELEASE_VERSION="${RELEASE_VERSION#refs/tags/}"
             RELEASE_VERSION="${RELEASE_VERSION#esp32p4-}"
-            idf.py set-target esp32p4
-            idf.py -DPROJECT_VER="$RELEASE_VERSION" build
-            python ../tools/firmware_release/prepare_esp32p4_release.py \
-              --build-dir build \
-              --dist-dir ../dist \
-              --web-dir ../web/flasher \
-              --version "$RELEASE_VERSION"
+            # 一次发布产出**两套**固件：V3.9 与 V4.3 扩展板。
+            #
+            # 两版把 IMU 贴在相差 90° 的角度上（U4 与 U5/U6 转向还相反），固件
+            # 按构建时选定的板型换算姿态。只发一套等于让另一半用户刷进去一个
+            # 「照样有姿态、只是横滚偏 90°」的固件——不报错，桌上也看不出来。
+            #
+            # 每个板型用独立 build 目录：共用一个会留下上一版的 .o，症状是
+            # 「改了没生效」，在 CI 上尤其难查。板型由 sdkconfig.defaults.<profile>
+            # 片段显式给出，不依赖 Kconfig 的默认值。
+            BOARD_PROFILES="${{ env.BOARD_PROFILES }}"
+            echo "building board profiles: ${BOARD_PROFILES}"
+            for profile in ${BOARD_PROFILES}; do
+              echo "::group::build ${profile}"
+              idf.py -B "build_${profile}" \
+                -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.${profile}" \
+                -DSDKCONFIG="build_${profile}/sdkconfig" \
+                set-target esp32p4
+              idf.py -B "build_${profile}" \
+                -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.${profile}" \
+                -DSDKCONFIG="build_${profile}/sdkconfig" \
+                -DPROJECT_VER="$RELEASE_VERSION" build
+              # 产物必须真的带上选定的板型，而不是悄悄回落到 Kconfig 默认。
+              upper=$(echo "$profile" | tr '[:lower:]' '[:upper:]')
+              grep -q "#define CONFIG_PK_BOARD_PROFILE_${upper} 1" \
+                "build_${profile}/config/sdkconfig.h"
+              python ../tools/firmware_release/prepare_esp32p4_release.py \
+                --build-dir "build_${profile}" \
+                --dist-dir ../dist \
+                --web-dir ../web/flasher \
+                --board-profile "${profile}" \
+                --version "$RELEASE_VERSION"
+              echo "::endgroup::"
+            done
+            # 两套产物同名会互相静默覆盖，数一遍 factory bin 兜底：数量必须
+            # 恰好等于本次要编的板型数量。
+            want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d ' ')
+            test "$(ls -1 ../dist/release/*-factory.bin | wc -l)" -eq "${want}"
 
       - name: Upload firmware package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pilot-kit-box-esp32p4-${{ env.RELEASE_VERSION }}
+          name: pilot-kit-box-esp32p4-${{ env.RELEASE_VERSION }}-${{ env.BOARD_LABEL }}
           path: dist/release/*
           if-no-files-found: error
 
+      # 单板型构建的 dist/site 里只有一半 manifest，发出去会让另一版用户
+      # 在刷机页上点到 404。所以只有完整构建才上传站点产物；Pages 工作流
+      # 找不到这个产物时会安静跳过（见 deploy-esp32p4-pages.yml）。
       - name: Upload Pages site artifact
+        if: env.BUILD_IS_COMPLETE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: pilot-kit-box-esp32p4-pages-site
           path: dist/site
           if-no-files-found: error
 
+      # 同理：半套资产不进 Release。单板型构建只留 workflow artifact 供下载。
       - name: Publish GitHub Release assets
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && env.BUILD_IS_COMPLETE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -81,6 +134,14 @@ jobs:
           - Open the GitHub Pages firmware updater.
           - Connect the ESP32-P4 Type-C serial port.
           - Flash the latest ESP32-P4 firmware from the browser.
+
+          Two firmware sets are published, one per expansion board revision:
+          - V3.9 board: assets containing "v3"
+          - V4.3 board: assets containing "v4"
+
+          Pick the set that matches the board silkscreen. Flashing the wrong one does not fail:
+          the artificial horizon still shows a live attitude, simply rolled by 90 degrees.
+          The boot log line "imu: board profile V3.9|V4.3" confirms what is running.
 
           Release assets intentionally include "esp32p4" in their filenames so future board families can coexist safely.
           This release updates only the ESP32-P4 main firmware. It does not update the ESP32-C6 hosted slave firmware.

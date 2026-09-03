@@ -291,6 +291,28 @@ idf.py set-target esp32p4
 idf.py set-target esp32p4
 ```
 
+### 选扩展板板型（**唯一一个必须自己确认的选项**）
+
+```bash
+./build.sh menuconfig
+#   -> Pilot Kit Box -> Expansion board profile
+```
+
+**默认是 v4 板系。** 手上是 **v3** 板就必须改过来（看板号第一位，v3.x 都用 v3 固件，小版本只是修订）——两个板系的传感器贴片角度不同
+（U4 差 90°，且 U4 与 U5/U6 转向相反），选错了 PFD 照样出姿态、照样跟着动，只是横滚整体
+偏 90°，桌上看不出来。
+
+非交互改法（`sdkconfig` 不进 git，只影响你本地）：
+
+```bash
+sed -i '' 's/^# CONFIG_PK_BOARD_PROFILE_V3 is not set$/CONFIG_PK_BOARD_PROFILE_V3=y/' sdkconfig
+sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not set/' sdkconfig
+```
+
+编完确认编的是哪一版：`grep PK_BOARD_PROFILE build/config/sdkconfig.h`；
+烧完看开机日志 `imu: board profile v3|v4: q_body_fix = …` 那一行。
+细节见 [`docs/configuration.md`](configuration.md) 第 1 节。
+
 ### 关键配置项（已在 sdkconfig.defaults 写好，无需手动改）
 
 如果你只是要把固件跑起来，**这一节可以跳过**。完整的配置参考见 [`docs/configuration.md`](configuration.md)。

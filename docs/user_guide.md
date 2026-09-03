@@ -70,10 +70,19 @@ BNO085 continuously refines its magnetic calibration while the unit moves.
 Leveling stores the Pilot Kit software attitude reference; it is separate
 from the BNO085 internal calibration state.
 
-The current firmware assumes a vertical IMU breakout installation: chip face
-toward the pilot, header on the pilot's left and VCC at the top. If your IMU
-is installed differently, the firmware mounting transform must be changed
-and verified; leveling alone cannot correct a wrong axis mapping.
+The mounting transform follows the **expansion board profile** rather than a
+hand-entered constant. The v3 and v4 board families mount the IMU 90 degrees apart, and the
+firmware applies the transform for whichever profile the image was built for.
+Both assume the enclosure standing upright with the display facing the pilot
+and the J1 header edge downward.
+
+**If your board is in the v3 family (V3.x), select that profile at build time** — the default is
+V4.3. See the first section of [`configuration.md`](configuration.md). The
+symptom of a wrong profile is an artificial horizon rolled by 90 degrees: it
+still moves and still looks live, which is easy to miss on a bench. The boot
+log line `imu: board profile V3.9|V4.3` identifies the flashed image.
+
+Leveling cannot correct a wrong axis mapping; it only cages the horizon.
 
 ## 4. Main pages
 

@@ -32,6 +32,7 @@
 #include "config_demo.h"   /* pk_demo_enabled —— 演示模式接管姿态数据源 */
 #include "demo_data.h"
 #include "pk_i2c0_recover.h"  /* 总线级恢复：坏的是总线时 bno_bring_up 救不回来 */
+#include "pk_board.h"      /* 板型 profile：V3.9/V4.3 的 BNO085 安装变换不同 */
 #include "pk_vib.h"        /* vib_level：加速度模长滑动窗口 RMS */
 
 #include <math.h>
@@ -316,9 +317,9 @@ static esp_err_t bno_enable_linear_acceleration(void)
 
 /* --- Hamilton quaternion product: out = a · b ----------------------- *
  *
- * Used to apply a constant mounting rotation to the BNO085's Rotation
- * Vector before Euler extraction — see PK_IMU_MOUNT_QUAT_* in
- * imu_task.h for the rationale and the diagnostic recipe.
+ * Used to apply the board-profile mounting rotation to the BNO085's
+ * Rotation Vector before Euler extraction — see the sandwich section
+ * in imu_task.h and the derivation in pk_board.h.
  *
  * When the mounting quaternion is identity (1,0,0,0), this function
  * is invoked with W=1, X=Y=Z=0 and the compiler's constant
@@ -334,33 +335,53 @@ static inline void quat_mul(float aw, float ax, float ay, float az,
     *oz = aw * bz + ax * by - ay * bx + az * bw;
 }
 
+/* --- Board-profile mounting term ------------------------------------- *
+ *
+ * q_body_fix = R_aircraft→chip for the board this firmware is built
+ * for. V3.9 mounts U4 at 0°, V4.3 at +90°, so this is NOT a compile-
+ * time constant of imu_task — pk_board owns the derivation.
+ *
+ * Cached once in pk_imu_init(), which is the only entry point that
+ * creates the IMU task, so every reader below runs after the store.
+ * Never written again. */
+static float s_body_fix[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+
+static void load_board_mount(void)
+{
+    pk_board_imu_body_fix_quat(pk_board_profile(), s_body_fix);
+    ESP_LOGI(TAG, "board profile %s: q_body_fix = %.7f %.7f %.7f %.7f",
+             pk_board_profile_name(pk_board_profile()),
+             (double)s_body_fix[0], (double)s_body_fix[1],
+             (double)s_body_fix[2], (double)s_body_fix[3]);
+}
+
 /* --- Rotate a body-frame vector chip→aircraft ------------------------ *
  *
  * Linear Acceleration is a vector in the BNO's chip body frame, NOT a
  * world-referenced orientation — so unlike parse_rotation_vector()'s
- * quaternion sandwich, only the body-frame remap applies here
- * (PK_IMU_MOUNT_QUAT_*); PK_IMU_WORLD_FIX_* (ENU→NED) is irrelevant to
- * a body-frame vector and must NOT be applied.
+ * quaternion sandwich, only the body-frame remap applies here;
+ * PK_IMU_WORLD_FIX_* (ENU→NED) is irrelevant to a body-frame vector
+ * and must NOT be applied.
  *
- * PK_IMU_MOUNT_QUAT_* is defined (see imu_task.h) as q_body_fix =
- * R_aircraft→chip, i.e. it rotates AIRCRAFT vectors into the CHIP
- * frame. We need the inverse direction (chip→aircraft), which for a
- * unit quaternion is the conjugate: v_aircraft = q* · v_chip · q,
- * where q* = conj(q_body_fix) = (W, -X, -Y, -Z).
+ * s_body_fix is q_body_fix = R_aircraft→chip, i.e. it rotates AIRCRAFT
+ * vectors into the CHIP frame. We need the inverse direction
+ * (chip→aircraft), which for a unit quaternion is the conjugate:
+ * v_aircraft = q* · v_chip · q, where q* = conj(q_body_fix).
  *
  * Standard vector-rotation-by-quaternion formula: treat v as a pure
  * quaternion (0, vx, vy, vz) and compute p · v · conj(p) with
- * p = conj(q_body_fix). Verified against the worked "chip +X →
- * aircraft up" example in imu_task.h: rotating chip vector (1,0,0)
- * through this function with the current PK_IMU_MOUNT_QUAT_* yields
- * (0,0,-1) = aircraft up in NED, matching that example exactly. */
+ * p = conj(q_body_fix). Cross-checked against
+ * pk_board_imu_chip_vec_to_body() — firmware/test/test_pk_board_mount.c
+ * asserts the matrix form for both profiles, and
+ * firmware/test/test_imu_mount.c re-derives this quaternion path for
+ * V3.9 from the physical axis mapping. */
 static inline void quat_rotate_vec_body_fix(float vx, float vy, float vz,
                                             float *ox, float *oy, float *oz)
 {
-    const float pw =  PK_IMU_MOUNT_QUAT_W;
-    const float px = -PK_IMU_MOUNT_QUAT_X;
-    const float py = -PK_IMU_MOUNT_QUAT_Y;
-    const float pz = -PK_IMU_MOUNT_QUAT_Z;
+    const float pw =  s_body_fix[0];
+    const float px = -s_body_fix[1];
+    const float py = -s_body_fix[2];
+    const float pz = -s_body_fix[3];
 
     float tw, tx, ty, tz;
     quat_mul(pw, px, py, pz, 0.0f, vx, vy, vz, &tw, &tx, &ty, &tz);
@@ -460,8 +481,7 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
              &tw, &ti, &tj, &tk);
     float aqw, aqi, aqj, aqk;
     quat_mul(tw, ti, tj, tk,
-             PK_IMU_MOUNT_QUAT_W, PK_IMU_MOUNT_QUAT_X,
-             PK_IMU_MOUNT_QUAT_Y, PK_IMU_MOUNT_QUAT_Z,
+             s_body_fix[0], s_body_fix[1], s_body_fix[2], s_body_fix[3],
              &aqw, &aqi, &aqj, &aqk);
 
     /* Snapshot the post-sandwich attitude under the lock so
@@ -510,23 +530,14 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     quat_to_euler(aqi, aqj, aqk, aqw, &discard_roll, &discard_pitch, &yaw);
     (void)discard_yaw; (void)discard_roll; (void)discard_pitch;
 
-    /* Mounting-orientation corrections — see imu_task.h for the
-     * diagnostic recipe and the rationale for each knob. These
-     * compile away when the corresponding define is 0. */
-#if PK_IMU_MOUNT_INVERT_ROLL
-    roll = -roll;
-#endif
-#if PK_IMU_MOUNT_INVERT_PITCH
-    pitch = -pitch;
-#endif
-#if PK_IMU_MOUNT_INVERT_YAW
-    yaw = 360.0f - yaw;
-#endif
-#if PK_IMU_MOUNT_YAW_OFFSET_DEG != 0
-    yaw += (float)PK_IMU_MOUNT_YAW_OFFSET_DEG;
-    while (yaw >= 360.0f) yaw -= 360.0f;
-    while (yaw <    0.0f) yaw += 360.0f;
-#endif
+    /* 这里曾经有一组 invert roll / invert pitch / invert yaw /
+     * yaw offset 的手工修正旋钮（旧 breakout 时代的遗留）。2026-09-03 删除：
+     * 它们在 profile 变换**之后**再改欧拉角，构成第二套全局安装修正入口，
+     * 而且欧拉角后处理并不等价于三维安装旋转——"把 pitch 取反"不对应任何
+     * 真实的安装姿态，用它凑出来的 PFD 在复合姿态下必然是错的，还会和走
+     * pk_board 的磁力计各说各话。安装方向的唯一来源是 pk_board 的 profile；
+     * 真机上如果哪个轴不对，改的是 pk_board.c 里对应那一段判据。
+     * hardware/test_firmware_board_profile_contract.py 会阻止它们复活。 */
 
     xSemaphoreTake(s_sample_lock, portMAX_DELAY);
     s_sample.ts_us     = esp_timer_get_time();
@@ -952,6 +963,10 @@ bool pk_imu_sample_get(pk_imu_sample_t *out)
 
 esp_err_t pk_imu_init(void)
 {
+    /* 先装安装变换：s_body_fix 必须在 IMU 任务被创建之前就位，否则第一批
+     * Rotation Vector 会按单位四元数解算，PFD 会闪一下错误姿态。 */
+    load_board_mount();
+
     s_sample_lock = xSemaphoreCreateMutex();
     if (s_sample_lock == NULL) return ESP_ERR_NO_MEM;
     pk_vib_reset(&s_vib);

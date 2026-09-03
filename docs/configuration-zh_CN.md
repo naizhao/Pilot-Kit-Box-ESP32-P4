@@ -19,24 +19,160 @@
 
 ## 目录
 
-1. [硬件目标 (P4 silicon revision)](#1-硬件目标-p4-silicon-revision)
-2. [分区表与 Flash](#2-分区表与-flash)
-3. [USB Host (RTL-SDR)](#3-usb-host-rtl-sdr)
-4. [蓝牙 / BLE / ESP-Hosted](#4-蓝牙--ble--esp-hosted)
-5. [Own-ship 绑定](#5-own-ship-绑定)
-6. [存储 / LittleFS / MicroSD](#6-存储--littlefs--microsd)
-7. [显示 / ST7701 MIPI-DSI](#7-显示--st7701-mipi-dsi)
-8. [IMU / BNO085](#8-imu--bno085)
-9. [触摸与电源](#9-触摸与电源)
-10. [日志输出](#10-日志输出)
-11. [FreeRTOS 调度](#11-freertos-调度)
-12. [编译优化](#12-编译优化)
-13. [改完配置之后](#13-改完配置之后)
-14. [想加新配置项](#14-想加新配置项)
+1. [**扩展板板系 (v3 / v4)**](#1-扩展板板系-v3--v4)
+2. [硬件目标 (P4 silicon revision)](#2-硬件目标-p4-silicon-revision)
+3. [分区表与 Flash](#3-分区表与-flash)
+4. [USB Host (RTL-SDR)](#4-usb-host-rtl-sdr)
+5. [蓝牙 / BLE / ESP-Hosted](#5-蓝牙--ble--esp-hosted)
+6. [Own-ship 绑定](#6-own-ship-绑定)
+7. [存储 / LittleFS / MicroSD](#7-存储--littlefs--microsd)
+8. [显示 / ST7701 MIPI-DSI](#8-显示--st7701-mipi-dsi)
+9. [IMU / BNO085](#9-imu--bno085)
+10. [触摸与电源](#10-触摸与电源)
+11. [日志输出](#11-日志输出)
+12. [FreeRTOS 调度](#12-freertos-调度)
+13. [编译优化](#13-编译优化)
+14. [改完配置之后](#14-改完配置之后)
+15. [想加新配置项](#15-想加新配置项)
 
 ---
 
-## 1. 硬件目标 (P4 silicon revision)
+## 1. 扩展板板系 (v3 / v4)
+
+| 配置项 | 默认 | 说明 |
+|--------|------|------|
+| `CONFIG_PK_BOARD_PROFILE_V4` | `y` | 为 **v4 板系**编译（当前默认） |
+| `CONFIG_PK_BOARD_PROFILE_V3` | `n` | 为 **v3 板系**编译 |
+
+> **选的是板系，不是修订号。** `v3` / `v4`（将来还有 `v5`）指扩展板板系；
+> `V3.9` / `V4.3` 只是这两个板系当前的修订。修订滚动不需要改固件——
+> V4.4 出来了照样用 `v4` 固件。下面的角度实测自 V3.9 与 V4.3，而
+> `hardware/test_firmware_board_profile_contract.py` 会把固件里的角度表与
+> 两个 `kicad_pcb` 现场对拍，哪天某个新修订转了传感器，它先变红。
+
+两者互斥（Kconfig `choice`），必须且只能选一个。**没选任何一个不会静默走默认值，而是编译期直接报错**：
+
+```
+#error 没有选择扩展板板系：请在 menuconfig 的 Pilot Kit Box 里选
+       PK_BOARD_PROFILE_V3 或 V4。板型不能在运行时靠探测猜。
+```
+
+> ⚠️ **这跟下一节的 P4 silicon revision 是两回事。**
+> `CONFIG_ESP32P4_*` 说的是主控芯片的流片版本；这一节说的是**扩展板**的 PCB 版本。
+> 两者互不相关，改错哪一个都不会提示另一个。
+
+### 为什么必须手选，不能自动探测
+
+v3 与 v4 两个板系把传感器**贴在不同的角度**上（实测自各自当前修订 V3.9 / V4.3）：
+
+| 器件 | v3 | v4 |
+|---|---:|---:|
+| U4 BNO085（IMU） | 0° | **+90°** |
+| U5 BMP388（气压） | 0° | -90° |
+| U6 QMC5883P（磁力计） | 0° | -90° |
+| U7 ATGM336H（GNSS） | 0° | 0° |
+
+注意 U4 和 U5/U6 **转向相反**，所以这不是"整板转 90°"，两颗姿态相关的器件各有一套
+board-to-body 变换。
+
+选错板型的症状很坏：**PFD 照样有姿态、照样跟着动，只是横滚整体偏 90°**——地面上摆着看
+不出来，飞起来才发现。所以固件宁可编译期报错，也不给"猜一个"的余地。
+
+固件**不会**、也**不允许**用运行时探测来判板型。板上唯一随版本变化的 I²C 器件是 SY6970
+PMIC，而它表达的是 powered / unpowered **变体**，不是板子版本：V3 和一块没装电源部分的
+V4 都不会应答它。`hardware/test_firmware_board_profile_contract.py` 会在 `pk_board` 的代码里
+出现 `SY6970` / `0x6A` / `PMIC` 时直接判红。
+
+### 切到 v3
+
+**方式一：menuconfig（推荐，交互式）**
+
+```bash
+cd firmware
+./build.sh menuconfig
+#   -> Pilot Kit Box
+#     -> Expansion board profile (v4 (expansion-board-v4))  --->
+#        ( ) v3 (expansion-board-v3, validated on V3.9)   <- 方向键选中，空格确认
+#        (X) v4 (expansion-board-v4, validated on V4.3)
+#   S 保存 -> Q 退出
+./build.sh build
+```
+
+**方式二：直接改 sdkconfig（脚本 / CI 用，非交互）**
+
+`sdkconfig` 在 `.gitignore` 里，改它只影响你本地：
+
+```bash
+cd firmware
+sed -i '' 's/^# CONFIG_PK_BOARD_PROFILE_V3 is not set$/CONFIG_PK_BOARD_PROFILE_V3=y/' sdkconfig
+sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not set/' sdkconfig
+./build.sh build
+```
+
+（Linux 上把 `sed -i ''` 换成 `sed -i`。）
+
+**切回 v4** 就是把上面两条 `sed` 反过来，或在 menuconfig 里重新选 v4。
+
+### 怎么确认这次编的是哪一版
+
+**编译后、烧录前**——查生成的配置头，两行只会出现一行：
+
+```bash
+grep PK_BOARD_PROFILE firmware/build/config/sdkconfig.h
+# v3 -> #define CONFIG_PK_BOARD_PROFILE_V3 1
+# v4 -> #define CONFIG_PK_BOARD_PROFILE_V4 1
+```
+
+**烧录后**——开机串口日志里 `imu` 这一行直接把板型和安装四元数打出来：
+
+```
+I (xxxx) imu: board profile v3: q_body_fix = 0.7071068 0.0000000 0.7071068 0.0000000
+I (xxxx) imu: board profile v4: q_body_fix = 0.5000000 0.5000000 0.5000000 -0.5000000
+```
+
+这两组数不一样，一眼就能看出烧进去的是哪一版。**换板子时先看这一行**，别靠记忆。
+
+### 两版对称构建（发布 / CI 用）
+
+不想动 `sdkconfig`、又要一次产出两个镜像时，用各自独立的 build 目录——
+共用一个目录会留下上一版的 `.o`，症状是"改了却没生效"，很难查：
+
+```bash
+cd firmware
+./build.sh -B build_v3 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v3" \
+  -DSDKCONFIG=build_v3/sdkconfig build
+
+./build.sh -B build_v4 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v4" \
+  -DSDKCONFIG=build_v4/sdkconfig build
+```
+
+产物分别在 `build_v3/pilot_kit_box.bin` 和 `build_v4/pilot_kit_box.bin`。
+烧录把 `build` 换成 `-p <端口> flash` 即可。
+
+`sdkconfig.defaults` 本身**故意不写板型**，否则上面两个片段谁也覆盖不掉它；
+`hardware/test_firmware_board_profile_contract.py` 会盯着这一点。
+
+### 构建时也会打出来一次
+
+configure 阶段（首次构建、以及每次 `menuconfig` / `sdkconfig` 变动后）会打印：
+
+```
+-- Pilot Kit: expansion board profile = v4 (expansion-board-v4)  (改：idf.py menuconfig -> ...)
+```
+
+加上开机日志那一行，人在场的两个时刻都能看见板型，不用靠"记得自己选过"。
+
+### 想让某一版成为团队默认
+
+把 `CONFIG_PK_BOARD_PROFILE_V3=y` 加进 `firmware/sdkconfig.defaults`（这个文件进 git），
+然后删掉本地 `sdkconfig` 重新 `set-target`。当前 `sdkconfig.defaults` 里没写这一项，
+所以走 Kconfig 的 `default`，也就是 **v4**。
+
+---
+
+## 2. 硬件目标 (P4 silicon revision)
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -56,7 +192,7 @@ Chip type:          ESP32-P4 (revision v1.3)
 
 ---
 
-## 2. 分区表与 Flash
+## 3. 分区表与 Flash
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -94,7 +230,7 @@ storage,   data, spiffs,   ,          0x800000,    ← 缩到 8 MiB 给 OTA 让�
 
 ---
 
-## 3. USB Host (RTL-SDR)
+## 4. USB Host (RTL-SDR)
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -124,7 +260,7 @@ RTL2832U 范围 225 kSPS – 3.2 MSPS。ADS-B 必须 ≥ 2 MSPS（每比特 1 µ
 
 ---
 
-## 4. 蓝牙 / BLE / ESP-Hosted
+## 5. 蓝牙 / BLE / ESP-Hosted
 
 > ✅ **默认 `CONFIG_PK_BLE_ENABLED=y`，BLE 启动时初始化**。Bring-up 已经全链路打通，出厂状态固件会自动跑 `ble_gatt_init()`，板子上电就 advertising。
 >
@@ -206,7 +342,7 @@ MAC 后缀来自 C6 模组的 efuse —— 同板跨重启稳定、跨板唯一�
 
 ---
 
-## 5. Own-ship 绑定
+## 6. Own-ship 绑定
 
 PFD 的 ALT / GS / VS 可以来自编译期配置的本机 ADS-B transponder，也可在
 没有手动绑定时使用 GPS。本机 ICAO 通过 `CONFIG_PK_OWN_ICAO` 配置。
@@ -247,7 +383,7 @@ ICAO 时使用编译期 `CONFIG_PK_OWN_ICAO`；否则由 GPS 提供本机位置�
 
 ---
 
-## 6. 存储 / LittleFS / MicroSD
+## 7. 存储 / LittleFS / MicroSD
 
 文件后端在启动时读取 NVS 配置。选择 MicroSD 且卡已挂载时写
 `/sdcard`，否则写 `/storage` LittleFS；选择了 MicroSD 但缺卡时会
@@ -286,7 +422,7 @@ CLK=GPIO43  CMD=GPIO44  D0..D3=GPIO39..42
 
 ---
 
-## 7. 显示 / ST7701 MIPI-DSI
+## 8. 显示 / ST7701 MIPI-DSI
 
 写死在 `firmware/main/display.h`：
 
@@ -308,7 +444,7 @@ RGB565-swapped framebuffer 逆时针旋转 270°（等效顺时针 90°）、执
 
 ---
 
-## 8. IMU / BNO085
+## 9. IMU / BNO085
 
 写死在 `firmware/main/imu_task.c`：
 
@@ -336,14 +472,27 @@ RGB565-swapped framebuffer 逆时针旋转 270°（等效顺时针 90°）、执
 - `pitch` (Y 轴旋转): -90..+90，机头上抬为正
 - `yaw` (Z 轴旋转): 0..360，从上方看顺时针为正
 
-当前 `q_body_fix = (0, 0.7071068, 0, -0.7071068)` 假定模块竖直安装：
-芯片面朝飞行员、排针位于飞行员左侧、VCC 在顶部；芯片 +X 对应飞行器向上，
-+Y 对应向左，+Z 对应向后。若实际安装方向不同，必须修改固件变换并重新验证
-姿态；触摸“调平”不能代替轴向变换。
+### 安装变换 q_body_fix
+
+**不再是 `imu_task.h` 里的一个写死常量**，而是按扩展板板系给出，见
+[第 1 节](#1-扩展板板系-v3--v4)：
+
+| 板型 | `q_body_fix` (w, x, y, z) | 芯片轴 → 机体轴 |
+|---|---|---|
+| v3（U4 贴 0°） | `0.7071068, 0, 0.7071068, 0` | +X→下、+Y→右、+Z→后 |
+| v4（U4 贴 +90°） | `0.5, 0.5, 0.5, -0.5` | +X→右、+Y→上、+Z→后 |
+
+机体系是航空 NED（+X 前 / +Y 右 / +Z 下）；两版都按盒子竖立、屏幕面向飞行员、
+J1 排针边朝下安装。数值由 `firmware/main/pk_board.c` 从三段判据算出（原厂手册轴向、
+PCB 实测封装角、装配朝向），不是手工标定值。
+
+**别手改这两个值**。装配方式如果真的变了，改 `pk_board.c` 里对应的那一段判据，
+然后跑 `firmware/test/test_pk_board_mount.c`——它从物理轴定义独立推导期望值，
+改错会红。触摸“调平”只能笼住地平仪，不能代替轴向变换。
 
 ---
 
-## 9. 触摸与电源
+## 10. 触摸与电源
 
 Rev1.2 只有 RESET、BOOT、POWER 三个板级按键，没有 MODE/TARE/UP/DOWN
 应用按键。旧 `button_task.c` 只为 2.4 寸载板保留，且已从
@@ -361,7 +510,7 @@ GPIO26/GPIO23 在 Rev1.2 上是 LCD_BL_PWM 和 GT911 TP_RST。
 Key3 POWER 短按开机、长按约两秒关机；Key1 RESET 重启 P4；Key2 BOOT
 用于下载模式。当前触摸 UI 没有工厂重置 / DCD 擦除手势。
 
-## 10. 日志输出
+## 11. 日志输出
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -404,7 +553,7 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 
 ---
 
-## 11. FreeRTOS 调度
+## 12. FreeRTOS 调度
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -431,7 +580,7 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 
 ---
 
-## 12. 编译优化
+## 13. 编译优化
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
@@ -475,7 +624,7 @@ export IDF_CCACHE_ENABLE=1
 
 ---
 
-## 13. 改完配置之后
+## 14. 改完配置之后
 
 任何 sdkconfig 改动后：
 
@@ -496,7 +645,7 @@ idf.py -p <PORT> flash
 
 ---
 
-## 14. 想加新配置项？
+## 15. 想加新配置项？
 
 如果你写了一个新模块，希望让它的某个行为通过 menuconfig 配置：
 

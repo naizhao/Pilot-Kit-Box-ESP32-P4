@@ -249,8 +249,8 @@
               <span class="value">ESP32-P4</span>
             </div>
             <div class="item">
-              <span class="label">刷写清单</span>
-              <span class="value">firmware/esp32p4/latest/manifest-esp32p4.json</span>
+              <span class="label">扩展板板型</span>
+              <span class="value">必须自己选：v3 或 v4 板</span>
             </div>
             <div class="item">
               <span class="label">更新范围</span>
@@ -258,11 +258,25 @@
             </div>
           </div>
 
+          <p class="status">
+            <strong>⚠️ 先确认你的扩展板是 v3 还是 v4。</strong>看板号第一位即可——v3.x 都用 v3 固件，v4.x 都用 v4 固件，小版本只是修订。
+            v3 与 v4 两个板系把 IMU 贴在相差 90° 的角度上，固件按板系换算姿态。
+            <strong>刷错板型不会报错</strong>：地平仪照样有姿态、照样跟着动，
+            只是横滚整体偏 90°，放在桌上不容易看出来。板号印在扩展板丝印上。
+          </p>
+
           <div class="actions">
             <esp-web-install-button
-              manifest="firmware/esp32p4/latest/manifest-esp32p4.json"
+              manifest="firmware/esp32p4/v3/latest/manifest-esp32p4-v3.json"
             >
-              <button slot="activate">连接并刷入 ESP32-P4 固件</button>
+              <button slot="activate">刷入 v3 板固件（V3.x）</button>
+              <span slot="unsupported">当前浏览器不支持 Web Serial。请使用 Chrome 或 Edge。</span>
+              <span slot="not-allowed">刷写页面需要通过 HTTPS 或 localhost 打开。</span>
+            </esp-web-install-button>
+            <esp-web-install-button
+              manifest="firmware/esp32p4/v4/latest/manifest-esp32p4-v4.json"
+            >
+              <button slot="activate">刷入 v4 板固件（V4.x）</button>
               <span slot="unsupported">当前浏览器不支持 Web Serial。请使用 Chrome 或 Edge。</span>
               <span slot="not-allowed">刷写页面需要通过 HTTPS 或 localhost 打开。</span>
             </esp-web-install-button>

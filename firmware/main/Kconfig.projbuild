@@ -1,5 +1,36 @@
 menu "Pilot Kit Box"
 
+    choice PK_BOARD_PROFILE
+        prompt "Expansion board profile"
+        default PK_BOARD_PROFILE_V4
+        help
+            Which expansion board FAMILY this image is built for. The
+            choice is the family (v3, v4, and future v5), not a revision:
+            v3.x and v4.x mount their sensors at different angles (U4
+            BNO085 0 vs +90 degrees, U6 QMC5883P 0 vs -90), so the
+            board-to-body transforms differ and the wrong choice produces
+            a plausible but wrong attitude and heading.
+
+            Validated against the current revisions of each family,
+            V3.9 and V4.3. Sensor placement is treated as a family-level
+            property; hardware/test_firmware_board_profile_contract.py
+            compares this firmware table against the live kicad_pcb files,
+            so a future revision that rotates a sensor turns red instead
+            of shipping silently.
+
+            This MUST stay an explicit build-time choice. It cannot be
+            probed at runtime: the only board-varying I2C device is the
+            SY6970 PMIC, and that is a powered/unpowered variant marker,
+            not a board family — v3 and an unpowered v4 both fail to
+            ACK it. See firmware/main/pk_board.h.
+
+        config PK_BOARD_PROFILE_V3
+            bool "v3 (expansion-board-v3, validated on V3.9)"
+
+        config PK_BOARD_PROFILE_V4
+            bool "v4 (expansion-board-v4, validated on V4.3)"
+    endchoice
+
     config PK_BLE_ENABLED
         bool "Initialise BLE GATT server at boot"
         default y

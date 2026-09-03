@@ -44,17 +44,42 @@
 
 所有 ESP32-P4 产物文件名都包含 `esp32p4`，为未来其他板型预留空间。
 
-以 `v1.2.3` 为例：
+### 一次发布产出两套：v3 与 v4
+
+v3 与 v4 两个板系把 IMU 贴在相差 90° 的角度上，固件按构建时选定的板系换算姿态，
+所以**每次发布都同时构建两套**，产物文件名里带 `v3` / `v4`。
+
+⚠️ **刷错板型不会报错**：地平仪照样有姿态、照样跟着动，只是横滚整体偏 90°，
+桌上不容易看出来。所以刷机页面不提供"默认按钮"，必须自己选板型；开机串口日志
+`imu: board profile v3|v4` 那一行可以事后确认。
+
+以 `v1.2.3` 的 v4 那一套为例（v3 把 `v4` 换成 `v3`）：
 
 | 文件 | 用途 |
 |---|---|
-| `pilot-kit-box-esp32p4-v1.2.3-factory.bin` | 网页刷写使用的 merged bin，写入 offset `0x0` |
-| `pilot-kit-box-esp32p4-v1.2.3-bootloader.bin` | 维护者排障用，写入 offset `0x2000` |
-| `pilot-kit-box-esp32p4-v1.2.3-partition-table.bin` | 维护者排障用，写入 offset `0x8000` |
-| `pilot-kit-box-esp32p4-v1.2.3-app.bin` | 维护者排障用，写入 offset `0x10000` |
-| `manifest-esp32p4.json` | ESP Web Tools 刷写清单 |
-| `SHA256SUMS-esp32p4.txt` | 校验和 |
-| `pilot-kit-box-esp32p4-v1.2.3.zip` | 面向下载的完整包 |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-factory.bin` | 网页刷写使用的 merged bin，写入 offset `0x0` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-bootloader.bin` | 维护者排障用，写入 offset `0x2000` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-partition-table.bin` | 维护者排障用，写入 offset `0x8000` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-app.bin` | 维护者排障用，写入 offset `0x10000` |
+| `manifest-esp32p4-v4.json` | ESP Web Tools 刷写清单 |
+| `SHA256SUMS-esp32p4-v4.txt` | 校验和 |
+| `pilot-kit-box-esp32p4-v4-v1.2.3.zip` | 面向下载的完整包 |
+
+### 只编一版（验证 / 排障）
+
+Actions → **Release ESP32-P4 firmware** → *Run workflow*，`board_profile` 选
+`v3` 或 `v4`（默认 `both`）。
+
+单板型运行**只产出 workflow artifact 供下载**，不发 GitHub Release 资产、也不发布
+Pages 站点——它的 `dist/site` 里只有一半 manifest，发出去会让另一版用户在刷机页上
+点到 404。Pages 部署工作流查不到站点产物时会打一条 notice 安静跳过，不会报红。
+
+**tag 推送恒为两版**，`board_profile` 只对手动触发生效。
+
+Pages 站点上两套各占一个目录：
+`firmware/esp32p4/v3/latest/` 与 `firmware/esp32p4/v4/latest/`。
+不带板型的旧路径 `firmware/esp32p4/latest/` **已不再生成**——它等于给刷机页留一个
+"默认刷某一版"的大按钮，另一版的用户点下去不会有任何提示。
 
 网页刷写采用 merged bin，是因为 ESP Web Tools 对 ESP-IDF v4+ 固件推荐使用合并后的单个二进制，由 `esptool merge-bin` 在 CI 中生成。
 
