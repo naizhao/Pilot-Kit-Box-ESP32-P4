@@ -21,7 +21,7 @@ SKIP_REASONS = {
     "安装孔": "mounting hole",
     "测试点焊盘": "test-point pad",
     "短接焊盘": "solder-bridge pad",
-    "板载天线": "on-board antenna",
+    "板载天线": "on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span",
     "备用检波位（默认贴 U13）": "alternate detector footprint (U13 is default)",
 }
 
@@ -43,6 +43,8 @@ def translate_stage(stage):
 
 
 def checklist_note(ref, note):
+    if ref == "ANT1":
+        return "Per-cut measured 50.0mm outer envelope / 48.5mm centerline span"
     if ref in {"D4", "D5"}:
         return "Bidirectional low-capacitance USB ESD protector; no polarity"
     if ref in {"D1", "D2", "D3"}:
@@ -170,8 +172,18 @@ def sync_assembly(board_root, revision, board):
 
 
 def main():
-    for board, revision in (("v3", "V3.9"), ("v4", "V4.3")):
+    # 版本号只认各板的board_meta.py，禁止在双语同步器里再维护一份写死副本。
+    boards = (
+        ("v3", ROOT / "hardware" / "expansion-board-v3" / "tools" / "board_meta.py"),
+        ("v4", ROOT / "hardware" / "expansion-board-v4" / "internal" / "tools" / "board_meta.py"),
+    )
+    for board, metadata in boards:
         board_root = ROOT / "hardware" / f"expansion-board-{board}"
+        match = re.search(r'^BOARD_REV\s*=\s*"([^"]+)"',
+                          metadata.read_text(encoding="utf-8"), re.MULTILINE)
+        if not match:
+            raise RuntimeError(f"{metadata} 缺少BOARD_REV")
+        revision = match.group(1)
         sync_checklist(board_root, revision)
         sync_assembly(board_root, revision, board)
         print(f"synced expansion-board-{board}: {revision}")

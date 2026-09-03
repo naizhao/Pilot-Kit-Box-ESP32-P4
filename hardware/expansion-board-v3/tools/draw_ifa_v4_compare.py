@@ -2,7 +2,8 @@
 """【历史作废方案】三个 v4 天线方案的净空占地对比图。
 
 2026-08-24：A/B/C三组尺寸和共同的K外推长度均已退出当前决策。现行预研是保持标准IFA
-图形、短路腿直接入地、最终主臂50.2mm/画板52.0mm；见draw_ifa_v4c.py和HFSS报告。
+图形、短路腿直接入地、历史预研最终主臂50.2mm/画板52.0mm；当前实测定型值见
+draw_ifa_v4c.py和HFSS报告的2026-09-03更新。
 
 同一个总长 L=59.11mm（主臂+腿+接地引线），把长度在三个部件之间挪，
 看**净空区**的形状差多少——这才是板面成本，不是天线本身的尺寸。
@@ -99,6 +100,6 @@ for title, stub, leg, note in PLANS:
     y += ROW_PX
 
 d.text((M, IMG_H-26), f"历史作废：旧总长 L={L:.2f}mm / K=66,012 MHz·mm 只保留追溯，"
-                      f"不得当作当前50.2mm预研输入", font=FS, fill=(220,130,130))
+                      f"不得当作当前48.5/50.0mm实测制造输入", font=FS, fill=(220,130,130))
 out = sys.argv[1] if len(sys.argv)>1 else "build/ifa_v4_compare.png"
 img.save(out); print("saved:", out, img.size)

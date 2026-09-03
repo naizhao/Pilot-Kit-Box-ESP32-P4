@@ -1,4 +1,4 @@
-# Expansion Board V4.3 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
+# Expansion Board V4.4 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -101,17 +101,19 @@ Test points: V1 removed the MM8930 production-test socket and the RF-section W.F
 
 All LC values are〔A〕starting points; V1 leaves an 0402 tunable slot at every reference designator. After the SAW swap (TFS1090F→TA0970A) the matching values must be tuned on the real board.
 
-The onboard IFA's J7 hangs after the π network and before C53. When measuring via J7 with a VNA, leave C53 unpopulated so the downstream stages don't show up in parallel in the reading.
-The current π network defaults to ZS1=0R, ZP1/ZP2=DNP, i.e. straight-through; the full six-layer rev2 HFSS first sweep can start from ZS1=3.6nH, ZP2=3.3pF,
-ZP1=DNP, with final values settled by measurement in the case. The ANT1 embedded in the generator/footprint library/PCB has been unified to
-52.0mm drawn length / 53.5mm outer envelope; the taper and the 5.103mm feed path are already on the board (see the v3 HFSS antenna study
-report §8, internal engineering notes).
+The onboard IFA's J7 hangs after the π network and before C53. A VNA measurement at J7 is isolated whenever the downstream receive path is open.
+On the measured V4.0 board C53 was populated, but U17 and the other downstream parts were not, so C53 did not create a load path and did not affect
+the result. If the downstream path is populated on another board, isolate it before measuring.
+The current π network defaults to ZS1=0R, ZP1/ZP2=DNP, i.e. straight-through. The V4.0 antenna was physically trimmed to a **50.0mm copper outer
+envelope / 48.5mm radiating-arm centerline span**, reached by cutting from 53.5mm and
+stopping at 50.0mm. In the case with the battery fitted it measured **1082.5MHz, SWR 1.09,
+45+j0.5Ω**; with the case open the reading drifts over 1080–1090MHz. V4.4 transfers this geometry to the generator, footprint library and embedded ANT1; the taper and 5.103mm feed path remain unchanged.
 
 ## 6. Sensors / GNSS (wired straight to P4, not through the RP2040)〔F architecture unchanged〕
 
 | Device | Bus/pins | Notes |
 |---|---|---|
-| BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 tied low; CLKSEL0 and H_CSN tied high; V4.3 footprint rotation is 90° |
+| BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 tied low; CLKSEL0 and H_CSN tied high; V4.4 footprint rotation is 90° |
 | BMP388 | I2C addr 0x76 (baro_task.c:29) + BARO_INT(GPIO31) | case keeps a vent hole |
 | QMC5883P | I2C address 0x2C | keep away from inductors / high-current traces; pins and support network verified against the datasheet |
 | ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3; 1PPS → GPIO50; VCC_RF feeds the active antenna | 18-pin LCC, pin diagram verified (manual §2.3) |
@@ -130,8 +132,8 @@ report §8, internal engineering notes).
 9. ~~AD8319 CLPF left floating~~ — 2026-08-26 switched to AD8313 (no CLPF pin); this item is void.
 10. ~~No ESD diode on the 978 antenna port~~ **handled: D3 is in the schematic (aligned with 1090; exposed ports on an aviation product always get ESD)**.
 11. (Added in the schematic phase) The asymmetric 12/15pF 32k-crystal load capacitors were copied verbatim from the original schematic; normally they should be symmetric — discussion item for review.
-12. (Onboard-IFA physical-board to-do) Frozen inputs are synced to the footprint/PCB/feedline; the physical board's dF/dL, in-case shift,
-    π-network measured values, and receive efficiency still await board bring-up verification.
+12. ~~Onboard-IFA length bring-up~~ **resolved on V4.0 on 2026-09-03:** trim from about 54mm to a 50.0mm outer envelope moved the center to about
+    1090MHz; the straight-through π state measured the values above. Radiation efficiency and over-the-air message/range A/B remain to be verified.
 
 ## 8. Device version verification checklist (user requirement: datasheet version = actually purchased version; SMT placement allowed only after item-by-item arrival check)
 

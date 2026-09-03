@@ -103,7 +103,7 @@ Cross-checked against the official KiCad `Connector_PinHeader_2.54mm:PinHeader_2
 
 | Link | Internal | External | RF switch | Notes |
 |---|---|---|---|---|
-| **1090** | onboard IFA (reuse only the standard inverted-F topology, not the 41mm size), top edge **offset left** | SMA | ✅ XA17-G4K | dimensions set by the v3 HFSS antenna study (internal engineering notes, 52.0mm drawn length / 53.5mm outer envelope); kept away from the C6 WiFi antenna |
+| **1090** | onboard IFA (reuse only the standard inverted-F topology, not the 41mm size), top edge **offset left** | SMA | ✅ XA17-G4K | V4.0 measured final geometry: 50.0mm copper outer envelope / 48.5mm centerline span; kept away from the C6 WiFi antenna |
 | **978** | ❌ not implemented | SMA (or U.FL pigtail) | ❌ not fitted | only 10% away from 1090 in frequency — strong coupling would pull it off; and only US GA uses it. **The entire channel is done as a select-population variant**, saving ¥30 on the domestic version |
 | **GNSS** | 25×25×6.3 active ceramic patch, mounted in the case's **top-edge bump-out**, facing the sky, X≈70–95 | SMA | ✅ XA17-G4K | the user has verified this patch gets a good signal; the top-edge bump-out gets implemented when the case design is finalized |
 
