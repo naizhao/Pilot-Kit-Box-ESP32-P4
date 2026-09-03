@@ -37,8 +37,11 @@
  *   roll  = rotation about the sensor's X axis  (right-wing-down +)
  *   pitch = rotation about the sensor's Y axis  (nose-up +)
  *   yaw   = rotation about the sensor's Z axis  (clockwise-from-above +)
- * The fixed mounting quaternion below must match the physical IMU
- * orientation in the current enclosure or breadboard build.
+ * The mounting transform is NOT in this file: it depends on which
+ * expansion board the image is built for (V3.9 mounts U4 at 0°, V4.3
+ * at +90°), so it comes from pk_board.h. There is deliberately no
+ * second, hand-tuned correction path here — see the sandwich section
+ * below.
  */
 #pragma once
 
@@ -47,49 +50,6 @@
 
 #include "esp_err.h"
 #include "driver/i2c_master.h"
-
-/* --- Mounting orientation corrections (breadboard / debug only) ----- *
- *
- * Applied to the Euler output AFTER BNO085's quaternion → euler
- * conversion. Use these while the chip is glued onto the board in
- * an orientation that doesn't match the "chip +X forward, +Y right,
- * +Z down" aerospace convention.
- *
- * Once the final PCB physically orients the BNO085 correctly, set
- * all four back to 0 / false and this section becomes dead code.
- *
- * Diagnostic recipe — set them all to 0 / 0 first, then adjust:
- *
- *   Step 1.  Place device LEVEL on a desk, "front" edge pointing
- *            away from you, "right" edge to your right.
- *   Step 2.  Check PFD HDG. If it reads ~180° when you face north
- *            (or any consistent 180° offset from the expected value),
- *            set MOUNT_YAW_OFFSET_DEG = 180. Other values (90 / 270)
- *            work too for different mounting rotations.
- *   Step 3.  Tilt the FRONT edge of the device downward (nose-down).
- *            Pitch should read NEGATIVE. If it reads positive,
- *            set MOUNT_INVERT_PITCH = 1.
- *   Step 4.  Tilt the RIGHT edge of the device downward (right-wing-
- *            down). Roll should read POSITIVE. If negative,
- *            set MOUNT_INVERT_ROLL = 1.
- *   Step 5.  Rotate device clockwise viewed from above. HDG should
- *            INCREASE 0→90→180→270. If it decreases, set
- *            MOUNT_INVERT_YAW = 1.
- *
- * INVERT flags are applied first; the offset is applied last
- * (after invert) and wraps yaw into [0, 360).
- *
- * Defaults are all 0 / off — the chip is assumed to be mounted in
- * the canonical "chip +X forward, +Y right, +Z down" aerospace
- * orientation. The temporary INVERT_PITCH=1 default that earlier
- * commits shipped was for an incorrectly-mounted breadboard build
- * that the user is now re-soldering. Once the new mount is in place,
- * walk through the diagnostic recipe above (steps 1-5) and only set
- * a knob if its corresponding test actually fails. */
-#define PK_IMU_MOUNT_INVERT_ROLL       0
-#define PK_IMU_MOUNT_INVERT_PITCH      0
-#define PK_IMU_MOUNT_INVERT_YAW        0
-#define PK_IMU_MOUNT_YAW_OFFSET_DEG    0
 
 /* --- Mounting + world-frame transformation (sandwich form) ---------- *
  *
@@ -108,60 +68,34 @@
  *           q_world_fix = (0, √2/2, √2/2, 0)
  *
  *       This is a FIXED constant — independent of how the chip is
- *       physically mounted. Don't touch it unless we change which
- *       Euler convention quat_to_euler() implements.
+ *       physically mounted, and independent of which board it is on.
+ *       It belongs to the Euler convention, so it lives here. Don't
+ *       touch it unless quat_to_euler() changes.
  *
- *     ─ q_body_fix  = R_aircraft→chip — turns aircraft body vectors
- *       into chip body vectors. Numerically equal to the inverse of
- *       R_chip→aircraft. For a 180° rotation the matrix is its own
- *       inverse, so we can just store R_chip→aircraft directly here.
- *       THIS is the per-mount knob.
+ *     ─ q_body_fix = R_aircraft→chip — turns aircraft body vectors into
+ *       chip body vectors. THIS is the per-board mounting term, and it
+ *       is NOT a constant in this header any more: V3.9 mounts U4 at
+ *       0° and V4.3 at +90°, so it comes from
  *
- * Identity body fix (chip body == aircraft body):
- *     W=1, X=0, Y=0, Z=0
+ *           pk_board_imu_body_fix_quat(pk_board_profile(), q)
  *
- * Current build (re-soldered 2026-08-03) — chip face still toward the
- * display, but the breakout was rotated 180° about the board normal
- * relative to the previous build:
+ *       See pk_board.h for the datasheet / footprint / enclosure chain
+ *       that produces it. The old hand-tuned PK_IMU_MOUNT_QUAT_* macros
+ *       described a 2026-08-03 re-soldered breakout, not either PCB,
+ *       and have been removed so nothing can silently keep using them.
  *
- *     previous:  VCC at top-left,     PS0 at bottom-left
- *     current:   VCC at bottom-right, PS0 at top-right
- *
- * The board normal is unchanged, so only the chip's X and Y axes flip;
- * Z stays put:
- *     chip +X  →  aircraft down   (= +aircraft +Z)   [was: up]
- *     chip +Y  →  aircraft right  (= +aircraft +Y)   [was: left]
- *     chip +Z  →  aircraft back   (= -aircraft +X)   [unchanged]
- * That R_chip→aircraft is a 90° rotation about the aircraft Y axis,
- * NOT a 180° one.
- *
- * ⚠ Consequence: unlike the previous 180° mount, this matrix is NOT its
- * own inverse. q_body_fix is R_aircraft→chip = the INVERSE of the
- * mapping above  →  q = (√2/2, 0, √2/2, 0). Don't "simplify" it by
- * storing R_chip→aircraft directly the way the old 180° value allowed.
- *
- * Math sanity check: for "level facing N" pose in the above mounting,
- * BNO outputs q_bno = (0.5, 0.5, 0.5, -0.5); applying the sandwich
- * with the q's below yields q_aircraft = (1, 0, 0, 0), so
- * quat_to_euler() returns (0, 0, 0). ✓
- *
- * Regression test: firmware/test/test_imu_mount.c derives the expected
- * q_bno for four poses straight from the physical axis mapping (it does
- * NOT reuse the macros below), so a wrong constant here turns it red.
- *     cc -std=c11 -O2 -I firmware/main -I sim/compat \
- *        -o /tmp/test_imu_mount firmware/test/test_imu_mount.c -lm */
+ * Regression tests derive the expected q_bno for known poses straight
+ * from the physical axis mapping — they do NOT reuse pk_board's
+ * matrices, so a wrong constant there turns them red:
+ *     firmware/test/test_pk_board_mount.c   (both profiles + wrong-profile)
+ *     firmware/test/test_imu_mount.c        (V3.9 deep-dive + accel path)
+ */
 
 /* q_world_fix — DO NOT EDIT unless quat_to_euler() changes. */
 #define PK_IMU_WORLD_FIX_W             0.0f
 #define PK_IMU_WORLD_FIX_X             0.7071068f
 #define PK_IMU_WORLD_FIX_Y             0.7071068f
 #define PK_IMU_WORLD_FIX_Z             0.0f
-
-/* q_body_fix — set this to match the physical chip mounting. */
-#define PK_IMU_MOUNT_QUAT_W            0.7071068f
-#define PK_IMU_MOUNT_QUAT_X            0.0f
-#define PK_IMU_MOUNT_QUAT_Y            0.7071068f
-#define PK_IMU_MOUNT_QUAT_Z            0.0f
 
 typedef struct {
     int64_t  ts_us;        /* esp_timer_get_time() at sample */
@@ -172,8 +106,8 @@ typedef struct {
     bool     valid;
     /* Gravity-subtracted linear acceleration, aircraft body frame
      * (+X forward, +Y right, +Z down), m/s². Rotated chip→aircraft
-     * with the same PK_IMU_MOUNT_QUAT_* used for attitude — NOT the
-     * world-frame fix, since this is a body-frame vector, not a
+     * with the same board-profile q_body_fix used for attitude — NOT
+     * the world-frame fix, since this is a body-frame vector, not a
      * world-referenced orientation. have_accel is false until the
      * first Linear Acceleration (0x04) report parses successfully
      * (e.g. sensor absent, or still booting); consumers must check it

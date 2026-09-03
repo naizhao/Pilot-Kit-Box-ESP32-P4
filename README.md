@@ -377,11 +377,18 @@ cd Pilot-Kit-Box-ESP32-P4/firmware
 # 3. 激活 IDF 并构建 / Activate IDF and build
 source ~/.espressif/tools/activate_idf_v6.0.1.sh
 ./build.sh set-target esp32p4
+
+# 3b. 选扩展板板系（默认 v4；v3 板必须改。小版本只是修订，看板号第一位）
+#     Select the expansion board family (default v4; switch it for a v3 board)
+#     ./build.sh menuconfig  ->  Pilot Kit Box  ->  Expansion board profile
 ./build.sh build
 
 # 4. 烧录并监视 / Flash and monitor
 ./build.sh -p /dev/cu.usbmodem* flash monitor
 ```
+
+> ⚠️ **板系默认是 v4。** 手上是 v3 板（V3.x）就必须在 `menuconfig` 里改过来——两个板系的传感器贴片角度不同，选错了 PFD 照样有姿态，只是横滚整体偏 90°，桌上看不出来。板号小版本只是修订，看第一位即可。切换与确认步骤见 [`docs/configuration.md`](docs/configuration.md) 第 1 节。
+> The board profile defaults to the **v4** family. Switch it for a v3 board: the sensor mounting angles differ, and the wrong profile still renders a live attitude that is simply rolled by 90 degrees.
 
 > 新板如果要启用 BLE，必须先给板载 ESP32-C6 烧一次 hosted slave 固件。If BLE is needed on a fresh board, flash the on-board ESP32-C6 hosted slave firmware once first. See [`docs/BUILD.md`](docs/BUILD.md) section 3.
 

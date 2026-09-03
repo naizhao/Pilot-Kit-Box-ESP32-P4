@@ -13,6 +13,134 @@ cd firmware
 
 To make a configuration change part of the project defaults, add the `CONFIG_*` line to `firmware/sdkconfig.defaults`. The generated `sdkconfig` is local and should remain machine-specific.
 
+## Expansion Board Profile (v3 / v4)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `CONFIG_PK_BOARD_PROFILE_V4` | `y` | Build for the **v4 board family** (current default). |
+| `CONFIG_PK_BOARD_PROFILE_V3` | `n` | Build for the **v3 board family**. |
+
+The choice is the board **family**, not a revision. `v3` / `v4` (and a future
+`v5`) name the family; `V3.9` / `V4.3` are merely their current revisions. A new
+revision does not need a new profile — a V4.4 board still runs the `v4` image.
+The angles below were measured on V3.9 and V4.3, and
+`hardware/test_firmware_board_profile_contract.py` compares the firmware table
+against the live `kicad_pcb` files, so a future revision that rotates a sensor
+turns red instead of shipping silently.
+
+These are a mutually exclusive Kconfig `choice`; exactly one must be selected. Selecting
+neither does not fall back to a default — the build stops with an `#error`.
+
+This is unrelated to the ESP32-P4 silicon revision in the next section. `CONFIG_ESP32P4_*`
+describes the main SoC stepping; this option describes the **expansion board** PCB revision.
+Getting one wrong gives no hint about the other.
+
+### Why it cannot be probed at runtime
+
+The two families place their sensors at different angles (measured on their current revisions V3.9 and V4.3):
+
+| Part | v3 | v4 |
+|---|---:|---:|
+| U4 BNO085 (IMU) | 0 deg | **+90 deg** |
+| U5 BMP388 (baro) | 0 deg | -90 deg |
+| U6 QMC5883P (magnetometer) | 0 deg | -90 deg |
+| U7 ATGM336H (GNSS) | 0 deg | 0 deg |
+
+U4 and U5/U6 rotate in **opposite** directions, so this is not a whole-board 90-degree
+rotation; the two attitude-bearing parts each carry their own board-to-body transform.
+
+Picking the wrong profile fails badly but quietly: the PFD still shows an attitude and still
+tracks motion, it is just rolled by 90 degrees. That is hard to notice on a bench and easy to
+notice in flight, which is why the firmware refuses to guess.
+
+The only board-varying I2C device is the SY6970 PMIC, and it marks the powered/unpowered
+**variant**, not the board revision — V3 and an unpowered V4 both fail to ACK it.
+`hardware/test_firmware_board_profile_contract.py` fails if `SY6970`, `0x6A` or `PMIC`
+appears in the `pk_board` sources.
+
+### Switching to v3
+
+Interactive:
+
+```bash
+cd firmware
+./build.sh menuconfig
+#   -> Pilot Kit Box
+#     -> Expansion board profile  --->
+#        ( ) v3 (expansion-board-v3, validated on V3.9)
+#        (X) v4 (expansion-board-v4, validated on V4.3)
+./build.sh build
+```
+
+Non-interactive (scripts / CI). `sdkconfig` is gitignored, so this only affects your checkout:
+
+```bash
+cd firmware
+sed -i '' 's/^# CONFIG_PK_BOARD_PROFILE_V3 is not set$/CONFIG_PK_BOARD_PROFILE_V3=y/' sdkconfig
+sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not set/' sdkconfig
+./build.sh build
+```
+
+Use `sed -i` without the empty argument on Linux. Reverse both substitutions to go back to v4.
+
+### Confirming which profile was built
+
+Before flashing, exactly one of these lines exists:
+
+```bash
+grep PK_BOARD_PROFILE firmware/build/config/sdkconfig.h
+# v3 -> #define CONFIG_PK_BOARD_PROFILE_V3 1
+# v4 -> #define CONFIG_PK_BOARD_PROFILE_V4 1
+```
+
+After flashing, the boot log prints the profile and its mounting quaternion:
+
+```
+I (xxxx) imu: board profile v3: q_body_fix = 0.7071068 0.0000000 0.7071068 0.0000000
+I (xxxx) imu: board profile v4: q_body_fix = 0.5000000 0.5000000 0.5000000 -0.5000000
+```
+
+The two values differ, so this single line identifies the image. Check it when swapping boards.
+
+### Symmetric two-board builds (release / CI)
+
+To produce both images without touching `sdkconfig`, use separate build
+directories. Sharing one directory leaves stale objects from the previous
+profile behind, which shows up as "I changed it but nothing happened":
+
+```bash
+cd firmware
+./build.sh -B build_v3 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v3" \
+  -DSDKCONFIG=build_v3/sdkconfig build
+
+./build.sh -B build_v4 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v4" \
+  -DSDKCONFIG=build_v4/sdkconfig build
+```
+
+Artifacts land in `build_v3/pilot_kit_box.bin` and
+`build_v4/pilot_kit_box.bin`. Replace `build` with `-p <port> flash` to flash.
+
+`sdkconfig.defaults` deliberately does not pin a profile; otherwise neither
+fragment could override it. `hardware/test_firmware_board_profile_contract.py`
+enforces that.
+
+### The build prints it too
+
+At configure time — the first build, and after every `menuconfig` or
+`sdkconfig` change — CMake prints:
+
+```
+-- Pilot Kit: expansion board profile = v4 (expansion-board-v4)  ...
+```
+
+Together with the boot log line, the profile is visible at both moments a
+human is present, so nothing depends on remembering that it was selected.
+
+To change the project-wide default, add the `CONFIG_PK_BOARD_PROFILE_*` line to
+`firmware/sdkconfig.defaults`. It is absent today, so the Kconfig `default` (v4) applies.
+
 ## Hardware Target
 
 | Option | Default | Meaning |
@@ -230,11 +358,28 @@ Euler convention:
 - Pitch: Y-axis rotation, nose-up positive.
 - Yaw: Z-axis rotation, 0..360 degrees clockwise when viewed from above.
 
-The current `q_body_fix = (0, 0.7071068, 0, -0.7071068)` assumes a vertical
-breakout with the chip face toward the pilot, the header on the pilot's left
-and VCC at the top. That maps chip +X to aircraft up, +Y to aircraft left and
-+Z to aircraft back. A different physical installation requires a firmware
-transform change and attitude revalidation; touch leveling is not a substitute.
+### Mounting transform q_body_fix
+
+No longer a hard-coded constant in `imu_task.h`. It is selected by expansion
+board profile — see the first section of this document:
+
+| Profile | `q_body_fix` (w, x, y, z) | Chip axes to body axes |
+|---|---|---|
+| v3 (U4 at 0 deg) | `0.7071068, 0, 0.7071068, 0` | +X down, +Y right, +Z aft |
+| v4 (U4 at +90 deg) | `0.5, 0.5, 0.5, -0.5` | +X right, +Y up, +Z aft |
+
+Body frame is aerospace NED (+X forward, +Y right, +Z down). Both assume the
+enclosure standing upright with the display facing the pilot and the J1 header
+edge downward. The values are derived in `firmware/main/pk_board.c` from three
+pieces of evidence — datasheet axes, footprint rotation measured on each PCB,
+and the enclosure orientation — not hand-tuned.
+
+Do not edit these values by hand. If the physical installation genuinely
+changes, edit the corresponding evidence in `pk_board.c` and run
+`firmware/test/test_pk_board_mount.c`, which derives its expectations
+independently from the physical axis definitions and fails on a wrong value.
+Touch leveling cages the horizon only; it is not a substitute for an axis
+transform.
 
 ## Touch And Power
 

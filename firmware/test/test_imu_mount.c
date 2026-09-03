@@ -1,5 +1,18 @@
 /*
- * test_imu_mount.c — host 端验证 PK_IMU_MOUNT_QUAT_*（IMU 安装方位）。
+ * test_imu_mount.c — host 端验证 **V3.9** 的 IMU 安装方位（含线加速度路径）。
+ *
+ * 与 test_pk_board_mount.c 的分工
+ * -------------------------------
+ * test_pk_board_mount.c 覆盖 V3.9 + V4.3 两版、四种姿态、错选 profile 必失败，
+ * 是板型层面的主证据。本文件保留下来做 V3.9 这一版的深挖：它比那边多一条
+ * **线加速度向量走 quat_rotate_vec_body_fix() 这条独立代码路径**的对拍
+ * （姿态走 sandwich，向量走 conj(q_body_fix)，两条路错法不一样）。
+ *
+ * 2026-09-03 改动：安装四元数不再是 imu_task.h 里的 PK_IMU_MOUNT_QUAT_* 宏
+ * （那是 2026-08-03 旧 breakout 的手工标定，既不是 V3.9 也不是 V4.3），改为
+ * pk_board_imu_body_fix_quat(PK_BOARD_PROFILE_V3, ...)。下面 chip_axes_in_
+ * aircraft() 里的物理映射一个字没改——V3.9 的 U4 摆位算下来与那块旧 breakout
+ * 恰好同向，这是巧合，不是复用。
  *
  * 为什么需要它
  * ------------
@@ -24,12 +37,13 @@
  * 测试是独立的：宏写错了它就红。
  *
  * 与 test_imu_tare.c 一致，纯数学函数从 firmware/main/imu_task.c 逐字
- * 复制（那边是 static，无法链接）；但**安装宏是 include 真头文件拿的**，
- * 所以改 imu_task.h 会立刻反映到这里，不存在两份常量走偏。
+ * 复制（那边是 static，无法链接）；但**安装四元数是调真实现拿的**，
+ * 所以改 pk_board.c 会立刻反映到这里，不存在两份常量走偏。
  *
  * 编译运行（不需要 ESP-IDF）：
  *     cc -std=c11 -O2 -I firmware/main -I sim/compat \
- *        -o /tmp/test_imu_mount firmware/test/test_imu_mount.c -lm
+ *        -o /tmp/test_imu_mount firmware/test/test_imu_mount.c \
+ *        firmware/main/pk_board.c -lm
  *     /tmp/test_imu_mount
  */
 
@@ -38,10 +52,23 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 真实的安装常量来自固件头文件 —— 不复制，改宏这里立刻跟着变。
- * imu_task.h 会 include esp_err.h / driver/i2c_master.h，用 sim/compat
- * 下模拟器已有的桩满足（-I sim/compat）。 */
+/* 真实的安装变换来自 pk_board —— 不复制，改 pk_board.c 这里立刻跟着变。
+ * imu_task.h 只提供 q_world_fix（ENU→NED，与板型无关）；它会 include
+ * esp_err.h / driver/i2c_master.h，用 sim/compat 下模拟器已有的桩满足。 */
 #include "imu_task.h"
+#include "pk_board.h"
+
+/* q_body_fix = R_机体→芯片，V3.9 profile。首次使用时从 pk_board 取。 */
+static const float *v39_body_fix(void)
+{
+    static float q[4];
+    static int loaded;
+    if (!loaded) {
+        pk_board_imu_body_fix_quat(PK_BOARD_PROFILE_V3, q);
+        loaded = 1;
+    }
+    return q;
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -83,10 +110,11 @@ static void quat_to_euler(float qi, float qj, float qk, float qw,
 static inline void quat_rotate_vec_body_fix(float vx, float vy, float vz,
                                             float *ox, float *oy, float *oz)
 {
-    const float pw =  PK_IMU_MOUNT_QUAT_W;
-    const float px = -PK_IMU_MOUNT_QUAT_X;
-    const float py = -PK_IMU_MOUNT_QUAT_Y;
-    const float pz = -PK_IMU_MOUNT_QUAT_Z;
+    const float *q = v39_body_fix();
+    const float pw =  q[0];
+    const float px = -q[1];
+    const float py = -q[2];
+    const float pz = -q[3];
 
     float tw, tx, ty, tz;
     quat_mul(pw, px, py, pz, 0.0f, vx, vy, vz, &tw, &tx, &ty, &tz);
@@ -108,10 +136,10 @@ static void sandwich_to_euler(const float q_bno[4],
              PK_IMU_WORLD_FIX_Y, PK_IMU_WORLD_FIX_Z,
              q_bno[0], q_bno[1], q_bno[2], q_bno[3],
              &tw, &ti, &tj, &tk);
+    const float *bf = v39_body_fix();
     float aw, ai, aj, ak;
     quat_mul(tw, ti, tj, tk,
-             PK_IMU_MOUNT_QUAT_W, PK_IMU_MOUNT_QUAT_X,
-             PK_IMU_MOUNT_QUAT_Y, PK_IMU_MOUNT_QUAT_Z,
+             bf[0], bf[1], bf[2], bf[3],
              &aw, &ai, &aj, &ak);
     quat_to_euler(ai, aj, ak, aw, roll, pitch, yaw);
 }
@@ -119,7 +147,11 @@ static void sandwich_to_euler(const float q_bno[4],
 /* ---- 物理装配 → BNO085 应输出的四元数（不使用被测的宏）------------- */
 
 /*
- * 当前装配（用户 2026-08-03 重新焊装，相对上一版绕板法线转了 180°）：
+ * V3.9 的 U4 摆位（expansion-board-v3.kicad_pcb: U4 (63.7,78.3) rot=0, F.Cu）
+ * 加上盒子竖立、屏幕面向飞行员的装配朝向，算下来芯片三轴的机体指向与下面
+ * 这块 2026-08-03 手工重焊的旧 breakout 恰好一致，所以这段描述继续有效：
+ *
+ * 旧 breakout（用户 2026-08-03 重新焊装，相对上一版绕板法线转了 180°）：
  *
  *   旧板：VCC 在左上角，PS0 在左下角，芯片面朝屏幕
  *   新板：VCC 在右下角，PS0 在右上角，芯片面朝屏幕
@@ -248,9 +280,10 @@ static void case_attitude(const char *name,
 
 int main(void)
 {
-    printf("PK_IMU_MOUNT_QUAT = (%.7f, %.7f, %.7f, %.7f)\n\n",
-           (double)PK_IMU_MOUNT_QUAT_W, (double)PK_IMU_MOUNT_QUAT_X,
-           (double)PK_IMU_MOUNT_QUAT_Y, (double)PK_IMU_MOUNT_QUAT_Z);
+    const float *bf = v39_body_fix();
+    printf("%s q_body_fix = (%.7f, %.7f, %.7f, %.7f)\n\n",
+           pk_board_profile_name(PK_BOARD_PROFILE_V3),
+           (double)bf[0], (double)bf[1], (double)bf[2], (double)bf[3]);
 
     const float d2r = (float)M_PI / 180.0f;
 

@@ -33,7 +33,28 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+      # 单板型验证构建（release 工作流的 board_profile != both）故意不上传站点
+      # 产物：它的 dist/site 里只有一半 manifest，发出去会让另一版用户在刷机页
+      # 上点到 404。这里先查产物在不在，不在就安静跳过——每次单板型构建都让
+      # 这个工作流红一次，只会把人训练成无视红叉。
+      - name: Check for Pages site artifact
+        id: site_artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event.inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+               --paginate --jq '.artifacts[].name' \
+             | grep -qx 'pilot-kit-box-esp32p4-pages-site'; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::该运行没有站点产物（多半是单板型验证构建），跳过 Pages 部署。"
+          fi
+
       - name: Download Pages site artifact
+        if: steps.site_artifact.outputs.found == 'true'
         uses: actions/download-artifact@v4
         with:
           name: pilot-kit-box-esp32p4-pages-site
@@ -42,13 +63,16 @@ jobs:
           path: site
 
       - name: Configure GitHub Pages
+        if: steps.site_artifact.outputs.found == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload GitHub Pages artifact
+        if: steps.site_artifact.outputs.found == 'true'
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
+        if: steps.site_artifact.outputs.found == 'true'
         uses: actions/deploy-pages@v4

@@ -169,6 +169,32 @@ Important defaults already live in `firmware/sdkconfig.defaults`:
 
 For details, see [`configuration.md`](configuration.md).
 
+### Select The Expansion Board Profile
+
+This is the one option you must confirm yourself. The default is the **v4** board family;
+switch it if you have a **v3** board. The choice is the family — v3.x all use the `v3`
+image, v4.x all use the `v4` image; the minor number is only a revision.
+
+```bash
+./build.sh menuconfig
+#   -> Pilot Kit Box -> Expansion board profile
+```
+
+Non-interactive (`sdkconfig` is gitignored, so this stays local):
+
+```bash
+sed -i '' 's/^# CONFIG_PK_BOARD_PROFILE_V3 is not set$/CONFIG_PK_BOARD_PROFILE_V3=y/' sdkconfig
+sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not set/' sdkconfig
+```
+
+The two families mount their sensors at different angles (U4 differs by 90 degrees, and U4 and
+U5/U6 rotate in opposite directions). With the wrong profile the PFD still shows a live
+attitude — rolled by 90 degrees — which is easy to miss on a bench.
+
+Verify before flashing with `grep PK_BOARD_PROFILE build/config/sdkconfig.h`, and after
+flashing with the `imu: board profile v3|v4: q_body_fix = ...` boot log line.
+See [`configuration.md`](configuration.md) for the full section.
+
 ## Build
 
 ```bash

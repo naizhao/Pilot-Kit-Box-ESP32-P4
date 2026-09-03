@@ -45,17 +45,47 @@ Before first use of GitHub Pages, confirm these repository settings:
 
 All ESP32-P4 assets include `esp32p4` in the filename to leave room for future boards.
 
-For release `v1.2.3`:
+### Every release ships two sets: v3 and v4
+
+The v3 and v4 board families mount the IMU 90 degrees apart and the
+firmware applies the transform for the profile it was built with, so **every
+release builds both**. Asset names carry `v3` or `v4`.
+
+Flashing the wrong profile does not fail: the artificial horizon still shows a
+live attitude, simply rolled by 90 degrees, which is easy to miss on a bench.
+The web flasher therefore offers no default button — the profile must be picked
+explicitly. The boot log line `imu: board profile v3|v4` confirms what was
+flashed.
+
+For release `v1.2.3`, the v4 set (replace `v4` with `v3` for the other):
 
 | File | Purpose |
 |---|---|
-| `pilot-kit-box-esp32p4-v1.2.3-factory.bin` | Merged binary for web flashing at offset `0x0` |
-| `pilot-kit-box-esp32p4-v1.2.3-bootloader.bin` | Maintainer troubleshooting asset, flash at offset `0x2000` |
-| `pilot-kit-box-esp32p4-v1.2.3-partition-table.bin` | Maintainer troubleshooting asset, flash at offset `0x8000` |
-| `pilot-kit-box-esp32p4-v1.2.3-app.bin` | Maintainer troubleshooting asset, flash at offset `0x10000` |
-| `manifest-esp32p4.json` | ESP Web Tools manifest |
-| `SHA256SUMS-esp32p4.txt` | Checksums |
-| `pilot-kit-box-esp32p4-v1.2.3.zip` | Complete downloadable package |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-factory.bin` | Merged binary for web flashing at offset `0x0` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-bootloader.bin` | Maintainer troubleshooting asset, flash at offset `0x2000` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-partition-table.bin` | Maintainer troubleshooting asset, flash at offset `0x8000` |
+| `pilot-kit-box-esp32p4-v4-v1.2.3-app.bin` | Maintainer troubleshooting asset, flash at offset `0x10000` |
+| `manifest-esp32p4-v4.json` | ESP Web Tools manifest |
+| `SHA256SUMS-esp32p4-v4.txt` | Checksums |
+| `pilot-kit-box-esp32p4-v4-v1.2.3.zip` | Complete downloadable package |
+
+### Building a single profile (verification / troubleshooting)
+
+Actions -> **Release ESP32-P4 firmware** -> *Run workflow*, set `board_profile`
+to `v3` or `v4` (default `both`).
+
+A single-profile run produces **only a downloadable workflow artifact**. It does
+not publish GitHub Release assets and does not publish the Pages site: its
+`dist/site` holds only half the manifests, and publishing it would leave the
+other profile's button on the updater page returning 404. The Pages deploy
+workflow emits a notice and skips quietly when no site artifact is present.
+
+**Tag pushes always build both**; `board_profile` applies to manual runs only.
+
+On the Pages site each profile gets its own directory:
+`firmware/esp32p4/v3/latest/` and `firmware/esp32p4/v4/latest/`. The old
+profile-less path `firmware/esp32p4/latest/` is **no longer generated** — it
+amounted to a default button that silently flashed one profile.
 
 The web flasher uses the merged binary because ESP Web Tools recommends a single merged image for ESP-IDF v4+ firmware. CI produces it with `esptool merge-bin`.
 
