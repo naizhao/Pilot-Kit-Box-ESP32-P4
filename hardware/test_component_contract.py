@@ -822,7 +822,8 @@ class ComponentContractTest(unittest.TestCase):
                     "三个方案的 CPL 要么都在，要么就是有人漏跑了 gen_jlc_smt.py",
                 )
             for path in files:
-                rows = list(csv.DictReader(path.open(encoding="utf-8-sig")))
+                with path.open(encoding="utf-8-sig") as fh:
+                    rows = list(csv.DictReader(fh))
                 with self.subTest(cpl=path.name, check="非空"):
                     self.assertTrue(rows, f"{path.name} 是空的")
                 for row in rows:
@@ -1102,7 +1103,7 @@ class ComponentContractTest(unittest.TestCase):
     def test_v40_rework_guide_does_not_invert_correct_gnss_controls(self):
         guide = ROOT / "hardware" / "expansion-board-v4" / "internal" / "BOARD_TEST.md"
         text = guide.read_text(encoding="utf-8")
-        self.assertIn("V4.0 实物返修与 V4.3 验收流程", text)
+        self.assertIn("V4.0 实物返修与 V4.4 验收流程", text)
         # 认意图不认字面：文档 2026-08-31 二次核实后把措辞改成了语义更强的
         # 「禁止交换」，绑死「不交换」这四个字会把正确的文档判成违规。
         self.assertRegex(text, r"(不得|不要|禁止|不)交换 `U17 pin4/pin6`")

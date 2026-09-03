@@ -36,13 +36,18 @@ FINALIZED_GRAPHICS_COUNT = 26
 DEBUG_LABELS = ("TP1", "TP2", "TP3", "TP4", "TP5", "TP6", "TP7")
 BOARD_GRAPHICS_COUNT = FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
 # B 面左边缘同一竖列：SW1、SW2 相邻成组排在 TP 之前，SW1 在 SW2 上方。
-# 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠），
-# TP 之间仍是 2.50mm。
+# 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠）。
+#
+# 2026-09-04 用户手工重排：TP2–TP7 的间距由 2.50mm 收到 **2.033mm**，
+# 整列仍在 x=51.85 的 B 面同一竖列，SW1 / SW2 / TP1 三个位置没动。
+# 这一列往下腾出的空间给了挪过来的 RT1（54.813, 100.940）。
+# 收紧后 `kicad-cli pcb drc` 仍是 0 违例（courtyard 没有重叠），
+# 本合同按既定口径**跟随实际板面**，不反过来约束用户的排版决定。
 DEBUG_X = 51.85
 DEBUG_Y = {
-    "SW1": 77.45, "SW2": 81.05, "TP1": 86.05, "TP2": 88.55,
-    "TP3": 91.05, "TP4": 93.55, "TP5": 96.05, "TP6": 98.55,
-    "TP7": 101.05,
+    "SW1": 77.450, "SW2": 81.050, "TP1": 86.050, "TP2": 88.083,
+    "TP3": 90.116, "TP4": 92.149, "TP5": 94.181, "TP6": 96.214,
+    "TP7": 98.247,
 }
 DEBUG_ROTATION = {"SW2": 90.0, "SW1": 90.0}
 POSITION_TOLERANCE = 0.05
