@@ -1,4 +1,4 @@
-# V4.3 Selective Placement / Mutually Exclusive Parts Reference
+# V4.4 Selective Placement / Mutually Exclusive Parts Reference
 
 Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
@@ -106,12 +106,13 @@ keep 3.6/3.9pF on hand — the final values are set by VNA after enclosure assem
 
 ---
 
-## ⑤ Conditionally Unplaced: `C53` When Measuring the Antenna
+## ⑤ Conditional downstream isolation when measuring at `J7`
 
 `C53` (100pF) sits in series between `IFA_MATCH` ↔ `SW1_J3`; it is the coupling capacitor from the onboard IFA to the RF switch.
 
-**When measuring the IFA antenna via `J7` with a VNA, `C53` must not be placed** — otherwise the `U16` switch and everything after it
-hang on the antenna, and the measured impedance is not the antenna's own. Place it after the measurement.
+The requirement is that the path after `C53` be electrically open. On the measured V4.0 board `C53` was populated,
+but U17 and the other downstream parts were unpopulated, so it did not establish a load path and did not affect the reading.
+Only boards with a populated downstream chain need `C53` removed or that path isolated by another method.
 
 ---
 

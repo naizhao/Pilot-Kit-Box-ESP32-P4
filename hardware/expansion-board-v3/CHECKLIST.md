@@ -1,4 +1,4 @@
-# V3.9 BOM Verification Checklist (reference-designator order)
+# V3.10 BOM Verification Checklist (reference-designator order)
 
 Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
@@ -170,7 +170,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **J6** | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (124.3, 62.1) | E 1090 Receive Chain |  |
 | ☐ | **J7** | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT | (103.1, 61.3) | E 1090 Receive Chain |  |
 | ☐ | **J8** | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT | (52.9, 64.4) | C Sensors + GNSS |  |
-| — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (85.5, 57.8) | **Not placed** (on-board antenna) |  |
+| — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (85.5, 57.8) | **Not placed** (on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span) | Per-cut measured 50.0mm outer envelope / 48.5mm centerline span |
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (85.5, 63.6) | **Not placed** (DNP) |  |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (90.5, 63.6) | **Not placed** (DNP) |  |
 | ☐ | **ZS1** | 0R 串 | L_0603_1608Metric | (88.0, 62.9) | E 1090 Receive Chain |  |
