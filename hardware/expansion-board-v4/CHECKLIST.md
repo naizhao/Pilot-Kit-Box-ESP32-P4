@@ -1,4 +1,4 @@
-# V4.3 BOM Verification Checklist (reference-designator order)
+# V4.4 BOM Verification Checklist (reference-designator order)
 
 Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
@@ -197,22 +197,22 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **J6** | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (106.5, 67.3) | E 1090 Receive Chain |  |
 | ☐ | **J7** | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT | (90.0, 61.3) | E 1090 Receive Chain |  |
 | ☐ | **J8** | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT | (54.0, 69.2) | C Sensors + GNSS |  |
-| ☐ | **J9** | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P | (134.6, 108.7) | A Power |  |
-| — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (79.2, 57.8) | **Not placed** (on-board antenna) | See the Chinese companion for the detailed engineering note |
+| ☐ | **J9** | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P | (144.8, 99.0) | A Power |  |
+| — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (79.2, 57.8) | **Not placed** (on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span) | Per-cut measured 50.0mm outer envelope / 48.5mm centerline span |
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (79.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (84.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | ☐ | **ZS1** | 0R 串 | L_0603_1608Metric | (81.7, 62.9) | E 1090 Receive Chain | See the Chinese companion for the detailed engineering note |
 | — | **SW1** | RESET短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 77.5) | **Not placed** (solder-bridge pad) |  |
 | — | **SW2** | BOOTSEL短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 81.0) | **Not placed** (solder-bridge pad) |  |
 | — | **TP1** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 86.0) | **Not placed** (test-point pad) |  |
-| — | **TP2** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 88.5) | **Not placed** (test-point pad) |  |
-| — | **TP3** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 91.0) | **Not placed** (test-point pad) |  |
-| — | **TP4** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 93.5) | **Not placed** (test-point pad) |  |
-| — | **TP5** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 96.0) | **Not placed** (test-point pad) |  |
-| — | **TP6** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 98.5) | **Not placed** (test-point pad) |  |
-| — | **TP7** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 101.0) | **Not placed** (test-point pad) |  |
+| — | **TP2** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 88.1) | **Not placed** (test-point pad) |  |
+| — | **TP3** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 90.1) | **Not placed** (test-point pad) |  |
+| — | **TP4** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 92.1) | **Not placed** (test-point pad) |  |
+| — | **TP5** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 94.2) | **Not placed** (test-point pad) |  |
+| — | **TP6** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 96.2) | **Not placed** (test-point pad) |  |
+| — | **TP7** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 98.2) | **Not placed** (test-point pad) |  |
 | — | **H1** | — | MountingHole_2.7mm_M2. | (54.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H2** | — | MountingHole_2.7mm_M2. | (146.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H3** | — | MountingHole_2.7mm_M2. | (54.0, 106.0) | **Not placed** (mounting hole) |  |
 | — | **H4** | — | MountingHole_2.7mm_M2. | (146.0, 106.0) | **Not placed** (mounting hole) |  |
-| ☐ | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (120.9, 82.0) | A Power |  |
+| ☐ | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (54.8, 100.9) | A Power |  |

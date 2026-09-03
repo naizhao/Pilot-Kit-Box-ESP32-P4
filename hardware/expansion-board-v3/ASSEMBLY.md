@@ -1,4 +1,4 @@
-# V3.9 Manual SMT Placement List
+# V3.10 Manual SMT Placement List
 
 Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 
@@ -197,7 +197,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 
 | Designator | Reason |
 |---|---|
-| **ANT1** | 板载天线，PCB 走线本身，无器件 |
+| **ANT1** | 板载天线，PCB铜箔本身，无器件；V3.10已回灌50.0mm外包络/48.5mm中心线 |
 | **H1** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
 | **H2** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
 | **H3** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
