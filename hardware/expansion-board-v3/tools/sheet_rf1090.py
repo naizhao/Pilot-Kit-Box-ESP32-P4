@@ -42,7 +42,8 @@ s.place("C30", "Device", "C", 73.66, 50.8, {"1": "ANT1090_EXT", "2": "SW1_J2"},
 # 板载 IFA 本体。脚1=馈点、脚2=短路点接地——**两者在天线铜箔内部是直接导通的**，
 # 这就是倒 F 的定义（也正因如此，设计文档 §11.4 警告偏置 Tee 挂公共口会把 3.3V 短到地）。
 # 连接铜箔放在 footprint 内部，KiCad 才允许它连通两个不同网络的自家焊盘而不判短路。
-# 几何原样复用 docs/jlc 里已调好的 1090_MHz_IFA_ANT，见 tools/gen_ifa_footprint.py。
+# V3.10回灌V4.0实板装盒VNA定型几何：50.0mm铜箔外包络/48.5mm中心线跨度；
+# 装盒+电池1082.5MHz为SWR 1.09、45+j0.5Ω，见tools/gen_ifa_footprint.py。
 s.place("ANT1", "Device", "Antenna_Shield", 38.1, 66.04,
         {"1": "ANT1090_IFA", "2": "GND"},
         value="IFA_1090", footprint="expansion-board-v3:ANT_IFA_1090MHz")

@@ -1,24 +1,28 @@
-# V4.3 Onboard 1090MHz IFA Tuning Spares Purchase List
+# V4.4 Onboard 1090MHz IFA Verification and Tuning Spares List
 Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 
-> Purpose: solely for trimming the v4 onboard 1090MHz IFA, in-enclosure VNA tuning, and matching-network component swaps.
+> Purpose: verify the measured 50.0mm v4 onboard 1090MHz IFA, and keep optional matching-network spares for enclosure or laminate changes.
 > This list is an independent tuning spares list and does not replace the full-board [`BOM_PURCHASE.md`](BOM_PURCHASE.md).
 >
 > Current engineering facts: ZP1/ZP2 are 0603 shunt positions, ZS1 is a 0603 series position, J7 is the U.FL tuning port,
-> C53 is a 0402 100pF. J7 sits after the π network and before C53; when connecting the VNA, C53 must be left unpopulated
-> so the downstream receive chain is kept out of the measurement.
+> C53 is a 0402 100pF. J7 sits after the π network and before C53. The VNA requirement is that the **downstream path be open**,
+> not that C53 itself must always be DNP. On the measured V4.0 board C53 was populated while U17 and other downstream parts
+> were unpopulated, so no load path existed and C53 did not affect the result.
 
 ## 1. First, clarify the assembly states
 
 | State | ZP1 (antenna-side shunt) | ZS1 (series) | ZP2 (radio-side shunt) | J7 | C53 | Purpose |
 |---|---:|---:|---:|---:|---:|---|
-| **Current CAD nominal assembly** | DNP | 0R | DNP | Populated | **100pF** | Antenna feeds the receive chain directly; the antenna cannot be measured independently from J7 |
-| **Calibration-board first build / bare-antenna baseline** | DNP | 0R | DNP | Populated | **DNP** | Isolates the receive chain; first trim the antenna open end so that, once in the enclosure, the series resonance lands on 1090MHz, and capture the unmatched impedance |
-| **HFSS first-round matching starting point** | DNP | **3.6nH** | **3.3pF** | Populated | **DNP** | A 9-point parameter sweep estimates about 21.15Ω at the current D≈4.988, H=6 and target length of about 50.230mm; the ideal values are about 3.607nH/3.411pF, and this combination serves only as the first component-swap starting point |
-| **Final receive state** | Decided by measurement | Decided by measurement | Decided by measurement | May keep | **100pF** | The π network gets the final measured values; after removing the VNA, re-populate C53 to reconnect the receive chain |
+| **V4.4 nominal / V4.0 measured state** | DNP | **0R** | DNP | Populated | **100pF** | 50.0mm outer envelope; valid J7 isolation on the measured board because U17 and the remaining downstream path were unpopulated/open |
+| **Calibration board with populated downstream chain** | DNP | **0R** | DNP | Populated | **DNP or otherwise isolated** | Open the downstream path before measuring the antenna independently; DNP C53 is one isolation method, not an unconditional requirement |
+| **Historical HFSS first-round starting point (superseded)** | DNP | 3.6nH | 3.3pF | Populated | Open downstream | Pre-board prediction for a roughly 50.230mm centerline length; retained only as a contingency sweep point, not the V4.4 default |
+| **Alternative enclosure/material retune** | Decided by measurement | Decided by measurement | Decided by measurement | May keep | **100pF** | Use only if a new production stack systematically moves away from the V4.0 measured baseline |
 
-> **DNP = not populated.** 3.6nH/3.3pF are not verified production values. The finished enclosure, battery, screws, laminate batch and
-> component parasitics all change the final result; the in-enclosure measured result is the final authority.
+> **DNP = not populated.** The production baseline is straight-through, not 3.6nH/3.3pF. The V4.0 antenna trimmed to a
+> **50.0mm copper outer envelope / 48.5mm centerline span**, trimmed cut-by-cut from
+> 53.5mm and stopped at 50.0mm. In the case with the battery fitted it measured
+> **1082.5MHz, SWR 1.09, 45+j0.5Ω**; with the case open (battery still fitted) the
+> reading drifts over 1080–1090MHz. The same series gives a slope of 24–25MHz/mm.
 
 ## 2. Default parts for the first build
 
@@ -28,7 +32,7 @@ Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 | 🔴Must-buy | HFSS starting point | 3.6nH, RF high-Q inductor | 0603 | 20 | ZS1 | **Murata LQW18AN3N6C00D**; or same-spec Coilcraft 0603HP-3N6XJRW | For this value Murata gives SRF 6GHz, Q(min) 25; ample margin at 1090MHz. When swapping values across the whole set, keep the same series as much as possible |
 | 🔴Must-buy | HFSS starting point | 3.3pF, C0G/NP0 | 0603 | 20 | ZP2 | **Murata GRM1885C1H3R3BA01D** | 50V, C0G, ±0.1pF; keep ZP1 DNP in the first round |
 | 🔴Must-buy | Tuning interface | 50Ω U.FL board-end receptacle | Footprint compatible with U.FL_Hirose_U.FL-R-SMT-1_Vertical | 3 | J7 | Juxingtai AIPEX-1 **C41432122** (three-pad); original Hirose U.FL-R-SMT-1(80) C88374 also works | 1 for first build and 2 spares. Use a three-pad part; Pinzan C5299419 has four pads and does not match this PCB footprint |
-| 🟢Parts bin | Restoring the receive chain | 100pF | 0402 | 20 | C53 | Any 100pF, **X7R is fine** | DNP during the VNA measurement phase; populate after the matching values are fixed and the measurement cable is removed. **No need to buy C0G**; reasoning below |
+| 🟢Parts bin | Receive-chain DC block | 100pF | 0402 | 20 | C53 | Any 100pF, **X7R is fine** | May remain populated during VNA measurement if the downstream path is already open; otherwise isolate the path. **No need to buy C0G**; reasoning below |
 
 > **Why C53 does not need C0G** (aligned with [`BOM_PURCHASE.md`](BOM_PURCHASE.md) on 2026-08-28):
 > This list originally marked C53 as "🔴Must-buy C0G", which conflicted with the full-board purchase list's "🟢General, X7R is fine".
@@ -36,8 +40,8 @@ Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 > capacitors uniformly C0G" rule. Its impedance at 1090MHz is only
 > `1/(2π·1090MHz·100pF) = 1.46Ω`, and even with X7R capacitance drifting ±15% it only reaches 1.7Ω;
 > the `BOM_PURCHASE.md` full-path calculation shows a difference of just **0.13dB**.
-> Moreover, **C53 is DNP throughout the entire tuning process** (the receive chain must be isolated to measure the antenna alone from J7),
-> so it never participates in the matching measurement at all. ZP1/ZP2/ZS1 are the matching positions, and those three must still be C0G/NP0.
+> C53 also does not create a termination by itself: with U17 and the remaining downstream parts unpopulated, the line after C53 is open.
+> That was the actual V4.0 measurement state. ZP1/ZP2/ZS1 are the matching positions; any capacitor used at ZP1/ZP2 must still be C0G/NP0.
 
 ## 3. Matching replacement parts
 
@@ -72,7 +76,7 @@ SRF and pad parasitics; after changing vendor or series, re-measurement is manda
 | 🔴Must-buy | Flux | No-clean, suitable for 0603/0402 rework | 1 pc | To be selected | Reduces pad damage from repeated component swaps; after tuning, clean residues and re-measure |
 | 🔴Must-buy | Solder wire | Fine solder, about 0.3mm | 1 spool | To be selected | For hand-swapping 0603/0402 parts and copper-foil restoration experiments |
 | 🔴Must-buy | Solder wick | About 0.8–1.0mm | 1 spool | To be selected | Clean the ZP1/ZP2/ZS1/C53 pads; avoid solder buildup changing RF parasitics |
-| 🔴Must-buy | Cutting blades | Pointed hobby knife/scalpel replacement blades | 1 box | To be selected | Trim only 0.1–0.2mm at a time from the IFA open end; after each cut, deburr, clean, reassemble to the fixed position, then re-measure |
+| 🟡Service only | Cutting blades | Pointed hobby knife/scalpel replacement blades | 1 box | To be selected | V4.4 already contains the measured 50.0mm geometry; cut only during a controlled retune for a changed enclosure/material, 0.1–0.2mm at a time |
 | 🟡Advised | Copper foil restoration stock | Adhesive-free bare copper foil, about 0.03–0.05mm thick, width ≥1.5mm | 1 sheet | To be selected | Only for experimental restoration after over-cutting and for confirming direction; the final production length must be written back into the PCB copper — attached foil is not a production solution |
 | 🟡Advised | Assembly consumables | Insulating tape/foam/screws identical to production | 1 set/prototype | To be selected | In-enclosure placement and metal screws change the resonance; tuning must use the same assembly state as production |
 
@@ -93,9 +97,9 @@ defer to the manufacturer's full part number and datasheet, not the abbreviated 
 
 ## 6. Shortest tuning sequence
 
-1. First build: leave ZP1/ZP2/C53 unpopulated, populate ZS1 with 0R and J7 with U.FL; assemble the unit into the enclosure in the production state.
-2. Connect the VNA at J7 and observe the series resonance first; trim only the IFA open end so the `Im(Z)` zero crossing lands near 1090MHz.
-3. Once the frequency is in place, record the complex impedance at 1090MHz; then start swapping from ZS1=3.6nH, ZP2=3.3pF, ZP1=DNP.
-4. Use "close to 50Ω at 1090MHz, stable S11/SWR, and insensitivity to assembly position" as the screening criteria — do not just chase the deepest single dip.
-5. After fixing the values, remove the VNA cable, re-populate C53=100pF, re-test in the enclosure, and run an A/B on 1090 message counts, range and noise floor.
-6. Write the final antenna length and the measured ZP1/ZS1/ZP2 values back into the next PCB/BOM revision; later batches populate the fixed values directly, but the π positions stay on the board for re-verification after laminate or enclosure changes.
+1. Verify the manufactured copper outer envelope is 50.0mm and fit ZS1=0R with ZP1/ZP2 DNP; populate J7 for the VNA.
+2. Confirm that the receive path after C53 is open. C53 may remain populated when the downstream parts are absent; otherwise isolate the path.
+3. Measure at J7 first out of the case and then in the complete production enclosure, including the display, TF-card socket, battery and screws.
+4. At 1090MHz record SWR and complex impedance and compare with the V4.0 baseline above. Do not trim or populate the historical HFSS parts merely to deepen one dip.
+5. Only if a changed enclosure/material causes a repeatable batch-level shift, retune in controlled 0.1–0.2mm steps and use the π network as needed.
+6. Run an over-the-air A/B on 1090 message count, range and noise floor; VNA matching alone does not verify radiation efficiency.

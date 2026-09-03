@@ -1,10 +1,10 @@
-# Pilot Kit Avionics Board V4.3
+# Pilot Kit Avionics Board V4.4
 
 **Integrated ADS-B / GNSS / IMU expansion board for the Pilot Kit Box**
 集成 ADS-B / GNSS / IMU 扩展板
 
 <p align="center">
-  <img src="render/top.png" alt="Expansion board V4.3 top side" width="900">
+  <img src="render/top.png" alt="Expansion board V4.4 top side" width="900">
 </p>
 
 A 6-layer, 100.1 × 62.1 mm HAT that stacks onto the Waveshare
@@ -21,13 +21,15 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 
 ## ⚠️ Status / 当前状态
 
-> **V4.0 has been fabricated; V4.3 is the corrected manufacturing revision.**
-> V4.3 passes the automated schematic/PCB checks below, but the corrected revision
+> **V4.0 has been fabricated; V4.4 is the current manufacturing revision.**
+> V4.4 carries forward the V4.3 electrical corrections and transfers the V4.0
+> measured 50.0mm IFA geometry. It passes the automated schematic/PCB checks below, but this revision
 > itself still requires physical bring-up. Owners of V4.0 boards must follow the
 > internal rework record before powering the 1090 MHz chain.
 >
-> **V4.0 已经打样；V4.3 是修正后的制造版本。** V4.3 已通过下列原理图与 PCB
-> 自动检查，但修正版仍待实物 bring-up。V4.0 实物在开启 1090 MHz 链路前必须先按
+> **V4.0 已经打样；V4.4 是当前制造版本。** V4.4 继承 V4.3 的电气修正，并回灌
+> V4.0 逐刀实测定型的 50.0mm IFA 几何。V4.4 已通过下列原理图与 PCB 自动检查，但本版仍待
+> 实物 bring-up。V4.0 实物在开启 1090 MHz 链路前必须先按
 > 内部返修记录处理。
 
 | | Status / 状态 |
@@ -35,20 +37,24 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 | Schematic / 原理图 | ✅ Complete / 完成 |
 | Layout & routing / 布局布线 | ✅ Complete — 0 DRC violations, 0 unconnected nets / 零违例、未连通 0 |
 | Manufacturing files / 制造文件 | ✅ Gerber + drill export cleanly / 可正常导出 |
-| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.3 not yet fabricated / V4.0 已打样，V4.3 待打样 |
-| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.3 pending / V4.0 返修流程已就绪，V4.3 待验证 |
-| **On-board IFA antenna / 板载 IFA 天线** | ⚠️ **Laid out but NOT tuned / 已落板但未调谐** |
+| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.4 not yet fabricated / V4.0 已打样，V4.4 待打样 |
+| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.4 pending / V4.0 返修流程已就绪，V4.4 待验证 |
+| **On-board IFA antenna / 板载 IFA 天线** | ✅ V4.0 per-cut measured 50.0mm geometry transferred / V4.0 逐刀实测 50.0mm 几何已回灌 |
 
-**About the IFA antenna** — the 1090 MHz inverted-F antenna is drawn at
-52.0 mm as a starting length. It **must** be tuned with a VNA in the final
-enclosure: the matching network ships as a straight-through (`ZS1`=0R,
-`ZP1`/`ZP2`=DNP) and the HFSS starting point (3.6 nH / 3.3 pF) is a first
-sweep value, **not a production value**. Enclosure, battery, and screws all
-shift the resonance. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
+**About the IFA antenna** — V4.4 uses the V4.0 physical-board result: a
+**50.0mm copper outer envelope** (48.5mm radiating-arm centerline span), with
+the matching network straight-through (`ZS1`=0R, `ZP1`/`ZP2`=DNP). The V4.0
+board was trimmed cut-by-cut from 53.5mm and stopped at 50.0mm, where it
+measured **1082.5MHz, SWR 1.09, 45+j0.5Ω** in the case with the battery
+fitted. The same series yields a slope of **24–25 MHz/mm**. These values
+validate the transferred geometry, but each new enclosure/material batch
+still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 
-板载 1090 MHz 倒 F 天线按 52.0mm 画长，**必须**装盒后用 VNA 调谐：
-匹配网络出厂是直通，HFSS 起点 3.6nH/3.3pF 只是首轮扫值**不是量产值**。
-外壳、电池、螺丝都会改变谐振点。
+板载 1090MHz 倒 F 天线采用 V4.0 实板逐刀定型结果：**铜箔外包络 50.0mm**（辐射臂
+中心线跨度 48.5mm），匹配网络直通（`ZS1`=0R、`ZP1`/`ZP2`=DNP）。该板由 53.5mm
+逐刀切短并在 50.0mm 停刀，装盒且装电池实测 **1082.5MHz、SWR 1.09、45+j0.5Ω**；
+同一组序列给出斜率 **24–25MHz/mm**。
+该结果用于 V4.4 回灌，但新外壳或板材批次仍应抽样用 VNA 复核。
 
 ---
 
@@ -73,7 +79,7 @@ See [`VARIANTS.md`](VARIANTS.md).
 两个装配变体（带/不带板载电源），选贴规则见该文档。
 
 <p align="center">
-  <img src="render/bottom.png" alt="Expansion board V4.3 bottom side" width="900">
+  <img src="render/bottom.png" alt="Expansion board V4.4 bottom side" width="900">
 </p>
 
 ---
@@ -104,8 +110,10 @@ Pre-built packages live in [`release/`](release/):
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.3-20260902.zip` | **Use this to order** — V4.3 QPL9547/comparator/detector/power/debug corrections, RS-274-X, 15 files |
-| `expansion-board-v4-kicad-V4.3-20260902.zip` | Matching V4.3 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.4-20260904.zip` | **Use this to order** — V4.3 electrical corrections plus the per-cut measured 50.0mm IFA geometry, RS-274-X, 15 files |
+| `expansion-board-v4-kicad-V4.4-20260904.zip` | Matching V4.4 source archive / further development. **Not accepted by the fab** |
+| `expansion-board-v4-gerber-JLC-V4.3-20260902.zip` | ⚠️ Superseded by V4.4 before fabrication — old 53.5mm IFA outer envelope, do not order |
+| `expansion-board-v4-kicad-V4.3-20260902.zip` | ⚠️ Matching superseded V4.3 source archive — do not use |
 | `expansion-board-v4-gerber-JLC-V4.1-20260830.zip` | ⚠️ Superseded before the QPL9547 bias and power corrections — do not order |
 | `expansion-board-v4-kicad-V4.1-20260830.zip` | ⚠️ Matching superseded V4.1 source archive — do not use |
 | `expansion-board-v4-gerber-JLC-20260830.zip` | ⚠️ Superseded: electrically includes the ECO but carries the stale V4.0 silkscreen — do not order |

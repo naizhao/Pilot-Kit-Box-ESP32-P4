@@ -39,11 +39,13 @@
                  两条控制线；RF 路径、bias tee、器件位置和参考面不变
   V3.8  → V3.9   二次硬件审计 ECO：比较器使能、检波耦合、核心/射频去耦、
                  CC1312R 复位上拉、USB ESD 与 VBUS 检测
+  V3.9  → V3.10  板载1090MHz IFA按V4.0实板装盒VNA结果定型：铜箔外包络
+                 50.0mm（中心线48.5mm），取代53.5mm画长待切版本
 """
 
 BOARD_NAME = "Pilot Kit Avionics Board"
-BOARD_REV = "V3.9"
-BOARD_DATE = "2026-08"
+BOARD_REV = "V3.10"
+BOARD_DATE = "2026-09"
 COPYRIGHT = "(c) Pilot Kit"
 WEBSITE = "https://air.club"
 SUBTITLE = "1090 / 978 ADS-B  +  GNSS  +  IMU  +  BARO"
