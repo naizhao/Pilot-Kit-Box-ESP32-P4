@@ -270,7 +270,7 @@ VNA calibration in the final enclosure.
 | [`CHECKLIST.md`](hardware/expansion-board-v4/CHECKLIST.md) | 按位号贴片核对表（另附 .xlsx/.pdf 打印版）/ Per-reference placement checklist (with printable .xlsx/.pdf) |
 | [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
 | [`SELECTIVE_PLACEMENT.md`](hardware/expansion-board-v4/SELECTIVE_PLACEMENT.md) | 贴装分组与互斥规则（贴错会烧板）/ Placement groups and mutex rules |
-| [`BOM_PURCHASE.md`](hardware/expansion-board-v4/BOM_PURCHASE.md) | 权威采购清单（脚本从网表生成）/ Authoritative purchasing list, generated from the netlist |
+| [`BOM_PURCHASE-zh_CN.md`](hardware/expansion-board-v4/BOM_PURCHASE-zh_CN.md) | 权威采购清单（脚本从网表生成）/ Authoritative purchasing list, generated from the netlist |
 | [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md) | IFA 调谐备料与装盒 VNA 调试流程 / Antenna tuning kit and the in-enclosure VNA procedure |
 | [`BASEBOARD_REF.md`](hardware/expansion-board-v4/BASEBOARD_REF.md) | 载板机械参数基准 / Mechanical reference for the Waveshare carrier |
 
@@ -282,13 +282,13 @@ counterpart; see the v4 README for the full index.
 ### 硬件成本参考 / Hardware Cost Reference
 
 以 **v4 扩展板**为准（两片用量、含备损；完整料号与选型依据见
-[`BOM_PURCHASE.md`](hardware/expansion-board-v4/BOM_PURCHASE.md)）：
+[`BOM_PURCHASE-zh_CN.md`](hardware/expansion-board-v4/BOM_PURCHASE-zh_CN.md)）：
 
 | 项目 / Item | 金额 / Cost | 说明 / Notes |
 |---|---:|---|
 | 嘉立创 SMT 贴装（`full` 方案，2 片）<br>JLC SMT assembly (`full` profile, 2 boards) | **实付 ¥51.06**<br>**¥51.06 paid** | 46 种 / 126 件 / 252 焊点；工程费、焊盘费、换料费优惠券后为 0<br>46 parts / 126 placements; setup & fees waived by coupons |
 | 手贴件：贵价射频 IC、电源 IC、B 面件等<br>Hand-placed: pricier RF/Power ICs, B-side parts | 另计<br>extra | 数量与料号见 `BOM_PURCHASE.md` 中未列入嘉立创 SMT 贴装（手贴）的行；按 `VARIANTS.md` 的选贴规则取用<br>see the hand-placed (non-SMT) rows in `BOM_PURCHASE.md`; quantities per `VARIANTS.md` |
-| 6 层 PCB 打样（JLC06161H-3313，含盘中孔工艺）<br>6-layer PCB fab (JLC06161H-3313, via-in-pad) | 另计<br>extra | 叠层与阻抗依据 [`JLC_STACKUP_IMPEDANCE.md`](hardware/JLC_STACKUP_IMPEDANCE.md) / see stackup doc |
+| 6 层 PCB 打样（JLC06161H-3313，含盘中孔工艺）<br>6-layer PCB fab (JLC06161H-3313, via-in-pad) | 另计<br>extra | 叠层与阻抗依据 [`PCB_STACKUP_IMPEDANCE.md`](hardware/PCB_STACKUP_IMPEDANCE.md) / see stackup doc |
 | 外壳 / Enclosure | 另计<br>extra | 3D 打印（嘉立创） / 3D printed (JLC) |
 
 > 2026-07-31 之前的 2.4 寸载板（v1）时代旧成本表已随 **`v1` 分支**归档，可在

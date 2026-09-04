@@ -63,7 +63,7 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | | |
 |---|---|
 | **Outline / Layers** | 100.1 × 62.1 mm, 6 layers |
-| **Stackup** | JLC06161H-3313 — 0.0994 mm L1→In1 dielectric, 0.15 mm 50 Ω microstrip |
+| **Stackup** | Designed for 0.0994 mm L1→In1 (single-ply 3313); any 0.085–0.115 mm works as-is — see below |
 | **Layer usage** | F.Cu signal · In1 solid GND (RF reference) · In2 signal · In3 3V3 plane · In4 solid GND · B.Cu signal |
 | **1090 MHz RX** | QPL9547 LNA → TA0970A SAW → BGA2817 → AD8313 log detector → TLV3501 comparator → RP2040 PIO decoder |
 | **978 MHz UAT** | CC1312R1F3RGZR sub-GHz transceiver, differential LC match |
@@ -125,17 +125,35 @@ Pre-built packages live in [`release/`](release/):
 
 1. **Gerbers must be RS-274-X, not X2.** JLCPCB accepts neither KiCad project
    files nor Gerber X2. KiCad exports X2 by default, so the release package is
-   regenerated with `--no-x2 --no-netlist`. Because only Gerbers can be
-   uploaded, **the via treatment cannot be selected on the web form — it has to
-   go in the order notes.** Ready-to-paste text is in the order guide below.
-2. **The stackup must be JLC06161H-3313.** All 28 controlled-impedance RF nets
-   are 0.15 mm wide because that stackup's L1→In1 dielectric is 0.0994 mm.
-   A different stackup silently breaks 50 Ω and degrades 1090/978 sensitivity.
+   regenerated with `--no-x2 --no-netlist`.
+2. **Via solder-mask state comes from the file, not the order form.** JLCPCB,
+   HQPCB and JiePei all state the same thing: *"if the file is Gerber, we
+   process strictly per the file; this option has no effect"* — Gerber cannot
+   tell a via from a component hole. This board ships 437 vias: 401 tented,
+   36 exposed (all 36 inside pad mask openings, 28 of them thermal via-in-pad).
 3. **`J4`'s four `SH` holes must NOT be resin-plugged.** They are ⌀0.60 mm
    plated *slots* (Excellon `G85`) that mechanically anchor the USB-C
    receptacle. Plug them and the connector will tear off after a few
-   insertions. The soldermask layer already encodes the distinction (SH is
-   opened, the EP thermal vias are tented) — the fab should follow it.
+   insertions. If you order resin-filled via-in-pad, exclude these explicitly
+   in the order notes.
+
+### Stackup: preferred, not mandatory
+
+The 28 controlled-impedance RF nets are 0.15 mm wide, derived from an L1→In1
+dielectric of **0.0994 mm (single-ply 3313 prepreg)**. You do **not** need that
+exact stackup:
+
+| Your fab's L1→In1 | Result | Action |
+|---|---|---|
+| **0.085 – 0.115 mm** | 45–55 Ω | Send as-is. Verified: JLCPCB `JLC06161H-3313`, JiePei `JP06161H-3313B2` |
+| ~0.125 mm (single-ply 2116) | ≈57 Ω | Still fine — 0.02 dB mismatch loss |
+| ~0.19 mm (single-ply 7628) | ≈70 Ω | Buildable — 0.12 dB mismatch loss, slightly lower 1090 sensitivity |
+
+The longest RF run is 11.7 mm ≈ λ/13 at 1090 MHz, so mismatch never builds a
+standing wave — every case above costs less than the 0.51 dB that an SWR of 2.0
+would. **The on-board IFA antenna is cleared on all six copper layers and is
+unaffected by the stackup entirely.** Full numbers, per-vendor stackup tables and
+the mismatch-loss derivation: [`PCB_STACKUP_IMPEDANCE.md`](../PCB_STACKUP_IMPEDANCE.md).
 
 ---
 

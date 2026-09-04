@@ -10,7 +10,7 @@ Dk，再用这个 Dk 在同一叠层内插值。**任何要下单的线宽以官
     python3 microstrip_z0.py                # 跑内置的嘉立创叠层校验
     python3 microstrip_z0.py 0.15 0.0994 4.725   # W h Dk -> Z0
 
-数据来源见 ../JLC_STACKUP_IMPEDANCE.md
+数据来源见 ../PCB_STACKUP_IMPEDANCE-zh_CN.md（多厂对照：嘉立创/华秋/捷配）
 """
 
 import math
