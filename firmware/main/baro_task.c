@@ -308,7 +308,7 @@ void pk_baro_start(void)
 {
     i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
     if (bus == NULL) {
-        ESP_LOGE(TAG, "I2C0 bus not ready (call after pk_imu_init)");
+        ESP_LOGE(TAG, "I2C0 bus not ready (call after pk_i2c0_bus_init)");
         return;
     }
 
