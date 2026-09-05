@@ -4,12 +4,10 @@
  * core0：帧环 → p4_link 发送、RX 轮询、1 Hz HEALTH、CDC 命令、看护 core1。
  */
 #include <stdio.h>
-#include <string.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 
-#include "board_pins.h"
 #include "rf_safety.h"
 #include "edge_cap.h"
 #include "modes_edge.h"

@@ -12,7 +12,8 @@
  *   · READ/WRITE_ADDR：不重编程则沿用当前值作下一轮起点（§2.5.1.1），
  *     配合写环（RING_SEL=write, RING_SIZE=13，仅低 13 位变化、2^13 字节
  *     边界回卷）写完一整环后地址恰好回到 s_ring[0]，两通道交替无缝。
- * 通道交接瞬间（硬件即时触发）RX FIFO 的 8 字深兜住间隔样本。
+ * 通道交接（硬件即时触发）只隔几个周期；未开 FIFO join 时 RX FIFO
+ * 深 4 字，4 字 ≫ 交接窗口，足以兜住间隔样本。
  *
  * 写环用 channel_config_set_ring(&c, true, 13)（pico-sdk dma.h 的正规
  * 写法，等价于 CTRL.RING_SEL/RING_SIZE 字段）；不用手工 al1_write_addr_trig

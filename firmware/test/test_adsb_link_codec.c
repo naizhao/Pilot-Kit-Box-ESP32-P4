@@ -15,7 +15,6 @@
  */
 #include "adsb_link.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 

@@ -20,9 +20,10 @@
  *       own_adsb.tsl    绑定机专属原始报文，同 adsb-NNN.tsl 格式，无头
  *       session.json    元数据（开机 partial，pre-unmount 时覆盖 final）
  *
- * traffic.idx 按机摘要**不在本阶段（3a）范围**：它的内容来自
- * traffic.trk 里逐条记录聚合出的按机统计，3a 没有任何生产者往
- * traffic.trk 写数据，这里先不建。3b 接上 dsp_task 之后再补。
+ * traffic.idx 按机摘要：3a 时 traffic.trk 尚无生产者、未实现；
+ * 3b 落地（即如今的 adsb_link_task）后 traffic.trk 有了生产者，
+ * 按机统计随之在运行期在线维护、session 关闭时整表写出（见下文
+ * write_traffic_idx_locked）。
  */
 #include "pk_rec_store.h"
 #include "pk_rec_format.h"

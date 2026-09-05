@@ -580,6 +580,12 @@ reset:;
 }
 
 /* --- 链路消息分发 ------------------------------------------------------ */
+static uint32_t le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
@@ -625,11 +631,11 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
         ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u resync=%u noise=%u "
                       "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
-                 *(uint32_t *)(m->payload + 0),  *(uint32_t *)(m->payload + 4),
-                 *(uint32_t *)(m->payload + 8),  *(uint32_t *)(m->payload + 12),
-                 *(uint32_t *)(m->payload + 16), *(uint32_t *)(m->payload + 20),
-                 *(uint32_t *)(m->payload + 24), *(uint32_t *)(m->payload + 28),
-                 *(uint32_t *)(m->payload + 32), *(uint32_t *)(m->payload + 36));
+                 le32(m->payload + 0),  le32(m->payload + 4),
+                 le32(m->payload + 8),  le32(m->payload + 12),
+                 le32(m->payload + 16), le32(m->payload + 20),
+                 le32(m->payload + 24), le32(m->payload + 28),
+                 le32(m->payload + 32), le32(m->payload + 36));
         break;
     case ADSB_LINK_MSG_ERROR:
         ESP_LOGW(TAG_ADSB, "RP error code=%u", m->payload_len ? m->payload[0] : 0);
