@@ -47,6 +47,7 @@
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
+#include "qmc5883p.h"
 #include "battery.h"
 #include "config_ble.h"
 #include "config_demo.h"
@@ -295,6 +296,13 @@ void app_main(void)
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
+
+    /* QMC5883P 磁力计诊断（WP-B Task 4）：optional 器件，缺失/探测失败
+     * 只在驱动里 WARN + 计数，不影响其余功能；R1——只出原始三轴诊断，
+     * 不出航向。 */
+    if (qmc5883p_init(pk_i2c0_bus_get()) != ESP_OK) {
+        ESP_LOGW(TAG, "QMC5883P init failed — mag diagnostics disabled");
+    }
 
     /*
      * 地图扫描放在 splash 期间 —— 这是**产品决定压过时序最优**的一处，改之前

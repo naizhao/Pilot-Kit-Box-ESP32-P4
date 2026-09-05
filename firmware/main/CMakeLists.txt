@@ -83,6 +83,9 @@ idf_component_register(
         "imu_task.c"
         "pk_vib.c"
         "baro_task.c"
+        # QMC5883P 磁力计一阶段驱动（WP-B Task 4）：纯解码 host 单测
+        # （test_qmc5883p.c），目标端轮询依赖 pk_board.c 的封装系→机体变换。
+        "qmc5883p.c"
         # I²C0 总线级恢复。policy 是纯逻辑（host 单测 test_pk_i2c0_policy.c），
         # recover 才碰 i2c_master_bus_reset()。见 pk_i2c0_recover.h 文件头。
         "pk_i2c0_policy.c"
