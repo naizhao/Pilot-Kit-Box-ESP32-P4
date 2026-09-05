@@ -82,6 +82,9 @@ idf_component_register(
         "pk_board.c"
         "imu_task.c"
         "pk_vib.c"
+        # BMP388 补偿数学（WP-B Task 5 从 baro_task.c 抽出的纯单元，无 ESP
+        # 依赖）：host 单测 test_baro_compensate.c 直接编它做双实现互证。
+        "baro_compensate.c"
         "baro_task.c"
         # QMC5883P 磁力计一阶段驱动（WP-B Task 4）：纯解码 host 单测
         # （test_qmc5883p.c），目标端轮询依赖 pk_board.c 的封装系→机体变换。

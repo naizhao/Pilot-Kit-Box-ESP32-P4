@@ -11,6 +11,7 @@
  */
 
 #include "baro.h"
+#include "baro_compensate.h"  /* BMP388 补偿数学(WP-B Task 5 抽出的纯单元) */
 #include <string.h>
 #include <math.h>
 #include "freertos/FreeRTOS.h"
@@ -48,12 +49,9 @@ static i2c_master_dev_handle_t s_dev;
 static SemaphoreHandle_t       s_mutex;
 static pk_baro_state_t         s_state;   /* guarded by s_mutex */
 
-/* ── 量化后的校准系数(Bosch BMP3_FLOAT 格式) ── */
-static struct {
-    float t1, t2, t3;
-    float p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11;
-    float t_lin;   /* compensate_temperature 的中间结果,供 compensate_pressure 复用 */
-} s_cal;
+/* 量化校准系数 + t_lin 中间结果。补偿公式本体在 baro_compensate.c
+ * (手册 §9 参考实现，WP-B Task 5 抽成纯单元供 host 单测)。 */
+static baro_calib_t s_cal;
 
 /* 配置+校准成功 gate:配置写入或校准读取任一失败前禁止输出 valid 数据 */
 static volatile bool s_ready = false;
@@ -71,28 +69,6 @@ static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     uint8_t b[2] = { reg, val };
     return i2c_master_transmit(s_dev, b, 2, 100);
-}
-
-/* ─────────────────────────────────────────────────────────────────────── */
-/*  Bosch BMP3_FLOAT 补偿公式(照原文一字不改)                               */
-/* ─────────────────────────────────────────────────────────────────────── */
-
-static float compensate_temperature(uint32_t uncomp_temp)
-{
-    float pd1 = (float)uncomp_temp - s_cal.t1;
-    float pd2 = pd1 * s_cal.t2;
-    s_cal.t_lin = pd2 + (pd1 * pd1) * s_cal.t3;
-    return s_cal.t_lin;
-}
-
-static float compensate_pressure(uint32_t uncomp_press)
-{
-    float t   = s_cal.t_lin;
-    float po1 = s_cal.p5 + s_cal.p6 * t + s_cal.p7 * (t * t) + s_cal.p8 * (t * t * t);
-    float po2 = (float)uncomp_press * (s_cal.p1 + s_cal.p2 * t + s_cal.p3 * (t * t) + s_cal.p4 * (t * t * t));
-    float up2 = (float)uncomp_press * (float)uncomp_press;
-    float po3 = up2 * (s_cal.p9 + s_cal.p10 * t) + (up2 * (float)uncomp_press) * s_cal.p11;
-    return po1 + po2 + po3;   /* Pa */
 }
 
 /* 前向声明:configure_and_calibrate 调用 load_calibration */
@@ -128,36 +104,7 @@ static esp_err_t load_calibration(void)
         return err;
     }
 
-    uint16_t T1 = (uint16_t)((c[1] << 8) | c[0]);
-    uint16_t T2 = (uint16_t)((c[3] << 8) | c[2]);
-    int8_t   T3 = (int8_t)c[4];
-    int16_t  P1 = (int16_t)((c[6] << 8) | c[5]);
-    int16_t  P2 = (int16_t)((c[8] << 8) | c[7]);
-    int8_t   P3 = (int8_t)c[9];
-    int8_t   P4 = (int8_t)c[10];
-    uint16_t P5 = (uint16_t)((c[12] << 8) | c[11]);
-    uint16_t P6 = (uint16_t)((c[14] << 8) | c[13]);
-    int8_t   P7 = (int8_t)c[15];
-    int8_t   P8 = (int8_t)c[16];
-    int16_t  P9 = (int16_t)((c[18] << 8) | c[17]);
-    int8_t   P10 = (int8_t)c[19];
-    int8_t   P11 = (int8_t)c[20];
-
-    s_cal.t1  = (float)T1  / 0.00390625f;              /* 2^-8  */
-    s_cal.t2  = (float)T2  / 1073741824.0f;             /* 2^30  */
-    s_cal.t3  = (float)T3  / 281474976710656.0f;         /* 2^48  */
-    s_cal.p1  = ((float)P1  - 16384.0f) / 1048576.0f;   /* 2^20  */
-    s_cal.p2  = ((float)P2  - 16384.0f) / 536870912.0f; /* 2^29  */
-    s_cal.p3  = (float)P3  / 4294967296.0f;              /* 2^32  */
-    s_cal.p4  = (float)P4  / 137438953472.0f;            /* 2^37  */
-    s_cal.p5  = (float)P5  / 0.125f;                     /* 2^-3  */
-    s_cal.p6  = (float)P6  / 64.0f;                      /* 2^6   */
-    s_cal.p7  = (float)P7  / 256.0f;                     /* 2^8   */
-    s_cal.p8  = (float)P8  / 32768.0f;                   /* 2^15  */
-    s_cal.p9  = (float)P9  / 281474976710656.0f;          /* 2^48  */
-    s_cal.p10 = (float)P10 / 281474976710656.0f;          /* 2^48  */
-    s_cal.p11 = (float)P11 / 36893488147419103232.0f;    /* 2^65  */
-    s_cal.t_lin = 0.0f;
+    baro_calib_parse(c, &s_cal);
 
     ESP_LOGI(TAG, "calib loaded T1=%.1f T2=%.3e P5=%.1f P6=%.3e",
              s_cal.t1, s_cal.t2, s_cal.p5, s_cal.p6);
@@ -287,8 +234,8 @@ static void baro_task(void *arg)
         uint32_t raw_temp  = (uint32_t)d[3] | ((uint32_t)d[4] << 8) | ((uint32_t)d[5] << 16);
 
         /* 顺序重要:先温度(更新 t_lin),再气压(依赖 t_lin) */
-        float temp_c   = compensate_temperature(raw_temp);
-        float press_pa = compensate_pressure(raw_press);
+        float temp_c   = baro_compensate_temperature(&s_cal, raw_temp);
+        float press_pa = baro_compensate_pressure(&s_cal, raw_press);
 
         /* 守卫:press_pa <= 0 会使 powf 底数为负,产生 NaN → (int)NaN UB */
         if (!(press_pa > 0.0f)) {
