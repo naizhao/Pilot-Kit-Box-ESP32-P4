@@ -26,7 +26,7 @@ add_executable(adsb1090
     adsb1090.c
     # ── 临时状态（Task 7 脚手架）：其余源文件尚未创建，暂注释，Task 8 起逐个放回 ──
     rf_safety.c
-    # modes_edge.c
+    modes_edge.c
     # edge_cap.c
     # edge_cap.pio
     # selftest_gen.c
