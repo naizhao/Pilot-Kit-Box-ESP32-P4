@@ -177,3 +177,6 @@ hardware/datasheets/*.png
 
 # 仓库根的 build/：救援副本、临时试验，不进版本库
 /build/
+
+# SDD worktrees (isolated implementation workspaces)
+.worktrees/
