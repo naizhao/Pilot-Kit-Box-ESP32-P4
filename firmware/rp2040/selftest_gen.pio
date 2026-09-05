@@ -1,0 +1,19 @@
+; pulsegen — 16Mbps 固定速率位流输出（SM div=7.8125 @125MHz → 1 slot = 1/16µs）。
+; DMA 把 bitstream 推进 TX FIFO，out pins,1 逐位吐出；LSB 先行（右移）。
+.program pulsegen
+.wrap_target
+    out pins, 1
+.wrap
+
+% c-sdk {
+static inline void pulsegen_program_init(PIO pio, uint sm, uint offset, uint pin)
+{
+    pio_sm_config c = pulsegen_program_get_default_config(offset);
+    sm_config_set_out_pin_base(&c, pin);
+    sm_config_set_out_shift(&c, true /*右移 LSB first*/, true /*autopull*/, 32);
+    sm_config_set_clkdiv(&c, 7.8125f);          /* 125MHz/7.8125 = 16MHz */
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_gpio_init(pio, pin);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

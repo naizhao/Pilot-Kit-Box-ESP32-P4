@@ -29,7 +29,8 @@ add_executable(adsb1090
     modes_edge.c
     edge_cap.c
     edge_cap.pio
-    # selftest_gen.c
+    selftest_gen.c
+    selftest_gen.pio
     # threshold_ctl.c
     # p4_link.c
     # ../components/adsb_link_codec/adsb_link_codec.c   # 文件已存在，随链路任务一起放回
@@ -42,6 +43,7 @@ target_include_directories(adsb1090 PRIVATE
 # pioasm 工具链由 SDK tools/CMakeLists.txt 按需 FetchContent；
 # 必须显式声明才会生成头（.pio 仅列进 add_executable 不会触发）。
 pico_generate_pio_header(adsb1090 ${CMAKE_CURRENT_LIST_DIR}/edge_cap.pio)
+pico_generate_pio_header(adsb1090 ${CMAKE_CURRENT_LIST_DIR}/selftest_gen.pio)
 # SDK 2.1.1 会取 picotool develop 分支，其按扩展名识别输入文件；
 # 无后缀的默认产物名会被拒（"no recognized file type"），显式用 .elf 后缀。
 set_target_properties(adsb1090 PROPERTIES SUFFIX ".elf")
