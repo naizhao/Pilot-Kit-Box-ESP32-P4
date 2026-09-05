@@ -24,7 +24,6 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(adsb1090
     adsb1090.c
-    # ── 临时状态（Task 7 脚手架）：其余源文件尚未创建，暂注释，Task 8 起逐个放回 ──
     rf_safety.c
     modes_edge.c
     edge_cap.c
@@ -32,8 +31,8 @@ add_executable(adsb1090
     selftest_gen.c
     selftest_gen.pio
     threshold_ctl.c
-    # p4_link.c
-    # ../components/adsb_link_codec/adsb_link_codec.c   # 文件已存在，随链路任务一起放回
+    p4_link.c
+    ../components/adsb_link_codec/adsb_link_codec.c   # 共享 codec：与 P4 侧同一份源
 )
 target_include_directories(adsb1090 PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
