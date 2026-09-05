@@ -31,6 +31,7 @@
 
 #include "config_demo.h"   /* pk_demo_enabled —— 演示模式接管姿态数据源 */
 #include "demo_data.h"
+#include "pk_i2c0_bus.h"      /* I²C0 总线已上移为板级模块（bus handle 来源） */
 #include "pk_i2c0_recover.h"  /* 总线级恢复：坏的是总线时 bno_bring_up 救不回来 */
 #include "pk_board.h"      /* 板型 profile：V3.9/V4.3 的 BNO085 安装变换不同 */
 #include "pk_vib.h"        /* vib_level：加速度模长滑动窗口 RMS */
@@ -52,9 +53,8 @@
 static const char *TAG = "imu";
 
 /* --- Hardware wiring (mirrors docs/hardware/board_pinout.md) --------- */
-#define IMU_I2C_PORT             I2C_NUM_0
-#define IMU_I2C_SDA              7
-#define IMU_I2C_SCL              8
+/* I²C0 总线（SDA GPIO7 / SCL GPIO8，400 kHz）的创建已上移到板级模块
+ * pk_i2c0_bus.c；这里只剩器件自己的地址与 RST/INT 引脚。 */
 #define IMU_I2C_HZ               400000
 #define IMU_I2C_ADDR             0x4A
 #define IMU_PIN_INT              34    /* J3 Pin 28 = GPIO34 (JLC PCB net IMU_INT); current driver polls, INT unused */
@@ -111,7 +111,6 @@ typedef struct __attribute__((packed)) {
 } sh2_set_feature_t;
 
 /* --- Module state ---------------------------------------------------- */
-static i2c_master_bus_handle_t    s_bus;
 static i2c_master_dev_handle_t    s_dev;
 static SemaphoreHandle_t          s_sample_lock;
 static pk_imu_sample_t            s_sample;
@@ -167,29 +166,23 @@ static esp_err_t imu_nvs_load_tare(float *w, float *x, float *y, float *z);
 static esp_err_t imu_nvs_save_tare(float w, float x, float y, float z);
 static esp_err_t imu_nvs_erase_tare(void);
 
-/* --- I²C bring-up ---------------------------------------------------- */
-static esp_err_t i2c_bring_up(void)
+/* --- I²C device attach ------------------------------------------------ *
+ *
+ * 总线本身由板级模块 pk_i2c0_bus 在 app_main 最前面创建（所有权移交见
+ * pk_i2c0_bus.h）——IMU init 失败不再连带总线消失，optional 器件缺失 ≠
+ * 总线故障。这里只把 BNO085 挂上去；bus == NULL 说明启动次序被人动过
+ * （pk_i2c0_bus_init 没跑或失败了），报错给人看。 */
+static esp_err_t i2c_add_device(void)
 {
-    /* Bus is shared with the ES8311 codec. esp_driver_i2c happily lets
-     * us re-init the bus if no one else has — both code paths in the
-     * firmware end up here exactly once, so a fresh init is fine. */
-    const i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = IMU_I2C_PORT,
-        .sda_io_num = IMU_I2C_SDA,
-        .scl_io_num = IMU_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_bus);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+    i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
+    if (bus == NULL) return ESP_ERR_INVALID_STATE;
 
     const i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = IMU_I2C_ADDR,
         .scl_speed_hz = IMU_I2C_HZ,
     };
-    return i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev);
+    return i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
 }
 
 /* --- BNO085 hard reset ----------------------------------------------- */
@@ -750,10 +743,10 @@ static void imu_task(void *arg)
     pk_i2c0_client_t i2c_client;
     pk_i2c0_client_init(&i2c_client, "imu", 2, 0);
 
-    /* 总线恢复代数。别的任务（baro）把总线救回来之后，这里要跟着把
-     * BNO085 重新初始化一遍——总线复位只是把线放开了，芯片那侧的 SH-2
-     * 会话已经断了，不重放 init 就永远收不到报文。 */
-    uint32_t bus_gen = pk_i2c0_recover_generation();
+    /* 总线恢复代数（住在板级总线模块里）。别的任务（baro）把总线救回来
+     * 之后，这里要跟着把 BNO085 重新初始化一遍——总线复位只是把线放开了，
+     * 芯片那侧的 SH-2 会话已经断了，不重放 init 就永远收不到报文。 */
+    uint32_t bus_gen = pk_i2c0_bus_generation();
 
     /* Per-second counters (zeroed in the 1 Hz dump). */
     uint32_t valid_count        = 0;   /* successfully parsed RV reports */
@@ -769,7 +762,7 @@ static void imu_task(void *arg)
     while (1) {
         /* --- 总线被别人救回来了？先把自己重新初始化，再谈轮询 --- */
         {
-            const uint32_t gen = pk_i2c0_recover_generation();
+            const uint32_t gen = pk_i2c0_bus_generation();
             if (gen != bus_gen) {
                 bus_gen = gen;
                 ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 BNO085 初始化",
@@ -1010,9 +1003,9 @@ esp_err_t pk_imu_init(void)
         }
     }
 
-    esp_err_t err = i2c_bring_up();
+    esp_err_t err = i2c_add_device();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2c_bring_up: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "i2c_add_device: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -1028,17 +1021,6 @@ esp_err_t pk_imu_init(void)
     if (ok != pdTRUE) return ESP_ERR_NO_MEM;
     s_imu_ready = true;
     return ESP_OK;
-}
-
-/* --- I²C0 bus handle export ----------------------------------------- *
- *
- * 暴露 I²C0 主总线 handle,供同总线的其它 device(BMP388)复用。
- * i2c_new_master_bus() 全局只能建一次,此 handle 是唯一入口。
- * baro_task 用它 i2c_master_bus_add_device() 挂自己的 BMP388 device。
- * 返回 NULL 表示 IMU 尚未初始化(总线未建)。 */
-i2c_master_bus_handle_t pk_i2c0_bus_get(void)
-{
-    return s_bus;
 }
 
 /* --- Tare API (software-side) --------------------------------------- *

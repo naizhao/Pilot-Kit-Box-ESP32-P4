@@ -33,8 +33,7 @@
 #include "lvgl.h"
 
 #include "display.h"
-#include "imu_task.h"      /* pk_i2c0_bus_get() */
-#include "pk_i2c0_recover.h"  /* 总线恢复代数 —— 见 pk_touch_retry_after_bus_recovery() */
+#include "pk_i2c0_bus.h"   /* pk_i2c0_bus_get + 总线恢复代数 —— 重试见 pk_touch_retry_tick() */
 #include "about_page.h"
 #include "adsb_list.h"
 #include "cal_wizard.h"
@@ -397,7 +396,7 @@ void pk_touch_retry_tick(void)
     if (s_tp != NULL) return;
 
     const int64_t  now = esp_timer_get_time();
-    const uint32_t gen = pk_i2c0_recover_generation();
+    const uint32_t gen = pk_i2c0_bus_generation();
 
     /* 两条独立的触发路径,缺一不可:
      *

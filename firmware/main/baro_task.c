@@ -19,7 +19,7 @@
 #include "driver/i2c_master.h"
 #include "esp_timer.h"
 #include "esp_log.h"
-#include "imu_task.h"   /* pk_i2c0_bus_get */
+#include "pk_i2c0_bus.h"      /* pk_i2c0_bus_get —— 总线已上移为板级模块 */
 #include "pk_i2c0_recover.h"  /* 总线级恢复:BMP388 挂掉多半是总线塌了,不是它自己 */
 #include "config_qnh.h" /* pk_qnh_get() — 动态 QNH(修正海压) */
 #include "config_demo.h"
@@ -181,8 +181,8 @@ static void baro_task(void *arg)
     pk_i2c0_client_t i2c_client;
     pk_i2c0_client_init(&i2c_client, "baro", 5, 2 * 1000000LL);
 
-    /* 总线恢复代数。总线被谁救回来都要重来一遍配置+标定。 */
-    uint32_t bus_gen = pk_i2c0_recover_generation();
+    /* 总线恢复代数（住在板级总线模块里）。总线被谁救回来都要重来一遍配置+标定。 */
+    uint32_t bus_gen = pk_i2c0_bus_generation();
 
     /* ── 1. 验证 CHIP_ID ──
      *
@@ -195,7 +195,7 @@ static void baro_task(void *arg)
         if (round > 0) {
             ESP_LOGW(TAG, "CHIP_ID 首轮 10 次全败 — 请求 I²C0 总线恢复后再试一轮");
             (void)pk_i2c0_recover_request("baro/chipid");
-            bus_gen = pk_i2c0_recover_generation();
+            bus_gen = pk_i2c0_bus_generation();
         }
         for (int retry = 0; retry < 10; retry++) {
             if (reg_read(BMP388_REG_CHIPID, &id, 1) == ESP_OK && id == BMP388_CHIPID) break;
@@ -239,7 +239,7 @@ static void baro_task(void *arg)
          * 还在、标定系数读得对不对,都得重新验一遍。复用既有的 !s_ready
          * 分支去跑 configure_and_calibrate(),不另写一份。 */
         {
-            const uint32_t gen = pk_i2c0_recover_generation();
+            const uint32_t gen = pk_i2c0_bus_generation();
             if (gen != bus_gen) {
                 bus_gen = gen;
                 ESP_LOGW(TAG, "I²C0 总线已复位(第 %lu 轮)— 重写 BMP388 配置并重读标定",

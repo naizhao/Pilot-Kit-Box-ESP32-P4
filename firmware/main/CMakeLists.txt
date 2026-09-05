@@ -87,6 +87,10 @@ idf_component_register(
         # recover 才碰 i2c_master_bus_reset()。见 pk_i2c0_recover.h 文件头。
         "pk_i2c0_policy.c"
         "pk_i2c0_recover.c"
+        # 板级 I²C0 总线所有权（从 imu_task 移交，WP-B Task 3）：main.c 先于
+        # 一切 I²C 器件 init 调 pk_i2c0_bus_init()；generation 纯逻辑由
+        # test_pk_i2c0_bus.c 覆盖。
+        "pk_i2c0_bus.c"
         # button_task.c 故意不编译：它写死的 GPIO26/GPIO23 在 Rev1.2
         # 4.3 寸上是背光 PWM 和触摸复位，配成输入上拉会打死背光和触摸。
         # 详见 button_task.h 顶部说明。

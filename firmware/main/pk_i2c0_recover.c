@@ -8,7 +8,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-#include "imu_task.h"   /* pk_i2c0_bus_get() —— 全局唯一的 I²C0 handle */
+#include "pk_i2c0_bus.h"   /* pk_i2c0_bus_get() + 恢复代数 —— 全局唯一的 I²C0 总线口 */
 
 /* 独立的 tag。这个故障是偶发的，下次现场只有串口日志可看，必须能一眼
  * grep 出"总线塌了 → 恢复中 → 成功/失败"这条线。 */
@@ -53,15 +53,6 @@ static pk_i2c0_gate_t    s_gate = {
     .cooldown_base_us = PK_I2C0_COOLDOWN_BASE_US,
     .cooldown_max_us  = PK_I2C0_COOLDOWN_MAX_US,
 };
-
-uint32_t pk_i2c0_recover_generation(void)
-{
-    uint32_t g;
-    taskENTER_CRITICAL(&s_mux);
-    g = s_gate.generation;
-    taskEXIT_CRITICAL(&s_mux);
-    return g;
-}
 
 esp_err_t pk_i2c0_recover_request(const char *who)
 {
@@ -124,6 +115,11 @@ esp_err_t pk_i2c0_recover_request(const char *who)
     int64_t cooldown_us;
     taskENTER_CRITICAL(&s_mux);
     pk_i2c0_gate_finish(&s_gate, recovered, t1);
+    /* 总线模块的代数与闸门代数在同一临界区里一起动：各器件盯着的是前者
+     * （pk_i2c0_bus_generation，恢复后重放 bring-up 的唯一信号），闸门那个
+     * 只喂上面的「第 N 轮」日志。单写者保证来自闸门 busy 位，见
+     * pk_i2c0_bus.h 的并发说明。 */
+    if (recovered) pk_i2c0_bus_generation_inc();
     cooldown_us = pk_i2c0_gate_cooldown_us(&s_gate);
     round       = s_gate.generation;
     taskEXIT_CRITICAL(&s_mux);

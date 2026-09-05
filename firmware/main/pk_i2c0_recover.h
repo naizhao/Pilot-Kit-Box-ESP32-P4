@@ -18,8 +18,9 @@
  *
  * 器件怎么重新初始化：靠"代数"，不靠回调
  * ------------------------------------
- * 恢复成功后 pk_i2c0_recover_generation() 会 +1。各器件任务在**自己的
- * 循环里**比对代数，发现变了就重放自己既有的 bring-up：
+ * 恢复成功后总线代数会 +1——代数住在板级总线模块里（pk_i2c0_bus.h 的
+ * pk_i2c0_bus_generation / _inc，本模块在恢复判据判真处递增它）。各器件
+ * 任务在**自己的循环里**比对代数，发现变了就重放自己既有的 bring-up：
  *   imu_task  → bno_bring_up()          （拉 RST + 重放 SH-2 init）
  *   baro_task → configure_and_calibrate()（重写 OSR/ODR/IIR/PWR + 重读标定）
  *
@@ -92,16 +93,5 @@ void pk_i2c0_client_reset(pk_i2c0_client_t *c);
  */
 esp_err_t pk_i2c0_recover_request(const char *who);
 
-/*
- * 成功复位过的总线轮数。开机为 0，每成功恢复一轮 +1。
- *
- * 各器件任务的用法（照抄 imu_task.c / baro_task.c 里那两处）：
- *
- *     static uint32_t bus_gen = 0;               // 任务起来时取一次
- *     ...
- *     uint32_t gen = pk_i2c0_recover_generation();
- *     if (gen != bus_gen) { bus_gen = gen; 重放自己的 bring_up(); }
- *
- * 用"变了没有"而不是"等于几"，这样谁先谁后、中途漏看几轮都不影响正确性。
- */
-uint32_t pk_i2c0_recover_generation(void);
+/* 旧pk_i2c0_recover_generation()已并入板级总线模块：
+ * 读端是 pk_i2c0_bus_generation()，写端（复位成功 +1）就是本文件。 */

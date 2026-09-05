@@ -7,8 +7,9 @@
  * 为什么要有这一层
  * ----------------
  * I²C0（GPIO7/GPIO8，400 kHz）上挂着 BNO085(0x4A)、BMP388(0x76)、
- * GT911(0x5D) 和板载 codec，总线 handle 全局唯一（imu_task.c 建，
- * pk_i2c0_bus_get() 是唯一入口）。2026-08-03 真机抓到一次偶发的
+ * GT911(0x5D) 和板载 codec，总线 handle 全局唯一（板级模块 pk_i2c0_bus
+ * 建，pk_i2c0_bus_get() 是唯一入口；2026-09-06 起所有权从 imu_task 移交）。
+ * 2026-08-03 真机抓到一次偶发的
  * **总线**塌陷（不是某个器件挂了）：
  *
  *     I (13403) touch: GT911 found at 0x5D      ← 只有 found，没有 ready

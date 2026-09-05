@@ -37,6 +37,7 @@
 #include "nav_grid_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
+#include "pk_i2c0_bus.h"   /* 板级 I²C0 总线：先于一切 I²C 器件 init 创建 */
 #include "demo_track_sd.h"
 #include "pk_rec_store.h"
 #include "pk_rec_ingest.h"
@@ -275,6 +276,11 @@ void app_main(void)
         pk_backlight_step_set(PK_BL_STEP_MID);
         splash_shown_us = esp_timer_get_time();
     }
+
+    /* I²C0 总线是板级的（imu/baro/touch 共用），必须先于一切 I²C 器件
+     * init 建好——放在这里而不是 pk_imu_init() 里，IMU 这种 optional 器件
+     * 缺失才不会连带总线一起消失（PLAN.md §6.1）。 */
+    ESP_ERROR_CHECK(pk_i2c0_bus_init());
 
     /* BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
