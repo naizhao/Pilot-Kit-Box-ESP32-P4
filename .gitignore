@@ -53,6 +53,9 @@ firmware/sdkconfig
 firmware/sdkconfig.*
 firmware/managed_components/
 firmware/dependencies.lock
+
+# RP2040（pico-sdk）构建产物
+firmware/rp2040/build/
 **/.cache/
 .DS_Store
 
