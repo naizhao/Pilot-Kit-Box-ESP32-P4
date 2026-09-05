@@ -1,0 +1,41 @@
+;
+; edge_cap.pio — 相邻上升沿间隔计数（单位 = 2 个 SM 周期；SM 默认 125MHz → 16ns）。
+; X 预载 0xFFFFFFE0（set x,31 + mov x,~x，已知常数），低/高相位都计数，
+; 上升沿到来时 push 当前 X。X 减到 0 停在饱和小循环（推送 ≈0xFFFFFFE0-0
+; 的大值 = 空闲标记，解码端按超阈值处理）。
+;
+.program edgecap
+.wrap_target
+    set x, 31
+    mov x, ~x
+low_phase:               ; 当前低电平
+    jmp pin edge         ; 上升沿 → 捕获（这一拍就是沿）
+    jmp x-- low_phase
+    jmp low_phase        ; X 饱和：继续等沿
+edge:
+    mov isr, x
+    push noblock         ; RX FIFO 满则丢这一沿（间隔链断裂，解码端自愈）
+    set x, 31
+    mov x, ~x
+high_phase:              ; 高电平期间继续在同一个 X 上计数
+    jmp pin high_cnt
+    jmp low_phase        ; 变低 → 低相位接着数（此刻的 X 保持累加）
+high_cnt:
+    jmp x-- high_phase
+    jmp high_phase
+.wrap
+
+% c-sdk {
+static inline void edge_cap_program_init(PIO pio, uint sm, uint offset, uint pin)
+{
+    pio_sm_config c = edgecap_program_get_default_config(offset);
+    sm_config_set_jmp_pin(&c, pin);
+    sm_config_set_in_pin_base(&c, pin);
+    sm_config_set_in_shift(&c, false, false, 32);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+    pio_gpio_init(pio, pin);
+    gpio_pull_down(pin);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
