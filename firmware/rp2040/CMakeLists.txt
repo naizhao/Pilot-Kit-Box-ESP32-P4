@@ -31,7 +31,7 @@ add_executable(adsb1090
     edge_cap.pio
     selftest_gen.c
     selftest_gen.pio
-    # threshold_ctl.c
+    threshold_ctl.c
     # p4_link.c
     # ../components/adsb_link_codec/adsb_link_codec.c   # 文件已存在，随链路任务一起放回
 )
