@@ -1,4 +1,5 @@
 #include "gps.h"
+#include "gps_nmea.h"
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -57,14 +58,6 @@ static double nmea_to_deg(const char *val, const char *hemi){
     return d;
 }
 
-/* split in-place by ',' → fields[]; returns field count */
-static int split_csv(char *s, char *fields[], int maxf){
-    int n = 0; char *p = s;
-    fields[n++] = p;
-    while(*p && n < maxf){ if(*p == ','){ *p = '\0'; fields[n++] = p + 1; } p++; }
-    return n;
-}
-
 /* RMC 的 hhmmss(.sss) 与 ddmmyy 都是定长数字串 → epoch 毫秒。
  * 任一字段缺失/非法返回 false（不校时）。 */
 static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
@@ -85,23 +78,27 @@ static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
     return true;
 }
 
-static void parse_rmc(char *f[], int n){
-    if(n < 10) return;                 /* 需含日期字段 f[9] */
-    bool valid = (f[2][0] == 'A');
+/* 以下 parse_* 的字段切分/checksum 门已迁入 gps_nmea.c（WP-B Task 1）；
+ * 这里只做「字段 → gps 状态」的落地，函数体保持原样，仅字段来源从老的
+ * fields[]/n 换成 msg->f/msg->n。 */
+
+static void parse_rmc(const gps_nmea_msg_t *msg){
+    if(msg->n < 10) return;                 /* 需含日期字段 f[9] */
+    bool valid = (msg->f[2][0] == 'A');
     take();
     s_gps.have_fix = valid;
     if(valid){
-        s_gps.lat = nmea_to_deg(f[3], f[4]);
-        s_gps.lon = nmea_to_deg(f[5], f[6]);
-        s_gps.ground_speed_kt = (int)(atof(f[7]) + 0.5);
-        s_gps.track_deg       = (int)(atof(f[8]) + 0.5);
+        s_gps.lat = nmea_to_deg(msg->f[3], msg->f[4]);
+        s_gps.lon = nmea_to_deg(msg->f[5], msg->f[6]);
+        s_gps.ground_speed_kt = (int)(atof(msg->f[7]) + 0.5);
+        s_gps.track_deg       = (int)(atof(msg->f[8]) + 0.5);
         s_gps.updated_us = esp_timer_get_time();
     }
     give();
 
     /* 两段式校时（锁外做：settimeofday 不碰 s_gps）。 */
     int64_t gps_ms;
-    if(!rmc_epoch_ms(f[1], f[9], &gps_ms)) return;
+    if(!rmc_epoch_ms(msg->f[1], msg->f[9], &gps_ms)) return;
     if(valid){
         /* 精校：fix 有效 = 卫星授时；仅当偏差 > 阈值才写，避免无谓跳变。 */
         struct timeval tv; gettimeofday(&tv, NULL);
@@ -114,14 +111,14 @@ static void parse_rmc(char *f[], int n){
     }
 }
 
-static void parse_gga(char *f[], int n){
-    if(n < 10) return;
-    int    q     = atoi(f[6]);          /* fix quality, 0 = no fix */
-    int    sats  = atoi(f[7]);
-    double alt_m = atof(f[9]);
+static void parse_gga(const gps_nmea_msg_t *msg){
+    if(msg->n < 10) return;
+    int    q     = atoi(msg->f[6]);          /* fix quality, 0 = no fix */
+    int    sats  = atoi(msg->f[7]);
+    double alt_m = atof(msg->f[9]);
     take();
     s_gps.sats = sats;
-    s_gps.hdop = (float)atof(f[8]);     /* GGA field 8 = HDOP */
+    s_gps.hdop = (float)atof(msg->f[8]);     /* GGA field 8 = HDOP */
     if(q > 0){
         s_gps.altitude_ft  = (int)(alt_m * 3.28084 + 0.5);
         s_gps.have_altitude = true;
@@ -149,18 +146,18 @@ static uint8_t gsv_constellation(const char *t){
 }
 
 /* GSV: $xxGSV,numMsg,msgNum,totalInView, {prn,elev,az,snr}×N [,signalID] */
-static void parse_gsv(char *f[], int n){
-    if(n < 4) return;
-    uint8_t con = gsv_constellation(f[0]);
-    int msgNum = atoi(f[2]);
-    int total  = atoi(f[3]);
+static void parse_gsv(const gps_nmea_msg_t *msg){
+    if(msg->n < 4) return;
+    uint8_t con = gsv_constellation(msg->f[0]);
+    int msgNum = atoi(msg->f[2]);
+    int total  = atoi(msg->f[3]);
     if(msgNum == 1){                       /* 同星座多句 total 相同，只首句计入 */
         s_acc_view += total;
         if(con == PK_GNSS_GPS)      s_acc_view_gps += total;
         else if(con == PK_GNSS_BDS) s_acc_view_bds += total;
     }
-    for(int i = 4; i + 3 < n; i += 4){     /* 每颗星 4 字段；尾随 signalID 自然落空 */
-        const char *snr = f[i + 3];
+    for(int i = 4; i + 3 < msg->n; i += 4){ /* 每颗星 4 字段；尾随 signalID 自然落空 */
+        const char *snr = msg->f[i + 3];
         if(snr && *snr && s_acc_snr_n < PK_GPS_SNR_MAX){
             s_acc_snr[s_acc_snr_n] = (uint8_t)atoi(snr);
             s_acc_con[s_acc_snr_n] = con;
@@ -170,9 +167,9 @@ static void parse_gsv(char *f[], int n){
 }
 
 /* TXT: $GPTXT,01,01,01,ANTENNA OK|OPEN|SHORT */
-static void parse_txt(char *f[], int n){
-    if(n < 5) return;
-    const char *m = f[4];
+static void parse_txt(const gps_nmea_msg_t *msg){
+    if(msg->n < 5) return;
+    const char *m = msg->f[4];
     pk_gps_ant_t a;
     if      (strstr(m, "ANTENNA OPEN"))  a = PK_GPS_ANT_OPEN;
     else if (strstr(m, "ANTENNA SHORT")) a = PK_GPS_ANT_SHORT;
@@ -183,23 +180,21 @@ static void parse_txt(char *f[], int n){
 
 static void handle_line(char *line){
     s_nmea_lines++;
-    /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。 */
+    /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。
+     * checksum 不过的行同样算「在讲话」，所以计数/时间戳必须在解析之前。 */
     take(); s_gps.last_nmea_us = esp_timer_get_time(); give();
     /* 原始 NMEA 行：默认不刷屏，需要时把 gps TAG 调到 DEBUG 即可调出。
-     * split_csv 会就地改写，必须在解析前打印。 */
+     * 解析器在自家内部缓冲里切分，line 本身不再被改写。 */
     ESP_LOGD(TAG, "NMEA: %s", line);
-    char *body = (*line == '$') ? line + 1 : line;
-    if(strlen(body) < 6) return;
-    char *fields[24];
-    int   n    = split_csv(body, fields, 24);
-    const char *type = fields[0];        /* e.g. "GNRMC" (any talker GP/GN/GL) */
-    size_t tl = strlen(type);
-    if(tl < 3) return;
-    const char *suf = type + (tl - 3);   /* match last 3 chars */
-    if(strncmp(suf, "RMC", 3) == 0)      parse_rmc(fields, n);
-    else if(strncmp(suf, "GGA", 3) == 0) parse_gga(fields, n);
-    else if(strncmp(suf, "GSV", 3) == 0) parse_gsv(fields, n);
-    else if(strncmp(suf, "TXT", 3) == 0) parse_txt(fields, n);
+    /* 切分/checksum 门在 gps_nmea 里（WP-B Task 1）：坏 checksum、非 $ 句
+     * 直接整行丢弃——老代码不验 *hh，损坏句子的字段会一路进 fix/校时。 */
+    gps_nmea_msg_t msg;
+    if(!gps_nmea_feed_line(&msg, line)) return;
+    if(strncmp(msg.type, "RMC", 3) == 0)      parse_rmc(&msg);
+    else if(strncmp(msg.type, "GGA", 3) == 0) parse_gga(&msg);
+    else if(strncmp(msg.type, "GSV", 3) == 0) parse_gsv(&msg);
+    else if(strncmp(msg.type, "TXT", 3) == 0) parse_txt(&msg);
+    /* 其余类型（GSA/VTG/GLL…）解析照返回 1，这里不接就是忽略——与老行为一致。 */
 }
 
 static void gps_task(void *arg){

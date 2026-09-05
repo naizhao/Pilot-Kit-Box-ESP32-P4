@@ -23,6 +23,9 @@ idf_component_register(
         "cpr_decode.c"
         "aircraft_state.c"
         "pk_callsign.c"
+        # 纯 NMEA 解析（checksum 门 + 字段切分）：不依赖 ESP-IDF，
+        # host 单测 test_gps_nmea.c 直接编它（WP-B Task 1）。
+        "gps_nmea.c"
         "gps_task.c"
         "pk_clock.c"
         "own_ship.c"
