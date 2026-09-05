@@ -20,8 +20,6 @@ endif()
 idf_component_register(
     SRCS
         "main.c"
-        "sdr_task.c"
-        "dsp_task.c"
         "cpr_decode.c"
         "aircraft_state.c"
         "pk_callsign.c"
@@ -69,8 +67,12 @@ idf_component_register(
         "pk_win_nearest.c"
         "display.c"
         # Mode-S 帧解码器（来路：esp32-rtl-sdr 复制件，WP-C1；
-        # 归属头见 mode_s.c 文件头，排在未来 modes_ingest.c 之前）。
+        # 归属头见 mode_s.c 文件头，排在 modes_ingest.c 之前）。
         "mode_s.c"
+        "modes_ingest.c"
+        # RP2040 UART 链路任务：接收 MODES_RAW，并承载原 dsp_task 的
+        # 报文后业务链（CPR/航迹/记录/看板），2026-09-05 WP-C1 迁移。
+        "adsb_link_task.c"
         # 板型 profile：v3/v4 板系的传感器安装角不同，且 U4 与 U5/U6 转向相反，
         # 不能抽象成整板旋转。必须排在 imu_task.c 之前被链接的语义无关，但
         # 它是 imu_task/未来 qmc5883p 的共同依赖，放在一起看得见。
@@ -164,9 +166,8 @@ idf_component_register(
         # 分区占用率 91% → 23%。那份旧的 main/aircraft_db.bin 已不再参与
         # 构建，也已移出源码树（现在在 datafiles/data/，见 datafiles/README.md）。
     REQUIRES
-        esp32-rtl-sdr            # our patched RTL-SDR driver component
-        espressif__usb           # USB host library (was core `usb` pre-IDF v6.0)
-        esp_ringbuf              # FreeRTOS ring buffer (xRingbuffer*)
+        adsb_link_codec           # P4↔RP2040 链路编解码（共享组件）
+        esp_ringbuf               # FreeRTOS ring buffer (xRingbuffer*)
         esp_timer                # esp_timer_get_time()
         joltwallet__littlefs     # on-board ts-format dump partition
         bt                       # NimBLE host (controller proxied via hosted)

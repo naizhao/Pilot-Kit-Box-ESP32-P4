@@ -11,7 +11,7 @@
  * Write path is single-step: format → call ble_gatt_notify_raw_line.
  * The notify helper internally checks subscription status and drops
  * silently if no one is listening, so this sink never back-pressures
- * the dsp_task.
+ * the ingest task.
  */
 
 #include "record_sink.h"

@@ -46,9 +46,9 @@ void pk_boot_splash_render(uint16_t *fb);
  * 只能在 **pk_pfd_start() 之前**调用
  * ---------------------------------
  * PFD 任务一起来就按 30 FPS 独占 framebuffer 与 flush，app_main 再往里画就是
- * 两个写者抢同一块内存 + 抢同一个 flush，会撕帧。所以 SDR 那一步（sdr_task 排
- * 在 pk_pfd_start() 之后，理由见 main.c 那段注释）**不在**这条进度条的覆盖范围
- * 内，别为它补一次调用。
+ * 两个写者抢同一块内存 + 抢同一个 flush，会撕帧。所以 ADS-B 链路那一步
+ * （adsb 链路任务排在 pk_pfd_start() 之后，理由见 main.c 那段注释）**不在**
+ * 这条进度条的覆盖范围内，别为它补一次调用。
  *
  * 建议的调用次序（app_main，与实测耗时对应）：
  *

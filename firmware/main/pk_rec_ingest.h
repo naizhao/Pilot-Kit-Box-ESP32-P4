@@ -2,12 +2,12 @@
  * pk_rec_ingest.h — traffic.trk 的位置/身份记录：编码 + 落盘的薄胶水层。
  *
  * 设计依据 ADS-B 数据持久化设计（内部文档）
- * 「记录格式」「写入时机」两节。调用方（dsp_task.c 的 CPR fresh 分支 /
+ * 「记录格式」「写入时机」两节。调用方（adsb_link_task.c 的 CPR fresh 分支 /
  * DF17 ident 分支；以及 pk_rec_selftest.c 的注入式自检，绕开射频直接调用
  * 这两个函数）把已经解出的字段递进来，本文件只管：sentinel 化 + 时间同步
  * flag + 调用 pk_rec_format 编码 + pk_rec_store_append_traffic_record()
  * 落盘。**不做 CPR / 呼号变化判定**——那是调用方的职责（前者在
- * cpr_decode.c，后者在 dsp_task.c 里用 aircraft_state 的旧值/新值对比）。
+ * cpr_decode.c，后者在 adsb_link_task.c 里用 aircraft_state 的旧值/新值对比）。
  *
  * 依赖 pk_rec_store（FreeRTOS + VFS），因此本文件不是 host 可测的纯逻辑
  * 模块，不进 test_pk_rec_format.c 的 #include 列表——它本身没有可测的分支
@@ -16,7 +16,7 @@
  * 真机自检里跑一遍全链路。
  *
  * 写入管线（非阻塞入队 + 独立写任务）：pk_rec_ingest_position/identity
- * 挂在 dsp_task 的 Mode-S 解码热路径上，绝不能因为 pk_rec_store_append_
+ * 挂在 ADS-B 链路任务的 Mode-S 解码热路径上，绝不能因为 pk_rec_store_append_
  * traffic_record() 内部 xSemaphoreTake(portMAX_DELAY) + fwrite 可能撞上
  * SD 拔卡时 ~2.01s 的固定超时而被拖停（同 record_sink_rec_store.c 对
  * ADS-B 原始行的处理、pk_own_sampler.c 对 own.trk 的处理）。两个 ingest
@@ -45,7 +45,7 @@
 extern "C" {
 #endif
 
-/* 建队列 + 起写任务；须在 dsp_task 开始跑解码之前调用一次（main.c 里紧跟
+/* 建队列 + 起写任务；须在 ADS-B 链路任务开始跑解码之前调用一次（main.c 里紧跟
  * pk_rec_store_init() 之后）。幂等。 */
 void pk_rec_ingest_init(void);
 

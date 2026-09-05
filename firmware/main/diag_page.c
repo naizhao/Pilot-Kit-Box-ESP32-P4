@@ -31,9 +31,9 @@
 #include "esp_timer.h"
 
 #include "display.h"
-#include "pilot_kit.h"       /* PK_RTLSDR_SAMPLERATE_HZ */
 #include "imu_task.h"        /* pk_imu_sample_get, pk_imu_sample_t */
-#include "dsp_task.h"        /* pk_dsp_get_stats, pk_dsp_stats_t */
+#include "modes_ingest.h"    /* pk_dsp_get_stats, pk_dsp_stats_t */
+#include "adsb_link_task.h"  /* pk_adsb_link_state_get */
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
 #include "baro.h"            /* pk_baro_get, pk_baro_state_t */
 #include "config_qnh.h"      /* pk_qnh_get — baro 高度的 QNH 基准 */
@@ -449,28 +449,26 @@ void pk_diag_page_render(uint16_t *fb)
         }
     }
 
-    /* ── SDR ── */
+    /* ── ADS-B 链路（RP2040 UART）── */
     {
-        uint32_t drop_kb = 0;
-        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
+        const pk_adsb_link_state_t st = pk_adsb_link_state_get(NULL);
         pk_dsp_stats_t d;
         pk_dsp_get_stats(&d);
         switch (st) {
-        case PK_SDR_NO_DEVICE:
+        case PK_ADSB_LINK_NO_LINK:
             draw_card(fb, 1, 1, card_title(3),
                       pk_i18n_text(PK_TR_DIAG_V_SDR_NONE), ST_BAD);
             break;
-        case PK_SDR_ATTACHED:
+        case PK_ADSB_LINK_PROTO_MISMATCH:
             draw_card(fb, 1, 1, card_title(3),
                       pk_i18n_text(PK_TR_DIAG_V_SDR_ATTACH), ST_WARN);
             break;
-        case PK_SDR_STALLED:
+        case PK_ADSB_LINK_STALLED:
             draw_card(fb, 1, 1, card_title(3),
                       pk_i18n_text(PK_TR_DIAG_V_SDR_STALL), ST_WARN);
             break;
-        default:
-            snprintf(buf, sizeof(buf), "%luMS/s  %s %lu",
-                     (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL),
+        default:    /* LINKED */
+            snprintf(buf, sizeof(buf), "%s %lu",
                      pk_i18n_text(PK_TR_DIAG_U_MSGS),
                      (unsigned long)d.msgs_total);
             draw_card(fb, 1, 1, card_title(3), buf, ST_OK);
@@ -1121,27 +1119,22 @@ static void draw_detail(uint16_t *fb, int which)
         break;
     }
 
-    case 3: {   /* SDR */
-        uint32_t drop_kb = 0;
-        const pk_sdr_state_t st = pk_sdr_state_get(&drop_kb);
+    case 3: {   /* ADS-B 链路（RP2040 UART）*/
+        const pk_adsb_link_state_t st = pk_adsb_link_state_get(NULL);
         pk_dsp_stats_t d;
         pk_dsp_get_stats(&d);
-        static const pk_tr_id_t kSdr[] = {
-            PK_TR_DIAG_V_SDR_NONE_S,  PK_TR_DIAG_V_SDR_ATTACH_S,
-            PK_TR_DIAG_V_SDR_STALL_S, PK_TR_DIAG_V_SDR_STREAM };
-        det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATE, kSdr[st],
-                   st == PK_SDR_STREAMING ? COL_ONLINE : COL_ALERT);
-        if (st == PK_SDR_NO_DEVICE)
+        static const pk_tr_id_t kLink[] = {
+            PK_TR_DIAG_V_SDR_NONE_S,   /* NO_LINK */
+            PK_TR_DIAG_V_SDR_ATTACH_S, /* PROTO_MISMATCH */
+            PK_TR_DIAG_V_SDR_STALL_S,  /* STALLED */
+            PK_TR_DIAG_V_SDR_STREAM }; /* LINKED */
+        det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATE, kLink[st],
+                   st == PK_ADSB_LINK_LINKED ? COL_ONLINE : COL_ALERT);
+        if (st == PK_ADSB_LINK_NO_LINK)
             det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_SDR_HINT,
                        COL_WARN);
-        snprintf(buf, sizeof(buf), "%lu MS/s",
-                 (unsigned long)(PK_RTLSDR_SAMPLERATE_HZ / 1000000UL));
-        det_kv_tr(fb, line++, PK_TR_DIAG_K_SAMPLE_RATE, buf, COL_VAL);
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.msgs_total);
         det_kv_tr(fb, line++, PK_TR_DIAG_K_ADSB_MSGS, buf, COL_VAL);
-        snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.iq_drop_total);
-        det_kv_tr(fb, line++, PK_TR_DIAG_K_IQ_DROPPED, buf,
-                  d.iq_drop_total ? COL_WARN : COL_VAL);
         break;
     }
 

@@ -1,7 +1,17 @@
 #include <string.h>
 #include "modes_ingest.h"
 
-static mode_s_t            s_dec;
+/* 32,780 B 的 mode_s_t（大头是 ICAO 地址缓存）必须放 PSRAM：dsp_task 时代
+ * 同一实例就带 EXT_RAM_BSS_ATTR（机理见 firmware/scripts/check_early_heap.py
+ * 头注释——内部 .bss 会把调度器启动前的堆窗口吃穿，2026-08-01 实测 boot
+ * loop）。host 单测没有 ESP-IDF，attr 退化为空宏，保持本文件 host 可编。 */
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+#else
+#define EXT_RAM_BSS_ATTR
+#endif
+
+static EXT_RAM_BSS_ATTR mode_s_t s_dec;
 static modes_ingest_sink_fn s_sink;
 static void                *s_user;
 static uint32_t             s_msgs_total;

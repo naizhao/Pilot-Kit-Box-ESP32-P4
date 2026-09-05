@@ -106,7 +106,7 @@ typedef struct {
 
 /* 身份记录（rec_type=1）。callsign 未必 NUL 结尾满 9 字节时——按 spec
  * "char callsign[9]" 存 9 字节，调用方保证不超长（这里只做定长搬运，
- * 不额外做截断/校验，那是上游 dsp_task 的职责）。 */
+ * 不额外做截断/校验，那是上游调用方（adsb 链路任务）的职责）。 */
 typedef struct {
     uint64_t ts_ms;
     uint8_t  icao24[3];
