@@ -83,8 +83,11 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 # ⚠️ 这两行必须先算成变量，不能直接塞进下面的 f-string：
 # f-string 表达式里出现反斜杠是 Python 3.12 才放开的，而且引号嵌套一层就绕晕。
 # （刚在 tools/gen_bom_smt.py 上栽过同一个坑，这里不重复。）
-_warn = ('#warning "PK_AERO_KEY not configured - using public placeholder key, '
-         'cannot decrypt official data files"') if is_placeholder else \
+# #pragma message 而非 #warning：本仓库固件以 -Werror=cpp 编译，#warning 会把
+# "无 .env 的外部开发者拿到占位密钥也能编过"这一既定承诺直接变成编译错误。
+# #pragma message 不属于 -Wcpp 警告族，不受 -Werror 影响，提示照打。
+_warn = ('#pragma message ("PK_AERO_KEY not configured - using public placeholder key, '
+         'cannot decrypt official data files")') if is_placeholder else \
         "/* 使用已配置的真实密钥 */"
 _ph = 1 if is_placeholder else 0
 
