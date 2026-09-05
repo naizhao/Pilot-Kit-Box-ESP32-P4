@@ -72,6 +72,7 @@ int main(void)
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
         CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
+        CHECK(g_last.start_tick == 0, "start_tick=%llu\n", (unsigned long long)g_last.start_tick);
         CHECK(m.preamble_hits == 1 && m.frames_112 == 1, "stats\n");
     }
 

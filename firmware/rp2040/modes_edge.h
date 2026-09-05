@@ -36,4 +36,5 @@ typedef struct {
 
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user);
+/* cb 在 burst 清理前被调用；cb 内不得调用 modes_edge_feed（会追加入即将清空的缓冲/嵌套 burst_emit）*/
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n);
