@@ -241,6 +241,29 @@ int main(void)
         CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
     }
 
+    /* 14. 回归钉住（rescan 重构判别用例）：**长**坏帧（plen=70，共 80 字节）
+        被拒后在缓冲前部留下 79 字节垃圾，其后紧跟完整缓冲的短好帧（30 字节），
+        三者在同一次 feed 里。旧逐字节实现每收到 1 个输入字节最多前滑 1 字节，
+        30 个好帧字节滑不完 79 字节垃圾 → 好帧末字节到位时 buf[0] 仍是垃圾，
+        msgs=0（对旧实现实测复现）；新两段式 drain 不依赖新输入就地重扫，
+        必须解出短帧。case 13（短坏帧）恰好被旧代码逐字节判据覆盖，不判别。 */
+    {
+        g_msgs = 0;
+        uint8_t buf[1024];
+        uint8_t pl70[70];
+        memset(pl70, 0x5A, sizeof(pl70));
+        size_t n1 = adsb_link_encode(buf, 512, ADSB_LINK_MSG_HEALTH_STATS, 40,
+                                     pl70, sizeof(pl70));   /* 8+70+2 = 80 */
+        CHECK(n1 == 80, "long frame len got=%zu\n", n1);
+        buf[n1 - 1] ^= 0x01;                           /* 坏 CRC：本帧作废 */
+        size_t n2 = build_modes_raw(buf + n1, 41);     /* 30 字节，完整在后 */
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, buf, n1 + n2);          /* 单次 feed */
+        CHECK(g_msgs == 1 && g_last.seq == 41, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+        CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }
