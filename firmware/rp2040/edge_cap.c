@@ -105,7 +105,8 @@ size_t edge_cap_drain(uint32_t *out, size_t cap)
     }
     size_t n = avail < cap ? avail : cap;
     for (size_t i = 0; i < n; i++)
-        out[i] = s_ring[(s_read + i) % EDGE_CAP_RING_ITEMS];
+        out[i] = edgecap_raw_to_ticks(          /* 原值 → 真实间隔 tick（edge_cap.h） */
+            s_ring[(s_read + i) % EDGE_CAP_RING_ITEMS]);
     s_read = (s_read + n) % EDGE_CAP_RING_ITEMS;
     return n;
 }

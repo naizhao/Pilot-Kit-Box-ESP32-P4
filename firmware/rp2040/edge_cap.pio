@@ -1,8 +1,10 @@
 ;
 ; edge_cap.pio — 相邻上升沿间隔计数（单位 = 2 个 SM 周期；SM 默认 125MHz → 16ns）。
 ; X 预载 0xFFFFFFE0（set x,31 + mov x,~x，已知常数），低/高相位都计数，
-; 上升沿到来时 push 当前 X。X 减到 0 停在饱和小循环（推送 ≈0xFFFFFFE0-0
-; 的大值 = 空闲标记，解码端按超阈值处理）。
+; 上升沿到来时 push 当前 X 原值（递减计数器，不是间隔）。drain 端用
+; edgecap_raw_to_ticks() 换算：cycles = 2×(PRELOAD−raw)+6 → ticks = (PRELOAD−raw)+3。
+; X 减到 0 停在饱和小循环（raw≈0 → 换算出 ≈PRELOAD+3 的超大值 = 空闲标记，
+; 解码端按超阈值处理）。
 ;
 .program edgecap
 .wrap_target

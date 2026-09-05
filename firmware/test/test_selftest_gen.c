@@ -74,7 +74,8 @@ int main(void)
         modes_edge_t m; modes_edge_init(&m, SELFTEST_BITS_PER_US * 1000000u,
                                         cb, NULL);
         g_frames = 0;
-        deltas[nd++] = 16u * 20000;        /* 20ms 终止长隔：关 burst 才出帧 */
+        /* 不追加手工终止长隔：位流末尾的收尾孤立脉冲（P1-5）与最后数据
+         * 脉冲间隔 >5µs，其上升沿自身关闭帧 burst。 */
         modes_edge_feed(&m, deltas, nd);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);

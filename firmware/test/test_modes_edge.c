@@ -8,11 +8,12 @@
  *
  * 向量构造与实现共用同一份时序合同：上升沿绝对时刻一律用 quarter-µs
  * （qus）整数 —— preamble 沿在 0/1.0/3.5/4.5µs（= 0/4/14/18 qus，三段
- * 间隔 [1.0, 2.5, 1.0]µs）；数据块自 +8µs 起、每 chip 2µs，脉冲在 chip
- * +0µs → bit1、chip +1µs → bit0（= 32 + 8k (+4) qus）。
+ * 间隔 [1.0, 2.5, 1.0]µs）；数据块自 +8µs 起、每比特 1.0µs（外部锚点
+ * mode-s.c:708-715），脉冲在比特 +0µs → bit1、+0.5µs → bit0
+ * （= 32 + 4k (+2) qus）。
  * qus→tick 取四舍五入：62.5MHz 下 1 qus = 15.625 tick，真实捕获本就把
  * 间隔量化到最近 tick，这样任一 qus 值经 tick 往返不失真；若用截断，
- * 每个 4/12 qus 间隔固定丢 1 qus，112 chip 内累积漂移远超 ±1 qus 容差。
+ * 每个 2/4 qus 间隔固定丢 1 qus，112 比特内累积漂移远超 ±1 qus 容差。
  */
 #include "modes_edge.h"
 #include <stdio.h>
@@ -41,7 +42,7 @@ static size_t build_deltas(const uint8_t *frame, int msgbits,
     rise[nr++] = 14; rise[nr++] = 18;
     for (int k = 0; k < msgbits; k++) {
         int bit = (frame[k / 8] >> (7 - (k % 8))) & 1;
-        rise[nr++] = (uint32_t)(32 + 8 * k + (bit ? 0 : 4));   /* 8µs + 2µs·k (+1µs) */
+        rise[nr++] = (uint32_t)(32 + 4 * k + (bit ? 0 : 2));   /* 8µs + 1µs·k (+0.5µs) */
     }
     if (jitter_qus)                                    /* 确定性抖动：±交替 */
         for (size_t i = 4; i < nr; i++)

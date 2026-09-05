@@ -4,6 +4,16 @@
  * 纯 C、无 pico 依赖：host 单测与上板共用同一份实现。
  * 职责边界（PLAN.md §4）：这里只做 preamble 同步 + PPM 采样 + 组帧，
  * 不做 CRC、不维护任何目标状态——裁决与融合都在 P4。
+ *
+ * 时序合同（外部锚点：firmware/components/esp32-rtl-sdr/main/mode-s.c:708-715、
+ * docs/configuration-zh_CN.md:259「每比特 1 µs，每帧 120 µs」）：
+ *   preamble 上升沿在 0 / 1.0 / 3.5 / 4.5µs（三段间隔 [4,10,4]±1 qus）；
+ *   数据自 preamble 首沿 +8µs（32 qus）起，每比特 1.0µs（QUS_BIT=4），
+ *   比特 k 的上升沿在 32+4k qus（bit1，前半）或 32+4k+2 qus（bit0，后半），
+ *   判位窗口 ±1 qus。两窗在 32+4k+1 处相接：恰落等距点（32+4k+1）的沿
+ *   判 bit1 —— 确定性 tie-break，见 modes_edge.c 常量旁注释。
+ *   帧内最长沿间隔 4.0µs（preamble 末沿 4.5µs → 首数据脉冲 8.5µs）
+ *   < 5µs burst 阈值，判据不变。
  */
 #pragma once
 #include <stddef.h>

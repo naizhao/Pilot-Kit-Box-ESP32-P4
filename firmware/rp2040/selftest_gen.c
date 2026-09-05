@@ -1,10 +1,13 @@
 /*
  * selftest_gen.c — bitstream 构造（纯函数）+ 上板单次回放。
  *
- * 波形定义与 modes_edge 判据严格互逆：preamble 上升沿 0/1.0/3.5/4.5µs，
- * 数据 8.0+2k µs 处、bit1 在 +0µs / bit0 在 +1µs。脉冲宽 0.5µs（不是
- * 1µs）：相邻脉冲起点最近只差 1µs，1µs 宽会让前后脉冲首尾相接并成
- * 单个长脉冲（无下降沿 → 上升沿丢失，回环实测 preamble 第一段就断）。
+ * 波形定义与 modes_edge 判据严格互逆（外部锚点 mode-s.c:708-715）：
+ * preamble 上升沿 0/1.0/3.5/4.5µs，数据 8.0+1.0k µs 处、bit1 在 +0µs /
+ * bit0 在 +0.5µs。脉冲宽 0.25µs（不是 0.5µs）：解码只看上升沿，宽度
+ * 只需保证相邻脉冲不首尾相接 —— 1µs 比特下 0→1 转换的相邻上升沿最近
+ * 只差 0.5µs（前比特 +0.5µs、后比特 +1.0µs），0.5µs 宽恰好相接融合成
+ * 单个长脉冲（无下降沿 → 第二个上升沿丢失，帧在首个 0→1 处即断；
+ * 真实 ADS-B 包络本就如此融合，台架信号必须保持每个沿可见）。
  * SELFTEST_DF17 的 parity 初始为 0（故意非法）——由 host 测试
  * test_selftest_gen.c 用 mode_s_checksum 算出正确值回填后才算过；
  * 这保证上板回放的帧能穿过 P4 的 CRC 门（RP 自身不裁决 CRC）。
@@ -42,20 +45,25 @@ size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
     rise[nr++] = (uint32_t)(4.5 * SELFTEST_BITS_PER_US);
     for (int k = 0; k < msgbits; k++) {
         int bit = (frame[k / 8] >> (7 - (k % 8))) & 1;
-        uint32_t base = (uint32_t)((8.0 + 2.0 * k + (bit ? 0.0 : 1.0))
+        uint32_t base = (uint32_t)((8.0 + 1.0 * k + (bit ? 0.0 : 0.5))
                                    * SELFTEST_BITS_PER_US);
         rise[nr++] = base;
     }
-    uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US;
+    /* P1-5：帧尾收尾孤立脉冲 —— 与最后数据脉冲上升沿间隔 6µs（96 slot）
+     * > 5µs burst 阈值。静默台架上单次回放再无其它长隔，靠这个沿关闭
+     * 帧 burst，否则帧永远不出。 */
+    rise[nr] = rise[nr - 1] + 6 * SELFTEST_BITS_PER_US;
+    nr++;
+    uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US / 4;
     uint32_t total = idle_before + last_end + idle_after;
 
     size_t words = (total + 31) / 32;
     if (words > cap_words) return 0;
     memset(out, 0, words * sizeof(uint32_t));
-    /* 每脉冲高电平 0.5µs = 8 slot：解码只看上升沿，宽度只需保证相邻
-     * 脉冲不首尾相接（最小上升间隔 1µs = 16 slot）。 */
+    /* 每脉冲高电平 0.25µs = 4 slot：宽度只需 >0 且 <0.5µs（相邻上升沿
+     * 最近间隔），保证每个脉冲的上升沿都独立可见（理由见文件头）。 */
     for (size_t i = 0; i < nr; i++)
-        for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 2; s++)
+        for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 4; s++)
             set_bit(out, idle_before + rise[i] + s);
     return words;
 }
