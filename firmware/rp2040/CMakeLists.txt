@@ -10,12 +10,14 @@ include(FetchContent)
 FetchContent_Declare(
     tinyusb
     URL https://github.com/hathach/tinyusb/archive/86ad6e56c1700e85f1c5678607a762cfe3aa2f47.tar.gz
+    URL_HASH SHA256=9f43fd2a745e2543a42ac79b99774c24155e6ef1e0d2ae3cb16ed4ffacf5c517
 )
 FetchContent_MakeAvailable(tinyusb)
 set(PICO_TINYUSB_PATH ${tinyusb_SOURCE_DIR})
 FetchContent_Declare(
     pico_sdk
     URL https://github.com/raspberrypi/pico-sdk/archive/refs/tags/2.1.1.tar.gz
+    URL_HASH SHA256=179c5531e75ac7f82d0679e70b6e8881f871738dc0ef17baf3b4ff4679291c41
 )
 FetchContent_MakeAvailable(pico_sdk)
 
