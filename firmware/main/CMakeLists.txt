@@ -68,6 +68,9 @@ idf_component_register(
         "pk_win.c"
         "pk_win_nearest.c"
         "display.c"
+        # Mode-S 帧解码器（来路：esp32-rtl-sdr 复制件，WP-C1；
+        # 归属头见 mode_s.c 文件头，排在未来 modes_ingest.c 之前）。
+        "mode_s.c"
         # 板型 profile：v3/v4 板系的传感器安装角不同，且 U4 与 U5/U6 转向相反，
         # 不能抽象成整板旋转。必须排在 imu_task.c 之前被链接的语义无关，但
         # 它是 imu_task/未来 qmc5883p 的共同依赖，放在一起看得见。
