@@ -1,29 +1,25 @@
 /*
  * main.c — Pilot Kit Box (ESP32-P4) application boot strap.
  *
- *   1. Allocate the shared IQ ring buffer.
- *   2. Spawn usb_host_lib_task on CPU 0 (USB stack lifecycle pump).
- *   3. Wait until the USB host library is installed.
- *   4. Spawn sdr_task on CPU 1 (RTL-SDR control + async IQ producer).
- *   5. Spawn dsp_task on CPU 1 (consumer + decoder + 1 Hz meter).
- *   6. Bring up storage sinks, LCD, IMU, UI state, PFD, and BLE.
+ *   1. Bring up storage sinks, GPS, record pipelines, and BLE.
+ *   2. Bring up LCD, IMU, UI state, and PFD.
+ *   3. Spawn the ADS-B link task last (RP2040 UART, adsb_link_task.c).
  *
- * app_main returns; the three tasks own the rest of the runtime.
+ * app_main returns; the spawned tasks own the rest of the runtime.
  */
 
 #include <assert.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/ringbuf.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_intr_alloc.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
-#include "usb/usb_host.h"
 
 #include "pilot_kit.h"
+#include "adsb_link_task.h"
 #include "aircraft_db.h"
 #include "aircraft_state.h"
 #include "gps.h"
@@ -67,80 +63,6 @@ static const char *TAG = "pilot_kit";
  * 背景见 firmware/scripts/i18n_ids.json 顶部的事故说明。 */
 #define PK_I18N_ID_SELFTEST 0
 
-RingbufHandle_t g_iq_ringbuf = NULL;
-
-/*
- * USB 排障日志开关（2026-08-03 起临时默认打开）。
- *
- * 为什么需要：dongle 接到载板 USB-A（DP/DM 走 J3 排针 27/25）之后不再枚举，
- * 而 VBUS 实测 4.88 V、dongle 发烫说明供电与上电都正常。默认 INFO 级别下
- * USB 栈**一句话都不打**——「根端口有没有上电」「有没有看到 D+ 上拉」这些
- * 判据全在 DEBUG 级，于是现象只剩 sdr_task 那句干等的 waiting，无从下手。
- *
- * 打开后能区分三种情况（这正是要拿的实证）：
- *   - 连 `HUB: Root port powered` 都没有  → 根端口没起来，问题在主机侧；
- *   - 有 powered、没有 connection            → 主机没看到设备 D+ 上拉，
- *                                              问题在 DP/DM 走线或极性；
- *   - 有 connection、ENUM 报错               → 枚举失败，多半是信号完整性
- *                                              （J3 排针飞线跑 480 Mbps）。
- *
- * 代价是每次插拔多几十行日志，没有设备时几乎不刷屏。
- *
- * 2026-08-03 已收工，改回 0。当时靠它拿到的判据是「root port active、
- * 0 enumerated device、HUB 全程无 power-on 失败」——据此排除了主机侧，
- * 把问题定位到载板那段接线。下次 dongle 又不认，第一件事就是改回 1。
- */
-#define PK_USB_DIAG_VERBOSE   0
-
-static void usb_diag_enable_logs(void)
-{
-#if PK_USB_DIAG_VERBOSE
-    /* TAG 取自 managed_components/espressif__usb/src/ 各文件里的 *_TAG 常量，
-     * 以及 esp_hw_support/usb_phy/usb_phy.c 的 USBPHY_TAG。 */
-    esp_log_level_set("usb_phy",  ESP_LOG_DEBUG);   /* PHY 选型/初始化 */
-    esp_log_level_set("HCD DWC",  ESP_LOG_DEBUG);   /* 控制器与端口状态机 */
-    esp_log_level_set("HUB",      ESP_LOG_DEBUG);   /* 根端口上电/连接检测 */
-    esp_log_level_set("ENUM",     ESP_LOG_DEBUG);   /* 枚举各阶段 */
-    esp_log_level_set("USBH",     ESP_LOG_DEBUG);
-    esp_log_level_set("USB HOST", ESP_LOG_DEBUG);
-    ESP_LOGW(TAG, "USB diagnostic logging ENABLED (PK_USB_DIAG_VERBOSE=1) "
-                  "— set it back to 0 once the dongle enumerates");
-#endif
-}
-
-void usb_host_lib_task(void *arg)
-{
-    usb_diag_enable_logs();
-
-    ESP_LOGI(TAG, "Installing USB host stack on peripheral_map=0x%x "
-                  "(BIT0 = peripheral 0 = High-Speed / UTMI, see pilot_kit.h)",
-             (unsigned)PK_USB_PERIPHERAL_MAP);
-
-    const usb_host_config_t host_cfg = {
-        .skip_phy_setup = false,
-        .intr_flags     = ESP_INTR_FLAG_LEVEL1,
-        .peripheral_map = PK_USB_PERIPHERAL_MAP,
-    };
-    ESP_ERROR_CHECK(usb_host_install(&host_cfg));
-    ESP_LOGI(TAG, "USB host stack installed");
-
-    /* Wake app_main so it can spawn the SDR task that depends on the stack
-     * being up. */
-    xTaskNotifyGive((TaskHandle_t)arg);
-
-    while (1) {
-        uint32_t event_flags = 0;
-        usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
-
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
-            ESP_LOGW(TAG, "USB host: no clients registered");
-        }
-        if (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE) {
-            ESP_LOGW(TAG, "USB host: all devices freed");
-        }
-    }
-}
-
 void app_main(void)
 {
     ESP_LOGI(TAG, "Pilot Kit Box (ESP32-P4) boot");
@@ -157,21 +79,8 @@ void app_main(void)
     ESP_LOGI(TAG, "Free internal heap at boot: %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-    g_iq_ringbuf = xRingbufferCreate(PK_IQ_RINGBUF_SIZE_BYTES,
-                                     RINGBUF_TYPE_BYTEBUF);
-    assert(g_iq_ringbuf != NULL && "IQ ring buffer alloc failed");
-    ESP_LOGI(TAG, "IQ ring buffer ready: %u B (BYTEBUF)",
-             (unsigned)PK_IQ_RINGBUF_SIZE_BYTES);
-
-    TaskHandle_t lib_task_hdl = NULL;
-    BaseType_t ok = xTaskCreatePinnedToCore(
-        usb_host_lib_task, "usb_lib", 4096,
-        xTaskGetCurrentTaskHandle(), 5, &lib_task_hdl, 0);
-    assert(ok == pdTRUE);
-
-    /* Block until USB host stack is installed (usb_host_lib_task notifies). */
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    ESP_LOGI(TAG, "USB host stack online — spawning SDR + DSP tasks");
+    /* ADS-B 链路任务的 UART 在 adsb_link_task 内部初始化，
+     * 这里不再有 USB host 栈的启动次序约束。 */
 
     /* Initialise the per-aircraft fusion table before any sink can write
      * into it. */
@@ -190,14 +99,14 @@ void app_main(void)
     pk_batt_init();
     pk_sdcard_init();
     /* ADS-B / 本机数据落盘的 session 目录管理，须晚于 pk_sdcard_init()。
-     * 阶段 3a：只建目录/开文件，不接数据源（dsp_task / own_ship / 相位
+     * 阶段 3a：只建目录/开文件，不接数据源（ADS-B 解码链 / own_ship / 相位
      * 状态机是 3b 的事）。pre-unmount 静默复用 record_sink_file.c 的
      * sd_close_log_cb 转调，不额外占 pk_sdcard 的回调槽位。 */
     pk_rec_store_init();
     /* traffic.trk 生产端的非阻塞入队 + 独立写任务，须晚于 pk_rec_store_init()
-     * （写任务要调 pk_rec_store_append_traffic_record()）、早于 dsp_task
-     * 起跑（下面 sdr_task/dsp_task 创建之前）——dsp_task 的 Mode-S 解码热
-     * 路径调 pk_rec_ingest_position/identity()，队列必须已经建好，否则
+     * （写任务要调 pk_rec_store_append_traffic_record()）、早于 ADS-B 链路
+     * 任务起跑（下面链路任务创建之前）——链路任务的 Mode-S 解码热路径调
+     * pk_rec_ingest_position/identity()，队列必须已经建好，否则
      * enqueue_or_drop() 会因 s_queue==NULL 直接丢数据（见 pk_rec_ingest.h）。 */
     pk_rec_ingest_init();
     /* 机型分类须先于 own_sampler_start()：采样任务第一拍就调
@@ -255,9 +164,9 @@ void app_main(void)
      * 注册好，所以排在它后面。见 pk_rec_selftest.h。 */
     pk_rec_selftest_init();
 
-    /* sdr_task / dsp_task 的创建**故意排到 app_main 末尾**（PFD 起来之后），
-     * 不在这里。原因见那边的注释：RTL-SDR 一旦枚举成功就会抢内部 DMA 堆，
-     * 早启动会把屏、BLE、IMU、气压计全饿死。 */
+    /* ADS-B 链路任务的创建**故意排到 app_main 末尾**（PFD 起来之后），
+     * 不在这里。原因见末尾启动处的注释：record sinks 与 pk_rec_ingest_init()
+     * 必须先就绪，Mode-S 热路径的首批报文才不会丢进空队列。 */
 
     /* ESP-Hosted 握手必须排在 MIPI-DSI 之前——顺序反了整机会 26 秒一重启。
      *
@@ -459,40 +368,14 @@ void app_main(void)
     }
 
     /*
-     * RTL-SDR 放到最后启动 —— 这个次序是有代价换来的，别再往前挪。
-     *
-     * 2026-08-03 载板 USB 接好、dongle 第一次真正枚举成功之后，整机反而垮了：
-     *
-     *     I (9073) rtlsdr_async: alloc'd 15 URBs x 6144 B (free internal heap: 45059 B)
-     *     E (10111) display: ST7701 panel create failed: ESP_ERR_NO_MEM
-     *     E (10142) vhci_drv: Tx ble_transport_to_ll_cmd_impl: malloc failed
-     *     W (10903) pilot_kit: IMU init failed (ESP_ERR_NO_MEM)
-     *     E (10925) baro: baro task create failed
-     *
-     * 屏、BLE、姿态、高度**同时**没了，只剩一个在收 ADS-B 的无头盒子。
-     *
-     * 机理：USB URB 必须落在 DMA-capable 的**内部** RAM（PSRAM 不行），15×6144
-     * ≈ 92 KB，加上 USB host stack 自己的开销，把内部堆从 298 KB 打到 45 KB。
-     * 而排在后面的 ST7701 DPI DMA 链表、NimBLE 的 vhci 缓冲、BNO085/BMP388 的
-     * 驱动分配全都要内部 RAM——先到先得，SDR 早启动就等于它先把堆吃掉。
-     *
-     * 之所以此前一直没暴露：dongle 从来没枚举成功过（H1/H2 座子不对外供电，
-     * 插上去根本不上电），sdr_task 一直停在等 NEW_DEV，那 92 KB 从未真正分配。
-     * 换句话说这个坑是**功能修好之后才浮出来的**，不是新引入的回归。
-     *
-     * 于是把次序反过来：需求固定且不可降级的（屏 / BLE / IMU / 气压计 / PFD）
-     * 先各自拿到内存，SDR 用剩下的。ADS-B 晚几秒开始收没有任何影响——它本来
-     * 就要等 dongle 枚举 + 调谐 + PLL 锁定。
-     *
-     * 前置条件仍然满足：USB host stack 早在 app_main 开头就装好了（上面那句
-     * ulTaskNotifyTake 等的就是它），g_iq_ringbuf 也已就绪，record_sink 已注册。
+     * ADS-B 链路任务保持最后启动：record sinks 与 pk_rec_ingest_init()
+     * 必须先就绪，Mode-S 热路径的首批报文才不会丢进空队列（原 dsp_task
+     * 时代同样约束，见 pk_rec_ingest.h）。UART 不抢内部 DMA 堆，旧
+     * RTL-SDR 时代的 92 KB URB 内存饥饿问题（2026-08-03 事故）不复存在；
+     * 次序保持只为最小改动。
      */
-    ok = xTaskCreatePinnedToCore(sdr_task, "sdr", 8192, NULL, 6, NULL, 1);
-    assert(ok == pdTRUE);
+    pk_adsb_link_start();
 
-    ok = xTaskCreatePinnedToCore(dsp_task, "dsp", 4096, NULL, 4, NULL, 1);
-    assert(ok == pdTRUE);
-
-    ESP_LOGI(TAG, "SDR + DSP tasks spawned last (free internal heap: %u B)",
+    ESP_LOGI(TAG, "ADS-B link task spawned last (free internal heap: %u B)",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 }

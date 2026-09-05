@@ -1,32 +1,8 @@
 /*
- * dsp_task.c — ADS-B edge decoder.
- *
- * Drains g_iq_ringbuf in fixed-size chunks, runs the dump1090-derived
- * magnitude / preamble / Manchester decode chain inherited from
- * naizhao/esp32-rtl-sdr's `mode-s.c`, and pretty-prints every CRC-valid
- * message to the console.
- *
- *   DF11 (all-call reply)        -> "<ICAO> df=11"
- *   DF17 metype 1..4  (ident)    -> "<ICAO> callsign=<flight>"
- *   DF17 metype 9..18 (airborne) -> "<ICAO> alt=<ft|m> pos=<lat,lon>"
- *   DF17 metype 19    (velocity) -> "<ICAO> hdg=<deg> speed=<kt> vrate=<fpm>"
- *   DF20/21                       -> "<ICAO> df=<dn> alt=<ft|m>"
- *
- * Positions only emerge after the per-aircraft CPR pairing layer
- * (cpr_decode.c) has both an even and an odd frame, both fresh within
- * 10 s, and both falling in the same NL longitude zone — matching
- * RTCA DO-260B. Until that happens, position lines say "pos=pending".
- *
- * In parallel the task emits a throughput dashboard line once per
- * second:
- *
- *   I (xxx) dsp: stream 2.00 MB/s | msgs/s 23 (df17_pos 8 df17_id 2) | aircraft 14
- *
- * On real-hardware verification the dashboard going non-zero proves
- * the data pipeline is intact; the per-message lines prove the
- * decoder is converging on actual aircraft.
+ * adsb_link_task.c — RP2040 UART 链路 + 原 dsp_task 业务链。
+ * 迁移自 dsp_task.c（2026-09-05，WP-C1）；IQ/USB 路径不再回来。
  */
-
+#include <assert.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -35,58 +11,58 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/ringbuf.h"
-#include "esp_attr.h"               /* EXT_RAM_BSS_ATTR */
+#include "driver/uart.h"
+#include "esp_attr.h"
 #include "esp_log.h"
-/* Stall recovery is now graceful: pk_sdr_request_reinit() (sdr_task)
- * tears down + re-opens the dongle without touching IMU / PFD / BLE.
- * esp_restart() only happens inside sdr_task after the attempt cap. */
 #include "esp_timer.h"
 
-#include "mode-s.h"
+#include "adsb_link.h"
+#include "modes_ingest.h"
 #include "pilot_kit.h"
 #include "cpr_decode.h"
 #include "aircraft_state.h"
 #include "config_demo.h"
 #include "record_sink.h"
-#include "dsp_task.h"
-#include "pk_rec_ingest.h"   /* traffic.trk 位置/身份记录落盘（阶段 3b） */
-#include "gps.h"             /* pk_gps_get() —— 地面 CPR 局部解码的参考位置（阶段 4b） */
+#include "pk_rec_ingest.h"
+#include "gps.h"
+#include "adsb_link_task.h"
 
-static const char *TAG      = "dsp";
+static const char *TAG      = "dsp";     /* 沿用旧 TAG，日志检索连续 */
 static const char *TAG_ADSB = "adsb";
 
-/* --- Working buffers ---------------------------------------------------
- *
- * 8192 B of IQ at 2 MSPS == 4 ms of audio per dump1090 invocation. The
- * 480-byte overlap (= 240 magnitude samples = MODE_S_FULL_LEN samples)
- * is just enough to ensure preambles that land near the buffer's tail
- * still have their full message body available on the next pass; the
- * decoder's own ICAO cache transparently dedupes the re-detection that
- * happens at the overlap region.
- */
-#define DSP_IQ_BUF_BYTES   8192
-#define DSP_MAG_BUF_LEN    (DSP_IQ_BUF_BYTES / 2)
-#define DSP_OVERLAP_BYTES  480
+/* --- 链路硬件参数（PLAN.md §3.2 / 协议 §0）---------------------------- */
+#define ADSB_UART        UART_NUM_2
+#define ADSB_UART_BAUD   921600
+#define ADSB_TX_GPIO     32      /* P4 TX → RP2040 RXD（J3-31）*/
+#define ADSB_UART_RX_BUF 4096
+#define ADSB_UART_TX_BUF 1024
+#define LINK_STALE_US    (5 * 1000000LL)
 
-static uint8_t   s_iq_buf[DSP_IQ_BUF_BYTES];
-static uint16_t  s_mag_buf[DSP_MAG_BUF_LEN];
-/* 放 PSRAM：32,780 B 的 mode_s_t（大头是 ICAO 地址缓存）此前占着调度器启动
- * 前那段极稀缺的内部堆窗口——它一个符号就吃掉将近一半（详见
- * firmware/scripts/check_early_heap.py 的机理说明）。
- *
- * 搬得动的理由：它只在 dsp_task() 函数体内被访问（init 一次 + 每次
- * mode_s_detect 传指针），全文件零 IRAM_ATTR、零中断注册，不存在 ISR 上下文
- * 访问 PSRAM 的风险；且缓存是**按报文**命中（几十次/秒），不是按采样点
- * （2M/s），PSRAM 延迟摊到每条报文上可忽略。
- *
- * 隔壁 s_iq_buf / s_mag_buf **不要**跟着搬：它们在解调内循环里按采样点访问，
- * 且 IQ 缓冲是 USB 传输落点、可能要求 DMA 能力。 */
-EXT_RAM_BSS_ATTR static mode_s_t  s_decoder;
+static adsb_link_dec_t      s_dec;
+static volatile int64_t     s_last_frame_us;
+static bool                 s_ever_linked;
+static bool                 s_proto_mismatch_seen;
+static bool                 s_hello_sent;
+static pk_adsb_link_stats_t s_stats;
+static uint8_t              s_rxchunk[256];
+
+/* ── 以下整块【迁移】自 dsp_task.c，除注明外逐字搬运 ────────────────
+ *   - 1 Hz 窗口计数 s_msgs_* / s_pos_decoded 与 volatile 累计
+ *     s_msgs_total_cum / s_pos_decoded_cum
+ *   - ICAO_SEEN_CAPACITY / s_icao_seen / s_icao_unique / icao_seen_insert()
+ *   - PK_REC_LOOKUP_MAX_AGE_US
+ *   - s_summary_snap[AIRCRAFT_TABLE_CAPACITY]（EXT_RAM_BSS_ATTR 保留）
+ *   - format_aircraft_line() / aircraft_summary_emit()
+ *   - on_mode_s_msg() → on_ingest_msg()（签名换 modes_ingest sink）
+ *   - dashboard_emit_and_reset()：搬运但**改造**——去掉 stream MB/s，
+ *     换链路计数（rx/s、crcerr/s），窗口基线 s_win_rx / s_win_crc。
+ * 【删除不迁】s_iq_buf / s_mag_buf / DSP_*_BYTES / s_window_bytes /
+ *   IQ stall watchdog / mode_s_detect 调用 / EXT_RAM 的 s_decoder
+ *   （解码器实例移入 modes_ingest.c）。
+ */
 
 /* --- 1 Hz dashboard counters ------------------------------------------ */
 
-static uint64_t s_window_bytes   = 0;
 static uint32_t s_msgs_total     = 0;
 static uint32_t s_msgs_df11      = 0;
 static uint32_t s_msgs_df17_id   = 0;
@@ -96,14 +72,25 @@ static uint32_t s_msgs_df20_21   = 0;
 static uint32_t s_msgs_other     = 0;
 static uint32_t s_pos_decoded    = 0;
 
+/* 链路计数 1 Hz 窗口基线：emit 时与累计值求差得本窗增量，之后追平。 */
+static uint32_t s_win_rx  = 0;
+static uint32_t s_win_crc = 0;
+
 /* --- Cumulative diagnostic counters (boot-lifetime, never reset) ------- *
- * Written only from dsp_task; read by diag page via pk_dsp_get_stats().
+ * Written only from this task; read by diag page via pk_dsp_get_stats().
  * 32-bit aligned r/w is atomic on ESP32-P4 (RV32), so no lock needed;
  * volatile prevents the compiler from caching stale values across tasks.
  */
 static volatile uint32_t s_msgs_total_cum  = 0;   /* cumulative CRC-ok Mode-S frames */
 static volatile uint32_t s_pos_decoded_cum = 0;   /* cumulative CPR position decodes  */
-static volatile uint32_t s_iq_drop_total   = 0;   /* cumulative IQ bytes dropped       */
+
+/*
+ * aircraft_state_get_own() 的"旧值/当前值"快照查询用——大到覆盖任何合理
+ * 的两帧间隔（呼号变化探测），小到不会真的匹配上一次开机遗留的陈旧数据
+ * （s_table 每次 aircraft_state_init() 都会清空，同一次开机内不存在这个
+ * 问题）。
+ */
+#define PK_REC_LOOKUP_MAX_AGE_US (24LL * 3600 * 1000000)
 
 /*
  * Tiny ICAO seen-set, kept solely so the dashboard can report unique
@@ -111,12 +98,6 @@ static volatile uint32_t s_iq_drop_total   = 0;   /* cumulative IQ bytes dropped
  * 1024 slots × 4 bytes = 4 KiB; collisions just under-count, which is
  * fine for a dashboard.
  */
-/* aircraft_state_get_own() 的"旧值/当前值"快照查询用——大到覆盖任何合理
- * 的两帧间隔（呼号变化探测），小到不会真的匹配上一次开机遗留的陈旧数据
- * （s_table 每次 aircraft_state_init() 都会清空，同一次开机内不存在这个
- * 问题）。 */
-#define PK_REC_LOOKUP_MAX_AGE_US (24LL * 3600 * 1000000)
-
 #define ICAO_SEEN_CAPACITY  1024
 static uint32_t          s_icao_seen[ICAO_SEEN_CAPACITY];
 static volatile uint32_t s_icao_unique = 0;
@@ -138,14 +119,17 @@ static void icao_seen_insert(uint32_t icao24)
 
 /* --- Per-message handler ----------------------------------------------
  *
- * Invoked synchronously by mode_s_detect() for every preamble candidate
- * the decoder is willing to call a frame. We filter by CRC and dispatch
- * a human-readable log line per recognised message family. Runs on the
- * dsp_task; no synchronisation needed for the static counters.
+ * Registered as the modes_ingest sink: invoked synchronously by
+ * modes_ingest_feed() for every frame that passes the decoder's CRC
+ * check. We filter by CRC and dispatch a human-readable log line per
+ * recognised message family. Runs on adsb_link_task; no synchronisation
+ * needed for the static counters.
  */
-static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
+static void on_ingest_msg(const struct mode_s_msg *mm,
+                          const modes_ingest_meta_t *meta,
+                          void *user)
 {
-    (void)self;
+    (void)meta; (void)user;
 
     /* Drop frames whose CRC is bad (or only became "ok" after a
      * single-bit forced correction — too noisy for live traffic). */
@@ -405,8 +389,8 @@ static void on_mode_s_msg(mode_s_t *self, struct mode_s_msg *mm)
  * min ago are dropped (also the LRU table caps at 64 slots so they
  * eventually get evicted on first contact with new traffic).
  *
- * Snapshot buffer is ~64 * 72 ≈ 4.5 KiB; lives in PSRAM .bss because
- * dsp_task's stack is only 4 KiB. Single-caller — no lock needed. */
+ * Snapshot buffer is ~64 * 72 ≈ 4.5 KiB; lives in PSRAM .bss to keep
+ * it off the task stack. Single-caller — no lock needed. */
 #define SUMMARY_TIER_FRESH_US   (60ULL * 1000000ULL)          /* 60 s   */
 #define SUMMARY_TIER_RECENT_US  (15ULL * 60ULL * 1000000ULL)  /* 15 min */
 #define SUMMARY_TIER_OLDER_US   (30ULL * 60ULL * 1000000ULL)  /* 30 min */
@@ -501,10 +485,11 @@ static void aircraft_summary_emit(int64_t now_us)
     };
     /* Per-tier print cap. With > ~40 tracked aircraft, the unbounded
      * loop emitted enough ESP_LOGI lines (each ~130 B blocking the
-     * 115200-baud UART for ~11 ms) that dsp_task stalled long enough
-     * for the IQ ringbuf to overflow. Capping each tier keeps the
-     * summary at most ~24 lines + headers (~260 ms blocking) which
-     * the 512 KiB ringbuf comfortably absorbs. */
+     * 115200-baud UART for ~11 ms) that the old IQ-era dsp task stalled
+     * long enough for the IQ ring buffer to overflow (2026-08 实测，
+     * ringbuffer 已随 SDR 路径退役). Capping each tier keeps the
+     * summary at most ~24 lines + headers (~260 ms blocking) — the
+     * UART stall itself hasn't gone away, so the cap stays. */
     #define SUMMARY_TIER_PRINT_CAP  8
     bool printed[AIRCRAFT_TABLE_CAPACITY] = { 0 };
     for (size_t t = 0; t < sizeof(tiers) / sizeof(tiers[0]); ++t) {
@@ -542,41 +527,36 @@ static void aircraft_summary_emit(int64_t now_us)
 
 static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
 {
-    int64_t elapsed_us = now_us - window_start_us;
-    double  secs = (double)elapsed_us / 1e6;
-    double  mbps = (double)s_window_bytes / 1e6 / secs;
-    uint32_t drops = pk_iq_dropped_bytes_swap();
-    s_iq_drop_total += drops;   /* accumulate into boot-lifetime counter */
+    (void)now_us; (void)window_start_us;  /* 无 MB/s 归一后不再参与计算 */
+    const uint32_t rx  = s_stats.rx_frames     - s_win_rx;
+    const uint32_t crc = s_stats.rx_crc_errors - s_win_crc;
 
-    /* Stay quiet when there's no IQ to talk about. This happens whenever
-     * the dongle is unplugged (sdr_task is parked in its NEW_DEV wait)
-     * or has never been attached; printing "stream 0.00 MB/s" every
-     * second in that state is just noise that drowns out the rest of
-     * the system. The 1 Hz dashboard resumes the instant IQ flows. */
-    if (s_window_bytes == 0 && drops == 0) {
+    /* Stay quiet when there's no link to talk about. This happens
+     * whenever the RP2040 isn't wired up / isn't sending yet; printing
+     * "rx/s 0" every second in that state is just noise that drowns
+     * out the rest of the system. The 1 Hz dashboard resumes the
+     * instant frames flow. */
+    if (rx == 0 && crc == 0) {
         goto reset;
     }
 
-    if (drops == 0) {
+    if (crc == 0) {
         ESP_LOGI(TAG,
-                 "stream %.2f MB/s | msgs/s %lu (df11 %lu  df17 id %lu pos %lu "
-                 "(decoded %lu) vel %lu  df20/21 %lu  other %lu) | aircraft %lu",
-                 mbps,
-                 (unsigned long)s_msgs_total,
-                 (unsigned long)s_msgs_df11,
-                 (unsigned long)s_msgs_df17_id,
-                 (unsigned long)s_msgs_df17_pos,
-                 (unsigned long)s_pos_decoded,
-                 (unsigned long)s_msgs_df17_vel,
-                 (unsigned long)s_msgs_df20_21,
-                 (unsigned long)s_msgs_other,
-                 (unsigned long)s_icao_unique);
+                 "link rx/s %u crcerr/s %u | msgs/s %u (df17_pos %u "
+                 "df17_id %u) | aircraft %u",
+                 (unsigned)rx,
+                 (unsigned)crc,
+                 (unsigned)s_msgs_total,
+                 (unsigned)s_msgs_df17_pos,
+                 (unsigned)s_msgs_df17_id,
+                 (unsigned)s_icao_unique);
     } else {
         ESP_LOGW(TAG,
-                 "stream %.2f MB/s (DROPPED %lu B) | msgs/s %lu | aircraft %lu",
-                 mbps, (unsigned long)drops,
-                 (unsigned long)s_msgs_total,
-                 (unsigned long)s_icao_unique);
+                 "link rx/s %u crcerr/s %u (BAD CRC) | msgs/s %u | aircraft %u",
+                 (unsigned)rx,
+                 (unsigned)crc,
+                 (unsigned)s_msgs_total,
+                 (unsigned)s_icao_unique);
     }
 
 reset:;
@@ -587,7 +567,8 @@ reset:;
     s_msgs_total_cum  += s_msgs_total;
     s_pos_decoded_cum += s_pos_decoded;
 
-    s_window_bytes  = 0;
+    s_win_rx        = s_stats.rx_frames;
+    s_win_crc       = s_stats.rx_crc_errors;
     s_msgs_total    = 0;
     s_msgs_df11     = 0;
     s_msgs_df17_id  = 0;
@@ -598,125 +579,145 @@ reset:;
     s_pos_decoded   = 0;
 }
 
-void dsp_task(void *arg)
+/* --- 链路消息分发 ------------------------------------------------------ */
+static uint32_t le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void on_link_msg(void *user, const adsb_link_msg_t *m)
+{
+    (void)user;
+    int64_t now = esp_timer_get_time();
+    s_last_frame_us = now;
+    s_ever_linked = true;
+    s_stats.rx_frames++;
+
+    switch (m->type) {
+    case ADSB_LINK_MSG_MODES_RAW: {
+        if (m->payload_len < 6) break;
+        int msgbits = (m->payload[0] & ADSB_LINK_MODES_LONG) ? 112 : 56;
+        size_t need = 6 + (size_t)(msgbits / 8);
+        if (m->payload_len < need) break;          /* 短包：丢弃，等 HEALTH 里看 */
+        modes_ingest_meta_t meta = {
+            .rssi     = m->payload[1],
+            .rp_ts_us = (uint32_t)(m->payload[2] | (m->payload[3] << 8) |
+                                   ((uint32_t)m->payload[4] << 16) |
+                                   ((uint32_t)m->payload[5] << 24)),
+        };
+        modes_ingest_feed(m->payload + 6, msgbits, &meta);
+        s_stats.modes_fed++;
+        break;
+    }
+    case ADSB_LINK_MSG_HELLO:
+    case ADSB_LINK_MSG_CAPABILITIES:
+        /* 协议 §5：P4 收到 HELLO 回一帧自己的 HELLO，让 RP 侧也能 LINKED。 */
+        if (!s_hello_sent) {
+            uint8_t pl[17] = { 0 };          /* min_minor + build[16] */
+            memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
+            uint8_t out[ADSB_LINK_MAX_FRAME];
+            size_t n = adsb_link_encode(out, sizeof out,
+                                        ADSB_LINK_MSG_HELLO, 0,
+                                        pl, sizeof pl);
+            if (n) uart_write_bytes(ADSB_UART, out, n);
+            s_hello_sent = true;
+        }
+        ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
+                 ? "HELLO" : "CAPABILITIES", m->seq);
+        break;
+    case ADSB_LINK_MSG_HEALTH_STATS:
+        if (m->payload_len < 40) break;
+        /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
+        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u resync=%u noise=%u "
+                      "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
+                 le32(m->payload + 0),  le32(m->payload + 4),
+                 le32(m->payload + 8),  le32(m->payload + 12),
+                 le32(m->payload + 16), le32(m->payload + 20),
+                 le32(m->payload + 24), le32(m->payload + 28),
+                 le32(m->payload + 32), le32(m->payload + 36));
+        break;
+    case ADSB_LINK_MSG_ERROR:
+        ESP_LOGW(TAG_ADSB, "RP error code=%u", m->payload_len ? m->payload[0] : 0);
+        break;
+    default:
+        break;                                     /* 未知类型：忽略（规范§3.5） */
+    }
+}
+
+static void adsb_link_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "dsp_task running (dump1090-derived edge decode)");
+    ESP_LOGI(TAG, "adsb_link_task running (UART%d rx=%d tx=%d %d baud)",
+             ADSB_UART, 46, ADSB_TX_GPIO, ADSB_UART_BAUD);
 
     cpr_init();
-    mode_s_init(&s_decoder);
-    /* The decoder's own crc check + our crcok filter in the callback
-     * are both belt-and-braces. fix_errors and aggressive defeat the
-     * point of "real aircraft only" reporting, so leave them off. */
-    s_decoder.check_crc  = 1;
-    s_decoder.fix_errors = 0;
-    s_decoder.aggressive = 0;
+    modes_ingest_init(on_ingest_msg, NULL);
+    adsb_link_dec_init(&s_dec, on_link_msg, NULL);
+    s_last_frame_us = esp_timer_get_time();
 
-    size_t   filled               = 0;
-    int64_t  window_start_us      = esp_timer_get_time();
-    int64_t  summary_last_emit_us = window_start_us;
+    const uart_config_t uc = {
+        .baud_rate  = ADSB_UART_BAUD,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    ESP_ERROR_CHECK(uart_param_config(ADSB_UART, &uc));
+    ESP_ERROR_CHECK(uart_set_pin(ADSB_UART, ADSB_TX_GPIO, 46,
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_driver_install(ADSB_UART, ADSB_UART_RX_BUF,
+                                        ADSB_UART_TX_BUF, 0, NULL, 0));
 
-    /* IQ stall watchdog: real dongles occasionally just stop pushing
-     * samples after hours of uptime (rtl2832u quirk, USB stack
-     * starvation, who knows). When we notice the stream has been
-     * silent for IQ_STALL_LIMIT_MS, ask sdr_task to tear down its
-     * librtlsdr session and re-open the dongle (no USB unplug needed).
-     * Re-init happens in-place — IMU, PFD and BLE stay running. After
-     * a successful re-init, sdr_task waits for IQ to start flowing
-     * again before clearing its own attempt counter.
-     *
-     * IQ_REINIT_BACKOFF_MS prevents this watchdog from spamming
-     * pk_sdr_request_reinit() faster than sdr_task can act on it —
-     * the tear-down + re-open path itself takes ~1-2 s, during which
-     * last_iq_us obviously won't advance. */
-    #define IQ_STALL_LIMIT_MS    10000   /* 10 s with no IQ → reinit request */
-    #define IQ_REINIT_BACKOFF_MS  3000   /* don't re-request within 3 s of last */
-    int64_t  last_iq_us           = window_start_us;
-    int64_t  last_reinit_req_us   = 0;
-    bool     iq_ever_received     = false;
+    int64_t window_start_us      = esp_timer_get_time();
+    int64_t summary_last_emit_us = window_start_us;
 
     while (1) {
-        /* Greedy fill: pull whatever's currently in the ring buffer until
-         * either our working buffer is full or 100 ms have passed. */
-        while (filled < DSP_IQ_BUF_BYTES) {
-            size_t got = 0;
-            void *p = xRingbufferReceiveUpTo(
-                g_iq_ringbuf, &got, pdMS_TO_TICKS(100),
-                DSP_IQ_BUF_BYTES - filled);
-            if (p == NULL) break;
-            memcpy(s_iq_buf + filled, p, got);
-            vRingbufferReturnItem(g_iq_ringbuf, p);
-            filled += got;
-            last_iq_us = esp_timer_get_time();
-            iq_ever_received = true;
-        }
+        int n = uart_read_bytes(ADSB_UART, s_rxchunk, sizeof(s_rxchunk),
+                                pdMS_TO_TICKS(100));
+        if (n > 0) adsb_link_dec_feed(&s_dec, s_rxchunk, (size_t)n);
 
-        if (filled >= DSP_OVERLAP_BYTES + 2) {
-            s_window_bytes += (filled - DSP_OVERLAP_BYTES);  /* fresh bytes */
-            uint32_t mag_len = filled / 2;
-            mode_s_compute_magnitude_vector(s_iq_buf, s_mag_buf, filled);
-            mode_s_detect(&s_decoder, s_mag_buf, mag_len, on_mode_s_msg);
-
-            /* Carry the trailing overlap forward so preambles straddling
-             * the boundary aren't dropped. The decoder's internal ICAO
-             * cache deduplicates any frame we end up re-detecting. */
-            memmove(s_iq_buf, s_iq_buf + filled - DSP_OVERLAP_BYTES,
-                    DSP_OVERLAP_BYTES);
-            filled = DSP_OVERLAP_BYTES;
-        }
+        s_stats.rx_crc_errors = s_dec.crc_errors;
+        s_stats.rx_seq_gaps   = s_dec.seq_gaps;
+        s_stats.rx_resyncs    = s_dec.resyncs;
+        if (s_dec.version_mismatch) s_proto_mismatch_seen = true;
 
         int64_t now_us = esp_timer_get_time();
         if (now_us - window_start_us >= 1000000) {
-            dashboard_emit_and_reset(now_us, window_start_us);
+            dashboard_emit_and_reset(now_us, window_start_us);  /*【迁移+改造】*/
             window_start_us = now_us;
         }
-        /* Summary every 30 s, not 5 s: with many aircraft tracked the
-         * 30-odd ESP_LOGI lines block the UART (115200 baud) for
-         * several hundred ms, stalling dsp_task long enough for the
-         * IQ ringbuf to overflow ("DROPPED ~1.8 MB" warnings every 5 s
-         * once aircraft count climbed past ~40). 30 s keeps the
-         * blackout below 1% of dsp_task wall time. */
         if (now_us - summary_last_emit_us >= 30000000) {
-            aircraft_summary_emit(now_us);
+            aircraft_summary_emit(now_us);                       /*【迁移】*/
             summary_last_emit_us = now_us;
-        }
-
-        /* Stall watchdog. Only arms after we've actually received IQ
-         * at least once — otherwise we'd request a re-init during normal
-         * boot before the dongle has finished enumerating. */
-        if (iq_ever_received) {
-            int64_t stall_ms = (now_us - last_iq_us) / 1000;
-            int64_t since_last_req_ms = (now_us - last_reinit_req_us) / 1000;
-            if (stall_ms > IQ_STALL_LIMIT_MS &&
-                since_last_req_ms > IQ_REINIT_BACKOFF_MS) {
-                char reason[64];
-                snprintf(reason, sizeof(reason),
-                         "IQ stream stalled %lld ms (limit %d ms)",
-                         (long long)stall_ms, IQ_STALL_LIMIT_MS);
-                ESP_LOGW(TAG, "%s — requesting sdr_task re-init", reason);
-                pk_sdr_request_reinit(reason);
-                last_reinit_req_us = now_us;
-                /* Don't clear last_iq_us: if the re-init succeeds, on_iq
-                 * will refresh it; if it doesn't, we'll re-request after
-                 * IQ_REINIT_BACKOFF_MS, and sdr_task's own attempt
-                 * counter will escalate to esp_restart() after
-                 * SDR_REINIT_MAX_ATTEMPTS failures. */
-            }
         }
     }
 }
 
-/* --- Diagnostic snapshot getter -------------------------------------- *
- *
- * Returns boot-lifetime cumulative counters as a single flat struct.
- * Called from pfd_task (diag page) at display refresh cadence (~1 Hz).
- * 32-bit aligned reads are atomic on ESP32-P4 (RV32); no locking needed.
- */
+pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
+{
+    if (stats) *stats = s_stats;
+    if (s_proto_mismatch_seen) return PK_ADSB_LINK_PROTO_MISMATCH;
+    if (!s_ever_linked) return PK_ADSB_LINK_NO_LINK;
+    return (esp_timer_get_time() - s_last_frame_us > LINK_STALE_US)
+               ? PK_ADSB_LINK_STALLED : PK_ADSB_LINK_LINKED;
+}
+
 void pk_dsp_get_stats(pk_dsp_stats_t *out)
 {
     if (out == NULL) return;
-    out->msgs_total   = s_msgs_total_cum;
-    out->pos_decoded  = s_pos_decoded_cum;
-    out->icao_unique  = s_icao_unique;
-    out->iq_drop_total = s_iq_drop_total;
+    uint32_t ok = 0, bad = 0;
+    modes_ingest_get_stats(&ok, &bad);
+    out->msgs_total     = ok;
+    out->frames_bad_crc = bad;
+    out->pos_decoded    = s_pos_decoded_cum;    /*【迁移】自 dsp_task.c */
+    out->icao_unique    = s_icao_unique;        /*【迁移】*/
+}
+
+void pk_adsb_link_start(void)
+{
+    BaseType_t ok = xTaskCreatePinnedToCore(adsb_link_task, "adsb_lnk",
+                                            8192, NULL, 5, NULL, 1);
+    assert(ok == pdTRUE);
 }

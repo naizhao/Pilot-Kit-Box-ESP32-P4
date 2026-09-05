@@ -151,7 +151,7 @@ void aircraft_state_init(void);
 void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us);
 
 /*
- * Override an aircraft's position. Used by dsp_task.c after running
+ * Override an aircraft's position. Used by adsb_link_task.c after running
  * cpr_decode_position() so the BLE traffic report carries lat/lon.
  */
 void aircraft_state_update_position(uint32_t icao24,

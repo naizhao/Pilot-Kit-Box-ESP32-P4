@@ -1,0 +1,16 @@
+# v3 板系扩展板的构建配置片段（该板系当前修订为 V3.9）。
+#
+# 用法（不要直接改 sdkconfig，用独立 build 目录避免陈旧 .o）：
+#
+#     cd firmware
+#     ./build.sh -B build_v3 \
+#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v3" \
+#       -DSDKCONFIG=build_v3/sdkconfig build
+#
+# 烧录同理，把 build 换成 `-p <port> flash`。
+#
+# 为什么单独存在：Kconfig 的默认板系是 v4（2026-09-03 产品裁定）。默认值本身
+# 没问题，但如果 v3 只能靠"记得去 menuconfig 切一下"，忘了就静默出 v4 固件，
+# PFD 会横滚偏 90° 而地面上看不出来。这份文件让 v3 也有一条可复现、可进 CI 的
+# 构建路径。基础的 sdkconfig.defaults 故意不写板系，否则这里覆盖不掉它。
+CONFIG_PK_BOARD_PROFILE_V3=y

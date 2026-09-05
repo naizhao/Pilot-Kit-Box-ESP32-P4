@@ -3,8 +3,9 @@
  *
  * Open-addressing table indexed by ICAO % capacity, linear probing for
  * collisions, LRU eviction when the table is full. Mutex-protected so
- * dsp_task (writer via aircraft_state_ingest) and ble_gatt_task
- * (reader via aircraft_state_snapshot) can run on different cores.
+ * the ADS-B link task (writer via aircraft_state_ingest) and
+ * ble_gatt_task (reader via aircraft_state_snapshot) can run on
+ * different cores.
  */
 
 #include "aircraft_state.h"
@@ -21,7 +22,7 @@
 #include "config_demo.h"  /* pk_demo_enabled —— 演示模式接管目标表快照 */
 #include "pk_callsign.h"  /* pk_callsign_sanitize —— 拒收含保留码位的呼号 */
 #include "demo_data.h"
-#include "mode-s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
+#include "mode_s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
 #include "ui_state.h" /* pk_ui_get_own_icao() — pin the bound own-ship
                        * slot against LRU eviction (see lookup_or_claim) */
 
@@ -31,7 +32,7 @@ static const char *TAG = "aircraft";
  * squawk / wake / on_ground additions that keeping all 64 slots in
  * internal DRAM started squeezing ESP-Hosted's boot-time timer-task
  * allocation off the heap. Mutex-guarded reads from PSRAM are cheap
- * enough for the dsp_task ingest path (~30-50 calls/s). */
+ * enough for the ingest path (~30-50 calls/s). */
 static EXT_RAM_BSS_ATTR aircraft_t s_table[AIRCRAFT_TABLE_CAPACITY];
 /* 两处长度必须同值：pk_callsign_sanitize 按 PK_CALLSIGN_LEN 写出参，
  * 结果直接 memcpy 进 aircraft_t.callsign[AIRCRAFT_CALLSIGN_LEN]。 */
@@ -225,7 +226,7 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
         } else if (mm->metype >= 5 && mm->metype <= 8) {
             /* Surface position — aircraft is on the ground (taxi /
              * runway / apron). The CPR itself is decoded separately in
-             * dsp_task.c via cpr_decode_surface_local() (local/
+             * adsb_link_task.c via cpr_decode_surface_local() (local/
              * single-frame decode — ground targets squitter too
              * infrequently once stationary for the global odd+even
              * pairing window in cpr_decode.c to stay useful). Here we

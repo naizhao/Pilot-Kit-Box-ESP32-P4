@@ -1,0 +1,13 @@
+# v4 板系扩展板的构建配置片段（该板系当前修订为 V4.3）。
+#
+# 用法（不要直接改 sdkconfig，用独立 build 目录避免陈旧 .o）：
+#
+#     cd firmware
+#     ./build.sh -B build_v4 \
+#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.v4" \
+#       -DSDKCONFIG=build_v4/sdkconfig build
+#
+# v4 同时也是 Kconfig 的默认板系（2026-09-03 产品裁定），所以不带这份片段的
+# 普通 `./build.sh build` 出来的就是 v4。这份文件的意义是让两个板系**对称**：
+# 发布/CI 里两个镜像都用同一种显式方式产出，不靠"哪个是默认"这种隐含知识。
+CONFIG_PK_BOARD_PROFILE_V4=y

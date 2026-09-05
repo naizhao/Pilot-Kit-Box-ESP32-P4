@@ -33,7 +33,7 @@ static void icao_to_bytes(uint32_t icao24, uint8_t out[3])
 }
 
 /* 非阻塞入队；队满丢弃并计数（照 record_sink_file.c:344-353 的做法，每
- * 256 次丢弃打一条日志，避免刷屏）。dsp_task 热路径上只调这个，不摸
+ * 256 次丢弃打一条日志，避免刷屏）。解码热路径上只调这个，不摸
  * s_lock/fwrite。 */
 static void enqueue_or_drop(const uint8_t buf[PK_TRK_RECORD_LEN])
 {
@@ -47,7 +47,7 @@ static void enqueue_or_drop(const uint8_t buf[PK_TRK_RECORD_LEN])
 }
 
 /* 写任务：唯一真正碰 pk_rec_store_append_traffic_record()（内部
- * xSemaphoreTake(portMAX_DELAY) + fwrite）的地方，不拖累 dsp_task。 */
+ * xSemaphoreTake(portMAX_DELAY) + fwrite）的地方，不拖累链路任务。 */
 static void rec_ingest_writer_task(void *arg)
 {
     (void)arg;

@@ -1,9 +1,10 @@
 /*
  * record_sink.h — multi-sink fan-out for CRC-valid Mode-S records.
  *
- * The DSP task (dsp_task.c) calls record_dispatch() once per Mode-S
- * frame that passes the upstream decoder's CRC check. Each registered
- * sink then sees the same record and decides what to do with it:
+ * The ADS-B link task (adsb_link_task.c) calls record_dispatch() once
+ * per Mode-S frame that passes the upstream decoder's CRC check. Each
+ * registered sink then sees the same record and decides what to do
+ * with it:
  *
  *   - record_sink_uart  prints "<ts_ms> *<HEX>;" to the console
  *   - record_sink_file  appends the same line to a rotated LittleFS
@@ -14,8 +15,8 @@
  * no allocation on the hot path. The dispatcher walks the registry and
  * calls each sink's write() callback synchronously. Sinks whose backing
  * I/O is slow (flash, BLE) must internally enqueue + return promptly —
- * blocking inside write() back-pressures the DSP task, which would
- * eventually drop USB IQ samples.
+ * blocking inside write() back-pressures the ingest task, which would
+ * eventually drop link frames.
  *
  * Time semantics: rec->ts_ms is wall-clock milliseconds via
  * gettimeofday(); if the system clock has not been set (no SNTP yet,
@@ -51,8 +52,8 @@ struct record_sink {
 
 /*
  * Register a sink. Must be called before record_dispatch() is invoked
- * (i.e. before sdr_task spawns). Returns ESP_ERR_NO_MEM if the static
- * registry is full (see RECORD_SINK_MAX in record_sink.c).
+ * (i.e. before the ADS-B link task spawns). Returns ESP_ERR_NO_MEM if
+ * the static registry is full (see RECORD_SINK_MAX in record_sink.c).
  */
 esp_err_t record_sink_register(record_sink_t *sink);
 

@@ -4,7 +4,7 @@
  * 跑法（与 firmware/test/ 下其它测试同一套路：把被测 .c 直接拉进本 TU）：
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 \
- *      -I firmware/components/esp32-rtl-sdr/main \
+ *      -I firmware/main \
  *      -o /tmp/test_mode_s_surface firmware/test/test_mode_s_surface.c -lm
  *   /tmp/test_mode_s_surface
  *
@@ -18,7 +18,7 @@
  *   TC[0:5) MOV[5:12) S[12] TRK[13:20) T[20] F[21] LAT[22:39) LON[39:56)
  * DF17 报文里 ME 从 msg[4] 起，故 ME bit 0 == msg[4] 的 bit7。
  */
-#include "mode-s.c"   /* 连 static 的 decode_movement_field 一起拉进来 */
+#include "mode_s.c"   /* 连 static 的 decode_movement_field 一起拉进来 */
 
 #include <assert.h>
 #include <math.h>

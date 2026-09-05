@@ -1,7 +1,7 @@
 /*
  * record_sink_file.c — append-only file sink, LittleFS backend.
  *
- * Lives entirely off the dsp_task hot path: write() formats the ts-line
+ * Lives entirely off the ingest hot path: write() formats the ts-line
  * into a small struct, puts it on a queue, returns. A dedicated
  * file_writer_task drains the queue, appending lines to the currently
  * open ts file under /storage/. When the active file exceeds

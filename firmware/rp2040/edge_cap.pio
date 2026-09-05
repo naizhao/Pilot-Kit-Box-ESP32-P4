@@ -1,0 +1,54 @@
+/*
+ * edgecap.pio — 双沿间隔捕获：每个边沿（上升+下降）推送"距上一边沿的 tick 数"
+ * （1 tick = 2 SM 周期；SM 默认 125MHz → 16ns/tick）。X 预载 0xFFFFFFE0
+ * （set x,31 + mov x,~x 两个已知常数合成），高低两段相位都在同一个 X 上递减。
+ *
+ * 两条推送路径的恒定开销逐指令相等（mov/push/set/mov = 4 拍 + 转换 2 拍，
+ * 合计 6 拍 = 3 tick），所以换算常数统一为 +3：true_ticks = (PRELOAD − raw) + 3，
+ * 下取整、误差 ≤1 tick（16ns）。饱和（X 减到 0 停住）推送 ≈PRELOAD+3 的超大
+ * 值 = 空闲标记，与解码器 ">5µs 关 burst" 语义一致。
+ *
+ * R11（P0）：必须捕获双沿——真实 Mode-S 里 bit0→bit1 的两个 0.5µs 脉冲背靠背
+ * 融合成 1µs 连续高电平，只捕获上升沿会丢掉 bit1 的定位信息（见 PLAN.md §11 R11）。
+ */
+.program edgecap
+.wrap_target
+    set x, 31
+    mov x, ~x
+low_wait:                ; 低电平：等上升沿
+    jmp pin rise
+    jmp x-- low_wait
+    jmp low_wait         ; X 饱和：继续等沿
+rise:                    ; 上升沿 → 推送（低电平时长）
+    mov isr, x
+    push noblock         ; RX FIFO 满则丢这一沿（奇偶错乱的 burst 由解码端整帧丢弃）
+    set x, 31
+    mov x, ~x
+high_wait:               ; 高电平：等下降沿
+    jmp pin high_cnt
+    jmp fall
+high_cnt:
+    jmp x-- high_wait
+    jmp high_wait
+fall:                    ; 下降沿 → 推送（高电平时长）
+    mov isr, x
+    push noblock
+    set x, 31
+    mov x, ~x
+    jmp low_wait
+.wrap
+
+% c-sdk {
+static inline void edgecap_program_init(PIO pio, uint sm, uint offset, uint pin)
+{
+    pio_sm_config c = edgecap_program_get_default_config(offset);
+    sm_config_set_jmp_pin(&c, pin);
+    sm_config_set_in_pin_base(&c, pin);
+    sm_config_set_in_shift(&c, false, false, 32);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+    pio_gpio_init(pio, pin);
+    gpio_pull_down(pin);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

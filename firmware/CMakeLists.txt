@@ -2,7 +2,11 @@
 # Target: ESP32-P4 (set in sdkconfig.defaults via CONFIG_IDF_TARGET).
 cmake_minimum_required(VERSION 3.16)
 
-# Pull components from the in-tree `components/` directory (esp32-rtl-sdr lives there).
+# Pull components from the in-tree `components/` directory. The retired
+# esp32-rtl-sdr submodule (and the gitignored xtrsdr reference lib) were
+# removed on 2026-09-05 with user authorization — the Mode-S decoder they
+# used to provide now lives at main/mode_s.{c,h} (BSD-3 notice in-file);
+# see docs/internal/firmware-v3v4/PLAN.md §11 R5/R10.
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components")
 
 

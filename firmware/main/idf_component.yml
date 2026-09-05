@@ -2,7 +2,6 @@
 dependencies:
   idf:
     version: '>=6.0.0'
-  espressif/usb: '*'
   # LittleFS — log-structured filesystem for the on-board ADS-B ts-format
   # dump partition. Picked over SPIFFS for better wear levelling on the
   # 32 MB Nor flash, which can see thousands of writes per flight hour

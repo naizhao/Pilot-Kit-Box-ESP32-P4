@@ -51,8 +51,14 @@ firmware/sdkconfig
 # sdkconfig 的所有衍生副本一网打尽——原来只列了 .old 和 .broken-backup-*，
 # 结果 sdkconfig.bak 成了漏网之鱼。这类文件会随手产生，逐个补规则追不上。
 firmware/sdkconfig.*
+# 板型 profile 默认值是一等公民构建输入（F3 阶段 5/7 产物），必须进版本库
+!firmware/sdkconfig.defaults.v3
+!firmware/sdkconfig.defaults.v4
 firmware/managed_components/
 firmware/dependencies.lock
+
+# RP2040（pico-sdk）构建产物
+firmware/rp2040/build/
 **/.cache/
 .DS_Store
 
