@@ -5,8 +5,12 @@ cmake_minimum_required(VERSION 3.16)
 # Pull components from the in-tree `components/` directory. Note:
 # esp32-rtl-sdr is no longer referenced by main (adsb_link_task took
 # over the ADS-B entry, 2026-09-05) — the directory is kept in-tree
-# pending an authorized removal.
+# pending an authorized removal. audit P2: explicitly exclude it (and
+# the gitignored xtrsdr reference lib) so the retired RTL-SDR component
+# stops compiling and its `espressif/usb: '*'` manifest dep stops being
+# resolved (dependencies.lock drops `espressif/usb` on reconfigure).
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components")
+set(EXCLUDE_COMPONENTS esp32-rtl-sdr xtrsdr)
 
 
 # Local version = version.txt + current git short hash, e.g. "v0.8.0-ce49d37".

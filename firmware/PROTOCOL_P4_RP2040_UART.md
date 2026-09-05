@@ -46,6 +46,10 @@ CRC 已知答案向量：`crc16("123456789") = 0x29B1`。
 6. seq：接收方检测 `(u8)(seq_now - seq_prev) != 1` 计 seq_gaps；不丢帧、不要求重传。
 7. 帧被作废后，流中**后续**合法帧必须仍可解出（滑窗前进 1 字节而非清空）。
 
+> 勘误（2026-09-05，audit P2）：实际校验顺序为 **magic → len → CRC → version**；
+> `version_mismatch` 仅统计 **CRC 合法**的异版本帧。坏 CRC 一律计 `crc_errors`
+> （§3.2 原文按列表序理解会先查版本，以此勘误为准）。
+
 ## 4. HEALTH_STATS payload（u32le × N，均为开机累计）
 
 | 序 | 字段 |

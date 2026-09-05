@@ -52,36 +52,38 @@ void adsb_link_dec_init(adsb_link_dec_t *d, adsb_link_on_msg_fn cb,
 
 void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
 {
+    /* 两段式（audit P2）：先把输入全部入栈，再统一 drain。
+     * 旧实现逐字节边收边判，坏帧被拒后必须等下一个输入字节到达才重查
+     * 缓冲——已缓冲的完整帧可能因此被扣住。现在任何一次作废/滑窗后
+     * 都立即基于当前缓冲重跑判据，推进不依赖新输入。 */
     while (n--) {
         if (d->fill >= sizeof(d->buf)) {   /* 噪声洪泛防御：保证总能滑窗 */
             d->resyncs++;
             dec_shift1(d);
         }
         d->buf[d->fill++] = *bytes++;
-        if (d->fill < ADSB_LINK_HDR_LEN) continue;
+    }
 
+    for (;;) {
+        if (d->fill < ADSB_LINK_HDR_LEN) return;
         if (d->buf[0] != ADSB_LINK_MAGIC0 || d->buf[1] != ADSB_LINK_MAGIC1) {
             d->resyncs++;
             dec_shift1(d);
             continue;
         }
-        if (d->fill >= ADSB_LINK_HDR_LEN) {
-            if (d->buf[2] != ADSB_LINK_VER_MAJOR) {
-                d->version_mismatch++;
-                dec_shift1(d);
-                continue;
-            }
-            uint16_t plen = (uint16_t)(d->buf[6] | ((uint16_t)d->buf[7] << 8));
-            if (plen > ADSB_LINK_MAX_PAYLOAD) {
-                d->len_errors++;
-                dec_shift1(d);
-                continue;
-            }
-        }
         uint16_t plen = (uint16_t)(d->buf[6] | ((uint16_t)d->buf[7] << 8));
+        if (plen > ADSB_LINK_MAX_PAYLOAD) {
+            d->len_errors++;
+            dec_shift1(d);
+            continue;
+        }
         size_t total = ADSB_LINK_HDR_LEN + plen + 2;
-        if (d->fill < total) continue;               /* 还没收满一帧 */
+        if (d->fill < total) return;               /* 还没收满一帧 */
 
+        /* 校验顺序（2026-09-05 勘误）：magic → len → CRC → version。
+         * CRC 先于版本：只有 CRC 合法的异版本帧才计 version_mismatch，
+         * 坏 CRC 一律计 crc_errors——否则对端可凭噪声伪造 version_mismatch，
+         * 把 P4 的 PROTO_MISMATCH 锁进误判。 */
         uint16_t crc_want = (uint16_t)(d->buf[total - 2] |
                                        ((uint16_t)d->buf[total - 1] << 8));
         if (crc_want != adsb_link_crc16(d->buf, total - 2)) {
@@ -89,6 +91,12 @@ void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
             dec_shift1(d);
             continue;
         }
+        if (d->buf[2] != ADSB_LINK_VER_MAJOR) {
+            d->version_mismatch++;
+            dec_shift1(d);
+            continue;
+        }
+
         if (d->have_seq && (uint8_t)(d->buf[5] - d->last_seq) != 1)
             d->seq_gaps++;
         d->last_seq = d->buf[5];

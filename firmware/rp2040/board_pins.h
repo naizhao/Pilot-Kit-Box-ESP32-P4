@@ -11,6 +11,10 @@
 #define PIN_BIAS_EN_978   3   /* 同上（978 支路）*/
 #define PIN_GNSS_SEL_A    6   /* U17 V1 / Q4 gate（ECO 后配对）*/
 #define PIN_GNSS_SEL_B    7   /* U17 V2 / Q5 gate */
+#define PIN_ANT_SEL_1090_A 4  /* U16 SPDT V1：A=1/B=0 → J1-J3（板载 IFA）；
+                               * A=0/B=1 → J1-J2（外接 J6）。默认装配，
+                               * 真值表与 GNSS 开关一致（netlist U8.6/U8.7）*/
+#define PIN_ANT_SEL_1090_B 5  /* U16 SPDT V2（netlist U8.7）*/
 #define PIN_SUBG_SCK      10  /* CC1312R SPI1 —— WP-E 启用前不动 */
 #define PIN_SUBG_MOSI     11
 #define PIN_SUBG_MISO     12
@@ -18,7 +22,11 @@
 #define PIN_SUBG_IRQ      14
 #define PIN_SUBG_SYNC     15
 #define PIN_PULSES        19  /* TLV3501 → PIO 上升沿捕获 */
-#define PIN_SELFTEST_OUT  18  /* 自检脉冲输出；台架跳线 18→19 */
+#define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；台架跳线 24→19（≥1k 串联电阻，
+                               * 19 上 TLV3501 是推挽驱动，直接对接会打架）。
+                               * audit P1-4：原 18 是 SUBG_RESET（CC1312R），
+                               * PINMAP §2 严禁挪用；24 = RECOVERED_CLK，
+                               * v4 无落点（v3 仅 TP7），空置可安全借用 */
 #define PIN_TL_PWM        25  /* 门限 PWM → R34/C49（RC≈1ms，F5）→ LEVEL_BIAS */
 #define PIN_ADC_LEVEL     26  /* ADC0：门限直流回读 */
 #define PIN_ADC_RSSI      27  /* ADC1：AD8313 RSSI */

@@ -18,9 +18,9 @@ int main(void)
 {
     int n = 0;
     const rf_safety_pin_t *v = rf_safety_boot_vector(&n);
-    CHECK(n == 4, "count=%d\n", n);
+    CHECK(n == 6, "count=%d\n", n);
 
-    int bias_off = 0, a = -1, b = -1;
+    int bias_off = 0, a = -1, b = -1, r1090_a = -1, r1090_b = -1;
     for (int i = 0; i < n; i++) {
         if (v[i].gpio == PIN_BIAS_EN_1090 || v[i].gpio == PIN_BIAS_EN_978) {
             CHECK(v[i].level == 1, "bias gpio %d level=%d\n",
@@ -29,10 +29,22 @@ int main(void)
         }
         if (v[i].gpio == PIN_GNSS_SEL_A) a = v[i].level;
         if (v[i].gpio == PIN_GNSS_SEL_B) b = v[i].level;
+        if (v[i].gpio == PIN_ANT_SEL_1090_A) r1090_a = v[i].level;
+        if (v[i].gpio == PIN_ANT_SEL_1090_B) r1090_b = v[i].level;
     }
     CHECK(bias_off == 2, "bias pins=%d\n", bias_off);
-    CHECK(a != -1 && b != -1, "select pins missing a=%d b=%d\n", a, b);
-    CHECK((a ^ b) == 1, "select must be complementary: a=%d b=%d\n", a, b);
+
+    CHECK(a != -1 && b != -1, "gnss select pins missing a=%d b=%d\n", a, b);
+    CHECK((a ^ b) == 1, "gnss select must be complementary: a=%d b=%d\n",
+          a, b);
+    CHECK(a == 0 && b == 1, "gnss default = external: a=%d b=%d\n", a, b);
+
+    CHECK(r1090_a != -1 && r1090_b != -1,
+          "1090 select pins missing a=%d b=%d\n", r1090_a, r1090_b);
+    CHECK((r1090_a ^ r1090_b) == 1,
+          "1090 select must be complementary: a=%d b=%d\n", r1090_a, r1090_b);
+    CHECK(r1090_a == 1 && r1090_b == 0,
+          "1090 default = onboard IFA: a=%d b=%d\n", r1090_a, r1090_b);
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;

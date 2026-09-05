@@ -207,6 +207,40 @@ int main(void)
               g_msgs, g_last.seq);
     }
 
+    /* 12. 校验顺序（audit P2，2026-09-05 勘误）：CRC 先于 version。
+        ver_major=2 且 CRC **坏**的帧必须计 crc_errors、**不得**计入
+        version_mismatch——否则噪声可把 P4 的 PROTO_MISMATCH 锁进误判。 */
+    {
+        g_msgs = 0;
+        uint8_t buf[1024];
+        size_t n1 = build_modes_raw(buf, 20);
+        buf[2] = 2;                                    /* 篡改 major */
+        buf[n1 - 1] ^= 0x01;                           /* 再破坏 CRC */
+        size_t n2 = build_modes_raw(buf + n1, 21);     /* 随后正常帧仍可解 */
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, buf, n1 + n2);
+        CHECK(g_msgs == 1 && g_last.seq == 21, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+        CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
+        CHECK(d.version_mismatch == 0, "ver=%u\n", d.version_mismatch);
+    }
+
+    /* 13. 回归钉住（audit P2 重排判据时机）：坏帧 + 好帧在同一次 feed 里，
+        好帧最后一字节即本次 feed 最后一字节——坏帧被拒（滑窗）时好帧已
+        完整在栈，必须不依赖新输入就地解出。 */
+    {
+        g_msgs = 0;
+        uint8_t buf[1024];
+        size_t n1 = build_modes_raw(buf, 30);
+        buf[n1 - 1] ^= 0x01;                           /* 坏 CRC：本帧作废 */
+        size_t n2 = build_modes_raw(buf + n1, 31);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, buf, n1 + n2);          /* 单次 feed */
+        CHECK(g_msgs == 1 && g_last.seq == 31, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+        CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }
