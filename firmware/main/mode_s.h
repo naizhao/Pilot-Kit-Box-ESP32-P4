@@ -1,9 +1,34 @@
 /*
- * mode_s.h — Mode-S 帧解码（56/112-bit → 字段）。
+ * mode_s.h — Mode-S 帧解码（56/112-bit → 字段）的公共接口。
  *
  * 归属链：antirez/Malcolm-Robb dump1090 → naizhao/esp32-rtl-sdr 的
  * mode-s.{c,h}（本仓库 components/esp32-rtl-sdr，2026-09-05 复制到 main/）。
- * 许可审计状态见 docs/internal/firmware-v3v4/PLAN.md §11 R5。
+ *
+ * 上游许可（2026-09-05 审计，见 docs/internal/firmware-v3v4/PLAN.md §11 R5）：
+ *   Copyright (c) 2012, Salvatore Sanfilippo <antirez@gmail.com>
+ *   All rights reserved.
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions are met:
+ *   1. Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *   2. Redistributions in binary form must reproduce the above copyright
+ *      notice, this list of conditions and the following disclaimer in the
+ *      documentation and/or other materials provided with the distribution.
+ *   3. Neither the name of the copyright holder nor the names of its
+ *      contributors may be used to endorse or promote products derived from
+ *      this software without specific prior written permission.
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ *   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *   ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ *   LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ *   CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ *   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ *   INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ *   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ *   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ *   POSSIBILITY OF SUCH DAMAGE.
+ *
  * 1090 数据入口已改 RP2040 解调 + UART（PLAN.md §6.6）：本文件只保留
  * mode_s_decode / mode_s_checksum 路径；mode_s_detect /
  * mode_s_compute_magnitude_vector 属 IQ 时代接口，随 dsp_task.c 退役，
