@@ -30,9 +30,9 @@
  *   POSSIBILITY OF SUCH DAMAGE.
  *
  * 1090 数据入口已改 RP2040 解调 + UART（PLAN.md §6.6）：本文件只保留
- * mode_s_decode / mode_s_checksum 路径；mode_s_detect /
- * mode_s_compute_magnitude_vector 属 IQ 时代接口，随 dsp_task.c 退役，
- * 在 Task 5 后无调用者（保留函数体，等 esp32-rtl-sdr 目录删除时一并处理）。
+ * mode_s_decode / mode_s_checksum 路径。IQ 时代的 mode_s_detect /
+ * mode_s_compute_magnitude_vector / maglut（66,564 B 静态表）已随
+ * esp32-rtl-sdr 目录删除一并移除（2026-09-05，R10 闭环）。
  */
 #pragma once
 
@@ -119,11 +119,6 @@ struct mode_s_msg
     int altitude, unit;
 };
 
-typedef void (*mode_s_callback_t)(mode_s_t *self, struct mode_s_msg *mm);
-
 void mode_s_init(mode_s_t *self);
-void mode_s_compute_magnitude_vector(unsigned char *data, uint16_t *mag, uint32_t size);
-void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t);
 void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg);
 uint32_t mode_s_checksum(unsigned char *msg, int bits);   /* 尾 24 位不计入 */
-void runme();
