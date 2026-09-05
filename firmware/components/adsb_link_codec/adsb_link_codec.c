@@ -65,7 +65,7 @@ void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
             dec_shift1(d);
             continue;
         }
-        if (d->fill == ADSB_LINK_HDR_LEN) {
+        if (d->fill >= ADSB_LINK_HDR_LEN) {
             if (d->buf[2] != ADSB_LINK_VER_MAJOR) {
                 d->version_mismatch++;
                 dec_shift1(d);

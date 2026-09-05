@@ -182,6 +182,32 @@ int main(void)
                                (const uint8_t *)"a", 1) == 0, "small cap\n");
     }
 
+    /* 11. 回归（审查发现）：CRC 坏帧被拒后滑窗使 fill>8，此时到达的下一帧头
+       仍必须做 ver/plen 校验（规范 §3.2/§3.3）。紧跟着的 ver_major=2 且
+       CRC 正确的帧不得递交，只能作废并计数；随后正常帧仍可解。 */
+    {
+        g_msgs = 0;
+        uint8_t buf[1024];
+        size_t n1 = build_modes_raw(buf, 10);
+        buf[n1 - 1] ^= 0x01;                           /* 坏 CRC：本帧作废 */
+        uint8_t *f2 = buf + n1;
+        size_t n2 = build_modes_raw(f2, 11);
+        f2[2] = 2;                                     /* 篡改 major */
+        /* 按参考实现重补 CRC：保证它只死于版本检查而不是 CRC */
+        uint16_t c = ref_crc16(f2, n2 - 2);
+        f2[n2 - 2] = (uint8_t)c; f2[n2 - 1] = (uint8_t)(c >> 8);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, buf, n1 + n2);
+        CHECK(g_msgs == 0, "ver2 delivered after reject msgs=%d\n", g_msgs);
+        CHECK(d.version_mismatch == 1, "ver=%u\n", d.version_mismatch);
+        CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
+        g_msgs = 0;
+        size_t n3 = build_modes_raw(buf, 12);
+        adsb_link_dec_feed(&d, buf, n3);
+        CHECK(g_msgs == 1 && g_last.seq == 12, "recovered msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }
