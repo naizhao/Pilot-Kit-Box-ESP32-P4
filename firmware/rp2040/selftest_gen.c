@@ -3,11 +3,9 @@
  *
  * 波形定义与 modes_edge 判据严格互逆（外部锚点 mode-s.c:708-715）：
  * preamble 上升沿 0/1.0/3.5/4.5µs，数据 8.0+1.0k µs 处、bit1 在 +0µs /
- * bit0 在 +0.5µs。脉冲宽 0.25µs（不是 0.5µs）：解码只看上升沿，宽度
- * 只需保证相邻脉冲不首尾相接 —— 1µs 比特下 0→1 转换的相邻上升沿最近
- * 只差 0.5µs（前比特 +0.5µs、后比特 +1.0µs），0.5µs 宽恰好相接融合成
- * 单个长脉冲（无下降沿 → 第二个上升沿丢失，帧在首个 0→1 处即断；
- * 真实 ADS-B 包络本就如此融合，台架信号必须保持每个沿可见）。
+ * bit0 在 +0.5µs。**脉冲宽 0.5µs（真实信号宽度）**：R11 双沿解码后融合
+ * 波形（bit0→bit1 连续高电平）可被正确重建，自检必须用真实宽度才能作为
+ * 验收依据——窄脉冲特例已随单沿架构一并废除。
  * SELFTEST_DF17 的 parity 初始为 0（故意非法）——由 host 测试
  * test_selftest_gen.c 用 mode_s_checksum 算出正确值回填后才算过；
  * 这保证上板回放的帧能穿过 P4 的 CRC 门（RP 自身不裁决 CRC）。
@@ -54,16 +52,17 @@ size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
      * 帧 burst，否则帧永远不出。 */
     rise[nr] = rise[nr - 1] + 6 * SELFTEST_BITS_PER_US;
     nr++;
-    uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US / 4;
+    uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US / 2;
     uint32_t total = idle_before + last_end + idle_after;
 
     size_t words = (total + 31) / 32;
     if (words > cap_words) return 0;
     memset(out, 0, words * sizeof(uint32_t));
-    /* 每脉冲高电平 0.25µs = 4 slot：宽度只需 >0 且 <0.5µs（相邻上升沿
-     * 最近间隔），保证每个脉冲的上升沿都独立可见（理由见文件头）。 */
+    /* 每脉冲高电平 0.5µs = 8 slot：真实信号宽度。bit0→bit1 相邻时两个脉冲
+     * 首尾相接（连续高 1µs）——这是有意为之的验收形态，双沿解码按宽度
+     * 重建融合串（R11）。 */
     for (size_t i = 0; i < nr; i++)
-        for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 4; s++)
+        for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 2; s++)
             set_bit(out, idle_before + rise[i] + s);
     return words;
 }

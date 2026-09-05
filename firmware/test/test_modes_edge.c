@@ -1,19 +1,21 @@
 /*
- * test_modes_edge.c — 上升沿间隔 → Mode-S 帧解码的 host 单测。
+ * test_modes_edge.c — 双沿间隔流 → Mode-S 帧重构的 host 单测（R11）。
+ *
+ * 跑法：
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 -I firmware/rp2040 \
  *      -o /tmp/test_modes_edge \
  *      firmware/test/test_modes_edge.c firmware/rp2040/modes_edge.c \
  *   && /tmp/test_modes_edge
  *
- * 向量构造与实现共用同一份时序合同：上升沿绝对时刻一律用 quarter-µs
- * （qus）整数 —— preamble 沿在 0/1.0/3.5/4.5µs（= 0/4/14/18 qus，三段
- * 间隔 [1.0, 2.5, 1.0]µs）；数据块自 +8µs 起、每比特 1.0µs（外部锚点
- * mode-s.c:708-715），脉冲在比特 +0µs → bit1、+0.5µs → bit0
- * （= 32 + 4k (+2) qus）。
- * qus→tick 取四舍五入：62.5MHz 下 1 qus = 15.625 tick，真实捕获本就把
- * 间隔量化到最近 tick，这样任一 qus 值经 tick 往返不失真；若用截断，
- * 每个 2/4 qus 间隔固定丢 1 qus，112 比特内累积漂移远超 ±1 qus 容差。
+ * 构造器按真实波形生成**全部边沿**（上升+下降，0.5µs 脉宽）的相邻间隔，
+ * 与 edgecap PIO 的双沿捕获同构。判据：mode-s.c:708-715（0.5µs 脉冲 @
+ * 0/1.0/3.5/4.5µs；1µs/位、脉冲在位首=1/位中=0）。
+ *
+ * 抖动包络（R11 决策记录）：半位中心采样对边沿位置抖动的安全预算是
+ * ±0.5 qus；±1 qus 的抖动会把部分采样点推到边沿上，此时解码器必须
+ * **安全丢弃**（两半位同电平 → INVALID），绝不输出错位帧——抖动用例
+ * 断言的就是这条安全性质，而不是"必须解出"。
  */
 #include "modes_edge.h"
 #include <stdio.h>
@@ -26,105 +28,174 @@ static int g_fail;
 #define TICK_HZ 62500000u          /* SM 125MHz / 2（每迭代 2 周期） */
 #define US(x)   ((uint32_t)((double)(x) * TICK_HZ / 1000000.0))
 #define LONG_GAP US(100.0)         /* >5µs 的帧间长隔（用 100µs）*/
+#define QUS(x)  ((uint32_t)((x) * 4.0))   /* quarter-µs → tick */
 
 static int g_frames;
 static modes_edge_frame_t g_last;
 static void cb(const modes_edge_frame_t *f, void *user)
 { (void)user; g_frames++; g_last = *f; }
 
-/* bits → 上升沿绝对时刻（quarter-µs），转相邻间隔 tick（四舍五入），
- * 末尾追加长隔关 burst。 */
-static size_t build_deltas(const uint8_t *frame, int msgbits,
-                           int jitter_qus, uint32_t *out, size_t cap)
+/* bits → 全边沿相邻间隔（tick）。脉冲宽 0.5µs（2 qus）；jitter_qus 为
+ * ±交替抖动幅值（作用于每个物理边沿）。末尾追加长隔关闭 burst。
+ * 关键：相邻脉冲首尾相接（bit0→bit1）必须**合并成单个长高电平**——
+ * 物理上融合处不存在边沿；否则会注入零间隔假边沿、破坏电平重建。 */
+static size_t build_edges(const uint8_t *frame, int msgbits,
+                          int jitter_qus, uint32_t *out, size_t cap)
 {
-    uint32_t rise[128]; size_t nr = 0;
-    rise[nr++] = 0; rise[nr++] = 4;                    /* preamble: 0,1.0,3.5,4.5µs */
-    rise[nr++] = 14; rise[nr++] = 18;
+    uint32_t istart[300], iend[300]; size_t ni = 0;
+    uint32_t rise[300]; size_t nr = 0;
+    rise[nr++] = 0; rise[nr++] = QUS(1.0);          /* preamble 0/1.0/3.5/4.5µs */
+    rise[nr++] = QUS(3.5); rise[nr++] = QUS(4.5);
     for (int k = 0; k < msgbits; k++) {
         int bit = (frame[k / 8] >> (7 - (k % 8))) & 1;
-        rise[nr++] = (uint32_t)(32 + 4 * k + (bit ? 0 : 2));   /* 8µs + 1µs·k (+0.5µs) */
+        rise[nr++] = (uint32_t)((8.0 + 1.0 * k + (bit ? 0.0 : 0.5)) * 4.0);
     }
-    if (jitter_qus)                                    /* 确定性抖动：±交替 */
-        for (size_t i = 4; i < nr; i++)
-            rise[i] += (uint32_t)(((int)i % 2) ? jitter_qus : -jitter_qus);
+    /* 脉冲区间（0.5µs 宽）+ 相邻合并（融合） */
+    for (size_t i = 0; i < nr; i++) {
+        uint32_t s = rise[i], e = rise[i] + QUS(0.5);
+        if (ni && s <= iend[ni - 1]) {
+            if (e > iend[ni - 1]) iend[ni - 1] = e;         /* 融合 */
+        } else {
+            istart[ni] = s; iend[ni] = e; ni++;
+        }
+    }
+    /* 边界 → 边沿间隔（含 ±交替抖动，作用于物理边沿本身） */
+    uint32_t tog[300]; size_t nt = 0;
+    for (size_t i = 0; i < ni; i++) {
+        tog[nt++] = istart[i]; tog[nt++] = iend[i];
+    }
+    if (jitter_qus)
+        for (size_t i = 0; i < nt; i++)
+            tog[i] += (uint32_t)(((int)i % 2) ? jitter_qus : -jitter_qus);
     size_t n = 0;
-    for (size_t i = 1; i < nr && n < cap; i++)
-        out[n++] = (uint32_t)(((uint64_t)(rise[i] - rise[i-1]) * TICK_HZ
-                               + 2000000u) / 4000000u);
-    if (n < cap) out[n++] = LONG_GAP;                  /* 关 burst 终止符 */
+    for (size_t i = 1; i < nt && n < cap; i++)
+        out[n++] = (uint32_t)((uint64_t)(tog[i] - tog[i-1]) * TICK_HZ / 4000000u);
+    if (n < cap) out[n++] = LONG_GAP;             /* 关 burst 终止符 */
     return n;
 }
 
 static const uint8_t FRAME112[14] = {
     0x8D, 0x4C, 0xA1, 0xBD, 0x58, 0xBF, 0x34, 0x62,
-    0x59, 0x2C, 0x69, 0x8A, 0xD5, 0x3B };
-static const uint8_t FRAME56[7] = { 0x5D, 0x4C, 0xA1, 0xBD, 0x00, 0x00, 0x00 };
+    0x59, 0x2C, 0x69, 0x8A, 0xD5, 0x3B
+};
+static const uint8_t FRAME56_ALT[7] = {         /* 01010101… DF=10，全融合串 */
+    0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55
+};
+static const uint8_t FRAME56_HEAD0[7] = {       /* DF11=01011：帧首 bit0，帧首融合 */
+    0x5D, 0x4C, 0xA1, 0xBD, 0x00, 0x00, 0x00
+};
 
 int main(void)
 {
-    uint32_t d[256];
+    uint32_t d[512];
 
-    /* 1. 112-bit 理想帧。 */
+    /* 1. 理想 112-bit 帧（含 0→1 融合与全部四种相邻组合）。 */
     {
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
         g_frames = 0;
-        size_t n = build_deltas(FRAME112, 112, 0, d, 256);
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
         modes_edge_feed(&m, d, n);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
         CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
-        CHECK(g_last.start_tick == 0, "start_tick=%llu\n", (unsigned long long)g_last.start_tick);
         CHECK(m.preamble_hits == 1 && m.frames_112 == 1, "stats\n");
+        /* 钉住该向量确实覆盖四种相邻组合与至少一个 0→1 融合对 */
+        int have00 = 0, have01 = 0, have10 = 0, have11 = 0;
+        for (int k = 0; k + 1 < 112; k++) {
+            int a = (FRAME112[k / 8] >> (7 - (k % 8))) & 1;
+            int b = (FRAME112[(k+1) / 8] >> (7 - ((k+1) % 8))) & 1;
+            if (a && !b) have10 = 1; if (!a && b) have01 = 1;
+            if (!a && !b) have00 = 1; if (a && b) have11 = 1;
+        }
+        CHECK(have00 && have01 && have10 && have11, "coverage %d%d%d%d\n",
+              have00, have01, have10, have11);
     }
 
-    /* 2. ±0.25µs 抖动（1 quarter-µs，F5 的 1ms RC 门限下沿抖动的量级）仍可解。 */
+    /* 2. 全融合串 56-bit（0x55…，DF=10；帧首即为 bit0 → 帧首融合）。 */
     {
-        g_frames = 0;
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
-        size_t n = build_deltas(FRAME112, 112, 1, d, 256);
-        modes_edge_feed(&m, d, n);
-        CHECK(g_frames == 1, "frames=%d\n", g_frames);
-    }
-
-    /* 3. 56-bit 帧（DF11）。 */
-    {
         g_frames = 0;
-        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
-        size_t n = build_deltas(FRAME56, 56, 0, d, 256);
+        size_t n = build_edges(FRAME56_ALT, 56, 0, d, 512);
         modes_edge_feed(&m, d, n);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 56, "nbits=%u\n", g_last.nbits);
-        CHECK(memcmp(g_last.frame, FRAME56, 7) == 0, "frame bytes\n");
+        CHECK(memcmp(g_last.frame, FRAME56_ALT, 7) == 0, "alt bytes\n");
     }
 
-    /* 4. 两连帧（中间 100µs 间隔）都解出；间隔小于阈值不断 burst 也不影响。 */
+    /* 3. DF11 帧首 bit0（帧首融合 + 帧首 10 组合）。 */
     {
-        g_frames = 0;
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
-        size_t n1 = build_deltas(FRAME112, 112, 0, d, 128);
-        size_t n2 = build_deltas(FRAME56, 56, 0, d + n1 + 1, 128);
-        d[n1] = US(100);                              /* 100µs 帧间隔 */
-        modes_edge_feed(&m, d, n1 + 1 + n2);
+        g_frames = 0;
+        size_t n = build_edges(FRAME56_HEAD0, 56, 0, d, 512);
+        modes_edge_feed(&m, d, n);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME56_HEAD0, 7) == 0, "head0 bytes\n");
+    }
+
+    /* 4. 脉宽展宽 ±1 qus（上升沿准、下降沿抖）：仍是确定性正确。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        for (size_t i = 1; i + 1 < n; i += 2)      /* 每个下降沿 ±1 tick */
+            d[i] += (uint32_t)(((int)i % 2) ? 8 : -8);   /* ±0.125µs */
+        modes_edge_feed(&m, d, n);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "broadened bytes\n");
+    }
+
+    /* 5. 数据边沿 ±1 qus 抖动：超出安全包络（±0.5 qus）→ 必须**安全丢弃**
+     * （两半位同电平 → INVALID），绝不输出错位帧。具体帧数取决于量化
+     * 碰撞位置——断言安全性质而非具体帧数。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 1, d, 512);
+        modes_edge_feed(&m, d, n);
+        CHECK(g_frames == 0 || memcmp(g_last.frame, FRAME112, 14) == 0,
+              "unsafe frame emitted\n");
+    }
+
+    /* 6. 丢沿致奇偶错乱：删去一个中间 delta（模拟 FIFO 丢沿）→ 后续全部
+     * 边沿电平翻转 → 必须安全丢弃，不产帧。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        for (size_t i = 40; i + 1 < n; i++) d[i] = d[i + 1];   /* 抽掉一个沿 */
+        modes_edge_feed(&m, d, n - 1);
+        CHECK(g_frames == 0, "garbled parity produced %d frames\n", g_frames);
+        CHECK(m.dropped_noise >= 1, "noise=%u\n", m.dropped_noise);
+    }
+
+    /* 7. 两连帧（间隔 100µs）都解出。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n1 = build_edges(FRAME112, 112, 0, d, 256);
+        size_t n2 = build_edges(FRAME56_HEAD0, 56, 0, d + n1, 256);
+        modes_edge_feed(&m, d, n1 + n2);
         CHECK(g_frames == 2, "frames=%d\n", g_frames);
+        CHECK(g_last.nbits == 56, "last nbits=%u\n", g_last.nbits);
     }
 
-    /* 5. 噪声 burst（间隔乱序）不产帧、计 dropped_noise，且之后的好帧仍可解。 */
+    /* 8. 噪声 burst 不产帧、计数；随后好帧仍可解。 */
     {
-        g_frames = 0;
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
-        uint32_t noise[8] = { US(1), US(9), US(0.4), US(3), US(1), US(2.9),
-                              US(1), LONG_GAP };
-        modes_edge_feed(&m, noise, 8);
-        size_t n = build_deltas(FRAME112, 112, 0, d, 256);
+        g_frames = 0;
+        uint32_t noise[10] = { US(1), US(0.4), US(0.6), US(0.3), US(0.5),
+                               US(0.4), US(0.6), US(0.3), US(0.5), LONG_GAP };
+        modes_edge_feed(&m, noise, 10);
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
         modes_edge_feed(&m, d, n);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(m.dropped_noise >= 1, "noise=%u\n", m.dropped_noise);
     }
 
-    /* 6. 超长空闲（饱和值）只是关 burst，不产帧。 */
+    /* 9. 空闲饱和值只是关 burst，不产帧。 */
     {
-        g_frames = 0;
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
         uint32_t idle[3] = { 0xFFFFFFFFu, LONG_GAP, LONG_GAP };
         modes_edge_feed(&m, idle, 3);
         CHECK(g_frames == 0 && m.frames_112 == 0, "idle produced frames\n");

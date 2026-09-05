@@ -56,7 +56,7 @@ void edge_cap_start(void)
 
     uint offset = pio_add_program(s_pio, &edgecap_program);
     s_sm = pio_claim_unused_sm(s_pio, true);
-    edge_cap_program_init(s_pio, s_sm, offset, PIN_PULSES);
+    edgecap_program_init(s_pio, s_sm, offset, PIN_PULSES);
 
     s_dma[0] = dma_claim_unused_channel(true);
     s_dma[1] = dma_claim_unused_channel(true);

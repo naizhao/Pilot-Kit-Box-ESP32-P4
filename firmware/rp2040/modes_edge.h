@@ -1,30 +1,34 @@
 /*
- * modes_edge.h — TLV3501 上升沿间隔 → 56/112-bit Mode-S 帧。
+ * modes_edge.h — 双沿间隔流 → 56/112-bit Mode-S 帧重构。
  *
  * 纯 C、无 pico 依赖：host 单测与上板共用同一份实现。
- * 职责边界（PLAN.md §4）：这里只做 preamble 同步 + PPM 采样 + 组帧，
- * 不做 CRC、不维护任何目标状态——裁决与融合都在 P4。
+ * 职责边界（PLAN.md §4）：这里只做 preamble 同步 + PPM 位重建（含 R11 融合串
+ * 拆分）+ 组帧，不做 CRC、不维护任何目标状态——裁决与融合都在 P4。
  *
- * 时序合同（外部锚点：firmware/components/esp32-rtl-sdr/main/mode-s.c:708-715、
- * docs/configuration-zh_CN.md:259「每比特 1 µs，每帧 120 µs」）：
- *   preamble 上升沿在 0 / 1.0 / 3.5 / 4.5µs（三段间隔 [4,10,4]±1 qus）；
- *   数据自 preamble 首沿 +8µs（32 qus）起，每比特 1.0µs（QUS_BIT=4），
- *   比特 k 的上升沿在 32+4k qus（bit1，前半）或 32+4k+2 qus（bit0，后半），
- *   判位窗口 ±1 qus。两窗在 32+4k+1 处相接：恰落等距点（32+4k+1）的沿
- *   判 bit1 —— 确定性 tie-break，见 modes_edge.c 常量旁注释。
- *   帧内最长沿间隔 4.0µs（preamble 末沿 4.5µs → 首数据脉冲 8.5µs）
- *   < 5µs burst 阈值，判据不变。
+ * 时序合同（外部锚点：esp32-rtl-sdr/main/mode-s.c:708-715 —— 0.5µs 脉冲 @
+ * 0/1.0/3.5/4.5µs；数据 1µs/位、脉冲在位首=1 / 位中=0；quarter-µs 整数域，容差 ±1 qus）：
+ *   - feed 的是**全部边沿**（上升+下降交替）的相邻间隔，burst 以上升沿开启
+ *     （空闲低电平 → 首个跳变必为上升），burst 内边沿严格交替；
+ *   - 间隔 >5µs 关闭 burst（帧间静默）；
+ *   - 融合串规则：只有 0→1 会融合。脉冲起点在位首（4k，bit1）则宽度只能是
+ *     单脉冲（1→0 不融合）；起点在位中（4k+2，bit0）且宽度 >2 qus 时为融合串，
+ *     串内位按 0,1,0,1,… 交替、覆盖连续 chip——由波形唯一确定，无歧义；
+ *   - 每个 chip 恰好被覆盖一次，出现空洞/重叠/越界 → 整帧丢弃；
+ *   - 帧长按 DF=bits[0..4]（>15 → 112 else 56）；不做 CRC（P4 裁决）。
+ *
+ * 重入约束：cb 在 burst 清理前被调用；cb 内不得调用 modes_edge_feed
+ * （会追加入即将清空的缓冲/嵌套 burst_emit）。
  */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
 
-#define MODES_EDGE_MAX_EDGES 160   /* 4 preamble + 112 数据 + 余量 */
+#define MODES_EDGE_MAX_EDGES 256   /* 双沿：4 preamble + 2×112 数据 + 余量 */
 
 typedef struct {
     uint8_t  frame[14];
     uint32_t nbits;                /* 56 | 112 */
-    uint64_t start_tick;           /* preamble 首沿的绝对 tick（caller 换算 µs）*/
+    uint64_t start_tick;           /* burst 首边沿（preamble 上升沿）绝对 tick */
 } modes_edge_frame_t;
 
 typedef void (*modes_edge_frame_fn)(const modes_edge_frame_t *f, void *user);
@@ -34,7 +38,7 @@ typedef struct {
     modes_edge_frame_fn cb;
     void *user;
     /* burst 累积状态 */
-    uint64_t abs_tick;             /* 上一沿绝对 tick */
+    uint64_t abs_tick;             /* 上一边沿绝对 tick */
     uint64_t burst_start_tick;
     uint32_t burst[MODES_EDGE_MAX_EDGES];
     int      burst_n;
@@ -46,5 +50,4 @@ typedef struct {
 
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user);
-/* cb 在 burst 清理前被调用；cb 内不得调用 modes_edge_feed（会追加入即将清空的缓冲/嵌套 burst_emit）*/
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n);

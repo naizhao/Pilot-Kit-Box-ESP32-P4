@@ -59,23 +59,27 @@ int main(void)
                                              words, SELFTEST_MAX_WORDS);
         CHECK(nw > 0 && nw <= SELFTEST_MAX_WORDS, "nw=%zu\n", nw);
 
-        /* 位流 → 上升沿间隔（slot 单位 = tick_hz 16MHz）*/
-        uint32_t deltas[256]; size_t nd = 0;
-        int prev = 0; int64_t last_rise = -1;
-        for (size_t w = 0; w < nw && nd < 256; w++)
+        /* 位流 → 全边沿间隔（slot 单位 = tick_hz 16MHz）；上升/下降都算沿，
+         * 与 edgecap PIO 的双沿捕获一致（R11）。 */
+        uint32_t deltas[512]; size_t nd = 0;
+        int prev = 0; int64_t last_t = -1;
+        for (size_t w = 0; w < nw && nd < 512; w++)
             for (int b = 0; b < 32; b++) {
                 int bit = (words[w] >> b) & 1;
-                if (bit && !prev && last_rise >= 0)
-                    deltas[nd++] = (uint32_t)((int64_t)(w * 32 + b) - last_rise);
-                if (bit && !prev) last_rise = w * 32 + b;
-                prev = bit;
+                if (bit != prev) {
+                    if (last_t >= 0)
+                        deltas[nd++] = (uint32_t)((int64_t)(w * 32 + b) - last_t);
+                    last_t = w * 32 + b;
+                    prev = bit;
+                }
             }
 
         modes_edge_t m; modes_edge_init(&m, SELFTEST_BITS_PER_US * 1000000u,
                                         cb, NULL);
         g_frames = 0;
         /* 不追加手工终止长隔：位流末尾的收尾孤立脉冲（P1-5）与最后数据
-         * 脉冲间隔 >5µs，其上升沿自身关闭帧 burst。 */
+         * 脉冲间隔 >5µs，其上升沿自身关闭帧 burst；收尾脉冲自身的
+         * 上升+下降构成仅 2 边沿的新 burst，被 preamble 门径直丢弃。 */
         modes_edge_feed(&m, deltas, nd);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
