@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <sys/time.h>
@@ -25,6 +26,9 @@ static const char *TAG = "gps";
 #define GPS_BAUD    9600
 #define GPS_BUF_SZ  512
 
+#define GPS_PPS_PIN  50          /* GNSS 1PPS → P4，J3 Pin 34（board_pinout.md §10 GPS 表） */
+#define GPS_PPS_LOCK_US 2000000LL /* 时间锁定窗口：PPS 距今 <2 s 视为在锁 */
+
 static pk_gps_state_t    s_gps;
 static SemaphoreHandle_t s_lock;
 static void take(void){ xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -33,6 +37,19 @@ static void give(void){ xSemaphoreGive(s_lock); }
 /* --- 临时诊断计数器（排查 GPS no-fix；定位到根因后删除） --- */
 static volatile uint32_t s_rx_bytes;    /* 累计从 UART RX 收到的原始字节 */
 static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
+
+/* --- PPS（GPIO50 上升沿） -------------------------------------------------
+ * ISR 只做两件事：计数 + 打时间戳（esp_timer_get_time() 纯读硬件计时器，
+ * IRAM 内、ISR 安全）。fix 与否、2 s 窗口判定全部放 gps_task 的 1 Hz 快照
+ * 路径——见 gps.h 里 time_locked 的语义注释。 */
+static volatile uint32_t s_pps_count;    /* PPS 上升沿累计 */
+static volatile int64_t  s_last_pps_us;  /* 最近上升沿时间戳；0 = 还没见过沿 */
+
+static void IRAM_ATTR pps_isr(void *arg){
+    (void)arg;
+    s_pps_count++;
+    s_last_pps_us = esp_timer_get_time();
+}
 
 bool pk_gps_get(pk_gps_state_t *out){
     if(!out) return false;
@@ -234,6 +251,19 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
+            /* PPS 快照：与 ISR 并发读 volatile——先读计数，若读窗内又来沿则
+             * 重取时间戳（u64 非原子，双读把撕裂窗口压到可忽略；2 s 窗口
+             * 语义下残留偏差一秒内自愈）。time_locked 在这里判定，不进 ISR。 */
+            uint32_t pps_n  = s_pps_count;
+            int64_t  pps_us = s_last_pps_us;
+            if(pps_n != s_pps_count) pps_us = s_last_pps_us;
+            take();
+            s_gps.pps_count   = pps_n;
+            s_gps.last_pps_us = pps_us;
+            s_gps.time_locked = s_gps.have_fix && pps_us != 0 &&
+                                (now - pps_us) < GPS_PPS_LOCK_US;
+            give();
+
             /* 直接读快照而不是走 pk_gps_get()：那个入口在演示模式下会返回合成
              * 数据，于是没插 GPS 板卡时串口上照样印着 "fix=1 sats=11"——这条
              * 心跳存在的唯一目的就是排查真实模块，绝不能被演示数据污染。 */
@@ -241,11 +271,12 @@ static void gps_task(void *arg){
             /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
              * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
-                          "alt=%dft gs=%dkt trk=%d hdop=%.1f rx=%u lines=%u",
+                          "alt=%dft gs=%dkt trk=%d hdop=%.1f pps=%u tl=%d rx=%u lines=%u",
                      g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
                      g.sats_in_view_bds, g.snr_max, (int)g.ant_status,
                      g.lat, g.lon, g.altitude_ft, g.ground_speed_kt, g.track_deg,
-                     (double)g.hdop, (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
+                     (double)g.hdop, (unsigned)g.pps_count, (int)g.time_locked,
+                     (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
         }
     }
 }
@@ -266,6 +297,27 @@ void pk_gps_start(void){
     ESP_ERROR_CHECK(uart_param_config(GPS_UART, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(GPS_UART, GPS_TX_PIN, GPS_RX_PIN,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    /* PPS 输入 GPIO50：board_pinout.md §10 GPS 表只规定 PPS→GPIO50（J3-34）
+     * 走线，未规定上/下拉——故配浮空输入：1PPS 由 GNSS 模块推挽驱动（1PPS
+     * 的常规输出形态），无需内部上下拉。待台架实测确认：若发现无沿/误沿，
+     * 再评估内部下拉。 */
+    const gpio_config_t pps = {
+        .pin_bit_mask = 1ULL << GPS_PPS_PIN,
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_POSEDGE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&pps));
+    /* firmware/main 目前无其它 GPIO ISR 用户（IMU/BARO INT 都是轮询），
+     * 服务通常由这里首次安装；INVALID_STATE = 已被装好，同样放行。
+     * 引脚级 gpio_isr_handler_add 挂在共享默认服务上，与日后其它中断用户
+     * 互不干扰。 */
+    esp_err_t isr_err = gpio_install_isr_service(0);
+    configASSERT(isr_err == ESP_OK || isr_err == ESP_ERR_INVALID_STATE);
+    ESP_ERROR_CHECK(gpio_isr_handler_add(GPS_PPS_PIN, pps_isr, NULL));
+
     BaseType_t ok = xTaskCreatePinnedToCore(gps_task, "gps", 4096, NULL, 4, NULL, 0);
     configASSERT(ok == pdTRUE);
 }

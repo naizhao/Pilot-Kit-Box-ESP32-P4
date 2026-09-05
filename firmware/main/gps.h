@@ -35,6 +35,17 @@ typedef struct {
     int     sats;              /* GGA: 参与定位解算的卫星数 (in use) */
     int64_t updated_us;        /* esp_timer_get_time() of last valid fix */
 
+    /* --- PPS / 时间锁定（GPIO50 上升沿；ISR 只计数+打戳，1 Hz 快照提交） ---
+     * 两条状态语义（刻意分开）：
+     *   位置有效 = have_fix —— RMC status 'A'，纯 UART 数据面。
+     *   时间锁定 = have_fix 且 (now - last_pps_us) < 2 s —— 除了数据有效，
+     *              还要求秒脉冲真的在跳。由 gps_task 的 1 Hz 快照判定并
+     *              写入 time_locked（非实时；ISR 内不做任何判定）。
+     * last_pps_us == 0 表示开机至今没见过 PPS 沿（没接线/模块不出 PPS）。 */
+    uint32_t pps_count;        /* PPS 上升沿累计计数 */
+    int64_t  last_pps_us;      /* 最近一次 PPS 上升沿的 esp_timer 时间戳 */
+    bool     time_locked;      /* 上述「时间锁定」判定结果，1 Hz 刷新 */
+
     /* --- 诊断字段（1 Hz 快照，来自 GSV/GGA/TXT） --- */
     int          sats_in_view;     /* GSV: 可见卫星总数 (GPS+北斗…合计) */
     int          sats_in_view_gps; /* 其中 GPS 可见星数 */
