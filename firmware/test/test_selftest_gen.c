@@ -14,6 +14,13 @@
  * deltas 即以 slot 为 tick、tick_hz = 16MHz；1 qus = 4 slot 整除，
  * ticks_to_qus 往返无舍入误差（对照 test_modes_edge.c 的 qus 合同）。
  * mode_s.c 直接 include 进本 TU（仓库惯例），给常量回填正确 parity。
+ *
+ * 硬件适用范围（audit round 3 裁定）：位流构造与回环判据在 host 与
+ * V3 载板（TP7 落点）/台架裸 RP2040 板有效；**V4 载板无法执行跳线
+ * 回环**——TP7 已删、GPIO24 无落点。V4 的整链验收改用真实 RF 或信号
+ * 源注入 J6；P4 侧可用后续 debug 命令注入合成帧验证 modes_ingest 链
+ * （follow-up，不实现）。GPIO19 是 TLV3501 推挽输出，有落点处仍须串
+ * ≥1k 电阻。详见 selftest_gen.h。
  */
 #include "selftest_gen.h"
 #include "modes_edge.h"

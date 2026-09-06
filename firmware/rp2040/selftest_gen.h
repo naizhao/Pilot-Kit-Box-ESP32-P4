@@ -1,6 +1,13 @@
 /* selftest_gen.h — 台架自检脉冲。台架跳线 GPIO24→GPIO19，串 ≥1k 电阻
  * （TLV3501 在 19 上是推挽输出，直连会输出争用；串阻后 GPIO 电平胜出且
- * 电流 ~3.3mA 安全），整链回环。GPIO18 是 SUBG_RESET（CC1312R），严禁用作跳线。 */
+ * 电流 ~3.3mA 安全），整链回环。GPIO18 是 SUBG_RESET（CC1312R），严禁用作跳线。
+ *
+ * 适用板型（audit round 3 裁定：代码保留，接受范围写清）：
+ *   · V3 载板：GPIO24 在 TP7 有落点，可执行跳线回环；
+ *   · 台架裸 RP2040 板：直接跳线，可执行。
+ *   · V4 载板**无法执行跳线回环**——TP7 已删、GPIO24 无落点。V4 的整链
+ *     验收改用真实 RF 或信号源注入 J6；P4 侧可用后续 debug 命令注入合成
+ *     帧验证 modes_ingest 链（follow-up，本文件不实现）。 */
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
