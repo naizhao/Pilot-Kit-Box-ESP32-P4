@@ -28,6 +28,7 @@ static const char *TAG = "gps";
 
 #define GPS_PPS_PIN  50          /* GNSS 1PPS → P4，J3 Pin 34（board_pinout.md §10 GPS 表） */
 #define GPS_PPS_LOCK_US 2000000LL /* 时间锁定窗口：PPS 距今 <2 s 视为在锁 */
+#define GPS_NMEA_LOCK_US 5000000LL /* 时间锁定还要求 NMEA 距今 <5 s（UART 数据面活着）*/
 
 static pk_gps_state_t    s_gps;
 static SemaphoreHandle_t s_lock;
@@ -253,18 +254,31 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
-            /* PPS 快照：与 ISR 并发读 volatile——先读计数，若读窗内又来沿则
-             * 重取时间戳（u64 非原子，双读把撕裂窗口压到可忽略；2 s 窗口
-             * 语义下残留偏差一秒内自愈）。time_locked 在这里判定，不进 ISR。 */
+            /* PPS/NMEA 快照（seqlock-lite）：ISR 先写时间戳后自增计数，
+             * 计数即序标——读计数 → 读时间戳 → 复读计数；计数变了重试一次，
+             * 还在变就放弃本拍（last_pps_us=0，视为本拍无新鲜 PPS，
+             * time_locked 下个 1 Hz 拍自愈）。u64 时间戳在 32 位核上非
+             * 原子，双读计数把撕裂读挡在重试/放弃里。 */
             uint32_t pps_n  = s_pps_count;
             int64_t  pps_us = s_last_pps_us;
-            if(pps_n != s_pps_count) pps_us = s_last_pps_us;
+            if (pps_n != s_pps_count) { pps_us = s_last_pps_us; pps_n = s_pps_count; }
+            if (pps_n != s_pps_count) pps_us = 0;   /* 重试仍撞上写入 → 本拍作废 */
+
             take();
             s_gps.pps_count   = pps_n;
             s_gps.last_pps_us = pps_us;
+            /* 时间锁定 = fix 有效 + PPS <2 s + NMEA <5 s（gps.h 语义注释）。
+             * NMEA 新鲜度挡住「UART 已死、PPS 还在跳」的假锁定（2026-09
+             * 审计 P2）。 */
             s_gps.time_locked = s_gps.have_fix && pps_us != 0 &&
-                                (now - pps_us) < GPS_PPS_LOCK_US;
+                                (now - pps_us) < GPS_PPS_LOCK_US &&
+                                s_gps.last_nmea_us != 0 &&
+                                (now - s_gps.last_nmea_us) < GPS_NMEA_LOCK_US;
             give();
+            /* 注意：生产链路的时间可信度（pk_clock_is_synced()，消费方
+             * pk_own_sampler/pk_rec_ingest）仍是「校过一次就永久 latched」，
+             * 与这里的 time_locked 刻意不同——把 PPS/NMEA 新鲜度接进
+             * pk_clock 是后续 time-service 任务（2026-09 审计记录在案）。 */
 
             /* 直接读快照而不是走 pk_gps_get()：那个入口在演示模式下会返回合成
              * 数据，于是没插 GPS 板卡时串口上照样印着 "fix=1 sats=11"——这条
