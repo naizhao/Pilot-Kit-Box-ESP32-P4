@@ -62,7 +62,10 @@ int main(void)
         }
     }
 
-    /* 2. 全回路：bitstream → 模拟沿提取 → modes_edge → 帧逐字节一致。 */
+    /* 2. 全回路：bitstream → 模拟沿提取 → modes_edge → 帧逐字节一致。
+     *    gpt-5.6-sol Fix 1 起位流尾部带 flush 脉冲串（整环发布粒度的
+     *    台架配套）：帧必须从噪声洪流中被照常解出，洪流自身走容量
+     *    溢出路径被丢弃——不产帧、不崩。 */
     {
         static uint32_t words[SELFTEST_MAX_WORDS];
         size_t nw = selftest_build_bitstream(SELFTEST_DF17, 112,
@@ -72,9 +75,9 @@ int main(void)
 
         /* 位流 → 全边沿间隔（slot 单位 = tick_hz 16MHz）；上升/下降都算沿，
          * 与 edgecap PIO 的双沿捕获一致（R11）。 */
-        uint32_t deltas[512]; size_t nd = 0;
+        uint32_t deltas[4096]; size_t nd = 0;
         int prev = 0; int64_t last_t = -1;
-        for (size_t w = 0; w < nw && nd < 512; w++)
+        for (size_t w = 0; w < nw && nd < 4096; w++)
             for (int b = 0; b < 32; b++) {
                 int bit = (words[w] >> b) & 1;
                 if (bit != prev) {
@@ -88,13 +91,21 @@ int main(void)
         modes_edge_t m; modes_edge_init(&m, SELFTEST_BITS_PER_US * 1000000u,
                                         cb, NULL);
         g_frames = 0;
-        /* 不追加手工终止长隔：位流末尾的收尾孤立脉冲（P1-5）与最后数据
-         * 脉冲间隔 >5µs，其上升沿自身关闭帧 burst；收尾脉冲自身的
-         * 上升+下降构成仅 2 边沿的新 burst，被 preamble 门径直丢弃。 */
+        /* 不追加手工终止长隔：位流末尾是 flush 脉冲串（uniform 0.5µs
+         * 间隔），尾部不满 256 沿的残余留在 burst_n 里无终止符也无害。 */
         modes_edge_feed(&m, deltas, nd);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
         CHECK(memcmp(g_last.frame, SELFTEST_DF17, 14) == 0, "roundtrip bytes\n");
+        /* flush 脉冲串确实在位流里（边沿数 ≥ 预算），且确实是一整环
+         * 量级的噪声洪流：2048 沿以 256 沿/块走溢出路径 → 恰 8 次
+         * edge_overruns；噪声记账 = 收尾脉冲的下降沿 1 沿（其上升沿
+         * 是关闭帧 burst 的长隔终点，不属于小 burst）+ 8×256 沿 = 2049。 */
+        CHECK(nd >= SELFTEST_FLUSH_EDGES + 16u, "nd=%zu flush=%u\n",
+              nd, SELFTEST_FLUSH_EDGES);
+        CHECK(m.edge_overruns == 8u, "edge_overruns=%u\n", m.edge_overruns);
+        CHECK(m.dropped_noise == 2049u, "noise=%u\n", m.dropped_noise);
+        CHECK(m.preamble_hits == 1u, "preamble_hits=%u\n", m.preamble_hits);
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

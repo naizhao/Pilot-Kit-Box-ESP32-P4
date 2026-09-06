@@ -53,7 +53,19 @@ size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
     rise[nr] = rise[nr - 1] + 6 * SELFTEST_BITS_PER_US;
     nr++;
     uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US / 2;
-    uint32_t total = idle_before + last_end + idle_after;
+
+    /* Flush 脉冲串（gpt-5.6-sol Fix 1 台架配套）：edge_cap 发布粒度 =
+     * 整环 EDGE_CAP_RING_ITEMS 沿，单发突发（~240 沿）填不满一环、
+     * 永不发布。收尾脉冲之后再隔 6µs（不并入帧 burst，先关掉收尾
+     * 脉冲自己的 2 沿小 burst）追加 1µs 周期 / 0.5µs 宽的脉冲串，把
+     * 生产者推过一整环（SELFTEST_FLUSH_EDGES）——帧在环首随之发布；
+     * 串本身作为噪声洪流走 modes_edge 容量溢出路径被丢弃（不产帧，
+     * 见 test_modes_edge 用例 12）。 */
+    uint32_t flush_start = last_end + 6 * SELFTEST_BITS_PER_US;
+    uint32_t pulses = (SELFTEST_FLUSH_EDGES + 1) / 2;   /* 每脉冲 = 升+降 2 沿 */
+    uint32_t flush_end = flush_start + (pulses - 1) * SELFTEST_BITS_PER_US
+                       + SELFTEST_BITS_PER_US / 2;
+    uint32_t total = idle_before + flush_end + idle_after;
 
     size_t words = (total + 31) / 32;
     if (words > cap_words) return 0;
@@ -64,6 +76,10 @@ size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
     for (size_t i = 0; i < nr; i++)
         for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 2; s++)
             set_bit(out, idle_before + rise[i] + s);
+    for (uint32_t p = 0; p < pulses; p++)
+        for (uint32_t s = 0; s < SELFTEST_BITS_PER_US / 2; s++)
+            set_bit(out, idle_before + flush_start +
+                         p * SELFTEST_BITS_PER_US + s);
     return words;
 }
 
