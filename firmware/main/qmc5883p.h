@@ -23,6 +23,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef QMC5883P_HOST_TEST
@@ -73,13 +74,30 @@ void qmc5883p_decode_raw(const uint8_t *reg6, int16_t *x, int16_t *y, int16_t *z
  */
 void qmc5883p_decode_status(uint8_t s, qmc5883p_status_t *out);
 
+/* 上电配置序列的单步：寄存器地址 → 写入值 + 判据说明。 */
+typedef struct {
+    uint8_t     reg;
+    uint8_t     val;
+    const char *why;   /* 判据出处（静态字面量），host 测试断言非空 */
+} qmc5883p_init_step_t;
+
+/*
+ * 上电配置序列（数据表，host 可测）。返回表头；n 非空时写入步数。
+ * 顺序与取值 = QMC5883P.pdf Rev A §7.2 Continuous Mode Setup Example
+ * 逐条；首步必须是 29H=0x06 —— 见 qmc5883p.c 表定义处的告警注释
+ * （29H 不在 Table 14 寄存器表里，是 example-only 寄存器）。
+ */
+const qmc5883p_init_step_t *qmc5883p_init_seq(size_t *n);
+
 /* ---- 目标端（I²C 胶水）-------------------------------------------- */
 
 /*
- * 启动 QMC5883P：挂器件 + 起轮询任务（探测 00H CHIPID=0x80 → 写连续
- * 模式配置 → 1 Hz 轮询）。设备是 optional 的：探测失败只在任务里记
- * WARN + 计数后退出任务，不影响系统其余部分；本函数只报器件挂载/任务
- * 创建失败。bus 为 NULL 时返回错误。
+ * 启动 QMC5883P：挂器件 + 起轮询任务（探测 00H CHIPID=0x80 → 按
+ * qmc5883p_init_seq() 写配置 → 1 Hz 轮询）。设备是 optional 的：
+ * bring-up 失败只在任务里记 WARN + 按 1 s 退避重试，永不删任务——
+ * 器件 POR/软复位后会停在 Suspend（§5.2/§6.2.4），配置写得进去就能
+ * 复活；缺焊是永久失败但同样无害（周期重试，不影响系统其余部分）。
+ * 本函数只报器件挂载/任务创建失败。bus 为 NULL 时返回错误。
  */
 esp_err_t qmc5883p_init(i2c_master_bus_handle_t bus);
 
