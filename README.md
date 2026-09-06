@@ -222,7 +222,7 @@ board. Legacy EasyEDA sources:
 | USB-C OTG 转接头或有源 USB Hub | USB-C OTG adapter or powered USB hub | 仅裸板需要：把 RTL-SDR 接到 H2 原生 USB 2.0 HS Type-C。装上载板时 dongle 直接插载板 USB-A（走 J3-27/25），H2 空置；P1 是 C6 下载排针。<br>Bare board only: connects RTL-SDR to the H2 native USB 2.0 HS Type-C. With the carrier fitted the dongle plugs into the carrier USB-A (J3-27/25) and H2 stays empty; P1 is the C6 download header. |
 | 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接 RTL-SDR；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the RTL-SDR; real-world range depends strongly on antenna placement and power noise. |
 | GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
-| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；PPS 接 GPIO50 但固件未使用。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; PPS is wired to GPIO50 but unused by firmware. |
+| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；GPIO50 PPS 已被固件消费（1 Hz 快照用于时间锁定状态，授时服务接线为后续任务）。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; the GPIO50 PPS input is consumed by firmware (1 Hz snapshot feeds the time-lock status; time-service wiring remains a follow-up). |
 | BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
 
 ### 集成扩展板 V4.0（研发中）/ Integrated Expansion Board V4.0 (In Development)
@@ -399,7 +399,7 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - GDL90 Heartbeat 的 `utc_ok` 位尚未随 GPS/BLE 校时状态更新；客户端应以时间戳值为准。
 - Wi-Fi 分发、BLE 配置写特征和 OTA A/B 分区仍是后续工作。
 - GDL90 Ownship Report 需要有效 GPS fix 或编译期配置的本机 ICAO；无有效位置时不会发送可信本机位置。
-- GPIO50 PPS 只是接线预留；当前固件没有 PPS GPIO 中断或授时纪律。
+- GPIO50 PPS 已由固件消费：PPS GPIO 中断（1 Hz 快照）与时间锁定状态已实现；授时（settimeofday 级）接线仍为后续任务。
 - 当前触摸 UI 没有旧 TARE 十秒工厂重置/DCD 擦除入口。
 
 - The current GT911 firmware consumes only the first contact; five-point gestures are not enabled.
@@ -407,7 +407,7 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - The GDL90 Heartbeat `utc_ok` bit does not yet follow GPS/BLE clock discipline; clients should use the timestamp value.
 - Wi-Fi distribution, BLE configuration-write characteristics, and OTA A/B partitions remain future work.
 - GDL90 Ownship Report requires a valid GPS fix or a compile-time own-ship ICAO; the firmware does not advertise a trustworthy own position without one.
-- GPIO50 PPS is only a wiring reservation; current firmware has no PPS GPIO interrupt or time discipline.
+- The GPIO50 PPS input is now consumed by firmware: a PPS GPIO interrupt (1 Hz snapshot) and the time-lock status are in place; time discipline at the settimeofday level remains a follow-up.
 - The touch UI has no equivalent of the former ten-second TARE factory-reset/DCD-wipe gesture.
 
 ## 致谢 / Credits

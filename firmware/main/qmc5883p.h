@@ -83,9 +83,11 @@ typedef struct {
 
 /*
  * 上电配置序列（数据表，host 可测）。返回表头；n 非空时写入步数。
- * 顺序与取值 = QMC5883P.pdf Rev A §7.2 Continuous Mode Setup Example
- * 逐条；首步必须是 29H=0x06 —— 见 qmc5883p.c 表定义处的告警注释
- * （29H 不在 Table 14 寄存器表里，是 example-only 寄存器）。
+ * 顺序与 29H=0x06 = QMC5883P.pdf Rev A §7.2 Continuous Mode Setup Example
+ * 逐条；0BH/0AH 取值为 Table 17/18 字段级自选（±2G/10 Hz，出处见
+ * qmc5883p.c 各常量行内引用）。首步必须是 29H=0x06 —— 见 qmc5883p.c
+ * 表定义处的告警注释（29H 不在 Table 14 寄存器表里，是 example-only
+ * 寄存器）。
  */
 const qmc5883p_init_step_t *qmc5883p_init_seq(size_t *n);
 

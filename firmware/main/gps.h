@@ -42,7 +42,9 @@ typedef struct {
      *              求秒脉冲真的在跳、且 NMEA 流（UART 数据面）也还活着。
      *              由 gps_task 的 1 Hz 快照判定并写入 time_locked（非实时；
      *              ISR 内不做任何判定）。NMEA 新鲜度用 last_nmea_us 判。
-     * last_pps_us == 0 表示开机至今没见过 PPS 沿（没接线/模块不出 PPS）。 */
+     * last_pps_us == 0 表示开机至今没见过 PPS 沿（没接线/模块不出 PPS）。
+     * 两个字段由 1 Hz 快照成对提交：seqlock 作废拍两者都不动，不会出现
+     * 「count>0 且 last_pps_us==0」的中间态。 */
     uint32_t pps_count;        /* PPS 上升沿累计计数 */
     int64_t  last_pps_us;      /* 最近一次 PPS 上升沿的 esp_timer 时间戳 */
     bool     time_locked;      /* 上述「时间锁定」判定结果，1 Hz 刷新 */

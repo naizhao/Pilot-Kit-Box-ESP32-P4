@@ -265,6 +265,15 @@ static void baro_task(void *arg)
                 s_ready  = false;
                 has_prev = false;   /* 配置断档,VS 别出尖峰 */
                 vs_ema   = 0.0f;
+                /* 本拍的 data read 发生在 POR 之后,读数是复位后垃圾:整拍作废,
+                 * 在发布前置 valid=false,别让垃圾进 alt_filt(EMA 会把一次垃圾
+                 * 拖上好几拍)。重配置走既有 !s_ready gate(下一轮重跑
+                 * configure_and_calibrate),不另写路径(2026-09 复审修正)。 */
+                xSemaphoreTake(s_mutex, portMAX_DELAY);
+                s_state.valid = false;
+                xSemaphoreGive(s_mutex);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
             }
         }
 

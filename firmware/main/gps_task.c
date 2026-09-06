@@ -1,5 +1,6 @@
 #include "gps.h"
 #include "gps_nmea.h"
+#include <stdatomic.h>
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -43,15 +44,18 @@ static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
  * ISR 只做两件事：计数 + 打时间戳（esp_timer_get_time() 纯读硬件计时器，
  * IRAM 内、ISR 安全）。fix 与否、2 s 窗口判定全部放 gps_task 的 1 Hz 快照
  * 路径——见 gps.h 里 time_locked 的语义注释。 */
-static volatile uint32_t s_pps_count;    /* PPS 上升沿累计 */
-static volatile int64_t  s_last_pps_us;  /* 最近上升沿时间戳；0 = 还没见过沿 */
+/* C11 原子（2026-09 复审）：volatile 换 atomic——给 seqlock-lite 快照补上
+ * 正式的 happens-before。ISR 侧先写时间戳、再以 release 自增计数（计数是
+ * 序标：读者 acquire 读到新计数时，它前面的时间戳必然已可见）；读者侧
+ * acquire 读。原子量在 RISC-V ISR 内安全（同 pk_i2c0_bus.c 的用法）。 */
+static atomic_uint s_pps_count;          /* PPS 上升沿累计 */
+static _Atomic uint64_t s_last_pps_us;   /* 最近上升沿时间戳；0 = 还没见过沿 */
 
 static void IRAM_ATTR pps_isr(void *arg){
     (void)arg;
-    /* 先写时间戳再自增 count：count 是快照侧的 release 标记——读到 count
-     * 变化后，对应时间戳必然已写好，消除"先计数后写戳"留下的撕裂窗口。 */
-    s_last_pps_us = esp_timer_get_time();
-    s_pps_count++;
+    atomic_store_explicit(&s_last_pps_us, (uint64_t)esp_timer_get_time(),
+                          memory_order_relaxed);
+    atomic_fetch_add_explicit(&s_pps_count, 1, memory_order_release);
 }
 
 bool pk_gps_get(pk_gps_state_t *out){
@@ -254,24 +258,33 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
-            /* PPS/NMEA 快照（seqlock-lite）：ISR 先写时间戳后自增计数，
-             * 计数即序标——读计数 → 读时间戳 → 复读计数；计数变了重试一次，
-             * 还在变就放弃本拍（last_pps_us=0，视为本拍无新鲜 PPS，
-             * time_locked 下个 1 Hz 拍自愈）。u64 时间戳在 32 位核上非
-             * 原子，双读计数把撕裂读挡在重试/放弃里。 */
-            uint32_t pps_n  = s_pps_count;
-            int64_t  pps_us = s_last_pps_us;
-            if (pps_n != s_pps_count) { pps_us = s_last_pps_us; pps_n = s_pps_count; }
-            if (pps_n != s_pps_count) pps_us = 0;   /* 重试仍撞上写入 → 本拍作废 */
+            /* PPS/NMEA 快照（seqlock-lite）：ISR 以 release 顺序「先写戳、
+             * 后自增计数」，计数即序标——acquire 读计数 → 读戳 → 复读计数；
+             * 计数变了重试一次，仍在变则本拍作废。作废 = **两个 PPS 字段都
+             * 不提交**，沿用上一拍已提交的值：若只把时间戳清 0 而留下新计数，
+             * 会造出「count>0 且 last_pps_us==0」的矛盾快照，违反 gps.h
+             * 「last_pps_us==0 = 开机没见过沿」的语义（2026-09 复审修正）。
+             * 作废只损失一拍新鲜度，time_locked 下个 1 Hz 拍自愈。 */
+            uint32_t pps_n  = atomic_load_explicit(&s_pps_count, memory_order_acquire);
+            uint64_t pps_us = atomic_load_explicit(&s_last_pps_us, memory_order_acquire);
+            if (pps_n != atomic_load_explicit(&s_pps_count, memory_order_acquire)) {
+                pps_n  = atomic_load_explicit(&s_pps_count, memory_order_acquire);
+                pps_us = atomic_load_explicit(&s_last_pps_us, memory_order_acquire);
+            }
+            const bool pps_stable =
+                (pps_n == atomic_load_explicit(&s_pps_count, memory_order_acquire));
 
             take();
-            s_gps.pps_count   = pps_n;
-            s_gps.last_pps_us = pps_us;
+            if (pps_stable) {
+                s_gps.pps_count   = pps_n;
+                s_gps.last_pps_us = (int64_t)pps_us;
+            }
             /* 时间锁定 = fix 有效 + PPS <2 s + NMEA <5 s（gps.h 语义注释）。
              * NMEA 新鲜度挡住「UART 已死、PPS 还在跳」的假锁定（2026-09
-             * 审计 P2）。 */
-            s_gps.time_locked = s_gps.have_fix && pps_us != 0 &&
-                                (now - pps_us) < GPS_PPS_LOCK_US &&
+             * 审计 P2）。基于提交后的 last_pps_us 判定：作废拍自然沿用上
+             * 一拍结果，不误报失锁。 */
+            s_gps.time_locked = s_gps.have_fix && s_gps.last_pps_us != 0 &&
+                                (now - s_gps.last_pps_us) < GPS_PPS_LOCK_US &&
                                 s_gps.last_nmea_us != 0 &&
                                 (now - s_gps.last_nmea_us) < GPS_NMEA_LOCK_US;
             give();
