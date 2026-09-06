@@ -621,13 +621,15 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         /* 协议 §5：P4 对**每个**合法 HELLO 都回一帧（audit round 3，ledger
          * R9）。旧的一次性闩锁在 RP 侧重启后永远等不到回应——RP 侧只有
          * 未 linked 才发 HELLO、限速 1 Hz（p4_link.c），逐帧回应无洪泛
-         * 风险。日志只首条 LOGI，之后降 DEBUG。 */
+         * 风险。日志只首条 LOGI，之后降 DEBUG。seq 用本侧单调计数（协议
+         * §2 seq 是按发送方递增的）：恒 0 会让 RP 侧 seq_gaps 持续虚增。 */
         static bool s_hello_logged;
+        static uint8_t s_hello_seq;
         uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
         memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
         uint8_t out[ADSB_LINK_MAX_FRAME];
         size_t n = adsb_link_encode(out, sizeof out,
-                                    ADSB_LINK_MSG_HELLO, 0,
+                                    ADSB_LINK_MSG_HELLO, s_hello_seq++,
                                     pl, sizeof pl);
         if (n) uart_write_bytes(ADSB_UART, out, n);
         if (s_hello_logged)
