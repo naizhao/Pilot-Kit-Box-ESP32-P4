@@ -6,12 +6,14 @@
 1090 链路、LittleFS / MicroSD / UART / BLE 输出、GT-U8
 GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于和诊断页面。
 
-> 范围说明：当前接收路径是 **v3/v4 扩展板的 RP2040 UART 数据源**——RP2040
-> 以 PIO+DMA 双沿捕获 1090 MHz 脉冲、重建 56/112-bit Mode-S 帧，经
-> 921600 波特 UART（UART2，P4 RX=46 / TX=32）送入 `adsb_lnk` 任务，进入
-> 板上处理管线。早期的 RTL-SDR USB 数据源（v1/v2 载板与裸板方案，
-> `usb_host_lib`/`sdr`/`dsp` 任务与 IQ ring buffer）已整体退役，本文中
-> 相关条目仅作历史保留。
+> 范围说明：当前接收路径是 **v3/v4 扩展板的 RP2040 UART 数据源**——1090 MHz
+> 包络经 TLV3501 比较器整形，RP2040 以 PIO+DMA **双沿**捕获（双沿是 R11
+> 融合串重建的前提：0→1 融合脉冲对只能靠沿对+脉宽重建），重建
+> 56/112-bit Mode-S 帧，经 921600 波特 UART（UART2，P4 RX=46 / TX=32）
+> 送入 `adsb_lnk` 任务，进入板上处理管线。捕获/解码细节见
+> `firmware/rp2040`。早期的 RTL-SDR USB 数据源（v1/v2 载板与裸板方案，
+> `usb_host_lib`/`sdr`/`dsp` 任务与 IQ ring buffer）已整体退役，不再画入
+> 拓扑图；相关条目仅在任务表/内存表中作历史保留。
 
 ## 总览
 
@@ -19,8 +21,7 @@ GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于�
 flowchart LR
     subgraph HW["硬件"]
         direction TB
-        SDR["RTL-SDR\n1090 MHz"]
-        USB["原生 USB 2.0 HS\n载板 USB-A 走 J3-27/25\n（H2 同网，裸板时用）"]
+        RP2040["RP2040（v3/v4 扩展板）\nTLV3501 比较器 → PULSES\nPIO 双沿捕获 + DMA 块队列\nmodes_edge：前导同步 + PPM 重建\n56/112-bit（不做 CRC——P4 裁决）"]
         C6["ESP32-C6-MINI-1\nWi-Fi 6 / BLE 5"]
         SDIO_C6["SDIO\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
@@ -35,25 +36,28 @@ flowchart LR
 
     subgraph P4["ESP32-P4NRW32"]
         direction TB
-        USBTASK["usb_host_lib_task\nCPU0 prio 5"]
-        SDRTASK["sdr_task\nCPU1 prio 6\nrtlsdr_read_async"]
-        RBUF["g_iq_ringbuf\n512 KiB BYTEBUF\nPSRAM"]
-        DSPTASK["dsp_task\nCPU1 prio 4\nmagnitude -> detect -> CPR"]
+        subgraph T_LINK["adsb_lnk 任务 — CPU1 优先级 5"]
+            UART_IN["UART2 RX=46 TX=32\n921600 8N1，adsb_link 协议 v1\n（256 字节分片读；对每个 HELLO 回帧，\n1 Hz HEALTH 上报）"]
+            INGEST["modes_ingest\nCRC-16 门限（check_crc=1，\n不做纠错）\nICAO / 高度 / CPR 提取"]
+        end
+        CPR["cpr_decode 全局定位\n（64 机 CPR 表）"]
+        STATE["aircraft_state\n64 slots / 60 s 窗口\n（呼号/高度/位置/速度融合）"]
+        DASH["1 Hz 看板\n（报文率/架数/链路态）"]
         DISPATCH["record_dispatch\n同步 fan-out"]
         UART["UART sink\nType-C CDC log"]
         FILE["file sink\nFlash: 1 MiB 轮转，目标 12 文件\nMicroSD: 16 MiB × 64"]
         BLE["BLE raw sink\nqueue"]
-        STATE["aircraft_state\n64 slots / 60 s fresh window"]
         GDL["GDL90 encoder\nHeartbeat + Traffic"]
         GATT["NimBLE GATT notify"]
         IMU["imu task\nBNO085 100 Hz"]
         UI["pfd task\nPFD / TRAFFIC / LIST\nSETTINGS / ABOUT / DIAG"]
     end
 
-    SDR --> USB --> SDRTASK --> RBUF --> DSPTASK
-    USBTASK --> SDRTASK
-    DSPTASK --> DISPATCH
-    DSPTASK --> STATE
+    RP2040 -- "UART 协议 v1\n921600" --> UART_IN
+    UART_IN --> INGEST
+    INGEST --> CPR --> STATE
+    INGEST --> DISPATCH
+    INGEST --> DASH
     DISPATCH --> UART
     DISPATCH --> FILE
     DISPATCH --> BLE
@@ -71,7 +75,7 @@ flowchart LR
 
 | Task | CPU | 优先级 | 栈 | 职责 |
 |---|---:|---:|---:|---|
-| `usb_host_lib` | 0 | 5 | 4 KiB | 调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。 |
+| `usb_host_lib` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。不再创建；保留此行作历史参考。 |
 | `sdr` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`，把 IQ 推入 ring buffer。不再创建；保留此行作历史参考。 |
 | `dsp` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位。解码/分发职责已移到 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
@@ -106,15 +110,19 @@ flowchart LR
 ## 故障隔离
 
 ```text
-URB / IQ stall -> librtlsdr 累计 transfer error，或 dsp_task 检测 IQ 停滞后调用
-                  pk_sdr_request_reinit()。sdr_task 关闭并重新打开同一 dongle；
-                  连续失败达到上限后才 esp_restart()。
+RP2040 捕获     -> 环满 DMA 停机（overrun 计数 + lost 标志）。重启前先复位
+overrun/重启       PIO 状态机并清空 RX FIFO，重武装的首块带断点位——core1
+                   先 modes_edge_reset 再喂，断点两侧的边沿不会拼成假帧。
+                   停机窗口外的单沿丢失（RXSTALL）只损坏当前一帧，由解码
+                   端自然判负丢弃。以上都进入 1 Hz HEALTH 的 ovr 计数。
 
-Ring overflow  -> on_iq 中 xRingbufferSend 失败，只累计 drop counter；
-                  DSP dashboard 输出 WARN，USB 回调不阻塞。
+链路停滞        -> RP2040 侧：core1 解码停滞 >5 s 由 core0 看门狗经链路
+                   上报 ERROR(code=2)。P4 侧：曾 LINKED 后 >5 s 无合法帧
+                   即判 STALLED（seq 断档/resync 按协议 v1 计数）；诊断页
+                   显示链路状态。
 
 File queue full -> file sink xQueueSend 失败，记录 drop；
-                   DSP path 不等待 flash。
+                    ingest path 不等待 flash。
 
 Storage write -> LittleFS / MicroSD 的 fwrite 或 rotation fopen 失败时记录错误；
                  UART 和 BLE sink 继续工作。MicroSD 拔出后探测任务会卸载，
@@ -167,7 +175,7 @@ Pilot Kit 通过 UART 连接 GT-U8 GPS，通过 I²C0（`0x76`）连接 BMP388�
 
 ## 关键架构选择
 
-1. **RF / USB 工作集中在 CPU1**：减少 BLE、LCD、SDIO 等 CPU0 工作对 2 MSPS IQ path 的抖动影响。
-2. **单任务拥有 USB client**：同一个 USB client 不能被多个任务同时 pump。`sdr_task` 是唯一事件泵。
-3. **DSP 不阻塞 I/O**：文件、BLE、串口 sink 自己处理背压，DSP loop 保证继续消费 IQ。
+1. **1090 MHz 时序工作全部在 RP2040**：PIO + DMA 把双沿间隔收进硬件定时的块队列，捕获路径上没有 RTOS——P4 调度抖动不触碰脉冲时序。双沿是必要条件：0→1 融合脉冲对（R11）只能靠沿对+脉宽重建。
+2. **单任务拥有 UART 链路**：`adsb_lnk` 是 P4 侧唯一的 codec 读取者；RP2040 侧只有 core0 发送循环发送。协议 v1 有严格的按发送方 seq、HELLO 握手与 1 Hz HEALTH。
+3. **融合链不阻塞 I/O**：每一跳的背压都是有损且被计数的——P4 滞后时 RP2040 帧环丢帧（有计数），file/BLE sink 各自持有队列。解码/ingest 的前进不受 flash、BLE 对端或操作者行为影响。
 4. **wire / disk / BLE raw 格式一致**：`<ts_ms> *<HEX>;` 贯穿串口、文件和 BLE Raw，降低调试和后处理成本。
