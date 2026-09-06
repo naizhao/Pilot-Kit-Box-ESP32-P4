@@ -38,7 +38,7 @@ flowchart LR
         direction TB
         subgraph T_LINK["adsb_lnk 任务 — CPU1 优先级 5"]
             UART_IN["UART2 RX=46 TX=32\n921600 8N1，adsb_link 协议 v1\n（256 字节分片读；对每个 HELLO 回帧，\n1 Hz HEALTH 上报）"]
-            INGEST["modes_ingest\nCRC-16 门限（check_crc=1，\n不做纠错）\nICAO / 高度 / CPR 提取"]
+            INGEST["modes_ingest\nMode-S 24-bit 校验和门（mode_s.c；\ncheck_crc=1，不做纠错；链路外层 CRC-16\n由 codec 负责）\nICAO / 高度 / CPR 提取"]
         end
         CPR["cpr_decode 全局定位\n（64 机 CPR 表）"]
         STATE["aircraft_state\n64 slots / 60 s 窗口\n（呼号/高度/位置/速度融合）"]
@@ -77,7 +77,7 @@ flowchart LR
 |---|---:|---:|---:|---|
 | `usb_host_lib` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。不再创建；保留此行作历史参考。 |
 | `sdr` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`，把 IQ 推入 ring buffer。不再创建；保留此行作历史参考。 |
-| `dsp` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位。解码/分发职责已移到 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
+| `adsb_lnk` | 1 | 5 | 8 KiB | 运行 RP2040 UART 链路（adsb_link codec @ 921600 波特，256 字节分片读）：把 RP2040 前端送来的 CRC 前置 Mode-S 帧喂进 modes_ingest（Mode-S 24-bit 校验，mode_s.c；check_crc=1，不做纠错），对每个 HELLO 回帧，并承接原 DSP 业务链（CPR/航迹/记录/1 Hz 看板）。RP2040 侧自身经 PIO+DMA 捕获双沿、用 modes_edge 解码 56/112-bit 帧；USB RTL-SDR 任务对（`usb_host_lib`/`sdr`）已退役；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
 | `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；GPIO50 PPS 已被固件消费（GPIO ISR 计数 + 自旋锁快照，1 Hz 采样进入时间锁定状态），授时（settimeofday 级）接线仍是后续任务。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |

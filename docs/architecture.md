@@ -39,7 +39,7 @@ flowchart LR
         direction TB
         subgraph T_LINK["adsb_lnk task — CPU 1, prio 5"]
             UART_IN["UART2 RX=46 TX=32\n921600 8N1, adsb_link protocol v1\n(256-byte reads; replies to every\nHELLO, 1 Hz HEALTH to the RP2040)"]
-            INGEST["modes_ingest\nCRC-16 gate (check_crc=1,\nno error correction)\nICAO / alt / CPR extract"]
+            INGEST["modes_ingest\nMode-S 24-bit checksum gate\n(mode_s.c; check_crc=1, no error correction;\nthe outer link CRC-16 is the codec's job)\nICAO / alt / CPR extract"]
         end
 
         subgraph CHAIN["fusion chain (former dsp_task business)"]
@@ -106,7 +106,7 @@ flowchart LR
                                  │ (UART2 RX=46/TX=32; HELLO + 1 Hz HEALTH)
  ┌───────────────────────────────▼────── ESP32-P4-WIFI6 ────────────┐
  │ adsb_lnk task (CPU1, prio 5)                                     │
- │   adsb_link codec → modes_ingest (CRC-16 gate, no error fix)     │
+ │   adsb_link codec → modes_ingest (mode_s.c 24-bit CRC, no fixup)  │
  │     │                                                            │
  │     ├─ cpr_decode global position → aircraft_state (fusion)      │
  │     ├─ 1 Hz dashboard (msgs/s, aircraft, link state)             │
