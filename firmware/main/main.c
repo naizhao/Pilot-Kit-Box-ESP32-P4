@@ -278,10 +278,15 @@ void app_main(void)
         splash_shown_us = esp_timer_get_time();
     }
 
-    /* I²C0 总线是板级的（imu/baro/touch 共用），必须先于一切 I²C 器件
-     * init 建好——放在这里而不是 pk_imu_init() 里，IMU 这种 optional 器件
-     * 缺失才不会连带总线一起消失（PLAN.md §6.1）。 */
-    ESP_ERROR_CHECK(pk_i2c0_bus_init());
+    /* I²C0 总线初始化失败不再中止启动（深审裁定 2026-09-05）：本产品核心功能
+     * （1090 ADS-B + 显示）不依赖 I²C。IMU/气压计/触摸各自对 NULL handle
+     * 已有优雅失败路径（WARN + 自身任务退出），降级为"无姿态/无触摸的
+     * headless ADS-B 盒子"优于整机关机。 */
+    esp_err_t bus_err = pk_i2c0_bus_init();
+    if (bus_err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C0 bus init failed (%s) — continuing without "
+                      "IMU/baro/touch (1090 unaffected)", esp_err_to_name(bus_err));
+    }
 
     /* BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */

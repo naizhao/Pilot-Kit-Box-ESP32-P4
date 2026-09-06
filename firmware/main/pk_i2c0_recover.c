@@ -60,7 +60,8 @@ esp_err_t pk_i2c0_recover_request(const char *who)
 
     i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
     if (bus == NULL) {
-        /* 总线还没建起来（pk_imu_init 之前），没有可恢复的对象。 */
+        /* 总线还没建起来（pk_i2c0_bus_init 之前），没有可恢复的对象。
+         * 总线归 pk_i2c0_bus 所有，与 pk_imu_init 无关。 */
         return ESP_ERR_INVALID_STATE;
     }
 

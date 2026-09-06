@@ -47,8 +47,10 @@ static volatile int64_t  s_last_pps_us;  /* 最近上升沿时间戳；0 = 还�
 
 static void IRAM_ATTR pps_isr(void *arg){
     (void)arg;
-    s_pps_count++;
+    /* 先写时间戳再自增 count：count 是快照侧的 release 标记——读到 count
+     * 变化后，对应时间戳必然已写好，消除"先计数后写戳"留下的撕裂窗口。 */
     s_last_pps_us = esp_timer_get_time();
+    s_pps_count++;
 }
 
 bool pk_gps_get(pk_gps_state_t *out){
