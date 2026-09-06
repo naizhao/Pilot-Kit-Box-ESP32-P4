@@ -671,7 +671,7 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
     case ADSB_LINK_MSG_HEALTH_STATS:
         if (m->payload_len < 40) break;
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
-        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u resync=%u noise=%u "
+        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u degraded=%u noise=%u "
                       "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
                  le32(m->payload + 0),  le32(m->payload + 4),
                  le32(m->payload + 8),  le32(m->payload + 12),
