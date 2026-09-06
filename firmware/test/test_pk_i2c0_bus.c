@@ -16,7 +16,8 @@
  *
  * 并发语义 host 测不到，靠 pk_i2c0_bus.h 的注释钉死：generation 单写者
  * （pk_i2c0_recover.c，先拿到恢复闸门才 inc），多读者（imu/baro/touch
- * 任务各自轮询）；32 位对齐读写在双核上原子，volatile 防轮询缓存。
+ * 任务各自轮询）；2026-09 审计后为 C11 原子（atomic_uint），不再依赖
+ * 对齐读写的平台论证。
  */
 
 #include <stdio.h>

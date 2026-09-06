@@ -20,8 +20,9 @@
  *
  * 并发：单写者多读者，无锁。写者只有 pk_i2c0_recover.c，且它先拿到恢复
  * 闸门（pk_i2c0_gate_t 的 busy 位保证同一时刻只有一轮恢复在跑）才 inc；
- * 读者是 imu / baro / touch 各自的任务循环。32 位对齐的读写在双核上原子，
- * volatile 防止轮询循环把值缓存在寄存器里。
+ * 读者是 imu / baro / touch 各自的任务循环。generation 是 C11 原子
+ * （atomic_uint，load/fetch_add）——2026-09 审计把 volatile 换成原子，
+ * 不再依赖「对齐读写恰好原子」的平台论证。
  */
 #pragma once
 

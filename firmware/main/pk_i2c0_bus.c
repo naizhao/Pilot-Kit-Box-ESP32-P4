@@ -6,24 +6,29 @@
 
 #include "pk_i2c0_bus.h"
 
+#include <stdatomic.h>
+
 #ifndef PK_I2C0_BUS_HOST_TEST
 #include "esp_log.h"
 #endif
 
 /* s_bus：app_main 单线程写一次（init 成功时发布），之后全系统只读。
  * s_generation：单写者 = pk_i2c0_recover.c（恢复闸门临界区内），
- * 多读者 = 各器件任务轮询。并发论证见 pk_i2c0_bus.h。 */
+ * 多读者 = 各器件任务轮询。并发论证见 pk_i2c0_bus.h。
+ * 2026-09 审计：volatile 换成 C11 原子（atomic_uint）——原实现靠
+ * 「32 位对齐读写双核原子」的平台论证，属于数据竞争 UB；原子化后
+ * 不再依赖对齐运气，读写序语义不变（ESP-IDF/宿主 clang 均内建支持）。 */
 static i2c_master_bus_handle_t s_bus;
-static volatile uint32_t       s_generation;
+static atomic_uint             s_generation;
 
 uint32_t pk_i2c0_bus_generation(void)
 {
-    return s_generation;
+    return atomic_load(&s_generation);
 }
 
 void pk_i2c0_bus_generation_inc(void)
 {
-    s_generation++;
+    atomic_fetch_add(&s_generation, 1);
 }
 
 i2c_master_bus_handle_t pk_i2c0_bus_get(void)

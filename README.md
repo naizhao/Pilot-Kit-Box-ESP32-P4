@@ -133,7 +133,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 - 新增 360° 交通雷达、PFD HSI 前方交通叠加和统一 own-ship 航向决策。<br>Adds the 360-degree traffic radar, forward-traffic HSI overlay, and unified own-ship heading selection.
 - 新增 BMP388 气压高度/升降率、可调 QNH，以及可滚动实时 DIAG 页面。<br>Adds BMP388 altitude/vertical speed, adjustable QNH, and the scrollable live DIAG page.
-- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 仍是未实现预留。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS remains an unimplemented reservation.
+- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 已被固件消费，用于时间锁定判定（fix 有效 + PPS <2 s + NMEA <5 s）；把该新鲜度接入生产时间服务仍是后续任务。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS is now consumed for the time-lock status (valid fix + PPS <2 s + NMEA <5 s); wiring that freshness into the production time service remains a follow-up.
 - 新增 MicroSD 探测、Flash/MicroSD 日志切换、约 1 GiB 轮转保留和受保护格式化。<br>Adds MicroSD detection, Flash/MicroSD log selection, about 1 GiB rotation retention, and guarded formatting.
 - 完成 2.4 寸载板、板载 1090 MHz IFA 天线、3D 打印外壳和面板原型实物验证。<br>Documents the fabricated 2.4-inch carrier, on-board 1090 MHz IFA antenna, printed enclosure, and faceplate prototype.
 
@@ -149,7 +149,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | UART、LittleFS / MicroSD 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS/MicroSD files, and BLE raw ts-line output | 已实现 / Implemented |
 | BLE GATT：GDL90 Ownship、Traffic、Heartbeat、Raw、Time Sync | BLE GATT: GDL90 Ownship, Traffic, Heartbeat, Raw, and Time Sync | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
-| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 未实现 / Implemented; PPS not implemented |
+| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 已接入时间锁定 / Implemented; PPS consumed for time-lock status |
 | BMP388 气压高度和升降率，QNH 可调 | BMP388 barometric altitude and vertical speed with adjustable QNH | 已实现 / Implemented |
 | ST7701 480×800 MIPI-DSI 面板，PPA 转为 800×480 横屏，双 DPI buffer | ST7701 480×800 MIPI-DSI panel, PPA-transformed to 800×480 landscape with dual DPI buffers | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |

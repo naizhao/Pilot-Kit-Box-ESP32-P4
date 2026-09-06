@@ -35,11 +35,18 @@ static const char *TAG = "baro";
 
 /* BMP388 寄存器地址 */
 #define BMP388_REG_DATA    0x04   /* PRESS_XLSB..TEMP_MSB (6 bytes) */
+#define BMP388_REG_EVENT   0x10   /* EVENT 状态标志（DS §4.3.7 Table 31, p.33）。
+                                   * ⚠ 地址是 0x10，不是审计单上误写的 0x19
+                                   * （0x19 = INT_CTRL, Table 38, p.35）。 */
 #define BMP388_REG_PWR     0x1B   /* PWR_CTRL */
 #define BMP388_REG_OSR     0x1C   /* OSR */
 #define BMP388_REG_ODR     0x1D   /* ODR */
 #define BMP388_REG_CONFIG  0x1F   /* CONFIG: IIR 滤波(默认 0 = bypass) */
 #define BMP388_REG_CALIB   0x31   /* 校准系数起始 (21 bytes) */
+
+/* EVENT bit0 por_detected：'1' after device power up or softreset，
+ * clear-on-read（DS §4.3.7 Table 31, p.33）。 */
+#define BMP388_EVENT_POR   0x01
 
 /* BMP388 与 BNO085 共享 I²C0 总线,scl_speed_hz 必须与 IMU 一致。
  * imu_task.c 中 IMU_I2C_HZ = 400000,故此处同样使用 400000。 */
@@ -163,6 +170,17 @@ static void baro_task(void *arg)
     /* ── 2+3. 配置 OSR/ODR/PWR_CTRL + 读校准系数(开机尝试一次;失败后进循环内每秒重试) ── */
     s_ready = (configure_and_calibrate() == ESP_OK);
 
+    /* 开机读一次 EVENT 清掉上电 POR 标志（clear-on-read, Table 31）：
+     * 上电本该就是 1，不留在计数里让第一个 32 拍窗口误报。 */
+    if (s_ready) {
+        uint8_t ev = 0;
+        if (reg_read(BMP388_REG_EVENT, &ev, 1) != ESP_OK) ev = 0;
+        ESP_LOGD(TAG, "EVENT@boot=0x%02X (por 标志已清)", ev);
+    }
+
+    /* EVENT 轮拍计数：每 32 个成功轮询拍读一次 por_detected（约 3.2 s）。 */
+    int event_tick = 0;
+
     /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
     /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
     /* 高度/VS 防抖(配合 BMP388 硬件 IIR):软件高度低通 + 显示滞回 + VS 基于平滑高度。 */
@@ -229,6 +247,26 @@ static void baro_task(void *arg)
         }
         /* 读到了 = 总线活着,失败串清零。 */
         (void)pk_i2c0_client_report(&i2c_client, true);
+
+        /* ── 每 32 拍查一次 EVENT.por_detected（DS §4.3.7 Table 31, p.33）──
+         *
+         * BMP388 本地 POR/软复位会把 PWR_CTRL/OSR/ODR/CONFIG 打回默认,
+         * 但数据读仍然"成功"——不盯这个标志,器件就永远睡在错误配置里
+         * (2026-09 审计 P1/legacy)。读到 1 → 走既有配置路径重配(置
+         * !s_ready,下一轮的 gate 分支重跑 configure_and_calibrate),
+         * **不是**总线复位。读失败不另生分支:总线真坏了走上面的
+         * data read failed 主检测器。 */
+        if (++event_tick >= 32) {
+            event_tick = 0;
+            uint8_t ev = 0;
+            if (reg_read(BMP388_REG_EVENT, &ev, 1) == ESP_OK &&
+                (ev & BMP388_EVENT_POR)) {
+                ESP_LOGW(TAG, "EVENT.por_detected=1 — BMP388 本地复位,重写配置并重读标定");
+                s_ready  = false;
+                has_prev = false;   /* 配置断档,VS 别出尖峰 */
+                vs_ema   = 0.0f;
+            }
+        }
 
         uint32_t raw_press = (uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16);
         uint32_t raw_temp  = (uint32_t)d[3] | ((uint32_t)d[4] << 8) | ((uint32_t)d[5] << 16);
