@@ -26,6 +26,7 @@
  */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef PK_I2C0_BUS_HOST_TEST
@@ -38,6 +39,7 @@ typedef int esp_err_t;
 #define ESP_OK                0
 #define ESP_ERR_INVALID_STATE 0x103
 typedef void *i2c_master_bus_handle_t;
+typedef void *i2c_master_dev_handle_t;
 #endif
 
 /*
@@ -48,9 +50,46 @@ typedef void *i2c_master_bus_handle_t;
  *
  * 调用时机：app_main 里、先于一切 I²C 器件 init（imu / baro / touch）。
  * 失败时总线不存在、pk_i2c0_bus_get() 恒 NULL，各器件 init 会各自报错——
- * 那是可诊断的路径，不在这里 abort（调用方 main.c 用 ESP_ERROR_CHECK 收口）。
+ * 那是可诊断的路径，不在这里 abort。**契约（2026-09-05 深审裁定）**：
+ * 调用方 main.c 记 ERROR 后继续启动，降级为无 IMU/baro/touch 的
+ * 1090 盒子——不是 ESP_ERROR_CHECK 收口，不会重启。
  */
 esp_err_t pk_i2c0_bus_init(void);
+
+/*
+ * ═══════════════════════════════════════════════════════════════════
+ * 总线级互斥（2026-09 审计 P1/遗留）：事务 vs 复位
+ * ═══════════════════════════════════════════════════════════════════
+ * IDF 只对 transmit/receive/probe 的事务执行做了线程安全，而
+ * i2c_master_bus_reset() **不取**内部 ops 锁（i2c_master.c:1241）：
+ * 复位与一笔在飞的事务并发时，控制器状态机可能被中途拆掉。
+ *
+ * 因此本模块持一把 FreeRTOS mutex，把「器件事务」和「总线复位」在
+ * 总线层面串行起来。**所有** I²C0 事务与复位必须走下面这组
+ * pk_i2c0_bus_* 包装（内部取锁再转发）——这正是 i2c_master_bus_reset()
+ * 在本项目里安全的前提；谁绕开包装直呼 IDF API，保证对谁失效
+ * （审计 P1/遗留的收口）。已知例外见 touch_gt911.c 的 esp_lcd panel_io
+ * 注释：组件内部事务无法包进本锁，残余窗口以「一次 100 ms 超时」计。
+ *
+ * i2c_master_bus_add_device / rm_device 不在包装范围：只许 init 期
+ * 单线程调用（先于各恢复/轮询任务启动），无并发窗口。
+ */
+
+/* 器件事务（参数与 i2c_master_transmit/receive/transmit_receive 一一对应，
+ * 仅多了内部取锁）。总线未建好时返回 ESP_ERR_INVALID_STATE。 */
+esp_err_t pk_i2c0_bus_transmit(i2c_master_dev_handle_t dev,
+                               const uint8_t *wr, size_t wr_len, int timeout_ms);
+esp_err_t pk_i2c0_bus_receive(i2c_master_dev_handle_t dev,
+                              uint8_t *rd, size_t rd_len, int timeout_ms);
+esp_err_t pk_i2c0_bus_transmit_receive(i2c_master_dev_handle_t dev,
+                                       const uint8_t *wr, size_t wr_len,
+                                       uint8_t *rd, size_t rd_len, int timeout_ms);
+
+/* 地址探活（内部用本模块的总线 handle；参数同 i2c_master_probe）。 */
+esp_err_t pk_i2c0_bus_probe(uint8_t dev_addr, int timeout_ms);
+
+/* 总线复位（恢复路径专用：目前只有 pk_i2c0_recover.c 该调）。 */
+esp_err_t pk_i2c0_bus_reset(void);
 
 /*
  * 全局唯一的 I²C0 handle。未 init 或 init 失败时返回 NULL——语义同旧

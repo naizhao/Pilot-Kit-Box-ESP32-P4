@@ -277,6 +277,38 @@ static void test_incident_end_to_end(void)
     CHECK(g.generation == 1);
 }
 
+/* ============================================ 探活判据（可选器件缺失合法） */
+
+static void test_probe_ack_and_clean_nack_are_definitive(void)
+{
+    /* ACK = 器件在；干净 NACK（ESP_ERR_NOT_FOUND）= 器件不在但总线是通的。
+     * 两者都是「总线说话算话」的定论。 */
+    CHECK(pk_i2c0_probe_definitive(PK_I2C0_PROBE_ACK)  == true);
+    CHECK(pk_i2c0_probe_definitive(PK_I2C0_PROBE_NACK) == true);
+
+    /* 超时 / 其它错误 = 总线还没救回来（或时序仍乱），不许当定论。
+     * 0x107 = ESP_ERR_TIMEOUT，-1 = ESP_FAIL。 */
+    CHECK(pk_i2c0_probe_definitive(0x107) == false);
+    CHECK(pk_i2c0_probe_definitive(-1)    == false);
+}
+
+static void test_degraded_config_still_recovers(void)
+{
+    /* 合法降级配置：BNO085 + BMP388 都缺焊（双干净 NACK），QMC/GT911 在线。
+     * 旧判据「任一 ACK」在这种板上是永远失败 → 不 bump generation →
+     * QMC/GT911 永远等不到重放信号（2026-09 审计 P2）。新判据：两个探活
+     * 都是定论（无论 ACK/NACK）= 恢复成功。 */
+    CHECK(pk_i2c0_probe_round_ok(PK_I2C0_PROBE_NACK, PK_I2C0_PROBE_NACK) == true);
+    CHECK(pk_i2c0_probe_round_ok(PK_I2C0_PROBE_ACK,  PK_I2C0_PROBE_NACK) == true);
+    CHECK(pk_i2c0_probe_round_ok(PK_I2C0_PROBE_NACK, PK_I2C0_PROBE_ACK)  == true);
+    CHECK(pk_i2c0_probe_round_ok(PK_I2C0_PROBE_ACK,  PK_I2C0_PROBE_ACK)  == true);
+
+    /* 任一探活不是定论（超时/总线卡死）= 总线仍坏，不许判成功。 */
+    CHECK(pk_i2c0_probe_round_ok(PK_I2C0_PROBE_ACK,  0x107) == false);
+    CHECK(pk_i2c0_probe_round_ok(0x107, PK_I2C0_PROBE_NACK) == false);
+    CHECK(pk_i2c0_probe_round_ok(-1,    -1)                 == false);
+}
+
 int main(void)
 {
     test_single_glitch_never_asks();
@@ -295,6 +327,9 @@ int main(void)
     test_backoff_grows_then_caps();
     test_success_resets_backoff();
     test_generation_counts_only_successes();
+
+    test_probe_ack_and_clean_nack_are_definitive();
+    test_degraded_config_still_recovers();
 
     test_incident_end_to_end();
 

@@ -302,7 +302,9 @@ static uint8_t probe_addr(i2c_master_bus_handle_t bus)
         ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP,   /* 0x14，INT 上电为高 */
     };
     for (size_t i = 0; i < sizeof(candidates); ++i) {
-        if (i2c_master_probe(bus, candidates[i], TOUCH_PROBE_MS) == ESP_OK) {
+        /* 走板级包装而不是裸 i2c_master_probe：与总线复位互斥
+         * （pk_i2c0_bus.h 的契约）。 */
+        if (pk_i2c0_bus_probe(candidates[i], TOUCH_PROBE_MS) == ESP_OK) {
             ESP_LOGI(TAG, "GT911 found at 0x%02X", candidates[i]);
             return candidates[i];
         }
@@ -343,6 +345,10 @@ esp_err_t pk_touch_init(void)
         ESP_LOGE(TAG, "panel_io_i2c failed: %s", esp_err_to_name(err));
         return err;
     }
+    /* 已知残余窗口（pk_i2c0_bus.h 的互斥契约覆盖不到这里）：panel_io 之下的
+     * 事务由 esp_lcd 组件内部直呼 IDF，取不到板级互斥。总线复位若恰与一笔
+     * 触摸读取并发，代价上限是该笔读取以 100 ms 超时告终——与 recover.c
+     * 「复位打断在飞事务」的既有窗口同级，不另设机制。 */
 
     const esp_lcd_touch_config_t tp_cfg = {
         .x_max = TOUCH_NATIVE_W,

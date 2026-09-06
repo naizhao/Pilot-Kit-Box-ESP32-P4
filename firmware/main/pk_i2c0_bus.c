@@ -10,6 +10,8 @@
 
 #ifndef PK_I2C0_BUS_HOST_TEST
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #endif
 
 /* s_bus：app_main 单线程写一次（init 成功时发布），之后全系统只读。
@@ -40,11 +42,23 @@ i2c_master_bus_handle_t pk_i2c0_bus_get(void)
 
 static const char *TAG = "i2c0";
 
+/* 总线级互斥（契约见 pk_i2c0_bus.h）：把器件事务与 i2c_master_bus_reset
+ * 串行起来——IDF 的 bus_reset 不取内部 ops 锁（i2c_master.c:1241），
+ * 调用方互斥是它唯一的保护。init 期创建、永不删除。 */
+static SemaphoreHandle_t s_txn_mux;
+
 esp_err_t pk_i2c0_bus_init(void)
 {
     /* 幂等：重复 init 是无害 no-op。IDF 不允许 i2c_new_master_bus 对同一
      * port 建第二次，所以「已建好」必须在这里短路而不是往下撞。 */
     if (s_bus != NULL) return ESP_OK;
+
+    /* 互斥先于总线建：失败路径不用回收它（一次性的，泄漏无意义——
+     * 这个函数只会成功一次或让整机降级）。 */
+    if (s_txn_mux == NULL) {
+        s_txn_mux = xSemaphoreCreateMutex();
+        if (s_txn_mux == NULL) return ESP_ERR_NO_MEM;
+    }
 
     /* 端口配置照抄 imu_task 旧日的 i2c_bring_up()，一个值都不改：
      * 内部上拉是板上的临时手段，等整板波形实测后再动（PLAN.md §6.1）。 */
@@ -66,6 +80,57 @@ esp_err_t pk_i2c0_bus_init(void)
     s_bus = bus;
     ESP_LOGI(TAG, "master bus up (SDA GPIO7 / SCL GPIO8 @ 400 kHz)");
     return ESP_OK;
+}
+
+/* ── 包装：取锁 → 转发。转发参数与 IDF 原型一一对应，不另做语义。 ── */
+
+esp_err_t pk_i2c0_bus_transmit(i2c_master_dev_handle_t dev,
+                               const uint8_t *wr, size_t wr_len, int timeout_ms)
+{
+    if (s_bus == NULL || s_txn_mux == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_txn_mux, portMAX_DELAY);
+    esp_err_t err = i2c_master_transmit(dev, wr, wr_len, timeout_ms);
+    xSemaphoreGive(s_txn_mux);
+    return err;
+}
+
+esp_err_t pk_i2c0_bus_receive(i2c_master_dev_handle_t dev,
+                              uint8_t *rd, size_t rd_len, int timeout_ms)
+{
+    if (s_bus == NULL || s_txn_mux == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_txn_mux, portMAX_DELAY);
+    esp_err_t err = i2c_master_receive(dev, rd, rd_len, timeout_ms);
+    xSemaphoreGive(s_txn_mux);
+    return err;
+}
+
+esp_err_t pk_i2c0_bus_transmit_receive(i2c_master_dev_handle_t dev,
+                                       const uint8_t *wr, size_t wr_len,
+                                       uint8_t *rd, size_t rd_len, int timeout_ms)
+{
+    if (s_bus == NULL || s_txn_mux == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_txn_mux, portMAX_DELAY);
+    esp_err_t err = i2c_master_transmit_receive(dev, wr, wr_len, rd, rd_len, timeout_ms);
+    xSemaphoreGive(s_txn_mux);
+    return err;
+}
+
+esp_err_t pk_i2c0_bus_probe(uint8_t dev_addr, int timeout_ms)
+{
+    if (s_bus == NULL || s_txn_mux == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_txn_mux, portMAX_DELAY);
+    esp_err_t err = i2c_master_probe(s_bus, dev_addr, timeout_ms);
+    xSemaphoreGive(s_txn_mux);
+    return err;
+}
+
+esp_err_t pk_i2c0_bus_reset(void)
+{
+    if (s_bus == NULL || s_txn_mux == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_txn_mux, portMAX_DELAY);
+    esp_err_t err = i2c_master_bus_reset(s_bus);
+    xSemaphoreGive(s_txn_mux);
+    return err;
 }
 
 #else

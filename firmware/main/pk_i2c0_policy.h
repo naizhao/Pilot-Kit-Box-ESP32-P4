@@ -114,3 +114,31 @@ void pk_i2c0_gate_finish(pk_i2c0_gate_t *g, bool recovered, int64_t now_us);
 
 /* 当前这一档退避时长（日志用："下次最早 %.1fs 后"）。 */
 int64_t pk_i2c0_gate_cooldown_us(const pk_i2c0_gate_t *g);
+
+/* ─────────────────────────────────────────────────────────────────────
+ * 探活判据：复位之后「到底救没救回来」
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * 复位后的探活结果按「定论 / 非定论」分两档（2026-09 审计 P2）：
+ *   - ESP_OK       = 器件应答（ACK）——总线通、器件在；
+ *   - ESP_ERR_NOT_FOUND = 干净 NACK —— 总线通、器件不在（缺焊是合法状态）；
+ *   - 其它（超时等）= 总线还没说话算话（仍被拖死/时序未稳）——非定论。
+ *
+ * 为什么不能沿用旧判据「任一 ACK 即成功」：合法降级配置（BNO085+BMP388
+ * 都缺焊、QMC/GT911 在线）下两个必测地址都探不到，恢复会被永远判失败 →
+ * 不 bump generation → QMC/GT911 永远等不到「重放 bring-up」的信号。
+ * 而「两个探活都给出定论」恰好刻画了「总线自己已经恢复说话能力」这一
+ * 本质——器件在不在是器件的事，不是总线的事。 */
+
+/* esp_err_t 的两个取值（esp_err_t 就是 int；策略层零依赖，不复述 IDF 头）。
+ * recover 侧直接把 probe 的返回值传进来，值语义与 IDF 一致。 */
+enum {
+    PK_I2C0_PROBE_ACK  = 0,       /* ESP_OK             */
+    PK_I2C0_PROBE_NACK = 0x105,   /* ESP_ERR_NOT_FOUND  */
+};
+
+/* 单次探活返回值算不算定论。 */
+bool pk_i2c0_probe_definitive(int probe_err);
+
+/* 一轮两个探活是否都定论（无论 ACK/NACK）= 本轮恢复成功。 */
+bool pk_i2c0_probe_round_ok(int err_a, int err_b);

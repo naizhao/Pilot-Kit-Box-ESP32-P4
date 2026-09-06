@@ -153,13 +153,13 @@ static volatile qmc5883p_stats_t s_stats;
 
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
 {
-    return i2c_master_transmit_receive(s_dev, &reg, 1, buf, n, 100);
+    return pk_i2c0_bus_transmit_receive(s_dev, &reg, 1, buf, n, 100);
 }
 
 static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     uint8_t b[2] = { reg, val };
-    return i2c_master_transmit(s_dev, b, 2, 100);
+    return pk_i2c0_bus_transmit(s_dev, b, 2, 100);
 }
 
 /*

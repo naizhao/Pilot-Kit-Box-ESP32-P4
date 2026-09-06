@@ -214,7 +214,7 @@ static esp_err_t shtp_send(uint8_t channel, const uint8_t *cargo, size_t cargo_l
     frame[2] = channel;
     frame[3] = s_tx_seq[channel]++;
     if (cargo_len > 0) memcpy(frame + SHTP_HEADER_LEN, cargo, cargo_len);
-    return i2c_master_transmit(s_dev, frame, total, 100);
+    return pk_i2c0_bus_transmit(s_dev, frame, total, 100);
 }
 
 /* Read one SHTP frame. *out_channel and *out_cargo_len are populated;
@@ -224,7 +224,7 @@ static esp_err_t shtp_recv(uint8_t *out_cargo, size_t out_cap,
                            uint8_t *out_channel, size_t *out_cargo_len)
 {
     uint8_t hdr[SHTP_HEADER_LEN];
-    esp_err_t err = i2c_master_receive(s_dev, hdr, sizeof(hdr), 100);
+    esp_err_t err = pk_i2c0_bus_receive(s_dev, hdr, sizeof(hdr), 100);
     if (err != ESP_OK) return err;
 
     uint16_t length = ((uint16_t)hdr[1] & 0x7F) << 8 | hdr[0];
@@ -239,7 +239,7 @@ static esp_err_t shtp_recv(uint8_t *out_cargo, size_t out_cap,
      * bytes and skip the header in-place. */
     uint8_t scratch[SHTP_MAX_PAYLOAD + SHTP_HEADER_LEN];
     if (length > sizeof(scratch)) length = sizeof(scratch);
-    err = i2c_master_receive(s_dev, scratch, length, 100);
+    err = pk_i2c0_bus_receive(s_dev, scratch, length, 100);
     if (err != ESP_OK) return err;
 
     *out_channel = scratch[2];

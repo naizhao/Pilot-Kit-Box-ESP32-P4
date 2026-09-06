@@ -8,17 +8,28 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-#include "pk_i2c0_bus.h"   /* pk_i2c0_bus_get() + 恢复代数 —— 全局唯一的 I²C0 总线口 */
+#include "pk_i2c0_bus.h"   /* 总线 handle、恢复代数 + 事务/复位包装（板级互斥）*/
 
 /* 独立的 tag。这个故障是偶发的，下次现场只有串口日志可看，必须能一眼
  * grep 出"总线塌了 → 恢复中 → 成功/失败"这条线。 */
 static const char *TAG = "i2c0";
 
-/* 总线上必然存在的两颗芯片。复位之后拿它们探活，作为"到底救没救回来"
- * 的判据——只看 i2c_master_bus_reset() 的返回值是不够的，它复位的是本
- * 机这侧的控制器，从机还被拖死时照样返回 ESP_OK。 */
+/* 探活的两个固定地址（板图上必然布线的两颗；缺焊时干净 NACK 也是有效
+ * 探活结果——判据见 pk_i2c0_probe_round_ok，不在「在不在」上做文章）。
+ * 只看复位 API 的返回值是不够的：它复位的是本机这侧的控制器，从机还被
+ * 拖死时照样返回 ESP_OK。 */
 #define PK_I2C0_ADDR_BNO085   0x4A
 #define PK_I2C0_ADDR_BMP388   0x76
+
+/* 单次探活结果的日志措辞：ACK / 干净 NACK / 其它错误原样报出。 */
+static const char *probe_str(int e)
+{
+    switch (e) {
+    case PK_I2C0_PROBE_ACK:  return "ACK";
+    case PK_I2C0_PROBE_NACK: return "NACK(缺焊?)";
+    default:                 return esp_err_to_name(e);
+    }
+}
 
 /* 探活超时取 250 ms，而不是 touch_gt911.c 探地址时用的 50 ms。
  * i2c_master_probe() 的这个参数**同时**是"等总线锁"和"等这笔传输"的上限
@@ -88,29 +99,35 @@ esp_err_t pk_i2c0_recover_request(const char *who)
 
     /* ① 复位总线：SCL 打 9 拍放掉被拖住的 SDA + 复位控制器状态机。
      *
-     * 已知窗口：i2c_master_bus_reset() 内部**不取** IDF 的 bus_lock_mux
-     * （i2c_master.c:1241 没有加锁），所以别的任务此刻若正好有一笔事务在
-     * 飞，那笔事务会被打断、以超时告终。本机所有 I²C 事务都带 100 ms 超时
-     * （imu 的 shtp_send/recv、baro 的 reg_read/write 都是 100），代价上限
-     * 就是一次 100 ms 的失败——而走到这里时总线本来就已经不通了。 */
-    esp_err_t err = i2c_master_bus_reset(bus);
+     * 走 pk_i2c0_bus_reset()（2026-09 审计 P1 收口）：IDF 的
+     * i2c_master_bus_reset() 内部**不取** ops 锁（i2c_master.c:1241），
+     * 与在飞事务并发时会把控制器状态机中途拆掉；板级互斥保证复位与
+     * imu/baro/qmc 的事务串行（契约见 pk_i2c0_bus.h）。残余窗口只剩
+     * esp_lcd 组件内部的触摸事务，代价上限是一次 100 ms 超时——而走到
+     * 这里时总线本来就已经不通了。 */
+    esp_err_t err = pk_i2c0_bus_reset();
 
-    /* ② 探活。任一颗应答就算总线回来了：只用一颗做判据的话，那颗芯片本身
-     *    坏了/没焊会把总线误判成永远救不回来，退避一路涨到 30 s 封顶。 */
-    bool imu_ack = false, baro_ack = false;
+    /* ② 探活。判据（2026-09 审计 P2）：**两个探活都给出定论**才算救回来，
+     *    无论 ACK 还是干净 NACK——「器件在不在」是器件的事，「总线说话
+     *    算话」才是总线的事。定论 = ESP_OK（ACK）或 ESP_ERR_NOT_FOUND
+     *    （干净 NACK，缺焊是合法状态）；超时等其它错误 = 总线还没救回来。
+     *    旧的「任一 ACK」判据在合法降级配置（BNO+BMP 双缺、QMC/GT911
+     *    在线）上永远失败 → 不 bump generation → QMC/GT911 永远等不到
+     *    重放信号。判据本体在 pk_i2c0_probe_round_ok()（host 可测，
+     *    firmware/test/test_pk_i2c0_policy.c）。
+     *
+     *    pk_i2c0_bus_probe() 只发 START + 地址 + STOP，一个数据字节都不
+     *    写，对 BNO085 的 SHTP 会话和 BMP388 的寄存器指针都没有副作用；
+     *    它会把总线时序临时设成 100 kHz 且不还原，但每笔器件事务都会按
+     *    add_device 时的 scl_speed_hz 重设时序——touch_gt911.c 开机探地址
+     *    走的就是同一条路，400 kHz 照常。 */
+    int imu_probe = -1, baro_probe = -1;
     if (err == ESP_OK) {
-        /* i2c_master_probe() 是取 bus_lock_mux 的（i2c_master.c:1354），
-         * 到这一步就已经和别的任务的事务重新串行起来了。
-         *
-         * 它只发 START + 地址 + STOP（i2c_master.c:1365 那张 i2c_ops），
-         * 一个数据字节都不写，对 BNO085 的 SHTP 会话和 BMP388 的寄存器
-         * 指针都没有副作用。它会把总线时序临时设成 100 kHz 且不还原，但
-         * 每笔器件事务都会按自己 add_device 时的 scl_speed_hz 重设时序——
-         * touch_gt911.c 开机探地址走的就是同一条路，400 kHz 照常。 */
-        imu_ack  = (i2c_master_probe(bus, PK_I2C0_ADDR_BNO085, PK_I2C0_PROBE_MS) == ESP_OK);
-        baro_ack = (i2c_master_probe(bus, PK_I2C0_ADDR_BMP388, PK_I2C0_PROBE_MS) == ESP_OK);
+        imu_probe  = pk_i2c0_bus_probe(PK_I2C0_ADDR_BNO085, PK_I2C0_PROBE_MS);
+        baro_probe = pk_i2c0_bus_probe(PK_I2C0_ADDR_BMP388, PK_I2C0_PROBE_MS);
     }
-    const bool recovered = (err == ESP_OK) && (imu_ack || baro_ack);
+    const bool recovered = (err == ESP_OK) &&
+                           pk_i2c0_probe_round_ok(imu_probe, baro_probe);
 
     const int64_t t1 = esp_timer_get_time();
     int64_t cooldown_us;
@@ -130,18 +147,20 @@ esp_err_t pk_i2c0_recover_request(const char *who)
                       "探活 BNO085(0x4A)=%s BMP388(0x76)=%s）—— "
                       "各器件将在下一轮循环里重放自己的初始化",
                  (unsigned long)round, (long long)((t1 - t0) / 1000),
-                 imu_ack ? "ACK" : "无应答", baro_ack ? "ACK" : "无应答");
+                 probe_str(imu_probe), probe_str(baro_probe));
         return ESP_OK;
     }
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "I²C0 恢复失败：i2c_master_bus_reset = %s；"
+        ESP_LOGE(TAG, "I²C0 恢复失败：pk_i2c0_bus_reset = %s；"
                       "下次最早 %.1f s 后再试",
                  esp_err_to_name(err), (double)cooldown_us / 1e6);
         return err;
     }
-    ESP_LOGE(TAG, "I²C0 恢复失败：总线已复位但 0x4A / 0x76 均无应答"
-                  "（从机仍被拖死？）；下次最早 %.1f s 后再试",
+    ESP_LOGE(TAG, "I²C0 恢复失败：总线已复位但探活未全部定论"
+                  "（BNO085(0x4A)=%s BMP388(0x76)=%s，超时=总线仍坏）；"
+                  "下次最早 %.1f s 后再试",
+             probe_str(imu_probe), probe_str(baro_probe),
              (double)cooldown_us / 1e6);
     return ESP_ERR_NOT_FOUND;
 }

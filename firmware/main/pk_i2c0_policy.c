@@ -102,3 +102,17 @@ void pk_i2c0_gate_finish(pk_i2c0_gate_t *g, bool recovered, int64_t now_us)
     g->armed           = true;
     g->busy            = false;
 }
+
+/* ── 探活判据 ──────────────────────────────────────────────────────── */
+
+bool pk_i2c0_probe_definitive(int probe_err)
+{
+    /* ACK 与干净 NACK 都是「总线说话算话」的证据；超时/其它错误说明总线
+     * 还没救回来，判失败让退避接着走。 */
+    return probe_err == PK_I2C0_PROBE_ACK || probe_err == PK_I2C0_PROBE_NACK;
+}
+
+bool pk_i2c0_probe_round_ok(int err_a, int err_b)
+{
+    return pk_i2c0_probe_definitive(err_a) && pk_i2c0_probe_definitive(err_b);
+}
