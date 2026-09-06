@@ -6,10 +6,12 @@ Snapshot of the current 4.3-inch touch runtime topology, including ADS-B,
 BLE, GPS NMEA/RMC, barometer, dual storage backends, local traffic UI,
 diagnostics, IMU and i18n.
 
-> Scope note: the receive path documented here is the **RTL-SDR USB source**
-> (v1/v2 carriers and bare-board builds). The v3/v4 expansion boards carry an
-> onboard 1090 MHz chain decoded by an RP2040 that feeds this same on-device
-> pipeline; that source is additional to what this page details.
+> Scope note: the receive path is the **RP2040 front-end over UART** (v3/v4
+> expansion boards): the RP2040 captures dual edges via PIO+DMA, decodes
+> Mode S, and ships raw frames to the P4's `adsb_lnk` task at 921600 baud
+> for CRC filtering and the on-device fusion chain. The RTL-SDR USB source
+> documented below is the **retired v1/v2-era path**; this page keeps that
+> walkthrough as historical reference only.
 
 ## Big picture
 
@@ -150,8 +152,8 @@ flowchart LR
 | Task              | CPU | Prio | Stack | Role |
 |-------------------|-----|------|-------|------|
 | `adsb_lnk`        | 1   | 5    | 8 KiB | Runs the RP2040 UART link (adsb_link codec @ 921600 baud, 256-byte reads): feeds CRC-pre Mode-S frames from the RP2040 front-end into modes_ingest, replies to each HELLO, and carries the former DSP business chain (CPR/track/records/1 Hz dashboard). The RP2040 itself captures dual edges via PIO+DMA and decodes 56/112-bit frames with modes_edge; the USB RTL-SDR task pair (`usb_host_lib`/`sdr`) is retired. |
-| `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
-| `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the DSP task off storage writes. |
+| `dsp`             | —   | —    | —     | **RETIRED** (v1/v2 USB RTL-SDR era): drained the 512 KiB IQ ring buffer and ran dump1090 magnitude + Manchester decode. Not created anymore; its decode/dispatch duties now live in the RP2040 (`modes_edge`) + `adsb_lnk`/modes_ingest chain. Row kept for history. |
+| `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the link/decode path off storage writes. |
 | `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot); feeding it into the system clock is a follow-up task. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |

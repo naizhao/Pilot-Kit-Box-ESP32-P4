@@ -22,8 +22,11 @@
 #define PIN_SUBG_IRQ      14
 #define PIN_SUBG_SYNC     15
 #define PIN_PULSES        19  /* TLV3501 → PIO 上升沿捕获 */
-#define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；跳线 24→19（≥1k 串联电阻，
-                               * 19 上 TLV3501 是推挽驱动，直接对接会打架）。
+#define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；跳线 24→19 前**先拆下 R57**
+                               * （33Ω，TLV3501 输出→PULSES 的串阻：33Ω
+                               * 对 1k 串阻分支约 30:1 占优，不拆则节点
+                               * 跟随比较器——"串 ≥1k 电平胜出"物理不
+                               * 成立，见 selftest_gen.h；拆后直连即可）。
                                * audit P1-4：原 18 是 SUBG_RESET（CC1312R），
                                * PINMAP §2 严禁挪用；24 = RECOVERED_CLK，
                                * 调试网络，空置可安全借用。落点：v4 生产板

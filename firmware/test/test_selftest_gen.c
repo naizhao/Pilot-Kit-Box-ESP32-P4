@@ -15,13 +15,16 @@
  * ticks_to_qus 往返无舍入误差（对照 test_modes_edge.c 的 qus 合同）。
  * mode_s.c 直接 include 进本 TU（仓库惯例），给常量回填正确 parity。
  *
- * 硬件适用范围（audit round 4 勘误）：位流构造与回环判据在 host、V4/V3
- * 载板与台架裸 RP2040 板均有效。V4 载板的 TP7/RECOVERED_CLK 落点在
- * 生产 PCB 上存在（expansion-board-v4.kicad_pcb:38901，Reference=TP7、
- * net=RECOVERED_CLK）——跳线回环验收在 V4 **可执行**：GPIO24 经 TP7
- * 引出，跳线 24→19 串 ≥1k（GPIO19 是 TLV3501 推挽输出，直连会输出
- * 争用）。V3 载板 TP7 同样有落点。详见 selftest_gen.h；PINMAP.md/
- * ASSEMBLY 文档里"V4 已删 TP7"的旧说法与 PCB 不符，归硬件侧勘误。
+ * 硬件适用范围（audit round 5 勘误）：位流构造与回环判据在 host、V4/V3
+ * 载板与台架裸 RP2040 板均有效。跳线 24→19 前**必须先拆下 R57**（33Ω，
+ * PCB 上 PULSES_RAW→PULSES 的串阻，expansion-board-v4.kicad_pcb:7100 起、
+ * 焊盘 net 见 :7216/:7224）：TLV3501 推挽输出经 33Ω 对 1k 串阻分支约
+ * 30:1 占优，不拆 R57 则节点电平跟随比较器、旧"串 ≥1k 电平胜出"的
+ * 说法物理不成立。拆下 R57 后 GPIO24 → R57 的 PULSES 侧焊盘（或 PULSES
+ * 网络任一可达焊盘，V4 亦有 TP7 @ :38901）直连即可，无输出争用。V3
+ * 载板 TP7 同样有落点，同理先隔离比较器输出。详见 selftest_gen.h；
+ * PINMAP.md/ASSEMBLY 文档里"V4 已删 TP7"的旧说法与 PCB 不符，归硬件
+ * 侧勘误。
  */
 #include "selftest_gen.h"
 #include "modes_edge.h"

@@ -20,8 +20,7 @@ Experienced ESP-IDF users can skip to [Build](#build) after checking the prerequ
 
 | Item | Purpose |
 |---|---|
-| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B reception for **v1/v2 carrier or bare-board builds**. FC0013 is currently recommended because it keeps BOM cost low. **Not needed with the v4 expansion board** — it carries an onboard 1090 MHz chain. |
-| USB-C OTG adapter or powered USB hub | Bare-board only: connects the H2 native USB HS port to a USB-A RTL-SDR dongle. The Pilot Kit carrier already carries a USB-A plug on J3-27/25 and needs no adapter. |
+| 1090 MHz source: v3/v4 RP2040 expansion board | Onboard receive chain + RP2040 decoder feeding the P4 over 921600-baud UART; the antenna connects to the expansion board's antenna port. USB RTL-SDR dongles are **not supported anymore** — that v1/v2-era path was removed from the firmware and component tree. |
 | BNO085 / GY-BN008X IMU module | Attitude fusion for the PFD. |
 | USB-UART adapter | Required once per fresh board to flash the ESP32-C6 hosted slave firmware for BLE. |
 
@@ -87,7 +86,10 @@ If the repository was cloned without submodules:
 git submodule update --init --recursive
 ```
 
-`firmware/components/esp32-rtl-sdr/` is a submodule pointing at the Pilot Kit fork of `esp32-rtl-sdr`; it contains the patched asynchronous librtlsdr path used on ESP32-P4.
+The repository currently defines no submodules. The former
+`firmware/components/esp32-rtl-sdr/` submodule (the patched asynchronous
+librtlsdr path used during the v1/v2 USB RTL-SDR era) was removed together
+with that retired receive path; no RTL-SDR component is needed to build.
 
 ## One-Time ESP32-C6 Slave Flashing For BLE
 

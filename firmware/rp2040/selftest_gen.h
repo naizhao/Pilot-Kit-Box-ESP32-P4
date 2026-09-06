@@ -1,15 +1,20 @@
-/* selftest_gen.h — 台架自检脉冲。跳线 GPIO24→GPIO19，串 ≥1k 电阻
- * （TLV3501 在 19 上是推挽输出，直连会输出争用；串阻后 GPIO 电平胜出且
- * 电流 ~3.3mA 安全），整链回环。GPIO18 是 SUBG_RESET（CC1312R），严禁用作跳线。
+/* selftest_gen.h — 台架自检脉冲。跳线 GPIO24→GPIO19 的正确步骤（audit
+ * round 5 勘误，推翻"串 ≥1k 电阻 GPIO 电平胜出"的旧说法——物理不成立）：
+ * GPIO19 上的 TLV3501 是推挽输出，经 R57（33Ω，PCB 上 PULSES_RAW→PULSES
+ * 的串阻）驱动 PULSES 网络；33Ω 对 1k 分支的驱动能力约 30:1，只要 R57
+ * 还在，节点电平跟随比较器，GPIO 分支既打不动电平又与比较器对驱。
+ * **先拆下 R57（隔离 TLV3501 推挽输出），再跳线 GPIO24 → R57 的 PULSES
+ * 侧焊盘（或 PULSES 网络任一可达焊盘），直连即可**——比较器已被隔离，
+ * 无输出争用。GPIO18 是 SUBG_RESET（CC1312R），严禁用作跳线。
  *
- * 适用板型（audit round 4 勘误，推翻 adb83f0/audit round 3 的"V4 无落点"
- * 结论——PCB 实据：expansion-board-v4.kicad_pcb:38901 起的 footprint
- * Reference=TP7、net=RECOVERED_CLK）：
- *   · V4 载板：TP7/RECOVERED_CLK 在生产 PCB 上**存在**——跳线回环验收
- *     在 V4 **可执行**：GPIO24 经 TP7 落点引出，跳线 24→19 串 ≥1k
- *     （GPIO19 是 TLV3501 推挽输出）；
- *   · V3 载板：GPIO24 在 TP7 有落点，同样可执行；
- *   · 台架裸 RP2040 板：直接跳线，可执行。
+ * 适用板型（PCB 实据：expansion-board-v4.kicad_pcb——R57 footprint
+ * Reference=R57 @ :7100、Value=33R，焊盘 net PULSES_RAW @ :7216 /
+ * PULSES @ :7224；TP7/RECOVERED_CLK @ :38901）：
+ *   · V4 载板：R57 与 TP7 都在生产 PCB 上**存在**——按上述 ECO 拆下
+ *     R57 后跳线回环**可执行**；
+ *   · V3 载板：GPIO24 在 TP7 有落点，同样先隔离 TLV3501 推挽输出
+ *     （拆除其到 PULSES 网络的串阻）再跳线；
+ *   · 台架裸 RP2040 板：GPIO24/GPIO19 直连，可执行。
  * 遗留不一致（硬件侧文档，固件仓库不改、已在审计报告登记待修）：
  * hardware/expansion-board-v4/PINMAP.md:41 与 ASSEMBLY-zh_CN.md:303 仍写
  * "V4 已删 TP7 / 无落点"，与 PCB 实际不符。 */
