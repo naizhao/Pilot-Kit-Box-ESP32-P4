@@ -4,6 +4,7 @@
  * core0：帧环 → p4_link 发送、RX 轮询、1 Hz HEALTH、CDC 命令、看护 core1。
  */
 #include <stdio.h>
+#include <stdatomic.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -18,20 +19,27 @@
 #define FRAME_RING_LEN 64u
 
 typedef struct { modes_edge_frame_t f; } slot_t;
-static slot_t           s_ring[FRAME_RING_LEN];
-static volatile uint32_t s_ring_head, s_ring_tail;   /* core1 写 head / core0 写 tail */
-static volatile uint32_t s_ring_drops;
-static volatile uint32_t s_core1_beat;
+static slot_t s_ring[FRAME_RING_LEN];
+/* SPSC 环（audit round 3：volatile → C11 原子）。core1 生产者写槽后以
+ * release 发布 head；core0 消费者以 acquire 读 head 后才读槽，tail 反向
+ * 同理。 dropped 计数与 beat 只作统计/看护，relaxed 足够。 */
+static atomic_uint s_ring_head, s_ring_tail;
+static atomic_uint s_ring_drops;
+static atomic_uint s_core1_beat;
 
 static modes_edge_t s_edge;
 
 static void on_frame(const modes_edge_frame_t *f, void *user)
 {
     (void)user;
-    uint32_t next = (s_ring_head + 1) % FRAME_RING_LEN;
-    if (next == s_ring_tail) { s_ring_drops++; return; }   /* 背压：丢帧不阻塞 */
-    s_ring[s_ring_head].f = *f;
-    s_ring_head = next;
+    uint32_t head = atomic_load_explicit(&s_ring_head, memory_order_relaxed);
+    uint32_t next = (head + 1) % FRAME_RING_LEN;
+    if (next == atomic_load_explicit(&s_ring_tail, memory_order_acquire)) {
+        atomic_fetch_add_explicit(&s_ring_drops, 1, memory_order_relaxed);
+        return;                                /* 背压：丢帧不阻塞 */
+    }
+    s_ring[head].f = *f;
+    atomic_store_explicit(&s_ring_head, next, memory_order_release);
 }
 
 static void core1_entry(void)
@@ -40,7 +48,7 @@ static void core1_entry(void)
     while (true) {
         size_t n = edge_cap_drain(buf, 256);
         if (n) modes_edge_feed(&s_edge, buf, n);
-        s_core1_beat++;
+        atomic_fetch_add_explicit(&s_core1_beat, 1, memory_order_release);
         tight_loop_contents();
     }
 }
@@ -49,12 +57,20 @@ static void health_fill(uint32_t c[10])
 {
     uint32_t tx = 0, rx = 0, gaps = 0;
     p4_link_get_stats(&tx, &rx, &gaps);
-    c[0] = s_edge.preamble_hits;  c[1] = s_edge.frames_56;
-    c[2] = s_edge.frames_112;     c[3] = 0;                  /* resyncs 预留 */
-    c[4] = s_edge.dropped_noise;
-    c[5] = edge_cap_overruns() + s_edge.edge_overruns;
-    c[6] = tx;                    c[7] = s_ring_drops;
-    c[8] = rx;                    c[9] = gaps;
+    /* s_edge 由 core1 独占写、core0 在此只读（单写者，与 P4 侧 dsp stats
+     * 注释同一口径）：32 位对齐读在 M0+ 上天然原子，__atomic_load_n 防的
+     * 是编译器跨调用缓存旧值；多字段快照可能跨字段撕裂，但各计数单调，
+     * 对 1 Hz 诊断无碍。 */
+    c[0] = __atomic_load_n(&s_edge.preamble_hits, __ATOMIC_RELAXED);
+    c[1] = __atomic_load_n(&s_edge.frames_56, __ATOMIC_RELAXED);
+    c[2] = __atomic_load_n(&s_edge.frames_112, __ATOMIC_RELAXED);
+    c[3] = 0;                                  /* resyncs 预留 */
+    c[4] = __atomic_load_n(&s_edge.dropped_noise, __ATOMIC_RELAXED);
+    c[5] = edge_cap_overruns() + __atomic_load_n(&s_edge.edge_overruns,
+                                                 __ATOMIC_RELAXED);
+    c[6] = tx;
+    c[7] = atomic_load_explicit(&s_ring_drops, memory_order_relaxed);
+    c[8] = rx;                                 c[9] = gaps;
 }
 
 int main(void)
@@ -77,9 +93,15 @@ int main(void)
     absolute_time_t next_hz = make_timeout_time_ms(1000);
 
     while (true) {
-        while (s_ring_tail != s_ring_head) {
-            p4_link_send_modes(&s_ring[s_ring_tail].f, 0xFF);
-            s_ring_tail = (s_ring_tail + 1) % FRAME_RING_LEN;
+        for (;;) {
+            uint32_t tail = atomic_load_explicit(&s_ring_tail,
+                                                 memory_order_relaxed);
+            uint32_t head = atomic_load_explicit(&s_ring_head,
+                                                 memory_order_acquire);
+            if (tail == head) break;
+            p4_link_send_modes(&s_ring[tail].f, 0xFF);
+            atomic_store_explicit(&s_ring_tail, (tail + 1) % FRAME_RING_LEN,
+                                  memory_order_release);
         }
         p4_link_poll_rx();
 
@@ -103,12 +125,14 @@ int main(void)
             uint32_t h[10]; health_fill(h);
             p4_link_tick_health(h);
 
-            if (s_core1_beat == last_beat) {
+            uint32_t beat = atomic_load_explicit(&s_core1_beat,
+                                                 memory_order_acquire);
+            if (beat == last_beat) {
                 if (++stuck_s >= 5) {
                     printf("ERROR: core1 decoder stalled %ds\n", stuck_s);
                     p4_link_send_error(2);          /* code=2: decoder stall */
                 }
-            } else { last_beat = s_core1_beat; stuck_s = 0; }
+            } else { last_beat = beat; stuck_s = 0; }
         }
     }
 }
