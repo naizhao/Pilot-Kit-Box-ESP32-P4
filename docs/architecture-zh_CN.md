@@ -2,13 +2,16 @@
 
 英文版：[`architecture.md`](architecture.md)
 
-本文描述当前 4.3 寸触摸版 ESP32-P4 固件的运行拓扑，包括 RTL-SDR USB
-Host、Mode-S DSP 解码、LittleFS / MicroSD / UART / BLE 输出、GT-U8
+本文描述当前 4.3 寸触摸版 ESP32-P4 固件的运行拓扑，包括 RP2040 UART
+1090 链路、LittleFS / MicroSD / UART / BLE 输出、GT-U8
 GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于和诊断页面。
 
-> 范围说明：本文记载的接收路径是 **RTL-SDR USB 数据源**（v1/v2 载板与裸板
-> 方案）。v3/v4 扩展板自带 1090 MHz 接收链、由 RP2040 解码后馈入同一套
-> 板上处理管线；该数据源是本文所述内容之外的补充路径。
+> 范围说明：当前接收路径是 **v3/v4 扩展板的 RP2040 UART 数据源**——RP2040
+> 以 PIO+DMA 双沿捕获 1090 MHz 脉冲、重建 56/112-bit Mode-S 帧，经
+> 921600 波特 UART（UART2，P4 RX=46 / TX=32）送入 `adsb_lnk` 任务，进入
+> 板上处理管线。早期的 RTL-SDR USB 数据源（v1/v2 载板与裸板方案，
+> `usb_host_lib`/`sdr`/`dsp` 任务与 IQ ring buffer）已整体退役，本文中
+> 相关条目仅作历史保留。
 
 ## 总览
 
@@ -22,7 +25,7 @@ flowchart LR
         SDIO_C6["SDIO\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDMMC 4-bit\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BDS\nUART1 P4 TX=49 P4 RX=51\nRMC 授时；PPS(50) 未读取"]
+        GPS["GT-U8 GPS/BDS\nUART1 P4 TX=49 P4 RX=51\nRMC 授时；PPS(50) 已消费（时间锁定状态）"]
         BARO["BMP388\nI²C0 addr 0x76\n轮询，INT=31 未用"]
         BNO["BNO085 IMU\nSDA=7 SCL=8\n轮询，RST=28 INT=34"]
         SCREEN["ST7701 MIPI-DSI\n原生 480×800\nPPA → 800×480\nRST=27 BL=26"]
@@ -69,10 +72,10 @@ flowchart LR
 | Task | CPU | 优先级 | 栈 | 职责 |
 |---|---:|---:|---:|---|
 | `usb_host_lib` | 0 | 5 | 4 KiB | 调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。 |
-| `sdr` | 1 | 6 | 8 KiB | 拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`。USB URB 回调在同一任务上下文执行，只负责把 IQ 推入 ring buffer。 |
-| `dsp` | 1 | 4 | 4 KiB | 从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位，并输出 1 Hz dashboard。 |
+| `sdr` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`，把 IQ 推入 ring buffer。不再创建；保留此行作历史参考。 |
+| `dsp` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：从 IQ ring buffer 取数据，运行 dump1090 派生的幅度计算、前导码检测、曼彻斯特解码和 CPR 定位。解码/分发职责已移到 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
-| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；不读取 GPIO50 PPS。 |
+| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；GPIO50 PPS 已被固件消费（GPIO ISR 计数 + 自旋锁快照，1 Hz 采样进入时间锁定状态），授时（settimeofday 级）接线仍是后续任务。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
@@ -85,9 +88,9 @@ flowchart LR
 
 | 区域 | 大小 | 所有者 |
 |---|---:|---|
-| IQ ring buffer | 512 KiB | `g_iq_ringbuf`，大块 IQ 缓冲，当前通过 malloc 阈值放入 PSRAM |
-| URB pool | 约 96 KiB | 15 × 6400 B USB in-flight transfer |
-| DSP 工作集 | 约 12 KiB | 8 KiB IQ buffer + 4 KiB magnitude buffer |
+| IQ ring buffer | 512 KiB | **已退役**（v1/v2 USB RTL-SDR 时代）：`g_iq_ringbuf` 已随退役路径删除；PSRAM 现用于地图瓦片/字体/记录等其余工作集 |
+| URB pool       | ~96 KiB | **已退役**：15 × 6400 B 在途 USB 传输 |
+| DSP 工作集 | 约 12 KiB | **已退役**：8 KiB IQ buffer + 4 KiB magnitude buffer |
 | CPR table | 约 5 KiB | `cpr_decode.c` 中 64 架飞机的 CPR pairing 状态 |
 | aircraft_state | 约 7 KiB | `aircraft_state.c` 中 64 slots，保存呼号、高度、位置、速度等 |
 | 应用 framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped，位于 PSRAM |

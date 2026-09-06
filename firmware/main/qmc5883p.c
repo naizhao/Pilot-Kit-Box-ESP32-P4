@@ -231,7 +231,12 @@ static void qmc5883p_task(void *arg)
         ESP_LOGW(TAG, "QMC5883P bring-up 失败（可选器件），%d s 后重试",
                  up_backoff_ms / 1000);
         vTaskDelay(pdMS_TO_TICKS(up_backoff_ms));
-        if (up_backoff_ms < QMC5883P_UP_BACKOFF_MAX_MS) up_backoff_ms *= 2;
+        /* 翻倍后 clamp 到 MAX：旧写法 `if (< MAX) *= 2` 在 32 s 处会翻到
+         * 64 s，与注释/常量的 60 s 封顶不符（gpt-5.6-sol re-audit）。 */
+        if (up_backoff_ms < QMC5883P_UP_BACKOFF_MAX_MS)
+            up_backoff_ms = up_backoff_ms * 2 < QMC5883P_UP_BACKOFF_MAX_MS
+                                ? up_backoff_ms * 2
+                                : QMC5883P_UP_BACKOFF_MAX_MS;
     }
     ESP_LOGI(TAG, "QMC5883P ready @0x%02X (cont mode, ODR=10Hz, ±2G)",
              QMC5883P_I2C_ADDR);

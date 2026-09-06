@@ -166,7 +166,6 @@ Important defaults already live in `firmware/sdkconfig.defaults`:
 - custom `partitions.csv` with a 10 MiB LittleFS storage partition and optional MicroSD file backend
 - ESP32-P4 v1.x silicon support for current Waveshare boards
 - ESP-Hosted SDIO pins for the on-board C6
-- USB host hub support for RTL-SDR dongles
 - BLE enabled by default through `CONFIG_PK_BLE_ENABLED=y`
 
 For details, see [`configuration.md`](configuration.md).
@@ -226,12 +225,12 @@ Main build artifacts:
 Use H1, the Type-C port marked `USB TO UART`. It is the CH343P bridge for P4
 flashing and monitoring.
 
-The RTL-SDR data path is the P4 native USB 2.0 HS PHY. With the Pilot Kit
-carrier fitted, that pair leaves the board on J3-27/25 and ends at the
-carrier's USB-A plug, so the dongle goes there and H2 stays empty. On a bare
-Waveshare board, use H2 — the separate Type-C port marked `USB` — which
-carries the same two nets. Never occupy both at once. P1 is the C6 UART
-download header, not USB.
+The 1090 MHz data path is UART, not USB: the v3/v4 expansion board's RP2040
+decodes the pulses and feeds Mode-S frames to the P4 over UART2 at 921600
+baud (P4 RX GPIO46 / TX GPIO32, J3 header). The old USB RTL-SDR path (P4
+native USB 2.0 HS PHY, carrier USB-A plug or the H2 port on a bare board)
+is retired — the firmware and component tree no longer carry it. P1 is the
+C6 UART download header, not USB.
 
 ### Find The Serial Port
 
@@ -282,23 +281,22 @@ With the C6 slave already flashed and no optional peripherals attached, a health
 
 ```text
 pilot_kit: Pilot Kit Box (ESP32-P4) boot
-pilot_kit: IQ ring buffer ready: 524288 B (BYTEBUF)
-pilot_kit: USB host stack online — spawning SDR + DSP tasks
 rec_file: LittleFS mounted at /storage
 pk_sd: no microSD card at boot (will keep probing)
-sdr: USB client registered, waiting for RTL-SDR enumeration
 display: ST7701 DSI ready: logical 800x480 -> PPA 90 CW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 pilot_kit: IMU init failed (...) — PFD will run without attitude
 pfd: pfd_task running (G1000 landscape)
 transport: Identified slave [esp32c6]
 ble_gatt: advertising as "Pilot Kit Box-XXXXXX"
+pilot_kit: ADS-B link task spawned last (free internal heap: ...)
+dsp: adsb_link_task running (UART2 rx=46 tx=32 921600 baud)
 ```
 
 Optional hardware expectations:
 
 | Action | Expected result |
 |---|---|
-| Attach RTL-SDR to the carrier USB-A plug (bare board: H2 USB HS OTG) | `USB NEW_DEV`, `Tuned to 1090000000 Hz`, `Sampling at 2000000 S/s`, DSP stream around 2.00 MB/s |
+| Fit the v3/v4 expansion board (1090 MHz) | `dsp: adsb_link_task running (UART2 rx=46 tx=32 921600 baud)` at boot; with pulses reaching the RP2040, the 1 Hz `dsp: link rx/s ...` line appears and DIAG's aircraft list populates |
 | Power the integrated 4.3-inch display | 800x480 boot splash appears for at least 3 seconds, then the PFD renders |
 | Wire the BNO085 IMU | `imu: rpy = ... (acc=N ...)` logs update and PFD horizon follows motion |
 | Fit the GT-U8 module | GPS/BeiDou fix, satellite/SNR, antenna, and system-time rows update on DIAG |
@@ -366,12 +364,12 @@ FAT32 card, set `SETTINGS -> LOG` to `MICROSD`, and reboot. If the card
 is absent or cannot mount at boot, the writer falls back to LittleFS.
 Use DIAG to check card capacity and the active `LOG` backend.
 
-### RTL-SDR does not enumerate
+### No ADS-B traffic on the 1090 MHz link
 
-Check the USB HS connection (carrier USB-A plug, or the H2 OTG adapter on a
-bare board — never both at once) and the power budget. RTL-SDR dongles can
-draw a
-few hundred mA; use a powered hub or stable 5 V supply if necessary.
+The USB RTL-SDR path is retired (v1/v2-era; the firmware no longer
+enumerates dongles). 1090 MHz reception requires the v3/v4 expansion
+board: check that it is seated on the carrier's 2×20 header, and that
+DIAG's ADS-B link card is not showing `NO_LINK` / `PROTO_MISMATCH`.
 
 ## Daily Development Loop
 

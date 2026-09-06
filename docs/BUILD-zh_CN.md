@@ -5,7 +5,7 @@
 本文档面向**第一次接触 ESP32-P4 / Pilot Kit Box 项目**的开发者，从零开始一步步带你完成：
 
 1. 安装编译环境 (ESP-IDF v6.0.1)
-2. 拉取源码 (含 git submodule)
+2. 拉取源码
 3. 配置 + 编译固件
 4. 通过 H1 `USB TO UART` 烧录到 Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3
 5. 第一次（可选）烧录板载 ESP32-C6 协处理器的 esp_hosted slave 固件，启用蓝牙
@@ -28,8 +28,7 @@
 
 | 选配硬件 | 用途 | 对应功能 |
 |----------|------|-------------|
-| RTL-SDR FC0013 USB dongle | 1090 MHz ADS-B 接收，**适用于 v1/v2 载板或裸板方案**；当前推荐 FC0013，主要因为成本低。**v4 扩展板方案不需要**——它自带 1090 MHz 接收链 | ADS-B 数据链路 |
-| USB-C OTG 转接头或有源 USB Hub | 仅裸板需要：把 H2 原生 USB HS Type-C 转成 USB-A 母座接 RTL-SDR。Pilot Kit 载板自带 USB-A 插头（走 J3-27/25），不需要转接头 | ADS-B USB 数据链路 |
+| RTL-SDR FC0013 USB dongle | （已退役路径，仅 v1/v2 载板存量用户）1090 MHz ADS-B 接收；**当前固件已不支持**——v3/v4 扩展板自带 1090 MHz 接收链与 RP2040 解码 | ADS-B 数据链路（历史） |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |
 
@@ -103,21 +102,16 @@ ESP-IDF v6.0.1
 # 选一个你喜欢的目录
 cd ~/repos
 
-# clone 主仓库 + 拉子模块（重要：esp32-rtl-sdr 是 submodule！）
-git clone --recursive https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4.git
+git clone https://github.com/naizhao/Pilot-Kit-Box-ESP32-P4.git
 cd Pilot-Kit-Box-ESP32-P4
-```
-
-如果你已经 clone 过但忘了 `--recursive`，补一句：
-
-```bash
-cd Pilot-Kit-Box-ESP32-P4
-git submodule update --init --recursive
 ```
 
 ### 子模块说明
 
-`firmware/components/esp32-rtl-sdr/` 是一个独立的 git submodule，指向 [`naizhao/esp32-rtl-sdr`](https://github.com/naizhao/esp32-rtl-sdr) 的 `feat/p4-async-iq-stream` 分支。它包含我们 patch 过的 librtlsdr 异步 IO 实现。`xtrsdr` 是参考库不入仓库（在 `.gitignore` 里）。
+仓库曾经把 RTL-SDR 驱动（`firmware/components/esp32-rtl-sdr/`，v1/v2 载板
+USB 数据路径）作为 submodule 管理；该路径已退役，子模块已随退役代码一并
+删除。现在仓库**没有任何 submodule**，直接 `git clone` 即可，不需要
+`--recursive`。
 
 ### 目录结构速览
 
@@ -138,9 +132,7 @@ Pilot-Kit-Box-ESP32-P4/
 │   ├── sdkconfig.defaults              ← 默认配置（项目级）
 │   ├── partitions.csv                  ← 自定义分区表
 │   ├── main/                           ← 应用层源码
-│   └── components/
-│       ├── esp32-rtl-sdr/              ← submodule
-│       └── xtrsdr/                     ← gitignored
+│   └── components/                     ← （原 esp32-rtl-sdr submodule 已随退役路径删除）
 └── README.md
 ```
 
@@ -326,7 +318,6 @@ sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not 
   in range [v3.1 - v3.99] (this chip is revision v1.3).
   ```
 - `CONFIG_BT_ENABLED=y` + `CONFIG_BT_CONTROLLER_DISABLED=y` + ESP_HOSTED SDIO 引脚 — BLE 走 C6 协处理器
-- `CONFIG_USB_HOST_HUBS_SUPPORTED=y` — RTL-SDR 通过 USB hub 也能识别
 
 ### 想改配置？
 
@@ -380,9 +371,10 @@ pilot_kit_box.bin binary size 0x2c93b0 bytes. Smallest app partition is 0xc00000
 把 USB-C 数据线一端接 H1、也就是丝印为 `USB TO UART` 的 Type-C 口，
 另一端接电脑。
 
-> H1 走 CH343P USB-UART 桥。RTL-SDR 走 P4 原生 USB 2.0 HS：装上 Pilot Kit
-> 载板时插载板的 USB-A（J3-27/25），H2 保持空置；裸板时改插丝印为 `USB`
-> 的 H2 Type-C（同一组网络，二者只能占一个）。P1 是 C6 下载排针，不是 USB。
+> H1 走 CH343P USB-UART 桥。1090 MHz 数据链路走 UART 而不是 USB：v3/v4
+> 扩展板的 RP2040 解码后经 UART2（P4 RX=46 / TX=32，921600 波特）送入 P4。
+> 旧的 RTL-SDR USB 路径（P4 原生 USB 2.0 HS）已退役，固件不再支持。
+> P1 是 C6 下载排针，不是 USB。
 
 ### 找串口
 
@@ -490,10 +482,6 @@ idf.py -p <PORT> erase-flash
 ```
 I (1559) pilot_kit:   Pilot Kit Box (ESP32-P4) boot
 I (1564) pilot_kit:   Free internal heap at boot: 350371 B
-I (1569) pilot_kit:   IQ ring buffer ready: 524288 B (BYTEBUF)
-I (1575) pilot_kit:   Installing USB host stack on peripheral_map=0x1
-I (1611) pilot_kit:   USB host stack installed
-I (1611) pilot_kit:   USB host stack online — spawning SDR + DSP tasks
 I (1612) record_sink: registered sink 'uart' (1 total)
 I (1615) record_sink: registered sink 'ble_raw' (2 total)
 I (1620) pk_sd:       no microSD card at boot (will keep probing)      ← 没插卡时正常
@@ -501,8 +489,7 @@ I (3236) rec_file:    LittleFS mounted at /storage: 32/10240 KiB used   ← 第�
 I (3470) record_sink: registered sink 'file_littlefs' (3 total)
 I (3472) rec_file:    logging ADS-B to /storage/pilot_kit_ts_1.txt (rotate every 1024 KiB, keep 12 files)
 I (3474) pilot_kit:   ADS-B sinks ready (UART + file at /storage)
-I (3480) sdr:         USB client registered, waiting for RTL-SDR enumeration
-I (3486) dsp:         dsp_task running (dump1090-derived edge decode)
+I (3486) dsp:         adsb_link_task running (UART2 rx=46 tx=32 921600 baud)   ← 1090 链路 = 扩展板 RP2040 UART
 I (3617) display:     ST7701 DSI ready: logical 800x480 -> PPA 90 CW -> native 480x800, 2 DPI buffers, app framebuffer 750 KiB PSRAM
 E (4401) imu:         enable_rotation_vector: ESP_ERR_INVALID_RESPONSE         ← 预期（没接 BNO085）
 W (4402) pilot_kit:   IMU init failed (ESP_ERR_INVALID_RESPONSE) — PFD will run without attitude
@@ -515,9 +502,8 @@ I (4530) ble_gatt:    GDL90 emitter task running
 I (4540) ble_gatt:    BLE address 8c:fd:49:0b:5a:8a type=0
 I (4550) ble_gatt:    advertising as "Pilot Kit Box-0B5A8A"
 I (4560) main_task:   Returned from app_main()
-I (4544) dsp:         stream 0.00 MB/s | msgs/s 0 (...) | aircraft 0           ← 1Hz dashboard 心跳
 I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    ← 1Hz FPS 心跳
-... (PFD + DSP 心跳每秒一行持续输出)
+... (PFD FPS 心跳每秒一行；`dsp: link rx/s ...` 1Hz 链路心跳只在有帧进来时出现，空台架保持安静)
 ```
 
 **关键确认点**：
@@ -528,10 +514,9 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 | `Found 32MB PSRAM device` + `Speed: 200MHz` | PSRAM 32 MB 起来了（之前在 1.5 节里看到）|
 | `Reserving pool of 128K of internal memory for DMA/internal allocations` | DMA 内部内存预留 OK |
 | `LittleFS mounted` | 存储分区 OK |
-| `USB host stack online` | USB host 就绪（等 RTL-SDR） |
+| `adsb_link_task running (UART2 rx=46 tx=32 921600 baud)` | 1090 MHz RP2040 UART 链路任务就绪 |
 | `Returned from app_main()` | 所有初始化完成 |
 | `PFD 30+ FPS` 周期出现 | 显示渲染管线 OK |
-| `dsp: stream 0.00 MB/s` 1Hz 重复 | DSP task 运行中 |
 | `IMU init failed` | 预期（没接 BNO085） |
 | `advertising as "Pilot Kit Box-XXXXXX"` | BLE 起来了，手机能扫到（XXXXXX = 本机 C6 MAC 后 3 字节） |
 
@@ -541,7 +526,7 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 
 | 操作 | 预期 |
 |------|------|
-| RTL-SDR dongle 插载板 USB-A（裸板则经 H2 USB-C OTG 转接头或 Hub） | `sdr: USB NEW_DEV at addr 1` → `Tuned to 1090000000 Hz` → `Sampling at 2000000 S/s` → `rtlsdr_async: starting async stream` → `dsp: stream 2.00 MB/s` |
+| 装 v3/v4 扩展板（1090 MHz） | `dsp: adsb_link_task running (UART2 rx=46 tx=32 921600 baud)`；有脉冲进来后出现 1Hz `dsp: link rx/s ...` 行，DIAG 飞机列表开始出现周边目标 |
 | 给 4.3 寸一体板上电 | 800×480 全屏显示 Pilot Kit boot splash，最少停留约 3 秒 → 显示 PFD |
 | 装 GT-U8 GPS | DIAG 更新 GPS/北斗卫星、SNR、天线状态和系统时间；定位后 TRAFFIC 获得本机位置 |
 | 装 BMP388 | PFD / DIAG 显示压力、QNH 修正高度和升降率 |
@@ -711,9 +696,11 @@ idf.py -p <PORT> flash
 查看 MicroSD 容量和当前 `LOG` 后端。若要格式化卡，先把 LOG 切回 Flash
 并重启，再在 `FORMAT SD` 行 5 秒内按两次 UP 或 DOWN 确认。
 
-### `USB device descriptor returned errors` / RTL-SDR 上电没识别
+### 1090 MHz 链路没有 ADS-B 目标
 
-USB 供电不足。RTL-SDR 棒功耗 ~300 mA，电脑 USB 口供电有时不够带 P4 板 + dongle。试一根 5V/2A 的 USB-C 适配器从板子的 USB-C 口供电，电脑端接 4-pin 上的 OTG 数据。
+RTL-SDR USB 路径已退役（仅 v1/v2 历史载板，当前固件不再枚举 dongle）。
+1090 MHz 接收需要 v3/v4 扩展板：确认扩展板已插好在载板 2×20 排母上，
+DIAG 的 ADS-B 链路卡片没有显示 `NO_LINK` / `PROTO_MISMATCH`。
 
 ### 编译时 `idf.py: command not found`
 
@@ -786,7 +773,6 @@ idf.py -p <PORT> monitor
 ## 11. 参与贡献
 
 - 改了 `firmware/` 下任何 `.c` / `.h` / `CMakeLists.txt` / `sdkconfig.defaults`：直接发 PR
-- 改了 `firmware/components/esp32-rtl-sdr/`：这是 submodule，请直接对 [naizhao/esp32-rtl-sdr](https://github.com/naizhao/esp32-rtl-sdr) 的 `feat/p4-async-iq-stream` 分支发 PR，然后在本仓库 bump submodule SHA
 - 加了新 doc：放 `docs/` 下，并在本文档 + `README.md` 加链接
 - 加了新硬件支持：更新 `docs/hardware/board_pinout.md` + 创建对应章节
 

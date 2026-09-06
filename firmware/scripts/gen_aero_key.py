@@ -121,4 +121,10 @@ static inline void pk_aero_key_assemble(uint8_t out[16])
 ''')
 
 tag = "⚠️ 占位密钥（外部构建会走这条路）" if is_placeholder else f"指纹 {key[:4]}…{key[-4:]}"
-print(f"✓ {OUT.relative_to(REPO)}  ←  {src}   {tag}")
+# 日志行 best-effort：OUT 可能是相对路径或仓库外路径，relative_to 会抛
+# ValueError——文件已写完，不能让日志把整体退出码带崩（gpt-5.6-sol）。
+try:
+    shown = OUT.resolve().relative_to(REPO)
+except ValueError:
+    shown = OUT
+print(f"✓ {shown}  ←  {src}   {tag}")

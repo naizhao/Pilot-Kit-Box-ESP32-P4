@@ -25,7 +25,7 @@ flowchart LR
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BeiDou\nUART1 P4 TX=49 P4 RX=51\nRMC time; PPS(50) not consumed"]
+        GPS["GT-U8 GPS/BeiDou\nUART1 P4 TX=49 P4 RX=51\nRMC time; PPS(50) consumed (time-lock status)"]
         BARO["BMP388\nI²C0 addr 0x76\npolled; INT=31 unused"]
         BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\npolled; RST=28 INT=34"]
         SCREEN["ST7701 MIPI-DSI\nnative 480×800\nPPA → 800×480\nRST=27 BL=26"]
@@ -167,9 +167,9 @@ flowchart LR
 
 | Region | Size | Owner |
 |--------|------|-------|
-| IQ ring buffer | 512 KiB | `g_iq_ringbuf` (bulk IQ buffering, PSRAM-backed under current malloc threshold) |
-| URB pool       | ~96 KiB | 15 × 6400 B in-flight USB transfers |
-| DSP working set| ~12 KiB | 8 KiB IQ buf + 4 KiB magnitude buf |
+| IQ ring buffer | 512 KiB | **RETIRED (v1/v2 USB RTL-SDR era):** `g_iq_ringbuf` — removed with the retired receive path; PSRAM now backs map tiles/fonts/recording and the other working sets below |
+| URB pool       | ~96 KiB | **RETIRED:** 15 × 6400 B in-flight USB transfers |
+| DSP working set| ~12 KiB | **RETIRED:** 8 KiB IQ buf + 4 KiB magnitude buf |
 | CPR table      | ~5 KiB  | 64 aircraft slots in `cpr_decode.c` |
 | aircraft_state | ~7 KiB  | 64 slots in `aircraft_state.c` (callsign + alt + position + velocity) |
 | Application framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped in PSRAM |

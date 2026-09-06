@@ -27,8 +27,9 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # The ESP32-P4NRW32 chip on the Waveshare board ships with 32 MiB of
 # in-package HEX (16-line) PSRAM. ESP-IDF defaults to PSRAM disabled, so
 # without these knobs the firmware only has ~455 KiB of internal SRAM —
-# not enough to bring up ESP-Hosted's SDIO mempool, NimBLE, the IQ ring
-# buffer and the LCD framebuffer at the same time.
+# not enough to bring up ESP-Hosted's SDIO mempool, NimBLE, the LCD
+# framebuffer and the app's larger working sets (map tiles, fonts,
+# recording buffers) at the same time.
 #
 # We:
 #   - turn on PSRAM in HEX mode at 200 MHz (v1.x silicon doesn't allow

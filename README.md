@@ -84,7 +84,7 @@ Pilot Kit Box is designed to give pilots, student pilots, and aviation enthusias
 
 Pilot Kit Box 想解决的是这个问题：
 
-- **低成本**：用 ESP32-P4、RTL-SDR、屏幕、IMU 和常见电源模块，做出一个普通用户也能负担的飞行数据盒子。
+- **低成本**：用 ESP32-P4、v3/v4 扩展板（自带 1090 接收链，无需 RTL-SDR dongle）、屏幕、IMU 和常见电源模块，做出一个普通用户也能负担的飞行数据盒子。
 - **通用性**：它不是只能配合某一个 App 使用的封闭硬件；它可以独立使用，也可以面向标准航空数据接口继续扩展。
 - **与 Pilot Kit 紧密结合**：Pilot Kit 可以充分利用 Box 采集的数据，提供更完整的飞行记录、回放、分析和分享能力。
 - **本地记录**：飞行数据可以在设备本地记录，为飞行复盘和个人飞行档案提供基础。
@@ -96,7 +96,7 @@ Portable ADS-B receivers and flight data boxes already exist, including Stratux,
 
 Pilot Kit Box focuses on:
 
-- **Low cost**: ESP32-P4, RTL-SDR, display, IMU, and common power modules keep the hardware approachable.
+- **Low cost**: ESP32-P4, the v3/v4 expansion board (its own 1090 MHz receive chain — no RTL-SDR dongle), display, IMU, and common power modules keep the hardware approachable.
 - **General-purpose use**: it is not locked to one app; it can run on its own and already speaks standard aviation data interfaces (GDL90).
 - **Tight Pilot Kit integration**: Pilot Kit can use Box data for richer flight records, replay, analysis, and sharing.
 - **Local recording**: flight data can be recorded on the device for review and personal archives.
@@ -231,18 +231,21 @@ board. Legacy EasyEDA sources:
 |---|---|
 | <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.0, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.0, bottom side" width="420"> |
 
-上面「必备硬件」里的 RTL-SDR dongle、BNO085、GT-U8 和 BMP388 四个分立模块，
-正在被一块**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
-把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，不再需要
-RTL-SDR dongle**。工程、文档与制造包在
+上面「必备硬件」里的 BNO085、GT-U8 和 BMP388 三个分立模块，正在被一块
+**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
+把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，
+不再需要 RTL-SDR dongle**（该 USB 路径已随 v1/v2 载板退役，固件与组件树
+均不再包含）。工程、文档与制造包在
 [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)（该目录的
 [README](hardware/expansion-board-v4/README.md) 是双语的）。
 
-The four discrete modules listed under Required Hardware above (RTL-SDR dongle,
-BNO085, GT-U8, BMP388) are being replaced by a single **integrated expansion
+The three discrete modules listed under Required Hardware above (BNO085,
+GT-U8, BMP388) are being replaced by a single **integrated expansion
 board**. It stacks onto the Waveshare carrier's 2×20 header as a HAT and folds
 the receive chains, sensors, and power into one 6-layer PCB — including its own
-**1090 MHz receive chain, so no RTL-SDR dongle is needed**.
+**1090 MHz receive chain, so no RTL-SDR dongle is needed** (that USB path is
+retired along with the v1/v2 carriers; neither the firmware nor the component
+tree still carries it).
 
 | 项目 | Item | 规格 / Specification |
 |---|---|---|
