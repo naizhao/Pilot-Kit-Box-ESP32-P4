@@ -1,6 +1,5 @@
 #include "gps.h"
 #include "gps_nmea.h"
-#include <stdatomic.h>
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -29,7 +28,9 @@ static const char *TAG = "gps";
 
 #define GPS_PPS_PIN  50          /* GNSS 1PPS → P4，J3 Pin 34（board_pinout.md §10 GPS 表） */
 #define GPS_PPS_LOCK_US 2000000LL /* 时间锁定窗口：PPS 距今 <2 s 视为在锁 */
-#define GPS_NMEA_LOCK_US 5000000LL /* 时间锁定还要求 NMEA 距今 <5 s（UART 数据面活着）*/
+#define GPS_NMEA_LOCK_US 5000000LL /* 时间锁定还要求**有效 RMC** 距今 <5 s
+                                    * （updated_us；任何完整行都算的 last_nmea_us
+                                    * 只用于诊断「模块在不在」）*/
 
 static pk_gps_state_t    s_gps;
 static SemaphoreHandle_t s_lock;
@@ -44,18 +45,21 @@ static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
  * ISR 只做两件事：计数 + 打时间戳（esp_timer_get_time() 纯读硬件计时器，
  * IRAM 内、ISR 安全）。fix 与否、2 s 窗口判定全部放 gps_task 的 1 Hz 快照
  * 路径——见 gps.h 里 time_locked 的语义注释。 */
-/* C11 原子（2026-09 复审）：volatile 换 atomic——给 seqlock-lite 快照补上
- * 正式的 happens-before。ISR 侧先写时间戳、再以 release 自增计数（计数是
- * 序标：读者 acquire 读到新计数时，它前面的时间戳必然已可见）；读者侧
- * acquire 读。原子量在 RISC-V ISR 内安全（同 pk_i2c0_bus.c 的用法）。 */
-static atomic_uint s_pps_count;          /* PPS 上升沿累计 */
-static _Atomic uint64_t s_last_pps_us;   /* 最近上升沿时间戳；0 = 还没见过沿 */
+/* ISR↔task 配对用 spinlock 临界区（2026-09 审计三轮）：原先的
+ * seqlock-lite「读计数→读戳→复读计数」在 RVWMO 下跨核并不可靠
+ * （计数与戳没有真正的全序）。portMUX 临界区是 ESP-IDF 的标准做法：
+ * (计数, 时间戳) 对 ISR 原子，读者拿到的必然是同一瞬间的自洽对，
+ * 不再有重试/作废路径。临界区只有几条赋值，纳秒级。 */
+static portMUX_TYPE s_pps_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_pps_count;          /* PPS 上升沿累计；s_pps_mux 保护 */
+static uint64_t s_last_pps_us;        /* 最近上升沿时间戳；0 = 还没见过沿；s_pps_mux 保护 */
 
 static void IRAM_ATTR pps_isr(void *arg){
     (void)arg;
-    atomic_store_explicit(&s_last_pps_us, (uint64_t)esp_timer_get_time(),
-                          memory_order_relaxed);
-    atomic_fetch_add_explicit(&s_pps_count, 1, memory_order_release);
+    portENTER_CRITICAL_FROM_ISR(&s_pps_mux);
+    s_last_pps_us = (uint64_t)esp_timer_get_time();
+    s_pps_count++;
+    portEXIT_CRITICAL_FROM_ISR(&s_pps_mux);
 }
 
 bool pk_gps_get(pk_gps_state_t *out){
@@ -258,35 +262,27 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
-            /* PPS/NMEA 快照（seqlock-lite）：ISR 以 release 顺序「先写戳、
-             * 后自增计数」，计数即序标——acquire 读计数 → 读戳 → 复读计数；
-             * 计数变了重试一次，仍在变则本拍作废。作废 = **两个 PPS 字段都
-             * 不提交**，沿用上一拍已提交的值：若只把时间戳清 0 而留下新计数，
-             * 会造出「count>0 且 last_pps_us==0」的矛盾快照，违反 gps.h
-             * 「last_pps_us==0 = 开机没见过沿」的语义（2026-09 复审修正）。
-             * 作废只损失一拍新鲜度，time_locked 下个 1 Hz 拍自愈。 */
-            uint32_t pps_n  = atomic_load_explicit(&s_pps_count, memory_order_acquire);
-            uint64_t pps_us = atomic_load_explicit(&s_last_pps_us, memory_order_acquire);
-            if (pps_n != atomic_load_explicit(&s_pps_count, memory_order_acquire)) {
-                pps_n  = atomic_load_explicit(&s_pps_count, memory_order_acquire);
-                pps_us = atomic_load_explicit(&s_last_pps_us, memory_order_acquire);
-            }
-            const bool pps_stable =
-                (pps_n == atomic_load_explicit(&s_pps_count, memory_order_acquire));
+            /* PPS/NMEA 快照：spinlock 临界区让 (计数, 时间戳) 对 ISR 原子
+             * （2026-09 审计三轮），每个快照都是自洽对——不再有 seqlock
+             * 的重试/作废路径，s_gps 两字段总是成对推进。 */
+            uint32_t pps_n;
+            uint64_t pps_us;
+            portENTER_CRITICAL(&s_pps_mux);
+            pps_n  = s_pps_count;
+            pps_us = s_last_pps_us;
+            portEXIT_CRITICAL(&s_pps_mux);
 
             take();
-            if (pps_stable) {
-                s_gps.pps_count   = pps_n;
-                s_gps.last_pps_us = (int64_t)pps_us;
-            }
-            /* 时间锁定 = fix 有效 + PPS <2 s + NMEA <5 s（gps.h 语义注释）。
-             * NMEA 新鲜度挡住「UART 已死、PPS 还在跳」的假锁定（2026-09
-             * 审计 P2）。基于提交后的 last_pps_us 判定：作废拍自然沿用上
-             * 一拍结果，不误报失锁。 */
+            s_gps.pps_count   = pps_n;
+            s_gps.last_pps_us = (int64_t)pps_us;
+            /* 时间锁定 = fix 有效 + 有效 RMC <5 s + PPS <2 s（gps.h 语义）。
+             * NMEA 新鲜度项用 updated_us（只在**有效** RMC 落地时刷新）：
+             * last_nmea_us 连坏 checksum 的行也算「在讲话」，挡不住
+             * 「UART 半死、只剩乱码」的假锁定（2026-09 审计 P2）。 */
             s_gps.time_locked = s_gps.have_fix && s_gps.last_pps_us != 0 &&
                                 (now - s_gps.last_pps_us) < GPS_PPS_LOCK_US &&
-                                s_gps.last_nmea_us != 0 &&
-                                (now - s_gps.last_nmea_us) < GPS_NMEA_LOCK_US;
+                                s_gps.updated_us != 0 &&
+                                (now - s_gps.updated_us) < GPS_NMEA_LOCK_US;
             give();
             /* 注意：生产链路的时间可信度（pk_clock_is_synced()，消费方
              * pk_own_sampler/pk_rec_ingest）仍是「校过一次就永久 latched」，
