@@ -44,7 +44,11 @@ static int level_at(const uint32_t *t, int n, int *cursor, uint32_t x)
 static void burst_emit(modes_edge_t *m)
 {
     if (m->burst_n < 8) {                    /* preamble 至少 8 个边沿 */
-        if (m->burst_n) { m->bursts++; m->dropped_noise += (uint32_t)m->burst_n; }
+        if (m->burst_n) {
+            atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&m->dropped_noise, (uint32_t)m->burst_n,
+                                      memory_order_relaxed);
+        }
         burst_reset(m);
         return;
     }
@@ -95,7 +99,7 @@ static void burst_emit(modes_edge_t *m)
             }
         }
         if (!widths_ok) continue;
-        m->preamble_hits++;
+        atomic_fetch_add_explicit(&m->preamble_hits, 1, memory_order_relaxed);
         tried++;
 
         /* 数据：逐位在两个半位中心采样电平，采样时轴以本候选的上升沿
@@ -127,15 +131,18 @@ static void burst_emit(modes_edge_t *m)
             frame_ok = 1;
             break;
         }
-        m->dropped_decode++;              /* 本候选判负，试下一个 */
+        atomic_fetch_add_explicit(&m->dropped_decode, 1,
+                                  memory_order_relaxed); /* 本候选判负，试下一个 */
     }
     if (!frame_ok) {
         /* 保留既有 dropped_noise 双口径（audit round 4 不改账，仅把候选级
          * 失败分账到 dropped_decode）：从未出现合格候选 = 纯噪声 burst，
          * 按边沿数记（旧路径 1）；有候选但全部解码失败，按 burst 记 1
          * （旧路径 2）。 */
-        m->bursts++;
-        m->dropped_noise += tried ? 1u : (uint32_t)m->burst_n;
+        atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&m->dropped_noise,
+                                  tried ? 1u : (uint32_t)m->burst_n,
+                                  memory_order_relaxed);
         burst_reset(m);
         return;
     }
@@ -145,10 +152,13 @@ static void burst_emit(modes_edge_t *m)
     uint64_t start = m->burst_start_tick;
     for (int i = 0; i < pre; i++) start += m->burst[i];
     f.start_tick = start;
-    if (want == 56) m->frames_56++; else m->frames_112++;
+    if (want == 56)
+        atomic_fetch_add_explicit(&m->frames_56, 1, memory_order_relaxed);
+    else
+        atomic_fetch_add_explicit(&m->frames_112, 1, memory_order_relaxed);
     if (m->cb) m->cb(&f, m->user);
 
-    m->bursts++;
+    atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
     burst_reset(m);
 }
 
@@ -156,6 +166,15 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user)
 {
     memset(m, 0, sizeof(*m));
+    /* 统计字段是 C11 原子（modes_edge.h）：memset 后逐字段显式清零，
+     * 定义良好的初始化（不依赖"全零位模式 = 0"的实现细节）。 */
+    atomic_store_explicit(&m->preamble_hits, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->frames_56, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->frames_112, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->dropped_noise, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->dropped_decode, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->bursts, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->edge_overruns, 0, memory_order_relaxed);
     m->tick_hz = tick_hz;
     m->cb = cb;
     m->user = user;
@@ -177,7 +196,8 @@ void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n)
         if (m->burst_n < MODES_EDGE_MAX_EDGES) {
             m->burst[m->burst_n++] = d;
         } else {
-            m->edge_overruns++;
+            atomic_fetch_add_explicit(&m->edge_overruns, 1,
+                                      memory_order_relaxed);
             burst_emit(m);                    /* 缓冲满：按噪声帧处理 */
         }
     }

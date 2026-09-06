@@ -19,15 +19,25 @@
  * 写法，等价于 CTRL.RING_SEL/RING_SIZE 字段）；不用手工 al1_write_addr_trig
  * 掩码——那只是改一次起始地址再触发，并不构成硬件回卷。
  *
- * 单调生产位置（audit round 4，单写者重设计）：生产位置不再由 CPU 采样
- * 拼接（s_blocks 先读 + TRANS_COUNT 后读的两步采样在交接瞬间可拼出
- * "陈旧块数 × 新通道偏移"的假位置，producer_pos < s_read 无符号下溢 →
- * 假 overrun → s_read 回滚——本类竞态由设计消除）。改为：DMA 完成中断
- * 是 producer_pos 的**唯一写者**，每认领一次通道完成 +EDGE_CAP_RING_ITEMS
- * （两通道交替写同一环，一次完成 = 恰好一整环；交接瞬间两位置位按 2 计，
- * 同一块绝不双计）。producer_pos 单调不减、按 2^32 回卷；drain 以
- * acquire 读之，与 IRQ 的 release 累加配对。裁决算术全部收进 edge_cap.h
- * 的纯函数 edgecap_avail()（host 单测覆盖，见该头注释）。
+ * 单调生产位置（audit round 4/5，单写者 + 细粒度发布）：生产位置不再由
+ * CPU 采样拼接（s_blocks 先读 + TRANS_COUNT 后读的两步采样在交接瞬间可
+ * 拼出"陈旧块数 × 新通道偏移"的假位置，producer_pos < s_read 无符号下溢
+ * → 假 overrun → s_read 回滚——本类竞态由设计消除）。改为：DMA 完成中断
+ * 是**整环边界** producer_pos（atomic_uint）的唯一写者，每认领一次通道
+ * 完成 +EDGE_CAP_RING_ITEMS（两通道交替写同一环，一次完成=恰好一整环；
+ * 交接瞬间双位置位按 popcount 计 2，同一块绝不双计），release 发布给
+ * core1。整环粒度只是"已入环整块数"——小于一整环的突发（台架自检
+ * ~240 边沿）必须由 drain 再从**活跃通道**的 TRANS_COUNT 现场取环内
+ * 细粒度进度（RP2040 通道完成即把 TRANS_COUNT 清零、重触发时整环重载，
+ * 非 0 者即活跃；双 0 = 交接窗/完成块未被 IRQ 认领，视作满块——该整环
+ * 其实已完整入环，producer_pos 随后补账）。通道切换只发生在完成事件，
+ * 而完成事件的 IRQ 侧效果就是 producer_pos 的 release 累加，因此
+ * "读 boundary → 读 TRANS_COUNT → 重读 boundary"的重检环能闭合全部
+ * 撕裂采样：两次 boundary 读之间发生过完成就重试。活进度只增不减，
+ * avail = live − s_read 在滞后 <2^31 的合同内不下溢（wrap/溢出算术见
+ * edge_cap.h 的纯函数 edgecap_avail()，host 单测覆盖）。写穿在 drain
+ * 内部直接重同步（resync 标志裁决，目标可为 0），对调用方只暴露有界
+ * 新数据量与 s_overruns 计数（core0 health 读）。
  */
 #include <stdatomic.h>
 #include "pico/stdlib.h"
@@ -115,10 +125,13 @@ void edge_cap_start(void)
 }
 
 /*
- * drain（core1 独占）：以 acquire 读生产位置（与 IRQ 的 release 累加
- * 配对，拿到的是"已完整入环"的样本数），其余裁决交给 edgecap_avail()
- * 纯函数（edge_cap.h；host 单测覆盖正常前进/exact-lap/写穿重同步/u32
- * 回卷无下溢）。数据下标 = s_read 的环内掩码。
+ * drain（core1 独占）：整环边界以 acquire 读（与 IRQ 的 release 累加
+ * 配对），环内细粒度进度自活跃通道 TRANS_COUNT 现场取，boundary 重检
+ * 闭合完成瞬间的撕裂采样（重试次数以两次边界读之间"恰好发生一次完成"
+ * 为限——完成需 2048 个 DREQ 边沿，采样窗口只有几拍，实际至多一两次）。
+ * 数据下标 = s_read 的环内掩码；裁决算术见 edge_cap.h 纯函数
+ * edgecap_avail()（host 单测覆盖正常前进/细粒度发布/exact-lap/写穿
+ * 重同步/重同步目标为 0/u64 防溢出回卷）。
  */
 size_t edge_cap_drain(uint32_t *out, size_t cap)
 {
@@ -131,12 +144,26 @@ size_t edge_cap_drain(uint32_t *out, size_t cap)
         atomic_fetch_add_explicit(&s_overruns, 1, memory_order_relaxed);
     }
 
-    uint32_t producer = atomic_load_explicit(&s_producer_pos,
-                                             memory_order_acquire);
-    edgecap_avail_t a = edgecap_avail(producer, s_read, EDGE_CAP_RING_ITEMS);
-    if (a.overrun_resync_to) {                    /* 被写穿：跳到头重同步 */
+    edgecap_avail_t a;
+    for (;;) {
+        uint32_t boundary = atomic_load_explicit(&s_producer_pos,
+                                                 memory_order_acquire);
+        /* 活跃通道 = TRANS_COUNT 非 0 者；非 0 的至多一个（完成即清零、
+         * 重触发整环重载）。tc0 非零即活跃，否则取 tc1（可为 0=满块）。 */
+        uint32_t tc0 = dma_channel_hw_addr(s_dma[0])->transfer_count;
+        uint32_t tc1 = dma_channel_hw_addr(s_dma[1])->transfer_count;
+        if (atomic_load_explicit(&s_producer_pos,
+                                 memory_order_acquire) != boundary)
+            continue;                         /* 完成瞬间重试：通道切换只发生在完成时 */
+        uint32_t remaining = tc0 ? tc0 : tc1;
+        uint32_t progress = EDGE_CAP_RING_ITEMS - (remaining ? remaining : 0);
+        a = edgecap_avail(boundary, progress, s_read, EDGE_CAP_RING_ITEMS);
+        break;
+    }
+
+    if (a.resync) {                           /* 被写穿：drain 内部重同步 */
         atomic_fetch_add_explicit(&s_overruns, 1, memory_order_relaxed);
-        s_read = a.overrun_resync_to;
+        s_read = a.overrun_resync_to;         /* 丢旧，保留最新一环（目标可为 0）*/
     }
     size_t n = a.avail < cap ? (size_t)a.avail : cap;
     for (size_t i = 0; i < n; i++)

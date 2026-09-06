@@ -13,10 +13,13 @@
  * 高→低转换 2 拍无递减。相邻上升沿检测之间 cycles = 2×(PRELOAD − raw) + 6，
  * 1 tick = 2 SM 周期 → ticks = (PRELOAD − raw) + 3。
  *
- * edgecap_avail() 覆盖（DMA IRQ 单写者合同的消费端算术，IRQ 本体无法在
- * host 运行——中断侧合同见 edge_cap.h，handler 只做掩码/清理/原子累加）：
- * 正常前进、exact-lap 不误报写穿、写穿重同步、producer_pos 回卷后 u32
- * 模差无下溢。
+ * edgecap_avail() 覆盖（audit round 4/5 Fix 1 回归；IRQ 本体无法在
+ * host 运行——中断侧合同见 edge_cap.h，handler 只做掩码/清理/原子
+ * 累加，环内细粒度进度由 drain 重检闭环）：正常前进、**细粒度发布**
+ * （<一整环的突发必须立即可见——整环粒度下 ~240 边沿的台架自检会
+ * 永远不可见）、块内进度、exact-lap 不误报写穿、写穿重同步（含
+ * **重同步目标恰为 0** 的哨兵修复）、u64 加法防 boundary+progress
+ * 溢出 u32、producer_pos 回卷后 u32 模差无下溢。
  */
 #include "edge_cap.h"
 #include <stdio.h>
@@ -73,61 +76,116 @@ int main(void)
     CHECK(edgecap_raw_to_ticks(0u) == 0xFFFFFFE3u, "saturated value\n");
     CHECK(edgecap_raw_to_ticks(0u) > 6250000u, "saturated vs 100us\n");
 
-    /* ── edgecap_avail()（audit round 4 Fix 1 回归）────────────────────
+    /* ── edgecap_avail()（audit round 4/5 Fix 1 回归）──────────────────
      * 环大小用真实值 EDGE_CAP_RING_ITEMS；算术对任意 ring_items 成立。 */
 
-    /* 7. 正常前进：producer 领先未满一环 → 原样给出 avail，无 overrun。 */
+    /* 7. 正常前进（整环边界 + 块内进度拼出的滞后未满一环）→ 原样给出
+     *    avail，无 overrun。 */
     {
-        edgecap_avail_t a = edgecap_avail(1000u, 0u, EDGE_CAP_RING_ITEMS);
-        CHECK(a.avail == 1000u && a.overrun_resync_to == 0u, "normal %u/%u\n",
-              a.avail, a.overrun_resync_to);
+        edgecap_avail_t a = edgecap_avail(1000u, 0u, 0u, EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 1000u && a.resync == 0u, "normal %u/%u\n",
+              a.avail, a.resync);
     }
 
-    /* 8. 零滞后：producer == read → avail=0（旧行为：空转不报错）。 */
+    /* 8. 细粒度发布（audit round 5 Fix 1 核心）：boundary=0、活跃块内
+     *    已入环 240 个样本（台架自检量级）→ 立即可见 avail=240。整环
+     *    粒度方案下这批样本永远不可见（饥饿）。 */
     {
-        edgecap_avail_t a = edgecap_avail(4096u, 4096u, EDGE_CAP_RING_ITEMS);
-        CHECK(a.avail == 0u && a.overrun_resync_to == 0u, "zero-lag %u/%u\n",
-              a.avail, a.overrun_resync_to);
+        edgecap_avail_t a = edgecap_avail(0u, 240u, 0u, EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 240u && a.resync == 0u, "partial-burst %u/%u\n",
+              a.avail, a.resync);
     }
 
-    /* 9. exact-lap（旧 TRANS_COUNT 方案的盲区、race 的触发邻域）：
-     *    producer 恰好领先一整环 → avail == RING_ITEMS，**不得**误报
+    /* 9. 块内进度衔接在整环边界之后：已完成 1 环 + 活跃块内 100 → 2048+100。 */
+    {
+        edgecap_avail_t a = edgecap_avail(EDGE_CAP_RING_ITEMS, 100u,
+                                          EDGE_CAP_RING_ITEMS,
+                                          EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 100u && a.resync == 0u, "mid-block %u/%u\n",
+              a.avail, a.resync);
+    }
+
+    /* 10. 零滞后：live == read → avail=0（空转不报错）。 */
+    {
+        edgecap_avail_t a = edgecap_avail(4096u, 0u, 4096u,
+                                          EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 0u && a.resync == 0u, "zero-lag %u/%u\n",
+              a.avail, a.resync);
+    }
+
+    /* 11. exact-lap（旧 TRANS_COUNT 方案的盲区、race 的触发邻域）：
+     *    live 恰好领先一整环 → avail == RING_ITEMS，**不得**误报
      *    overrun（total > ring_items 为假）。 */
     {
-        edgecap_avail_t a = edgecap_avail(EDGE_CAP_RING_ITEMS, 0u,
+        edgecap_avail_t a = edgecap_avail(EDGE_CAP_RING_ITEMS, 0u, 0u,
                                           EDGE_CAP_RING_ITEMS);
         CHECK(a.avail == EDGE_CAP_RING_ITEMS, "exact-lap avail=%u\n", a.avail);
-        CHECK(a.overrun_resync_to == 0u, "exact-lap resync=%u\n",
-              a.overrun_resync_to);
+        CHECK(a.resync == 0u, "exact-lap resync=%u\n", a.resync);
     }
 
-    /* 10. 写穿：producer 领先超过一整环 → 重同步到 producer−ring_items
-     *     （保留最新一环），avail 封顶 ring_items。 */
+    /* 12. 写穿：live 领先超过一整环 → 置 resync 标志、重同步到
+     *    live−ring_items（保留最新一环），avail 封顶 ring_items。 */
     {
-        edgecap_avail_t a = edgecap_avail(3000u, 0u, EDGE_CAP_RING_ITEMS);
+        edgecap_avail_t a = edgecap_avail(3000u, 0u, 0u, EDGE_CAP_RING_ITEMS);
         CHECK(a.avail == EDGE_CAP_RING_ITEMS, "overrun avail=%u\n", a.avail);
+        CHECK(a.resync == 1u, "overrun resync flag=%u\n", a.resync);
         CHECK(a.overrun_resync_to == 3000u - EDGE_CAP_RING_ITEMS,
               "overrun resync=%u\n", a.overrun_resync_to);
     }
 
-    /* 11. 回卷无下溢（单写者合同的数学保证）：producer_pos 已按 2^32
-     *     回卷到 100，read_pos 停在回卷前的 0xFFFFFF00 → u32 模差必须
-     *     还原真实差 356，而不是无符号下溢的"巨可用量"。 */
+    /* 13. 重同步目标恰为 0（audit round 5 哨兵修复）：boundary=2048、
+     *    read=0xFFFFFFFF（回卷前 1 项）→ live=2048、模差 2049 > 2048，
+     *    重同步目标 = 2048−2048 = **0**。旧"非 0 即写穿"哨兵会把这个
+     *    合法目标漏判成"无写穿"；现在以 resync 标志裁决。 */
     {
-        edgecap_avail_t a = edgecap_avail(100u, 0xFFFFFF00u,
-                                          EDGE_CAP_RING_ITEMS);
-        CHECK(a.avail == 356u, "wrap avail=%u\n", a.avail);
-        CHECK(a.overrun_resync_to == 0u, "wrap resync=%u\n",
+        edgecap_avail_t a = edgecap_avail(EDGE_CAP_RING_ITEMS, 0u,
+                                          0xFFFFFFFFu, EDGE_CAP_RING_ITEMS);
+        CHECK(a.resync == 1u, "zero-target flag=%u\n", a.resync);
+        CHECK(a.overrun_resync_to == 0u, "zero-target=%u\n",
               a.overrun_resync_to);
+        CHECK(a.avail == EDGE_CAP_RING_ITEMS, "zero-target avail=%u\n",
+              a.avail);
     }
 
-    /* 12. 回卷 + 写穿叠加：read 在 0xFFFFF800、producer 回卷到 1000 →
-     *     真实差 3072 > 2048 → 重同步，且 resync 目标本身也允许落在
-     *     回卷后的低地址段。 */
+    /* 14. u64 域加法（audit round 5）：boundary=0xFFFFFF00（贴 2^32，
+     *    差 256 项回卷）+ progress=2048 → live 取模后 = 1792。read=0 →
+     *    模差 1792 < 2048 → 正常前进、无写穿；u64 中间量保证 boundary+
+     *    progress 的加法不丢进位、模差消费端拿到的是正确模值。 */
     {
-        edgecap_avail_t a = edgecap_avail(1000u, 0xFFFFF800u,
+        edgecap_avail_t a = edgecap_avail(0xFFFFFF00u, EDGE_CAP_RING_ITEMS,
+                                          0u, EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 1792u, "u64-live avail=%u\n", a.avail);
+        CHECK(a.resync == 0u, "u64-live resync=%u\n", a.resync);
+    }
+
+    /* 14b. 同一边界、read 停在回卷前 256 项处：live=1792 与 read=
+     *    0xFFFFFF00 的模差 = 1792+256 = 2048 = 恰好一环 → exact-lap
+     *    而非假写穿。 */
+    {
+        edgecap_avail_t a = edgecap_avail(0xFFFFFF00u, EDGE_CAP_RING_ITEMS,
+                                          0xFFFFFF00u, EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == EDGE_CAP_RING_ITEMS, "u64-lap avail=%u\n", a.avail);
+        CHECK(a.resync == 0u, "u64-lap resync=%u\n", a.resync);
+    }
+
+    /* 15. 回卷无下溢（单写者合同的数学保证）：live 回卷到 100，read_pos
+     *     停在回卷前的 0xFFFFFF00 → u32 模差必须还原真实差 356，而不是
+     *     无符号下溢的"巨可用量"。 */
+    {
+        edgecap_avail_t a = edgecap_avail(100u, 0u, 0xFFFFFF00u,
+                                          EDGE_CAP_RING_ITEMS);
+        CHECK(a.avail == 356u, "wrap avail=%u\n", a.avail);
+        CHECK(a.resync == 0u, "wrap resync=%u\n", a.resync);
+    }
+
+    /* 16. 回卷 + 写穿叠加：read 在 0xFFFFF800、live 回卷到 1000 → 真实差
+     *    3072 > 2048 → 重同步，且 resync 目标本身也允许落在回卷后的
+     *    低地址段（1000−2048 模 2^32 = 0xFFFFFB88）。 */
+    {
+        edgecap_avail_t a = edgecap_avail(1000u, 0u, 0xFFFFF800u,
                                           EDGE_CAP_RING_ITEMS);
         CHECK(a.avail == EDGE_CAP_RING_ITEMS, "wrap+ovr avail=%u\n", a.avail);
+        CHECK(a.resync == 1u, "wrap+ovr flag=%u\n", a.resync);
         CHECK(a.overrun_resync_to == 1000u - EDGE_CAP_RING_ITEMS,
               "wrap+ovr resync=%u\n", a.overrun_resync_to);
     }

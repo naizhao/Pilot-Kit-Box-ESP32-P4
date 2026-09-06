@@ -57,17 +57,17 @@ static void health_fill(uint32_t c[10])
 {
     uint32_t tx = 0, rx = 0, gaps = 0;
     p4_link_get_stats(&tx, &rx, &gaps);
-    /* s_edge 由 core1 独占写、core0 在此只读（单写者，与 P4 侧 dsp stats
-     * 注释同一口径）：32 位对齐读在 M0+ 上天然原子，__atomic_load_n 防的
-     * 是编译器跨调用缓存旧值；多字段快照可能跨字段撕裂，但各计数单调，
-     * 对 1 Hz 诊断无碍。 */
-    c[0] = __atomic_load_n(&s_edge.preamble_hits, __ATOMIC_RELAXED);
-    c[1] = __atomic_load_n(&s_edge.frames_56, __ATOMIC_RELAXED);
-    c[2] = __atomic_load_n(&s_edge.frames_112, __ATOMIC_RELAXED);
+    /* s_edge 统计字段为 C11 _Atomic（modes_edge.h，audit round 5 Fix 4）：
+     * core1 独占写、core0 在此只读（单写者，与 P4 侧 dsp stats 注释同一
+     * 口径），relaxed load 防编译器跨调用缓存旧值；多字段快照可能跨字段
+     * 撕裂，但各计数单调，对 1 Hz 诊断无碍。 */
+    c[0] = atomic_load_explicit(&s_edge.preamble_hits, memory_order_relaxed);
+    c[1] = atomic_load_explicit(&s_edge.frames_56, memory_order_relaxed);
+    c[2] = atomic_load_explicit(&s_edge.frames_112, memory_order_relaxed);
     c[3] = 0;                                  /* resyncs 预留 */
-    c[4] = __atomic_load_n(&s_edge.dropped_noise, __ATOMIC_RELAXED);
-    c[5] = edge_cap_overruns() + __atomic_load_n(&s_edge.edge_overruns,
-                                                 __ATOMIC_RELAXED);
+    c[4] = atomic_load_explicit(&s_edge.dropped_noise, memory_order_relaxed);
+    c[5] = edge_cap_overruns() +
+           atomic_load_explicit(&s_edge.edge_overruns, memory_order_relaxed);
     c[6] = tx;
     c[7] = atomic_load_explicit(&s_ring_drops, memory_order_relaxed);
     c[8] = rx;                                 c[9] = gaps;

@@ -22,6 +22,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #define MODES_EDGE_MAX_EDGES 256   /* 双沿：4 preamble + 2×112 数据 + 余量 */
 
@@ -44,13 +45,16 @@ typedef struct {
     uint32_t burst[MODES_EDGE_MAX_EDGES];
     int      burst_n;
     uint32_t burst_gap_ticks;      /* > 此值 = burst 结束（5µs）*/
-    /* 统计 */
-    uint32_t preamble_hits, frames_56, frames_112;
+    /* 统计（audit round 5 Fix 4：C11 原子——core1 解码任务独占写、
+     * core0 的 1 Hz health 只读；更新点全部 relaxed 原子加，读方
+     * relaxed load。逐字段独立采样，不做跨字段一致性承诺——各计数
+     * 单调，与 P4 侧 pk_dsp/adsb_link stats 同一口径）。结构布局不变。 */
+    atomic_uint preamble_hits, frames_56, frames_112;
     /* dropped_noise 按 burst 记账（该 burst 最终一无所获才 +1，每 burst
      * 至多一次）；dropped_decode 按候选记账：间距合格的 preamble 候选
      * 数据解码失败（两中心同电平）时 +1，随后滑到下一候选继续（audit
      * round 4）——同一 burst 两者可同时非零。 */
-    uint32_t dropped_noise, dropped_decode, bursts, edge_overruns;
+    atomic_uint dropped_noise, dropped_decode, bursts, edge_overruns;
 } modes_edge_t;
 
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
