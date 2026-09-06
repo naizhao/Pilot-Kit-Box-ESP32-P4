@@ -175,6 +175,7 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
     atomic_store_explicit(&m->dropped_decode, 0, memory_order_relaxed);
     atomic_store_explicit(&m->bursts, 0, memory_order_relaxed);
     atomic_store_explicit(&m->edge_overruns, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->time_degraded, false, memory_order_relaxed);
     m->tick_hz = tick_hz;
     m->cb = cb;
     m->user = user;
@@ -195,6 +196,21 @@ void modes_edge_reset(modes_edge_t *m)
 {
     m->burst_n = 0;                    /* 半截 burst 整体作废（含缓冲内容）*/
     m->burst_start_tick = 0;           /* burst_n==0 后喂入时必然重算 */
+}
+
+/*
+ * 丢沿退化（re-audit round-2 Fix 1）：sticky 置位、无清除路径——丢失段
+ * 时长不可知，时间基永久偏小是丢沿的固有结果（单调性保持），解码器
+ * 不自愈也不假装自愈。与 stats 同口径：core1 独占写，诊断只读。
+ */
+void modes_edge_mark_degraded(modes_edge_t *m)
+{
+    atomic_store_explicit(&m->time_degraded, true, memory_order_release);
+}
+
+bool modes_edge_time_degraded(const modes_edge_t *m)
+{
+    return atomic_load_explicit(&m->time_degraded, memory_order_acquire);
 }
 
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n)

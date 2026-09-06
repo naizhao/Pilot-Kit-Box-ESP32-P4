@@ -45,6 +45,7 @@ static void on_frame(const modes_edge_frame_t *f, void *user)
 static void core1_entry(void)
 {
     static uint32_t buf[256];
+    uint32_t last_overruns = 0;        /* edge_cap_start 清零先于本核启动 */
     while (true) {
         /* 每次至多取一块（edge_cap.h 合同）：断点只能表达在块边界，
          * 逐块取、块空让出。disc 块先 reset 再喂（断点两侧 delta 不拼接）；
@@ -56,6 +57,14 @@ static void core1_entry(void)
             size_t n = edge_cap_drain(buf, 256, &disc);
             if (!n)
                 break;
+            /* 丢沿如实上报（re-audit round-2 Fix 1）：RXSTALL 单沿丢失不
+             * 打 disc、时间基无自愈——disc（结构性断点）或 edge_cap_overruns()
+             * 增加（RXSTALL 计入其中）都是丢沿实据，sticky 置退化标志供
+             * 1 Hz 诊断读取，不假装恢复。 */
+            uint32_t ovr = edge_cap_overruns();
+            if (disc || ovr != last_overruns)
+                modes_edge_mark_degraded(&s_edge);
+            last_overruns = ovr;
             if (disc)
                 modes_edge_reset(&s_edge);
             modes_edge_feed(&s_edge, buf, n);

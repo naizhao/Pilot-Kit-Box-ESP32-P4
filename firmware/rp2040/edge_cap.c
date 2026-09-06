@@ -61,12 +61,12 @@ static void edge_cap_rearm(uint slot)
 }
 
 /*
- * PIO 确定性重初始化（gpt-5.6-sol round-2 audit）：pio_sm_restart 只复位
- * SM 内部执行状态（X/Y/ISR/OSR、输入输出计数器）——**不复位 PC、不重装
- * exec/shift 配置**；单用 restart + 清 FIFO 后 SM 可能停在程序中段、带着
- * 残缺 X 继续跑出垃圾流。完整序列等价冷启动：
- *     停用 → pio_sm_restart → 清 FIFO → pio_sm_init（重装配置、PC 回
- *     程序起点，X 从程序头 set x,31 重新预载）→ 重新使能。
+ * PIO 确定性重初始化（gpt-5.6-sol round-2 audit；勘误 re-audit round-2）：
+ * pio_sm_restart 只清 ISR/移位计数等执行暂存——**X/Y 与 PC 保留**、不重装
+ * exec/shift 配置；单用 restart + 清 FIFO 后 SM 会带着旧 PC、可能残缺的 X
+ * 从程序中段继续跑出垃圾流。完整序列必须等价冷启动：
+ *     停用 → pio_sm_restart → 清 FIFO → pio_sm_init（重装配置、PC 回程序
+ *     入口）+ 重载 X（程序头 set x,31 重做）→ 重新使能。
  * s_cfg 是 start 时 edgecap_program_init 返回并保存的同款配置。
  */
 static void edge_cap_pio_flush(void)
@@ -168,9 +168,12 @@ size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
     /* PIO 侧丢沿：push noblock 撞满 RX FIFO 会置本 SM 的 RXSTALL（写 1
      * 清除）。RXSTALL 只记 overrun、**不打 disc 位**：停机窗口外的单沿
      * 丢失是帧内损伤——奇偶/间距已乱，该帧由解码端自然判负（安全丢弃，
-     * test_modes_edge 用例 6 锁定）；abs_tick 的少量偏移在下一个 >5µs
-     * 帧间长隔处随 burst 重开自愈。只有"停机→重启"这类结构性断点（时间
-     * 轴整段缺失）才走 disc → modes_edge_reset 路径。 */
+     * test_modes_edge 用例 6 锁定）。丢失时长不可知 ⇒ 断点后的时间基
+     * **永久偏小**：单调性仍保持，但后续帧的 rp_ts_us 带轻微提前偏置
+     * ——这是丢沿的固有结果，**不是可自愈项**（解码器只累积收到的
+     * delta，丢失段无法回补；退化由 adsb1090 消费侧 mark_degraded 如实
+     * 上报）。只有"停机→重启"这类结构性断点（时间轴整段缺失）才走
+     * disc → modes_edge_reset 路径。 */
     uint32_t stall_bit = 1u << (PIO_FDEBUG_RXSTALL_LSB + s_sm);
     if (s_pio->fdebug & stall_bit) {
         s_pio->fdebug = stall_bit;

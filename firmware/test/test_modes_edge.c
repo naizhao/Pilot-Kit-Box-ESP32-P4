@@ -360,6 +360,42 @@ int main(void)
         CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "reset seam bytes\n");
     }
 
+    /* 16. 丢沿退化 + 跨 reset 单调性（re-audit round-2 Fix 1）：RXSTALL
+     *     单沿丢失不打 disc、无自愈——burst A 解出后记录 A 末边沿绝对
+     *     时刻，reset 丢弃半截 burst，再喂含丢失段的饱和空隔 + burst B：
+     *     start_tick(B) 必须严格大于 A 末边沿（时间基永久偏小但单调性
+     *     保持，丢失时长不可知、只表现为轻微提前偏置，不是可自愈项）。
+     *     mark_degraded 置位的 time_degraded 为 sticky——跨 reset 与续喂
+     *     保留，供诊断如实上报丢沿退化。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        CHECK(!modes_edge_time_degraded(&m), "fresh decoder must be clean\n");
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m, d, n);              /* burst A：完整帧解出 */
+        CHECK(g_frames == 1, "burst A frames=%d\n", g_frames);
+        uint64_t burst_a_start = g_last.start_tick;
+        modes_edge_feed(&m, d, 16);             /* 半截 burst 开着即遇断点 */
+        CHECK(m.burst_n == 16, "burst_n=%d want 16\n", m.burst_n);
+        uint64_t last_a = m.abs_tick;           /* A 末边沿绝对时刻 */
+        CHECK(last_a > burst_a_start, "time base must advance\n");
+        modes_edge_reset(&m);
+        CHECK(m.abs_tick == last_a, "reset keeps the time base\n");
+        modes_edge_mark_degraded(&m);
+        CHECK(modes_edge_time_degraded(&m), "degraded flag must latch\n");
+        uint32_t gap = LONG_GAP;   /* 丢失时长不可知：饱和空闲标记兜底 */
+        modes_edge_feed(&m, &gap, 1);
+        modes_edge_feed(&m, d, n);              /* burst B：干净帧 */
+        CHECK(g_frames == 2, "post-loss frame lost, frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "post-loss bytes\n");
+        CHECK(g_last.start_tick > last_a,
+              "start_tick=%llu not monotonic past %llu\n",
+              (unsigned long long)g_last.start_tick,
+              (unsigned long long)last_a);
+        CHECK(modes_edge_time_degraded(&m),
+              "flag is sticky across reset/feed\n");
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

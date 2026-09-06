@@ -22,6 +22,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 
 #define MODES_EDGE_MAX_EDGES 256   /* 双沿：4 preamble + 2×112 数据 + 余量 */
@@ -55,6 +56,11 @@ typedef struct {
      * 数据解码失败（两中心同电平）时 +1，随后滑到下一候选继续（audit
      * round 4）——同一 burst 两者可同时非零。 */
     atomic_uint dropped_noise, dropped_decode, bursts, edge_overruns;
+    /* 丢沿退化标志（re-audit round-2 Fix 1）：RXSTALL 单沿丢失不打 disc，
+     * 解码器只累积收到的 delta——丢失时长不可知，时间基从此**永久偏小**
+     * （单调性保持，rp_ts_us 带轻微提前偏置），没有自愈路径。sticky：
+     * 一旦置位不清除（含 reset），供 1 Hz 诊断如实上报。 */
+    atomic_bool time_degraded;
 } modes_edge_t;
 
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
@@ -70,3 +76,13 @@ void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n);
  * 被拼进同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge
  * 用例 15 对照锁定）。 */
 void modes_edge_reset(modes_edge_t *m);
+
+/* 丢沿退化标记（re-audit round-2 Fix 1）：确认发生丢沿后调用——RXSTALL
+ * 单沿丢失（消费侧见 edge_cap_overruns() 增加）或 disc 结构性断点都算
+ * 实据。sticky 置位、永不清除（含 modes_edge_reset）：丢失时长不可知，
+ * 时间基的提前偏置是丢沿的固有结果、不是可自愈项，必须如实记录而非
+ * 假装恢复。core1 解码语境独占调用（与 stats 同一口径）。 */
+void modes_edge_mark_degraded(modes_edge_t *m);
+/* 诊断读取（1 Hz health / 未来 diag）：true = 自 init 以来发生过丢沿，
+ * 断点后的 rp_ts_us 带轻微提前偏置（单调性不受影响）。 */
+bool modes_edge_time_degraded(const modes_edge_t *m);

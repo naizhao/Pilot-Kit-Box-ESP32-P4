@@ -58,6 +58,9 @@ bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi)
     uint8_t pl[6 + 14];
     pl[0] = (f->nbits == 112) ? ADSB_LINK_MODES_LONG : 0;
     pl[1] = rssi;                              /* 定标前恒 0xFF（无值）*/
+    /* rp_ts_us 回绕合同（PROTOCOL §2 勘误 2026-09-05）：此截断即模 2^32
+     * 单调语义（约 71.6 min 回绕）——消费方用 (u32)(ts_now − ts_prev)
+     * 无符号差值解释时间差，不把回绕当回跳。 */
     uint32_t ts = (uint32_t)(f->start_tick * 1000000ull / EDGE_CAP_TICK_HZ);
     pl[2] = (uint8_t)ts; pl[3] = (uint8_t)(ts >> 8);
     pl[4] = (uint8_t)(ts >> 16); pl[5] = (uint8_t)(ts >> 24);

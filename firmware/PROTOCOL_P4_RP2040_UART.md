@@ -30,10 +30,14 @@ CRC 已知答案向量：`crc16("123456789") = 0x29B1`。
 | 0x01 | HELLO | 双向 | `{u8 proto_min_minor; char build[16]}`（build 以 \0 结尾） |
 | 0x02 | CAPABILITIES | RP→P4 | `{u32le caps_bitmask}`（bit0=1090，bit1=978 预留） |
 | 0x03 | HEALTH_STATS | RP→P4，1 Hz | 见 §4 |
-| 0x10 | MODES_RAW | RP→P4 | `{u8 flags; u8 rssi; u32le rp_ts_us; u8 frame[7 或 14]}`；flags bit0=112-bit 帧；rssi 单位 0.5 dB、0xFF=无值；rp_ts_us 为 RP 单调 µs（帧 preamble 首沿），0=无值 |
+| 0x10 | MODES_RAW | RP→P4 | `{u8 flags; u8 rssi; u32le rp_ts_us; u8 frame[7 或 14]}`；flags bit0=112-bit 帧；rssi 单位 0.5 dB、0xFF=无值；rp_ts_us 为 RP 单调 µs（帧 preamble 首沿；模 2^32 回绕，见下方勘误），0=无值 |
 | 0x20 | CONFIG_REQ | P4→RP | 预留（v1 不实现） |
 | 0x21 | CONFIG_ACK | RP→P4 | 预留（v1 不实现） |
 | 0x7F | ERROR | RP→P4 | `{u8 code; u8 len; u8 msg[len]}` |
+
+> 勘误（2026-09-05，re-audit P2）：`rp_ts_us` 为**模 2^32 单调** µs（约
+> 71.6 分钟回绕）。消费者必须用无符号差值 `(u32)(ts_now − ts_prev)` 解释
+> 时间差，不得把回绕当作回跳；0 仍保留"无值"哨兵语义（仅首沿前）。
 
 ## 3. 编解码与恢复行为（两侧行为一致，由共享 codec 保证）
 
