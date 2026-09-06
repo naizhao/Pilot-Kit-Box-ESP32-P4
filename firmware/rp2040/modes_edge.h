@@ -46,7 +46,11 @@ typedef struct {
     uint32_t burst_gap_ticks;      /* > 此值 = burst 结束（5µs）*/
     /* 统计 */
     uint32_t preamble_hits, frames_56, frames_112;
-    uint32_t dropped_noise, bursts, edge_overruns;
+    /* dropped_noise 按 burst 记账（该 burst 最终一无所获才 +1，每 burst
+     * 至多一次）；dropped_decode 按候选记账：间距合格的 preamble 候选
+     * 数据解码失败（两中心同电平）时 +1，随后滑到下一候选继续（audit
+     * round 4）——同一 burst 两者可同时非零。 */
+    uint32_t dropped_noise, dropped_decode, bursts, edge_overruns;
 } modes_edge_t;
 
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,

@@ -51,8 +51,12 @@ static void burst_emit(modes_edge_t *m)
 
     /* 边沿绝对时刻（qus）。t[0] = 0：burst 首沿（上升沿）为时间原点；
      * t[i] = Σ burst[0..i-1]（burst[j] 是边沿 j→j+1 的间隔）。
-     * 奇偶：偶下标=上升，奇下标=下降。 */
-    uint32_t t[MODES_EDGE_MAX_EDGES];
+     * 奇偶：偶下标=上升，奇下标=下降。
+     * 数组取 MAX_EDGES+1（audit round 4 Fix 2）：burst_n 可达 MAX_EDGES
+     * （feed 的溢出路径在 burst_n==MAX 时才触发 emit），而最后一条间隔的
+     * 到达沿必须进表（见下）——t[burst_n] 是**语义必需的第 257 个槽**
+     * （t[burst_n] = 最后一条间隔的到达沿），不是冗余填充。 */
+    uint32_t t[MODES_EDGE_MAX_EDGES + 1];
     uint32_t acc = 0;
     t[0] = 0;
     for (int i = 1; i < m->burst_n; i++) {
@@ -64,13 +68,17 @@ static void burst_emit(modes_edge_t *m)
     int nedges = m->burst_n + 1;
     t[m->burst_n] = acc + ticks_to_qus(m->burst[m->burst_n - 1], m->tick_hz);
 
-    /* preamble：在连续 4 个上升沿上判 [4,10,4]±1 qus、脉宽各 ≈2 qus。
-     * 候选锚点沿上升沿序列滑动（audit round 3）：burst 首沿可能是帧前
-     * 噪声脉冲（紧贴帧头、间隔 <5µs 时与帧同 burst），按首沿锚定失败会
-     * 丢整帧——实测 0.5µs 噪声 + 1.5µs 间隔 + 合法帧 → frames=0。边沿表
-     * 偶下标 = 上升沿，候选步进 +2 即逐上升沿尝试；全部候选失败才记
-     * 一次噪声帧（dropped_noise 按 burst 记账，不按候选/边沿重复计）。 */
-    int pre = -1;                             /* 命中的 preamble 首上升沿下标 */
+    /* preamble + 数据解码（audit round 4 Fix 3）：候选锚点沿上升沿序列
+     * 滑动（burst 首沿可能是帧前噪声脉冲，按首沿锚定失败会丢整帧——
+     * 实测 0.5µs 噪声 + 1.5µs 间隔 + 合法帧 → frames=0）。间距+脉宽合格
+     * 的候选若随后数据解码失败（两中心同电平），**继续滑到下一个候选**
+     * ——噪声凑出的假前导（如 [4,10,4] 间距三连脉冲）不再吞掉同 burst
+     * 里紧跟的真帧。候选有限 → 终止性显然。解码失败的候选单独记
+     * dropped_decode（不进 dropped_noise，后者仍按 burst 记账、口径
+     * 不变）；preamble_hits 按候选计（间距+脉宽合格即命中，含最终解码
+     * 失败者——它确实检到了 preamble 形状的能量）。 */
+    modes_edge_frame_t f;
+    int frame_ok = 0, pre = -1, want = 0, tried = 0;
     for (int r = 0; r + 7 < nedges; r += 2) {
         uint32_t d1 = t[r + 2] - t[r], d2 = t[r + 4] - t[r + 2],
                  d3 = t[r + 6] - t[r + 4];
@@ -86,47 +94,52 @@ static void burst_emit(modes_edge_t *m)
                 break;
             }
         }
-        if (widths_ok) { pre = r; break; }
-    }
-    if (pre < 0) {
-        m->bursts++; m->dropped_noise += (uint32_t)m->burst_n;
-        burst_reset(m);
-        return;
-    }
-    m->preamble_hits++;
+        if (!widths_ok) continue;
+        m->preamble_hits++;
+        tried++;
 
-    /* 数据：逐位在两个半位中心采样电平，采样时轴以命中候选的上升沿为
-     * 原点。R11 融合（bit0→bit1 连续高电平）在此模型下自然正确：融合把
-     * 两个半位都垫成高。两个中心同电平 → 时序已被破坏（丢沿/抖动越界）
-     * → 安全丢帧。 */
-    uint8_t frame[14] = {0};
-    int covered = 0;
-    int df = -1, want = 0;
-    int cur = pre + 8;                        /* 电平游标：数据区从候选后第 8 沿起 */
-    for (int k = 0; k < 112; k++) {
-        uint32_t c1 = t[pre] + QUS_DATA_OFF + QUS_BIT * k + 1;
-        uint32_t c0 = c1 + QUS_HALF;
-        int lv1 = level_at(t, nedges, &cur, c1);
-        int lv0 = level_at(t, nedges, &cur, c0);
-        if (lv1 == lv0) break;                /* 两中心同电平：时序损坏 */
-        if (lv1) frame[k / 8] |= (uint8_t)(0x80u >> (k % 8));
-        covered = k + 1;
-        if (covered == 5) {
-            df = frame[0] >> 3;
-            want = (df > 15) ? 112 : 56;
+        /* 数据：逐位在两个半位中心采样电平，采样时轴以本候选的上升沿
+         * 为原点。R11 融合（bit0→bit1 连续高电平）在此模型下自然正确：
+         * 融合把两个半位都垫成高。两个中心同电平 → 本候选下时序已被
+         * 破坏（丢沿/抖动越界/假前导）→ 放弃本候选，滑向下一个。 */
+        uint8_t frame[14] = {0};
+        int covered = 0, df = -1;
+        want = 0;
+        int cur = r + 8;                  /* 电平游标：数据区从候选后第 8 沿起 */
+        for (int k = 0; k < 112; k++) {
+            uint32_t c1 = t[r] + QUS_DATA_OFF + QUS_BIT * k + 1;
+            uint32_t c0 = c1 + QUS_HALF;
+            int lv1 = level_at(t, nedges, &cur, c1);
+            int lv0 = level_at(t, nedges, &cur, c0);
+            if (lv1 == lv0) break;        /* 两中心同电平：候选判负 */
+            if (lv1) frame[k / 8] |= (uint8_t)(0x80u >> (k % 8));
+            covered = k + 1;
+            if (covered == 5) {
+                df = frame[0] >> 3;
+                want = (df > 15) ? 112 : 56;
+            }
+            if (want && covered >= want) break;
         }
-        if (want && covered >= want) break;
+        if (want && covered >= want) {
+            memcpy(f.frame, frame, sizeof(f.frame));
+            f.nbits = (uint32_t)want;
+            pre = r;
+            frame_ok = 1;
+            break;
+        }
+        m->dropped_decode++;              /* 本候选判负，试下一个 */
     }
-
-    if (!want || covered < want) {            /* 半帧/无数据 */
-        m->dropped_noise++;
+    if (!frame_ok) {
+        /* 保留既有 dropped_noise 双口径（audit round 4 不改账，仅把候选级
+         * 失败分账到 dropped_decode）：从未出现合格候选 = 纯噪声 burst，
+         * 按边沿数记（旧路径 1）；有候选但全部解码失败，按 burst 记 1
+         * （旧路径 2）。 */
         m->bursts++;
+        m->dropped_noise += tried ? 1u : (uint32_t)m->burst_n;
         burst_reset(m);
         return;
     }
-    modes_edge_frame_t f;
-    memcpy(f.frame, frame, sizeof(f.frame));
-    f.nbits = (uint32_t)want;
+
     /* start_tick 是 preamble 首沿（可能不是 burst 首沿——候选滑窗跳过
      * 了帧前噪声），按候选前的间隔精确回加。 */
     uint64_t start = m->burst_start_tick;

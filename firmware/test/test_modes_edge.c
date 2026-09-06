@@ -8,6 +8,14 @@
  *      firmware/test/test_modes_edge.c firmware/rp2040/modes_edge.c \
  *   && /tmp/test_modes_edge
  *
+ *   ASan/UBSan 变体（audit round 4 Fix 2 的回归用例 12 以此为探针：
+ *   burst_n 打满 MAX_EDGES 时 t[burst_n] 是栈越界写，-fsanitize=address
+ *   必须零报告）：
+ *   cc -std=c11 -Wall -Wextra -Werror -O0 -g -fsanitize=address,undefined \
+ *      -I firmware/rp2040 -o /tmp/test_modes_edge_asan \
+ *      firmware/test/test_modes_edge.c firmware/rp2040/modes_edge.c \
+ *   && /tmp/test_modes_edge_asan
+ *
  * 构造器按真实波形生成**全部边沿**（上升+下降，0.5µs 脉宽）的相邻间隔，
  * 与 edgecap PIO 的双沿捕获同构。判据：mode-s.c:708-715（0.5µs 脉冲 @
  * 0/1.0/3.5/4.5µs；1µs/位、脉冲在位首=1/位中=0）。
@@ -237,6 +245,58 @@ int main(void)
         modes_edge_feed(&m, noise, 10);
         CHECK(g_frames == 0, "noise produced %d frames\n", g_frames);
         CHECK(m.dropped_noise >= 1, "noise=%u\n", m.dropped_noise);
+    }
+
+    /* 12. 噪声洪流打满容量（audit round 4 Fix 2 回归，ASan 探针）：257 个
+     *     连续 0.5µs 短间隔使 burst_n 恰达 MAX_EDGES(256)，第 257 个间隔
+     *     走 feed 的溢出路径（edge_overruns++ → burst_emit），emit 内
+     *     nedges = 257、t[burst_n=256] 必须落在 +1 槽内——旧代码
+     *     t[MAX_EDGES] 是栈越界写，ASan 变体下当场爆。行为合同：记账、
+     *     不产帧、不崩。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        uint32_t flood[258];
+        for (int i = 0; i < 257; i++) flood[i] = US(0.5);
+        flood[257] = LONG_GAP;                /* 关 burst（此时已空转） */
+        modes_edge_feed(&m, flood, 258);
+        CHECK(g_frames == 0, "flood produced %d frames\n", g_frames);
+        CHECK(m.edge_overruns == 1, "edge_overruns=%u\n", m.edge_overruns);
+        CHECK(m.dropped_noise == MODES_EDGE_MAX_EDGES, "noise=%u\n",
+              m.dropped_noise);
+        CHECK(m.bursts == 1 && m.burst_n == 0, "bursts=%u n=%d\n",
+              m.bursts, m.burst_n);
+    }
+
+    /* 13. 假前导后跟真帧（audit round 4 Fix 3 回归）：噪声凑出间距合格
+     *     的 [4,10,4] 三连脉冲（同 burst 内），首个候选数据解码必败
+     *     （两中心同电平）；滑窗必须弃暗礁、继续锁到真帧——修复前整帧
+     *     被 false preamble 吞掉（frames=0）。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        /* 假前导：脉冲 @ 0/1.0/3.5/4.5µs（0.5µs 宽）→ 边沿 0,2,4,6,
+         * 14,16,18,20 qus；其后数据区两采样点（33/35 qus）无任何边沿
+         * → 候选 0 判负。真帧首沿 @9.5µs（38 qus）：与假前导末沿间隔
+         * 4.5µs < 5µs，同 burst；38-18=20 qus 使候选 2/4/6 间距全废。 */
+        uint32_t all[512];
+        int i = 0;
+        all[i++] = US(0.5); all[i++] = US(0.5); all[i++] = US(0.5);
+        all[i++] = US(2.0);
+        all[i++] = US(0.5); all[i++] = US(0.5); all[i++] = US(0.5);
+        all[i++] = US(4.5);                   /* 假前导末沿 → 真帧首沿 */
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        memcpy(all + i, d, (n - 1) * sizeof(uint32_t));  /* 去掉终止符 */
+        i += (int)(n - 1);
+        all[i++] = LONG_GAP;
+        modes_edge_feed(&m, all, (size_t)i);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
+        CHECK(m.preamble_hits == 2, "preamble_hits=%u\n", m.preamble_hits);
+        CHECK(m.dropped_decode == 1, "dropped_decode=%u\n",
+              m.dropped_decode);
+        CHECK(m.dropped_noise == 0, "noise=%u\n", m.dropped_noise);
+        CHECK(m.frames_112 == 1, "f112=%u\n", m.frames_112);
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
