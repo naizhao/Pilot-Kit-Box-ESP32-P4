@@ -303,7 +303,8 @@ int main(void)
      *     reset 保留（boot-lifetime 口径）；开着的半截 burst 被丢弃；
      *     abs_tick 时间基**保留**——burst A（解出）→ reset → burst B，
      *     start_tick(B) 单调超过 A 末边沿的绝对时刻，只带丢失段时长的
-     *     提前偏置（丢失固有），绝不回跳、不触碰 0=无值 语义。 */
+     *     提前偏置（丢失固有），绝不回跳，模 2^32 单调语义（无 0 哨兵）
+     *     不受影响。 */
     {
         modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
         g_frames = 0;

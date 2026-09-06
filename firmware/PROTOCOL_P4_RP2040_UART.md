@@ -30,14 +30,16 @@ CRC 已知答案向量：`crc16("123456789") = 0x29B1`。
 | 0x01 | HELLO | 双向 | `{u8 proto_min_minor; char build[16]}`（build 以 \0 结尾） |
 | 0x02 | CAPABILITIES | RP→P4 | `{u32le caps_bitmask}`（bit0=1090，bit1=978 预留） |
 | 0x03 | HEALTH_STATS | RP→P4，1 Hz | 见 §4 |
-| 0x10 | MODES_RAW | RP→P4 | `{u8 flags; u8 rssi; u32le rp_ts_us; u8 frame[7 或 14]}`；flags bit0=112-bit 帧；rssi 单位 0.5 dB、0xFF=无值；rp_ts_us 为 RP 单调 µs（帧 preamble 首沿；模 2^32 回绕，见下方勘误），0=无值 |
+| 0x10 | MODES_RAW | RP→P4 | `{u8 flags; u8 rssi; u32le rp_ts_us; u8 frame[7 或 14]}`；flags bit0=112-bit 帧；rssi 单位 0.5 dB、0xFF=无值；rp_ts_us 为模 2^32 单调 µs（帧 preamble 首沿；约 71.6 分钟回绕，见下方勘误）；RP2040 MVP 始终提供有效值，0 是合法回绕值 |
 | 0x20 | CONFIG_REQ | P4→RP | 预留（v1 不实现） |
 | 0x21 | CONFIG_ACK | RP→P4 | 预留（v1 不实现） |
 | 0x7F | ERROR | RP→P4 | `{u8 code; u8 len; u8 msg[len]}` |
 
 > 勘误（2026-09-05，re-audit P2）：`rp_ts_us` 为**模 2^32 单调** µs（约
 > 71.6 分钟回绕）。消费者必须用无符号差值 `(u32)(ts_now − ts_prev)` 解释
-> 时间差，不得把回绕当作回跳；0 仍保留"无值"哨兵语义（仅首沿前）。
+> 时间差，不得把回绕当作回跳。RP2040 MVP 始终提供有效值（preamble 首沿
+> 即有）；0 是合法回绕值，**不是**"无值"哨兵（二次勘误：废除原 0=无值
+> 特例——它与模 2^32 单调语义冲突）。
 
 ## 3. 编解码与恢复行为（两侧行为一致，由共享 codec 保证）
 
@@ -58,8 +60,14 @@ CRC 已知答案向量：`crc16("123456789") = 0x29B1`。
 
 | 序 | 字段 |
 |---|---|
-| 0..5 | preamble_hits, frames_56, frames_112, resyncs, dropped_noise, edge_overruns |
+| 0..5 | preamble_hits, frames_56, frames_112, time_degraded, dropped_noise, edge_overruns |
 | 6..9 | tx_frames, tx_drops（背压丢帧）, rx_frames, rx_seq_gaps |
+
+> 字段 3 说明（2026-09-05）：`time_degraded` 为 sticky 丢沿退化标志——
+> 1 = 自启动以来发生过丢沿/断点，断点后的 rp_ts_us 时间可信度降级
+> （带轻微提前偏置，单调性不受影响），重启前不清除。原 `resyncs` 槽位
+> 从未使用（恒 0），v1.0 起复用；P4 侧 v1.0 可忽略该位（diag 页呈现为
+> 后续项）。
 
 ## 5. 链路建立与看护
 

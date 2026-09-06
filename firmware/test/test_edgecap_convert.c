@@ -1,5 +1,6 @@
 /*
  * test_edgecap_convert.c — PIO 递减计数器原值 → 真实间隔 tick 的换算 +
+ * tick→µs（edgecap_tick_to_us，含 82h 溢出边界与模 2^32 回绕点）+
  * edge_cap_queue 块队列所有权协议（block-queue 重设计）的单测。
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 -I firmware/rp2040 \
@@ -164,6 +165,24 @@ int main(void)
      *    远大于任何合法间隔（含 100µs 帧间隔 = 6.25e6 tick）。 */
     CHECK(edgecap_raw_to_ticks(0u) == 0xFFFFFFE3u, "saturated value\n");
     CHECK(edgecap_raw_to_ticks(0u) > 6250000u, "saturated vs 100us\n");
+
+    /* 6b. tick→µs（edgecap_tick_to_us，PROTOCOL §2 勘误的回绕合同）：
+     *     精确整除点 + 82h 溢出边界 + 回绕点，锁定无溢出公式 tick×2/125
+     *     （tick=16ns 精确；floor，单值截断 <1µs——62 tick = 0.992µs → 0）。
+     *     · 82h 边界：tick = 82×3600×62.5e6 = 1.845e13 → µs =
+     *       295,200,000,000；早已越过 ~71.6 min 的首轮回绕，模 2^32 =
+     *       295200000000 − 68×2^32 = 3142223872。旧式 ×1000000ull 公式
+     *       在该 tick 处 u64 中间值已溢出（本组用例即其回归钉）。
+     *     · 回绕点：µs=2^32 ⇔ tick = 2^32×125/2 = 268,435,456,000 →
+     *       (u32)0 —— 0 是合法回绕值（无 0=无值 哨兵）。 */
+    CHECK(edgecap_tick_to_us(0) == 0u, "0 tick\n");
+    CHECK(edgecap_tick_to_us(125) == 2u, "125 tick = 2us\n");
+    CHECK(edgecap_tick_to_us(62500) == 1000u, "62500 tick = 1ms\n");
+    CHECK(edgecap_tick_to_us(62500000ull) == 1000000u, "1s = 1e6 us\n");
+    CHECK(edgecap_tick_to_us(62) == 0u, "62 tick floors to 0 (<1us)\n");
+    CHECK(edgecap_tick_to_us(268435456000ull) == 0u, "wrap point is 0\n");
+    CHECK(edgecap_tick_to_us(18450000000000ull) == 3142223872u,
+          "82h boundary us=%u\n", edgecap_tick_to_us(18450000000000ull));
 
     /* ── edge_cap_queue：块队列所有权协议（block-queue 重设计）────────── */
 

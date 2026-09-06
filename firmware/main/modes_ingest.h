@@ -16,8 +16,8 @@ typedef struct {
     uint8_t  rssi;      /* 0.5 dB 单位；0xFF = 未提供 */
     uint32_t rp_ts_us;  /* RP2040 单调 µs（preamble 首沿）；模 2^32 单调、
                          * 约 71.6 min 回绕（PROTOCOL §2 勘误）：时间差必须
-                         * 用无符号差值 (u32)(now − prev) 解释；0 = 未提供
-                         * （仅首沿前） */
+                         * 用无符号差值 (u32)(now − prev) 解释；0 是合法
+                         * 回绕值（无哨兵）——RP2040 MVP 始终提供有效值 */
 } modes_ingest_meta_t;
 
 typedef void (*modes_ingest_sink_fn)(const struct mode_s_msg *mm,

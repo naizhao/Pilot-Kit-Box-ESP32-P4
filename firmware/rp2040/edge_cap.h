@@ -27,6 +27,20 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
     return (EDGE_CAP_PRELOAD - raw) + 3u;
 }
 
+/* tick→µs（PROTOCOL §2 勘误 2026-09-05 的回绕合同）：tick = 16ns 精确，
+ * µs = tick×16/1000 = tick×2/125。先乘后除，u64 中间值（×2）对 u64 tick
+ * 域无溢出路径（溢出需 tick ≥ 2^63 ≈ 4700 年，物理不可达）；旧式
+ * tick×1000000ull 在 ~1.845e13 tick（≈82h uptime）即溢出 u64，勿改回。
+ * 整数除法 floor：单值截断误差 <1µs；返回值按 u32 截断 = 模 2^32 单调
+ * （约 71.6 min 回绕，消费方用 (u32)(now−prev) 无符号差值解释时间差）；
+ * 0 是合法回绕值，不是"无值"哨兵。 */
+_Static_assert(EDGE_CAP_TICK_HZ == 62500000u,
+               "2/125 us ratio pinned to the 62.5MHz tick");
+static inline uint32_t edgecap_tick_to_us(uint64_t tick)
+{
+    return (uint32_t)(tick * 2u / 125u);
+}
+
 /* 块队列发布合同（gpt-5.6-sol 两轮审计收敛的最终模型）：
  *
  *   · 单 DMA 通道，N=8 块 × 256 条；IRQ 驱动重武装，**显式所有权**：

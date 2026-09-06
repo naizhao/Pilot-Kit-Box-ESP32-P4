@@ -51,7 +51,8 @@ static void core1_entry(void)
          * 逐块取、块空让出。disc 块先 reset 再喂（断点两侧 delta 不拼接）；
          * 时间基保留（round-2 P1-b）：断点后帧的 rp_ts_us 单调、仅被丢失
          * 段时长轻微提前偏置（丢失固有，modes_edge.h 有记），协议
-         * rp_ts_us 0=无值 语义不再被触碰；P4 侧现忽略 meta，无下游影响。 */
+         * rp_ts_us 无 0 哨兵（模 2^32 单调，PROTOCOL §2 勘误）；P4 侧
+         * 现忽略 meta，无下游影响。 */
         for (;;) {
             bool disc;
             size_t n = edge_cap_drain(buf, 256, &disc);
@@ -85,7 +86,11 @@ static void health_fill(uint32_t c[10])
     c[0] = atomic_load_explicit(&s_edge.preamble_hits, memory_order_relaxed);
     c[1] = atomic_load_explicit(&s_edge.frames_56, memory_order_relaxed);
     c[2] = atomic_load_explicit(&s_edge.frames_112, memory_order_relaxed);
-    c[3] = 0;                                  /* resyncs 预留 */
+    c[3] = modes_edge_time_degraded(&s_edge) ? 1 : 0;
+    /* 字段 3（PROTOCOL §4，原恒 0 的 resyncs 预留槽位复用）：sticky 丢沿
+     * 退化标志——1 = 断点后时间可信度降级（rp_ts_us 带轻微提前偏置，
+     * 单调性不受影响），重启前不清除。P4 侧 v1.0 可忽略该位（diag 页
+     * 呈现为后续项）。 */
     c[4] = atomic_load_explicit(&s_edge.dropped_noise, memory_order_relaxed);
     c[5] = edge_cap_overruns() +
            atomic_load_explicit(&s_edge.edge_overruns, memory_order_relaxed);

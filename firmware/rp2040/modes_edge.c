@@ -187,7 +187,8 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
  * 不碰任何统计（计数是 boot-lifetime 口径）。abs_tick 时间基**保留**
  * （round-2 P1-a）：断点后的帧 start_tick 单调不减，只被丢失段的时长
  * 轻微提前偏置——丢失的时长无法恢复，提前偏置是丢失的固有属性，记录
- * 在案；绝不回跳，也就不会触碰 rp_ts_us 0=无值 的语义。消费者在喂入
+ * 在案；绝不回跳，rp_ts_us 模 2^32 单调语义（PROTOCOL §2 勘误，无 0
+ * 哨兵）不受影响。消费者在喂入
  * 带断点标记的块之前调用。不 reset 的后果：断点前后的 delta 被拼进
  * 同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge 用例
  * 15 对照锁定）。
