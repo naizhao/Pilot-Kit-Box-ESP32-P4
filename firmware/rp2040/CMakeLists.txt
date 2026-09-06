@@ -77,6 +77,7 @@ add_executable(adsb1090
     rf_safety.c
     modes_edge.c
     edge_cap.c
+    edge_cap_queue.c
     edge_cap.pio
     selftest_gen.c
     selftest_gen.pio

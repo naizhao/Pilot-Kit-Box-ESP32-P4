@@ -1,11 +1,17 @@
-/* edge_cap.h — PIO 双沿捕获 + DMA 环取数。 */
+/* edge_cap.h — PIO 双沿捕获 + DMA 块队列取数（block-queue 重设计）。 */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
 
+#include "edge_cap_queue.h"
+
 #define EDGE_CAP_SM_CLK_HZ 125000000u     /* RP2040 默认 sys clk，div=1 */
 #define EDGE_CAP_TICK_HZ   (EDGE_CAP_SM_CLK_HZ / 2u)   /* 2 周期/迭代 */
-#define EDGE_CAP_RING_ITEMS 2048u         /* u32 ×2048 = 8KB，双半区 */
+/* 缓冲总容量（u32 条目数）= 块队列几何：8 块 × 256 = 2048 条（8KB）。
+ * 条目不再按条发布，而按块（256 条/块）显式交接，几何见 edge_cap_queue.h；
+ * 保留本宏供 selftest_gen 的 flush 脉冲预算（SELFTEST_FLUSH_EDGES）按
+ * 总深换算，语义 = "推满整个块队列"，与容量一致。 */
+#define EDGE_CAP_RING_ITEMS (EDGE_CAP_Q_N_BLOCKS * EDGE_CAP_Q_BLOCK_ITEMS)
 
 /* PIO 推送的是递减计数器原值；换算成真实间隔 tick：
  * 设 D = PRELOAD − raw（两次沿捕获间的递减次数），对程序逐拍计数得
@@ -20,87 +26,40 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
     return (EDGE_CAP_PRELOAD - raw) + 3u;
 }
 
-/* 单调生产位置合同（gpt-5.6-sol re-audit 重设计：IRQ 整环记账 + 纯边界消费）：
+/* 块队列发布合同（gpt-5.6-sol 两轮审计收敛的最终模型）：
  *
- *   · producer_pos（edge_cap.c 内 atomic_uint）的唯一写者是 DMA_IRQ_0：
- *     每认领一个通道完成事件 +EDGE_CAP_RING_ITEMS（ping-pong 双通道交替写
- *     同一个 8KB 环，一次完成 = 恰好一整环入环；交接瞬间双通道位置位，
- *     popcount 计 2 环、不重不漏）。位置单调不减、只按 2^32 回卷、永不回退。
- *     CPU 侧**不存在任何对 DMA 硬件进度（TRANS_COUNT）的采样**：整环边界
- *     之外的"活进度"是跨硬件/中断窗口的二手读数——完成事件先落到硬件、
- *     后被 IRQ 记账，边界重检看不见这段错位（gpt-5.6-sol C1 反例），已整体
- *     废除，勿加回。
+ *   · 单 DMA 通道，N=8 块 × 256 条；IRQ 驱动重武装，**显式所有权**：
+ *     每个块任一时刻只属于一方——FREE →（DMA 在飞写）→ FULL（IRQ 发布）
+ *     →（消费者取空）→ FREE。块绝不同时被 DMA 写和被消费者读。旧共享环
+ *     的"整环发布让下一圈盖掉未读数据"（审计 C1）与随之而来的
+ *     claim/window_ok 写穿重检算术一并废除：所有权由构造排除写穿，
+ *     重检不再存在，也勿加回。
  *
- *   · ⚠⚠ **发布粒度 = 整环 2048 沿（接受的取舍，务必知悉）**：不满一整环
- *     的尾批边沿——最坏情形是一个 240 沿的孤立突发——在后续流量把块填满
- *     之前**不可见**（trailing-burst latency）。真实空中连续流量下环以
- *     ~2048 沿/毫秒级滚动，无感；台架单发自检由 selftest_gen 位流尾部的
- *     flush 脉冲串把环补满（SELFTEST_FLUSH_EDGES）。诊断窗口见
- *     edge_cap_pending()。
+ *   · 生产者 = DMA IRQ（core0）：完成 → push_full 发布（release）→
+ *     guard 放行则立即重武装下一 FREE 块（write_addr 重写 +
+ *     TRANS_COUNT_TRIG 触发）；环满（容量 N−1，保留槽贴着消费游标）则
+ *     **DMA 停机**：置 lost 标志、记 overrun。停机到消费侧重启之间的
+ *     边沿数据丢失（overrun 语义，真实过载路径，诚实计数）。
  *
- *   · read_pos（s_read）只前进，core1 的 drain 独占写。
+ *   · 消费者 = edge_cap_drain（core1 独占）：按 FIFO 序整块 peek →
+ *     逐条换算 → free（release 发布 FREE）。cap 按块取整：剩余容量
+ *     不足一块（256 条）时不弹块，本调用按块粒度返回。
+ *     停机重启：drain 在释放过 ≥1 块后检查 lost 标志，用 arm_slot 的
+ *     guard 重新武装（guard 失败 = 环仍满，保持停机等下一拍）。
+ *     重启 guard 必须走 arm_slot——它复用满环判定，防止把保留槽填满
+ *     发布出 fill_done == consume 的 8 块 FULL 态（host 测试 11 的
+ *     canary 反例）。
  *
- * 模差合同：滞后 < 2^31 时 (uint32_t)(producer_pos − read_pos) 等于真实
- * 差值（回卷越过 0 同样成立）；环只有 2048 项，正常运营恒在合同内。
- *
- * drain 的两段裁决（gpt-5.6-sol C1+C2），纯函数在下方、host 单测覆盖
- * （test_edgecap_convert.c）：
- *
- *   1. edgecap_claim()：acquire 读边界、对 read_pos 取模差。差 > 一整环 =
- *      写穿：resync 标志置位（判定只看标志——重同步目标可为 0），目标
- *      = 边界 − 环（丢旧、保留最新一环），可用量封顶一整环。
- *
- *   2. edgecap_window_ok()：复制完成后重读边界（acquire）。绝对位置 p 的
- *      槽位被重写，当且仅当生产者推进到 p + RING 之后；窗口 [s, s+n) 内
- *      最先被重写的是 s ⇒ 本批有效 ⇔ 生产者边界 ≤ s + RING，即越窗量
- *      producer_pos − (s+n) ≤ 环 − n（**裕度 = 整环 − 已复制窗口**）。
- *      越界 = 复制期间生产者跨过窗口起点 + 一整环 ⇒ 本批作废：overruns
- *      计数、read_pos 重同步到当前边界 − 环、返回 0；下一拍拿到的是完整
- *      新环。成立时（含等号）窗口内任何槽位都未被重写，本批可提交。
- *      平台前提（同环上其它 SPSC 结构的既有假设）：DMA IRQ 服务时延 ≪
- *      整环填充时间（淹没流量下 2048 沿 ≥ 1ms，handler 仅 µs）——IRQ
- *      未记账的已写前沿远小于一环，裕度把它整个覆盖。
+ *   · 跨核配对：fill_idx/fill_done 唯一写者 = IRQ（core0），consume_idx
+ *     唯一写者 = drain（core1），发布/回收全走 release/acquire（同
+ *     adsb1090 帧环的 SPSC 口径）。DMA 的 SRAM 写对两核一致可见，IRQ
+ *     在传输完成后才触发，块数据无需额外屏障。所有权逐条论证见
+ *     edge_cap_queue.h 头注释。
  */
-typedef struct {
-    uint32_t avail;              /* 本次可安全读取的样本数（≤ ring_items，
-                                  * 写穿时封顶并携带重同步目标）*/
-    uint32_t resync;             /* 非 0 = 写穿，read_pos 应重同步到
-                                  * resync_to（判定只看本标志，不看目标值）*/
-    uint32_t resync_to;          /* 重同步目标（丢旧，保留最新一环；可为 0）*/
-} edgecap_claim_t;
-
-static inline edgecap_claim_t edgecap_claim(uint32_t producer_pos,
-                                            uint32_t read_pos,
-                                            uint32_t ring_items)
-{
-    edgecap_claim_t r = {0u, 0u, 0u};
-    uint32_t lag = producer_pos - read_pos;      /* u32 模差：合同内无下溢 */
-    if (lag > ring_items) {                      /* 写穿：跳到头重同步 */
-        r.resync = 1u;
-        r.resync_to = producer_pos - ring_items;
-        r.avail = ring_items;
-    } else {
-        r.avail = lag;
-    }
-    return r;
-}
-
-/* 复制后重校验：返回非 0 = 窗口 [window_start, window_start + n) 全程未被
- * 生产者重写，本批可提交；返回 0 = 本批作废，read_pos 应重同步到
- * producer_pos_now − ring_items。要求 n ≤ ring_items。等价形式：
- * producer_pos_now − window_start ≤ ring_items。 */
-static inline uint32_t edgecap_window_ok(uint32_t producer_pos_now,
-                                         uint32_t window_start, uint32_t n,
-                                         uint32_t ring_items)
-{
-    return (uint32_t)(producer_pos_now - (window_start + n)) <=
-           (ring_items - n);
-}
 
 void   edge_cap_start(void);
 size_t edge_cap_drain(uint32_t *out, size_t cap);
 uint32_t edge_cap_overruns(void);
-/* 诊断：producer_pos − s_read（u32 模差）——已入环未被消费的样本数。
- * 整环粒度发布下它按 2048 整阶跳动；长期停在 <2048 的非零值 = 尾批
- * 边沿未满块（见上方发布粒度取舍）。 */
+/* 诊断：等待消费的**FULL 块数**（0..7，不折算条目数；含消费者正在
+ * 转换中的那块）。按块计——满块发布粒度下它以 256 条/块为台阶跳动。 */
 uint32_t edge_cap_pending(void);
