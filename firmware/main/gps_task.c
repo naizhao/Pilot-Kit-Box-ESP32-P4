@@ -48,18 +48,19 @@ static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
 /* ISR↔task 配对用 spinlock 临界区（2026-09 审计三轮）：原先的
  * seqlock-lite「读计数→读戳→复读计数」在 RVWMO 下跨核并不可靠
  * （计数与戳没有真正的全序）。portMUX 临界区是 ESP-IDF 的标准做法：
- * (计数, 时间戳) 对 ISR 原子，读者拿到的必然是同一瞬间的自洽对，
- * 不再有重试/作废路径。临界区只有几条赋值，纳秒级。 */
+ * ISR 侧 portENTER_CRITICAL_ISR、任务侧 portENTER_CRITICAL 共享同一把
+ * spinlock，(计数, 时间戳) 对 ISR 原子，读者拿到的必然是同一瞬间的
+ * 自洽对，不再有重试/作废路径。临界区只有几条赋值，纳秒级。 */
 static portMUX_TYPE s_pps_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_pps_count;          /* PPS 上升沿累计；s_pps_mux 保护 */
 static uint64_t s_last_pps_us;        /* 最近上升沿时间戳；0 = 还没见过沿；s_pps_mux 保护 */
 
 static void IRAM_ATTR pps_isr(void *arg){
     (void)arg;
-    portENTER_CRITICAL_FROM_ISR(&s_pps_mux);
+    portENTER_CRITICAL_ISR(&s_pps_mux);
     s_last_pps_us = (uint64_t)esp_timer_get_time();
     s_pps_count++;
-    portEXIT_CRITICAL_FROM_ISR(&s_pps_mux);
+    portEXIT_CRITICAL_ISR(&s_pps_mux);
 }
 
 bool pk_gps_get(pk_gps_state_t *out){

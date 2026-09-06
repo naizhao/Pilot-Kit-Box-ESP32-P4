@@ -432,7 +432,7 @@ Common ESP_LOG tags:
 | `imu` | 0 | 5 | 4 KiB | BNO085 polling |
 | `pfd` | 0 | 4 | 6 KiB | LCD UI renderer |
 | `rec_file` | 0 | 3 | 4 KiB | LittleFS / MicroSD writer |
-| `gps` | 0 | 4 | 4 KiB | GT-U8 NMEA/RMC; optional PPS wiring is not consumed |
+| `gps` | 0 | 4 | 4 KiB | GT-U8 NMEA/RMC; PPS (GPIO50) feeds the `time_locked` status — system time-service wiring is a follow-up task |
 | `baro` | 0 | 4 | 4 KiB | BMP388 polling |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD insertion/removal probe |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host |

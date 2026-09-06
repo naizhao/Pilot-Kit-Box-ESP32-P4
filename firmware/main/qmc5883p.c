@@ -147,8 +147,10 @@ static const char *TAG = "qmc";
 
 static i2c_master_dev_handle_t s_dev;
 
-/* 诊断计数：单写者（qmc 任务 / init 前无并发），32 位对齐读原子，
- * volatile 防读者缓存——并发约定同 pk_i2c0_bus.h 的 s_gen。 */
+/* 诊断计数：单写者 = qmc 任务（多读者 = 诊断页等），并发约定与 dsp 的
+ * 统计块同款（adsb_link_task.c）：32 位对齐读写 RV32 单指令原子，volatile
+ * 防读者跨任务缓存旧值，故无锁。升 C11 原子的事推迟到出现需要多字段
+ * 一致性的消费者再说（2026-09 审计三轮记录在案）。 */
 static volatile qmc5883p_stats_t s_stats;
 
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
@@ -199,26 +201,37 @@ static bool bring_up(void)
     return true;
 }
 
+/* 器件缺席时的重试退避上限：1 s→2 s→4 s→…→60 s 封顶（2026-09 审计
+ * 三轮）。封顶而不是无限退避：插上器件后最迟 1 分钟内上线，换来的是
+ * 缺席状态下每分钟只有一轮探测，而不是永久 ~2 s 一轮的 10×100 ms 探测
+ * 负载。 */
+#define QMC5883P_UP_BACKOFF_MAX_MS 60000
+
 /* 1 Hz 轮询任务。结构照抄 baro_task：代数比对重放 bring-up + 循环轮询。
  *
  * 与 baro 的两处有意差异（qmc 是 optional 诊断器件）：
  *   - 探测失败**不调** pk_i2c0_recover_request()：QMC 缺焊是合法状态，
  *     不能让它周期性触发整板总线复位去打扰 baro/touch；
- *   - bring-up / 重放失败**永不删任务**（2026-09 审计 P2）：WARN +
- *     1 s 退避后下一轮重试。POR/软复位会把器件打进 Suspend（§5.2/
- *     §6.2.4：I²C 仍应答、CHIPID 仍可读、不再测量），配置写得进去就能
- *     复活——旧代码失败即 vTaskDelete，一次故障就永久失明到重启。
+ *   - bring-up 失败按指数退避重试（见 QMC5883P_UP_BACKOFF_MAX_MS）、
+ *     重放失败**永不删任务**（2026-09 审计 P2）：WARN 后下一轮再试。
+ *     POR/软复位会把器件打进 Suspend（§5.2/§6.2.4：I²C 仍应答、CHIPID
+ *     仍可读、不再测量），配置写得进去就能复活——旧代码失败即
+ *     vTaskDelete，一次故障就永久失明到重启。
  * 轮询侧同理：连续 10 轮（≈10 s）拿不到有效样本就重放一遍配置序列，
  * 自愈 Suspend；拿到任何有效样本即清零计数。 */
 static void qmc5883p_task(void *arg)
 {
     (void)arg;
     uint32_t bus_gen = pk_i2c0_bus_generation();
-    int fail_streak = 0;   /* 连续无有效样本的轮数（1 轮 ≈ 1 s） */
+    int fail_streak  = 0;      /* 连续无有效样本的轮数（1 轮 ≈ 1 s） */
+    int up_backoff_ms = 1000;  /* 初始 bring-up 退避；成功后不再用到——
+                                * 运行期故障走下面的重放/自愈路径 */
 
     while (!bring_up()) {
-        ESP_LOGW(TAG, "QMC5883P bring-up 失败，1 s 后重试（可选器件，不放弃）");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGW(TAG, "QMC5883P bring-up 失败（可选器件），%d s 后重试",
+                 up_backoff_ms / 1000);
+        vTaskDelay(pdMS_TO_TICKS(up_backoff_ms));
+        if (up_backoff_ms < QMC5883P_UP_BACKOFF_MAX_MS) up_backoff_ms *= 2;
     }
     ESP_LOGI(TAG, "QMC5883P ready @0x%02X (cont mode, ODR=10Hz, ±2G)",
              QMC5883P_I2C_ADDR);
@@ -227,14 +240,17 @@ static void qmc5883p_task(void *arg)
         /* 总线被救回来了 → 重放探测+配置（pk_i2c0_bus.h 的器件侧契约）。 */
         const uint32_t gen = pk_i2c0_bus_generation();
         if (gen != bus_gen) {
-            bus_gen = gen;
             ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 QMC 配置",
                      (unsigned long)gen);
             if (!bring_up()) {
+                /* bus_gen 故意**不提交**（2026-09 审计三轮）：重放失败在
+                 * 下一轮（~1 s）就重试，而不是等满 10 轮失败阈值；只有
+                 * bring_up 成功才认这笔代数。 */
                 ESP_LOGW(TAG, "QMC5883P 重放失败，1 s 后重试");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
+            bus_gen = gen;
         }
 
         qmc5883p_sample_t s;

@@ -110,6 +110,7 @@ esp_err_t qmc5883p_init(i2c_master_bus_handle_t bus);
  */
 bool qmc5883p_poll(qmc5883p_sample_t *out);
 
-/* 诊断计数快照。单写者（驱动任务）多读者，32 位对齐读原子（同
- * pk_i2c0_bus.h 的并发约定）。out 为 NULL 时忽略。 */
+/* 诊断计数快照。单写者（驱动任务）多读者；32 位对齐读写 RV32 原子 +
+ * volatile 防缓存，无锁（同 dsp 统计块约定，见 qmc5883p.c）。out 为
+ * NULL 时忽略。 */
 void qmc5883p_stats_get(qmc5883p_stats_t *out);

@@ -171,15 +171,12 @@ static void baro_task(void *arg)
     s_ready = (configure_and_calibrate() == ESP_OK);
 
     /* 开机读一次 EVENT 清掉上电 POR 标志（clear-on-read, Table 31）：
-     * 上电本该就是 1，不留在计数里让第一个 32 拍窗口误报。 */
+     * 上电本该就是 1，不留在循环里让第一拍就白重配一遍。 */
     if (s_ready) {
         uint8_t ev = 0;
         if (reg_read(BMP388_REG_EVENT, &ev, 1) != ESP_OK) ev = 0;
         ESP_LOGD(TAG, "EVENT@boot=0x%02X (por 标志已清)", ev);
     }
-
-    /* EVENT 轮拍计数：每 32 个成功轮询拍读一次 por_detected（约 3.2 s）。 */
-    int event_tick = 0;
 
     /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
     /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
@@ -231,6 +228,38 @@ static void baro_task(void *arg)
             }
         }
 
+        /* ── 每拍先查 EVENT.por_detected，再读数据（DS §4.3.7 Table 31, p.33）──
+         *
+         * BMP388 本地 POR/软复位会把 PWR_CTRL/OSR/ODR/CONFIG 打回默认,
+         * 但数据读仍然"成功"——不盯这个标志,器件就永远睡在错误配置里
+         * (2026-09 审计 P1/legacy)。三轮审计把它从「每 32 拍读一次、且在
+         * 数据读之后」改成**每拍、数据读之前**：旧时序下 POR 之后最多
+         * 31 拍默认值读数会被当有效数据发布，甚至进 BARO_VALID 飞行记录。
+         * 成本：每 100 ms 拍多一次 1 字节 I²C 读，相对同拍的 6 字节温压读
+         * 可忽略。
+         *
+         * por_detected=1 → 本拍数据是复位后垃圾：整拍作废（valid=false、
+         * 跳过发布），并**在同一拍内**重跑器件配置（不是推迟到下一拍的
+         * gate），**不是**总线复位。EVENT 读失败不另生分支：总线真坏了
+         * 走下面的 data read failed 主检测器。 */
+        {
+            uint8_t ev = 0;
+            if (reg_read(BMP388_REG_EVENT, &ev, 1) == ESP_OK &&
+                (ev & BMP388_EVENT_POR)) {
+                ESP_LOGW(TAG, "EVENT.por_detected=1 — BMP388 本地复位,重写配置并重读标定");
+                has_prev = false;   /* 配置断档,VS 别出尖峰 */
+                vs_ema   = 0.0f;
+                xSemaphoreTake(s_mutex, portMAX_DELAY);
+                s_state.valid = false;
+                xSemaphoreGive(s_mutex);
+                /* 同拍重配：结果直接落 s_ready；若失败，下一拍的 !s_ready
+                 * gate 会照常每秒重试，不另写路径。 */
+                s_ready = (configure_and_calibrate() == ESP_OK);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+        }
+
         uint8_t d[6];
         if (reg_read(BMP388_REG_DATA, d, 6) != ESP_OK) {
             ESP_LOGW(TAG, "BMP388 data read failed");
@@ -247,35 +276,6 @@ static void baro_task(void *arg)
         }
         /* 读到了 = 总线活着,失败串清零。 */
         (void)pk_i2c0_client_report(&i2c_client, true);
-
-        /* ── 每 32 拍查一次 EVENT.por_detected（DS §4.3.7 Table 31, p.33）──
-         *
-         * BMP388 本地 POR/软复位会把 PWR_CTRL/OSR/ODR/CONFIG 打回默认,
-         * 但数据读仍然"成功"——不盯这个标志,器件就永远睡在错误配置里
-         * (2026-09 审计 P1/legacy)。读到 1 → 走既有配置路径重配(置
-         * !s_ready,下一轮的 gate 分支重跑 configure_and_calibrate),
-         * **不是**总线复位。读失败不另生分支:总线真坏了走上面的
-         * data read failed 主检测器。 */
-        if (++event_tick >= 32) {
-            event_tick = 0;
-            uint8_t ev = 0;
-            if (reg_read(BMP388_REG_EVENT, &ev, 1) == ESP_OK &&
-                (ev & BMP388_EVENT_POR)) {
-                ESP_LOGW(TAG, "EVENT.por_detected=1 — BMP388 本地复位,重写配置并重读标定");
-                s_ready  = false;
-                has_prev = false;   /* 配置断档,VS 别出尖峰 */
-                vs_ema   = 0.0f;
-                /* 本拍的 data read 发生在 POR 之后,读数是复位后垃圾:整拍作废,
-                 * 在发布前置 valid=false,别让垃圾进 alt_filt(EMA 会把一次垃圾
-                 * 拖上好几拍)。重配置走既有 !s_ready gate(下一轮重跑
-                 * configure_and_calibrate),不另写路径(2026-09 复审修正)。 */
-                xSemaphoreTake(s_mutex, portMAX_DELAY);
-                s_state.valid = false;
-                xSemaphoreGive(s_mutex);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
-        }
 
         uint32_t raw_press = (uint32_t)d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16);
         uint32_t raw_temp  = (uint32_t)d[3] | ((uint32_t)d[4] << 8) | ((uint32_t)d[5] << 16);
