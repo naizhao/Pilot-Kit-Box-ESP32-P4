@@ -36,9 +36,14 @@ static uint16_t ref_crc16(const uint8_t *d, size_t n)
 
 static int g_msgs;
 static adsb_link_msg_t g_last;
+static uint8_t g_seq_hist[8];
+static int g_seq_hist_n;
 static void sink(void *user, const adsb_link_msg_t *m)
 {
-    (void)user; g_msgs++; g_last = *m;
+    (void)user;
+    if (g_seq_hist_n < (int)sizeof(g_seq_hist))
+        g_seq_hist[g_seq_hist_n++] = m->seq;
+    g_msgs++; g_last = *m;
 }
 
 static const uint8_t SAMPLE_FRAME[14] = {
@@ -262,6 +267,82 @@ int main(void)
         CHECK(g_msgs == 1 && g_last.seq == 41, "msgs=%d seq=%u\n",
               g_msgs, g_last.seq);
         CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
+    }
+
+    /* 15. 审计复现（round 3）：协议最长帧（plen=464，共 474 B = 缓冲容量）
+        后紧跟下一帧，按 P4 实际读长 256 B 分块喂入。两段式 drain 在第二块
+        的入栈阶段不跑判据，紧随其后的字节触发洪泛防御把已完整的 474 B 帧
+        头部滑掉 → 第一帧丢失（实测 resyncs=474、msgs=1）。修复后必须
+        msgs=2 且按序（seq 60 → 61）、无多余 resync。 */
+    {
+        g_msgs = 0; g_seq_hist_n = 0;
+        uint8_t stream[600];
+        uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
+        memset(bigpl, 0x77, sizeof bigpl);
+        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+                                     60, bigpl, sizeof bigpl);
+        CHECK(n1 == 474, "max frame len got=%zu\n", n1);
+        size_t n2 = build_modes_raw(stream + n1, 61);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, stream, 256);                    /* 第一块 */
+        adsb_link_dec_feed(&d, stream + 256, (n1 - 256) + n2);  /* 第二块 */
+        CHECK(g_msgs == 2, "msgs=%d\n", g_msgs);
+        CHECK(g_seq_hist_n == 2 && g_seq_hist[0] == 60 && g_seq_hist[1] == 61,
+              "order %d: %u,%u\n", g_seq_hist_n,
+              g_seq_hist[0], g_seq_hist[1]);
+        CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
+    }
+
+    /* 16. 边界：plen=464 帧单独一次喂入（恰满缓冲）→ 必须解出。 */
+    {
+        g_msgs = 0;
+        uint8_t stream[512];
+        uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
+        memset(bigpl, 0x33, sizeof bigpl);
+        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+                                     62, bigpl, sizeof bigpl);
+        CHECK(n1 == 474, "len got=%zu\n", n1);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, stream, n1);
+        CHECK(g_msgs == 1 && g_last.seq == 62, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+        CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
+    }
+
+    /* 17. 边界：464 帧紧跟下一帧，单次 feed 全量入栈（无分块）→ msgs=2。
+        与 case 15 同根：满容后随字节在旧代码里同样触发洪泛滑窗。 */
+    {
+        g_msgs = 0;
+        uint8_t stream[600];
+        uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
+        memset(bigpl, 0x11, sizeof bigpl);
+        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+                                     63, bigpl, sizeof bigpl);
+        size_t n2 = build_modes_raw(stream + n1, 64);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, stream, n1 + n2);
+        CHECK(g_msgs == 2 && g_last.seq == 64, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
+        CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
+    }
+
+    /* 18. 边界：473 B 截断（差 1 字节）必须 hold 不产帧、不计数；
+        补上末字节后立即解出。 */
+    {
+        g_msgs = 0;
+        uint8_t stream[512];
+        uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
+        memset(bigpl, 0x99, sizeof bigpl);
+        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+                                     65, bigpl, sizeof bigpl);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, stream, n1 - 1);
+        CHECK(g_msgs == 0 && d.resyncs == 0 && d.crc_errors == 0,
+              "truncation leaked: msgs=%d resyncs=%u crc=%u\n",
+              g_msgs, d.resyncs, d.crc_errors);
+        adsb_link_dec_feed(&d, stream + n1 - 1, 1);
+        CHECK(g_msgs == 1 && g_last.seq == 65, "msgs=%d seq=%u\n",
+              g_msgs, g_last.seq);
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

@@ -64,34 +64,47 @@ static void burst_emit(modes_edge_t *m)
     int nedges = m->burst_n + 1;
     t[m->burst_n] = acc + ticks_to_qus(m->burst[m->burst_n - 1], m->tick_hz);
 
-    /* preamble：上升沿 t[0]/t[2]/t[4]/t[6]，间隔 4/10/4 qus；脉宽各 ≈2 qus。 */
-    uint32_t d1 = t[2] - t[0], d2 = t[4] - t[2], d3 = t[6] - t[4];
-    if (d1 < QUS_PREAM_D1 - QUS_TOL || d1 > QUS_PREAM_D1 + QUS_TOL ||
-        d2 < QUS_PREAM_D2 - QUS_TOL || d2 > QUS_PREAM_D2 + QUS_TOL ||
-        d3 < QUS_PREAM_D3 - QUS_TOL || d3 > QUS_PREAM_D3 + QUS_TOL) {
+    /* preamble：在连续 4 个上升沿上判 [4,10,4]±1 qus、脉宽各 ≈2 qus。
+     * 候选锚点沿上升沿序列滑动（audit round 3）：burst 首沿可能是帧前
+     * 噪声脉冲（紧贴帧头、间隔 <5µs 时与帧同 burst），按首沿锚定失败会
+     * 丢整帧——实测 0.5µs 噪声 + 1.5µs 间隔 + 合法帧 → frames=0。边沿表
+     * 偶下标 = 上升沿，候选步进 +2 即逐上升沿尝试；全部候选失败才记
+     * 一次噪声帧（dropped_noise 按 burst 记账，不按候选/边沿重复计）。 */
+    int pre = -1;                             /* 命中的 preamble 首上升沿下标 */
+    for (int r = 0; r + 7 < nedges; r += 2) {
+        uint32_t d1 = t[r + 2] - t[r], d2 = t[r + 4] - t[r + 2],
+                 d3 = t[r + 6] - t[r + 4];
+        if (d1 < QUS_PREAM_D1 - QUS_TOL || d1 > QUS_PREAM_D1 + QUS_TOL ||
+            d2 < QUS_PREAM_D2 - QUS_TOL || d2 > QUS_PREAM_D2 + QUS_TOL ||
+            d3 < QUS_PREAM_D3 - QUS_TOL || d3 > QUS_PREAM_D3 + QUS_TOL)
+            continue;
+        int widths_ok = 1;
+        for (int k = 0; k < 4; k++) {
+            uint32_t w = t[r + 2 * k + 1] - t[r + 2 * k];
+            if (w < QUS_HALF - QUS_TOL || w > QUS_HALF + QUS_TOL) {
+                widths_ok = 0;
+                break;
+            }
+        }
+        if (widths_ok) { pre = r; break; }
+    }
+    if (pre < 0) {
         m->bursts++; m->dropped_noise += (uint32_t)m->burst_n;
         burst_reset(m);
         return;
     }
-    for (int k = 0; k < 4; k++) {
-        uint32_t w = t[2 * k + 1] - t[2 * k];
-        if (w < QUS_HALF - QUS_TOL || w > QUS_HALF + QUS_TOL) {
-            m->bursts++; m->dropped_noise += (uint32_t)m->burst_n;
-            burst_reset(m);
-            return;
-        }
-    }
     m->preamble_hits++;
 
-    /* 数据：逐位在两个半位中心采样电平。R11 融合（bit0→bit1 连续高电平）
-     * 在此模型下自然正确：融合把两个半位都垫成高。两个中心同电平 → 时序
-     * 已被破坏（丢沿/抖动越界）→ 安全丢帧。 */
+    /* 数据：逐位在两个半位中心采样电平，采样时轴以命中候选的上升沿为
+     * 原点。R11 融合（bit0→bit1 连续高电平）在此模型下自然正确：融合把
+     * 两个半位都垫成高。两个中心同电平 → 时序已被破坏（丢沿/抖动越界）
+     * → 安全丢帧。 */
     uint8_t frame[14] = {0};
     int covered = 0;
     int df = -1, want = 0;
-    int cur = 8;                              /* 电平游标：数据区从边沿 8 起 */
+    int cur = pre + 8;                        /* 电平游标：数据区从候选后第 8 沿起 */
     for (int k = 0; k < 112; k++) {
-        uint32_t c1 = QUS_DATA_OFF + QUS_BIT * k + 1;
+        uint32_t c1 = t[pre] + QUS_DATA_OFF + QUS_BIT * k + 1;
         uint32_t c0 = c1 + QUS_HALF;
         int lv1 = level_at(t, nedges, &cur, c1);
         int lv0 = level_at(t, nedges, &cur, c0);
@@ -114,7 +127,11 @@ static void burst_emit(modes_edge_t *m)
     modes_edge_frame_t f;
     memcpy(f.frame, frame, sizeof(f.frame));
     f.nbits = (uint32_t)want;
-    f.start_tick = m->burst_start_tick;
+    /* start_tick 是 preamble 首沿（可能不是 burst 首沿——候选滑窗跳过
+     * 了帧前噪声），按候选前的间隔精确回加。 */
+    uint64_t start = m->burst_start_tick;
+    for (int i = 0; i < pre; i++) start += m->burst[i];
+    f.start_tick = start;
     if (want == 56) m->frames_56++; else m->frames_112++;
     if (m->cb) m->cb(&f, m->user);
 

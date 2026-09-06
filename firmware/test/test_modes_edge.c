@@ -201,6 +201,44 @@ int main(void)
         CHECK(g_frames == 0 && m.frames_112 == 0, "idle produced frames\n");
     }
 
+    /* 10. 噪声前缀紧贴帧头（同一 burst）：burst 首沿是 0.5µs 噪声脉冲，
+     * 1.5µs 后跟合法 112-bit 帧。preamble 锚定必须滑到后续上升沿候选，
+     * 而不是按 burst 首沿判废丢掉整帧——审计实测：修复前 frames=0
+     * （dropped_noise 吞帧）。旧噪声用例（case 8）噪声与帧隔 100µs、
+     * 分属两个 burst，从未覆盖这条。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        uint32_t all[512];
+        all[0] = US(0.5);                     /* 噪声脉冲宽 */
+        all[1] = US(1.5);                     /* 噪声脉冲尾 → 帧 preamble 首沿 */
+        memcpy(all + 2, d, (n - 1) * sizeof(uint32_t));  /* 去掉终止符 */
+        size_t total = 2 + (n - 1);
+        all[total++] = LONG_GAP;
+        modes_edge_feed(&m, all, total);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
+        /* start_tick 必须落在 preamble 首沿（跳过噪声前缀），不是 burst
+         * 首沿（=0）。US() 宏对小延时向下取整，期望值按注入的实际
+         * 间隔之和算。 */
+        CHECK(g_last.start_tick == (uint64_t)(all[0] + all[1]), "start_tick=%llu\n",
+              (unsigned long long)g_last.start_tick);
+        CHECK(m.preamble_hits == 1 && m.frames_112 == 1, "stats\n");
+    }
+
+    /* 11. 纯噪声 burst（无 preamble 候选可滑）仍按噪声记账、不产帧：
+     * 滑窗不得把 dropped_noise 的口径改坏。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        uint32_t noise[10] = { US(1), US(0.4), US(0.6), US(0.3), US(0.5),
+                               US(0.4), US(0.6), US(0.3), US(0.5), LONG_GAP };
+        modes_edge_feed(&m, noise, 10);
+        CHECK(g_frames == 0, "noise produced %d frames\n", g_frames);
+        CHECK(m.dropped_noise >= 1, "noise=%u\n", m.dropped_noise);
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

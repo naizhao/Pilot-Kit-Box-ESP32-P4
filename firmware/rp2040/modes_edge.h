@@ -28,7 +28,8 @@
 typedef struct {
     uint8_t  frame[14];
     uint32_t nbits;                /* 56 | 112 */
-    uint64_t start_tick;           /* burst 首边沿（preamble 上升沿）绝对 tick */
+    uint64_t start_tick;           /* preamble 首上升沿绝对 tick（burst 首沿
+                                    * 是帧前噪声时，经候选滑窗跳过噪声） */
 } modes_edge_frame_t;
 
 typedef void (*modes_edge_frame_fn)(const modes_edge_frame_t *f, void *user);
