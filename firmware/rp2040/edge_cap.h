@@ -7,10 +7,11 @@
 
 #define EDGE_CAP_SM_CLK_HZ 125000000u     /* RP2040 默认 sys clk，div=1 */
 #define EDGE_CAP_TICK_HZ   (EDGE_CAP_SM_CLK_HZ / 2u)   /* 2 周期/迭代 */
-/* 缓冲总容量（u32 条目数）= 块队列几何：8 块 × 256 = 2048 条（8KB）。
- * 条目不再按条发布，而按块（256 条/块）显式交接，几何见 edge_cap_queue.h；
- * 保留本宏供 selftest_gen 的 flush 脉冲预算（SELFTEST_FLUSH_EDGES）按
- * 总深换算，语义 = "推满整个块队列"，与容量一致。 */
+/* 块缓冲总几何（u32 条目数）= 8 块 × 256 = 2048 条（8KB，含 1 个保留槽）。
+ * **不是可用容量**：可同时 FULL 的只有 N−1=7 块 = 1792 条
+ * （EDGE_CAP_Q_CAPACITY × EDGE_CAP_Q_BLOCK_ITEMS，满环判定恒保留 1 槽）。
+ * 发布按块进行（256 条/块，IRQ 每块发布），旧"整环发布"语义不复存在；
+ * 本宏仅描述 DMA 缓冲区总面积，勿再作容量/预算换算用。 */
 #define EDGE_CAP_RING_ITEMS (EDGE_CAP_Q_N_BLOCKS * EDGE_CAP_Q_BLOCK_ITEMS)
 
 /* PIO 推送的是递减计数器原值；换算成真实间隔 tick：
@@ -45,7 +46,10 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
  *     逐条换算 → free（release 发布 FREE）。cap 按块取整：剩余容量
  *     不足一块（256 条）时不弹块，本调用按块粒度返回。
  *     停机重启：drain 在释放过 ≥1 块后检查 lost 标志，用 arm_slot 的
- *     guard 重新武装（guard 失败 = 环仍满，保持停机等下一拍）。
+ *     guard 重新武装（guard 失败 = 环仍满，保持停机等下一拍）。重启
+ *     前先 pio_sm_restart + clear_fifos 丢弃停机窗口的残缺流，并把
+ *     重武装的第一块 mark disc（edgecap_q_t::disc_bitmap）——消费侧
+ *     见位先 modes_edge_reset 再喂，断点不拼接（详见 edge_cap.c）。
  *     重启 guard 必须走 arm_slot——它复用满环判定，防止把保留槽填满
  *     发布出 fill_done == consume 的 8 块 FULL 态（host 测试 11 的
  *     canary 反例）。
@@ -58,7 +62,12 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
  */
 
 void   edge_cap_start(void);
-size_t edge_cap_drain(uint32_t *out, size_t cap);
+/* 取数（core1 独占）。discontinuity 可为 NULL；非 NULL 时接收本批的断点
+ * 标记：批内含 lost 停机后重武装的第一块时置 true——该块数据之前有
+ * 一段整段缺失的真实时间，消费侧必须先 modes_edge_reset（丢弃半截
+ * burst，abs_tick 基线归零）再喂本批，否则断点前后 delta 拼成假 burst。
+ * RXSTALL 单沿丢失不置位（帧内损伤，该帧自然判负；见 edge_cap.c）。 */
+size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity);
 uint32_t edge_cap_overruns(void);
 /* 诊断：等待消费的**FULL 块数**（0..7，不折算条目数；含消费者正在
  * 转换中的那块）。按块计——满块发布粒度下它以 256 条/块为台阶跳动。 */

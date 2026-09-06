@@ -299,6 +299,57 @@ int main(void)
         CHECK(m.frames_112 == 1, "f112=%u\n", m.frames_112);
     }
 
+    /* 14. modes_edge_reset（丢沿/重启断点合同）：统计跨 reset 保留
+     *     （boot-lifetime 口径）；开着的半截 burst 被丢弃；reset 后干净帧
+     *     照常解出，start_tick 以 reset 为零点（abs_tick 基线归零）。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m, d, n);              /* 完整帧：建立统计 */
+        CHECK(g_frames == 1, "warmup frames=%d\n", g_frames);
+        modes_edge_feed(&m, d, 40);             /* 帧中段截断：burst 开着 */
+        CHECK(m.burst_n == 40, "burst_n=%d want 40\n", m.burst_n);
+        modes_edge_reset(&m);
+        CHECK(m.burst_n == 0, "reset must drop the open burst\n");
+        CHECK(m.abs_tick == 0, "abs_tick baseline must re-zero\n");
+        CHECK(m.frames_112 == 1 && m.preamble_hits == 1,
+              "stats must survive reset: f112=%u pre=%u\n",
+              m.frames_112, m.preamble_hits);
+        modes_edge_feed(&m, d, n);              /* 干净帧（含终止长隔）*/
+        CHECK(g_frames == 2, "post-reset frame lost, frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "post-reset bytes\n");
+        CHECK(g_last.start_tick == 0, "start_tick=%llu want 0\n",
+              (unsigned long long)g_last.start_tick);
+    }
+
+    /* 15. 跨断点拼接对照（reset 的存在意义）：奇数位截断后不 reset 直接
+     *     续喂，两段 delta 拼进同一 burst——后续真帧的 preamble 落在
+     *     奇数（下降）沿位上，候选滑窗只扫偶数位 → 整帧丢失；同一向量
+     *     在接缝处 reset 后照常解出。锁定"断点必须 reset"的行为合同。 */
+    {
+        modes_edge_t m1; modes_edge_init(&m1, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m1, d, 39);            /* 奇数截断：接缝奇偶翻转 */
+        modes_edge_feed(&m1, d, n);             /* 不 reset：拼接进同 burst */
+        CHECK(g_frames == 0, "stitched stream produced %d frames\n",
+              g_frames);
+        CHECK(m1.dropped_decode + m1.dropped_noise >= 1,
+              "stitched stream must be accounted as dropped\n");
+    }
+    {
+        modes_edge_t m2; modes_edge_init(&m2, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m2, d, 39);
+        modes_edge_reset(&m2);                  /* 接缝处 reset */
+        modes_edge_feed(&m2, d, n);
+        CHECK(g_frames == 1, "reset seam lost the frame, frames=%d\n",
+              g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "reset seam bytes\n");
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

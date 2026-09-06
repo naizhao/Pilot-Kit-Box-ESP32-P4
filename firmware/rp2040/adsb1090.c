@@ -45,9 +45,16 @@ static void on_frame(const modes_edge_frame_t *f, void *user)
 static void core1_entry(void)
 {
     static uint32_t buf[256];
+    bool disc;
     while (true) {
-        size_t n = edge_cap_drain(buf, 256);
-        if (n) modes_edge_feed(&s_edge, buf, n);
+        size_t n = edge_cap_drain(buf, 256, &disc);
+        if (n) {
+            /* 丢沿/重启断点：先丢掉既有半截 burst 再喂（abs_tick 基线
+             * 归零重计），断点两侧的 delta 不拼接。 */
+            if (disc)
+                modes_edge_reset(&s_edge);
+            modes_edge_feed(&s_edge, buf, n);
+        }
         atomic_fetch_add_explicit(&s_core1_beat, 1, memory_order_release);
         tight_loop_contents();
     }

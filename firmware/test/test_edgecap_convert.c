@@ -311,6 +311,47 @@ int main(void)
         CHECK(consume_one(&expect) && expect == 1u, "block 0 intact\n");
     }
 
+    /* 14. 重启断点位（disc bitmap，gpt-5.6-sol re-audit Fix 1）：fresh 队列
+     *     无位；init 首块武装不打位；满环停机 → 消费者释放 → 重启武装的
+     *     那一块带 disc 位（mark 语义 = target 重启路径），位只在该块、
+     *     take 读清一次；停机前发布的旧块无位；位随 FIFO 序在轮转复用
+     *     后不串块。 */
+    {
+        q_reset();
+        CHECK(!edgecap_q_take_disc(&q, 0u), "fresh q must have no disc\n");
+        kick();                                  /* init 首块：不打位 */
+        while (dma_running)
+            produce_step();                      /* 7 块发布，第 7 次拒停 */
+        CHECK(!dma_running && q.refused == 1u, "stopped at capacity\n");
+
+        uint32_t expect = 0u;
+        CHECK(consume_one(&expect) && expect == 1u, "free block 0\n");
+        restart_if_possible();
+        CHECK(dma_running && dma_armed == 7u, "restart at reserved slot\n");
+        edgecap_q_mark_disc(&q, dma_armed);      /* target 重启路径的语义 */
+        produce_step();                          /* 块 7 填满发布 */
+        while (dma_running)
+            produce_step();                      /* 块 0 填满 → 再次拒停 */
+        CHECK(!dma_running && q.refused == 2u, "stopped again\n");
+
+        for (uint32_t s = 1u; s <= 6u; s++) {    /* 停机前旧块：无位 */
+            uint32_t i;
+            CHECK(edgecap_q_pop_full(&q, &i) && i == s, "pop %u\n", s);
+            CHECK(!edgecap_q_take_disc(&q, i),
+                  "pre-gap block %u must not carry disc\n", s);
+            edgecap_q_free(&q, i);
+        }
+        {
+            uint32_t i;
+            CHECK(edgecap_q_pop_full(&q, &i) && i == 7u,
+                  "disc block must be FIFO head now\n");
+            CHECK(edgecap_q_take_disc(&q, i),
+                  "re-armed block must carry disc\n");
+            CHECK(!edgecap_q_take_disc(&q, i), "take must clear (once)\n");
+            edgecap_q_free(&q, i);
+        }
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

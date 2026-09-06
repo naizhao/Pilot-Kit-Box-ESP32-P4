@@ -26,22 +26,24 @@
 #include "edge_cap.h"
 
 #define SELFTEST_BITS_PER_US 16u
-/* Flush 脉冲串的边沿预算（gpt-5.6-sol Fix 1 的台架配套）：edge_cap 的
- * 发布粒度 = 整环 EDGE_CAP_RING_ITEMS 条边沿，台架单发位流的突发
- * （~240 沿）填不满一环 → 尾批永远不可见。位流在收尾脉冲之后追加
- * 一串 1µs 周期 / 0.5µs 宽的 flush 脉冲，把生产者推过一整环（+64 边沿
- * 裕量），帧本身位于环首随之发布；脉冲串自身作为噪声突发被解码端
- * 丢弃（容量溢出路径，test_modes_edge 用例 12 覆盖）。改环深度时此值
- * 经 edge_cap.h 自动跟随。 */
-#define SELFTEST_FLUSH_EDGES (EDGE_CAP_RING_ITEMS + 64u)
-/* 1216 word = 38912 slot ≈ 2.4ms：232µs 最长帧 + 收尾脉冲 + flush 脉冲串
- * （2112 边沿 = 1056 脉冲 × 16 slot = 16896 slot，起点在收尾脉冲后 6µs）
- * + 台架 idle（100µs 前 + 1000µs 后）。
+/* Flush 脉冲串的边沿预算（块发布粒度的台架配套）：edge_cap 的发布粒度
+ * = 块（256 条/块，IRQ 每凑满一块发布），台架单发位流的突发（~240 沿）
+ * 只占当前残块、自己永远凑不齐一块 → 不可见。位流在收尾脉冲之后追加
+ * 一串 1µs 周期 / 0.5µs 宽的 flush 脉冲：填满当前残块（≤255 沿）再顶出
+ * 一个整块（256 沿）→ 2×256 = 512 沿即够，+64 沿裕量 = 576。帧位于
+ * 残块内随该块发布；脉冲串自身作为噪声突发被解码端丢弃（容量溢出路径，
+ * test_modes_edge 用例 12 覆盖）。发布粒度变化时经 EDGE_CAP_Q_BLOCK_ITEMS
+ * 自动跟随。 */
+#define SELFTEST_FLUSH_EDGES (2u * EDGE_CAP_Q_BLOCK_ITEMS + 64u)
+/* 768 word = 24576 slot ≈ 1.5ms：112-bit 最长位流（收尾脉冲止于
+ * 2016 slot）+ flush 脉冲串（576 边沿 = 288 脉冲 × 16 slot = 9216 slot，
+ * 起点在收尾脉冲后 6µs → 止于 6712 slot）+ 台架 idle（100µs 前 +
+ * 1000µs 后）。
  * 最坏占用：idle_before 1600 slot + 位流（收尾脉冲止于 2016 slot）+
- * flush 2112→flush_end 19000 slot + idle_after 16000 slot = 36600 slot
- * = 1144 word（36600/32 = 1143.75 向上取整）≤ 1216 ✓。
- * brief 原 704 容不下 flush 脉冲串（gpt-5.6-sol Fix 1 起位流加长）。 */
-#define SELFTEST_MAX_WORDS   1216u
+ * flush 2112→flush_end 6712 slot + idle_after 16000 slot = 24312 slot
+ * = 760 word（24312/32 = 759.75 向上取整）→ 取 768 留少量裕量。
+ * 旧值 1216 对应整环发布粒度（2048+64 沿 flush），块发布后收缩。 */
+#define SELFTEST_MAX_WORDS   768u
 
 size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
                                 uint32_t idle_bits_before,

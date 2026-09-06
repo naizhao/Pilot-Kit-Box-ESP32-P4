@@ -54,13 +54,13 @@ size_t selftest_build_bitstream(const uint8_t *frame, int msgbits,
     nr++;
     uint32_t last_end = rise[nr - 1] + SELFTEST_BITS_PER_US / 2;
 
-    /* Flush 脉冲串（gpt-5.6-sol Fix 1 台架配套）：edge_cap 发布粒度 =
-     * 整环 EDGE_CAP_RING_ITEMS 沿，单发突发（~240 沿）填不满一环、
-     * 永不发布。收尾脉冲之后再隔 6µs（不并入帧 burst，先关掉收尾
-     * 脉冲自己的 2 沿小 burst）追加 1µs 周期 / 0.5µs 宽的脉冲串，把
-     * 生产者推过一整环（SELFTEST_FLUSH_EDGES）——帧在环首随之发布；
-     * 串本身作为噪声洪流走 modes_edge 容量溢出路径被丢弃（不产帧，
-     * 见 test_modes_edge 用例 12）。 */
+    /* Flush 脉冲串（块发布粒度的台架配套）：edge_cap 发布粒度 = 块
+     * （256 条/块，IRQ 每块发布），台架单发突发（~240 沿）只占当前残块、
+     * 自己永远凑不齐一块、不可见。收尾脉冲之后再隔 6µs（不并入帧
+     * burst，先关掉收尾脉冲自己的 2 沿小 burst）追加 1µs 周期 / 0.5µs
+     * 宽的脉冲串：填满残块 + 顶出一个整块（SELFTEST_FLUSH_EDGES）→
+     * 帧随残块发布；串本身作为噪声洪流走 modes_edge 容量溢出路径被
+     * 丢弃（不产帧，见 test_modes_edge 用例 12）。 */
     uint32_t flush_start = last_end + 6 * SELFTEST_BITS_PER_US;
     uint32_t pulses = (SELFTEST_FLUSH_EDGES + 1) / 2;   /* 每脉冲 = 升+降 2 沿 */
     uint32_t flush_end = flush_start + (pulses - 1) * SELFTEST_BITS_PER_US

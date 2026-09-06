@@ -68,6 +68,14 @@ typedef struct {
     atomic_uint fill_idx;     /* 生产者：下一个 FREE 槽位（武装目标）*/
     atomic_uint fill_done;    /* 生产者：已发布 FULL 的 one-past（release）*/
     atomic_uint consume_idx;  /* 消费者：下一个待消费 FULL 块（release）*/
+    atomic_uint disc_bitmap;  /* 重启断点位图：bit i = 块 i 是 lost 停机后
+                               * 重武装的**第一块**（其数据之前有一段整段
+                               * 缺失的真实时间）。由重启武装路径 mark、
+                               * 消费者 take 读清——写者/读者同在消费侧
+                               * core1 单任务序列内，atomic 只为 host 台架
+                               * 与跨上下文调用留定义良好的语义。RXSTALL
+                               * 单沿丢失不打位（帧内损伤，该帧自然判负，
+                               * 见 edge_cap.c）。 */
     uint32_t refused;         /* 生产者私有诊断：满环拒发次数（host 测断言用；
                                * 目标侧权威计数在 edge_cap.c 的 s_overruns）*/
 } edgecap_q_t;
@@ -97,6 +105,16 @@ bool edgecap_q_pop_full(edgecap_q_t *q, uint32_t *idx);
 /* 消费者：释放 idx（必须是最近一次 peek 且已整块取空的块；单消费者严格
  * 顺序）。release 推进 consume_idx，向生产者 guard 发布该槽 FREE。 */
 void edgecap_q_free(edgecap_q_t *q, uint32_t idx);
+
+/* 重启武装路径：把 slot 标记为"断点后第一块"（lost 停机重武装语义；
+ * init 首块武装**不打位**——那是冷启动，解码器本来就新鲜）。slot < N。
+ * 与消费侧 take 同属 core1 单任务序列，relaxed 序足够。 */
+void edgecap_q_mark_disc(edgecap_q_t *q, uint32_t slot);
+
+/* 消费者：读清 idx 块的断点位。返回 true = 该块是断点后第一块，消费侧
+ * 必须先 modes_edge_reset 丢弃既有半截 burst 再喂（否则断点前后的 delta
+ * 拼成假 burst，abs_tick 把永久偏移带进 start_tick）。idx < N。 */
+bool edgecap_q_take_disc(edgecap_q_t *q, uint32_t idx);
 
 /* 诊断：已发布未释放的块数（0..N−1；含消费者正在转换的那块——数的是
  * FULL 块，不折算条目）。 */

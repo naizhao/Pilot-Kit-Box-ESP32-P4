@@ -63,9 +63,8 @@ int main(void)
     }
 
     /* 2. 全回路：bitstream → 模拟沿提取 → modes_edge → 帧逐字节一致。
-     *    gpt-5.6-sol Fix 1 起位流尾部带 flush 脉冲串（整环发布粒度的
-     *    台架配套）：帧必须从噪声洪流中被照常解出，洪流自身走容量
-     *    溢出路径被丢弃——不产帧、不崩。 */
+     *    位流尾部带 flush 脉冲串（块发布粒度的台架配套）：帧必须从噪声
+     *    洪流中被照常解出，洪流自身走容量溢出路径被丢弃——不产帧、不崩。 */
     {
         static uint32_t words[SELFTEST_MAX_WORDS];
         size_t nw = selftest_build_bitstream(SELFTEST_DF17, 112,
@@ -97,14 +96,16 @@ int main(void)
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
         CHECK(memcmp(g_last.frame, SELFTEST_DF17, 14) == 0, "roundtrip bytes\n");
-        /* flush 脉冲串确实在位流里（边沿数 ≥ 预算），且确实是一整环
-         * 量级的噪声洪流：2048 沿以 256 沿/块走溢出路径 → 恰 8 次
-         * edge_overruns；噪声记账 = 收尾脉冲的下降沿 1 沿（其上升沿
-         * 是关闭帧 burst 的长隔终点，不属于小 burst）+ 8×256 沿 = 2049。 */
+        /* flush 脉冲串确实在位流里（边沿数 ≥ 预算），且仍是一股噪声
+         * 洪流：576 沿 uniform 0.5µs 间隔走溢出路径（256 沿/次 emit）
+         * → 恰 2 次 edge_overruns；噪声记账 = 收尾脉冲的下降沿 1 沿
+         * （其上升沿是关闭帧 burst 的长隔终点，不属于小 burst）+
+         * 2×256 沿 = 513（尾部 64 沿残段无终止符、留在 burst_n 里
+         * 不记账）。 */
         CHECK(nd >= SELFTEST_FLUSH_EDGES + 16u, "nd=%zu flush=%u\n",
               nd, SELFTEST_FLUSH_EDGES);
-        CHECK(m.edge_overruns == 8u, "edge_overruns=%u\n", m.edge_overruns);
-        CHECK(m.dropped_noise == 2049u, "noise=%u\n", m.dropped_noise);
+        CHECK(m.edge_overruns == 2u, "edge_overruns=%u\n", m.edge_overruns);
+        CHECK(m.dropped_noise == 513u, "noise=%u\n", m.dropped_noise);
         CHECK(m.preamble_hits == 1u, "preamble_hits=%u\n", m.preamble_hits);
     }
 

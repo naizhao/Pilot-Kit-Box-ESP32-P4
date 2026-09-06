@@ -72,8 +72,12 @@ static void __not_in_flash_func(edge_cap_dma_irq)(void)
     if (edgecap_q_push_full(&s_q, &next)) {
         edge_cap_rearm(next);        /* 下一 FREE 块，无缝续传 */
     } else {
-        /* 环满：停机（完成即自停，无需寄存器操作）。消费侧腾出槽位前
-         * 的边沿丢失——记 overrun + 置 lost，由 drain 重启。 */
+        /* 环满：停机（完成即自停，无需寄存器操作），不重武装。停机窗口
+         * 内 PIO 仍在跑、照常 push（DREQ 无消费方）：RX FIFO 塞满后
+         * RXSTALL、push noblock 静默丢沿——这是**可接受的垃圾窗口**：
+         * 残缺流在重启时被 pio_sm_restart + clear_fifos 整体丢弃，且重启
+         * 后首块带 disc 位，消费侧先 modes_edge_reset 再喂（见 drain）。
+         * 丢沿如实记 overrun + 置 lost，由 drain 重启。 */
         atomic_fetch_add_explicit(&s_overruns, 1, memory_order_relaxed);
         atomic_store_explicit(&s_lost, 1u, memory_order_release);
     }
@@ -128,13 +132,24 @@ void edge_cap_start(void)
  * 一块时不弹块（半块交接会破坏"整块 FREE"的所有权语义）。退出前处理
  * 满环停机：本调用释放过块（腾出了槽位）才尝试重启；重启必须走
  * arm_slot 的 guard（环仍满则保持停机，见 edge_cap.h 合同）。
+ *
+ * 断点传播（gpt-5.6-sol re-audit Fix 1）：带 disc 位的批次把
+ * *discontinuity 置 true，消费侧（adsb1090 core1）必须先
+ * modes_edge_reset 再喂——断点两侧的 delta 才不会被拼成假 burst。
  */
-size_t edge_cap_drain(uint32_t *out, size_t cap)
+size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
 {
     if (!s_started)
         return 0;
+    if (discontinuity)
+        *discontinuity = false;
 
-    /* PIO 侧丢沿：push noblock 撞满 RX FIFO 会置本 SM 的 RXSTALL（写 1 清除）*/
+    /* PIO 侧丢沿：push noblock 撞满 RX FIFO 会置本 SM 的 RXSTALL（写 1
+     * 清除）。RXSTALL 只记 overrun、**不打 disc 位**：停机窗口外的单沿
+     * 丢失是帧内损伤——奇偶/间距已乱，该帧由解码端自然判负（安全丢弃，
+     * test_modes_edge 用例 6 锁定）；abs_tick 的少量偏移在下一个 >5µs
+     * 帧间长隔处随 burst 重开自愈。只有"停机→重启"这类结构性断点（时间
+     * 轴整段缺失）才走 disc → modes_edge_reset 路径。 */
     uint32_t stall_bit = 1u << (PIO_FDEBUG_RXSTALL_LSB + s_sm);
     if (s_pio->fdebug & stall_bit) {
         s_pio->fdebug = stall_bit;
@@ -145,21 +160,41 @@ size_t edge_cap_drain(uint32_t *out, size_t cap)
     uint32_t idx;
     while (cap - n >= EDGE_CAP_Q_BLOCK_ITEMS &&
            edgecap_q_pop_full(&s_q, &idx)) {
+        /* 断点位读清后随批上抛（本消费者每批恰一块——adsb1090 的 buf
+         * 深度 = 一块；停机前发布的旧块先于 disc 块出队、不带位）。 */
+        bool disc = edgecap_q_take_disc(&s_q, idx);
         for (size_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
             out[n + i] = edgecap_raw_to_ticks(s_blocks[idx][i]);
         edgecap_q_free(&s_q, idx);
         n += EDGE_CAP_Q_BLOCK_ITEMS;
+        if (disc && discontinuity)
+            *discontinuity = true;
     }
 
     /* 满环停机的重启：lost 由 IRQ release 置位；取走（acquire）后尝试
      * 重武装。arm_slot 失败 = 环仍满（保留槽未释放）→ 恢复标志等下一拍
-     * （arm_slot 失败无副作用，fill_idx 未动）。 */
+     * （arm_slot 失败无副作用，fill_idx 未动）。
+     *
+     * 重启卫生（断点传播，Fix 1c）：
+     *   1. pio_sm_restart + pio_sm_clear_fifos 在武装**之前**执行——停机
+     *      窗口里 PIO 塞进 RX FIFO 的残缺值整体丢弃，新块从下一真实沿
+     *      干净起录（首条间隔仍以真实上一沿为基准：X 在每个沿无条件
+     *      重装，丢的只是 push，不是计数基准；接缝处若恰好落在 burst
+     *      中间，那一帧奇偶已乱、由解码端自然判负，见上方 RXSTALL 注释）。
+     *   2. 重启武装的第一块 mark disc——该块数据之前有一段整段缺失的
+     *      真实时间，消费侧必须先 modes_edge_reset 丢弃半截 burst 再喂，
+     *      否则断点前后 delta 拼成假 burst、abs_tick 把永久偏移带进
+     *      start_tick。 */
     if (atomic_exchange_explicit(&s_lost, 0u, memory_order_acq_rel)) {
         uint32_t slot;
-        if (edgecap_q_arm_slot(&s_q, &slot))
+        if (edgecap_q_arm_slot(&s_q, &slot)) {
+            pio_sm_restart(s_pio, s_sm);
+            pio_sm_clear_fifos(s_pio, s_sm);
             edge_cap_rearm(slot);
-        else
+            edgecap_q_mark_disc(&s_q, slot);
+        } else {
             atomic_store_explicit(&s_lost, 1u, memory_order_relaxed);
+        }
     }
 
     return n;

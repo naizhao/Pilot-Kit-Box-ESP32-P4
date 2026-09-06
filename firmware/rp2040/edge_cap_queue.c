@@ -7,6 +7,7 @@ void edgecap_q_init(edgecap_q_t *q)
     atomic_store_explicit(&q->fill_idx, 0u, memory_order_relaxed);
     atomic_store_explicit(&q->fill_done, 0u, memory_order_relaxed);
     atomic_store_explicit(&q->consume_idx, 0u, memory_order_relaxed);
+    atomic_store_explicit(&q->disc_bitmap, 0u, memory_order_relaxed);
     q->refused = 0u;
 }
 
@@ -77,6 +78,20 @@ void edgecap_q_free(edgecap_q_t *q, uint32_t idx)
     atomic_store_explicit(&q->consume_idx,
                           (idx + 1u) % EDGE_CAP_Q_N_BLOCKS,
                           memory_order_release);
+}
+
+void edgecap_q_mark_disc(edgecap_q_t *q, uint32_t slot)
+{
+    atomic_fetch_or_explicit(&q->disc_bitmap, 1u << slot,
+                             memory_order_relaxed);
+}
+
+bool edgecap_q_take_disc(edgecap_q_t *q, uint32_t idx)
+{
+    uint32_t bit = 1u << idx;
+    uint32_t old = atomic_fetch_and_explicit(&q->disc_bitmap, ~bit,
+                                             memory_order_relaxed);
+    return (old & bit) != 0u;
 }
 
 uint32_t edgecap_q_pending(const edgecap_q_t *q)

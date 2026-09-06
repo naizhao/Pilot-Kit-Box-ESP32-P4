@@ -2,8 +2,8 @@
  * modes_edge.h — 双沿间隔流 → 56/112-bit Mode-S 帧重构。
  *
  * 纯 C、无 pico 依赖：host 单测与上板共用同一份实现。
- * 职责边界（PLAN.md §4）：这里只做 preamble 同步 + PPM 位重建（含 R11 融合串
- * 拆分）+ 组帧，不做 CRC、不维护任何目标状态——裁决与融合都在 P4。
+ * 职责边界：这里只做 preamble 同步 + PPM 位重建（含 R11 融合串拆分）+
+ * 组帧，不做 CRC、不维护任何目标状态——裁决与融合都在 P4。
  *
  * 时序合同（外部锚点：esp32-rtl-sdr/main/mode-s.c:708-715 —— 0.5µs 脉冲 @
  * 0/1.0/3.5/4.5µs；数据 1µs/位、脉冲在位首=1 / 位中=0；quarter-µs 整数域，容差 ±1 qus）：
@@ -60,3 +60,10 @@ typedef struct {
 void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user);
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n);
+/* 断点重置：在 discontinuity（丢沿/重启，见 edge_cap.h drain 的
+ * discontinuity 出参）后、喂入断点标记批次之前调用。丢弃开着的半截
+ * burst（burst_n/abs_tick/burst_start_tick 归零重计），不 emit、不回调；
+ * 统计字段保留（boot-lifetime 口径）。不 reset 的后果：断点前后的 delta
+ * 被拼进同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge
+ * 用例 15 对照锁定），abs_tick 也把永久偏移带进 start_tick。 */
+void modes_edge_reset(modes_edge_t *m);
