@@ -42,14 +42,19 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
  *     **DMA 停机**：置 lost 标志、记 overrun。停机到消费侧重启之间的
  *     边沿数据丢失（overrun 语义，真实过载路径，诚实计数）。
  *
- *   · 消费者 = edge_cap_drain（core1 独占）：按 FIFO 序整块 peek →
- *     逐条换算 → free（release 发布 FREE）。cap 按块取整：剩余容量
- *     不足一块（256 条）时不弹块，本调用按块粒度返回。
+ *   · 消费者 = edge_cap_drain（core1 独占）：**每次调用至多取走一整块**
+ *     （round-2 Fix 4）——弹出 → 逐条换算 → free（release 交还）；队列
+ *     空或 cap 不足一块（256 条）时返回 0。理由：一次跨断点的多块批次
+ *     无法表达"断点在哪"，消费者要在块间 reset 解码器——逐块交接让断
+ *     点位置精确落在块边界。
  *     停机重启：drain 在释放过 ≥1 块后检查 lost 标志，用 arm_slot 的
  *     guard 重新武装（guard 失败 = 环仍满，保持停机等下一拍）。重启
- *     前先 pio_sm_restart + clear_fifos 丢弃停机窗口的残缺流，并把
- *     重武装的第一块 mark disc（edgecap_q_t::disc_bitmap）——消费侧
- *     见位先 modes_edge_reset 再喂，断点不拼接（详见 edge_cap.c）。
+ *     前对 PIO 做**完整确定性重初始化**（停用 → pio_sm_restart → 清
+ *     FIFO → pio_sm_init 重装配置 + PC 回程序起点 → 重新使能；单用
+ *     restart 不复位 PC/X，见 edge_cap.c edge_cap_pio_flush），丢弃停机
+ *     窗口的残缺流，并把重武装的第一块 mark disc
+ *     （edgecap_q_t::disc_bitmap）——消费侧见位先 modes_edge_reset 再喂，
+ *     断点不拼接（时间基保留，断点后时间戳单调、见 modes_edge.h）。
  *     重启 guard 必须走 arm_slot——它复用满环判定，防止把保留槽填满
  *     发布出 fill_done == consume 的 8 块 FULL 态（host 测试 11 的
  *     canary 反例）。
@@ -62,11 +67,15 @@ static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
  */
 
 void   edge_cap_start(void);
-/* 取数（core1 独占）。discontinuity 可为 NULL；非 NULL 时接收本批的断点
- * 标记：批内含 lost 停机后重武装的第一块时置 true——该块数据之前有
- * 一段整段缺失的真实时间，消费侧必须先 modes_edge_reset（丢弃半截
- * burst，abs_tick 基线归零）再喂本批，否则断点前后 delta 拼成假 burst。
- * RXSTALL 单沿丢失不置位（帧内损伤，该帧自然判负；见 edge_cap.c）。 */
+/* 取数（core1 独占）：**每次调用至多弹出一整块**——成功返回
+ * EDGE_CAP_Q_BLOCK_ITEMS（256），队列空或 cap 不足一块返回 0；断点只能
+ * 表达在块边界（跨断点的批次无法标记断点位置，消费方逐块 reset）。
+ * discontinuity 可为 NULL；非 NULL 时接收**本块**的断点标记：返回的块
+ * 是 lost 停机重武装后的第一块时置 true——该块数据之前有一段整段缺失
+ * 的真实时间，消费侧必须先 modes_edge_reset（丢弃半截 burst；abs_tick
+ * 时间基保留、断点后时间戳单调）再喂本块，否则断点前后 delta 拼成假
+ * burst。RXSTALL 单沿丢失不置位（帧内损伤，该帧自然判负；见
+ * edge_cap.c）。 */
 size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity);
 uint32_t edge_cap_overruns(void);
 /* 诊断：等待消费的**FULL 块数**（0..7，不折算条目数；含消费者正在

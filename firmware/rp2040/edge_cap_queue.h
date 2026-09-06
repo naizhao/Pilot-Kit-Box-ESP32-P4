@@ -113,7 +113,8 @@ void edgecap_q_mark_disc(edgecap_q_t *q, uint32_t slot);
 
 /* 消费者：读清 idx 块的断点位。返回 true = 该块是断点后第一块，消费侧
  * 必须先 modes_edge_reset 丢弃既有半截 burst 再喂（否则断点前后的 delta
- * 拼成假 burst，abs_tick 把永久偏移带进 start_tick）。idx < N。 */
+ * 拼成假 burst；时间基保留，断点后时间戳单调、见 modes_edge.h）。
+ * idx < N。 */
 bool edgecap_q_take_disc(edgecap_q_t *q, uint32_t idx);
 
 /* 诊断：已发布未释放的块数（0..N−1；含消费者正在转换的那块——数的是

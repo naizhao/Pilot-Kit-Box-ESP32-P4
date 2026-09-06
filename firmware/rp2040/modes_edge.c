@@ -183,15 +183,18 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
 
 /*
  * 断点重置（丢沿/重启）：把开着的半截 burst 直接丢弃——不 emit、不回调、
- * 不碰任何统计（计数是 boot-lifetime 口径）；abs_tick/burst_start_tick
- * 归零重计：断点两侧的 tick 不连续（中间丢了一段真实时间），旧基线只会
- * 把永久偏移烙进 start_tick。消费者在喂入带断点标记的批次之前调用。
+ * 不碰任何统计（计数是 boot-lifetime 口径）。abs_tick 时间基**保留**
+ * （round-2 P1-a）：断点后的帧 start_tick 单调不减，只被丢失段的时长
+ * 轻微提前偏置——丢失的时长无法恢复，提前偏置是丢失的固有属性，记录
+ * 在案；绝不回跳，也就不会触碰 rp_ts_us 0=无值 的语义。消费者在喂入
+ * 带断点标记的块之前调用。不 reset 的后果：断点前后的 delta 被拼进
+ * 同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge 用例
+ * 15 对照锁定）。
  */
 void modes_edge_reset(modes_edge_t *m)
 {
-    m->burst_n = 0;
-    m->abs_tick = 0;
-    m->burst_start_tick = 0;
+    m->burst_n = 0;                    /* 半截 burst 整体作废（含缓冲内容）*/
+    m->burst_start_tick = 0;           /* burst_n==0 后喂入时必然重算 */
 }
 
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n)

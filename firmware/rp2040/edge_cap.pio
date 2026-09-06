@@ -10,8 +10,9 @@
  *
  * R11（P0）：必须捕获双沿——真实 Mode-S 里 bit0→bit1 的两个 0.5µs 脉冲背靠背
  * 融合成 1µs 连续高电平；只有双沿（上升+下降）加脉宽才能把融合串重建为
- * 两个半位，只捕获上升沿会丢掉 bit1 的定位信息（内部计划文档 R11 决策，
- * 规则本体如上）。
+ * 两个半位，只捕获上升沿会丢掉 bit1 的定位信息（融合规则本体即上文两条
+ * 推送路径；PIO 原值 → 真实间隔 tick 的换算合同见
+ * firmware/test/test_edgecap_convert.c 文件头）。
  */
 .program edgecap
 .wrap_target
@@ -41,7 +42,9 @@ fall:                    ; 下降沿 → 推送（高电平时长）
 .wrap
 
 % c-sdk {
-static inline void edgecap_program_init(PIO pio, uint sm, uint offset, uint pin)
+/* 返回实际应用的 sm_config：宿主（edge_cap.c）保存一份，供 lost 重启
+ * 路径做完整确定性重初始化（pio_sm_init 需要同款配置）。 */
+static inline pio_sm_config edgecap_program_init(PIO pio, uint sm, uint offset, uint pin)
 {
     pio_sm_config c = edgecap_program_get_default_config(offset);
     sm_config_set_jmp_pin(&c, pin);
@@ -52,5 +55,6 @@ static inline void edgecap_program_init(PIO pio, uint sm, uint offset, uint pin)
     gpio_pull_down(pin);
     pio_sm_init(pio, sm, offset, &c);
     pio_sm_set_enabled(pio, sm, true);
+    return c;
 }
 %}

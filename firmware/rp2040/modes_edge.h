@@ -61,9 +61,12 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user);
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n);
 /* 断点重置：在 discontinuity（丢沿/重启，见 edge_cap.h drain 的
- * discontinuity 出参）后、喂入断点标记批次之前调用。丢弃开着的半截
- * burst（burst_n/abs_tick/burst_start_tick 归零重计），不 emit、不回调；
- * 统计字段保留（boot-lifetime 口径）。不 reset 的后果：断点前后的 delta
+ * discontinuity 出参）后、喂入断点标记块之前调用。只丢弃开着的半截
+ * burst（burst_n/burst_start_tick 作废，缓冲内容随之失效），不 emit、
+ * 不回调；统计字段保留（boot-lifetime 口径）。abs_tick 时间基**保留**
+ * （round-2 P1-a）：断点后的帧 start_tick 单调递增，只被丢失段时长
+ * 轻微提前偏置（丢失固有、无法恢复，已记录）；P4 侧现忽略 meta
+ * （adsb_link_task.c），无下游影响。不 reset 的后果：断点前后的 delta
  * 被拼进同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge
- * 用例 15 对照锁定），abs_tick 也把永久偏移带进 start_tick。 */
+ * 用例 15 对照锁定）。 */
 void modes_edge_reset(modes_edge_t *m);

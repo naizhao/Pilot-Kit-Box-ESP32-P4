@@ -45,12 +45,17 @@ static void on_frame(const modes_edge_frame_t *f, void *user)
 static void core1_entry(void)
 {
     static uint32_t buf[256];
-    bool disc;
     while (true) {
-        size_t n = edge_cap_drain(buf, 256, &disc);
-        if (n) {
-            /* 丢沿/重启断点：先丢掉既有半截 burst 再喂（abs_tick 基线
-             * 归零重计），断点两侧的 delta 不拼接。 */
+        /* 每次至多取一块（edge_cap.h 合同）：断点只能表达在块边界，
+         * 逐块取、块空让出。disc 块先 reset 再喂（断点两侧 delta 不拼接）；
+         * 时间基保留（round-2 P1-b）：断点后帧的 rp_ts_us 单调、仅被丢失
+         * 段时长轻微提前偏置（丢失固有，modes_edge.h 有记），协议
+         * rp_ts_us 0=无值 语义不再被触碰；P4 侧现忽略 meta，无下游影响。 */
+        for (;;) {
+            bool disc;
+            size_t n = edge_cap_drain(buf, 256, &disc);
+            if (!n)
+                break;
             if (disc)
                 modes_edge_reset(&s_edge);
             modes_edge_feed(&s_edge, buf, n);

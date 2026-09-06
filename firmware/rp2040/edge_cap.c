@@ -38,6 +38,8 @@
 
 static PIO  s_pio = pio0;
 static uint s_sm;
+static uint s_offset;               /* edgecap 程序装入偏移（重初始化的 PC 起点）*/
+static pio_sm_config s_cfg;         /* start 时保存的 sm_config（确定性重装用）*/
 static uint s_dma_ch;               /* 单 DMA 通道（块队列的生产者）*/
 static bool s_started;
 static uint32_t s_blocks[EDGE_CAP_Q_N_BLOCKS][EDGE_CAP_Q_BLOCK_ITEMS];
@@ -58,6 +60,24 @@ static void edge_cap_rearm(uint slot)
     dma_channel_set_trans_count(s_dma_ch, EDGE_CAP_Q_BLOCK_ITEMS, true);
 }
 
+/*
+ * PIO 确定性重初始化（gpt-5.6-sol round-2 audit）：pio_sm_restart 只复位
+ * SM 内部执行状态（X/Y/ISR/OSR、输入输出计数器）——**不复位 PC、不重装
+ * exec/shift 配置**；单用 restart + 清 FIFO 后 SM 可能停在程序中段、带着
+ * 残缺 X 继续跑出垃圾流。完整序列等价冷启动：
+ *     停用 → pio_sm_restart → 清 FIFO → pio_sm_init（重装配置、PC 回
+ *     程序起点，X 从程序头 set x,31 重新预载）→ 重新使能。
+ * s_cfg 是 start 时 edgecap_program_init 返回并保存的同款配置。
+ */
+static void edge_cap_pio_flush(void)
+{
+    pio_sm_set_enabled(s_pio, s_sm, false);
+    pio_sm_restart(s_pio, s_sm);
+    pio_sm_clear_fifos(s_pio, s_sm);
+    pio_sm_init(s_pio, s_sm, s_offset, &s_cfg);
+    pio_sm_set_enabled(s_pio, s_sm, true);
+}
+
 static void __not_in_flash_func(edge_cap_dma_irq)(void)
 {
     /* 只认领本通道的 intr 位（写 1 清零）；共享 IRQ 时不越权。handler
@@ -75,9 +95,9 @@ static void __not_in_flash_func(edge_cap_dma_irq)(void)
         /* 环满：停机（完成即自停，无需寄存器操作），不重武装。停机窗口
          * 内 PIO 仍在跑、照常 push（DREQ 无消费方）：RX FIFO 塞满后
          * RXSTALL、push noblock 静默丢沿——这是**可接受的垃圾窗口**：
-         * 残缺流在重启时被 pio_sm_restart + clear_fifos 整体丢弃，且重启
-         * 后首块带 disc 位，消费侧先 modes_edge_reset 再喂（见 drain）。
-         * 丢沿如实记 overrun + 置 lost，由 drain 重启。 */
+         * 残缺流在重启时被 edge_cap_pio_flush（完整确定性重初始化，见
+         * 上）整体丢弃，且重启后首块带 disc 位，消费侧先 modes_edge_reset
+         * 再喂（见 drain）。丢沿如实记 overrun + 置 lost，由 drain 重启。 */
         atomic_fetch_add_explicit(&s_overruns, 1, memory_order_relaxed);
         atomic_store_explicit(&s_lost, 1u, memory_order_release);
     }
@@ -90,7 +110,8 @@ void edge_cap_start(void)
 
     uint offset = pio_add_program(s_pio, &edgecap_program);
     s_sm = pio_claim_unused_sm(s_pio, true);
-    edgecap_program_init(s_pio, s_sm, offset, PIN_PULSES);
+    s_offset = offset;
+    s_cfg = edgecap_program_init(s_pio, s_sm, offset, PIN_PULSES);
 
     s_dma_ch = dma_claim_unused_channel(true);
 
@@ -127,19 +148,19 @@ void edge_cap_start(void)
 }
 
 /*
- * drain（core1 独占）：块粒度消费。逐块 pop（acquire 看见 FULL 即整块
- * 完整）→ 全块换算 → free（release 交还）。cap 按块取整：剩余容量不足
- * 一块时不弹块（半块交接会破坏"整块 FREE"的所有权语义）。退出前处理
- * 满环停机：本调用释放过块（腾出了槽位）才尝试重启；重启必须走
- * arm_slot 的 guard（环仍满则保持停机，见 edge_cap.h 合同）。
+ * drain（core1 独占）：**每次调用至多取走一整块**（round-2 Fix 4）。
+ * 弹出一块（acquire 看见 FULL 即整块完整）→ 全块换算 → free（release
+ * 交还）；队列空或 cap 不足一块（256 条）时返回 0——跨断点的多块批次
+ * 无法表达"断点在哪"，消费者要在块间 reset 解码器，逐块交接才让断点
+ * 位置精确落在块边界（adsb1090 core1 循环反复调用，返回 0 让出）。
  *
- * 断点传播（gpt-5.6-sol re-audit Fix 1）：带 disc 位的批次把
+ * 断点传播（gpt-5.6-sol re-audit Fix 1）：带 disc 位的块把
  * *discontinuity 置 true，消费侧（adsb1090 core1）必须先
  * modes_edge_reset 再喂——断点两侧的 delta 才不会被拼成假 burst。
  */
 size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
 {
-    if (!s_started)
+    if (!s_started || cap < EDGE_CAP_Q_BLOCK_ITEMS)
         return 0;
     if (discontinuity)
         *discontinuity = false;
@@ -156,40 +177,39 @@ size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
         atomic_fetch_add_explicit(&s_overruns, 1, memory_order_relaxed);
     }
 
-    size_t n = 0;
     uint32_t idx;
-    while (cap - n >= EDGE_CAP_Q_BLOCK_ITEMS &&
-           edgecap_q_pop_full(&s_q, &idx)) {
-        /* 断点位读清后随批上抛（本消费者每批恰一块——adsb1090 的 buf
-         * 深度 = 一块；停机前发布的旧块先于 disc 块出队、不带位）。 */
-        bool disc = edgecap_q_take_disc(&s_q, idx);
-        for (size_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
-            out[n + i] = edgecap_raw_to_ticks(s_blocks[idx][i]);
-        edgecap_q_free(&s_q, idx);
-        n += EDGE_CAP_Q_BLOCK_ITEMS;
-        if (disc && discontinuity)
-            *discontinuity = true;
-    }
+    if (!edgecap_q_pop_full(&s_q, &idx))
+        return 0;
+    /* 断点位读清后随块上抛（本调用恰一块——断点位置精确到块边界；
+     * 停机前发布的旧块先于 disc 块出队、不带位）。 */
+    bool disc = edgecap_q_take_disc(&s_q, idx);
+    for (size_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
+        out[i] = edgecap_raw_to_ticks(s_blocks[idx][i]);
+    edgecap_q_free(&s_q, idx);
+    if (disc && discontinuity)
+        *discontinuity = true;
 
     /* 满环停机的重启：lost 由 IRQ release 置位；取走（acquire）后尝试
      * 重武装。arm_slot 失败 = 环仍满（保留槽未释放）→ 恢复标志等下一拍
      * （arm_slot 失败无副作用，fill_idx 未动）。
      *
-     * 重启卫生（断点传播，Fix 1c）：
-     *   1. pio_sm_restart + pio_sm_clear_fifos 在武装**之前**执行——停机
-     *      窗口里 PIO 塞进 RX FIFO 的残缺值整体丢弃，新块从下一真实沿
-     *      干净起录（首条间隔仍以真实上一沿为基准：X 在每个沿无条件
-     *      重装，丢的只是 push，不是计数基准；接缝处若恰好落在 burst
-     *      中间，那一帧奇偶已乱、由解码端自然判负，见上方 RXSTALL 注释）。
+     * 重启卫生（round-2 Fix 3，确定性重初始化）：
+     *   1. edge_cap_pio_flush（停用 → pio_sm_restart → 清 FIFO →
+     *      pio_sm_init 重装配置 + PC 回程序起点 → 使能）在武装**之前**
+     *      执行——停机窗口里 PIO 塞进 RX FIFO 的残缺值整体丢弃，且 SM
+     *      从程序头干净起跑（旧"仅 restart + 清 FIFO"不复位 PC/X，SM
+     *      可能从中段带残缺 X 续跑，审计指认已修复）。新流从下一沿干净
+     *      开始：首条间隔自重启时刻起算，线路空闲低电平时 X 饱和推送
+     *      超大空闲标记，解码端按 >5µs 长隔关 burst、不与旧流拼接；
+     *      接缝处若恰有半截 burst，由 disc → modes_edge_reset 丢弃。
      *   2. 重启武装的第一块 mark disc——该块数据之前有一段整段缺失的
      *      真实时间，消费侧必须先 modes_edge_reset 丢弃半截 burst 再喂，
-     *      否则断点前后 delta 拼成假 burst、abs_tick 把永久偏移带进
-     *      start_tick。 */
+     *      否则断点前后 delta 拼成假 burst（时间基保留、见 modes_edge.h，
+     *      断点后 start_tick 单调、轻微提前偏置）。 */
     if (atomic_exchange_explicit(&s_lost, 0u, memory_order_acq_rel)) {
         uint32_t slot;
         if (edgecap_q_arm_slot(&s_q, &slot)) {
-            pio_sm_restart(s_pio, s_sm);
-            pio_sm_clear_fifos(s_pio, s_sm);
+            edge_cap_pio_flush();
             edge_cap_rearm(slot);
             edgecap_q_mark_disc(&s_q, slot);
         } else {
@@ -197,7 +217,7 @@ size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
         }
     }
 
-    return n;
+    return EDGE_CAP_Q_BLOCK_ITEMS;
 }
 
 uint32_t edge_cap_overruns(void)
