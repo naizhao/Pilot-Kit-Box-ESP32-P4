@@ -22,11 +22,14 @@
 #define PIN_SUBG_IRQ      14
 #define PIN_SUBG_SYNC     15
 #define PIN_PULSES        19  /* TLV3501 → PIO 上升沿捕获 */
-#define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；台架跳线 24→19（≥1k 串联电阻，
+#define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；跳线 24→19（≥1k 串联电阻，
                                * 19 上 TLV3501 是推挽驱动，直接对接会打架）。
                                * audit P1-4：原 18 是 SUBG_RESET（CC1312R），
                                * PINMAP §2 严禁挪用；24 = RECOVERED_CLK，
-                               * v4 无落点（v3 仅 TP7），空置可安全借用 */
+                               * 调试网络，空置可安全借用。落点：v4 生产板
+                               * TP7 存在（kicad_pcb:38901，audit round 4
+                               * 勘误；PINMAP.md:41 的"V4 已删 TP7"与 PCB
+                               * 不符，归硬件侧勘误），v3 亦有 TP7 */
 #define PIN_TL_PWM        25  /* 门限 PWM → R34/C49（RC≈1ms，F5）→ LEVEL_BIAS */
 #define PIN_ADC_LEVEL     26  /* ADC0：门限直流回读 */
 #define PIN_ADC_RSSI      27  /* ADC1：AD8313 RSSI */

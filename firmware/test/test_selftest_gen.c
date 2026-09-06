@@ -15,12 +15,13 @@
  * ticks_to_qus 往返无舍入误差（对照 test_modes_edge.c 的 qus 合同）。
  * mode_s.c 直接 include 进本 TU（仓库惯例），给常量回填正确 parity。
  *
- * 硬件适用范围（audit round 3 裁定）：位流构造与回环判据在 host 与
- * V3 载板（TP7 落点）/台架裸 RP2040 板有效；**V4 载板无法执行跳线
- * 回环**——TP7 已删、GPIO24 无落点。V4 的整链验收改用真实 RF 或信号
- * 源注入 J6；P4 侧可用后续 debug 命令注入合成帧验证 modes_ingest 链
- * （follow-up，不实现）。GPIO19 是 TLV3501 推挽输出，有落点处仍须串
- * ≥1k 电阻。详见 selftest_gen.h。
+ * 硬件适用范围（audit round 4 勘误）：位流构造与回环判据在 host、V4/V3
+ * 载板与台架裸 RP2040 板均有效。V4 载板的 TP7/RECOVERED_CLK 落点在
+ * 生产 PCB 上存在（expansion-board-v4.kicad_pcb:38901，Reference=TP7、
+ * net=RECOVERED_CLK）——跳线回环验收在 V4 **可执行**：GPIO24 经 TP7
+ * 引出，跳线 24→19 串 ≥1k（GPIO19 是 TLV3501 推挽输出，直连会输出
+ * 争用）。V3 载板 TP7 同样有落点。详见 selftest_gen.h；PINMAP.md/
+ * ASSEMBLY 文档里"V4 已删 TP7"的旧说法与 PCB 不符，归硬件侧勘误。
  */
 #include "selftest_gen.h"
 #include "modes_edge.h"
