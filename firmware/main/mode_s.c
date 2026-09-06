@@ -691,4 +691,3 @@ void apply_phase_correction(uint16_t *mag)
         }
     }
 }
-

@@ -149,8 +149,7 @@ flowchart LR
 
 | Task              | CPU | Prio | Stack | Role |
 |-------------------|-----|------|-------|------|
-| `usb_host_lib`    | 0   | 5    | 4 KiB | Pumps `usb_host_lib_handle_events()`; required by USB stack lifecycle. |
-| `sdr`             | 1   | 6    | 8 KiB | Owns the USB client, opens the RTL-SDR, drives `rtlsdr_read_async()`. The async URB callback runs *on this same task* (`rtlsdr_read_async`'s wait loop pumps client events itself), so the IQ producer is a single-task design with no cross-CPU contention. |
+| `adsb_lnk`        | 1   | 5    | 8 KiB | Runs the RP2040 UART link (adsb_link codec @ 921600 baud, 256-byte reads): feeds CRC-pre Mode-S frames from the RP2040 front-end into modes_ingest, replies to each HELLO, and carries the former DSP business chain (CPR/track/records/1 Hz dashboard). The RP2040 itself captures dual edges via PIO+DMA and decodes 56/112-bit frames with modes_edge; the USB RTL-SDR task pair (`usb_host_lib`/`sdr`) is retired. |
 | `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
 | `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the DSP task off storage writes. |
 | `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot); feeding it into the system clock is a follow-up task. |

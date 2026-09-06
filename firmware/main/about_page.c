@@ -39,6 +39,7 @@
 #include "display.h"
 #include "i18n.h"
 #include "logo_blob.h"
+#include "modes_ingest.h"
 #include "pfd_layout.h"
 #include "pfd_aa_text.h"
 #include "pfd_aa_font.h"
@@ -310,7 +311,16 @@ void pk_about_page_render(uint16_t *fb)
     /* 姿态与接收机也是「硬件型号」，spec §5.6 归类里有它们；字段本身沿用
      * 既有实现，不按 spec 的示意图删改。 */
     draw_row(fb, row++, PK_TR_ABOUT_IMU, "BNO085 I2C0 0x4A");
-    draw_row(fb, row++, PK_TR_ABOUT_DONGLE, "RTL-SDR 2MS/s");
+    /* 接收机行报链路实况而不是固定型号字符串（audit round 3）：RTL-SDR
+     * 已退役，现役前端是 RP2040 拓展板（UART 链路送原始帧），旧文案
+     * "RTL-SDR 2MS/s" 与诊断页的链路口径互相矛盾。msgs 取开机累计。 */
+    {
+        pk_dsp_stats_t ds;
+        pk_dsp_get_stats(&ds);
+        snprintf(tmp, sizeof(tmp), "RP2040 UART %lu msgs",
+                 (unsigned long)ds.msgs_total);
+        draw_row(fb, row++, PK_TR_ABOUT_DONGLE, tmp);
+    }
 
     /* ── 网址 ───────────────────────────────────────────────
      * spec §5.6 原本要求二维码。先用文字网址顶上：二维码要占 100 px 见方

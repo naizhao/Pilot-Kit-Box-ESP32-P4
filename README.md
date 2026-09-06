@@ -142,7 +142,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | 功能 | Feature | 状态 / Status |
 |---|---|---|
 | ESP32-P4 + FreeRTOS 固件，无 Linux 启动链路 | ESP32-P4 + FreeRTOS firmware, no Linux boot chain | 已实现 / Implemented |
-| USB 2.0 HS 直连 RTL-SDR，1090 MHz，2 MSPS IQ8 数据流（v1/v2 载板路径） | USB 2.0 HS RTL-SDR path at 1090 MHz, 2 MSPS IQ8 (v1/v2 carrier path) | 已实现 / Implemented |
+| RP2040 拓展板双沿捕获 1090 MHz ADS-B，921600 UART 送 P4 解码（USB RTL-SDR 路径已退役） | RP2040 add-on dual-edge capture of 1090 MHz ADS-B, raw frames to the P4 over 921600-baud UART (USB RTL-SDR path retired) | 已实现 / Implemented |
 | 512 KiB IQ ring buffer、非阻塞 USB 回调、DSP 任务解码 | 512 KiB IQ ring buffer, non-blocking USB callback, DSP decode task | 已实现 / Implemented |
 | dump1090 派生 Mode-S 解码、CRC 过滤、CPR 全球定位 | dump1090-derived Mode-S decode, CRC filtering, CPR global position decode | 已实现 / Implemented |
 | 最多同时跟踪 64 个 ADS-B / Mode-S 目标，并聚合呼号、高度、位置、速度、垂直速度、应答机码和机型信息 | Tracks up to 64 ADS-B / Mode-S targets at once, aggregating callsign, altitude, position, velocity, vertical rate, squawk, and aircraft type | 已实现 / Implemented |

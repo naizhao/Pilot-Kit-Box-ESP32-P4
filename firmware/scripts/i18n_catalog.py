@@ -835,9 +835,11 @@ STRINGS = [
     ("DIAG_K_QNH_REF",     {"en": "QNH REF",     "zh": "QNH 基准"}),
     ("DIAG_K_STATE",       {"en": "STATE",       "zh": "状态"}),
     ("DIAG_K_HINT",        {"en": "HINT",        "zh": "提示"}),
-    ("DIAG_K_SAMPLE_RATE", {"en": "SAMPLE RATE", "zh": "采样率"}),
     ("DIAG_K_ADSB_MSGS",   {"en": "ADS-B MSGS",  "zh": "ADS-B 报文"}),
-    ("DIAG_K_IQ_DROPPED",  {"en": "IQ DROPPED",  "zh": "IQ 丢弃"}),
+    # 链路详情页的收发两行（audit round 3）：RTL-SDR 退役后旧的
+    # SAMPLE RATE / IQ DROPPED 两行已无数据源，换成 UART 链路的实际计数。
+    ("DIAG_K_LINK_RX",     {"en": "LINK RX",     "zh": "链路收帧"}),
+    ("DIAG_K_BAD_CRC",     {"en": "BAD CRC",     "zh": "坏 CRC"}),
     ("DIAG_K_LINK",        {"en": "LINK",        "zh": "连接"}),
     ("DIAG_K_PROTOCOL",    {"en": "PROTOCOL",    "zh": "协议"}),
     ("DIAG_K_BACKEND",     {"en": "BACKEND",     "zh": "当前后端"}),
@@ -900,23 +902,15 @@ STRINGS = [
     ("DIAG_V_ANT_OPEN_S",  {"en": "OPEN",     "zh": "开路"}),
     ("DIAG_V_ANT_SHORT_S", {"en": "SHORT",    "zh": "短路"}),
     ("DIAG_V_NO_SATS",     {"en": "(no satellites in view)", "zh": "(无可见卫星)"}),
-    # SDR：没枚举时**直接把该插哪儿写在屏上**——这是接线问题，写 "OFFLINE"
-    # 帮不上忙。
-    #
-    # 2026-08-03：原文写死「用 H2 USB-C」，装了载板之后这句是**误导**——
-    # 载板把同一对 USBD_P/N 从 J3 排针 27/25 引到了自己的 USB-A 座，两个
-    # 出口是同一组网络，同一时刻只能占一个（见 pilot_kit.h 里
-    # PK_USB_PERIPHERAL_MAP 的说明）。照原文去插 H2 等于和载板抢线。
-    # 常态是装了载板，所以正文指向载板，H2 退到 HINT 里作为裸板备选。
-    ("DIAG_V_SDR_NONE",    {"en": "NO DONGLE - carrier USB-A", "zh": "无接收机 - 插载板 USB"}),
-    ("DIAG_V_SDR_NONE_S",  {"en": "NO DONGLE",     "zh": "无接收机"}),
-    ("DIAG_V_SDR_ATTACH",  {"en": "attached, opening...", "zh": "已连接, 打开中..."}),
-    ("DIAG_V_SDR_ATTACH_S",{"en": "attached",      "zh": "已连接"}),
-    ("DIAG_V_SDR_STALL",   {"en": "STALLED - no IQ >1s",  "zh": "停滞 - 无 IQ >1s"}),
-    ("DIAG_V_SDR_STALL_S", {"en": "STALLED",       "zh": "停滞"}),
-    ("DIAG_V_SDR_STREAM",  {"en": "streaming",     "zh": "数据流"}),
-    # 两个出口二选一：装了载板插它的 USB-A；裸板上机才用 H2。
-    ("DIAG_V_SDR_HINT",    {"en": "carrier USB-A, or H2", "zh": "插载板 USB 或 H2"}),
+    # ADS-B 链路四态（RP2040 UART）。旧 SDR 口径（"无接收机 - 插载板 USB"、
+    # "已连接, 打开中"）随 RTL-SDR 退役删除——审计两轮点名：链路对端是
+    # RP2040 拓展板，PROTO_MISMATCH 显示"已连接、打开中"会把排查引向
+    # USB。四态按链路语义直说，LINKED 报"出数中"（有报文在流动）。
+    # 英文侧全大写航电风格，与 DIAG_V_BLE_CONN 等值行一致。
+    ("DIAG_V_LINK_NONE",    {"en": "NO LINK",           "zh": "无链路"}),
+    ("DIAG_V_LINK_PROTO",   {"en": "PROTOCOL MISMATCH", "zh": "协议不符"}),
+    ("DIAG_V_LINK_STALLED", {"en": "LINK STALLED",      "zh": "链路停滞"}),
+    ("DIAG_V_LINK_LIVE",    {"en": "FEEDING",           "zh": "出数中"}),
     # IMU / BARO 离线时的接线提示，照 SDR 那条的样子给。
     # 没有它，这两页在「外设全没接」时**整页只有一行**「传感器 离线」，下面
     # 四百像素纯黑——空态排查时看到的就是这个，第一反应是详情页没渲染出来。

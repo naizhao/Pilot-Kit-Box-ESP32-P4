@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
@@ -39,10 +40,10 @@ static const char *TAG_ADSB = "adsb";
 #define LINK_STALE_US    (5 * 1000000LL)
 
 static adsb_link_dec_t      s_dec;
-static volatile int64_t     s_last_frame_us;
+static atomic_llong         s_last_frame_us;   /* 跨任务读（诊断页），64 位
+                                                * 必须 _Atomic 防撕裂 */
 static bool                 s_ever_linked;
 static bool                 s_proto_mismatch_seen;
-static bool                 s_hello_sent;
 static pk_adsb_link_stats_t s_stats;
 static uint8_t              s_rxchunk[256];
 
@@ -80,6 +81,11 @@ static uint32_t s_win_crc = 0;
  * Written only from this task; read by diag page via pk_dsp_get_stats().
  * 32-bit aligned r/w is atomic on ESP32-P4 (RV32), so no lock needed;
  * volatile prevents the compiler from caching stale values across tasks.
+ * The 64-bit s_last_frame_us is also single-writer (this task) but read
+ * cross-task by pk_adsb_link_state_get() — RV32 has no atomic 64-bit
+ * loads, so it is _Atomic (compiler emits the lock) instead of volatile.
+ * s_ever_linked / s_proto_mismatch_seen are single-writer bool flags read
+ * by the same path; worst case is one extra 1 Hz tick of staleness.
  */
 static volatile uint32_t s_msgs_total_cum  = 0;   /* cumulative CRC-ok Mode-S frames */
 static volatile uint32_t s_pos_decoded_cum = 0;   /* cumulative CPR position decodes  */
@@ -589,8 +595,8 @@ static uint32_t le32(const uint8_t *p)
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
-    int64_t now = esp_timer_get_time();
-    s_last_frame_us = now;
+    atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
+                          memory_order_relaxed);
     s_ever_linked = true;
     s_stats.rx_frames++;
 
@@ -611,21 +617,29 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         break;
     }
     case ADSB_LINK_MSG_HELLO:
-    case ADSB_LINK_MSG_CAPABILITIES:
-        /* 协议 §5：P4 收到 HELLO 回一帧自己的 HELLO，让 RP 侧也能 LINKED。 */
-        if (!s_hello_sent) {
-            uint8_t pl[17] = { 0 };          /* min_minor + build[16] */
-            memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
-            uint8_t out[ADSB_LINK_MAX_FRAME];
-            size_t n = adsb_link_encode(out, sizeof out,
-                                        ADSB_LINK_MSG_HELLO, 0,
-                                        pl, sizeof pl);
-            if (n) uart_write_bytes(ADSB_UART, out, n);
-            s_hello_sent = true;
+    case ADSB_LINK_MSG_CAPABILITIES: {
+        /* 协议 §5：P4 对**每个**合法 HELLO 都回一帧（audit round 3，ledger
+         * R9）。旧的一次性闩锁在 RP 侧重启后永远等不到回应——RP 侧只有
+         * 未 linked 才发 HELLO、限速 1 Hz（p4_link.c），逐帧回应无洪泛
+         * 风险。日志只首条 LOGI，之后降 DEBUG。 */
+        static bool s_hello_logged;
+        uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
+        memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
+        uint8_t out[ADSB_LINK_MAX_FRAME];
+        size_t n = adsb_link_encode(out, sizeof out,
+                                    ADSB_LINK_MSG_HELLO, 0,
+                                    pl, sizeof pl);
+        if (n) uart_write_bytes(ADSB_UART, out, n);
+        if (s_hello_logged)
+            ESP_LOGD(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
+                     ? "HELLO" : "CAPABILITIES", m->seq);
+        else {
+            ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
+                     ? "HELLO" : "CAPABILITIES", m->seq);
+            s_hello_logged = true;
         }
-        ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
-                 ? "HELLO" : "CAPABILITIES", m->seq);
         break;
+    }
     case ADSB_LINK_MSG_HEALTH_STATS:
         if (m->payload_len < 40) break;
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
@@ -654,7 +668,8 @@ static void adsb_link_task(void *arg)
     cpr_init();
     modes_ingest_init(on_ingest_msg, NULL);
     adsb_link_dec_init(&s_dec, on_link_msg, NULL);
-    s_last_frame_us = esp_timer_get_time();
+    atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
+                          memory_order_relaxed);
 
     const uart_config_t uc = {
         .baud_rate  = ADSB_UART_BAUD,
@@ -700,7 +715,9 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
     if (stats) *stats = s_stats;
     if (s_proto_mismatch_seen) return PK_ADSB_LINK_PROTO_MISMATCH;
     if (!s_ever_linked) return PK_ADSB_LINK_NO_LINK;
-    return (esp_timer_get_time() - s_last_frame_us > LINK_STALE_US)
+    return (esp_timer_get_time() -
+            atomic_load_explicit(&s_last_frame_us, memory_order_relaxed)
+            > LINK_STALE_US)
                ? PK_ADSB_LINK_STALLED : PK_ADSB_LINK_LINKED;
 }
 
