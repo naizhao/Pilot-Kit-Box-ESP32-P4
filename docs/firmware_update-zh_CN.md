@@ -99,6 +99,37 @@ Pages 站点上两套各占一个目录：
 3. 松开 BOOT。
 4. 回到网页重新连接。
 
+## RP2040 协处理器固件（扩展板 1090 MHz）
+
+v3/v4 扩展板上的 RP2040 负责 1090 MHz Mode-S 解码，跑自己的固件
+（`adsb1090`）。它是独立的芯片：网页刷写页碰不到它（没有 Web Serial），
+也不在上面那批 ESP32-P4 产物的范围内。镜像与 P4 板型无关，没有 v3/v4
+板型要选。
+
+### 日常更新 —— BOOTSEL 拖放
+
+1. 拿到 UF2：刷机页的 RP2040 下载卡直链最新 `adsb1090.uf2`；每次 Release
+   也会附带 `pilot-kit-box-rp2040-<版本>.uf2` 资产。
+2. 按住扩展板上的 **BOOTSEL** 键，把 RP2040 的 USB 口插到电脑。RP2040 会
+   枚举成一个 U 盘（`RPI-RP2`）。
+3. 把 `.uf2` 拖进该盘，RP2040 自动重启进入新固件。
+
+想从源码构建，工具链要求、依赖 pin 与 `./build.sh` 见
+[`../firmware/rp2040/README.md`](../firmware/rp2040/README.md)。
+
+### 坏固件恢复
+
+重复同样的 BOOTSEL 流程即可。RP2040 的 USB mass-storage 属于 boot ROM
+能力、不依赖已烧固件，固件坏了也锁不死：重新进 BOOTSEL、再拖一次 UF2。
+（ROM 能力，设计保证；实板验证待台架。）注意 v4 板已删除 RP2040 的
+SWD 测试点，BOOTSEL 是该板上现实的恢复路径；调试器需飞线到芯片的
+SWCLK/SWDIO 引脚。
+
+### CC1312R 首烧（978 MHz 前端）
+
+v4 板上的 CC1312R 需要经板上 cJTAG 完成首次烧录；该路径未实测，待台架
+验证。
+
 ## 限制
 
 - iPhone / iPad Safari 不支持 Web Serial，不能直接刷写。

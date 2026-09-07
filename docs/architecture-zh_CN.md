@@ -11,9 +11,8 @@ GPS NMEA/RMC、BMP388、BNO085，以及 PFD、交通、列表、设置、关于�
 > 融合串重建的前提：0→1 融合脉冲对只能靠沿对+脉宽重建），重建
 > 56/112-bit Mode-S 帧，经 921600 波特 UART（UART2，P4 RX=46 / TX=32）
 > 送入 `adsb_lnk` 任务，进入板上处理管线。捕获/解码细节见
-> `firmware/rp2040`。早期的 RTL-SDR USB 数据源（v1/v2 载板与裸板方案，
-> `usb_host_lib`/`sdr`/`dsp` 任务与 IQ ring buffer）已整体退役，不再画入
-> 拓扑图；相关条目仅在任务表/内存表中作历史保留。
+> `firmware/rp2040`。早期的 RTL-SDR USB 数据源（v1/v2 载板与裸板方案）已于
+> 2026-09 移除，不再画入拓扑图；历史细节见 git 历史。
 
 ## 总览
 
@@ -75,15 +74,14 @@ flowchart LR
 
 | Task | CPU | 优先级 | 栈 | 职责 |
 |---|---:|---:|---:|---|
-| `usb_host_lib` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：调用 `usb_host_install()` 并持续 pump `usb_host_lib_handle_events()`。不再创建；保留此行作历史参考。 |
-| `sdr` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：拥有 USB client，打开 RTL-SDR，配置 1090 MHz / 2 MSPS，运行 `rtlsdr_read_async()`，把 IQ 推入 ring buffer。不再创建；保留此行作历史参考。 |
-| `dsp` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：排空 512 KiB IQ ring buffer 并运行 dump1090 幅度 + Manchester 解码。不再创建；解码/分发职责现位于 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链。保留此行作历史参考。 |
+| `usb_host_lib` / `sdr` / `dsp` | — | — | — | **已退役**（2026-09 随 v1/v2 USB RTL-SDR 接收链移除）：历史细节见 git 历史；解码/分发职责现位于 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链。 |
 | `adsb_lnk` | 1 | 5 | 8 KiB | 运行 RP2040 UART 链路（adsb_link codec @ 921600 波特，256 字节分片读）：把 RP2040 前端送来的 CRC 前置 Mode-S 帧喂进 modes_ingest（Mode-S 24-bit 校验，mode_s.c；check_crc=1，不做纠错），对每个 HELLO 回帧，并承接原 DSP 业务链（CPR/航迹/记录/1 Hz 看板）。RP2040 侧自身经 PIO+DMA 捕获双沿、用 modes_edge 解码 56/112-bit 帧；USB RTL-SDR 任务对（`usb_host_lib`/`sdr`）已退役；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
 | `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；GPIO50 PPS 已被固件消费（GPIO ISR 计数 + 自旋锁快照，1 Hz 采样进入时间锁定状态），授时（settimeofday 级）接线仍是后续任务。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
+| `pwr` | 0 | 3 | 4 KiB | `power_service` 背后的 1 Hz 电源轮询任务：SY6970（v4 powered，I²C 0x6A）与 ETA6098（载板 BAT_ADC/STAT）两个 backend 汇成带 stale 判定的公共快照，SY6970 过期自动回落 ETA6098；诊断页电池卡片与状态栏消费。 |
 | `buttons` | — | — | — | 保留旧源码但 4.3 寸触摸板不启动该任务。 |
 | `pfd` | 0 | 4 | 6 KiB | 把 PFD 与 UI 页面渲染到 800×480 逻辑 framebuffer。 |
 | `nimble_host` | 0 | 4 | 4 KiB | NimBLE host 事件循环，通过 C6 的 SDIO / VHCI controller 处理 BLE。 |
@@ -93,9 +91,7 @@ flowchart LR
 
 | 区域 | 大小 | 所有者 |
 |---|---:|---|
-| IQ ring buffer | 512 KiB | **已退役**（v1/v2 USB RTL-SDR 时代）：`g_iq_ringbuf` 已随退役路径删除；PSRAM 现用于地图瓦片/字体/记录等其余工作集 |
-| URB pool       | ~96 KiB | **已退役**：15 × 6400 B 在途 USB 传输 |
-| DSP 工作集 | 约 12 KiB | **已退役**：8 KiB IQ buffer + 4 KiB magnitude buffer |
+| IQ ring buffer / URB pool / DSP 工作集 | 已释放 | **已退役**（2026-09 随 v1/v2 USB RTL-SDR 接收链移除）：历史细节见 git 历史；原占用的 PSRAM 现用于地图瓦片/字体/记录等其余工作集 |
 | CPR table | 约 5 KiB | `cpr_decode.c` 中 64 架飞机的 CPR pairing 状态 |
 | aircraft_state | 约 7 KiB | `aircraft_state.c` 中 64 slots，保存呼号、高度、位置、速度等 |
 | 应用 framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped，位于 PSRAM |

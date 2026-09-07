@@ -31,15 +31,13 @@ All public docs should match this baseline:
 - Safety boundary: Pilot Kit Box is not certified avionics and must
   not be documented as a primary instrument, backup instrument,
   navigation source, or collision-avoidance system.
-- Target board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
-- ADS-B reception comes in two board-generation flavors: **v1/v2 carriers and
-  bare boards** attached an RTL-SDR dongle to the native USB 2.0 HS pair (carrier
-  USB-A on J3-27/25, or H2 Type-C with an OTG adapter/hub on a bare Waveshare
-  board; both share the same nets — only one at a time), while the **v3/v4
-  expansion boards** carry an onboard 1090 MHz chain decoded by an RP2040. The
-  dongle path is retired: current firmware supports only the expansion-board
-  chain.
-- Current recommended SDR dongle tuner: **FC0013**, mainly because the BOM cost is low.
+- Target board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**. The P4 handles UI
+  and storage; 1090 MHz decoding runs on the expansion board's RP2040; the C6
+  handles BLE.
+- ADS-B reception: the **v3/v4 expansion boards** carry an onboard 1090 MHz
+  chain decoded by an RP2040. The v1/v2-era USB RTL-SDR dongle path was
+  removed (2026-09); see git history for details — current firmware supports
+  only the expansion-board chain.
 - Identity databases: the ICAO24 aircraft database ships on the microSD card at `/sdcard/aero/pk_actdb.bin` (built into `datafiles/data/pk_actdb.bin`, read by `firmware/main/aircraft_db.c`) and is updated by copying a file, not by reflashing; the airline code table at `firmware/main/airline_codes.c` and the ICAO24 country table at `firmware/main/icao_country.c` are still compiled into the firmware.
 - LCD: **4.3-inch ST7701 480x800 MIPI-DSI**, presented as 800x480 landscape through PPA rotation; backlight PWM GPIO26, reset GPIO27, BL_EN GPIO33.
 - GT911 touch shares I2C0 on GPIO7/8 and uses GPIO23 reset. The legacy four-button task (`button_task.c`) is excluded from the build.
@@ -49,7 +47,7 @@ All public docs should match this baseline:
   **DIAG, SETTINGS, ABOUT** (page 2); the grid's action bar carries the
   long-press Level action. The earlier horizontal dock is retired.
 - Navigation and tare actions are exposed through the 4.3-inch touch UI; references to MODE/TARE tact buttons describe the legacy 2.4-inch carrier only.
-- GT-U8 GPS/BeiDou, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths. GPIO50 PPS is wired but not consumed by firmware.
+- GT-U8 GPS/BeiDou, BMP388 altitude/vertical speed, the traffic radar, and live DIAG page are active runtime paths. GPIO50 PPS is consumed by firmware for the `time_locked` status (ISR count + 1 Hz snapshot); wiring it into the production time service remains a follow-up.
 - Settings controls language, QNH, map orientation, radar range, and log backend; MicroSD supports insertion/removal detection, capacity status, and guarded formatting.
 - Settings, About, Diagnostics, and Compass Calibration have English/Chinese firmware UI strings with configuration persisted through NVS.
 

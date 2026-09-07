@@ -220,6 +220,16 @@ Main build artifacts:
 | `build/partition_table/partition-table.bin` | Partition table |
 | `build/pilot_kit_box.bin` | Main application |
 
+## RP2040 Co-processor Firmware (expansion board, optional)
+
+The RP2040 on the v3/v4 expansion boards (the 1090 MHz decoder) is a separate
+chip with its own firmware — not an ESP-IDF project. Build it from
+`firmware/rp2040/` with `./build.sh`; toolchain requirements, pinned
+dependencies, and caveats are documented in
+[`../firmware/rp2040/README.md`](../firmware/rp2040/README.md). Flashing and
+recovery use BOOTSEL drag-and-drop, covered in
+[`firmware_update.md`](firmware_update.md).
+
 ## Connect The Board
 
 Use H1, the Type-C port marked `USB TO UART`. It is the CH343P bridge for P4

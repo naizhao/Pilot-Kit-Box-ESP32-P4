@@ -530,7 +530,6 @@ esp_log_level_set("adsb", ESP_LOG_DEBUG);
 | `baro` | BMP388 压力、高度和升降率 |
 | `record_sink` | sink 注册 |
 | `ble_gatt` | NimBLE host + GATT |
-| `rtlsdr_async` | librtlsdr 异步 IO |
 | `display` | ST7701 MIPI-DSI + PPA 旋转 |
 | `imu` | BNO085 驱动 |
 | `pfd` | PFD 渲染 |
