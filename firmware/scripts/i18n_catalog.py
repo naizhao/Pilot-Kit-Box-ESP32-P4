@@ -995,6 +995,36 @@ STRINGS = [
     ("DIAG_V_AFTER_RESTART", {"en": "restart",     "zh": "重启生效"}),
     ("DIAG_V_SET_TO",      {"en": "set",           "zh": "设为"}),
 
+    # ── 电源卡（WP-D Task 5：SY6970 powered variant 的呈现）──────────────
+    # v4 powered 的 SY6970 是权威源，诊断页按它的寄存器证据说话。REG00 /
+    # REG0C / VBUS / ICHG 是寄存器名与引脚名，照航电缩写原则不译；故障词
+    # 是给排查者读的状态描述，翻译（同 reset-reason 那组的口径）。
+    # NTC 故障只拼寄存器原码（"NTC 6"），不立词条：buck 档 010 Warm /
+    # 011 Cool / 101 Cold / 110 Hot（DS p.22-23），屏幕上对着手册查 bit 的
+    # 人要的是原码不是译文。
+    # 数据过期：服务端 5 s 无新数据时顶掉数字，宁可说过期也不把旧数当实时。
+    ("DIAG_V_PWR_STALE",    {"en": "data stale >5s", "zh": "数据过期"}),
+    # 充电状态四档：CHRG_STAT 的 01/10 归为充电中、11 充电完成；
+    # 未充电时按 VBUS 在位与否分外部供电/电池放电。
+    ("DIAG_V_PWR_CHARGING", {"en": "charging",    "zh": "充电中"}),
+    ("DIAG_V_PWR_TERM",     {"en": "charge done", "zh": "充电完成"}),
+    ("DIAG_V_PWR_EXT",      {"en": "external",    "zh": "外部供电"}),
+    ("DIAG_V_PWR_DISCHG",   {"en": "discharging", "zh": "电池放电"}),
+    ("DIAG_K_VBUS",         {"en": "VBUS",        "zh": "VBUS"}),
+    ("DIAG_K_ICHG",         {"en": "ICHG",        "zh": "充电电流"}),
+    ("DIAG_K_PWR_FAULT",    {"en": "FAULTS",      "zh": "故障"}),
+    ("DIAG_K_REG00",        {"en": "REG00",       "zh": "REG00"}),
+    ("DIAG_K_REG0C",        {"en": "REG0C",       "zh": "REG0C"}),
+    # REG0C 故障位译码。CHRG_FAULT[5:4] 的 01/10/11 各说各的——输入故障
+    # 查适配器/线缆、热关断查散热、定时超时查电池，混成一句"充电故障"
+    # 就得从头猜起（DS p.22-23）。
+    ("DIAG_V_PWR_WDFAULT",  {"en": "WD fault",    "zh": "看门狗故障"}),
+    ("DIAG_V_PWR_CHG_IN",   {"en": "CHG input",   "zh": "输入故障"}),
+    ("DIAG_V_PWR_CHG_THERM", {"en": "thermal",    "zh": "热关断"}),
+    ("DIAG_V_PWR_CHG_TIMER", {"en": "safety tmr", "zh": "定时超时"}),
+    ("DIAG_V_PWR_BATOVP",   {"en": "BATOVP",      "zh": "电池过压"}),
+    ("DIAG_V_PWR_BOOST",    {"en": "BOOST fault", "zh": "升压故障"}),
+
     # 上次复位原因。区分能力才是它的价值：BROWNOUT 说明供电撑不住瞬时负载，
     # power-on 说明真的断过电，panic/WDT 说明是固件的锅——三者排查方向完全
     # 不同，靠"它重启了"这一句分不出来。总览卡与详情页共用这一组。

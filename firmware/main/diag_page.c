@@ -153,6 +153,8 @@ static void fmt_clock(char *buf, size_t bufsz)
 #include "pk_ui_nav.h"
 #include "pfd_draw.h"
 #include "battery.h"
+#include "power_service.h"   /* power_service_snapshot — 电源聚合快照（WP-D） */
+#include "power_sy6970.h"    /* sy6970_diag_get — v4 powered 充电芯片取证（WP-D） */
 #include "soc_temp.h"
 
 #define CARD_COLS   2
@@ -262,6 +264,26 @@ static const char *reset_reason_text(esp_reset_reason_t rr)
 static const char *log_store_text(bool on_sd)
 {
     return pk_i18n_text(on_sd ? PK_TR_DIAG_V_LOG_SD : PK_TR_DIAG_V_LOG_FLASH);
+}
+
+/*
+ * SY6970 在位判据 —— powered variant 电池呈现分支的唯一开关。
+ *
+ * 判「diag 拿得到数据且 updated_us 距今 <5 s」，刻意**不是**：
+ *   - pk_board_profile()：板型只说明"出厂可能带"，合同禁止拿它门控运行期
+ *     电源语义（pk_board.h:30-32）——powered 板也可能没上电，SY6970 探测
+ *     NACK 是预期路径（power_sy6970.c 的 init 注释）；
+ *   - snapshot.source：SY6970 电池放电时同样报 POWER_SRC_BATTERY，分不出
+ *     两代载板（power_service.h:45-47 的档位语义）。
+ * 阈值复用 POWER_SERVICE_STALE_US：与服务的 stale 判定同口径，diag 新鲜
+ * 而快照过期不可能出现（同一拍更新），万一出现由下面的 stale 分支兜底。
+ * 从未报数（探测 NACK / bring-up 未成功）sy6970_diag_get() 返回 false，
+ * 自然走 ETA6098 分支——v3 与未上电的 v4 都落在这里。
+ */
+static bool sy6970_live(sy6970_diag_t *out)
+{
+    if (out == NULL || !sy6970_diag_get(out)) return false;
+    return (esp_timer_get_time() - out->updated_us) < POWER_SERVICE_STALE_US;
 }
 
 static void draw_card(uint16_t *fb, int col, int row, const char *title,
@@ -642,30 +664,102 @@ void pk_diag_page_render(uint16_t *fb)
     }
 
     /* ── BATT ──
-     * 板上没有电量检测通路：右排针只有 VSYS（Battery / external 5 V input），
-     * 没有分压到 ADC、没有充电 IC 状态脚（docs/hardware/board_pinout.md:93）。
-     * 所以接上电池也读不到电量或充电状态。
-     *
-     * 如实写"无检测硬件"而不是显示 0% 或藏起来：藏起来会让人以为固件漏了，
-     * 显示 0% 则是编造数据——而这一格的读者正想知道还能飞多久。 */
+     * 两代载板的电源通路不同，这一格按 SY6970 在位（sy6970_live，见上）
+     * 分两套呈现：
+     *   v4 powered —— SY6970（I²C 0x6A）是权威源，卡片报它的充电状态、
+     *     故障、VBUS 与充电电流；
+     *   v3 / 未上电的 v4 —— 探测 NACK，回落 ETA6098 的分压采样，
+     *     维持原来的 pct/V/CHG/raw 版面。
+     * 无论哪套，都如实写"无数据"而不是显示 0% 或藏起来：藏起来会让人
+     * 以为固件漏了，编个 0 出来则是说谎——而这一格的读者正想知道
+     * 还能飞多久。 */
     {
-        pk_batt_t b;
-        pk_batt_get(&b);
-        if (b.valid) {
-            /* 同时给百分比、电压和 raw：raw 是标定分压比的唯一依据，
-             * 拿万用表量到的电池电压除以它就是比值（见 CONFIG_PK_BATT_
-             * DIVIDER_X100）。标定完这一项就没用了，但留着不碍事，
-             * 换板子时还得再标一次。 */
-            snprintf(buf, sizeof(buf), "%d%% %.2fV%s raw %dmV",
-                     b.pct, b.batt_mv / 1000.0, b.charging ? " CHG" : "",
-                     b.raw_mv);
-            draw_card(fb, 0, 5, card_title(10), buf,
-                      b.charging ? ST_OK : b.pct >= 20 ? ST_OK : ST_WARN);
+        sy6970_diag_t d;
+        if (sy6970_live(&d)) {
+            const power_snapshot_t s = power_service_snapshot();
+            /* 同源守卫（审计）：快照赢家不是 SY6970——典型是 SY6970 stale
+             * 后服务端已回落 ETA6098——时，快照里的电量/电压就是另一个源
+             * 的数据，并进本卡等于张冠李戴；此时只渲染诊断快照（寄存器
+             * 译码）自己的字段。stale 闸也只对同源快照有意义：过期的是
+             * 别人的数据，不该替 SY6970 的译码顶罪。 */
+            const bool same_src = (s.backend == POWER_BACKEND_SY6970);
+            if (same_src && s.stale) {
+                /* 服务端 5 s 无新数据：宁可说过期，也不把旧数当实时。
+                 * 常规路径到不了这里（diag 新鲜则快照同拍新鲜），摆出来
+                 * 是把「数据过期就别信数字」这条规则钉死在这格上。 */
+                draw_card(fb, 0, 5, card_title(10),
+                          pk_i18n_text(PK_TR_DIAG_V_PWR_STALE), ST_WARN);
+            } else {
+                const sy6970_status_t *st = &d.st;
+                /* 电量/电压：仅同源时取公共快照（pct_valid 是服务端与
+                 * ETA6098 同口径的量程闸）；不同源时电压取 SY6970 自己的
+                 * BATV 译码、不显示电量（本层不出 pct 的合同不变）。
+                 * 故障/电流/VBUS 恒取诊断快照（锁内整体拷贝，线程合同
+                 * 见 power_sy6970.h）。 */
+                int p;
+                if (same_src) {
+                    p = s.pct_valid
+                        ? snprintf(buf, sizeof(buf), "%u%% %.2fV",
+                                   (unsigned)s.pct_est, (double)s.batt_mv / 1000.0)
+                        : snprintf(buf, sizeof(buf), "%.2fV",
+                                   (double)s.batt_mv / 1000.0);
+                } else {
+                    p = snprintf(buf, sizeof(buf), "%.2fV",
+                                 (double)st->batt_mv / 1000.0);
+                }
+                /* 故障优先级：看门狗故障意味着寄存器被整体打回默认（关狗
+                 * 写被清掉，F1 的前提没了），比一次充电故障更要紧；CHRG_
+                 * FAULT 的 01/10/11 各指向不同的排查方向（适配器/散热/
+                 * 电池），分词说清（[DS] p.22-23）。 */
+                const char *fault =
+                    st->wd_fault           ? pk_i18n_text(PK_TR_DIAG_V_PWR_WDFAULT)   :
+                    st->chrg_fault == 1    ? pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_IN)    :
+                    st->chrg_fault == 2    ? pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_THERM) :
+                    st->chrg_fault == 3    ? pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_TIMER) :
+                    st->bat_ovp_fault      ? pk_i18n_text(PK_TR_DIAG_V_PWR_BATOVP)    :
+                    st->boost_fault        ? pk_i18n_text(PK_TR_DIAG_V_PWR_BOOST)     : NULL;
+                if (fault && p > 0 && p < (int)sizeof(buf))
+                    p = snprintf(buf + p, sizeof(buf) - p, " %s", fault);
+                /* 这三个数取代了 ETA6098 分支的 raw-mV 标定槽：SY6970 自己
+                 * 的 BUSV/ICHGR ADC 就是供电证据（[DS] p.24），不借 ETA6098
+                 * 的分压读数（v4 上那是另一条网络，指不上）。CHG 与电流只
+                 * 在真充电时给——充满维持时电流≈0，摆出来只会让人疑惑。 */
+                if (!fault && st->charging && p > 0 && p < (int)sizeof(buf))
+                    p = snprintf(buf + p, sizeof(buf) - p, " CHG");
+                if (st->vbus_present && p > 0 && p < (int)sizeof(buf))
+                    p = snprintf(buf + p, sizeof(buf) - p, " %.1fV",
+                                 (double)st->vbus_mv / 1000.0);
+                if (!fault && st->charging && p > 0 && p < (int)sizeof(buf))
+                    p = snprintf(buf + p, sizeof(buf) - p, " %.1fA",
+                                 (double)st->ichg_ma / 1000.0);
+                /* 状态灯：REG0C 任一硬故障即红；插着电（充电或充满维持）
+                 * 绿；纯电池放电沿用 20% 琥珀线——还够飞就不打扰（琥珀线
+                 * 依据的是公共快照的电量，仅同源时有意义）。 */
+                draw_card(fb, 0, 5, card_title(10), buf,
+                          fault ? ST_BAD
+                          : (st->charging || st->vbus_present) ? ST_OK
+                          : (same_src && s.pct_valid && s.pct_est < 20) ? ST_WARN : ST_OK);
+            }
         } else {
-            /* 没接电池时引脚浮空，读数乱跳——不显示百分比，只说没接。 */
-            snprintf(buf, sizeof(buf), "%s (raw %dmV)",
-                     pk_i18n_text(PK_TR_DIAG_V_NO_BATTERY), b.raw_mv);
-            draw_card(fb, 0, 5, card_title(10), buf, ST_BAD);
+            /* v3 / 未上电的 v4：ETA6098 分压采样，呈现原样保留。 */
+            pk_batt_t b;
+            pk_batt_get(&b);
+            if (b.valid) {
+                /* 同时给百分比、电压和 raw：raw 是标定分压比的唯一依据，
+                 * 拿万用表量到的电池电压除以它就是比值（见 CONFIG_PK_BATT_
+                 * DIVIDER_X100）。标定完这一项就没用了，但留着不碍事，
+                 * 换板子时还得再标一次。 */
+                snprintf(buf, sizeof(buf), "%d%% %.2fV%s raw %dmV",
+                         b.pct, b.batt_mv / 1000.0, b.charging ? " CHG" : "",
+                         b.raw_mv);
+                draw_card(fb, 0, 5, card_title(10), buf,
+                          b.charging ? ST_OK : b.pct >= 20 ? ST_OK : ST_WARN);
+            } else {
+                /* 没接电池时引脚浮空，读数乱跳——不显示百分比，只说没接。 */
+                snprintf(buf, sizeof(buf), "%s (raw %dmV)",
+                         pk_i18n_text(PK_TR_DIAG_V_NO_BATTERY), b.raw_mv);
+                draw_card(fb, 0, 5, card_title(10), buf, ST_BAD);
+            }
         }
     }
 
@@ -985,6 +1079,20 @@ static void det_kv_tr2(uint16_t *fb, int line, pk_tr_id_t key, pk_tr_id_t val,
     det_kv(fb, line, pk_i18n_text(key), pk_i18n_text(val), vcol);
 }
 
+/* FAULTS 行的片段拼接：seg 追加到 buf[pos]，非首段以空格分隔。返回新
+ * 长度，缓冲不够返回 -1（调用方放弃后续片段；片段都是短词，给足缓冲
+ * 就到不了这步——worst case 全部故障同时置位约 72 B）。 */
+static int diag_fault_cat(char *buf, size_t cap, int pos, bool *first,
+                          const char *seg)
+{
+    if (pos < 0) return -1;
+    const int n = snprintf(buf + pos, cap - (size_t)pos, "%s%s",
+                           *first ? "" : " ", seg);
+    if (n < 0 || (size_t)n >= cap - (size_t)pos) return -1;
+    *first = false;
+    return pos + n;
+}
+
 static void draw_detail(uint16_t *fb, int which)
 {
     char buf[64];
@@ -1247,27 +1355,137 @@ static void draw_detail(uint16_t *fb, int which)
         break;
 
     case 10: {  /* BATT */
-        pk_batt_t b;
-        pk_batt_get(&b);
-        if (b.valid) {
-            snprintf(buf, sizeof(buf), "%d %%", b.pct);
-            det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
-                      b.pct >= 20 ? COL_ONLINE : COL_WARN);
-            snprintf(buf, sizeof(buf), "%.3f V", b.batt_mv / 1000.0);
+        sy6970_diag_t d;
+        if (sy6970_live(&d)) {
+            /* v4 powered：SY6970 的寄存器级取证。这一页的读者在排查供电，
+             * 给原始证据（REG00 回读、REG0C 故障字节）比只给结论更能定位
+             * ——F1 的关狗写还在不在、REG0C 锁了哪个 bit，看这两行就知道。
+             * 电量/电压在**同源**时取公共快照，与状态栏、总览卡同一口径
+             * （同源守卫见下：快照赢家不是 SY6970 时不用它的字段）。 */
+            const power_snapshot_t s = power_service_snapshot();
+            const bool same_src = (s.backend == POWER_BACKEND_SY6970);
+            if (same_src && s.stale) {
+                /* 服务端 5 s 无新数据：说过期，不报旧数（同总览卡的取舍）。 */
+                det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATUS,
+                           PK_TR_DIAG_V_PWR_STALE, COL_WARN);
+                break;
+            }
+            const sy6970_status_t *st = &d.st;
+            /* CHRG_STAT 四态分开报：01/10 都是充电中（预充/快充），11 是
+             * 充满维持；不充时按 VBUS 在位与否分"外部供电/电池放电"——
+             * 插着电没充和靠电池飞是两个完全不同的排查起点。 */
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATUS,
+                       st->charging       ? PK_TR_DIAG_V_PWR_CHARGING
+                       : st->term_done    ? PK_TR_DIAG_V_PWR_TERM
+                       : st->vbus_present ? PK_TR_DIAG_V_PWR_EXT
+                                          : PK_TR_DIAG_V_PWR_DISCHG,
+                       st->charging ? COL_ONLINE : COL_VAL);
+            if (same_src && s.pct_valid) {
+                snprintf(buf, sizeof(buf), "%u %%", (unsigned)s.pct_est);
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
+                          s.pct_est >= 20 ? COL_ONLINE : COL_WARN);
+            }
+            /* 电压：同源取公共快照；不同源取 SY6970 自己的 BATV 译码
+             * （回落源的电压不是这颗芯片的读数，不并进来）。 */
+            snprintf(buf, sizeof(buf), "%.3f V",
+                     (double)(same_src ? s.batt_mv : st->batt_mv) / 1000.0);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_VOLTAGE, buf, COL_VAL);
-            snprintf(buf, sizeof(buf), "%d mV", b.raw_mv);
-            det_kv_tr(fb, line++, PK_TR_DIAG_K_ADC_RAW, buf, COL_OFFLINE);
-            det_kv_tr2(fb, line++, PK_TR_DIAG_K_CHARGING,
-                       b.charging ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
-                       b.charging ? COL_ONLINE : COL_VAL);
-            /* 这块板的电池只接充电通路、没有 power path：拔掉 USB 是彻底
-             * 断电再上电（实测复位原因为 power-on，不是 brownout）。这一行
-             * 是给排查者的，不是给飞行员的——但它能省掉一轮"为什么会重启"。 */
-            det_kv_tr2(fb, line++, PK_TR_DIAG_K_ON_UNPLUG,
-                       PK_TR_DIAG_V_ON_UNPLUG, COL_WARN);
+            /* BUSV/ICHGR 是 SY6970 自己的 ADC（REG11/REG12，[DS] p.24-25）。
+             * ICHGR 在 VBAT<VSHORT 时芯片读回 0mA——那是芯片口径，不是读
+             * 数坏了；VBUS 没插电时寄存器仍有残值，照实显示、灰掉。 */
+            snprintf(buf, sizeof(buf), "%.1f V", (double)st->vbus_mv / 1000.0);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_VBUS, buf,
+                      st->vbus_present ? COL_ONLINE : COL_OFFLINE);
+            snprintf(buf, sizeof(buf), "%u mA", (unsigned)st->ichg_ma);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_ICHG, buf, COL_VAL);
+            /* FAULTS：REG0C 各位译码，多处同时故障全部列出（读者正对着手
+             * 册查 bit）；NTC 只拼寄存器原码——Warm/Cool/Cold/Hot 对应
+             * 010/011/101/110，报原码才好对照（[DS] p.22-23）。全零时复
+             * 用天线自检那条「OK/正常」。 */
+            {
+                char fbuf[96];
+                char ntc[8];
+                bool first = true, any = false;
+                int q = 0;
+                fbuf[0] = '\0';
+                if (st->wd_fault) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_WDFAULT));
+                }
+                if (st->chrg_fault == 1) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_IN));
+                }
+                if (st->chrg_fault == 2) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_THERM));
+                }
+                if (st->chrg_fault == 3) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_CHG_TIMER));
+                }
+                if (st->bat_ovp_fault) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_BATOVP));
+                }
+                if (st->boost_fault) {
+                    any = true;
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first,
+                                       pk_i18n_text(PK_TR_DIAG_V_PWR_BOOST));
+                }
+                if (st->ntc_fault != 0) {
+                    any = true;
+                    snprintf(ntc, sizeof(ntc), "NTC %u",
+                             (unsigned)st->ntc_fault);
+                    q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first, ntc);
+                }
+                if (any)
+                    det_kv_tr(fb, line++, PK_TR_DIAG_K_PWR_FAULT, fbuf,
+                              COL_ALERT);
+                else
+                    det_kv_tr2(fb, line++, PK_TR_DIAG_K_PWR_FAULT,
+                               PK_TR_DIAG_V_ANT_OK, COL_ONLINE);
+            }
+            /* F1 的落定证据：REG00 回读 = 0x40 | IINLIM（EN_HIZ=0、
+             * EN_ILIM=1，[DS] p.15）。看门狗把寄存器打回默认的话，这里
+             * 会看到 POR 以外的异动，与 WD fault 那行互证。 */
+            snprintf(buf, sizeof(buf), "0x%02X", d.reg00);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_REG00, buf, COL_VAL);
+            /* REG0C 原始字节：上一行 FAULTS 是它的译码，并排供对照。
+             * 窗口布局 regs[0]=REG0B、regs[1]=REG0C（power_sy6970.h）。 */
+            snprintf(buf, sizeof(buf), "0x%02X", d.regs[1]);
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_REG0C, buf, COL_OFFLINE);
         } else {
-            det_kv_tr2(fb, line++, PK_TR_DIAG_CARD_BATT,
-                       PK_TR_DIAG_V_NOT_DETECTED, COL_ALERT);
+            /* v3 / 未上电的 v4：ETA6098 分压采样，呈现原样保留。 */
+            pk_batt_t b;
+            pk_batt_get(&b);
+            if (b.valid) {
+                snprintf(buf, sizeof(buf), "%d %%", b.pct);
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
+                          b.pct >= 20 ? COL_ONLINE : COL_WARN);
+                snprintf(buf, sizeof(buf), "%.3f V", b.batt_mv / 1000.0);
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_VOLTAGE, buf, COL_VAL);
+                snprintf(buf, sizeof(buf), "%d mV", b.raw_mv);
+                det_kv_tr(fb, line++, PK_TR_DIAG_K_ADC_RAW, buf, COL_OFFLINE);
+                det_kv_tr2(fb, line++, PK_TR_DIAG_K_CHARGING,
+                           b.charging ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
+                           b.charging ? COL_ONLINE : COL_VAL);
+                /* 这块板的电池只接充电通路、没有 power path：拔掉 USB 是彻底
+                 * 断电再上电（实测复位原因为 power-on，不是 brownout）。这一行
+                 * 是给排查者的，不是给飞行员的——但它能省掉一轮"为什么会重启"。
+                 * 只在 ETA6098 分支出现：SY6970 自带 power path，这句对它不成立，
+                 * 而 v4 上的实测行为还没验证过，不替它编一句相反的话。 */
+                det_kv_tr2(fb, line++, PK_TR_DIAG_K_ON_UNPLUG,
+                           PK_TR_DIAG_V_ON_UNPLUG, COL_WARN);
+            } else {
+                det_kv_tr2(fb, line++, PK_TR_DIAG_CARD_BATT,
+                           PK_TR_DIAG_V_NOT_DETECTED, COL_ALERT);
+            }
         }
         break;
     }

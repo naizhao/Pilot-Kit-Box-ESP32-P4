@@ -156,7 +156,23 @@ idf_component_register(
         "pk_ui_nav_host.c"
         "touch_gt911.c"
         "pk_touch_arbiter.c"
+        # 旧 battery API 的兼容壳（WP-D Task 2）：pk_batt_init/pk_batt_get
+        # 两个转发，diag_page/pfd_statusbar 的调用点零改动。
         "battery.c"
+        # ETA6098 载板电源 backend（WP-D Task 2，自 battery.c 迁入）：
+        # GPIO20 BAT_ADC + GPIO21 STAT 的采集与判据都在这里，
+        # init 成功后注册成 power_service 的兜底源。
+        "power_eta6098.c"
+        # 公共电源状态模型 + backend 注册表（WP-D Task 1）：ETA6098
+        # （power_eta6098.c）与 SY6970（Task 4 新增）都注册到这里。
+        # 纯模型 host 单测 test_power_service.c 直编（POWER_SERVICE_HOST_TEST
+        # 隔离，模式同 qmc5883p.c）；目标端只有 1 Hz 轮询任务胶水。
+        "power_service.c"
+        # SY6970 寄存器解码纯层（WP-D Task 3）：REG0B..REG12 窗口的
+        # 状态/故障/ADC 换算，纯函数 host 单测 test_power_sy6970.c 直编
+        # （SY6970_HOST_TEST 隔离，模式同 qmc5883p.c）；I²C 胶水与
+        # power_service 注册在 Task 4 落地（power_sy6970.c 的 #ifndef 区）。
+        "power_sy6970.c"
         "soc_temp.c"
         "config_fab.c"
         "logo_blob.c"
