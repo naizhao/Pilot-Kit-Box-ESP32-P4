@@ -103,3 +103,36 @@ typedef struct {
  * power_sy6970.c 的表定义处。
  */
 const sy6970_init_step_t *sy6970_init_seq(size_t *n);
+
+/* ── 目标端（I²C 胶水 + backend，host 单测不编译不链接）───────────────
+ *
+ * 线程合同与 power_service.h:27-32 一致：唯一写者是 power_service 的
+ * 1 Hz poll 任务（经 sy6970_poll()），读者（诊断页等）自由拷贝快照，
+ * 不上锁，撕裂最坏混到相邻两拍（1 s）的字段——状态栏/诊断页场景无害。
+ */
+
+/*
+ * 探测 0x6A 并在 ACK 后把 backend 注册进 power_service（v4 powered 上的
+ * 权威源）。调用点在 main.c 的电源链、**先于** power_eta6098_init()——
+ * 注册次序=优先级（power_service.h:15-20），v3 / 未上电的 v4 探测 NACK
+ * 是**预期路径**：只打一条日志、不注册，服务自然回落 ETA6098。
+ * powered / unpowered 只由 ACK 表达，与 Kconfig 板型正交
+ * （pk_board.h:30-32 合同，禁止按板型门控注册）。幂等；失败不致命。
+ */
+void power_sy6970_init(void);
+
+/*
+ * F7 诊断快照：最近一次成功解码的原始状态 + REG00 回读值（F1 写入落定
+ * 证据）+ 原始寄存器窗口字节。Task 5 的诊断页据此展示 WATCHDOG_FAULT
+ * （st.wd_fault，REG0C[7]）、配置回读（reg00）与原始 ADC 值，本任务不建 UI。
+ * 从未拿到过数据（探测 NACK / bring-up 未成功）返回 false 并把 *out 清零。
+ */
+typedef struct {
+    sy6970_status_t st;            /* 最近一次成功解码的状态               */
+    uint8_t reg00;                 /* 最近一次 REG00 回读值                */
+    uint8_t regs[SY6970_WIN_LEN];  /* 原始窗口：regs[0]=REG0B..regs[7]=REG12 */
+    bool    ready;                 /* bring-up 已成功（在读数）            */
+    int64_t updated_us;            /* 最近成功采集时刻（0=从未报数哨兵）   */
+} sy6970_diag_t;
+
+bool sy6970_diag_get(sy6970_diag_t *out);

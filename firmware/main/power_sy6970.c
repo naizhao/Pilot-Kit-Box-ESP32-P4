@@ -192,11 +192,327 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
 }
 
 /* ── 目标端（I²C 胶水）：host 单测不编译 ──────────────────────────────
- * Task 4 在这里落地：pk_i2c0_bus_get() 挂 0x6A 器件 → REG02 开 ADC
- * 连续转换 → 按 sy6970_init_seq() 执行 F1 序列 → 1 Hz 连读
- * SY6970_WIN_REG0 起 SY6970_WIN_LEN 字节 → sy6970_decode_status() →
- * power_service_register()。本阶段（Task 3）刻意留空：解码层无 I²C
- * 依赖，host 单测直编，两板系构建验证本文件参与固件链接。 */
+ * 职责（Task 4）：探测 0x6A → ACK 才 add_device + bring-up → 注册成
+ * power_service 的第一个（权威）backend；1 Hz 由服务的 poll 任务驱动，
+ * 连读 SY6970_WIN_REG0 起 SY6970_WIN_LEN 字节（连读两遍取 REG0C 实况）
+ * → sy6970_decode_status() → 摊成公共快照。F1 序列按 sy6970_init_seq()
+ * 逐字执行（写前后 REG00 回读值都进日志）；总线代数比对 + 失败连击
+ * 自愈重放，结构照 qmc5883p 的器件侧契约（pk_i2c0_bus.h）。
+ */
 #ifndef SY6970_HOST_TEST
+
+#include <string.h>
+
+#include "esp_log.h"
+#include "pk_i2c0_bus.h"
+#include "power_eta6098.h"
+#include "power_service.h"
+
+static const char *TAG = "sy6970";
+
+/* I²C 地址 0x6A [DS] p.15 / [ALT] p.12 / [AN] p.15（"Address: 6AH"）。 */
+#define SY6970_I2C_ADDR       0x6A
+#define SY6970_I2C_TIMEOUT_MS 100  /* 与 qmc/baro 的单笔超时口径一致   */
+
+#define SY6970_REG02 0x02
+
+/* REG02 CONV_START[7] / CONV_RATE[6] [DS] p.16 / [ALT] p.13 / [AN] p.16：
+ * CONV_RATE=1 → "Start 1s continuous Conversion"，且转换自动开始；
+ * CONV_RATE=1 时 CONV_START 变只读（转换期间保持 1）。ADC 不开则
+ * REG0E~12 全是陈旧值——轮询侧的职责（Task 3 取证表事实 14）。
+ * 用 RMW 置位而不是整字节覆盖：REG02 其余位（AICL_EN/HVDCP_EN 等
+ * POR=1）保持芯片当前值，与 F1 对 REG07 的 RMW 同一哲学。 */
+#define SY6970_CONV_MASK      0xC0  /* CONV_START | CONV_RATE          */
+
+/* 自愈阈值：连续 10 拍（≈10 s）拿不到有效窗口才重放 bring-up，节拍
+ * 与 qmc5883p 的失明自愈一致——单拍抖动不值得动配置写。 */
+#define SY6970_FAIL_STREAK_MAX 10
+
+/* 开机 60 s 后复检充电电流（F1 配套）：CH224K 诱骗 + SY6970 配置都该
+ * 已稳定；若期间看门狗把寄存器打回过默认模式，这一拍的数据能看出来。 */
+#define SY6970_ICHG_RECHECK_US (60LL * 1000 * 1000)
+
+/* 5V/9V 判档中点：CH224K 诱骗档位只到 9V，7V 中点区分两档。仅作
+ * 诊断参考口径——权威 VBUS 值来自 BUSV ADC，见 sy6970_poll 的 F6 注。 */
+#define SY6970_VBUS_9V_MIDPOINT_MV 7000
+
+static i2c_master_dev_handle_t s_dev;
+
+/* ── 单写者状态（写者 = power_service 的 1 Hz poll 任务；读者自由拷贝，
+ * 撕裂容忍口径同 power_service.h:27-32）────────────────────────────── */
+static bool            s_ready;      /* bring-up 成功（在读数）            */
+static sy6970_status_t s_status;     /* 最近一次成功解码                   */
+static uint8_t         s_regs[SY6970_WIN_LEN];  /* 原始窗口字节（F7）     */
+static uint8_t         s_reg00;      /* 最近一次 REG00 回读（F1 证据）     */
+static int64_t         s_updated_us; /* 最近成功采集时刻（0=从未）         */
+static power_snapshot_t s_last_good; /* 最近一份好快照：读失败时原样上报，
+                                     * 让服务端按 updated_us 判 stale 回落 */
+static uint32_t        s_bus_gen;    /* 已认账的总线代数                   */
+static int             s_fail_streak;
+static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
+static bool            s_ichg_recheck_done;
+
+static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
+{
+    return pk_i2c0_bus_transmit_receive(s_dev, &reg, 1, buf, n,
+                                        SY6970_I2C_TIMEOUT_MS);
+}
+
+static esp_err_t reg_write(uint8_t reg, uint8_t val)
+{
+    uint8_t b[2] = { reg, val };
+    return pk_i2c0_bus_transmit(s_dev, b, 2, SY6970_I2C_TIMEOUT_MS);
+}
+
+/*
+ * F1 看门狗管理 + ADC 连续转换开启（bring-up）。
+ *
+ * 序列按 sy6970_init_seq() **逐字执行**（顺序不得重排）：写前 REG00
+ * 在位校验 → REG07 关狗 → REG03 喂狗 → 写后 REG00 回读验证。两次 REG00
+ * 回读值都以 INFO 进日志（write-intent + write-result 证据，计划约束）；
+ * 任一步失败 WARN 带 why 并返回 false。本文件唯一的寄存器写豁免是
+ * 看门狗管理（F1，计划全局约束）+ ADC 转换开启（Task 3 取证表事实 14
+ * 点名 Task 4 职责）；充电参数（IINLIM/ICHG/VREG 等）一概不碰。
+ */
+static bool bring_up(void)
+{
+    /* 先开 ADC 连续转换，再走 F1：F1 的最后一步回读 REG00 时，REG0E~12
+     * 已在按 1 s 刷新，第一拍轮询拿到的就是新鲜值。 */
+    uint8_t r02 = 0;
+    if (reg_read(SY6970_REG02, &r02, 1) != ESP_OK) {
+        ESP_LOGW(TAG, "REG02 回读失败，无法开 ADC");
+        return false;
+    }
+    const uint8_t r02_new = r02 | SY6970_CONV_MASK;
+    ESP_LOGI(TAG, "开 ADC 连续转换：REG02 0x%02X→0x%02X（CONV_RATE=1，1s 连续）",
+             r02, r02_new);
+    if (reg_write(SY6970_REG02, r02_new) != ESP_OK) {
+        ESP_LOGW(TAG, "REG02 写入失败");
+        return false;
+    }
+
+    size_t n = 0;
+    const sy6970_init_step_t *seq = sy6970_init_seq(&n);
+    for (size_t i = 0; i < n; i++) {
+        const sy6970_init_step_t *st = &seq[i];
+        switch (st->op) {
+        case SY6970_SEQ_VERIFY: {
+            uint8_t val = 0;
+            if (reg_read(st->reg, &val, 1) != ESP_OK ||
+                (val & st->mask) != st->val) {
+                ESP_LOGW(TAG, "F1 第 %u 步校验失败：REG%02X=0x%02X（掩码 0x%02X "
+                              "期望 0x%02X）— %s",
+                         (unsigned)i, st->reg, val, st->mask, st->val, st->why);
+                return false;
+            }
+            if (st->reg == SY6970_REG00) s_reg00 = val;
+            ESP_LOGI(TAG, "F1 %s：REG00=0x%02X（掩码 0x%02X==0x%02X）",
+                     i == 0 ? "写前在位校验" : "写后回读验证",
+                     val, st->mask, st->val);
+            break;
+        }
+        case SY6970_SEQ_RMW_CLEAR:
+        case SY6970_SEQ_RMW_SET: {
+            uint8_t old = 0;
+            if (reg_read(st->reg, &old, 1) != ESP_OK) {
+                ESP_LOGW(TAG, "F1 第 %u 步 RMW 回读失败：REG%02X — %s",
+                         (unsigned)i, st->reg, st->why);
+                return false;
+            }
+            const uint8_t newv = (st->op == SY6970_SEQ_RMW_SET)
+                                     ? (uint8_t)(old | st->mask)
+                                     : (uint8_t)(old & ~st->mask);
+            if (reg_write(st->reg, newv) != ESP_OK) {
+                ESP_LOGW(TAG, "F1 第 %u 步 RMW 写入失败：REG%02X — %s",
+                         (unsigned)i, st->reg, st->why);
+                return false;
+            }
+            ESP_LOGI(TAG, "F1 RMW：REG%02X 0x%02X→0x%02X", st->reg, old, newv);
+            break;
+        }
+        }
+    }
+    return true;
+}
+
+/* 快照组装（成功拍）。pct：SY6970 与 ETA6098 一样只有电压没有库仑计，
+ * 复用同一张电芯放电曲线（power_eta6098_mv_to_pct，合同见其头文件）；
+ * 插电维持电压的虚高偏差在这里**未补偿**——ETA 的 CC/HOLD 压降补偿是
+ * 2026-08-04 按那颗芯片实测标定的，直接套用到 SY6970 属于编造，标定
+ * 数据到手前如实带着偏差（ichg_ma/charging 已在诊断快照里，标定有据
+ * 可依）。量程闸与 ETA6098 backend 同口径。 */
+static power_snapshot_t build_snapshot(int64_t now_us)
+{
+    power_snapshot_t out;
+    out.batt_mv          = s_status.batt_mv;
+    out.pct_est          = (uint8_t)power_eta6098_mv_to_pct(s_status.batt_mv);
+    out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
+    out.charging         = s_status.charging;
+    /* F6 范围裁定（controller 2026-09-07）：计划里的 VBUS 分压网络
+     * （v4=30k/10k、v3=10k/10k）物理上接在 **RP2040 的 ADC**（U8 pin 40，
+     * 网络 USB_VBUS_SENSE，取证 hardware/test_component_contract.py:33-50
+     * 与 :568-570），不在 ESP32-P4 上；P4 要读它得扩展 RP2040 UART 协议
+     * （v1.0 已冻结），超出本任务范围、明确不做。因此 vbus_present 与
+     * VBUS 电压取自 SY6970 自己的 BUSV ADC（[DS] p.24：2.6V+code×100mV，
+     * 2.6~15.3V，已在 s_status.vbus_mv），覆盖 5V/9V 档判别；7V 中点
+     * 阈值只在 60 s 复检日志里作诊断参考。 */
+    out.vbus_present     = s_status.vbus_present;
+    out.source           = s_status.vbus_present ? POWER_SRC_SY6970_VBUS
+                                                 : POWER_SRC_BATTERY;
+    /* 没有库仑计，剩余时间不可估，如实标注（同 ETA6098 backend）。 */
+    out.time_degraded_na = true;
+    out.updated_us       = now_us;
+    return out;
+}
+
+static power_snapshot_t poll_fail(int64_t now_us);
+
+/*
+ * 服务的 1 Hz 轮询入口（单写者）。连读两遍窗口取 REG0C 实况，第二遍帧
+ * 解码进状态；读失败时原样上报最近一份好快照——updated_us 停在最后好拍，
+ * 服务端 5 s 后判 stale 自动回落 ETA6098（power_service.h:15-20 的选择
+ * 语义），这里绝不编造新鲜数据。
+ */
+static power_snapshot_t sy6970_poll(int64_t now_us)
+{
+    /* 防御闸（同 eta6098_poll 的口径，服务层不假设 backend 内部状态）：
+     * 正常路径注册前 bring-up 已成功；唯一能走到 !s_ready 的场景是
+     * init 期 bring-up 失败但 ACK 已注册——每拍重试一次。 */
+    if (!s_ready) {
+        if (!bring_up()) return s_last_good;   /* 初值=全零快照，恒 stale */
+        s_ready   = true;
+        s_bus_gen = pk_i2c0_bus_generation();
+        ESP_LOGI(TAG, "SY6970 bring-up 成功（补试）");
+    }
+
+    /* 总线被救回来 → 重放配置 + F1。器件 handle 不重建（总线复位不清
+     * add_device，qmc5883p 同款契约）；重放失败不提交代数，下一拍重试。 */
+    const uint32_t gen = pk_i2c0_bus_generation();
+    if (gen != s_bus_gen) {
+        ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 SY6970 bring-up",
+                 (unsigned long)gen);
+        if (!bring_up()) {
+            ESP_LOGW(TAG, "重放失败，下一拍重试");
+            return s_last_good;
+        }
+        s_bus_gen = gen;
+    }
+
+    /* REG0C 故障锁存到被读走，取实况须连读两遍（[DS] p.29 / [AN] p.29，
+     * 连读两遍的示例见 [AN] p.35）；唯一例外 NTC_FAULT 不锁存、恒如实
+     * （[DS] p.29）。第一遍把上次的锁存冲掉，第二遍帧整体解码——其余
+     * 寄存器是 ADC 快照，用同一帧保持整帧一致。顺序读窗口也清 REG0C
+     * 的锁存：锁存语义挂在"寄存器被读"这个事件上，与单字节/顺序读无关。 */
+    uint8_t flush[SY6970_WIN_LEN];
+    if (reg_read(SY6970_WIN_REG0, flush, SY6970_WIN_LEN) != ESP_OK ||
+        reg_read(SY6970_WIN_REG0, s_regs, SY6970_WIN_LEN) != ESP_OK) {
+        return poll_fail(now_us);
+    }
+
+    sy6970_status_t st;
+    if (!sy6970_decode_status(s_regs, sizeof(s_regs), &st)) {
+        /* 整窗全 0xFF = 器件掉电/离线（窗口合同，power_sy6970.h）。 */
+        return poll_fail(now_us);
+    }
+
+    s_status      = st;
+    s_updated_us  = now_us;
+    s_fail_streak = 0;
+    if (s_up_us == 0) s_up_us = now_us;    /* 60 s 复检的锚：首拍成功时刻 */
+    s_last_good   = build_snapshot(now_us);
+
+    /* 开机 60 s 复检充电电流（一次性）：CH224K 诱骗与配置此时都该稳定。
+     * ICHGR 在窗口帧的 REG12（regs[7]；注意 REG11 是 BUSV 不是 ICHG）。
+     * 若期间看门狗曾把寄存器打回默认模式，这拍数据就是证据。 */
+    if (!s_ichg_recheck_done &&
+        now_us - s_up_us >= SY6970_ICHG_RECHECK_US) {
+        s_ichg_recheck_done = true;
+        ESP_LOGI(TAG, "60s 复检：ICHG=%umA VBUS=%umV chg=%d —— %s档"
+                      "（7V 中点判档，诊断参考；VBAT<VSHORT 时芯片自报 0mA）",
+                 (unsigned)s_status.ichg_ma, (unsigned)s_status.vbus_mv,
+                 (int)s_status.charging,
+                 s_status.vbus_mv >= SY6970_VBUS_9V_MIDPOINT_MV ? "9V" : "5V");
+    }
+
+    return s_last_good;
+}
+
+/* 读失败/解码失败共用路径：连击计数 + 周期性自愈重放，原样返回旧快照。 */
+static power_snapshot_t poll_fail(int64_t now_us)
+{
+    (void)now_us;
+    s_fail_streak++;
+    if (s_fail_streak >= SY6970_FAIL_STREAK_MAX) {
+        ESP_LOGW(TAG, "连续 %d 拍无有效数据 — 重放 SY6970 bring-up",
+                 s_fail_streak);
+        if (!bring_up()) {
+            ESP_LOGW(TAG, "自愈重放失败，再等 %d 拍后重试",
+                     SY6970_FAIL_STREAK_MAX);
+        }
+        s_fail_streak = 0;
+    }
+    return s_last_good;
+}
+
+/* F7 诊断快照：单写者/无锁读者合同（见 sy6970_diag_t 处注释）。 */
+bool sy6970_diag_get(sy6970_diag_t *out)
+{
+    if (out == NULL) return false;
+    *out = (sy6970_diag_t){0};
+    if (s_updated_us == 0) return false;   /* 从未拿到过数据 */
+
+    out->st         = s_status;
+    out->reg00      = s_reg00;
+    memcpy(out->regs, s_regs, sizeof(out->regs));
+    out->ready      = s_ready;
+    out->updated_us = s_updated_us;
+    return true;
+}
+
+/* backend 登记项：name 仅用于日志。 */
+static const power_backend_t s_backend = {
+    .name = "sy6970",
+    .poll = sy6970_poll,
+};
+
+void power_sy6970_init(void)
+{
+    static bool s_brought_up;
+    if (s_brought_up) return;                      /* 幂等：只探一次 */
+    s_brought_up = true;
+
+    i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
+    if (bus == NULL) {
+        ESP_LOGW(TAG, "I2C0 总线不可用——SY6970 探测跳过，电源回落 ETA6098");
+        return;
+    }
+
+    /* 地址探活：NACK 是预期路径（v3 载板 / 未上电的 v4），INFO 不是 WARN
+     * ——它表达的是 powered variant，不是故障（pk_board.h:30-32）。 */
+    if (pk_i2c0_bus_probe(SY6970_I2C_ADDR, SY6970_I2C_TIMEOUT_MS) != ESP_OK) {
+        ESP_LOGI(TAG, "0x%02X 探测 NACK——无 SY6970（v3 / 未上电 v4 预期），"
+                      "不注册，电源回落 ETA6098", SY6970_I2C_ADDR);
+        return;
+    }
+
+    /* add_device 只许 init 期单线程调用（pk_i2c0_bus.h 合同）——此刻在
+     * app_main，先于一切轮询/恢复任务，无并发窗口。 */
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = SY6970_I2C_ADDR,
+        .scl_speed_hz    = 400000,   /* 与同总线的 BNO085/BMP388/GT911 同速 */
+    };
+    esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "add_device 失败（%s）——不注册", esp_err_to_name(err));
+        return;
+    }
+
+    /* ACK 即注册（bring-up 失败由 poll 的 1 Hz 自愈重试兜住，见下）。
+     * 注册次序=优先级：本函数在 main.c 里先于 power_eta6098_init() 调用，
+     * SY6970 占第一槽 = 权威源；ETA6098 随后注册自然回落为兜底。 */
+    power_service_register(&s_backend);
+    ESP_LOGI(TAG, "0x%02X ACK——SY6970 注册为电源权威源", SY6970_I2C_ADDR);
+}
 
 #endif /* SY6970_HOST_TEST */

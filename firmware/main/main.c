@@ -48,6 +48,7 @@
 #include "imu_task.h"
 #include "baro.h"
 #include "qmc5883p.h"
+#include "power_sy6970.h"
 #include "power_eta6098.h"
 #include "power_service.h"
 #include "config_ble.h"
@@ -99,12 +100,27 @@ void app_main(void)
     /* microSD 探测 + 日志存储位置设置必须先于 file sink 创建：
      * record_sink_file_create() 据此决定写 flash LittleFS 还是 /sdcard。 */
     pk_config_storage_load();
-    /* 电源链（原 pk_batt_init 单口，WP-D Task 2 拆成两步）：
-     * ETA6098 在两代载板上都必然在位，先装好并注册，再起 1 Hz 轮询任务。
+    /* I²C0 总线在这里（电源链之前）创建——从原先点屏之后的位置前移
+     * （WP-D Task 4）：电源链里的 SY6970 探测需要总线已在位，而
+     * pk_i2c0_bus.h 的既定时机本来就是「app_main 最前面、先于一切
+     * I²C 器件 init」。失败不中止启动的深审裁定（2026-09-05）不变：
+     * 探测/器件 init 各自对 NULL 总线有优雅失败路径，降级为无 IMU/baro/
+     * touch/SY6970 的 1090 盒子。 */
+    esp_err_t bus_err = pk_i2c0_bus_init();
+    if (bus_err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C0 bus init failed (%s) — continuing without "
+                      "IMU/baro/touch (1090 unaffected)", esp_err_to_name(bus_err));
+    }
+
+    /* 电源链（原 pk_batt_init 单口，WP-D 拆成三步）：
+     * 1. SY6970 探测：ACK（= v4 powered 充电芯片在位）→ 注册为权威源；
+     *    NACK（v3 载板 / 未上电 v4 的**预期路径**）→ 不注册，仅 INFO。
+     * 2. ETA6098 装好并注册（两代载板都必然在位，兜底源）。
+     * 3. 起 1 Hz 轮询任务。
      * 注册次序=优先级（首个非 stale 者赢，见 power_service.h:15-20）：
-     * 当前只有这一个 backend；v4 上 T4 会在本调用**之前**插入 SY6970 的
-     * 探测注册（权威源排前），届时 ETA6098 自然回落为兜底。
-     * 两个调用都幂等。 */
+     * SY6970 掉线时服务自动回落 ETA6098。powered/unpowered 只由 ACK
+     * 表达，与 Kconfig 板型正交（pk_board.h:30-32）。三个调用都幂等。 */
+    power_sy6970_init();
     power_eta6098_init();
     power_service_init();
     pk_sdcard_init();
@@ -286,17 +302,10 @@ void app_main(void)
         splash_shown_us = esp_timer_get_time();
     }
 
-    /* I²C0 总线初始化失败不再中止启动（深审裁定 2026-09-05）：本产品核心功能
-     * （1090 ADS-B + 显示）不依赖 I²C。IMU/气压计/触摸各自对 NULL handle
-     * 已有优雅失败路径（WARN + 自身任务退出），降级为"无姿态/无触摸的
-     * headless ADS-B 盒子"优于整机关机。 */
-    esp_err_t bus_err = pk_i2c0_bus_init();
-    if (bus_err != ESP_OK) {
-        ESP_LOGE(TAG, "I2C0 bus init failed (%s) — continuing without "
-                      "IMU/baro/touch (1090 unaffected)", esp_err_to_name(bus_err));
-    }
-
-    /* BNO085 IMU. Failure is non-fatal — the rest of the
+    /* I²C0 总线的创建已前移到电源链之前（SY6970 探测需要总线，
+     * 见上方电源链处的说明）。
+     *
+     * BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
     pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_SENSORS), 1, 3);
     esp_err_t imu_err = pk_imu_init();

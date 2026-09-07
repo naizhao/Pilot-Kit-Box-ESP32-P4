@@ -38,3 +38,13 @@ void power_eta6098_init(void);
  * 从未采到过（init 失败或一拍都没跑）返回 false。
  */
 bool power_eta6098_raw_mv(int *out_mv);
+
+/*
+ * 锂电放电曲线 → 百分比（0..100）。
+ *
+ * 电芯模型是**化学属性**，不是某一颗充电芯片的属性——本模块因为是第一个
+ * backend 才落了这份标定曲线（分段表 + 推导见 power_eta6098.c），公开出来
+ * 给 SY6970 backend 复用（它同样只有电压没有库仑计）。两处各养一张
+ * SoC 表必然漂移，禁止在 power_sy6970.c 里再抄一份。
+ */
+int power_eta6098_mv_to_pct(int batt_mv);
