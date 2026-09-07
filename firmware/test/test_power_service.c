@@ -26,10 +26,10 @@
  *      与 esp_timer_get_time() 同源同单位）；
  *   6. backend 身份戳：注册项自报的 id 由服务盖进聚合快照（诊断页同源
  *      守卫的依据）；未声明身份的 backend 盖 NONE；
- *   7. seqlock：序号奇数（写到一半）时读者重试耗尽后按「本拍没读到」
- *      处理（UNKNOWN/stale），绝不交出撕裂副本；写者下一拍恢复偶数后
- *      数据重新可读。单线程可测的靠山是 host seam：把序号掰成奇数，
- *      模拟读者撞上槽位写到一半。
+ *   7. 注册合同：所有 backend 必须在 power_service_init() 之前注册；
+ *      init 之后再注册一律拒收（注册表保持不变）——注册路径是 init 期
+ *      单线程的，服务不为此加锁。宿主版 power_service_init() 只翻转
+ *      "已启动"标志，让拒收分支在单线程测试里可达。
  */
 
 #include <stdio.h>
@@ -331,35 +331,26 @@ static void test_backend_id_stamped_into_snapshot(void)
     CHECK(power_service_snapshot_at(now).backend == POWER_BACKEND_NONE);
 }
 
-/* ── 14 seqlock：序号奇数（写到一半）读者不得拿到撕裂副本 ──────────── */
-static void test_seqlock_write_in_progress_readers_get_no_data(void)
+/* ── 14 注册合同：init 之后注册一律拒收，注册表保持不变 ────────────── */
+static void test_register_after_init_rejected(void)
 {
+    /* init 之前注册照常（正常路径先确认没被误伤） */
     power_service_reset();
     power_service_register(&s_b0);
-
-    const int64_t now = 120000000;
+    CHECK(power_service_backend_count() == 1);
+    const int64_t now = 130000000;
     s_ret[0] = mk_snap(POWER_SRC_BATTERY, now, 3700, 50);
     power_service_poll_tick(now);
+    CHECK(power_service_snapshot_at(now).batt_mv == 3700);
 
-    /* 正常路径：已提交快照的一次一致读 */
-    power_snapshot_t s = power_service_snapshot_at(now);
-    CHECK(s.stale == false);
-    CHECK(s.batt_mv == 3700);
-
-    /* 把序号掰成奇数，模拟读者撞上「槽位写到一半」 */
-    power_service_test_seq_break(0);
-    s = power_service_snapshot_at(now);
-    /* 重试耗尽：本拍按「没读到」处理——宁可 UNKNOWN/stale，也绝不把
-     * 可能撕裂的副本交出去（RV32 上 int64_t updated_us 撕了就是垃圾） */
-    CHECK(s.source == POWER_SRC_UNKNOWN);
-    CHECK(s.stale == true);
-    CHECK(s.updated_us == 0);
-
-    /* 写者下一拍走完整写协议（收尾必回偶数），数据重新可读 */
-    power_service_poll_tick(now + 1000000);
-    s = power_service_snapshot_at(now + 1000000);
-    CHECK(s.stale == false);
-    CHECK(s.batt_mv == 3700);
+    /* init 之后：注册表进不去了——注册路径是 init 期单线程的，晚注册
+     * 没有并发保护，宁可拒收也不碰运气 */
+    power_service_reset();
+    power_service_init();
+    power_service_register(&s_b0);
+    CHECK(power_service_backend_count() == 0);
+    power_service_register(&s_b1);
+    CHECK(power_service_backend_count() == 0);
 }
 
 int main(void)
@@ -377,7 +368,7 @@ int main(void)
     test_invalid_register_rejected();
     test_fields_pass_through();
     test_backend_id_stamped_into_snapshot();
-    test_seqlock_write_in_progress_readers_get_no_data();
+    test_register_after_init_rejected();
 
     if (g_fail == 0) {
         printf("test_power_service: all OK\n");

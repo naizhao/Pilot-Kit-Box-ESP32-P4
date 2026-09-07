@@ -208,9 +208,9 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
 #ifndef SY6970_HOST_TEST
 
 #include <string.h>
-#include <stdatomic.h>
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include "pk_i2c0_bus.h"
 #include "power_eta6098.h"
 #include "power_service.h"
@@ -251,11 +251,11 @@ static i2c_master_dev_handle_t s_dev;
 
 /* ── 单写者状态（写者 = power_service 的 1 Hz poll 任务）───────────────
  * 诊断态（st/regs/reg00/ready/updated_us）捆在 s_diag 一份里，poll 末尾
- * 走 seqlock 整体提交、sy6970_diag_get()（UI 上下文）走 seqlock 整体读
- * ——审计 F2/F4/F3：读者会抢占写者，RV32 上 int64_t 的 updated_us 撕成
- * 两条 store 就是垃圾时间戳；而"窗口读失败仍把旧解码状态配新写进去的
- * 原始字节"更是把矛盾证据摆上台面。旧口径「撕裂最坏混到相邻两拍」
- * 不覆盖字内撕裂，已废弃（合同见 power_sy6970.h 线程合同一节）。 */
+ * 在 s_diag_mux 临界区内整体提交、sy6970_diag_get()（UI 上下文）锁内
+ * 整体读——2026-09 审计二轮：首轮的 C11 原子 seqlock 复审被否，教训同
+ * gps_task.c:48-53（RVWMO 弱序下计数与负载无真全序；C11 口径下裸
+ * 负载/存储的竞争是 UB）。portMUX 自旋锁是 ESP-IDF 标准，跨核正确性
+ * 由构造保证；临界区只有几条拷贝，纳秒级（合同见 power_sy6970.h）。 */
 static bool            s_ready;      /* bring-up 成功（在读数）；仅 poll
                                       * 上下文读写，诊断页经 s_diag.ready
                                       * 取副本                             */
@@ -271,14 +271,14 @@ static int             s_wd_streak;     /* WATCHDOG_FAULT 重放连击（节流�
 static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
 static bool            s_ichg_recheck_done;
 
-/* 诊断单快照（seqlock）：偶 = 稳定，奇 = 写到一半。 */
+/* 诊断单快照（s_diag_mux 保护，见上）。 */
+static portMUX_TYPE s_diag_mux = portMUX_INITIALIZER_UNLOCKED;
 static struct {
-    _Atomic uint32_t seq;
     sy6970_status_t  st;           /* 最近一次成功解码                     */
     uint8_t          regs[SY6970_WIN_LEN]; /* 提交当拍的原始窗口字节      */
     uint8_t          reg00;        /* 提交当拍的 REG00 回读（F1 证据）     */
     bool             ready;
-    int64_t          updated_us;   /* 最近成功采集时刻（0=从未）           */
+    int64_t          updated_us;   /* 最近成功采集时刻（0=从未报数哨兵）   */
 } s_diag;
 
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
@@ -425,25 +425,22 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
 static power_snapshot_t poll_fail(int64_t now_us);
 
 /*
- * 诊断态整体提交（seqlock 写协议，同 power_service.c）：进临界区先把
- * 序号打成奇数（release），提交后打回偶数。只在"读 ok + 解码 ok"的
- * 完整成功拍调用（审计 F4：候选帧半路失败不许污染已提交证据）——
- * 含 wd_fault 帧（审计修复 P2）：诊断证据与服务新鲜度分账，故障帧
- * 照常上屏；服务快照（s_last_good）是否刷新由调用方决定。
+ * 诊断态整体提交（s_diag_mux 临界区，见 statics 处注释）：锁内整体
+ * 拷贝，无重试路径。只在"读 ok + 解码 ok"的完整成功拍调用（审计 F4：
+ * 候选帧半路失败不许污染已提交证据）——含 wd_fault 帧（审计修复 P2）：
+ * 诊断证据与服务新鲜度分账，故障帧照常上屏；服务快照（s_last_good）
+ * 是否刷新由调用方决定。
  */
 static void diag_commit(const sy6970_status_t *st, const uint8_t *win,
                         int64_t now_us)
 {
-    const uint32_t seq = atomic_load_explicit(&s_diag.seq,
-                                              memory_order_relaxed);
-    atomic_store_explicit(&s_diag.seq, seq | 1u, memory_order_release);
+    portENTER_CRITICAL(&s_diag_mux);
     s_diag.st         = *st;
     memcpy(s_diag.regs, win, SY6970_WIN_LEN);
     s_diag.reg00      = s_reg00;
     s_diag.ready      = s_ready;
     s_diag.updated_us = now_us;
-    atomic_store_explicit(&s_diag.seq, (seq | 1u) + 1u,
-                          memory_order_release);
+    portEXIT_CRITICAL(&s_diag_mux);
 }
 
 /*
@@ -587,34 +584,25 @@ static power_snapshot_t poll_fail(int64_t now_us)
     return s_last_good;
 }
 
-/* F7 诊断快照：seqlock 读协议（写者 = poll 任务，见 s_diag 处注释）。
- * 序号奇数或拷贝前后不符即重试，上限 4 次——写临界区只有一次结构体
- * 拷贝，1 Hz 写者下连撞 4 次意味着系统已经病了，此时按「本拍无数据」
- * 返回 false：诊断页宁可闪一拍无数据，也不能把 REG0C 原始字节和它的
- * 译码对不上号。从未拿到过数据（updated_us==0）同样返回 false。 */
+/* F7 诊断快照：锁内整体拷贝（s_diag_mux，见 statics 处注释），无重试
+ * 路径。从未拿到过数据（updated_us==0，从未报数哨兵）返回 false——
+ * 这是哨兵语义，不是锁失败路径。 */
 bool sy6970_diag_get(sy6970_diag_t *out)
 {
     if (out == NULL) return false;
-    *out = (sy6970_diag_t){0};
 
-    for (int attempt = 0; attempt < 4; attempt++) {
-        const uint32_t s1 = atomic_load_explicit(&s_diag.seq,
-                                                 memory_order_acquire);
-        if (s1 & 1u) continue;                 /* 写到一半：重试 */
-        sy6970_diag_t c;
-        c.st         = s_diag.st;
-        c.reg00      = s_diag.reg00;
-        memcpy(c.regs, s_diag.regs, sizeof(c.regs));
-        c.ready      = s_diag.ready;
-        c.updated_us = s_diag.updated_us;
-        const uint32_t s2 = atomic_load_explicit(&s_diag.seq,
-                                                 memory_order_acquire);
-        if (s1 != s2) continue;                /* 拷贝期间被写入：重试 */
-        if (c.updated_us == 0) return false;   /* 从未拿到过数据 */
-        *out = c;
-        return true;
-    }
-    return false;                              /* 重试耗尽：按无数据处理 */
+    sy6970_diag_t c;
+    portENTER_CRITICAL(&s_diag_mux);
+    c.st         = s_diag.st;
+    c.reg00      = s_diag.reg00;
+    memcpy(c.regs, s_diag.regs, sizeof(c.regs));
+    c.ready      = s_diag.ready;
+    c.updated_us = s_diag.updated_us;
+    portEXIT_CRITICAL(&s_diag_mux);
+
+    if (c.updated_us == 0) return false;   /* 从未拿到过数据 */
+    *out = c;
+    return true;
 }
 
 /* backend 登记项：name 仅用于日志；id 由服务盖进聚合快照（同源守卫）。 */

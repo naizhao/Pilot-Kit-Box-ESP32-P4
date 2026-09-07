@@ -106,13 +106,13 @@ const sy6970_init_step_t *sy6970_init_seq(size_t *n);
 
 /* ── 目标端（I²C 胶水 + backend，host 单测不编译不链接）───────────────
  *
- * 线程合同（seqlock 单写者，同 power_service.h 线程合同一节）：诊断态
- * （st/regs/reg00/ready/updated_us）捆在一份快照里，唯一写者是
- * power_service 的 1 Hz poll 任务（经 sy6970_poll()，成功拍末尾整体
- * 提交）；读者（诊断页）经 sy6970_diag_get() 拷贝——取序号（acquire）
- * → 拷贝 → 复核，奇数或不符即重试，上限 4 次，耗尽按「本拍无数据」
- * 返回 false。旧口径「撕裂最坏混到相邻两拍」不覆盖 64 位 updated_us
- * 的字内撕裂，已废弃；全程无锁无阻塞。
+ * 线程合同（portMUX 单写者，2026-09 审计二轮定稿；教训与实现先例同
+ * gps_task.c:48-53 / power_service.h 线程合同）：诊断态（st/regs/
+ * reg00/ready/updated_us）捆在一份快照里，唯一写者是 power_service 的
+ * 1 Hz poll 任务（经 sy6970_poll()，成功拍末尾整体提交）；读者（诊断
+ * 页）经 sy6970_diag_get() 拷贝。双方都在同一把自旋锁的临界区里整体
+ * 拷贝——无重试、无撕裂、无 UB，跨核正确性由构造保证（RVWMO 下
+ * "计数+负载"式 seqlock 已被复审否决），临界区纳秒级。
  */
 
 /*
@@ -127,11 +127,11 @@ void power_sy6970_init(void);
 
 /*
  * F7 诊断快照：最近一次**成功**轮询拍的解码状态 + REG00 回读值（F1 写入
- * 落定证据）+ 同拍原始寄存器窗口字节——三者同拍整体提交/整体读（seqlock，
- * 见上线程合同），不存在"旧状态配新字节"的混合证据。Task 5 的诊断页据
- * 此展示 WATCHDOG_FAULT（st.wd_fault，REG0C[7]）、配置回读（reg00）与
- * 原始 ADC 值。从未拿到过数据（探测 NACK / bring-up 未成功）返回 false
- * 并把 *out 清零；seqlock 重试耗尽同样按本拍无数据返回 false。
+ * 落定证据）+ 同拍原始寄存器窗口字节——三者同拍整体提交/整体读（自旋锁
+ * 临界区，见上线程合同），不存在"旧状态配新字节"的混合证据。Task 5 的
+ * 诊断页据此展示 WATCHDOG_FAULT（st.wd_fault，REG0C[7]）、配置回读
+ * （reg00）与原始 ADC 值。从未拿到过数据（探测 NACK / bring-up 未成功，
+ * updated_us==0 哨兵）返回 false 并把 *out 清零。
  */
 typedef struct {
     sy6970_status_t st;            /* 最近一次成功解码的状态               */

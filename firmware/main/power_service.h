@@ -25,18 +25,18 @@
  * 服务端统一重算（updated_us 距今 >5 s），不信任 backend 自报。
  *
  * ── 线程合同 ────────────────────────────────────────────────────────
- * 槽位只有一个写者（poll 任务，见 power_service.c 的 1 Hz 任务）；
- * 读者（UI 任务）会抢占写者，RV32 上一次普通结构体拷贝会被撕裂——
- * int64_t 的 updated_us 拆成两条 store，撞上抢占就是垃圾时间戳或拼错
- * 的字段组合，旧的「最坏混到相邻两拍」口径从不覆盖这种字内撕裂。
- * 槽位提交走 seqlock（C11 原子，同 qmc5883p.c 的口径）：写者进临界区
- * 前把槽位序号打成奇数、提交后打回偶数（release）；读者取序号
- * （acquire）→ 拷贝 → 复核序号，奇数或不符即重试，上限 4 次——耗尽
- * 则本拍按「没读到」处理（调用方拿到 UNKNOWN/stale），绝不交出撕裂
- * 副本。全程无阻塞、无长自旋。register() 在 bring-up 早期（任务起跑
- * 前后都允许）调用——"前后都允许"依赖 poll_tick 的空槽免疫兜底
- * （power_service.c：调 poll 前先判槽位 NULL）；晚注册的 backend
- * 下一拍自然进入轮询。
+ * 注册路径是 init 期单线程的：所有 backend 必须在 power_service_init()
+ * 之前注册，init 之后再注册一律 WARN + 拒收（注册表不变）——注册表
+ * 本身没有并发保护，靠这条时序合同保证（没有真实调用方需要晚注册，
+ * main.c 的电源链全部先于 power_service_init()）。
+ * 快照槽位有一个写者（poll 任务，见 power_service.c 的 1 Hz 任务）与
+ * 多个读者（UI 任务），双方都在同一把 portMUX 自旋锁的临界区里整体
+ * 拷贝（2026-09 审计二轮：曾试过 C11 原子 seqlock，复审废除——RVWMO
+ * 弱序下计数与负载没有真全序、C11 口径下裸负载/存储的竞争是 UB，教训
+ * 与实现先例见 gps_task.c:48-53 的 PPS (计数,时间戳) 对）。临界区只有
+ * 一次结构体拷贝（快照 ~40-100 B、1 Hz 写），纳秒级、无重试、无阻塞
+ * 长等待。poll_tick 的空槽 early-continue 保留为便宜的健壮性，不再
+ * 承担"晚注册下一拍进轮询"的职责（晚注册已被拒收）。
  *
  * ── battery.h 的迁移映射（Task 2 的合同）────────────────────────────
  *   pk_batt_t.valid    → pct_valid（batt_mv 量程 2500..4500 的判定留在
@@ -113,9 +113,12 @@ typedef struct {
 
 /* ── 纯模型（host 可测）────────────────────────────────────────────── */
 
-/* 注册一个 backend。幂等（同指针重复注册只算一次）；poll 为空整体拒收；
- * 超容量静默忽略（目标端会打一条 WARN）。典型调用点：各 backend 的
- * bring-up（SY6970 探测 ACK 后 / ETA6098 init 成功后），先注册者优先。 */
+/* 注册一个 backend。必须在 power_service_init() **之前**调用：init
+ * 之后再注册一律 WARN + 拒收（注册表不变，见文件头线程合同——注册
+ * 路径靠"init 期单线程"合同免锁）。幂等（同指针重复注册只算一次）；
+ * poll 为空整体拒收；超容量静默忽略（目标端会打一条 WARN）。典型
+ * 调用点：各 backend 的 bring-up（SY6970 探测 ACK 后 / ETA6098 init
+ * 成功后，main.c 的电源链先于 power_service_init()），先注册者优先。 */
 void power_service_register(const power_backend_t *b);
 
 /* 已注册的 backend 数（诊断 + host 测试断言用）。 */
@@ -140,7 +143,8 @@ power_snapshot_t power_service_snapshot_at(int64_t now_us);
 /*
  * 启动电源服务：创建 1 Hz 轮询任务（backend 注册由各 backend 自己的
  * bring-up 调 power_service_register() 完成——SY6970 要探测 ACK 才能定
- * 去留，注册时机天然在它自己的 init 里）。幂等：重复调用只起一个任务。
+ * 去留，注册时机天然在它自己的 init 里；注册必须全部发生在本调用
+ * **之前**，此后 register() 一律拒收）。幂等：重复调用只起一个任务。
  * 不返回错误：任务创建失败只打 ERROR，服务缺席等价于"无 backend"，
  * snapshot() 会如实报 UNKNOWN/stale，UI 按无数据显示。
  */
@@ -149,11 +153,8 @@ void power_service_init(void);
 /* 聚合"现在"的快照（esp_timer_get_time() 时刻的 snapshot_at）。 */
 power_snapshot_t power_service_snapshot(void);
 
-/* 仅 host 单测：清空注册表（POWER_SERVICE_HOST_TEST 才声明/定义）。 */
+/* 仅 host 单测：清空注册表并复位「init 未跑」标志
+ * （POWER_SERVICE_HOST_TEST 才声明/定义）。 */
 #ifdef POWER_SERVICE_HOST_TEST
 void power_service_reset(void);
-/* 仅 host 单测：把指定槽位的 seqlock 序号掰成奇数，单线程模拟「读者
- * 撞上槽位写到一半」，验证读侧重试耗尽后按无数据处理（写者下一拍走
- * 完整写协议会把偶数态恢复回来）。 */
-void power_service_test_seq_break(size_t slot);
 #endif

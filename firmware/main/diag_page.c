@@ -694,8 +694,8 @@ void pk_diag_page_render(uint16_t *fb)
                 /* 电量/电压：仅同源时取公共快照（pct_valid 是服务端与
                  * ETA6098 同口径的量程闸）；不同源时电压取 SY6970 自己的
                  * BATV 译码、不显示电量（本层不出 pct 的合同不变）。
-                 * 故障/电流/VBUS 恒取诊断快照（seqlock 一致性拷贝，线程
-                 * 合同见 power_sy6970.h）。 */
+                 * 故障/电流/VBUS 恒取诊断快照（锁内整体拷贝，线程合同
+                 * 见 power_sy6970.h）。 */
                 int p;
                 if (same_src) {
                     p = s.pct_valid

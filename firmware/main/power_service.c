@@ -11,20 +11,39 @@
 #include "power_service.h"
 
 #include <stddef.h>
-#include <stdatomic.h>
 
+/* ── 快照槽位的锁（2026-09 审计二轮：seqlock → portMUX）───────────────
+ * 首轮的 C11 原子 seqlock 复审被否：教训同 gps_task.c:48-53 记录的那次
+ * ——RVWMO（ESP32-P4 双核 RV32，弱内存序）下"读计数→读负载→复核计数"
+ * 的计数与负载没有真正的全序，且 C11 口径下裸负载/存储的数据竞争本身
+ * 就是 UB，事后复核救不回来。portMUX 自旋锁临界区是 ESP-IDF 的标准
+ * 做法（GPS PPS 的 (计数,时间戳) 对即此方案）：写者 = 1 Hz poll 任务、
+ * 读者 = UI 任务，同一把 spinlock 里整体拷贝，跨核正确性由构造保证。
+ * 临界区只有一次结构体拷贝（快照 ~40-100 B，1 Hz 写），纳秒级。
+ * 宿主单测（POWER_SERVICE_HOST_TEST）单线程无并发，锁宏退化为空操作
+ * ——纯模型的注册/选择/stale 判定照常覆盖；并发正确性靠两板系构建的
+ * 真锁（合同见 power_service.h 线程合同一节）。 */
 #ifndef POWER_SERVICE_HOST_TEST
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 static const char *TAG = "pwr";
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+#define PWR_SLOTS_LOCK()   portENTER_CRITICAL(&s_mux)
+#define PWR_SLOTS_UNLOCK() portEXIT_CRITICAL(&s_mux)
+#else
+#define PWR_SLOTS_LOCK()   ((void)0)
+#define PWR_SLOTS_UNLOCK() ((void)0)
 #endif
 
-/* 注册表：指针数组 + 平行快照槽位。槽位只有一个写者（poll 任务），
- * 读者（UI 任务）经 seqlock 协议拷贝（合同见头文件线程合同一节）：
- * 序号偶数 = 槽位稳定，奇数 = 写到一半。 */
+/* 注册表：指针数组 + 平行快照槽位。槽位有一个写者（poll 任务）与多个
+ * 读者（UI 任务），全部经 s_mux 临界区访问（见上）。 */
 static const power_backend_t *s_backends[POWER_SERVICE_MAX_BACKENDS];
 static power_snapshot_t s_slots[POWER_SERVICE_MAX_BACKENDS];
-static _Atomic uint32_t s_slot_seq[POWER_SERVICE_MAX_BACKENDS];
 static size_t s_count;
+
+/* 注册闸：注册表没有并发写者，靠「init 期单线程注册」的时序合同保证；
+ * init 之后再来的注册一律拒收（合同见 power_service.h）。 */
+static bool s_init_done;
 
 /* "无数据"槽位初值 / 无 backend 时的返回值。time_degraded_na=true：
  * 没有任何数据源时剩余时间必然不可估，不许给默认假象。 */
@@ -56,6 +75,17 @@ void power_service_register(const power_backend_t *b)
 {
     if (b == NULL || b->poll == NULL) return;      /* 非法注册整体拒收 */
 
+    if (s_init_done) {
+        /* 注册合同：所有 backend 必须在 power_service_init() 之前注册。
+         * 注册表没有并发写者，靠这条时序保证；晚注册没有保护，拒收
+         * 而不是碰运气（宿主测试钉死）。 */
+#ifndef POWER_SERVICE_HOST_TEST
+        ESP_LOGW(TAG, "backend '%s' rejected: registered after init",
+                 b->name != NULL ? b->name : "?");
+#endif
+        return;
+    }
+
     for (size_t i = 0; i < s_count; i++) {
         if (s_backends[i] == b) return;            /* 同指针幂等 */
     }
@@ -84,7 +114,9 @@ void power_service_poll_tick(int64_t now_us)
 {
     for (size_t i = 0; i < s_count; i++) {
         const power_backend_t *b = s_backends[i];
-        if (b == NULL || b->poll == NULL) continue; /* 晚注册/异常槽免疫 */
+        if (b == NULL || b->poll == NULL) continue; /* 空槽/异常槽免疫：
+                                    * 便宜的健壮性保留（注册合同收紧后
+                                    * 不再承担"晚注册下一拍进轮询"）。 */
 
         power_snapshot_t s = b->poll(now_us);
 
@@ -95,40 +127,24 @@ void power_service_poll_tick(int64_t now_us)
         /* stale 由服务端按统一时序重算，backend 的自报不作数。 */
         s.stale = snapshot_is_stale(&s, now_us);
 
-        /* seqlock 写协议：进临界区先把序号打成奇数（release，读者见之
-         * 即重试），槽位提交后再打回偶数（release，读者的一致性闸）。
-         * 从「seq|1」起算保证收尾必是偶数——就算序号曾被外部掰成奇数
-         * （仅 host 测试 seam 干得出来），写者一拍就恢复不变式。 */
-        const uint32_t seq = atomic_load_explicit(&s_slot_seq[i],
-                                                  memory_order_relaxed);
-        atomic_store_explicit(&s_slot_seq[i], seq | 1u,
-                              memory_order_release);
+        /* 锁内整体提交：身份戳 + 槽位对读者原子（一次结构体拷贝，
+         * 无重试路径，见文件头锁注释）。 */
+        PWR_SLOTS_LOCK();
         s.backend = b->id;         /* 身份戳：赢家是谁由注册项自带 */
         s_slots[i] = s;
-        atomic_store_explicit(&s_slot_seq[i], (seq | 1u) + 1u,
-                              memory_order_release);
+        PWR_SLOTS_UNLOCK();
     }
 }
 
-/*
- * 槽位一致性拷贝（seqlock 读协议）：取序号（acquire）→ 拷贝 → 复核，
- * 奇数或复核不符即重试。上限 4 次：写临界区只有一次结构体赋值，1 Hz
- * 写者下读者连撞 4 次意味着系统已经病了——此时宁可按「本拍没读到」
- * 处理（调用方拿 UNKNOWN/stale），也绝不交出可能撕裂的副本（RV32 上
- * int64_t 的 updated_us 撕了就是垃圾时间戳， 见头文件线程合同）。
- */
-static bool slot_copy(size_t i, power_snapshot_t *out)
+/* 槽位一致性读：锁内一次拷贝，无重试/作废路径（原 seqlock 的 4 次
+ * 上限随旧方案一并删除）。 */
+static power_snapshot_t slot_read(size_t i)
 {
-    for (int attempt = 0; attempt < 4; attempt++) {
-        const uint32_t s1 = atomic_load_explicit(&s_slot_seq[i],
-                                                 memory_order_acquire);
-        if (s1 & 1u) continue;                    /* 写到一半：重试 */
-        *out = s_slots[i];
-        const uint32_t s2 = atomic_load_explicit(&s_slot_seq[i],
-                                                 memory_order_acquire);
-        if (s1 == s2) return true;                /* 一致副本 */
-    }
-    return false;
+    power_snapshot_t out;
+    PWR_SLOTS_LOCK();
+    out = s_slots[i];
+    PWR_SLOTS_UNLOCK();
+    return out;
 }
 
 power_snapshot_t power_service_snapshot_at(int64_t now_us)
@@ -137,11 +153,11 @@ power_snapshot_t power_service_snapshot_at(int64_t now_us)
     bool have_freshest = false;
 
     for (size_t i = 0; i < s_count; i++) {
-        power_snapshot_t s;
-        if (!slot_copy(i, &s)) continue;   /* 重试耗尽：本拍跳过该槽 */
+        const power_snapshot_t s = slot_read(i);
         if (!snapshot_is_stale(&s, now_us)) {
-            s.stale = false;
-            return s;                      /* 首个新鲜的赢 */
+            power_snapshot_t out = s;      /* 首个新鲜的赢 */
+            out.stale = false;
+            return out;
         }
         if (!have_freshest || s.updated_us > freshest.updated_us) {
             freshest = s;                  /* 记录最近更新的 */
@@ -153,19 +169,21 @@ power_snapshot_t power_service_snapshot_at(int64_t now_us)
         freshest.stale = true;             /* 全 stale：给最近的，如实标 */
         return freshest;
     }
-    return unknown_snapshot();             /* 无 backend（或全没读到） */
+    return unknown_snapshot();             /* 无 backend */
 }
 
 #ifdef POWER_SERVICE_HOST_TEST
 void power_service_reset(void)
 {
     s_count = 0;
+    s_init_done = false;               /* 复位成「init 未跑」，隔离各用例 */
 }
 
-void power_service_test_seq_break(size_t slot)
+void power_service_init(void)
 {
-    if (slot >= POWER_SERVICE_MAX_BACKENDS) return;
-    atomic_store_explicit(&s_slot_seq[slot], 1u, memory_order_relaxed);
+    /* 宿主没有任务可起：只翻转「服务已启动」标志，让注册合同的
+     * 「init 之后拒收」分支在单线程单测里可达。 */
+    s_init_done = true;
 }
 #endif
 
@@ -193,6 +211,10 @@ void power_service_init(void)
 {
     static bool s_started;
     if (s_started) return;                         /* 幂等：只起一个任务 */
+    /* 注册闸在这里落下：此后 register() 一律拒收（见 register 处注释）。
+     * 即使任务创建失败也照落——服务缺席 = 没有任何 backend，晚注册
+     * 同样改变不了什么。 */
+    s_init_done = true;
     if (xTaskCreatePinnedToCore(power_poll_task, "pwr", 4096,
                                 NULL, 3, NULL, 0) != pdTRUE) {
         /* 不算致命：服务缺席 = 没有任何 backend，snapshot() 如实报
