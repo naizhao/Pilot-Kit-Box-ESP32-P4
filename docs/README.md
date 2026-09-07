@@ -33,11 +33,12 @@ All public docs should match this baseline:
   navigation source, or collision-avoidance system.
 - Target board: **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**. The P4 handles USB, DSP, UI, and storage; the C6 handles BLE.
 - ADS-B reception comes in two board-generation flavors: **v1/v2 carriers and
-  bare boards** attach an RTL-SDR dongle to the native USB 2.0 HS pair (carrier
+  bare boards** attached an RTL-SDR dongle to the native USB 2.0 HS pair (carrier
   USB-A on J3-27/25, or H2 Type-C with an OTG adapter/hub on a bare Waveshare
   board; both share the same nets — only one at a time), while the **v3/v4
   expansion boards** carry an onboard 1090 MHz chain decoded by an RP2040. The
-  firmware defaults to 1090 MHz at 2 MSPS on the dongle path.
+  dongle path is retired: current firmware supports only the expansion-board
+  chain.
 - Current recommended SDR dongle tuner: **FC0013**, mainly because the BOM cost is low.
 - Identity databases: the ICAO24 aircraft database ships on the microSD card at `/sdcard/aero/pk_actdb.bin` (built into `datafiles/data/pk_actdb.bin`, read by `firmware/main/aircraft_db.c`) and is updated by copying a file, not by reflashing; the airline code table at `firmware/main/airline_codes.c` and the ICAO24 country table at `firmware/main/icao_country.c` are still compiled into the firmware.
 - LCD: **4.3-inch ST7701 480x800 MIPI-DSI**, presented as 800x480 landscape through PPA rotation; backlight PWM GPIO26, reset GPIO27, BL_EN GPIO33.

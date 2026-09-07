@@ -19,9 +19,11 @@
  *       计数重载进活动计数器）。一次触发同时装好地址与计数。
  * CTRL 配置（32bit、读定址 FIFO、写递增、DREQ、**无 ring、无 chain**）
  * 跨完成保持，无需重写；CHAIN_TO=自身即"无链"（手册明文），本设计
- * 单通道根本不依赖链——重武装由 IRQ 软件完成，交接窗口 = IRQ 延迟
- * （µs 级），RX FIFO 深 4 字兜不住的极端背靠背突发由停机-重启语义
- * 兜底（丢沿如实计数，不静默）。
+ * 单通道根本不依赖链——重武装由 IRQ 软件完成，交接窗口 = IRQ 延迟。
+ * RX FIFO 已开 join（edgecap_program_init 的 sm_config_set_fifo_join，
+ * TX 并入 RX）达 8 深：0.5µs 最短边沿间隔下的缓冲预算 = 8 × 0.5µs =
+ * 4µs，覆盖 IRQ 重武装窗口（完整时序预算合同见 edge_cap.h）；超出预算
+ * 的极端背靠背突发仍由停机-重启语义兜底（丢沿如实计数，不静默）。
  *
  * 初始化顺序（审计 C1-init）：状态清零（edgecap_q_init + 计数器）与
  * IRQ 安装先于 dma_channel_configure/触发；首块最后武装。producer
@@ -78,6 +80,11 @@ static void edge_cap_pio_flush(void)
     pio_sm_set_enabled(s_pio, s_sm, true);
 }
 
+/* __not_in_flash_func：handler 常驻 SRAM，XIP cache miss 不得给重武装
+ * 窗口加延迟（RX FIFO join 后预算仅 4µs，见 edge_cap.h 时序预算）。
+ * 优先级注记：DMA IRQ 与 USB 等共享 NVIC——本 handler 不得被遮蔽超过
+ * FIFO 预算（4µs）；与 USB 中断的完整优先级整定是 Task 15 台架项，
+ * 验收条款「持续边沿下 RXSTALL/overrun == 0」由台架实测裁决。 */
 static void __not_in_flash_func(edge_cap_dma_irq)(void)
 {
     /* 只认领本通道的 intr 位（写 1 清零）；共享 IRQ 时不越权。handler

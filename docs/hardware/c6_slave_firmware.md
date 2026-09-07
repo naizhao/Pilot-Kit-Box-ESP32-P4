@@ -32,7 +32,7 @@ Chinese version: [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md)
 > idf.py build && idf.py -p /dev/cu.usbmodem* flash monitor
 > ```
 >
-> Everything else (RTL-SDR / LittleFS / UART / LCD / IMU) keeps working;
+> Everything else (LittleFS / UART / LCD / IMU / ADS-B receive) keeps working;
 > only the BLE GATT advertise / GDL90 notify path is disabled. Come
 > back here whenever you're ready to enable BLE.
 >

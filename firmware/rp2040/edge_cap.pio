@@ -43,10 +43,15 @@ fall:                    ; 下降沿 → 推送（高电平时长）
 
 % c-sdk {
 /* 返回实际应用的 sm_config：宿主（edge_cap.c）保存一份，供 lost 重启
- * 路径做完整确定性重初始化（pio_sm_init 需要同款配置）。 */
+ * 路径做完整确定性重初始化（pio_sm_init 需要同款配置）。
+ * FIFO join（DMA 时序缓解，2026-09-05 审计）：TX 侧并入 RX，RX FIFO 变
+ * 8 深——0.5µs 最短边沿间隔下把块边界 IRQ 重武装窗口的缓冲预算从 2µs
+ * 翻倍到 4µs（时序预算合同见 edge_cap.h）。本程序从不 push TX，join 无
+ * 副作用；配置随返回值被宿主保存，pio_sm_init 重装路径同样生效。 */
 static inline pio_sm_config edgecap_program_init(PIO pio, uint sm, uint offset, uint pin)
 {
     pio_sm_config c = edgecap_program_get_default_config(offset);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
     sm_config_set_jmp_pin(&c, pin);
     sm_config_set_in_pin_base(&c, pin);
     sm_config_set_in_shift(&c, false, false, 32);

@@ -173,17 +173,19 @@ The `storage` partition is mounted through LittleFS and currently stores rotatin
 
 The 12 MiB `factory` partition is now mostly headroom: the 8 MiB aircraft database moved to the microSD card, so the app image is about 2.9 MB and occupies roughly 23% of the partition.
 
-## USB Host And RTL-SDR
+## ADS-B Receive Path (RP2040 Expansion Board)
 
-| Option / Constant | Default | Meaning |
-|---|---|---|
-| `CONFIG_USB_HOST_HUBS_SUPPORTED` | `y` | Enables USB hub support; some RTL-SDR dongles expose internal hubs. |
-| `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` | `512` | Allows full descriptor reads from RTL2832U devices. |
-| `PK_RTLSDR_FREQ_HZ` | `1090000000UL` | ADS-B / Mode-S center frequency. Defined in `firmware/main/pilot_kit.h`. |
-| `PK_RTLSDR_SAMPLERATE_HZ` | `2000000UL` | 2 MSPS sample rate for ADS-B. |
-| `PK_IQ_RINGBUF_SIZE_BYTES` | `512 * 1024` | IQ buffering headroom between USB producer and DSP consumer. |
-
-The current recommended low-cost SDR dongle uses the **FC0013** tuner. The firmware queries the tuner gain table at runtime and selects maximum manual gain, so it is not hard-coded to one tuner gain value.
+The 1090 MHz receive chain lives on the v3/v4 expansion board: QPL9547 LNA +
+TA0970A SAW + AD8313 log detector + TLV3501 comparator feed pulses to the
+board's RP2040, which captures dual edges via PIO+DMA, rebuilds 56/112-bit
+Mode-S frames, and ships them to the P4 over UART2 at 921600 8N1 (P4 RX
+GPIO46 from RP2040 TXD on J3-35, P4 TX GPIO32 to RP2040 RXD on J3-31). There
+is no RTL-SDR / USB-host receive configuration: the v1/v2-era USB RTL-SDR
+path (RTL2832U driver, IQ ring buffer, `PK_RTLSDR_*` constants, `sdr`/`dsp`
+task pair) was removed from the firmware and component tree — see
+[`architecture.md`](architecture.md) for the retired-task history. The centre
+frequency is fixed by the onboard SAW filter; comparator threshold and RSSI
+readback live on the RP2040 (`firmware/rp2040/threshold_ctl.c`).
 
 ## BLE / ESP-Hosted
 
@@ -410,12 +412,12 @@ Common ESP_LOG tags:
 | Tag | Module |
 |---|---|
 | `pilot_kit` | boot sequence and app-level init |
-| `sdr` | RTL-SDR USB control and re-init |
-| `dsp` | IQ decode and 1 Hz dashboard |
+| `sdr` | **RETIRED** (v1/v2 USB RTL-SDR era): task no longer created, row kept for history |
+| `dsp` | TAG retained by `adsb_link_task` for log-retrieval continuity: RP2040 UART link + former DSP business chain |
 | `adsb` | decoded ADS-B message logs |
 | `rec_file` | LittleFS / MicroSD writer |
 | `pk_sd` | MicroSD mount, removal, and format |
-| `gps` | GT-U8 NMEA/RMC and satellite diagnostics; no PPS GPIO handling |
+| `gps` | GT-U8 NMEA/RMC and satellite diagnostics; GPIO50 PPS feeds the `time_locked` status — production time-service wiring is a follow-up task |
 | `baro` | BMP388 pressure, altitude, and vertical speed |
 | `ble_gatt` | NimBLE host, GATT, GDL90 emitter |
 | `display` | ST7701 MIPI-DSI + PPA rotation |
@@ -426,9 +428,10 @@ Common ESP_LOG tags:
 
 | Task | CPU | Priority | Stack | Owner |
 |---|---:|---:|---:|---|
-| `usb_host_lib` | 0 | 5 | 4 KiB | USB host lifecycle |
-| `sdr` | 1 | 6 | 8 KiB | RTL-SDR control + async IQ producer |
-| `dsp` | 1 | 4 | 4 KiB | dump1090-derived decode |
+| `usb_host_lib` | — | — | — | **RETIRED** (v1/v2 USB RTL-SDR era) — row kept for history |
+| `sdr` | — | — | — | **RETIRED** (v1/v2 USB RTL-SDR era): RTL-SDR control + async IQ producer — row kept for history |
+| `dsp` | — | — | — | **RETIRED** (v1/v2 USB RTL-SDR era): duties moved to the RP2040 (`modes_edge`) + `adsb_lnk` chain — row kept for history |
+| `adsb_lnk` | 1 | 5 | 8 KiB | RP2040 UART link (MODES_RAW in / HEALTH out, 921600 baud); carries the former DSP business chain |
 | `imu` | 0 | 5 | 4 KiB | BNO085 polling |
 | `pfd` | 0 | 4 | 6 KiB | LCD UI renderer |
 | `rec_file` | 0 | 3 | 4 KiB | LittleFS / MicroSD writer |

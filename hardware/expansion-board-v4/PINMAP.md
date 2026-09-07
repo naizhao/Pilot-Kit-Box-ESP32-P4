@@ -38,7 +38,7 @@ Firmware-side change volume: only one added UART driver (GPIO46/32); zero change
 | GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG for reflashing CC1312R firmware〔A〕 |
 | GPIO19 | PULSES | comparator output → PIO0 preamble detection〔A〕 |
 | GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. **No landing point in V4**: the original TP3–TP6 were removed, leaving the net with only the RP2040 end |
-| GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. **No landing point in V4**: the original TP7 was removed, same as above |
+| GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. TP7/RECOVERED_CLK **存在于正式 PCB**（kicad_pcb:38901），可作 RP2040 GPIO24 自检/调试落点（硬件文档勘误 2026-09-05，与 PCB 源核对；自检跳线步骤以 `firmware/rp2040/selftest_gen.h` 为准） |
 | GPIO25 | TL_PWM | comparator threshold PWM (RC-filtered into LEVEL_BIAS)〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | DC readback of the threshold〔A〕 |
 | GPIO27 / ADC1 | RSSI | AD8313 VOUT readback (adaptive sensitivity)〔A〕 |

@@ -12,7 +12,7 @@
 
 ## 1. 概述
 
-Pilot Kit Box 是基于 ESP32-P4 的 ADS-B 接收器。它通过 RTL-SDR 接收 1090 MHz Mode-S / ADS-B 广播，在固件内完成解码和飞机状态聚合，再通过 BLE 把交通态势广播给附近客户端。
+Pilot Kit Box 是基于 ESP32-P4 的 ADS-B 接收器。它通过 v3/v4 扩展板的板载接收链接收 1090 MHz Mode-S / ADS-B 广播（板载 RP2040 双沿捕获、解码帧并经 921600 波特 UART 送 P4），在固件内完成解码和飞机状态聚合，再通过 BLE 把交通态势广播给附近客户端。
 
 协议设计刻意保持简单：
 
@@ -295,7 +295,6 @@ traffic.lastValueStream.listen(onGdl90TrafficFrame);
 当前未包含但在路线图中的项目：
 
 - Bluetooth Device Information Service (`0x180A`) 暴露固件版本
-- 配置写 characteristic：从 App 调整 RTL-SDR frequency / gain / sample rate
 - 在加入非公开、可识别用户、控制类或座舱敏感数据前，必须补 bonding + LESC encryption
 - 多客户端同时连接
 

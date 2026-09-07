@@ -110,7 +110,9 @@ esp_err_t qmc5883p_init(i2c_master_bus_handle_t bus);
  */
 bool qmc5883p_poll(qmc5883p_sample_t *out);
 
-/* 诊断计数快照。单写者（驱动任务）多读者；32 位对齐读写 RV32 原子 +
- * volatile 防缓存，无锁（同 dsp 统计块约定，见 qmc5883p.c）。out 为
+/* 诊断计数快照。单写者（驱动任务）多读者：内部计数为 C11 原子
+ * （relaxed，同 modes_edge.h stats 口径——2026-09-05 pre-merge 批次
+ * 升级，先于诊断页消费者就位），本函数把 relaxed load 逐字段拷入普通
+ * 结构体；各计数单调、逐字段独立采样，不做跨字段一致性承诺。out 为
  * NULL 时忽略。 */
 void qmc5883p_stats_get(qmc5883p_stats_t *out);

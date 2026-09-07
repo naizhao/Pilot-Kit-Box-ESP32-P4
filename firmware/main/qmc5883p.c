@@ -42,6 +42,7 @@
 
 #include "qmc5883p.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 
 /* ── 寄存器与器件常量（取证页码见文件头表）───────────────────────────── */
@@ -147,11 +148,14 @@ static const char *TAG = "qmc";
 
 static i2c_master_dev_handle_t s_dev;
 
-/* 诊断计数：单写者 = qmc 任务（多读者 = 诊断页等），并发约定与 dsp 的
- * 统计块同款（adsb_link_task.c）：32 位对齐读写 RV32 单指令原子，volatile
- * 防读者跨任务缓存旧值，故无锁。升 C11 原子的事推迟到出现需要多字段
- * 一致性的消费者再说（2026-09 审计三轮记录在案）。 */
-static volatile qmc5883p_stats_t s_stats;
+/* 诊断计数：单写者 = qmc 任务（多读者 = 诊断页等）。C11 原子 relaxed
+ * （2026-09-05 pre-merge 批次提前升级——诊断页消费者出现之前就位），
+ * 口径同 modes_edge.h stats：单写者独占写（fetch_add relaxed），读者
+ * relaxed load；逐字段独立采样、不做跨字段一致性承诺（各计数单调）。
+ * 对外快照仍是普通 qmc5883p_stats_t（qmc5883p_stats_get 合同不变）。 */
+static struct {
+    atomic_uint polls, overflows, probe_failures;
+} s_stats;
 
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
 {
@@ -184,7 +188,8 @@ static bool bring_up(void)
     }
     if (id != QMC5883P_CHIPID_VAL) {
         ESP_LOGW(TAG, "CHIPID probe failed (got 0x%02X, want 0x80 @0x2C)", id);
-        s_stats.probe_failures++;
+        atomic_fetch_add_explicit(&s_stats.probe_failures, 1,
+                                  memory_order_relaxed);
         return false;
     }
     esp_err_t e;
@@ -194,7 +199,8 @@ static bool bring_up(void)
         if ((e = reg_write(seq[i].reg, seq[i].val)) != ESP_OK) {
             ESP_LOGW(TAG, "config write 0x%02X failed: %d (%s)",
                      seq[i].reg, e, seq[i].why);
-            s_stats.probe_failures++;
+            atomic_fetch_add_explicit(&s_stats.probe_failures, 1,
+                                      memory_order_relaxed);
             return false;
         }
     }
@@ -322,8 +328,10 @@ bool qmc5883p_poll(qmc5883p_sample_t *out)
     if (reg_read(QMC5883P_REG_STATUS, &st, 1) != ESP_OK) return false;
     qmc5883p_status_t flags;
     qmc5883p_decode_status(st, &flags);
-    if (flags.ovfl) s_stats.overflows++;   /* §9.2.2 p.16/18：OVFL=1；
-                                            * 只要状态里见过就计，不等 DRDY */
+    if (flags.ovfl)                      /* §9.2.2 p.16/18：OVFL=1；
+                                            只要状态里见过就计，不等 DRDY */
+        atomic_fetch_add_explicit(&s_stats.overflows, 1,
+                                  memory_order_relaxed);
     if (!flags.drdy) return false;         /* 无新数据，不算失败 */
 
     uint8_t d[6];
@@ -340,16 +348,21 @@ bool qmc5883p_poll(qmc5883p_sample_t *out)
     }
 
     out->valid = true;
-    s_stats.polls++;
+    atomic_fetch_add_explicit(&s_stats.polls, 1, memory_order_relaxed);
     return true;
 }
 
 void qmc5883p_stats_get(qmc5883p_stats_t *out)
 {
     if (out == NULL) return;
-    out->polls          = s_stats.polls;
-    out->overflows      = s_stats.overflows;
-    out->probe_failures = s_stats.probe_failures;
+    /* 快照：内部 C11 原子的 relaxed load 逐字段拷入普通结构体
+     * （各计数单调，撕裂不构成问题——见 s_stats 处口径注释）。 */
+    out->polls          = atomic_load_explicit(&s_stats.polls,
+                                               memory_order_relaxed);
+    out->overflows      = atomic_load_explicit(&s_stats.overflows,
+                                               memory_order_relaxed);
+    out->probe_failures = atomic_load_explicit(&s_stats.probe_failures,
+                                               memory_order_relaxed);
 }
 
 #endif /* QMC5883P_HOST_TEST */

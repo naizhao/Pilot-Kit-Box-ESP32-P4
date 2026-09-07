@@ -133,7 +133,26 @@ int main(void)
 
         int c = getchar_timeout_us(0);
         if (c == 'T') {
-            printf("selftest: %s\n", selftest_run() ? "sent" : "FAILED");
+            /* 闭环自检（审计 Fix 2）：DF17 要走通 PIO→DMA→解码全链路，
+             * frames_112 增长才算收到；P4 侧 CRC 门在 P4 控制台另行
+             * 验证（Task 15）。 */
+            uint32_t f0 = atomic_load_explicit(&s_edge.frames_112,
+                                               memory_order_relaxed);
+            bool sent = selftest_run();
+            uint32_t f1 = f0;
+            for (int i = 0; sent && i < 500 && f1 == f0; i++) {
+                sleep_ms(1);
+                f1 = atomic_load_explicit(&s_edge.frames_112,
+                                          memory_order_relaxed);
+            }
+            if (!sent)
+                printf("selftest: FAILED\n");
+            else if (f1 != f0)
+                printf("selftest: ROUND-TRIP OK (%u frames)\n",
+                       (unsigned)(f1 - f0));
+            else
+                printf("selftest: sent but NOT received within 500ms "
+                       "-- check wire/decode\n");
         } else if (c == 'S') {
             uint32_t h[10]; health_fill(h);
             printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "

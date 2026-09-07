@@ -131,9 +131,10 @@
 必须同时区分以下接口：
 
 - H1：P4 烧录/串口日志的 `USB TO UART` Type-C。
-- H2：P4 原生 USB 2.0 HS OTG Type-C，与 J3-25/27 同网。装上 Pilot Kit
+- H2：P4 原生 USB 2.0 HS OTG Type-C，与 J3-25/27 同网。v1/v2 时代装上 Pilot Kit
   载板时 RTL-SDR 插载板的 USB-A（走 J3-27/25），H2 必须空置；只有裸板
-  台面调试才把 dongle 接 H2。
+  台面调试才把 dongle 接 H2。（该 dongle 路径在当前固件中已退役——1090 MHz
+  接收现位于 v3/v4 扩展板。）
 - P1：C6 的 `TX RX IO9 GND` UART 下载排针，不是 USB。
 - H4：喇叭座，不是 C6 调试排针。
 

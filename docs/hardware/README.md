@@ -16,7 +16,7 @@ current Pilot Kit Box target.
 | Display | ST7701, 4.3-inch 480×800 IPS, 2-lane MIPI-DSI; 800×480 landscape UI |
 | Touch | GT911, I²C GPIO7/8, reset GPIO23, interrupt resistor not fitted |
 | P4 console | H1 USB-C `USB TO UART`, through CH343P |
-| Native USB HS | Same nets on H2 USB-C `USB` and J3-27/25; the RTL-SDR path |
+| Native USB HS | Same nets on H2 USB-C `USB` and J3-27/25; the v1/v2-era RTL-SDR dongle path used these nets (retired in current firmware) |
 | C6 download | P1 1×4 header `TX RX IO9 GND` |
 | Expansion | J3 2×20 header; check the project pinout before wiring |
 
@@ -33,7 +33,7 @@ Official links:
 
 | Module | Connection | Firmware status |
 |---|---|---|
-| RTL-SDR FC0013 | Carrier USB-A plug on J3-27/25 (native USB 2.0 HS), H2 left empty; on a bare board use H2 with a USB-C OTG adapter/hub instead | Integrated |
+| RTL-SDR FC0013 | Carrier USB-A plug on J3-27/25 (native USB 2.0 HS), H2 left empty; on a bare board use H2 with a USB-C OTG adapter/hub instead | **Retired** (v1/v2 dongle path): firmware support removed — 1090 MHz receive now lives on the v3/v4 expansion board |
 | ST7701 display | Board-fixed MIPI-DSI, 2 lanes at 500 Mbit/s | Integrated |
 | GT911 touch | Board-fixed GPIO7/8, reset GPIO23; polled | Integrated, first contact only |
 | BNO085 IMU | GPIO7/8, reset GPIO28, INT GPIO34, address 0x4A | Integrated, polled |

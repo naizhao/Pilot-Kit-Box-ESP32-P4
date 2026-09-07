@@ -79,6 +79,17 @@ static inline uint32_t edgecap_tick_to_us(uint64_t tick)
  *     adsb1090 帧环的 SPSC 口径）。DMA 的 SRAM 写对两核一致可见，IRQ
  *     在传输完成后才触发，块数据无需额外屏障。所有权逐条论证见
  *     edge_cap_queue.h 头注释。
+ *
+ *   · 块边界重武装窗口的时序预算（2026-09-05 审计，DMA 时序缓解）：
+ *     PIO RX FIFO 已开 join（edgecap_program_init）达 **8 深**；最短边沿
+ *     间隔 0.5µs（R11 双沿，125MHz SM/2 tick）下缓冲预算 = 8 × 0.5µs =
+ *     **4µs**，用于覆盖「块完成 IRQ → 重武装下一块」的窗口。IRQ handler
+ *     已常驻 SRAM（__not_in_flash_func，防 XIP cache miss 加延迟），处理
+ *     本体 ~1µs 量级；剩余预算要吸收高优先级中断（USB 等）对 core0 的
+ *     抢占——DMA IRQ 不得被遮蔽超过 FIFO 预算。**审计验收条款：持续边沿
+ *     下 RXSTALL/overrun == 0**，必须由 Task 15 台架在真实持续边沿流下
+ *     实测验证（板未回，正式整定与验证延后到该任务）；超预算突发仍由
+ *     停机-重启 + disc 语义兜底（如实丢沿，不静默）。
  */
 
 void   edge_cap_start(void);

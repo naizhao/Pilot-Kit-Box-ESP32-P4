@@ -178,8 +178,8 @@ J3 **没有**引出 GPIO20、GPIO23、GPIO26、GPIO27 或 GPIO33。旧文档中
 | 充电状态（BAT_STAT） | GPIO21（J3 pin 15，飞线自 TP1） | **项目 + 固件** |
 | BMP388 中断 | GPIO31（J3 pin 24，载板网络 `BARO_INT`） | 载板已接线，但固件仍轮询 |
 | GPS UART1 TX / RX | P4 TX GPIO49（J3 pin 32）/ P4 RX GPIO51（J3 pin 36）；P4 TX 由 GPIO32 迁至 GPIO49 | **项目 + 固件**，9600 8N1 |
-| GPS PPS | 可选 GPIO50（因 PCB 走线从 GPIO46 迁移） | 仅预留接线；当前固件不读取 PPS |
-| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **载板 USB-A 插头**；H2 保持空置。VBUS 直接取自 J3 `VCC_5V`，载板上没有限流开关 |
+| GPS PPS | 可选 GPIO50（因 PCB 走线从 GPIO46 迁移） | GPIO50 上升沿 ISR 供 `time_locked` 判定（fix 有效 + PPS <2 s + NMEA <5 s）；生产时间服务接线为后续任务 |
+| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **载板 USB-A 插头**（v1/v2 dongle 路径，当前固件已退役）；H2 保持空置。VBUS 直接取自 J3 `VCC_5V`，载板上没有限流开关 |
 
 不启用上述可选项目功能时，较适合作通用扩展的引脚有：
 GPIO5、GPIO22、GPIO29、GPIO30、GPIO32、GPIO46、GPIO47、GPIO48、GPIO52。
@@ -495,8 +495,9 @@ cc -std=c11 -O2 -I firmware/main -I sim/compat \
 | PPS | 仅可选接 GPIO50（从 GPIO46 迁移） |
 | VCC / GND | ESP_3V3 / GND |
 
-当前固件使用 UART1、9600 8N1，并从 NMEA RMC 获取时间；没有实现 PPS
-GPIO 中断或授时纪律。
+当前固件使用 UART1、9600 8N1，并从 NMEA RMC 获取时间；GPIO50 PPS 上升沿
+已由 ISR 消费、用于 `time_locked` 判定（fix 有效 + PPS <2 s + NMEA <5 s）；
+把该新鲜度接入生产时间服务仍是后续任务。
 
 ## 11. Bring-up 检查表
 
@@ -507,7 +508,8 @@ GPIO 中断或授时纪律。
    P4 RX GPIO51 上。
 5. 确认 C6 ESP-Hosted 在 DSI 之前启动，且没有 SDIO CMD5 错误。
 6. 确认 microSD 通过 Slot 0 挂载，且没有重复初始化共享 SDMMC host。
-7. RTL-SDR 接载板的 USB-A 插头，确认 J3 原生 USB HS 枚举；H2 保持空置。
+7. （仅 v1/v2 载板点亮流程；dongle 路径在当前固件中已退役。）RTL-SDR 接
+   载板的 USB-A 插头，确认 J3 原生 USB HS 枚举；H2 保持空置。
    裸板时改接 H2。
 8. 修改接线后执行多次冷启动，确认启动稳定。
 
