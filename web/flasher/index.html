@@ -287,6 +287,26 @@
             >
           </div>
 
+          <!-- RP2040 是扩展板上的独立芯片，不支持 Web Serial，只能走
+               BOOTSEL 拖放 U 盘；与上面两个 esp-web-tools 刷写按钮互不相干。 -->
+          <div class="actions">
+            <a
+              class="download"
+              href="firmware/rp2040/latest/adsb1090.uf2"
+              download
+              >下载 rp2040 固件（adsb1090.uf2）</a
+            >
+          </div>
+
+          <div class="status">
+            <p>
+              <strong>RP2040 协处理器固件：</strong>用于扩展板上的 1090 MHz 解调协处理器，不能用浏览器刷写，改用 U 盘拖放：
+              ① 按住扩展板上的 BOOTSEL 键，把 RP2040 的 USB 口插到电脑；
+              ② 电脑会出现名为 RPI-RP2 的移动盘；
+              ③ 把下载的 adsb1090.uf2 拖进该盘，板子会自动重启并完成刷写。
+            </p>
+          </div>
+
           <div class="status">
             <p>
               <strong>正常更新：</strong>选择连接设备后，网页会写入一个 merged factory bin，刷写地址为 0x0。

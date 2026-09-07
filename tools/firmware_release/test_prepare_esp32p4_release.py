@@ -1,4 +1,6 @@
 import json
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -286,6 +288,59 @@ class Esp32p4ReleasePlanTest(unittest.TestCase):
         self.assertTrue(icon.is_file())
         self.assertIn('<link rel="icon" type="image/svg+xml" href="favicon.svg" />', text)
         self.assertIn('<img src="favicon.svg" alt="" />', text)
+
+    def test_prepare_release_leaves_rp2040_site_assets_alone(self):
+        """prepare 不得清理或覆盖 dist/site/firmware/rp2040。
+
+        RP2040 UF2 由 release workflow 在 P4 构建之后拷入
+        dist/site/firmware/rp2040/latest/（prepare 本身不产 rp2040 文件）。
+        prepare 是增量式的：mkdir(exist_ok=True) + 逐文件 copy，从不删
+        dist。这里用一个真实的 prepare_release 运行把这个契约锁死——
+        哪天有人给它加了清理逻辑，先红的是这条。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_dir = root / "build_v3"
+            build_dir.mkdir()
+            for name in (
+                "bootloader/bootloader.bin",
+                "partition_table/partition-table.bin",
+                "pilot_kit_box.bin",
+            ):
+                part = build_dir / name
+                part.parent.mkdir(parents=True, exist_ok=True)
+                part.write_bytes(b"bin")
+            web_dir = root / "web"
+            web_dir.mkdir()
+            (web_dir / "index.html").write_text("<html></html>", "utf-8")
+
+            dist = root / "dist"
+            sentry = dist / "site" / "firmware" / "rp2040" / "latest" / "adsb1090.uf2"
+            sentry.parent.mkdir(parents=True)
+            sentry.write_bytes(b"RP2040")
+
+            # 假 esptool：拿到 -o 参数后生成空 factory bin，免去真跑 esptool。
+            fake_esptool = [
+                sys.executable,
+                "-c",
+                "import sys; open(sys.argv[sys.argv.index('-o') + 1], 'wb').close()",
+            ]
+            release.prepare_release(
+                build_dir=build_dir,
+                dist_dir=dist,
+                web_dir=web_dir,
+                version="v1.2.3",
+                profile="v3",
+                esptool_cmd=fake_esptool,
+            )
+
+            # rp2040 文件原样幸存（内容逐字节一致，不是被同名新文件覆盖）。
+            self.assertEqual(sentry.read_bytes(), b"RP2040")
+            # 同一次运行里 P4 产物也在：上传时两者必须共存于同一个 site。
+            self.assertTrue(
+                (dist / "site" / "firmware" / "esp32p4" / "v3" / "latest"
+                 / "manifest-esp32p4-v3.json").is_file()
+            )
 
 
 if __name__ == "__main__":
