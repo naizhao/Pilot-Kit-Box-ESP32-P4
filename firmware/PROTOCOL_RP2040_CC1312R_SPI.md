@@ -1,7 +1,8 @@
 # RP2040 ↔ CC1312R Sub-GHz 链路协议（SPI），v1.0
 
-状态：冻结（2026-09-08）。修改协议必须递增 minor（向前兼容新增）或 major（不兼容），
-并同步更新 `firmware/components/rp_cc13xx_codec/`（WP-P0b Task 3 产出）与两侧实现及测试。
+状态：冻结（2026-09-08；定稿前修订见附录 C.3，不升版本）。修改协议必须递增
+minor（向前兼容新增）或 major（不兼容），并同步更新
+`firmware/components/rp_cc13xx_codec/`（WP-P0b Task 3 产出）与两侧实现及测试。
 
 上位依据：`docs/internal/firmware-v3v4/PLAN.md` §5.2。硬件事实唯一来源：
 `docs/hardware/pinmap_978.md`（下称「事实卡」）。姊妹规范：
@@ -112,8 +113,10 @@
 | 0x7F | ERROR | 双向 | §4.9 | 事件驱动，无周期 |
 
 `0x00` 禁用（全 0 填充不得被解析为帧）；`0xFF` 永不分配（全 `0xFF` 擦除/悬空
-态检测哨兵）；其余值保留。以下 payload 布局的每个字段偏移/单位均为 codec
-断言的直接引用对象（附录 B 契约）。
+态检测哨兵）；其余值保留。**接收方裁决**：携带合法 magic+CRC 的 `0x00`/`0xFF`
+帧属伪造/悬空态，按 §5.4 未知类型容忍处理——计 unknown_types、消息原样递交
+诊断、不发 ERROR、不改变状态（v1 裁决，codec 未知类型分支即按此实现）。
+以下 payload 布局的每个字段偏移/单位均为 codec 断言的直接引用对象（附录 B 契约）。
 
 ### 4.1 HELLO（握手）
 
@@ -137,7 +140,9 @@ u8 flags}`，共 14 B。`desc_id`：slave 侧单调递增（模 2^16），关联
 精神）；`total_len`：报文总长，≤ 4096（超限报文被 slave 截断到 4096 并置
 flags bit1，4096 ≥ 10× UAT 上行帧 432 B，裕量充足且 master 缓冲可静态分配）；
 `rssi`：0.5 dB/LSB、无符号，0xFF=无值（P0a MODES_RAW 同族单位）；`flags`：
-bit0=高优先级（建议 master 尽快取走）、bit1=截断，其余保留必须为 0。
+bit0=高优先级（建议 master 尽快取走）、bit1=截断，其余保留必须为 0（接收方
+校验非 0 视为 payload 违规，与 len 违规同计 len_errors 并作废整事务，§5.2；
+同 §4.8）。
 
 ### 4.4 RX_PAYLOAD_CHUNK
 
@@ -153,7 +158,8 @@ CRC16（§3.2）即传输完整性校验，不另设报文级 CRC（slave 在入
 `{u16le events_dropped; u8 queue_depth; u8 reserved}`，共 4 B。slave 事件队列
 满、开始丢弃时入队本事件：`events_dropped` 为开机累计丢弃数（模 2^16 单调），
 `queue_depth` 为当前队列占用（观测值，深度本身是 slave 资源参数、不经协议
-冻结），`reserved` 必须为 0。master 行为见 §7.2。
+冻结），`reserved` 必须为 0（接收方校验非 0 视为 payload 违规，与 len 违规
+同计 len_errors 并作废整事务，§5.2；同 §4.8）。master 行为见 §7.2。
 
 ### 4.6 RF_CONFIG / RF_CONFIG_STATUS（同一 payload 布局）
 
@@ -238,7 +244,8 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
    以下任一条件成立 → master 进入 RECOVERY：RESET_N 低 ≥ 1 ms → 回步骤 1：
    - LINKED 态 > 3 s 未收到任何合法 MISO 帧（drain 挂起 PING 时以事件流为
      活性证明，不计时）；
-   - SUBG_IRQ 持续高电平 > 1 s 且期间所有事务 MISO 均无事件（irq_spurious）。
+   - SUBG_IRQ 持续高电平 > 1 s 且期间所有事务 MISO 均无事件（irq_spurious；
+     drain 态由 §7.2 停滞判定接管，本条仅适用于非 drain 的 LINKED 态）。
    slave 侧看护：LINKED 态 > 5 s 无任何 master 事务 → 回 WAIT_HELLO（保留
    RF 配置与事件队列）。
 
@@ -249,8 +256,15 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
    的顺序取毕一个报文再取下一事件（IRQ_ACK 驱动，§4.2）。
 2. **QUEUE_FULL 退避**：master 收到 QUEUE_FULL 事件后进入 **drain 模式**：
    只发 IRQ_ACK 连续取空事件队列（挂起 PING 与一切查询/写命令），直至一个
-   事务满足「MISO 无事件且 IRQ 为低」；drain 持续 > 100 ms 未达成 → 按 §6.6
-   RECOVERY。drain 期间数据流本身即链路活性证明，看护计时挂起。
+   事务满足「MISO 无事件且 IRQ 为低」→ drain 正常结束。**停滞判定（stall）**：
+   连续 **8** 个事务 MISO 均无事件而 SUBG_IRQ 仍为高 → 按 §6.6 RECOVERY。
+   阈值依据：按**单事务空转次数**而非墙钟计——SPI 时钟速率未冻结（§1）、
+   queue_depth 未冻结（§4.5，u8 ≤ 255），任何墙钟上限都会在合法低速 + 深队列
+   组合下误杀健康 drain（且 RECOVERY 的 RESET 脉冲会清空正在排水的队列）；
+   事务次数与线速无关，任意时钟速率下语义恒定。停滞意味着 slave 异常（IRQ
+   声明有事件却持续交付为空），此时复位清队列是期望行为，与正常 drain 的
+   保护目标不冲突。drain 期间数据流本身即链路活性证明（同 §6.6，PING 看护
+   计时挂起）；§6.6 的 irq_spurious 墙钟兜底仅在非 drain 态计时。
 
 ## 8. 升级路径与 cJTAG 边界
 
@@ -437,3 +451,11 @@ B24 seq 回绕        PING seq=0xFFFF 与 PING seq=0x0000
   非协议语义）。
 - 每个字段偏移/单位/常量（496/502/512/4096/0.5 dB/0xFF/0x29B1）均可直接
   成为 codec 断言；消息布局与 §3 帧格式联合可导出逐字节向量。
+
+### C.3 v1.0 定稿前修订记录（2026-09-08，同日，不升版本）
+
+| 修订 | 内容 | 条款 |
+|---|---|---|
+| R1（`595e11c`） | UPGRADE_STATUS `reserved[3]` 约束；re-HELLO 分片态清理 | §4.8、§6.5 |
+| R2（本提交） | drain 退出改为事务粒度停滞判定（连续 8 事务空转），废除墙钟 100 ms 上限——线速/队列深度的合法组合下墙钟上限会误杀健康 drain | §7.2、§6.6 |
+| R2（本提交） | 0x00/0xFF 合法帧（magic+CRC 合法）接收行为入文（按未知类型容忍）；RX_DESCRIPTOR flags 与 QUEUE_FULL reserved 的接收校验规则补齐（同 §4.8 句式） | §4 表注、§4.3、§4.5 |
