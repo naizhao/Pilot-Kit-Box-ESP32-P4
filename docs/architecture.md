@@ -6,10 +6,15 @@ Snapshot of the current 4.3-inch touch runtime topology, including ADS-B,
 BLE, GPS NMEA/RMC, barometer, dual storage backends, local traffic UI,
 diagnostics, IMU and i18n.
 
-> Scope note: the receive path documented here is the **RTL-SDR USB source**
-> (v1/v2 carriers and bare-board builds). The v3/v4 expansion boards carry an
-> onboard 1090 MHz chain decoded by an RP2040 that feeds this same on-device
-> pipeline; that source is additional to what this page details.
+> Scope note: the receive path is the **RP2040 front-end over UART** (v3/v4
+> expansion boards). The 1090 MHz envelope is shaped by a TLV3501 comparator;
+> the RP2040 captures **both** edges via PIO+DMA — dual edges are load-bearing
+> because fused 0→1 pulse pairs (R11) are only rebuildable from edge pairs +
+> widths — decodes Mode S, and ships raw frames to the P4's `adsb_lnk` task
+> at 921600 baud for CRC filtering and the on-device fusion chain. Capture /
+> decode details live in `firmware/rp2040`. The v1/v2-era USB RTL-SDR source
+> is retired and no longer diagrammed; it survives only as history rows in
+> the task and memory tables below.
 
 ## Big picture
 
@@ -17,13 +22,12 @@ diagnostics, IMU and i18n.
 flowchart LR
     subgraph HW["Hardware"]
         direction TB
-        SDR["RTL-SDR\n(1090 MHz)"]
-        USB["Native USB 2.0 HS\ncarrier USB-A via J3-27/25\n(H2 = same nets, bare board)"]
+        RP2040["RP2040 (v3/v4 expansion board)\nTLV3501 comparator → PULSES\nPIO dual-edge capture + DMA block queue\nmodes_edge: preamble sync + PPM decode\n56/112-bit (no CRC — judged on the P4)"]
         C6["ESP32-C6-MINI-1\n(Wi-Fi 6 / BLE 5)"]
         SDIO_C6["SDIO bus\nCLK=18 CMD=19\nD0..3=14..17\nRESET=54"]
         FLASH["32 MB Nor Flash\nfactory app 12 MiB"]
         SD["MicroSD slot\nSDIO 3.0\nCLK=43 CMD=44\nD0..3=39..42"]
-        GPS["GT-U8 GPS/BeiDou\nUART1 P4 TX=49 P4 RX=51\nRMC time; PPS(50) not consumed"]
+        GPS["GT-U8 GPS/BeiDou\nUART1 P4 TX=49 P4 RX=51\nRMC time; PPS(50) consumed (time-lock status)"]
         BARO["BMP388\nI²C0 addr 0x76\npolled; INT=31 unused"]
         BNO["BNO085 IMU\nI²C 7=SDA 8=SCL\npolled; RST=28 INT=34"]
         SCREEN["ST7701 MIPI-DSI\nnative 480×800\nPPA → 800×480\nRST=27 BL=26"]
@@ -33,28 +37,17 @@ flowchart LR
 
     subgraph P4["ESP32-P4NRW32"]
         direction TB
-        subgraph T_USB["usb_host_lib_task — CPU 0, prio 5"]
-            USBINST["usb_host_install()\nusb_host_lib_handle_events()"]
+        subgraph T_LINK["adsb_lnk task — CPU 1, prio 5"]
+            UART_IN["UART2 RX=46 TX=32\n921600 8N1, adsb_link protocol v1\n(256-byte reads; replies to every\nHELLO, 1 Hz HEALTH to the RP2040)"]
+            INGEST["modes_ingest\nMode-S 24-bit checksum gate\n(mode_s.c; check_crc=1, no error correction;\nthe outer link CRC-16 is the codec's job)\nICAO / alt / CPR extract"]
         end
 
-        subgraph T_SDR["sdr_task — CPU 1, prio 6"]
-            CLIENT["usb_host_client_register()"]
-            OPEN["rtlsdr_open / set_freq=1090M\nset_rate=2 MSPS / AGC"]
-            READ["rtlsdr_read_async()\n(15 URBs × 6400 B)"]
-            CB["on_iq cb\n(non-blocking, push only)"]
+        subgraph CHAIN["fusion chain (former dsp_task business)"]
+            CPR["cpr_decode global position\n(64-aircraft CPR table)"]
+            STATE["aircraft_state\n64 slots, 60 s fresh window\n(callsign/alt/pos/vel fusion)"]
+            DASH["1 Hz dashboard\n(msgs/s, aircraft, link state)"]
+            DISPATCH["record_dispatch\n(synchronous fan-out)"]
         end
-
-        RBUF["g_iq_ringbuf\n512 KiB BYTEBUF\nPSRAM-backed"]
-
-        subgraph T_DSP["dsp_task — CPU 1, prio 4"]
-            DRAIN["xRingbufferReceiveUpTo\n8 KiB chunks + 480 B overlap"]
-            MAG["mode_s_compute_magnitude_vector"]
-            DET["mode_s_detect"]
-            ONMSG["on_mode_s_msg\n• CRC filter\n• ICAO/alt/cpr extract\n• CPR global decode"]
-            DASH["1 Hz dashboard\n(msgs/s, MB/s, aircraft)"]
-        end
-
-        DISPATCH["record_dispatch\n(synchronous fan-out)"]
 
         subgraph SINKS["sinks (registered at boot)"]
             direction LR
@@ -63,25 +56,21 @@ flowchart LR
             SINK_BLE["ble sink\nraw ts-line → queue"]
         end
 
-        subgraph T_FILE["file_writer_task — CPU 0, prio 3"]
+        subgraph T_FILE["rec_file task — CPU 0, prio 3"]
             FW["file append\nFlash: 1 MiB rotation, target 12\nMicroSD: 16 MiB × 64"]
         end
 
-        subgraph T_BLE["ble_emit_task — CPU 0, prio 3"]
-            STATE["aircraft_state snapshot\n(64 slots, 60 s window)"]
+        subgraph T_BLE["ble_emit task — CPU 0, prio 3"]
             GDL["GDL90 encode\n• Heartbeat (1 Hz)\n• Traffic Report per aircraft"]
             GATT["NimBLE GATT notify\non Traffic / Heartbeat / Raw chars"]
         end
     end
 
-    SDR -.RF.-> USB
-    USB -.USB 2.0 HS\n2 MSPS IQ8.-> CLIENT
-    CLIENT --> OPEN --> READ --> CB
-    CB -- "xRingbufferSend" --> RBUF
-    RBUF --> DRAIN --> MAG --> DET --> ONMSG
-    ONMSG --> DISPATCH
-    ONMSG -- aircraft_state_ingest --> STATE
-    ONMSG --> DASH
+    RP2040 -- "UART protocol v1\n921600 baud" --> UART_IN
+    UART_IN --> INGEST
+    INGEST --> CPR --> STATE
+    INGEST --> DISPATCH
+    INGEST --> DASH
     DISPATCH --> SINK_UART
     DISPATCH --> SINK_FILE
     DISPATCH --> SINK_BLE
@@ -93,7 +82,7 @@ flowchart LR
     STATE --> GDL
     GDL --> GATT
     GATT -- HCI over SDIO --> SDIO_C6
-    SDIO_C6 <-->C6
+    SDIO_C6 <--> C6
     C6 -- BLE 5 --> BLE_PEER
 
     SD --> SINK_FILE
@@ -108,52 +97,46 @@ flowchart LR
 ## ASCII view (when the SVG render is unavailable)
 
 ```
-                       ┌────────────── ESP32-P4-WIFI6 ──────────────┐
-                       │                                            │
-   RTL-SDR ──USB-HS──▶ │ usb_host_lib_task (CPU0)                   │
-   (1090 MHz)          │     │                                      │
-                       │     ▼                                      │
-                       │ sdr_task (CPU1) ──rtlsdr_read_async──┐     │
-                       │     │                                │     │
-                       │     │  ┌── on_iq cb (zero compute) ──┘     │
-                       │     │  │                                   │
-                       │     │  ▼                                   │
-                       │   g_iq_ringbuf  512 KiB BYTEBUF            │
-                       │     │                                      │
-                       │     ▼                                      │
-                       │ dsp_task (CPU1)                            │
-                       │   magnitude → detect → on_mode_s_msg       │
-                       │     │           │                          │
-                       │     │           ├─ ESP_LOGI dashboard      │
-                       │     │           ▼                          │
-                       │     │     record_dispatch                  │
-                       │     │      │   │   │                       │
-                       │     │      ▼   ▼   ▼                       │
-                       │     │   uart  file  ble (3b)               │
-                       │     │    │     │     │                     │
-                       │     │    │     ▼     ▼                     │
-                       │     │    │  writer  ble_gatt (3b)          │
-                       │     │    │   task   ▼                      │
-                       │     │    │   │   GDL90 enc → SDIO → C6 ──▶ │  iPad / iPhone
-                       │     │    │   ▼                             │   (BLE 5)
-                       │     │    │  LittleFS (or SD)               │
-                       │     │    ▼                                 │
-                       │     │  Type-C UART ─────────────────────── │  PC / Pilot-Kit
-                       │     │                                      │     adsb_to_track.py
-                       │     ▼                                      │
-                       │  1 Hz console dashboard                    │
-                       └────────────────────────────────────────────┘
+ ┌───────────────── RP2040 (v3/v4 expansion board) ─────────────────┐
+ │ TLV3501 ──PULSES──▶ PIO dual-edge capture + DMA block queue      │
+ │   (R11: both edges + widths rebuild fused 0→1 pulse pairs)       │
+ │ core1: DMA block queue → modes_edge 56/112-bit (no CRC)          │
+ └───────────────────────────────┬──────────────────────────────────┘
+                                 │ UART protocol v1, 921600 8N1
+                                 │ (UART2 RX=46/TX=32; HELLO + 1 Hz HEALTH)
+ ┌───────────────────────────────▼────── ESP32-P4-WIFI6 ────────────┐
+ │ adsb_lnk task (CPU1, prio 5)                                     │
+ │   adsb_link codec → modes_ingest (mode_s.c 24-bit CRC, no fixup)  │
+ │     │                                                            │
+ │     ├─ cpr_decode global position → aircraft_state (fusion)      │
+ │     ├─ 1 Hz dashboard (msgs/s, aircraft, link state)             │
+ │     ├─ record_dispatch                                           │
+ │     │      │   │   │                                             │
+ │     │      ▼   ▼   ▼                                             │
+ │     │   uart  file  ble (3)                                      │
+ │     │    │     │     │                                           │
+ │     │    │     ▼     ▼                                           │
+ │     │    │  rec_file  ble_emit (3)                               │
+ │     │    │   task      ▼                                         │
+ │     │    │   │   GDL90 enc → SDIO → C6 ─────────────▶ iPad /     │
+ │     │    │   ▼                                       iPhone      │
+ │     │    │  LittleFS (or SD)                         (BLE 5)     │
+ │     │    ▼                                                       │
+ │     │  Type-C UART ─────────────────────────────────▶ PC /       │
+ │     ▼                                                 Pilot-Kit  │
+ │  1 Hz console dashboard                               adsb_to_   │
+ │                                                       track.py   │
+ └──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Task table
 
 | Task              | CPU | Prio | Stack | Role |
 |-------------------|-----|------|-------|------|
-| `usb_host_lib`    | 0   | 5    | 4 KiB | Pumps `usb_host_lib_handle_events()`; required by USB stack lifecycle. |
-| `sdr`             | 1   | 6    | 8 KiB | Owns the USB client, opens the RTL-SDR, drives `rtlsdr_read_async()`. The async URB callback runs *on this same task* (`rtlsdr_read_async`'s wait loop pumps client events itself), so the IQ producer is a single-task design with no cross-CPU contention. |
-| `dsp`             | 1   | 4    | 4 KiB | Drains the ring buffer, runs dump1090's magnitude + Manchester decode, dispatches CRC-valid frames into the sink fan-out + the per-aircraft fusion table, and emits the 1 Hz dashboard. |
-| `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the DSP task off storage writes. |
-| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is not consumed. |
+| `adsb_lnk`        | 1   | 5    | 8 KiB | Runs the RP2040 UART link (adsb_link codec @ 921600 baud, 256-byte reads): feeds CRC-pre Mode-S frames from the RP2040 front-end into modes_ingest, replies to each HELLO, and carries the former DSP business chain (CPR/track/records/1 Hz dashboard). The RP2040 itself captures dual edges via PIO+DMA and decodes 56/112-bit frames with modes_edge; the USB RTL-SDR task pair (`usb_host_lib`/`sdr`) is retired. |
+| `dsp`             | —   | —    | —     | **RETIRED** (v1/v2 USB RTL-SDR era): drained the 512 KiB IQ ring buffer and ran dump1090 magnitude + Manchester decode. Not created anymore; its decode/dispatch duties now live in the RP2040 (`modes_edge`) + `adsb_lnk`/modes_ingest chain. Row kept for history. |
+| `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the link/decode path off storage writes. |
+| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot); feeding it into the system clock is a follow-up task. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
@@ -166,9 +149,9 @@ flowchart LR
 
 | Region | Size | Owner |
 |--------|------|-------|
-| IQ ring buffer | 512 KiB | `g_iq_ringbuf` (bulk IQ buffering, PSRAM-backed under current malloc threshold) |
-| URB pool       | ~96 KiB | 15 × 6400 B in-flight USB transfers |
-| DSP working set| ~12 KiB | 8 KiB IQ buf + 4 KiB magnitude buf |
+| IQ ring buffer | 512 KiB | **RETIRED (v1/v2 USB RTL-SDR era):** `g_iq_ringbuf` — removed with the retired receive path; PSRAM now backs map tiles/fonts/recording and the other working sets below |
+| URB pool       | ~96 KiB | **RETIRED:** 15 × 6400 B in-flight USB transfers |
+| DSP working set| ~12 KiB | **RETIRED:** 8 KiB IQ buf + 4 KiB magnitude buf |
 | CPR table      | ~5 KiB  | 64 aircraft slots in `cpr_decode.c` |
 | aircraft_state | ~7 KiB  | 64 slots in `aircraft_state.c` (callsign + alt + position + velocity) |
 | Application framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped in PSRAM |
@@ -186,18 +169,23 @@ ESP-Hosted queues, and USB host descriptors.
 ## Failure isolation
 
 ```
-URB / IQ stall → librtlsdr.c::_libusb_callback bumps xfer_errors;
-                 repeated errors trip rtlsdr_cancel_async(). dsp_task can
-                 also call pk_sdr_request_reinit() when IQ stalls. sdr_task
-                 closes and re-opens the same dongle address; after repeated
-                 failed attempts it escalates to esp_restart().
+RP2040 edge-cap   → queue-full stops the DMA (overrun counter + lost flag).
+overrun / restart   On re-arm the PIO SM is restarted and the RX FIFOs are
+                    cleared; the first re-armed block is flagged discontinuous,
+                    so core1 runs modes_edge_reset() before feeding it — no
+                    frames are stitched across the gap. A lone dropped edge
+                    mid-burst (RXSTALL) garbles only that one frame; the
+                    decoder drops it naturally. Everything surfaces in the
+                    1 Hz HEALTH ovr counter.
 
-Ring overflow  → xRingbufferSend in on_iq fails → counter incremented
-                 (pk_iq_dropped_bytes_swap); dashboard logs a WARN line
-                 so the operator sees DSP back-pressure.
+Link stall      → RP2040: a core1 decoder stall >5 s trips the core0
+                    watchdog, which sends ERROR(code=2) over the link.
+                    P4: no valid frame for >5 s after having been linked
+                    marks the link STALLED (seq gaps / resyncs counted per
+                    protocol v1); DIAG shows the link state.
 
 File queue full→ file sink xQueueSend returns pdFALSE → s_dropped++;
-                 every 256 drops the writer task logs a WARN. The DSP
+                 every 256 drops the writer task logs a WARN. The ingest
                  path never stalls.
 
 Storage write → LittleFS/MicroSD fwrite or rotation failures are logged;
@@ -235,11 +223,11 @@ See [`docs/ble_protocol.md`](ble_protocol.md) for the BLE wire
 format; the diagram below focuses on the two BLE-assisted paths.
 
 ```
-Mobile peer ── GAP_CONNECT ──► sdr_task              dsp_task
+Mobile peer ── GAP_CONNECT ──► ble_gatt              adsb_lnk
                                   │                   │
                                   ▼                   ▼
-                          ble_gatt::gap_event_cb     emits ts_ms from
-                                  │                  gettimeofday()
+                          ble_gatt::gap_event_cb     record_dispatch emits
+                                  │                  ts_ms from gettimeofday()
                                   ▼                  on every Mode-S
                           time_sync_kickoff           frame, so the
                                   │                   stamp magically
@@ -310,18 +298,21 @@ GPX / KML tracks.
 
 A few non-obvious choices that this diagram makes load-bearing:
 
-1. **All RF / USB work runs on CPU 1.** The audio codec interrupts,
-   future BLE host events, and any SDIO traffic stay on CPU 0,
-   removing one large source of jitter from the 2 MSPS data path.
+1. **All 1090 MHz timing work runs on the RP2040.** PIO + DMA capture dual
+   edges into a hardware-timed block queue with no RTOS on the capture
+   path — P4 scheduler jitter never touches pulse timing. Dual edges are
+   load-bearing: fused 0→1 pulse pairs (R11) are only rebuildable from
+   edge pairs + widths.
 
-2. **One task owns the USB client.** Two tasks calling
-   `usb_host_client_handle_events()` on the same client is undefined
-   behaviour. `sdr_task` is the sole pump (it pumps from the
-   `rtlsdr_read_async` wait loop).
+2. **One task owns the UART link.** `adsb_lnk` is the sole codec reader on
+   the P4; the RP2040 sends only from its core0 sender loop. Protocol v1
+   keeps per-sender sequence numbers, the HELLO handshake and 1 Hz HEALTH.
 
-3. **DSP never blocks on I/O.** The sinks are responsible for their
-   own backpressure. The DSP loop guarantees forward progress on the
-   IQ stream regardless of what flash, BLE peers, or operators do.
+3. **The fusion chain never blocks on I/O.** Backpressure is lossy by
+   design at every hop: the RP2040 frame ring drops (counted) when the P4
+   lags, and the file/BLE sinks keep their own queues. Decode/ingest
+   forward progress is guaranteed regardless of what flash, BLE peers,
+   or operators do.
 
 4. **The raw on-wire format matches the on-disk format.** Serial,
    LittleFS, and the BLE Raw characteristic all use the same

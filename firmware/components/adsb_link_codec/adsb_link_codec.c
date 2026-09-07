@@ -50,20 +50,8 @@ void adsb_link_dec_init(adsb_link_dec_t *d, adsb_link_on_msg_fn cb,
     d->user = user;
 }
 
-void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
+static void dec_drain(adsb_link_dec_t *d)
 {
-    /* 两段式（audit P2）：先把输入全部入栈，再统一 drain。
-     * 旧实现逐字节边收边判，坏帧被拒后必须等下一个输入字节到达才重查
-     * 缓冲——已缓冲的完整帧可能因此被扣住。现在任何一次作废/滑窗后
-     * 都立即基于当前缓冲重跑判据，推进不依赖新输入。 */
-    while (n--) {
-        if (d->fill >= sizeof(d->buf)) {   /* 噪声洪泛防御：保证总能滑窗 */
-            d->resyncs++;
-            dec_shift1(d);
-        }
-        d->buf[d->fill++] = *bytes++;
-    }
-
     for (;;) {
         if (d->fill < ADSB_LINK_HDR_LEN) return;
         if (d->buf[0] != ADSB_LINK_MAGIC0 || d->buf[1] != ADSB_LINK_MAGIC1) {
@@ -114,4 +102,27 @@ void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
         d->fill = (uint16_t)(d->fill - total);
         memmove(d->buf, d->buf + total, d->fill);
     }
+}
+
+void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
+{
+    /* 两段式（audit P2）：先把输入全部入栈，再统一 drain。
+     * 旧实现逐字节边收边判，坏帧被拒后必须等下一个输入字节到达才重查
+     * 缓冲——已缓冲的完整帧可能因此被扣住。现在任何一次作废/滑窗后
+     * 都立即基于当前缓冲重跑判据，推进不依赖新输入。
+     *
+     * 满容即判（audit round 3）：fill 恰好到达缓冲容量时立刻 drain——
+     * 协议最长帧（474 B）恰好填满缓冲，若等本批入栈完再判，其后随字节
+     * 会在入栈阶段触发洪泛防御把完整帧的头部滑掉（实测：474 B 帧 + 后随
+     * 帧按 256 B 分块喂入 → resyncs=474、首帧丢失）。满容时若内容不是
+     * 完整帧，drain 只会滑窗后返回，洪泛防御语义不变。 */
+    while (n--) {
+        if (d->fill >= sizeof(d->buf)) {   /* 噪声洪泛防御：保证总能滑窗 */
+            d->resyncs++;
+            dec_shift1(d);
+        }
+        d->buf[d->fill++] = *bytes++;
+        if (d->fill == sizeof(d->buf)) dec_drain(d);
+    }
+    dec_drain(d);
 }

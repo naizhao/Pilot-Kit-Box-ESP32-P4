@@ -37,6 +37,7 @@
 #include "nav_grid_page.h"
 #include "search_page.h"
 #include "pk_sdcard.h"
+#include "pk_i2c0_bus.h"   /* 板级 I²C0 总线：先于一切 I²C 器件 init 创建 */
 #include "demo_track_sd.h"
 #include "pk_rec_store.h"
 #include "pk_rec_ingest.h"
@@ -46,6 +47,7 @@
 #include "display.h"
 #include "imu_task.h"
 #include "baro.h"
+#include "qmc5883p.h"
 #include "battery.h"
 #include "config_ble.h"
 #include "config_demo.h"
@@ -276,6 +278,16 @@ void app_main(void)
         splash_shown_us = esp_timer_get_time();
     }
 
+    /* I²C0 总线初始化失败不再中止启动（深审裁定 2026-09-05）：本产品核心功能
+     * （1090 ADS-B + 显示）不依赖 I²C。IMU/气压计/触摸各自对 NULL handle
+     * 已有优雅失败路径（WARN + 自身任务退出），降级为"无姿态/无触摸的
+     * headless ADS-B 盒子"优于整机关机。 */
+    esp_err_t bus_err = pk_i2c0_bus_init();
+    if (bus_err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C0 bus init failed (%s) — continuing without "
+                      "IMU/baro/touch (1090 unaffected)", esp_err_to_name(bus_err));
+    }
+
     /* BNO085 IMU. Failure is non-fatal — the rest of the
      * firmware (RTL-SDR, BLE, storage) keeps working without attitude. */
     pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_SENSORS), 1, 3);
@@ -289,6 +301,13 @@ void app_main(void)
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
+
+    /* QMC5883P 磁力计诊断（WP-B Task 4）：optional 器件，缺失/探测失败
+     * 只在驱动里 WARN + 计数，不影响其余功能；R1——只出原始三轴诊断，
+     * 不出航向。 */
+    if (qmc5883p_init(pk_i2c0_bus_get()) != ESP_OK) {
+        ESP_LOGW(TAG, "QMC5883P init failed — mag diagnostics disabled");
+    }
 
     /*
      * 地图扫描放在 splash 期间 —— 这是**产品决定压过时序最优**的一处，改之前

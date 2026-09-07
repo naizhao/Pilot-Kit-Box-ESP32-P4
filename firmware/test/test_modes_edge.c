@@ -8,6 +8,14 @@
  *      firmware/test/test_modes_edge.c firmware/rp2040/modes_edge.c \
  *   && /tmp/test_modes_edge
  *
+ *   ASan/UBSan 变体（audit round 4 Fix 2 的回归用例 12 以此为探针：
+ *   burst_n 打满 MAX_EDGES 时 t[burst_n] 是栈越界写，-fsanitize=address
+ *   必须零报告）：
+ *   cc -std=c11 -Wall -Wextra -Werror -O0 -g -fsanitize=address,undefined \
+ *      -I firmware/rp2040 -o /tmp/test_modes_edge_asan \
+ *      firmware/test/test_modes_edge.c firmware/rp2040/modes_edge.c \
+ *   && /tmp/test_modes_edge_asan
+ *
  * 构造器按真实波形生成**全部边沿**（上升+下降，0.5µs 脉宽）的相邻间隔，
  * 与 edgecap PIO 的双沿捕获同构。判据：mode-s.c:708-715（0.5µs 脉冲 @
  * 0/1.0/3.5/4.5µs；1µs/位、脉冲在位首=1/位中=0）。
@@ -199,6 +207,194 @@ int main(void)
         uint32_t idle[3] = { 0xFFFFFFFFu, LONG_GAP, LONG_GAP };
         modes_edge_feed(&m, idle, 3);
         CHECK(g_frames == 0 && m.frames_112 == 0, "idle produced frames\n");
+    }
+
+    /* 10. 噪声前缀紧贴帧头（同一 burst）：burst 首沿是 0.5µs 噪声脉冲，
+     * 1.5µs 后跟合法 112-bit 帧。preamble 锚定必须滑到后续上升沿候选，
+     * 而不是按 burst 首沿判废丢掉整帧——审计实测：修复前 frames=0
+     * （dropped_noise 吞帧）。旧噪声用例（case 8）噪声与帧隔 100µs、
+     * 分属两个 burst，从未覆盖这条。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        uint32_t all[512];
+        all[0] = US(0.5);                     /* 噪声脉冲宽 */
+        all[1] = US(1.5);                     /* 噪声脉冲尾 → 帧 preamble 首沿 */
+        memcpy(all + 2, d, (n - 1) * sizeof(uint32_t));  /* 去掉终止符 */
+        size_t total = 2 + (n - 1);
+        all[total++] = LONG_GAP;
+        modes_edge_feed(&m, all, total);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
+        /* start_tick 必须落在 preamble 首沿（跳过噪声前缀），不是 burst
+         * 首沿（=0）。US() 宏对小延时向下取整，期望值按注入的实际
+         * 间隔之和算。 */
+        CHECK(g_last.start_tick == (uint64_t)(all[0] + all[1]), "start_tick=%llu\n",
+              (unsigned long long)g_last.start_tick);
+        CHECK(m.preamble_hits == 1 && m.frames_112 == 1, "stats\n");
+    }
+
+    /* 11. 纯噪声 burst（无 preamble 候选可滑）仍按噪声记账、不产帧：
+     * 滑窗不得把 dropped_noise 的口径改坏。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        uint32_t noise[10] = { US(1), US(0.4), US(0.6), US(0.3), US(0.5),
+                               US(0.4), US(0.6), US(0.3), US(0.5), LONG_GAP };
+        modes_edge_feed(&m, noise, 10);
+        CHECK(g_frames == 0, "noise produced %d frames\n", g_frames);
+        CHECK(m.dropped_noise >= 1, "noise=%u\n", m.dropped_noise);
+    }
+
+    /* 12. 噪声洪流打满容量（audit round 4 Fix 2 回归，ASan 探针）：257 个
+     *     连续 0.5µs 短间隔使 burst_n 恰达 MAX_EDGES(256)，第 257 个间隔
+     *     走 feed 的溢出路径（edge_overruns++ → burst_emit），emit 内
+     *     nedges = 257、t[burst_n=256] 必须落在 +1 槽内——旧代码
+     *     t[MAX_EDGES] 是栈越界写，ASan 变体下当场爆。行为合同：记账、
+     *     不产帧、不崩。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        uint32_t flood[258];
+        for (int i = 0; i < 257; i++) flood[i] = US(0.5);
+        flood[257] = LONG_GAP;                /* 关 burst（此时已空转） */
+        modes_edge_feed(&m, flood, 258);
+        CHECK(g_frames == 0, "flood produced %d frames\n", g_frames);
+        CHECK(m.edge_overruns == 1, "edge_overruns=%u\n", m.edge_overruns);
+        CHECK(m.dropped_noise == MODES_EDGE_MAX_EDGES, "noise=%u\n",
+              m.dropped_noise);
+        CHECK(m.bursts == 1 && m.burst_n == 0, "bursts=%u n=%d\n",
+              m.bursts, m.burst_n);
+    }
+
+    /* 13. 假前导后跟真帧（audit round 4 Fix 3 回归）：噪声凑出间距合格
+     *     的 [4,10,4] 三连脉冲（同 burst 内），首个候选数据解码必败
+     *     （两中心同电平）；滑窗必须弃暗礁、继续锁到真帧——修复前整帧
+     *     被 false preamble 吞掉（frames=0）。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        /* 假前导：脉冲 @ 0/1.0/3.5/4.5µs（0.5µs 宽）→ 边沿 0,2,4,6,
+         * 14,16,18,20 qus；其后数据区两采样点（33/35 qus）无任何边沿
+         * → 候选 0 判负。真帧首沿 @9.5µs（38 qus）：与假前导末沿间隔
+         * 4.5µs < 5µs，同 burst；38-18=20 qus 使候选 2/4/6 间距全废。 */
+        uint32_t all[512];
+        int i = 0;
+        all[i++] = US(0.5); all[i++] = US(0.5); all[i++] = US(0.5);
+        all[i++] = US(2.0);
+        all[i++] = US(0.5); all[i++] = US(0.5); all[i++] = US(0.5);
+        all[i++] = US(4.5);                   /* 假前导末沿 → 真帧首沿 */
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        memcpy(all + i, d, (n - 1) * sizeof(uint32_t));  /* 去掉终止符 */
+        i += (int)(n - 1);
+        all[i++] = LONG_GAP;
+        modes_edge_feed(&m, all, (size_t)i);
+        CHECK(g_frames == 1, "frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "frame bytes\n");
+        CHECK(m.preamble_hits == 2, "preamble_hits=%u\n", m.preamble_hits);
+        CHECK(m.dropped_decode == 1, "dropped_decode=%u\n",
+              m.dropped_decode);
+        CHECK(m.dropped_noise == 0, "noise=%u\n", m.dropped_noise);
+        CHECK(m.frames_112 == 1, "f112=%u\n", m.frames_112);
+    }
+
+    /* 14. modes_edge_reset（丢沿/重启断点合同，round-2 P1-a）：统计跨
+     *     reset 保留（boot-lifetime 口径）；开着的半截 burst 被丢弃；
+     *     abs_tick 时间基**保留**——burst A（解出）→ reset → burst B，
+     *     start_tick(B) 单调超过 A 末边沿的绝对时刻，只带丢失段时长的
+     *     提前偏置（丢失固有），绝不回跳，模 2^32 单调语义（无 0 哨兵）
+     *     不受影响。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m, d, n);              /* 完整帧：建立统计 */
+        CHECK(g_frames == 1, "warmup frames=%d\n", g_frames);
+        uint64_t burst_a_start = g_last.start_tick;
+        modes_edge_feed(&m, d, 40);             /* 帧中段截断：burst 开着 */
+        CHECK(m.burst_n == 40, "burst_n=%d want 40\n", m.burst_n);
+        uint64_t last_edge_tick = m.abs_tick;   /* 断点前最后一边沿 */
+        CHECK(last_edge_tick > burst_a_start, "time base must advance\n");
+        modes_edge_reset(&m);
+        CHECK(m.burst_n == 0, "reset must drop the open burst\n");
+        CHECK(m.abs_tick == last_edge_tick,
+              "abs_tick baseline must be preserved\n");
+        CHECK(m.frames_112 == 1 && m.preamble_hits == 1,
+              "stats must survive reset: f112=%u pre=%u\n",
+              m.frames_112, m.preamble_hits);
+        uint32_t gap = LONG_GAP;   /* 重启后首条间隔：饱和空闲标记，含丢失段 */
+        modes_edge_feed(&m, &gap, 1);
+        modes_edge_feed(&m, d, n);              /* 干净帧（含终止长隔）*/
+        CHECK(g_frames == 2, "post-reset frame lost, frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "post-reset bytes\n");
+        CHECK(g_last.start_tick > last_edge_tick,
+              "start_tick=%llu not monotonic past %llu\n",
+              (unsigned long long)g_last.start_tick,
+              (unsigned long long)last_edge_tick);
+    }
+
+    /* 15. 跨断点拼接对照（reset 的存在意义）：奇数位截断后不 reset 直接
+     *     续喂，两段 delta 拼进同一 burst——后续真帧的 preamble 落在
+     *     奇数（下降）沿位上，候选滑窗只扫偶数位 → 整帧丢失；同一向量
+     *     在接缝处 reset 后照常解出。锁定"断点必须 reset"的行为合同。 */
+    {
+        modes_edge_t m1; modes_edge_init(&m1, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m1, d, 39);            /* 奇数截断：接缝奇偶翻转 */
+        modes_edge_feed(&m1, d, n);             /* 不 reset：拼接进同 burst */
+        CHECK(g_frames == 0, "stitched stream produced %d frames\n",
+              g_frames);
+        CHECK(m1.dropped_decode + m1.dropped_noise >= 1,
+              "stitched stream must be accounted as dropped\n");
+    }
+    {
+        modes_edge_t m2; modes_edge_init(&m2, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m2, d, 39);
+        modes_edge_reset(&m2);                  /* 接缝处 reset */
+        modes_edge_feed(&m2, d, n);
+        CHECK(g_frames == 1, "reset seam lost the frame, frames=%d\n",
+              g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "reset seam bytes\n");
+    }
+
+    /* 16. 丢沿退化 + 跨 reset 单调性（re-audit round-2 Fix 1）：RXSTALL
+     *     单沿丢失不打 disc、无自愈——burst A 解出后记录 A 末边沿绝对
+     *     时刻，reset 丢弃半截 burst，再喂含丢失段的饱和空隔 + burst B：
+     *     start_tick(B) 必须严格大于 A 末边沿（时间基永久偏小但单调性
+     *     保持，丢失时长不可知、只表现为轻微提前偏置，不是可自愈项）。
+     *     mark_degraded 置位的 time_degraded 为 sticky——跨 reset 与续喂
+     *     保留，供诊断如实上报丢沿退化。 */
+    {
+        modes_edge_t m; modes_edge_init(&m, TICK_HZ, cb, NULL);
+        g_frames = 0;
+        CHECK(!modes_edge_time_degraded(&m), "fresh decoder must be clean\n");
+        size_t n = build_edges(FRAME112, 112, 0, d, 512);
+        modes_edge_feed(&m, d, n);              /* burst A：完整帧解出 */
+        CHECK(g_frames == 1, "burst A frames=%d\n", g_frames);
+        uint64_t burst_a_start = g_last.start_tick;
+        modes_edge_feed(&m, d, 16);             /* 半截 burst 开着即遇断点 */
+        CHECK(m.burst_n == 16, "burst_n=%d want 16\n", m.burst_n);
+        uint64_t last_a = m.abs_tick;           /* A 末边沿绝对时刻 */
+        CHECK(last_a > burst_a_start, "time base must advance\n");
+        modes_edge_reset(&m);
+        CHECK(m.abs_tick == last_a, "reset keeps the time base\n");
+        modes_edge_mark_degraded(&m);
+        CHECK(modes_edge_time_degraded(&m), "degraded flag must latch\n");
+        uint32_t gap = LONG_GAP;   /* 丢失时长不可知：饱和空闲标记兜底 */
+        modes_edge_feed(&m, &gap, 1);
+        modes_edge_feed(&m, d, n);              /* burst B：干净帧 */
+        CHECK(g_frames == 2, "post-loss frame lost, frames=%d\n", g_frames);
+        CHECK(memcmp(g_last.frame, FRAME112, 14) == 0, "post-loss bytes\n");
+        CHECK(g_last.start_tick > last_a,
+              "start_tick=%llu not monotonic past %llu\n",
+              (unsigned long long)g_last.start_tick,
+              (unsigned long long)last_a);
+        CHECK(modes_edge_time_degraded(&m),
+              "flag is sticky across reset/feed\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

@@ -22,7 +22,7 @@
 1. [**扩展板板系 (v3 / v4)**](#1-扩展板板系-v3--v4)
 2. [硬件目标 (P4 silicon revision)](#2-硬件目标-p4-silicon-revision)
 3. [分区表与 Flash](#3-分区表与-flash)
-4. [USB Host (RTL-SDR)](#4-usb-host-rtl-sdr)
+4. [ADS-B 接收链路（RP2040 扩展板）](#4-ads-b-接收链路rp2040-扩展板)
 5. [蓝牙 / BLE / ESP-Hosted](#5-蓝牙--ble--esp-hosted)
 6. [Own-ship 绑定](#6-own-ship-绑定)
 7. [存储 / LittleFS / MicroSD](#7-存储--littlefs--microsd)
@@ -230,33 +230,17 @@ storage,   data, spiffs,   ,          0x800000,    ← 缩到 8 MiB 给 OTA 让�
 
 ---
 
-## 4. USB Host (RTL-SDR)
+## 4. ADS-B 接收链路（RP2040 扩展板）
 
-| 配置项 | 默认 | 说明 |
-|--------|------|------|
-| `CONFIG_USB_HOST_HUBS_SUPPORTED` | `y` | 启用 USB hub 支持（某些 RTL-SDR 棒内置 hub） |
-| `CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE` | `512` | 让我们能读全 RTL2832U 的描述符 |
-
-### 想换中心频率？
-
-频率写死在 `firmware/main/pilot_kit.h`：
-```c
-#define PK_RTLSDR_FREQ_HZ        1090000000UL  /* ADS-B Mode-S */
-```
-
-改这个常量重编即可。常见替代频率：
-- `122900000` — VHF 民航语音（122.9 MHz）
-- `162400000` — AIS 船舶
-- `433920000` — ISM 433
-- `915000000` — LoRa US
-
-### 想换采样率？
-
-```c
-#define PK_RTLSDR_SAMPLERATE_HZ  2000000UL     /* 2 MSPS for ADS-B */
-```
-
-RTL2832U 范围 225 kSPS – 3.2 MSPS。ADS-B 必须 ≥ 2 MSPS（每比特 1 µs，每帧 120 µs）。
+1090 MHz 接收链位于 v3/v4 扩展板上：QPL9547 LNA + TA0970A SAW + AD8313
+对数检波 + TLV3501 比较器把脉冲馈给板上 RP2040，RP2040 以 PIO+DMA 捕获
+双沿、重建 56/112-bit Mode-S 帧，再经 UART2 以 921600 8N1 送 P4（P4 RX
+GPIO46 ← RP2040 TXD @ J3-35，P4 TX GPIO32 → RP2040 RXD @ J3-31）。固件已
+没有任何 RTL-SDR / USB host 接收配置：v1/v2 时代的 USB RTL-SDR 路径
+（RTL2832U 驱动、IQ ring buffer、`PK_RTLSDR_*` 常量、`sdr`/`dsp` 任务对）
+已从固件与组件树删除——退役任务的历史见
+[`architecture-zh_CN.md`](architecture-zh_CN.md)。中心频率由板载 SAW 滤波
+器固定；比较器门限与 RSSI 回读在 RP2040 侧（`firmware/rp2040/threshold_ctl.c`）。
 
 ---
 
@@ -527,7 +511,7 @@ esp_log_level_set("pfd", ESP_LOG_WARN);   /* 只看 W 以上 */
 ### 打开某模块 DEBUG 日志
 
 ```c
-esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
+esp_log_level_set("adsb", ESP_LOG_DEBUG);
 ```
 
 通常加在 `app_main()` 开头。
@@ -537,12 +521,12 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 | TAG | 模块 |
 |-----|------|
 | `pilot_kit` | main.c 启动序列 |
-| `sdr` | sdr_task RTL-SDR 控制流 |
-| `dsp` | dsp_task DSP 解码 |
-| `adsb` | dsp_task 每帧解码结果 |
+| `sdr` | **已退役**（v1/v2 USB RTL-SDR 时代）：任务已删除，保留行作历史参考 |
+| `dsp` | `adsb_link_task` 沿用的 TAG（日志检索连续）：RP2040 UART 链路 + 原 DSP 业务链 |
+| `adsb` | adsb_link_task 每帧解码结果 |
 | `rec_file` | LittleFS / MicroSD 文件 sink |
 | `pk_sd` | MicroSD 挂载、插拔与格式化 |
-| `gps` | GT-U8 NMEA/RMC 与卫星诊断；未实现 PPS GPIO 处理 |
+| `gps` | GT-U8 NMEA/RMC 与卫星诊断；GPIO50 PPS 已被固件消费、用于 `time_locked` 判定（生产时间服务接线为后续任务） |
 | `baro` | BMP388 压力、高度和升降率 |
 | `record_sink` | sink 注册 |
 | `ble_gatt` | NimBLE host + GATT |
@@ -564,9 +548,10 @@ esp_log_level_set("rtlsdr_async", ESP_LOG_DEBUG);
 
 | Task | CPU | Prio | Stack | 文件 |
 |------|-----|------|-------|------|
-| `usb_host_lib` | 0 | 5 | 4 KiB | main.c |
-| `sdr_task` | 1 | 6 | 8 KiB | main.c |
-| `dsp_task` | 1 | 4 | 4 KiB | main.c |
+| `usb_host_lib` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代），保留行作历史参考 |
+| `sdr_task` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：RTL-SDR 控制 + IQ 生产者，保留行作历史参考 |
+| `dsp_task` | — | — | — | **已退役**（v1/v2 USB RTL-SDR 时代）：职责移至 RP2040（`modes_edge`）+ `adsb_lnk` 链，保留行作历史参考 |
+| `adsb_lnk` | 1 | 5 | 8 KiB | adsb_link_task.c（RP2040 UART 链路 921600 波特，承接原 DSP 业务链） |
 | `imu_task` | 0 | 5 | 4 KiB | imu_task.c |
 | `pfd_task` | 0 | 4 | 6 KiB | pfd.c |
 | `rec_file_writer` | 0 | 3 | 4 KiB | record_sink_file.c |

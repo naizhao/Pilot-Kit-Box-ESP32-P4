@@ -27,8 +27,9 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # The ESP32-P4NRW32 chip on the Waveshare board ships with 32 MiB of
 # in-package HEX (16-line) PSRAM. ESP-IDF defaults to PSRAM disabled, so
 # without these knobs the firmware only has ~455 KiB of internal SRAM —
-# not enough to bring up ESP-Hosted's SDIO mempool, NimBLE, the IQ ring
-# buffer and the LCD framebuffer at the same time.
+# not enough to bring up ESP-Hosted's SDIO mempool, NimBLE, the LCD
+# framebuffer and the app's larger working sets (map tiles, fonts,
+# recording buffers) at the same time.
 #
 # We:
 #   - turn on PSRAM in HEX mode at 200 MHz (v1.x silicon doesn't allow
@@ -51,29 +52,10 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # FreeRTOS timer task stack alloc.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
-# --- USB Host stack ---------------------------------------------------------
-# RTL-SDR dongles enumerate a single device but some ship via a hub bridge.
-CONFIG_USB_HOST_HUBS_SUPPORTED=y
-# URB 数据缓冲放 PSRAM，别占内部 RAM。
-#
-# 2026-08-03 载板 USB 接好、dongle 第一次真正枚举成功之后才暴露出来的：URB
-# 默认从**内部** DMA 堆分配（espressif__usb/src/usb_private.c:24 的
-# DATA_BUFFER_CAPS 带 MALLOC_CAP_INTERNAL），15×6144 ≈ 92 KB，直接把屏、
-# NimBLE、IMU、气压计全饿死（ST7701 DMA 链表 NO_MEM / vhci malloc failed /
-# baro task create failed）。把 SDR 挪到最后启动只是缓解，实测仍然只能分配出
-# 4 个 URB 就 NO_MEM——内部 DMA 堆本来就那么大。
-#
-# ESP32-P4 的 USB-DWC DMA **可以直接访问外部 RAM**（同文件 :22 那条分支，
-# Kconfig 帮助文本亦然），打开后 URB 落 PSRAM（我们有 32 MB、空闲 18 MB），
-# 内部 RAM 一个字节都不占。代价是访问外部 RAM 的少量开销，而 IQ 数据的终点
-# g_iq_ringbuf 本来就在 PSRAM，多这一跳无关紧要。
-CONFIG_USB_HOST_DWC_DMA_CAP_MEMORY_IN_PSRAM=y
-# Increase the control-transfer descriptor cap so we can read RTL2832U's
-# config/string descriptors without short reads.
-CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
-
 # --- FreeRTOS ---------------------------------------------------------------
-# 2 MSPS bursts need responsive ISR/event handling.
+# 1 Hz HEALTH / 100 Hz IMU 等周期任务需要毫秒级节拍（RTL-SDR 时代的 2 MSPS
+# 突发注释已随 USB 路径退役；USB Host 三条 Kconfig 一并移除——app 代码与
+# managed_components 均无 usb_host 消费者）。
 CONFIG_FREERTOS_HZ=1000
 
 # --- Logging ----------------------------------------------------------------
@@ -81,9 +63,8 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
 # --- Memory -----------------------------------------------------------------
-# RTL-SDR async pipeline holds 15 x 6.4 KiB = ~96 KiB of in-flight URBs in
-# DMA-capable internal RAM. Keep the main task stack modest, give the
-# heap room to breathe.
+# Keep the main task stack modest and give the heap room to breathe
+# (UI/链路/记录各任务的栈都在自己的 xTaskCreate 里给)。
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 
 # --- Compiler ---------------------------------------------------------------

@@ -190,8 +190,8 @@ Important cautions:
 | BNO085 interrupt | GPIO34 (J3 pin 28, carrier net `IMU_INT`) | Wired on the carrier; firmware still polls |
 | BMP388 interrupt | GPIO31 (J3 pin 24, carrier net `BARO_INT`) | Wired on the carrier; firmware still polls |
 | GPS UART1 TX / RX | P4 TX GPIO49 (J3 pin 32) / P4 RX GPIO51 (J3 pin 36); P4 TX moved GPIO32→GPIO49 | **Project + firmware**, 9600 8N1 |
-| GPS PPS | GPIO50 optional (moved from GPIO46 for PCB routing) | Wiring reservation only; current firmware does not consume PPS |
-| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **Carrier USB-A plug**; leave H2 empty. VBUS comes straight from J3 `VCC_5V`, with no current-limited switch on the carrier |
+| GPS PPS | GPIO50 optional (moved from GPIO46 for PCB routing) | GPIO50 edge ISR feeds the `time_locked` status (valid fix + PPS <2 s + NMEA <5 s); production time-service wiring is a follow-up task |
+| RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **Carrier USB-A plug** (v1/v2 dongle path, retired in current firmware); leave H2 empty. VBUS comes straight from J3 `VCC_5V`, with no current-limited switch on the carrier |
 
 Reasonable general-purpose candidates, when the optional project functions
 above are unused, are GPIO5, GPIO22, GPIO29, GPIO30, GPIO32, GPIO46,
@@ -527,7 +527,9 @@ P4 side (see the UART direction convention at the top of this document).
 | VCC / GND | ESP_3V3 / GND |
 
 Current firmware uses UART1 at 9600 8N1 and derives time from NMEA RMC.
-It does not implement a GPIO interrupt or timing discipline from PPS.
+The GPIO50 PPS edge is consumed by an ISR for the `time_locked` status
+(valid fix + PPS <2 s + NMEA <5 s); wiring that freshness into the
+production time service remains a follow-up task.
 
 ## 11. Bring-up checklist
 
@@ -541,7 +543,8 @@ It does not implement a GPIO interrupt or timing discipline from PPS.
    error appears.
 6. Confirm microSD mounts through Slot 0 without reinitializing the shared
    SDMMC host.
-7. Attach RTL-SDR to the carrier's USB-A plug, confirm native USB HS
+7. (v1/v2 carrier bring-up only; the dongle path is retired in current
+   firmware.) Attach RTL-SDR to the carrier's USB-A plug, confirm native USB HS
    enumeration through J3, and leave H2 empty. On a bare board, use H2
    instead.
 8. Perform repeated cold boots before treating any wiring change as stable.

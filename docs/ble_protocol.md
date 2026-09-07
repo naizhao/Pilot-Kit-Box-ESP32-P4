@@ -13,8 +13,10 @@ Chinese version: [`ble_protocol-zh_CN.md`](ble_protocol-zh_CN.md)
 
 ## 1. Overview
 
-A Pilot Kit Box is an ESP32-P4-based ADS-B receiver that demodulates
-1090 MHz traffic from an attached RTL-SDR dongle and re-broadcasts the
+A Pilot Kit Box is an ESP32-P4-based ADS-B receiver that receives
+1090 MHz Mode-S / ADS-B broadcasts through the v3/v4 expansion board's
+onboard receive chain (an RP2040 captures dual edges, decodes frames and
+ships them to the P4 over a 921600-baud UART) and re-broadcasts the
 decoded surveillance to nearby BLE clients. This document specifies
 the BLE wire-level contract clients must follow to consume that
 broadcast.
@@ -470,8 +472,6 @@ are on the firmware roadmap; they will get their own sections once
 implemented:
 
 - **Device Info Service (0x180A)** for firmware version
-- **Configuration write characteristic** — set RTL-SDR sample
-  rate / gain / centre frequency from the app
 - **Bonding + LESC encryption** before adding any non-public,
   user-identifying, control, or cockpit-sensitive data path
 - **Multiple concurrent peers** — currently one at a time

@@ -1,18 +1,32 @@
 /*
- * test_edgecap_convert.c — PIO 递减计数器原值 → 真实间隔 tick 的换算单测。
+ * test_edgecap_convert.c — PIO 递减计数器原值 → 真实间隔 tick 的换算 +
+ * tick→µs（edgecap_tick_to_us，含 82h 溢出边界与模 2^32 回绕点）+
+ * edge_cap_queue 块队列所有权协议（block-queue 重设计）的单测。
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 -I firmware/rp2040 \
  *      -o /tmp/test_edgecap_convert \
  *      firmware/test/test_edgecap_convert.c \
+ *      firmware/rp2040/edge_cap_queue.c \
  *   && /tmp/test_edgecap_convert
  *
- * 只包含 edge_cap.h：它必须保持无 pico 依赖（本文件能独立编译即证明）。
- * 合同（edge_cap.pio 逐周期推导）：上升沿检测后 edge 块固定 4 拍
- * （mov isr/push/set x/mov x,~x）无递减；低/高相位每迭代 2 拍、1 次递减，
- * 高→低转换 2 拍无递减。相邻上升沿检测之间 cycles = 2×(PRELOAD − raw) + 6，
- * 1 tick = 2 SM 周期 → ticks = (PRELOAD − raw) + 3。
+ * 只包含 edge_cap.h / edge_cap_queue.h：两者必须保持无 pico 依赖（本文件
+ * 能独立编译即证明）。换算合同（edge_cap.pio 逐周期推导）：上升沿检测后
+ * edge 块固定 4 拍（mov isr/push/set x/mov x,~x）无递减；低/高相位每迭代
+ * 2 拍、1 次递减，高→低转换 2 拍无递减。相邻上升沿检测之间 cycles =
+ * 2×(PRELOAD − raw) + 6，1 tick = 2 SM 周期 → ticks = (PRELOAD − raw) + 3。
+ *
+ * 块队列覆盖（block-queue 重设计：IRQ 生产者 / drain 消费者的显式所有权
+ * 协议，合同见 edge_cap_queue.h；旧的 claim/window_ok 消费裁决算术随
+ * 共享环一起废除——显式所有权下"写穿重检"不再存在）：空队列边界、满容量
+ * N−1 顺序 fill→drain 覆盖全部槽位、生产者绕圈撞上消费者持有块被拒且原块
+ * 完好（C1 类性质，由构造成立）、消费者释放重新解锁生产者、多轮交错 FIFO
+ * 序、填满后取一放一。台架严格模拟 target 驱动策略：DMA 只在运行时填；
+ * 满环拒绝后只有消费者释放过块才允许重启（安全重启前提，见
+ * edge_cap_queue.h 容量 N−1 论证）。
  */
 #include "edge_cap.h"
+#include "edge_cap_queue.h"
+#include <stdatomic.h>
 #include <stdio.h>
 
 static int g_fail;
@@ -20,6 +34,91 @@ static int g_fail;
         printf("        at %s:%d\n", __FILE__, __LINE__); g_fail++; } } while (0)
 
 #define TICK_HZ 62500000u          /* SM 125MHz / 2（每迭代 2 周期） */
+#define QN   EDGE_CAP_Q_N_BLOCKS
+#define QCAP EDGE_CAP_Q_CAPACITY
+
+/* ── 块队列测试台架：按 target 的生产/消费时序模拟 ──────────────────── */
+static edgecap_q_t q;
+static uint32_t blocks[QN][EDGE_CAP_Q_BLOCK_ITEMS];   /* canary 数据 */
+static uint32_t seq;                 /* 已完成填充的块数（整块 = 生产序号）*/
+
+static bool     dma_running;
+static uint32_t dma_armed;           /* 在飞块下标 */
+static uint32_t freed_since_stop;    /* 消费者自上次停止以来释放的块数 */
+
+static void kick(void)               /* init 首块武装 / 消费侧重启 */
+{
+    uint32_t slot;
+    CHECK(edgecap_q_arm_slot(&q, &slot), "kick refused (guard)\n");
+    dma_armed = slot;
+    dma_running = true;
+}
+
+static void restart_if_possible(void)   /* target 的 re-kick 前提：释放过块 */
+{
+    if (!dma_running && freed_since_stop) {
+        kick();
+        freed_since_stop = 0;
+    }
+}
+
+/* IRQ：在飞块完成 → 发布 + 重武装或停。 */
+static void irq_complete(void)
+{
+    uint32_t next;
+    if (edgecap_q_push_full(&q, &next)) {
+        dma_armed = next;
+        return;
+    }
+    dma_running = false;             /* 满环：DMA 停（target 记 overrun/lost）*/
+    freed_since_stop = 0;            /* 停机后须重新释放才可重启 */
+}
+
+/* DMA + IRQ：填满在飞块并完成。须 dma_running。 */
+static void produce_step(void)
+{
+    for (uint32_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
+        blocks[dma_armed][i] = seq;
+    seq++;
+    irq_complete();
+}
+
+/* drain 的一个块：peek → 全块校验（序号递增 = FIFO 且未被重写）→ free。
+ * 内容不符时不 free（保留现场），由调用方 peek_head/断言收尾。 */
+static bool consume_one(uint32_t *expect)
+{
+    uint32_t idx;
+    if (!edgecap_q_pop_full(&q, &idx))
+        return false;
+    for (uint32_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++) {
+        if (blocks[idx][i] != *expect)
+            return true;             /* 内容损坏：交给调用方断言 */
+    }
+    edgecap_q_free(&q, idx);
+    freed_since_stop++;
+    (*expect)++;
+    return true;
+}
+
+/* 队头块首字（不释放）；空队列返回哨兵。 */
+static uint32_t peek_head(void)
+{
+    uint32_t idx = QN;
+    if (!edgecap_q_pop_full(&q, &idx))
+        return 0xFFFFFFFFu;
+    return blocks[idx][0];
+}
+
+static void q_reset(void)
+{
+    edgecap_q_init(&q);
+    for (uint32_t k = 0; k < QN; k++)
+        for (uint32_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
+            blocks[k][i] = 0xDEADBEEFu;
+    seq = 0;
+    dma_running = false;
+    freed_since_stop = 0;
+}
 
 int main(void)
 {
@@ -66,6 +165,211 @@ int main(void)
      *    远大于任何合法间隔（含 100µs 帧间隔 = 6.25e6 tick）。 */
     CHECK(edgecap_raw_to_ticks(0u) == 0xFFFFFFE3u, "saturated value\n");
     CHECK(edgecap_raw_to_ticks(0u) > 6250000u, "saturated vs 100us\n");
+
+    /* 6b. tick→µs（edgecap_tick_to_us，PROTOCOL §2 勘误的回绕合同）：
+     *     精确整除点 + 82h 溢出边界 + 回绕点，锁定无溢出公式 tick×2/125
+     *     （tick=16ns 精确；floor，单值截断 <1µs——62 tick = 0.992µs → 0）。
+     *     · 82h 边界：tick = 82×3600×62.5e6 = 1.845e13 → µs =
+     *       295,200,000,000；早已越过 ~71.6 min 的首轮回绕，模 2^32 =
+     *       295200000000 − 68×2^32 = 3142223872。旧式 ×1000000ull 公式
+     *       在该 tick 处 u64 中间值已溢出（本组用例即其回归钉）。
+     *     · 回绕点：µs=2^32 ⇔ tick = 2^32×125/2 = 268,435,456,000 →
+     *       (u32)0 —— 0 是合法回绕值（无 0=无值 哨兵）。 */
+    CHECK(edgecap_tick_to_us(0) == 0u, "0 tick\n");
+    CHECK(edgecap_tick_to_us(125) == 2u, "125 tick = 2us\n");
+    CHECK(edgecap_tick_to_us(62500) == 1000u, "62500 tick = 1ms\n");
+    CHECK(edgecap_tick_to_us(62500000ull) == 1000000u, "1s = 1e6 us\n");
+    CHECK(edgecap_tick_to_us(62) == 0u, "62 tick floors to 0 (<1us)\n");
+    CHECK(edgecap_tick_to_us(268435456000ull) == 0u, "wrap point is 0\n");
+    CHECK(edgecap_tick_to_us(18450000000000ull) == 3142223872u,
+          "82h boundary us=%u\n", edgecap_tick_to_us(18450000000000ull));
+
+    /* ── edge_cap_queue：块队列所有权协议（block-queue 重设计）────────── */
+
+    /* 7. 空队列边界：init 后 pop=false 且不动出参、pending=0；arm_slot
+     *    从 0 起单调前进（首块武装序 = 槽序），空环 guard 恒放行。 */
+    {
+        q_reset();
+        uint32_t idx = 123u;
+        CHECK(!edgecap_q_pop_full(&q, &idx), "empty pop\n");
+        CHECK(idx == 123u, "empty pop must not touch idx\n");
+        CHECK(edgecap_q_pending(&q) == 0u, "empty pending\n");
+        CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 0u, "first arm=0\n");
+        CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 1u, "second arm=1\n");
+        CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 2u, "third arm=2\n");
+    }
+
+    /* 8. fill→drain 严格顺序，满容量 N−1/批，三圈绕环覆盖全部 8 个槽位
+     *    （canary 全字校验：序号递增 = FIFO 且无任何槽位被提前重写）。 */
+    {
+        q_reset();
+        kick();
+        uint32_t expect = 0u;
+        for (uint32_t round = 0; round < 3u * QN; round++) {
+            while (dma_running)
+                produce_step();
+            CHECK(edgecap_q_pending(&q) == QCAP,
+                  "round %u pending=%u want %u\n", round,
+                  edgecap_q_pending(&q), QCAP);
+            while (consume_one(&expect))
+                ;
+            restart_if_possible();
+            CHECK(dma_running, "round %u restart failed\n", round);
+        }
+        CHECK(expect == seq, "FIFO consumed %u of %u\n", expect, seq);
+        CHECK(seq == 3u * QN * QCAP, "produced %u\n", seq);
+    }
+
+    /* 9. 生产者绕圈撞上消费者持有块 → 拒绝（C1 类性质，由构造成立）：
+     *    消费者不动，第 QCAP 次完成发布后 guard 拒绝武装保留槽；完成块
+     *    已发布（pending 含它）；被持有块 0 之后 pop 出来内容原样
+     *    （canary 证明从未被重写）。未释放时重启被策略拒绝。 */
+    {
+        q_reset();
+        kick();
+        while (dma_running)
+            produce_step();
+        CHECK(seq == QCAP, "fills=%u want %u\n", seq, QCAP);
+        CHECK(!dma_running, "DMA must be stopped at capacity\n");
+        CHECK(q.refused == 1u, "refused=%u want 1\n", q.refused);
+        CHECK(edgecap_q_pending(&q) == QCAP, "pending after refuse\n");
+
+        restart_if_possible();
+        CHECK(!dma_running, "no free yet: must stay stopped\n");
+        {
+            uint32_t s = 123u;
+            CHECK(!edgecap_q_arm_slot(&q, &s),
+                  "arm guard must refuse while full\n");
+            CHECK(s == 123u, "failed arm must not touch slot\n");
+            CHECK(atomic_load(&q.fill_idx) == 7u,
+                  "failed arm must not advance fill_idx\n");
+        }
+
+        CHECK(peek_head() == 0u, "held block head seq\n");
+        uint32_t expect = 0u;
+        CHECK(consume_one(&expect), "held block 0 must pop\n");
+        CHECK(expect == 1u, "held block was rewritten (C1!)\n");
+        CHECK(edgecap_q_pending(&q) == QCAP - 1u, "pending after free\n");
+    }
+
+    /* 10. 消费者释放重新解锁生产者：未释放保持停；释放一块后恰好放行
+     *     一次生产（一换一），FIFO 序继续，随后再次拒停。 */
+    {
+        q_reset();
+        kick();
+        while (dma_running)
+            produce_step();
+        uint32_t expect = 0u;
+        CHECK(consume_one(&expect) && expect == 1u, "free block 0\n");
+        restart_if_possible();
+        CHECK(dma_running, "restart armed\n");
+        CHECK(dma_armed == 7u, "restart slot=%u want reserved 7\n", dma_armed);
+        produce_step();
+        CHECK(edgecap_q_pending(&q) == QCAP, "pending back to full\n");
+        CHECK(peek_head() == 1u, "FIFO continues at seq 1\n");
+        CHECK(!dma_running, "one free == one produce, stopped again\n");
+    }
+
+    /* 11. 多轮确定性伪随机交错下 FIFO 序保持（生产偏快 → 反复逼到满环
+     *     拒绝 + 安全重启路径；canary 全程校验）。 */
+    {
+        q_reset();
+        kick();
+        uint32_t expect = 0u;
+        uint32_t rng = 0x1234567u;
+        for (uint32_t round = 0; round < 1024u; round++) {
+            rng = rng * 1664525u + 1013904223u;
+            if ((rng >> 24) < 200u && dma_running)
+                produce_step();
+            else
+                (void)consume_one(&expect);
+            restart_if_possible();
+        }
+        while (consume_one(&expect))
+            ;
+        CHECK(expect == seq, "interleaved FIFO consumed %u of %u\n",
+              expect, seq);
+        CHECK(edgecap_q_pending(&q) == 0u, "fully drained\n");
+    }
+
+    /* 12. 填满后取一放一：pending 恒满、队头连续、拒绝/重启节奏稳定。 */
+    {
+        q_reset();
+        kick();
+        while (dma_running)
+            produce_step();
+        uint32_t expect = 0u;
+        for (uint32_t i = 0; i < 5u * QN; i++) {
+            CHECK(edgecap_q_pending(&q) == QCAP, "i=%u pending\n", i);
+            CHECK(peek_head() == expect, "i=%u head want %u\n", i, expect);
+            CHECK(consume_one(&expect), "i=%u consume\n", i);
+            restart_if_possible();
+            CHECK(dma_running, "i=%u restart\n", i);
+            produce_step();
+            CHECK(edgecap_q_pending(&q) == QCAP, "i=%u refilled\n", i);
+        }
+        while (consume_one(&expect))
+            ;
+        CHECK(expect == seq, "take-one-put-one FIFO %u/%u\n", expect, seq);
+    }
+
+    /* 13. 拒绝时完成块已发布的边界：填到第 QCAP 块，push 返回停（拒绝
+     *     的只是武装保留槽），但该块已发布、pending == QCAP、块 0 完好。 */
+    {
+        q_reset();
+        kick();
+        for (uint32_t i = 0; i < QCAP - 1u; i++) {
+            CHECK(dma_running, "pre-fill %u stopped early\n", i);
+            produce_step();
+        }
+        CHECK(dma_running, "still running at %u fills\n", QCAP - 1u);
+        produce_step();                  /* 第 QCAP 块：发布 + 拒停 */
+        CHECK(!dma_running, "stopped at capacity\n");
+        CHECK(edgecap_q_pending(&q) == QCAP, "completed block published\n");
+        uint32_t expect = 0u;
+        CHECK(consume_one(&expect) && expect == 1u, "block 0 intact\n");
+    }
+
+    /* 14. 重启断点位（disc bitmap，gpt-5.6-sol re-audit Fix 1）：fresh 队列
+     *     无位；init 首块武装不打位；满环停机 → 消费者释放 → 重启武装的
+     *     那一块带 disc 位（mark 语义 = target 重启路径），位只在该块、
+     *     take 读清一次；停机前发布的旧块无位；位随 FIFO 序在轮转复用
+     *     后不串块。 */
+    {
+        q_reset();
+        CHECK(!edgecap_q_take_disc(&q, 0u), "fresh q must have no disc\n");
+        kick();                                  /* init 首块：不打位 */
+        while (dma_running)
+            produce_step();                      /* 7 块发布，第 7 次拒停 */
+        CHECK(!dma_running && q.refused == 1u, "stopped at capacity\n");
+
+        uint32_t expect = 0u;
+        CHECK(consume_one(&expect) && expect == 1u, "free block 0\n");
+        restart_if_possible();
+        CHECK(dma_running && dma_armed == 7u, "restart at reserved slot\n");
+        edgecap_q_mark_disc(&q, dma_armed);      /* target 重启路径的语义 */
+        produce_step();                          /* 块 7 填满发布 */
+        while (dma_running)
+            produce_step();                      /* 块 0 填满 → 再次拒停 */
+        CHECK(!dma_running && q.refused == 2u, "stopped again\n");
+
+        for (uint32_t s = 1u; s <= 6u; s++) {    /* 停机前旧块：无位 */
+            uint32_t i;
+            CHECK(edgecap_q_pop_full(&q, &i) && i == s, "pop %u\n", s);
+            CHECK(!edgecap_q_take_disc(&q, i),
+                  "pre-gap block %u must not carry disc\n", s);
+            edgecap_q_free(&q, i);
+        }
+        {
+            uint32_t i;
+            CHECK(edgecap_q_pop_full(&q, &i) && i == 7u,
+                  "disc block must be FIFO head now\n");
+            CHECK(edgecap_q_take_disc(&q, i),
+                  "re-armed block must carry disc\n");
+            CHECK(!edgecap_q_take_disc(&q, i), "take must clear (once)\n");
+            edgecap_q_free(&q, i);
+        }
+    }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;

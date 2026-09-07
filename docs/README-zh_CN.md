@@ -30,8 +30,8 @@
 
 - 安全边界：Pilot Kit Box 不是经过适航认证的航电设备，文档不得把它写成主飞行仪表、备用仪表、导航源或防撞系统。
 - 目标开发板是 **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3**。P4 负责 USB、DSP、UI 和存储；C6 负责 BLE。
-- ADS-B 接收按板代分两种形态：**v1/v2 载板与裸板**把 RTL-SDR dongle 接到原生 USB 2.0 HS 差分对（装载板时插载板 USB-A，走 J3-27/25；裸 Waveshare 板则用 H2 Type-C 加 OTG 转接头或 Hub；两者同网，只能二选一），而 **v3/v4 扩展板**自带 1090 MHz 接收链、由 RP2040 解码。dongle 路径默认 1090 MHz、2 MSPS。
-- 当前推荐的 SDR dongle tuner 是 **FC0013**，主要原因是 BOM 成本低。
+- ADS-B 接收按板代分两种形态：**v1/v2 载板与裸板**把 RTL-SDR dongle 接到原生 USB 2.0 HS 差分对（装载板时插载板 USB-A，走 J3-27/25；裸 Waveshare 板则用 H2 Type-C 加 OTG 转接头或 Hub；两者同网，只能二选一），而 **v3/v4 扩展板**自带 1090 MHz 接收链、由 RP2040 解码。dongle 路径已退役：当前固件只支持扩展板接收链。
+- 当前推荐的 SDR dongle tuner 是 **FC0013**，主要原因是 BOM 成本低。（历史：该 dongle 仅属已退役的 v1/v2 USB 路径。）
 - 识别数据库：ICAO24 飞机数据库随 microSD 卡分发，路径 `/sdcard/aero/pk_actdb.bin`（仓库内产物 `datafiles/data/pk_actdb.bin`，读取端 `firmware/main/aircraft_db.c`），更新是拷文件、不是刷固件；`firmware/main/airline_codes.c` 的航司代码表和 `firmware/main/icao_country.c` 的 ICAO24 国家地址段表仍编进固件。
 - LCD 是 **4.3 寸 ST7701 480×800 MIPI-DSI 屏**，通过 PPA 作为 800×480 横屏使用；背光 GPIO26、复位 GPIO27、BL_EN GPIO33。
 - GT911 触摸与其他设备共用 GPIO7/8 的 I²C0，复位 GPIO23；旧四实体键任务（`button_task.c`）已移出编译。
@@ -39,7 +39,7 @@
 - 4.3 寸触摸 FAB 打开**全屏导航网格**直接切页：第 1 页 **PFD、交通、地图、
   列表、搜索、记录、工具**，第 2 页 **诊断、设置、关于**；网格底部动作条承载
   长按「调平」。旧的横向 dock 已废弃。
-- GT-U8 GPS/北斗、BMP388 气压高度/升降率、交通雷达和 DIAG 实时诊断均已接入运行时；GPIO50 PPS 已接线但固件不读取。
+- GT-U8 GPS/北斗、BMP388 气压高度/升降率、交通雷达和 DIAG 实时诊断均已接入运行时；GPIO50 PPS 由固件消费于 GPS「时间锁定」状态（ISR 计数 + 1 Hz 快照判定），接入系统授时为后续任务。
 - Settings 可调整语言、QNH、地图朝向、雷达量程和日志后端；MicroSD 支持插拔探测、容量状态和受保护格式化。
 - Settings、About、Diagnostics、Compass Calibration 页面已有中英文固件 UI 字符串，配置保存到 NVS。
 

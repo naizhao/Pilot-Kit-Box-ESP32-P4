@@ -130,9 +130,9 @@ resolved these conflicts.
 The following connectors must also be distinguished:
 
 - H1: the `USB TO UART` Type-C used for P4 flashing / serial logging.
-- H2: the P4 native USB 2.0 HS OTG Type-C, on the same nets as J3-25/27. When the Pilot Kit
-  carrier board is installed, the RTL-SDR plugs into the carrier board's USB-A (routed via J3-27/25), and H2 must be left empty; only for bare-board
-  bench debugging should the dongle be plugged into H2.
+- H2: the P4 native USB 2.0 HS OTG Type-C, on the same nets as J3-25/27. In the v1/v2 era, when the Pilot Kit
+  carrier board was installed, the RTL-SDR plugged into the carrier board's USB-A (routed via J3-27/25), and H2 had to be left empty; only for bare-board
+  bench debugging would the dongle be plugged into H2. (The dongle path is retired in current firmware — 1090 MHz receive now lives on the v3/v4 expansion board.)
 - P1: the C6's `TX RX IO9 GND` UART download pin header, not USB.
 - H4: the speaker connector, not a C6 debug header.
 

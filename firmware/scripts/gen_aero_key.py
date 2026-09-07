@@ -83,8 +83,13 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 # ⚠️ 这两行必须先算成变量，不能直接塞进下面的 f-string：
 # f-string 表达式里出现反斜杠是 Python 3.12 才放开的，而且引号嵌套一层就绕晕。
 # （刚在 tools/gen_bom_smt.py 上栽过同一个坑，这里不重复。）
-_warn = ('#warning "PK_AERO_KEY not configured - using public placeholder key, '
-         'cannot decrypt official data files"') if is_placeholder else \
+# #pragma message 而非 #warning：本仓库固件以 -Werror 编译（P4 build 的
+# compile_commands 已核实，非 -Werror=cpp），#warning 属 -Wcpp 警告族，
+# -Werror 下同样升级为错误——净效果相同，会把"无 .env 的外部开发者拿到
+# 占位密钥也能编过"这一既定承诺直接变成编译错误。
+# #pragma message 不属于警告族，不受 -Werror 影响，提示照打。
+_warn = ('#pragma message ("PK_AERO_KEY not configured - using public placeholder key, '
+         'cannot decrypt official data files")') if is_placeholder else \
         "/* 使用已配置的真实密钥 */"
 _ph = 1 if is_placeholder else 0
 
@@ -116,4 +121,10 @@ static inline void pk_aero_key_assemble(uint8_t out[16])
 ''')
 
 tag = "⚠️ 占位密钥（外部构建会走这条路）" if is_placeholder else f"指纹 {key[:4]}…{key[-4:]}"
-print(f"✓ {OUT.relative_to(REPO)}  ←  {src}   {tag}")
+# 日志行 best-effort：OUT 可能是相对路径或仓库外路径，relative_to 会抛
+# ValueError——文件已写完，不能让日志把整体退出码带崩（gpt-5.6-sol）。
+try:
+    shown = OUT.resolve().relative_to(REPO)
+except ValueError:
+    shown = OUT
+print(f"✓ {shown}  ←  {src}   {tag}")

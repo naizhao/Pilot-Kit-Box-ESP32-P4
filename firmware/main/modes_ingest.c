@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdatomic.h>
 #include "modes_ingest.h"
 
 /* 32,780 B 的 mode_s_t（大头是 ICAO 地址缓存）必须放 PSRAM：dsp_task 时代
@@ -14,15 +15,19 @@
 static EXT_RAM_BSS_ATTR mode_s_t s_dec;
 static modes_ingest_sink_fn s_sink;
 static void                *s_user;
-static uint32_t             s_msgs_total;
-static uint32_t             s_frames_bad_crc;
+/* 计数器由 adsb_link_task（feed 调用方）独占写，diag/pfd 在其他任务经
+ * modes_ingest_get_stats 读取——C11 原子（relaxed）：各字段独立采样、
+ * 单调计数，不做跨字段一致性承诺，与 pk_dsp/adsb_link stats 同一口径
+ * （audit round 5 Fix 4）。 */
+static atomic_uint           s_msgs_total;
+static atomic_uint           s_frames_bad_crc;
 
 void modes_ingest_init(modes_ingest_sink_fn sink, void *user)
 {
     s_sink = sink;
     s_user = user;
-    s_msgs_total = 0;
-    s_frames_bad_crc = 0;
+    atomic_store_explicit(&s_msgs_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_frames_bad_crc, 0, memory_order_relaxed);
     mode_s_init(&s_dec);
     /* 与 IQ 时代同一策略：只认 CRC 正确帧；不做单/双比特纠错。 */
     s_dec.check_crc  = 1;
@@ -41,10 +46,10 @@ void modes_ingest_feed(const uint8_t *frame, int msgbits,
     struct mode_s_msg mm;
     mode_s_decode(&s_dec, &mm, buf);
     if (!mm.crcok) {
-        s_frames_bad_crc++;
+        atomic_fetch_add_explicit(&s_frames_bad_crc, 1, memory_order_relaxed);
         return;
     }
-    s_msgs_total++;
+    atomic_fetch_add_explicit(&s_msgs_total, 1, memory_order_relaxed);
     if (s_sink) {
         modes_ingest_meta_t m = {0};
         if (meta) m = *meta;
@@ -54,6 +59,10 @@ void modes_ingest_feed(const uint8_t *frame, int msgbits,
 
 void modes_ingest_get_stats(uint32_t *msgs_total, uint32_t *frames_bad_crc)
 {
-    if (msgs_total)    *msgs_total    = s_msgs_total;
-    if (frames_bad_crc) *frames_bad_crc = s_frames_bad_crc;
+    if (msgs_total)
+        *msgs_total = atomic_load_explicit(&s_msgs_total,
+                                           memory_order_relaxed);
+    if (frames_bad_crc)
+        *frames_bad_crc = atomic_load_explicit(&s_frames_bad_crc,
+                                               memory_order_relaxed);
 }

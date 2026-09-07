@@ -15,7 +15,7 @@
 | 显示 | ST7701，4.3 寸 480×800 IPS，2-lane MIPI-DSI；横屏 UI 800×480 |
 | 触摸 | GT911，I²C GPIO7/8，复位 GPIO23，中断电阻默认未贴 |
 | P4 调试口 | H1 USB-C `USB TO UART`，经 CH343P |
-| 原生 USB HS | H2 USB-C `USB` 与 J3-27/25 同网；RTL-SDR 走这组信号 |
+| 原生 USB HS | H2 USB-C `USB` 与 J3-27/25 同网；v1/v2 时代的 RTL-SDR dongle 路径走这组信号（当前固件已退役） |
 | C6 下载口 | P1 1×4 排针 `TX RX IO9 GND` |
 | 扩展口 | J3 2×20 排针；接线前必须核对项目 pinout |
 
@@ -32,7 +32,7 @@ ESP32-P4 本身没有无线电。当前固件先启动 C6 上的 ESP-Hosted，�
 
 | 模块 | 连接 | 固件状态 |
 |---|---|---|
-| RTL-SDR FC0013 | 载板 USB-A 插头走 J3-27/25（原生 USB 2.0 HS），H2 空置；裸板调试时改接 H2 加 USB-C OTG 转接头或 Hub | 已集成 |
+| RTL-SDR FC0013 | 载板 USB-A 插头走 J3-27/25（原生 USB 2.0 HS），H2 空置；裸板调试时改接 H2 加 USB-C OTG 转接头或 Hub | **已退役**（v1/v2 dongle 路径）：固件支持已移除——1090 MHz 接收现位于 v3/v4 扩展板 |
 | ST7701 显示 | 板载固定 MIPI-DSI，2 lane @ 500 Mbit/s | 已集成 |
 | GT911 触摸 | 板载 GPIO7/8、复位 GPIO23；轮询 | 已集成，当前只取第一触点 |
 | BNO085 IMU | GPIO7/8、复位 GPIO28、INT GPIO34、地址 0x4A | 已集成，轮询 |

@@ -20,7 +20,7 @@ scan and applicable regulations for every flight decision.
 | Key1 **RESET** | Restart the ESP32-P4 |
 | Key2 **BOOT** | Service control for download mode; not a UI key |
 | H1 `USB TO UART` | P4 flashing, power and serial monitor |
-| H2 `USB` | Native USB 2.0 HS OTG. Same nets as J3-27/25: with the carrier fitted the RTL-SDR plugs into the carrier's USB-A and H2 stays empty; on a bare board connect the dongle here |
+| H2 `USB` | Native USB 2.0 HS OTG, same nets as J3-27/25. Unused by the current firmware: the RTL-SDR dongle path that used this port (v1/v2 era) is retired — the 1090 MHz receive chain now lives on the expansion board |
 | Touchscreen | All page navigation and user actions |
 
 The legacy `button_task.c` is not compiled into the current firmware. There are no
@@ -153,17 +153,21 @@ turn it off in Setup.
 
 ## 5. External-module behavior
 
-- **RTL-SDR:** with the Pilot Kit carrier fitted, plug the dongle into the
-  carrier's USB-A plug (J3-27/25) and leave H2 empty. On a bare board, use H2
-  through a suitable USB-C OTG adapter or powered hub. The two share the same
-  nets, so only one may be occupied. H1 is not the SDR data path and P1 is not
-  USB.
+- **ADS-B receive:** the v3/v4 expansion board carries the full 1090 MHz
+  receive chain and an RP2040 that captures dual edges and decodes Mode-S
+  frames; frames reach the P4 over a 921600-baud UART on the J3 header. No
+  dongle is needed. The v1/v2-era USB RTL-SDR path is retired: firmware no
+  longer enumerates a dongle on the carrier USB-A (J3-27/25) or H2, which
+  share the same nets — at most one may be occupied. H1 is not an SDR data
+  path and P1 is not USB.
 - **BNO085:** current driver polls address `0x4A`; INT is wired to GPIO34 but
   unused by firmware.
 - **BMP388:** current driver polls address `0x76`; INT is wired to GPIO31 but
   unused by firmware.
 - **GPS:** UART1 uses P4 TX GPIO49 and P4 RX GPIO51 at 9600 8N1. Time comes
-  from NMEA RMC; optional GPIO50 PPS wiring is not used by current firmware.
+  from NMEA RMC; GPIO50 PPS is consumed by firmware for the `time_locked`
+  status (valid fix + PPS <2 s + NMEA <5 s) — wiring that freshness into the
+  production time service remains a follow-up.
 - **BLE:** a new board needs the C6 ESP-Hosted slave image flashed once through
   P1. See [`hardware/c6_slave_firmware.md`](hardware/c6_slave_firmware.md).
 
@@ -176,7 +180,7 @@ turn it off in Setup.
 | Touch is rotated or offset | Confirm the firmware reports logical 800×480 and PPA 90° clockwise |
 | Heading does not react correctly | Check the physical IMU mounting first, then run figure-eight calibration and Level |
 | Traffic says no own position | Move the GPS antenna to open sky and wait for a fix |
-| RTL-SDR does not enumerate | Confirm it is on the carrier USB-A plug (or H2 on a bare board), not H1 or P1, and that only one of the two is occupied; try a powered hub |
+| No ADS-B frames | Confirm the v3/v4 expansion board is fitted; check P4 serial logs for the `dsp`/`adsb` tags (RP2040 UART link, 921600 baud on J3) |
 | MicroSD selection still says reboot | Leave the card inserted and reboot; absent/bad cards fall back to LittleFS |
 | BLE never advertises | Complete the one-time C6 slave flash and check ESP-Hosted startup before DSI |
 

@@ -44,15 +44,23 @@ static int level_at(const uint32_t *t, int n, int *cursor, uint32_t x)
 static void burst_emit(modes_edge_t *m)
 {
     if (m->burst_n < 8) {                    /* preamble 至少 8 个边沿 */
-        if (m->burst_n) { m->bursts++; m->dropped_noise += (uint32_t)m->burst_n; }
+        if (m->burst_n) {
+            atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&m->dropped_noise, (uint32_t)m->burst_n,
+                                      memory_order_relaxed);
+        }
         burst_reset(m);
         return;
     }
 
     /* 边沿绝对时刻（qus）。t[0] = 0：burst 首沿（上升沿）为时间原点；
      * t[i] = Σ burst[0..i-1]（burst[j] 是边沿 j→j+1 的间隔）。
-     * 奇偶：偶下标=上升，奇下标=下降。 */
-    uint32_t t[MODES_EDGE_MAX_EDGES];
+     * 奇偶：偶下标=上升，奇下标=下降。
+     * 数组取 MAX_EDGES+1（audit round 4 Fix 2）：burst_n 可达 MAX_EDGES
+     * （feed 的溢出路径在 burst_n==MAX 时才触发 emit），而最后一条间隔的
+     * 到达沿必须进表（见下）——t[burst_n] 是**语义必需的第 257 个槽**
+     * （t[burst_n] = 最后一条间隔的到达沿），不是冗余填充。 */
+    uint32_t t[MODES_EDGE_MAX_EDGES + 1];
     uint32_t acc = 0;
     t[0] = 0;
     for (int i = 1; i < m->burst_n; i++) {
@@ -64,61 +72,93 @@ static void burst_emit(modes_edge_t *m)
     int nedges = m->burst_n + 1;
     t[m->burst_n] = acc + ticks_to_qus(m->burst[m->burst_n - 1], m->tick_hz);
 
-    /* preamble：上升沿 t[0]/t[2]/t[4]/t[6]，间隔 4/10/4 qus；脉宽各 ≈2 qus。 */
-    uint32_t d1 = t[2] - t[0], d2 = t[4] - t[2], d3 = t[6] - t[4];
-    if (d1 < QUS_PREAM_D1 - QUS_TOL || d1 > QUS_PREAM_D1 + QUS_TOL ||
-        d2 < QUS_PREAM_D2 - QUS_TOL || d2 > QUS_PREAM_D2 + QUS_TOL ||
-        d3 < QUS_PREAM_D3 - QUS_TOL || d3 > QUS_PREAM_D3 + QUS_TOL) {
-        m->bursts++; m->dropped_noise += (uint32_t)m->burst_n;
-        burst_reset(m);
-        return;
-    }
-    for (int k = 0; k < 4; k++) {
-        uint32_t w = t[2 * k + 1] - t[2 * k];
-        if (w < QUS_HALF - QUS_TOL || w > QUS_HALF + QUS_TOL) {
-            m->bursts++; m->dropped_noise += (uint32_t)m->burst_n;
-            burst_reset(m);
-            return;
-        }
-    }
-    m->preamble_hits++;
-
-    /* 数据：逐位在两个半位中心采样电平。R11 融合（bit0→bit1 连续高电平）
-     * 在此模型下自然正确：融合把两个半位都垫成高。两个中心同电平 → 时序
-     * 已被破坏（丢沿/抖动越界）→ 安全丢帧。 */
-    uint8_t frame[14] = {0};
-    int covered = 0;
-    int df = -1, want = 0;
-    int cur = 8;                              /* 电平游标：数据区从边沿 8 起 */
-    for (int k = 0; k < 112; k++) {
-        uint32_t c1 = QUS_DATA_OFF + QUS_BIT * k + 1;
-        uint32_t c0 = c1 + QUS_HALF;
-        int lv1 = level_at(t, nedges, &cur, c1);
-        int lv0 = level_at(t, nedges, &cur, c0);
-        if (lv1 == lv0) break;                /* 两中心同电平：时序损坏 */
-        if (lv1) frame[k / 8] |= (uint8_t)(0x80u >> (k % 8));
-        covered = k + 1;
-        if (covered == 5) {
-            df = frame[0] >> 3;
-            want = (df > 15) ? 112 : 56;
-        }
-        if (want && covered >= want) break;
-    }
-
-    if (!want || covered < want) {            /* 半帧/无数据 */
-        m->dropped_noise++;
-        m->bursts++;
-        burst_reset(m);
-        return;
-    }
+    /* preamble + 数据解码（audit round 4 Fix 3）：候选锚点沿上升沿序列
+     * 滑动（burst 首沿可能是帧前噪声脉冲，按首沿锚定失败会丢整帧——
+     * 实测 0.5µs 噪声 + 1.5µs 间隔 + 合法帧 → frames=0）。间距+脉宽合格
+     * 的候选若随后数据解码失败（两中心同电平），**继续滑到下一个候选**
+     * ——噪声凑出的假前导（如 [4,10,4] 间距三连脉冲）不再吞掉同 burst
+     * 里紧跟的真帧。候选有限 → 终止性显然。解码失败的候选单独记
+     * dropped_decode（不进 dropped_noise，后者仍按 burst 记账、口径
+     * 不变）；preamble_hits 按候选计（间距+脉宽合格即命中，含最终解码
+     * 失败者——它确实检到了 preamble 形状的能量）。 */
     modes_edge_frame_t f;
-    memcpy(f.frame, frame, sizeof(f.frame));
-    f.nbits = (uint32_t)want;
-    f.start_tick = m->burst_start_tick;
-    if (want == 56) m->frames_56++; else m->frames_112++;
+    int frame_ok = 0, pre = -1, want = 0, tried = 0;
+    for (int r = 0; r + 7 < nedges; r += 2) {
+        uint32_t d1 = t[r + 2] - t[r], d2 = t[r + 4] - t[r + 2],
+                 d3 = t[r + 6] - t[r + 4];
+        if (d1 < QUS_PREAM_D1 - QUS_TOL || d1 > QUS_PREAM_D1 + QUS_TOL ||
+            d2 < QUS_PREAM_D2 - QUS_TOL || d2 > QUS_PREAM_D2 + QUS_TOL ||
+            d3 < QUS_PREAM_D3 - QUS_TOL || d3 > QUS_PREAM_D3 + QUS_TOL)
+            continue;
+        int widths_ok = 1;
+        for (int k = 0; k < 4; k++) {
+            uint32_t w = t[r + 2 * k + 1] - t[r + 2 * k];
+            if (w < QUS_HALF - QUS_TOL || w > QUS_HALF + QUS_TOL) {
+                widths_ok = 0;
+                break;
+            }
+        }
+        if (!widths_ok) continue;
+        atomic_fetch_add_explicit(&m->preamble_hits, 1, memory_order_relaxed);
+        tried++;
+
+        /* 数据：逐位在两个半位中心采样电平，采样时轴以本候选的上升沿
+         * 为原点。R11 融合（bit0→bit1 连续高电平）在此模型下自然正确：
+         * 融合把两个半位都垫成高。两个中心同电平 → 本候选下时序已被
+         * 破坏（丢沿/抖动越界/假前导）→ 放弃本候选，滑向下一个。 */
+        uint8_t frame[14] = {0};
+        int covered = 0, df = -1;
+        want = 0;
+        int cur = r + 8;                  /* 电平游标：数据区从候选后第 8 沿起 */
+        for (int k = 0; k < 112; k++) {
+            uint32_t c1 = t[r] + QUS_DATA_OFF + QUS_BIT * k + 1;
+            uint32_t c0 = c1 + QUS_HALF;
+            int lv1 = level_at(t, nedges, &cur, c1);
+            int lv0 = level_at(t, nedges, &cur, c0);
+            if (lv1 == lv0) break;        /* 两中心同电平：候选判负 */
+            if (lv1) frame[k / 8] |= (uint8_t)(0x80u >> (k % 8));
+            covered = k + 1;
+            if (covered == 5) {
+                df = frame[0] >> 3;
+                want = (df > 15) ? 112 : 56;
+            }
+            if (want && covered >= want) break;
+        }
+        if (want && covered >= want) {
+            memcpy(f.frame, frame, sizeof(f.frame));
+            f.nbits = (uint32_t)want;
+            pre = r;
+            frame_ok = 1;
+            break;
+        }
+        atomic_fetch_add_explicit(&m->dropped_decode, 1,
+                                  memory_order_relaxed); /* 本候选判负，试下一个 */
+    }
+    if (!frame_ok) {
+        /* 保留既有 dropped_noise 双口径（audit round 4 不改账，仅把候选级
+         * 失败分账到 dropped_decode）：从未出现合格候选 = 纯噪声 burst，
+         * 按边沿数记（旧路径 1）；有候选但全部解码失败，按 burst 记 1
+         * （旧路径 2）。 */
+        atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&m->dropped_noise,
+                                  tried ? 1u : (uint32_t)m->burst_n,
+                                  memory_order_relaxed);
+        burst_reset(m);
+        return;
+    }
+
+    /* start_tick 是 preamble 首沿（可能不是 burst 首沿——候选滑窗跳过
+     * 了帧前噪声），按候选前的间隔精确回加。 */
+    uint64_t start = m->burst_start_tick;
+    for (int i = 0; i < pre; i++) start += m->burst[i];
+    f.start_tick = start;
+    if (want == 56)
+        atomic_fetch_add_explicit(&m->frames_56, 1, memory_order_relaxed);
+    else
+        atomic_fetch_add_explicit(&m->frames_112, 1, memory_order_relaxed);
     if (m->cb) m->cb(&f, m->user);
 
-    m->bursts++;
+    atomic_fetch_add_explicit(&m->bursts, 1, memory_order_relaxed);
     burst_reset(m);
 }
 
@@ -126,10 +166,52 @@ void modes_edge_init(modes_edge_t *m, uint32_t tick_hz,
                      modes_edge_frame_fn cb, void *user)
 {
     memset(m, 0, sizeof(*m));
+    /* 统计字段是 C11 原子（modes_edge.h）：memset 后逐字段显式清零，
+     * 定义良好的初始化（不依赖"全零位模式 = 0"的实现细节）。 */
+    atomic_store_explicit(&m->preamble_hits, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->frames_56, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->frames_112, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->dropped_noise, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->dropped_decode, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->bursts, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->edge_overruns, 0, memory_order_relaxed);
+    atomic_store_explicit(&m->time_degraded, false, memory_order_relaxed);
     m->tick_hz = tick_hz;
     m->cb = cb;
     m->user = user;
     m->burst_gap_ticks = (uint32_t)(((uint64_t)QUS_BURST_GAP * tick_hz + 2000000u) / 4000000u);
+}
+
+/*
+ * 断点重置（丢沿/重启）：把开着的半截 burst 直接丢弃——不 emit、不回调、
+ * 不碰任何统计（计数是 boot-lifetime 口径）。abs_tick 时间基**保留**
+ * （round-2 P1-a）：断点后的帧 start_tick 单调不减，只被丢失段的时长
+ * 轻微提前偏置——丢失的时长无法恢复，提前偏置是丢失的固有属性，记录
+ * 在案；绝不回跳，rp_ts_us 模 2^32 单调语义（PROTOCOL §2 勘误，无 0
+ * 哨兵）不受影响。消费者在喂入
+ * 带断点标记的块之前调用。不 reset 的后果：断点前后的 delta 被拼进
+ * 同一 burst——接缝奇偶错乱时后续真帧整体丢失（test_modes_edge 用例
+ * 15 对照锁定）。
+ */
+void modes_edge_reset(modes_edge_t *m)
+{
+    m->burst_n = 0;                    /* 半截 burst 整体作废（含缓冲内容）*/
+    m->burst_start_tick = 0;           /* burst_n==0 后喂入时必然重算 */
+}
+
+/*
+ * 丢沿退化（re-audit round-2 Fix 1）：sticky 置位、无清除路径——丢失段
+ * 时长不可知，时间基永久偏小是丢沿的固有结果（单调性保持），解码器
+ * 不自愈也不假装自愈。与 stats 同口径：core1 独占写，诊断只读。
+ */
+void modes_edge_mark_degraded(modes_edge_t *m)
+{
+    atomic_store_explicit(&m->time_degraded, true, memory_order_release);
+}
+
+bool modes_edge_time_degraded(const modes_edge_t *m)
+{
+    return atomic_load_explicit(&m->time_degraded, memory_order_acquire);
 }
 
 void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n)
@@ -147,7 +229,8 @@ void modes_edge_feed(modes_edge_t *m, const uint32_t *deltas, size_t n)
         if (m->burst_n < MODES_EDGE_MAX_EDGES) {
             m->burst[m->burst_n++] = d;
         } else {
-            m->edge_overruns++;
+            atomic_fetch_add_explicit(&m->edge_overruns, 1,
+                                      memory_order_relaxed);
             burst_emit(m);                    /* 缓冲满：按噪声帧处理 */
         }
     }

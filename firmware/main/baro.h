@@ -2,7 +2,8 @@
  * baro.h — BMP388 气压计驱动接口。
  *
  * 挂载在 I²C0 总线上(与 BNO085 IMU 共享)，地址 0x76。
- * 使用前必须先调用 pk_imu_init() 让总线建立，再调用 pk_baro_start()。
+ * 总线由 pk_i2c0_bus_init() 建立(main.c，先于一切器件 init)；baro 对
+ * NULL handle 自行优雅失败，不要求任何器件 init 先成功。
  */
 #pragma once
 
@@ -18,7 +19,8 @@ typedef struct {
     int64_t updated_us;     /* esp_timer_get_time() of last good read */
 } pk_baro_state_t;
 
-/* 启动 baro_task。必须在 pk_imu_init() 成功后调用(依赖 I²C0 总线已建)。 */
+/* 启动 baro_task。依赖 I²C0 总线已由 pk_i2c0_bus_init() 建好；总线缺失时
+ * baro_task 自行退出并保持 state.invalid，不影响其余功能。 */
 void pk_baro_start(void);
 
 /* 快照当前气压状态。返回 out->valid。线程安全。 */

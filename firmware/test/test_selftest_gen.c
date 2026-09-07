@@ -14,6 +14,17 @@
  * deltas 即以 slot 为 tick、tick_hz = 16MHz；1 qus = 4 slot 整除，
  * ticks_to_qus 往返无舍入误差（对照 test_modes_edge.c 的 qus 合同）。
  * mode_s.c 直接 include 进本 TU（仓库惯例），给常量回填正确 parity。
+ *
+ * 硬件适用范围（audit round 5 勘误）：位流构造与回环判据在 host、V4/V3
+ * 载板与台架裸 RP2040 板均有效。跳线 24→19 前**必须先拆下 R57**（33Ω，
+ * PCB 上 PULSES_RAW→PULSES 的串阻，expansion-board-v4.kicad_pcb:7100 起、
+ * 焊盘 net 见 :7216/:7224）：TLV3501 推挽输出经 33Ω 对 1k 串阻分支约
+ * 30:1 占优，不拆 R57 则节点电平跟随比较器、旧"串 ≥1k 电平胜出"的
+ * 说法物理不成立。拆下 R57 后 GPIO24 → R57 的 PULSES 侧焊盘（或 PULSES
+ * 网络任一可达焊盘，V4 亦有 TP7 @ :38901）直连即可，无输出争用。V3
+ * 载板 TP7 同样有落点，同理先隔离比较器输出。详见 selftest_gen.h；
+ * PINMAP.md/ASSEMBLY 文档里"V4 已删 TP7"的旧说法与 PCB 不符，归硬件
+ * 侧勘误。
  */
 #include "selftest_gen.h"
 #include "modes_edge.h"
@@ -51,7 +62,9 @@ int main(void)
         }
     }
 
-    /* 2. 全回路：bitstream → 模拟沿提取 → modes_edge → 帧逐字节一致。 */
+    /* 2. 全回路：bitstream → 模拟沿提取 → modes_edge → 帧逐字节一致。
+     *    位流尾部带 flush 脉冲串（块发布粒度的台架配套）：帧必须从噪声
+     *    洪流中被照常解出，洪流自身走容量溢出路径被丢弃——不产帧、不崩。 */
     {
         static uint32_t words[SELFTEST_MAX_WORDS];
         size_t nw = selftest_build_bitstream(SELFTEST_DF17, 112,
@@ -61,9 +74,9 @@ int main(void)
 
         /* 位流 → 全边沿间隔（slot 单位 = tick_hz 16MHz）；上升/下降都算沿，
          * 与 edgecap PIO 的双沿捕获一致（R11）。 */
-        uint32_t deltas[512]; size_t nd = 0;
+        uint32_t deltas[4096]; size_t nd = 0;
         int prev = 0; int64_t last_t = -1;
-        for (size_t w = 0; w < nw && nd < 512; w++)
+        for (size_t w = 0; w < nw && nd < 4096; w++)
             for (int b = 0; b < 32; b++) {
                 int bit = (words[w] >> b) & 1;
                 if (bit != prev) {
@@ -77,13 +90,23 @@ int main(void)
         modes_edge_t m; modes_edge_init(&m, SELFTEST_BITS_PER_US * 1000000u,
                                         cb, NULL);
         g_frames = 0;
-        /* 不追加手工终止长隔：位流末尾的收尾孤立脉冲（P1-5）与最后数据
-         * 脉冲间隔 >5µs，其上升沿自身关闭帧 burst；收尾脉冲自身的
-         * 上升+下降构成仅 2 边沿的新 burst，被 preamble 门径直丢弃。 */
+        /* 不追加手工终止长隔：位流末尾是 flush 脉冲串（uniform 0.5µs
+         * 间隔），尾部不满 256 沿的残余留在 burst_n 里无终止符也无害。 */
         modes_edge_feed(&m, deltas, nd);
         CHECK(g_frames == 1, "frames=%d\n", g_frames);
         CHECK(g_last.nbits == 112, "nbits=%u\n", g_last.nbits);
         CHECK(memcmp(g_last.frame, SELFTEST_DF17, 14) == 0, "roundtrip bytes\n");
+        /* flush 脉冲串确实在位流里（边沿数 ≥ 预算），且仍是一股噪声
+         * 洪流：576 沿 uniform 0.5µs 间隔走溢出路径（256 沿/次 emit）
+         * → 恰 2 次 edge_overruns；噪声记账 = 收尾脉冲的下降沿 1 沿
+         * （其上升沿是关闭帧 burst 的长隔终点，不属于小 burst）+
+         * 2×256 沿 = 513（尾部 64 沿残段无终止符、留在 burst_n 里
+         * 不记账）。 */
+        CHECK(nd >= SELFTEST_FLUSH_EDGES + 16u, "nd=%zu flush=%u\n",
+              nd, SELFTEST_FLUSH_EDGES);
+        CHECK(m.edge_overruns == 2u, "edge_overruns=%u\n", m.edge_overruns);
+        CHECK(m.dropped_noise == 513u, "noise=%u\n", m.dropped_noise);
+        CHECK(m.preamble_hits == 1u, "preamble_hits=%u\n", m.preamble_hits);
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

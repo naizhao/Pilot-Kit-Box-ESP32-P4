@@ -1,10 +1,12 @@
 #include "gps.h"
+#include "gps_nmea.h"
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <sys/time.h>
@@ -24,6 +26,12 @@ static const char *TAG = "gps";
 #define GPS_BAUD    9600
 #define GPS_BUF_SZ  512
 
+#define GPS_PPS_PIN  50          /* GNSS 1PPS → P4，J3 Pin 34（board_pinout.md §10 GPS 表） */
+#define GPS_PPS_LOCK_US 2000000LL /* 时间锁定窗口：PPS 距今 <2 s 视为在锁 */
+#define GPS_NMEA_LOCK_US 5000000LL /* 时间锁定还要求**有效 RMC** 距今 <5 s
+                                    * （updated_us；任何完整行都算的 last_nmea_us
+                                    * 只用于诊断「模块在不在」）*/
+
 static pk_gps_state_t    s_gps;
 static SemaphoreHandle_t s_lock;
 static void take(void){ xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -32,6 +40,28 @@ static void give(void){ xSemaphoreGive(s_lock); }
 /* --- 临时诊断计数器（排查 GPS no-fix；定位到根因后删除） --- */
 static volatile uint32_t s_rx_bytes;    /* 累计从 UART RX 收到的原始字节 */
 static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
+
+/* --- PPS（GPIO50 上升沿） -------------------------------------------------
+ * ISR 只做两件事：计数 + 打时间戳（esp_timer_get_time() 纯读硬件计时器，
+ * IRAM 内、ISR 安全）。fix 与否、2 s 窗口判定全部放 gps_task 的 1 Hz 快照
+ * 路径——见 gps.h 里 time_locked 的语义注释。 */
+/* ISR↔task 配对用 spinlock 临界区（2026-09 审计三轮）：原先的
+ * seqlock-lite「读计数→读戳→复读计数」在 RVWMO 下跨核并不可靠
+ * （计数与戳没有真正的全序）。portMUX 临界区是 ESP-IDF 的标准做法：
+ * ISR 侧 portENTER_CRITICAL_ISR、任务侧 portENTER_CRITICAL 共享同一把
+ * spinlock，(计数, 时间戳) 对 ISR 原子，读者拿到的必然是同一瞬间的
+ * 自洽对，不再有重试/作废路径。临界区只有几条赋值，纳秒级。 */
+static portMUX_TYPE s_pps_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_pps_count;          /* PPS 上升沿累计；s_pps_mux 保护 */
+static uint64_t s_last_pps_us;        /* 最近上升沿时间戳；0 = 还没见过沿；s_pps_mux 保护 */
+
+static void IRAM_ATTR pps_isr(void *arg){
+    (void)arg;
+    portENTER_CRITICAL_ISR(&s_pps_mux);
+    s_last_pps_us = (uint64_t)esp_timer_get_time();
+    s_pps_count++;
+    portEXIT_CRITICAL_ISR(&s_pps_mux);
+}
 
 bool pk_gps_get(pk_gps_state_t *out){
     if(!out) return false;
@@ -57,14 +87,6 @@ static double nmea_to_deg(const char *val, const char *hemi){
     return d;
 }
 
-/* split in-place by ',' → fields[]; returns field count */
-static int split_csv(char *s, char *fields[], int maxf){
-    int n = 0; char *p = s;
-    fields[n++] = p;
-    while(*p && n < maxf){ if(*p == ','){ *p = '\0'; fields[n++] = p + 1; } p++; }
-    return n;
-}
-
 /* RMC 的 hhmmss(.sss) 与 ddmmyy 都是定长数字串 → epoch 毫秒。
  * 任一字段缺失/非法返回 false（不校时）。 */
 static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
@@ -85,23 +107,27 @@ static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
     return true;
 }
 
-static void parse_rmc(char *f[], int n){
-    if(n < 10) return;                 /* 需含日期字段 f[9] */
-    bool valid = (f[2][0] == 'A');
+/* 以下 parse_* 的字段切分/checksum 门已迁入 gps_nmea.c（WP-B Task 1）；
+ * 这里只做「字段 → gps 状态」的落地，函数体保持原样，仅字段来源从老的
+ * fields[]/n 换成 msg->f/msg->n。 */
+
+static void parse_rmc(const gps_nmea_msg_t *msg){
+    if(msg->n < 10) return;                 /* 需含日期字段 f[9] */
+    bool valid = (msg->f[2][0] == 'A');
     take();
     s_gps.have_fix = valid;
     if(valid){
-        s_gps.lat = nmea_to_deg(f[3], f[4]);
-        s_gps.lon = nmea_to_deg(f[5], f[6]);
-        s_gps.ground_speed_kt = (int)(atof(f[7]) + 0.5);
-        s_gps.track_deg       = (int)(atof(f[8]) + 0.5);
+        s_gps.lat = nmea_to_deg(msg->f[3], msg->f[4]);
+        s_gps.lon = nmea_to_deg(msg->f[5], msg->f[6]);
+        s_gps.ground_speed_kt = (int)(atof(msg->f[7]) + 0.5);
+        s_gps.track_deg       = (int)(atof(msg->f[8]) + 0.5);
         s_gps.updated_us = esp_timer_get_time();
     }
     give();
 
     /* 两段式校时（锁外做：settimeofday 不碰 s_gps）。 */
     int64_t gps_ms;
-    if(!rmc_epoch_ms(f[1], f[9], &gps_ms)) return;
+    if(!rmc_epoch_ms(msg->f[1], msg->f[9], &gps_ms)) return;
     if(valid){
         /* 精校：fix 有效 = 卫星授时；仅当偏差 > 阈值才写，避免无谓跳变。 */
         struct timeval tv; gettimeofday(&tv, NULL);
@@ -114,14 +140,14 @@ static void parse_rmc(char *f[], int n){
     }
 }
 
-static void parse_gga(char *f[], int n){
-    if(n < 10) return;
-    int    q     = atoi(f[6]);          /* fix quality, 0 = no fix */
-    int    sats  = atoi(f[7]);
-    double alt_m = atof(f[9]);
+static void parse_gga(const gps_nmea_msg_t *msg){
+    if(msg->n < 10) return;
+    int    q     = atoi(msg->f[6]);          /* fix quality, 0 = no fix */
+    int    sats  = atoi(msg->f[7]);
+    double alt_m = atof(msg->f[9]);
     take();
     s_gps.sats = sats;
-    s_gps.hdop = (float)atof(f[8]);     /* GGA field 8 = HDOP */
+    s_gps.hdop = (float)atof(msg->f[8]);     /* GGA field 8 = HDOP */
     if(q > 0){
         s_gps.altitude_ft  = (int)(alt_m * 3.28084 + 0.5);
         s_gps.have_altitude = true;
@@ -149,18 +175,18 @@ static uint8_t gsv_constellation(const char *t){
 }
 
 /* GSV: $xxGSV,numMsg,msgNum,totalInView, {prn,elev,az,snr}×N [,signalID] */
-static void parse_gsv(char *f[], int n){
-    if(n < 4) return;
-    uint8_t con = gsv_constellation(f[0]);
-    int msgNum = atoi(f[2]);
-    int total  = atoi(f[3]);
+static void parse_gsv(const gps_nmea_msg_t *msg){
+    if(msg->n < 4) return;
+    uint8_t con = gsv_constellation(msg->f[0]);
+    int msgNum = atoi(msg->f[2]);
+    int total  = atoi(msg->f[3]);
     if(msgNum == 1){                       /* 同星座多句 total 相同，只首句计入 */
         s_acc_view += total;
         if(con == PK_GNSS_GPS)      s_acc_view_gps += total;
         else if(con == PK_GNSS_BDS) s_acc_view_bds += total;
     }
-    for(int i = 4; i + 3 < n; i += 4){     /* 每颗星 4 字段；尾随 signalID 自然落空 */
-        const char *snr = f[i + 3];
+    for(int i = 4; i + 3 < msg->n; i += 4){ /* 每颗星 4 字段；尾随 signalID 自然落空 */
+        const char *snr = msg->f[i + 3];
         if(snr && *snr && s_acc_snr_n < PK_GPS_SNR_MAX){
             s_acc_snr[s_acc_snr_n] = (uint8_t)atoi(snr);
             s_acc_con[s_acc_snr_n] = con;
@@ -170,9 +196,9 @@ static void parse_gsv(char *f[], int n){
 }
 
 /* TXT: $GPTXT,01,01,01,ANTENNA OK|OPEN|SHORT */
-static void parse_txt(char *f[], int n){
-    if(n < 5) return;
-    const char *m = f[4];
+static void parse_txt(const gps_nmea_msg_t *msg){
+    if(msg->n < 5) return;
+    const char *m = msg->f[4];
     pk_gps_ant_t a;
     if      (strstr(m, "ANTENNA OPEN"))  a = PK_GPS_ANT_OPEN;
     else if (strstr(m, "ANTENNA SHORT")) a = PK_GPS_ANT_SHORT;
@@ -183,23 +209,21 @@ static void parse_txt(char *f[], int n){
 
 static void handle_line(char *line){
     s_nmea_lines++;
-    /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。 */
+    /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。
+     * checksum 不过的行同样算「在讲话」，所以计数/时间戳必须在解析之前。 */
     take(); s_gps.last_nmea_us = esp_timer_get_time(); give();
     /* 原始 NMEA 行：默认不刷屏，需要时把 gps TAG 调到 DEBUG 即可调出。
-     * split_csv 会就地改写，必须在解析前打印。 */
+     * 解析器在自家内部缓冲里切分，line 本身不再被改写。 */
     ESP_LOGD(TAG, "NMEA: %s", line);
-    char *body = (*line == '$') ? line + 1 : line;
-    if(strlen(body) < 6) return;
-    char *fields[24];
-    int   n    = split_csv(body, fields, 24);
-    const char *type = fields[0];        /* e.g. "GNRMC" (any talker GP/GN/GL) */
-    size_t tl = strlen(type);
-    if(tl < 3) return;
-    const char *suf = type + (tl - 3);   /* match last 3 chars */
-    if(strncmp(suf, "RMC", 3) == 0)      parse_rmc(fields, n);
-    else if(strncmp(suf, "GGA", 3) == 0) parse_gga(fields, n);
-    else if(strncmp(suf, "GSV", 3) == 0) parse_gsv(fields, n);
-    else if(strncmp(suf, "TXT", 3) == 0) parse_txt(fields, n);
+    /* 切分/checksum 门在 gps_nmea 里（WP-B Task 1）：坏 checksum、非 $ 句
+     * 直接整行丢弃——老代码不验 *hh，损坏句子的字段会一路进 fix/校时。 */
+    gps_nmea_msg_t msg;
+    if(!gps_nmea_feed_line(&msg, line)) return;
+    if(strncmp(msg.type, "RMC", 3) == 0)      parse_rmc(&msg);
+    else if(strncmp(msg.type, "GGA", 3) == 0) parse_gga(&msg);
+    else if(strncmp(msg.type, "GSV", 3) == 0) parse_gsv(&msg);
+    else if(strncmp(msg.type, "TXT", 3) == 0) parse_txt(&msg);
+    /* 其余类型（GSA/VTG/GLL…）解析照返回 1，这里不接就是忽略——与老行为一致。 */
 }
 
 static void gps_task(void *arg){
@@ -239,6 +263,33 @@ static void gps_task(void *arg){
             give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
 
+            /* PPS/NMEA 快照：spinlock 临界区让 (计数, 时间戳) 对 ISR 原子
+             * （2026-09 审计三轮），每个快照都是自洽对——不再有 seqlock
+             * 的重试/作废路径，s_gps 两字段总是成对推进。 */
+            uint32_t pps_n;
+            uint64_t pps_us;
+            portENTER_CRITICAL(&s_pps_mux);
+            pps_n  = s_pps_count;
+            pps_us = s_last_pps_us;
+            portEXIT_CRITICAL(&s_pps_mux);
+
+            take();
+            s_gps.pps_count   = pps_n;
+            s_gps.last_pps_us = (int64_t)pps_us;
+            /* 时间锁定 = fix 有效 + 有效 RMC <5 s + PPS <2 s（gps.h 语义）。
+             * NMEA 新鲜度项用 updated_us（只在**有效** RMC 落地时刷新）：
+             * last_nmea_us 连坏 checksum 的行也算「在讲话」，挡不住
+             * 「UART 半死、只剩乱码」的假锁定（2026-09 审计 P2）。 */
+            s_gps.time_locked = s_gps.have_fix && s_gps.last_pps_us != 0 &&
+                                (now - s_gps.last_pps_us) < GPS_PPS_LOCK_US &&
+                                s_gps.updated_us != 0 &&
+                                (now - s_gps.updated_us) < GPS_NMEA_LOCK_US;
+            give();
+            /* 注意：生产链路的时间可信度（pk_clock_is_synced()，消费方
+             * pk_own_sampler/pk_rec_ingest）仍是「校过一次就永久 latched」，
+             * 与这里的 time_locked 刻意不同——把 PPS/NMEA 新鲜度接进
+             * pk_clock 是后续 time-service 任务（2026-09 审计记录在案）。 */
+
             /* 直接读快照而不是走 pk_gps_get()：那个入口在演示模式下会返回合成
              * 数据，于是没插 GPS 板卡时串口上照样印着 "fix=1 sats=11"——这条
              * 心跳存在的唯一目的就是排查真实模块，绝不能被演示数据污染。 */
@@ -246,11 +297,12 @@ static void gps_task(void *arg){
             /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
              * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
-                          "alt=%dft gs=%dkt trk=%d hdop=%.1f rx=%u lines=%u",
+                          "alt=%dft gs=%dkt trk=%d hdop=%.1f pps=%u tl=%d rx=%u lines=%u",
                      g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
                      g.sats_in_view_bds, g.snr_max, (int)g.ant_status,
                      g.lat, g.lon, g.altitude_ft, g.ground_speed_kt, g.track_deg,
-                     (double)g.hdop, (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
+                     (double)g.hdop, (unsigned)g.pps_count, (int)g.time_locked,
+                     (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
         }
     }
 }
@@ -271,6 +323,27 @@ void pk_gps_start(void){
     ESP_ERROR_CHECK(uart_param_config(GPS_UART, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(GPS_UART, GPS_TX_PIN, GPS_RX_PIN,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    /* PPS 输入 GPIO50：board_pinout.md §10 GPS 表只规定 PPS→GPIO50（J3-34）
+     * 走线，未规定上/下拉——故配浮空输入：1PPS 由 GNSS 模块推挽驱动（1PPS
+     * 的常规输出形态），无需内部上下拉。待台架实测确认：若发现无沿/误沿，
+     * 再评估内部下拉。 */
+    const gpio_config_t pps = {
+        .pin_bit_mask = 1ULL << GPS_PPS_PIN,
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_POSEDGE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&pps));
+    /* firmware/main 目前无其它 GPIO ISR 用户（IMU/BARO INT 都是轮询），
+     * 服务通常由这里首次安装；INVALID_STATE = 已被装好，同样放行。
+     * 引脚级 gpio_isr_handler_add 挂在共享默认服务上，与日后其它中断用户
+     * 互不干扰。 */
+    esp_err_t isr_err = gpio_install_isr_service(0);
+    configASSERT(isr_err == ESP_OK || isr_err == ESP_ERR_INVALID_STATE);
+    ESP_ERROR_CHECK(gpio_isr_handler_add(GPS_PPS_PIN, pps_isr, NULL));
+
     BaseType_t ok = xTaskCreatePinnedToCore(gps_task, "gps", 4096, NULL, 4, NULL, 0);
     configASSERT(ok == pdTRUE);
 }

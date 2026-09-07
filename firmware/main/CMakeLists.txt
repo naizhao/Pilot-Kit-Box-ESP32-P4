@@ -23,6 +23,9 @@ idf_component_register(
         "cpr_decode.c"
         "aircraft_state.c"
         "pk_callsign.c"
+        # 纯 NMEA 解析（checksum 门 + 字段切分）：不依赖 ESP-IDF，
+        # host 单测 test_gps_nmea.c 直接编它（WP-B Task 1）。
+        "gps_nmea.c"
         "gps_task.c"
         "pk_clock.c"
         "own_ship.c"
@@ -79,11 +82,21 @@ idf_component_register(
         "pk_board.c"
         "imu_task.c"
         "pk_vib.c"
+        # BMP388 补偿数学（WP-B Task 5 从 baro_task.c 抽出的纯单元，无 ESP
+        # 依赖）：host 单测 test_baro_compensate.c 直接编它做双实现互证。
+        "baro_compensate.c"
         "baro_task.c"
+        # QMC5883P 磁力计一阶段驱动（WP-B Task 4）：纯解码 host 单测
+        # （test_qmc5883p.c），目标端轮询依赖 pk_board.c 的封装系→机体变换。
+        "qmc5883p.c"
         # I²C0 总线级恢复。policy 是纯逻辑（host 单测 test_pk_i2c0_policy.c），
         # recover 才碰 i2c_master_bus_reset()。见 pk_i2c0_recover.h 文件头。
         "pk_i2c0_policy.c"
         "pk_i2c0_recover.c"
+        # 板级 I²C0 总线所有权（从 imu_task 移交，WP-B Task 3）：main.c 先于
+        # 一切 I²C 器件 init 调 pk_i2c0_bus_init()；generation 纯逻辑由
+        # test_pk_i2c0_bus.c 覆盖。
+        "pk_i2c0_bus.c"
         # button_task.c 故意不编译：它写死的 GPIO26/GPIO23 在 Rev1.2
         # 4.3 寸上是背光 PWM 和触摸复位，配成输入上拉会打死背光和触摸。
         # 详见 button_task.h 顶部说明。

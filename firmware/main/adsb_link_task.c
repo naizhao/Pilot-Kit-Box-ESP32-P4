@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
@@ -39,15 +40,28 @@ static const char *TAG_ADSB = "adsb";
 #define LINK_STALE_US    (5 * 1000000LL)
 
 static adsb_link_dec_t      s_dec;
-static volatile int64_t     s_last_frame_us;
-static bool                 s_ever_linked;
-static bool                 s_proto_mismatch_seen;
-static bool                 s_hello_sent;
-static pk_adsb_link_stats_t s_stats;
+static atomic_llong         s_last_frame_us;   /* 跨任务读（诊断页），64 位
+                                                * 必须 _Atomic 防撕裂 */
+/* 跨任务只读的链路统计（audit round 4）：每字段独立 atomic_uint，读侧
+ * 做逐字段 load、**不做跨字段一致性承诺**（与 pk_dsp_stats 注释同一
+ * 口径——各计数单调，1 Hz 诊断页可容忍字段间撕裂）。 */
+static struct {
+    atomic_uint rx_frames;     /* codec 成功递交帧数（含未知类型） */
+    atomic_uint rx_crc_errors;
+    atomic_uint rx_seq_gaps;
+    atomic_uint rx_resyncs;
+    atomic_uint modes_fed;     /* 实际送入 modes_ingest 的 MODES_RAW 帧数 */
+} s_stats;
+/* 单写者（本任务写 true，永不复位）跨任务读的布尔旗标。选 atomic_bool
+ * 而非 volatile bool：同样的"编译器不得跨调用缓存"保证，但语义由 C11
+ * 定义（volatile 无跨线程语义，只防优化）；relaxed 序足够——最坏多滞后
+ * 一个 1 Hz 诊断刷新。 */
+static atomic_bool          s_ever_linked;
+static atomic_bool          s_proto_mismatch_seen;
 static uint8_t              s_rxchunk[256];
 
 /* ── 以下整块【迁移】自 dsp_task.c，除注明外逐字搬运 ────────────────
- *   - 1 Hz 窗口计数 s_msgs_* / s_pos_decoded 与 volatile 累计
+ *   - 1 Hz 窗口计数 s_msgs_* / s_pos_decoded 与 atomic 累计
  *     s_msgs_total_cum / s_pos_decoded_cum
  *   - ICAO_SEEN_CAPACITY / s_icao_seen / s_icao_unique / icao_seen_insert()
  *   - PK_REC_LOOKUP_MAX_AGE_US
@@ -77,12 +91,21 @@ static uint32_t s_win_rx  = 0;
 static uint32_t s_win_crc = 0;
 
 /* --- Cumulative diagnostic counters (boot-lifetime, never reset) ------- *
- * Written only from this task; read by diag page via pk_dsp_get_stats().
- * 32-bit aligned r/w is atomic on ESP32-P4 (RV32), so no lock needed;
- * volatile prevents the compiler from caching stale values across tasks.
+ * Written only from this task; read cross-task by pk_dsp_get_stats() and
+ * pk_adsb_link_state_get(). audit round 4: per-field atomic_uint loads —
+ * no cross-field consistency claim (each counter is monotonic, so a torn
+ * multi-field snapshot is fine for 1 Hz diagnostics; same convention as
+ * the link-stats struct above and the RP2040-side health stats).
+ * atomic_* replaces the old volatile approach: same "don't cache across
+ * calls" guarantee with defined C11 semantics instead of volatile's
+ * optimization-barrier-only behavior. The 64-bit s_last_frame_us stays
+ * _Atomic too (RV32 has no atomic 64-bit loads; the compiler emits a
+ * lock). The atomic_bool flags (s_ever_linked / s_proto_mismatch_seen)
+ * are single-writer (this task), relaxed ops — worst case is one extra
+ * 1 Hz tick of staleness.
  */
-static volatile uint32_t s_msgs_total_cum  = 0;   /* cumulative CRC-ok Mode-S frames */
-static volatile uint32_t s_pos_decoded_cum = 0;   /* cumulative CPR position decodes  */
+static atomic_uint s_msgs_total_cum  = 0;   /* cumulative CRC-ok Mode-S frames */
+static atomic_uint s_pos_decoded_cum = 0;   /* cumulative CPR position decodes  */
 
 /*
  * aircraft_state_get_own() 的"旧值/当前值"快照查询用——大到覆盖任何合理
@@ -100,7 +123,7 @@ static volatile uint32_t s_pos_decoded_cum = 0;   /* cumulative CPR position dec
  */
 #define ICAO_SEEN_CAPACITY  1024
 static uint32_t          s_icao_seen[ICAO_SEEN_CAPACITY];
-static volatile uint32_t s_icao_unique = 0;
+static atomic_uint       s_icao_unique = 0;
 
 static void icao_seen_insert(uint32_t icao24)
 {
@@ -110,7 +133,8 @@ static void icao_seen_insert(uint32_t icao24)
         if (*slot == icao24) return;          /* already seen */
         if (*slot == 0) {
             *slot = icao24;
-            s_icao_unique++;
+            atomic_fetch_add_explicit(&s_icao_unique, 1,
+                                      memory_order_relaxed);
             return;
         }
     }
@@ -528,8 +552,10 @@ static void aircraft_summary_emit(int64_t now_us)
 static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
 {
     (void)now_us; (void)window_start_us;  /* 无 MB/s 归一后不再参与计算 */
-    const uint32_t rx  = s_stats.rx_frames     - s_win_rx;
-    const uint32_t crc = s_stats.rx_crc_errors - s_win_crc;
+    const uint32_t rx  = atomic_load_explicit(&s_stats.rx_frames,
+                                              memory_order_relaxed) - s_win_rx;
+    const uint32_t crc = atomic_load_explicit(&s_stats.rx_crc_errors,
+                                              memory_order_relaxed) - s_win_crc;
 
     /* Stay quiet when there's no link to talk about. This happens
      * whenever the RP2040 isn't wired up / isn't sending yet; printing
@@ -540,6 +566,8 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
         goto reset;
     }
 
+    const uint32_t icao_seen = atomic_load_explicit(&s_icao_unique,
+                                                    memory_order_relaxed);
     if (crc == 0) {
         ESP_LOGI(TAG,
                  "link rx/s %u crcerr/s %u | msgs/s %u (df17_pos %u "
@@ -549,14 +577,14 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
                  (unsigned)s_msgs_total,
                  (unsigned)s_msgs_df17_pos,
                  (unsigned)s_msgs_df17_id,
-                 (unsigned)s_icao_unique);
+                 (unsigned)icao_seen);
     } else {
         ESP_LOGW(TAG,
                  "link rx/s %u crcerr/s %u (BAD CRC) | msgs/s %u | aircraft %u",
                  (unsigned)rx,
                  (unsigned)crc,
                  (unsigned)s_msgs_total,
-                 (unsigned)s_icao_unique);
+                 (unsigned)icao_seen);
     }
 
 reset:;
@@ -564,11 +592,15 @@ reset:;
     /* Flush 1-Hz window totals into boot-lifetime cumulative counters
      * before zeroing the window. s_icao_unique is already cumulative
      * (never reset) — exposed as-is by pk_dsp_get_stats(). */
-    s_msgs_total_cum  += s_msgs_total;
-    s_pos_decoded_cum += s_pos_decoded;
+    atomic_fetch_add_explicit(&s_msgs_total_cum, s_msgs_total,
+                              memory_order_relaxed);
+    atomic_fetch_add_explicit(&s_pos_decoded_cum, s_pos_decoded,
+                              memory_order_relaxed);
 
-    s_win_rx        = s_stats.rx_frames;
-    s_win_crc       = s_stats.rx_crc_errors;
+    s_win_rx        = atomic_load_explicit(&s_stats.rx_frames,
+                                           memory_order_relaxed);
+    s_win_crc       = atomic_load_explicit(&s_stats.rx_crc_errors,
+                                           memory_order_relaxed);
     s_msgs_total    = 0;
     s_msgs_df11     = 0;
     s_msgs_df17_id  = 0;
@@ -589,10 +621,10 @@ static uint32_t le32(const uint8_t *p)
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
-    int64_t now = esp_timer_get_time();
-    s_last_frame_us = now;
-    s_ever_linked = true;
-    s_stats.rx_frames++;
+    atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
+                          memory_order_relaxed);
+    atomic_store_explicit(&s_ever_linked, true, memory_order_relaxed);
+    atomic_fetch_add_explicit(&s_stats.rx_frames, 1, memory_order_relaxed);
 
     switch (m->type) {
     case ADSB_LINK_MSG_MODES_RAW: {
@@ -607,29 +639,39 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
                                    ((uint32_t)m->payload[5] << 24)),
         };
         modes_ingest_feed(m->payload + 6, msgbits, &meta);
-        s_stats.modes_fed++;
+        atomic_fetch_add_explicit(&s_stats.modes_fed, 1, memory_order_relaxed);
         break;
     }
     case ADSB_LINK_MSG_HELLO:
-    case ADSB_LINK_MSG_CAPABILITIES:
-        /* 协议 §5：P4 收到 HELLO 回一帧自己的 HELLO，让 RP 侧也能 LINKED。 */
-        if (!s_hello_sent) {
-            uint8_t pl[17] = { 0 };          /* min_minor + build[16] */
-            memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
-            uint8_t out[ADSB_LINK_MAX_FRAME];
-            size_t n = adsb_link_encode(out, sizeof out,
-                                        ADSB_LINK_MSG_HELLO, 0,
-                                        pl, sizeof pl);
-            if (n) uart_write_bytes(ADSB_UART, out, n);
-            s_hello_sent = true;
+    case ADSB_LINK_MSG_CAPABILITIES: {
+        /* 协议 §5：P4 对**每个**合法 HELLO 都回一帧（audit round 3，ledger
+         * R9）。旧的一次性闩锁在 RP 侧重启后永远等不到回应——RP 侧只有
+         * 未 linked 才发 HELLO、限速 1 Hz（p4_link.c），逐帧回应无洪泛
+         * 风险。日志只首条 LOGI，之后降 DEBUG。seq 用本侧单调计数（协议
+         * §2 seq 是按发送方递增的）：恒 0 会让 RP 侧 seq_gaps 持续虚增。 */
+        static bool s_hello_logged;
+        static uint8_t s_hello_seq;
+        uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
+        memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
+        uint8_t out[ADSB_LINK_MAX_FRAME];
+        size_t n = adsb_link_encode(out, sizeof out,
+                                    ADSB_LINK_MSG_HELLO, s_hello_seq++,
+                                    pl, sizeof pl);
+        if (n) uart_write_bytes(ADSB_UART, out, n);
+        if (s_hello_logged)
+            ESP_LOGD(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
+                     ? "HELLO" : "CAPABILITIES", m->seq);
+        else {
+            ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
+                     ? "HELLO" : "CAPABILITIES", m->seq);
+            s_hello_logged = true;
         }
-        ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
-                 ? "HELLO" : "CAPABILITIES", m->seq);
         break;
+    }
     case ADSB_LINK_MSG_HEALTH_STATS:
         if (m->payload_len < 40) break;
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
-        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u resync=%u noise=%u "
+        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u degraded=%u noise=%u "
                       "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
                  le32(m->payload + 0),  le32(m->payload + 4),
                  le32(m->payload + 8),  le32(m->payload + 12),
@@ -654,7 +696,8 @@ static void adsb_link_task(void *arg)
     cpr_init();
     modes_ingest_init(on_ingest_msg, NULL);
     adsb_link_dec_init(&s_dec, on_link_msg, NULL);
-    s_last_frame_us = esp_timer_get_time();
+    atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
+                          memory_order_relaxed);
 
     const uart_config_t uc = {
         .baud_rate  = ADSB_UART_BAUD,
@@ -678,10 +721,15 @@ static void adsb_link_task(void *arg)
                                 pdMS_TO_TICKS(100));
         if (n > 0) adsb_link_dec_feed(&s_dec, s_rxchunk, (size_t)n);
 
-        s_stats.rx_crc_errors = s_dec.crc_errors;
-        s_stats.rx_seq_gaps   = s_dec.seq_gaps;
-        s_stats.rx_resyncs    = s_dec.resyncs;
-        if (s_dec.version_mismatch) s_proto_mismatch_seen = true;
+        atomic_store_explicit(&s_stats.rx_crc_errors, s_dec.crc_errors,
+                              memory_order_relaxed);
+        atomic_store_explicit(&s_stats.rx_seq_gaps, s_dec.seq_gaps,
+                              memory_order_relaxed);
+        atomic_store_explicit(&s_stats.rx_resyncs, s_dec.resyncs,
+                              memory_order_relaxed);
+        if (s_dec.version_mismatch)
+            atomic_store_explicit(&s_proto_mismatch_seen, true,
+                                  memory_order_relaxed);
 
         int64_t now_us = esp_timer_get_time();
         if (now_us - window_start_us >= 1000000) {
@@ -697,10 +745,27 @@ static void adsb_link_task(void *arg)
 
 pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
 {
-    if (stats) *stats = s_stats;
-    if (s_proto_mismatch_seen) return PK_ADSB_LINK_PROTO_MISMATCH;
-    if (!s_ever_linked) return PK_ADSB_LINK_NO_LINK;
-    return (esp_timer_get_time() - s_last_frame_us > LINK_STALE_US)
+    if (stats) {
+        /* 逐字段 relaxed load：无跨字段一致性承诺（各计数单调，诊断页
+         * 口径），见 s_stats 声明处注释。 */
+        stats->rx_frames     = atomic_load_explicit(&s_stats.rx_frames,
+                                                    memory_order_relaxed);
+        stats->rx_crc_errors = atomic_load_explicit(&s_stats.rx_crc_errors,
+                                                    memory_order_relaxed);
+        stats->rx_seq_gaps   = atomic_load_explicit(&s_stats.rx_seq_gaps,
+                                                    memory_order_relaxed);
+        stats->rx_resyncs    = atomic_load_explicit(&s_stats.rx_resyncs,
+                                                    memory_order_relaxed);
+        stats->modes_fed     = atomic_load_explicit(&s_stats.modes_fed,
+                                                    memory_order_relaxed);
+    }
+    if (atomic_load_explicit(&s_proto_mismatch_seen, memory_order_relaxed))
+        return PK_ADSB_LINK_PROTO_MISMATCH;
+    if (!atomic_load_explicit(&s_ever_linked, memory_order_relaxed))
+        return PK_ADSB_LINK_NO_LINK;
+    return (esp_timer_get_time() -
+            atomic_load_explicit(&s_last_frame_us, memory_order_relaxed)
+            > LINK_STALE_US)
                ? PK_ADSB_LINK_STALLED : PK_ADSB_LINK_LINKED;
 }
 
@@ -711,8 +776,10 @@ void pk_dsp_get_stats(pk_dsp_stats_t *out)
     modes_ingest_get_stats(&ok, &bad);
     out->msgs_total     = ok;
     out->frames_bad_crc = bad;
-    out->pos_decoded    = s_pos_decoded_cum;    /*【迁移】自 dsp_task.c */
-    out->icao_unique    = s_icao_unique;        /*【迁移】*/
+    out->pos_decoded    = atomic_load_explicit(&s_pos_decoded_cum,
+                                               memory_order_relaxed);
+    out->icao_unique    = atomic_load_explicit(&s_icao_unique,
+                                               memory_order_relaxed);
 }
 
 void pk_adsb_link_start(void)

@@ -452,26 +452,22 @@ void pk_diag_page_render(uint16_t *fb)
     /* ── ADS-B 链路（RP2040 UART）── */
     {
         const pk_adsb_link_state_t st = pk_adsb_link_state_get(NULL);
-        pk_dsp_stats_t d;
-        pk_dsp_get_stats(&d);
         switch (st) {
         case PK_ADSB_LINK_NO_LINK:
             draw_card(fb, 1, 1, card_title(3),
-                      pk_i18n_text(PK_TR_DIAG_V_SDR_NONE), ST_BAD);
+                      pk_i18n_text(PK_TR_DIAG_V_LINK_NONE), ST_BAD);
             break;
         case PK_ADSB_LINK_PROTO_MISMATCH:
             draw_card(fb, 1, 1, card_title(3),
-                      pk_i18n_text(PK_TR_DIAG_V_SDR_ATTACH), ST_WARN);
+                      pk_i18n_text(PK_TR_DIAG_V_LINK_PROTO), ST_WARN);
             break;
         case PK_ADSB_LINK_STALLED:
             draw_card(fb, 1, 1, card_title(3),
-                      pk_i18n_text(PK_TR_DIAG_V_SDR_STALL), ST_WARN);
+                      pk_i18n_text(PK_TR_DIAG_V_LINK_STALLED), ST_WARN);
             break;
-        default:    /* LINKED */
-            snprintf(buf, sizeof(buf), "%s %lu",
-                     pk_i18n_text(PK_TR_DIAG_U_MSGS),
-                     (unsigned long)d.msgs_total);
-            draw_card(fb, 1, 1, card_title(3), buf, ST_OK);
+        default:    /* LINKED：报文在流动 */
+            draw_card(fb, 1, 1, card_title(3),
+                      pk_i18n_text(PK_TR_DIAG_V_LINK_LIVE), ST_OK);
             break;
         }
     }
@@ -1120,19 +1116,25 @@ static void draw_detail(uint16_t *fb, int which)
     }
 
     case 3: {   /* ADS-B 链路（RP2040 UART）*/
-        const pk_adsb_link_state_t st = pk_adsb_link_state_get(NULL);
+        pk_adsb_link_stats_t ls;
+        const pk_adsb_link_state_t st = pk_adsb_link_state_get(&ls);
         pk_dsp_stats_t d;
         pk_dsp_get_stats(&d);
         static const pk_tr_id_t kLink[] = {
-            PK_TR_DIAG_V_SDR_NONE_S,   /* NO_LINK */
-            PK_TR_DIAG_V_SDR_ATTACH_S, /* PROTO_MISMATCH */
-            PK_TR_DIAG_V_SDR_STALL_S,  /* STALLED */
-            PK_TR_DIAG_V_SDR_STREAM }; /* LINKED */
+            PK_TR_DIAG_V_LINK_NONE,     /* NO_LINK */
+            PK_TR_DIAG_V_LINK_PROTO,    /* PROTO_MISMATCH */
+            PK_TR_DIAG_V_LINK_STALLED,  /* STALLED */
+            PK_TR_DIAG_V_LINK_LIVE };   /* LINKED */
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATE, kLink[st],
                    st == PK_ADSB_LINK_LINKED ? COL_ONLINE : COL_ALERT);
-        if (st == PK_ADSB_LINK_NO_LINK)
-            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_SDR_HINT,
-                       COL_WARN);
+        /* 链路收发两行（audit round 3）：旧 SDR 口径的采样率/IQ 丢弃行
+         * 已随 RTL-SDR 退役，换成 UART 链路的实际计数——收帧看链路通量，
+         * 坏 CRC 看信号质量，琥珀色只在真的有坏帧时亮。 */
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)ls.rx_frames);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_LINK_RX, buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)ls.rx_crc_errors);
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_BAD_CRC, buf,
+                  ls.rx_crc_errors ? COL_WARN : COL_VAL);
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.msgs_total);
         det_kv_tr(fb, line++, PK_TR_DIAG_K_ADSB_MSGS, buf, COL_VAL);
         break;

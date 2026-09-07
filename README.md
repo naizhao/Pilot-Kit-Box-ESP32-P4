@@ -84,7 +84,7 @@ Pilot Kit Box is designed to give pilots, student pilots, and aviation enthusias
 
 Pilot Kit Box 想解决的是这个问题：
 
-- **低成本**：用 ESP32-P4、RTL-SDR、屏幕、IMU 和常见电源模块，做出一个普通用户也能负担的飞行数据盒子。
+- **低成本**：用 ESP32-P4、v3/v4 扩展板（自带 1090 接收链，无需 RTL-SDR dongle）、屏幕、IMU 和常见电源模块，做出一个普通用户也能负担的飞行数据盒子。
 - **通用性**：它不是只能配合某一个 App 使用的封闭硬件；它可以独立使用，也可以面向标准航空数据接口继续扩展。
 - **与 Pilot Kit 紧密结合**：Pilot Kit 可以充分利用 Box 采集的数据，提供更完整的飞行记录、回放、分析和分享能力。
 - **本地记录**：飞行数据可以在设备本地记录，为飞行复盘和个人飞行档案提供基础。
@@ -96,7 +96,7 @@ Portable ADS-B receivers and flight data boxes already exist, including Stratux,
 
 Pilot Kit Box focuses on:
 
-- **Low cost**: ESP32-P4, RTL-SDR, display, IMU, and common power modules keep the hardware approachable.
+- **Low cost**: ESP32-P4, the v3/v4 expansion board (its own 1090 MHz receive chain — no RTL-SDR dongle), display, IMU, and common power modules keep the hardware approachable.
 - **General-purpose use**: it is not locked to one app; it can run on its own and already speaks standard aviation data interfaces (GDL90).
 - **Tight Pilot Kit integration**: Pilot Kit can use Box data for richer flight records, replay, analysis, and sharing.
 - **Local recording**: flight data can be recorded on the device for review and personal archives.
@@ -106,9 +106,9 @@ Pilot Kit Box focuses on:
 
 ## 技术概览 / Technical Overview
 
-当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构。1090 MHz 接收按板代有两种形态：**v1/v2 载板**由 ESP32-P4 通过原生 USB 2.0 HS 直接驱动 RTL-SDR dongle；**v3/v4 扩展板**自带 1090 MHz 接收链（QPL9547 LNA + TA0970A SAW + AD8313 对数检波 + TLV3501 比较器），由 RP2040 解码后馈给 P4。两条路径都在本机完成 dump1090 派生的解码、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口以及 LittleFS / MicroSD 文件输出给移动端或调试工具。
+当前 ESP32-P4 版本把传统依赖 Linux 板卡的 ADS-B 接收链路压缩到单片机 + RTOS 架构。1090 MHz 接收由 **v3/v4 扩展板**完成：板载接收链（QPL9547 LNA + TA0970A SAW + AD8313 对数检波 + TLV3501 比较器）把脉冲馈给 RP2040，RP2040 以 PIO+DMA 捕获双沿、重建 56/112-bit Mode-S 帧，再经 921600 UART 送 ESP32-P4 做 CRC 过滤、CPR 定位融合、飞机状态聚合，并通过 BLE GATT、串口以及 LittleFS / MicroSD 文件输出给移动端或调试工具。（早期 v1/v2 载板走 P4 原生 USB 2.0 HS 驱动 RTL-SDR dongle 的路径已退役，固件与组件树均不再包含该代码。）
 
-The ESP32-P4 edition removes the Linux SBC from the ADS-B path. The 1090 MHz receive chain comes in two board-generation flavors: on the **v1/v2 carriers** the P4 drives an RTL-SDR receiver over native USB 2.0 HS, while the **v3/v4 expansion boards** carry their own 1090 MHz receive chain (QPL9547 LNA + TA0970A SAW + AD8313 log detector + TLV3501 comparator) decoded by an RP2040 and fed to the P4. Both paths decode dump1090-derived frames on-device, fuse per-aircraft state, and publish traffic over BLE GATT, serial output, and LittleFS or MicroSD logs.
+The ESP32-P4 edition removes the Linux SBC from the ADS-B path. The 1090 MHz receive chain lives on the **v3/v4 expansion boards**: the onboard chain (QPL9547 LNA + TA0970A SAW + AD8313 log detector + TLV3501 comparator) feeds pulses to an RP2040, which captures dual edges via PIO+DMA, rebuilds 56/112-bit Mode S frames, and ships them to the ESP32-P4 over a 921600-baud UART for CRC filtering, CPR position fusion, and per-aircraft state aggregation, published over BLE GATT, serial output, and LittleFS or MicroSD logs. (The early v1/v2-carrier path — the P4 driving an RTL-SDR dongle over native USB 2.0 HS — is retired; neither the firmware nor the component tree still carries it.)
 
 ## 安全与适航边界 / Safety And Certification Boundary
 
@@ -133,7 +133,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 - 新增 360° 交通雷达、PFD HSI 前方交通叠加和统一 own-ship 航向决策。<br>Adds the 360-degree traffic radar, forward-traffic HSI overlay, and unified own-ship heading selection.
 - 新增 BMP388 气压高度/升降率、可调 QNH，以及可滚动实时 DIAG 页面。<br>Adds BMP388 altitude/vertical speed, adjustable QNH, and the scrollable live DIAG page.
-- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 仍是未实现预留。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS remains an unimplemented reservation.
+- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 已被固件消费，用于时间锁定判定（fix 有效 + PPS <2 s + NMEA <5 s）；把该新鲜度接入生产时间服务仍是后续任务。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS is now consumed for the time-lock status (valid fix + PPS <2 s + NMEA <5 s); wiring that freshness into the production time service remains a follow-up.
 - 新增 MicroSD 探测、Flash/MicroSD 日志切换、约 1 GiB 轮转保留和受保护格式化。<br>Adds MicroSD detection, Flash/MicroSD log selection, about 1 GiB rotation retention, and guarded formatting.
 - 完成 2.4 寸载板、板载 1090 MHz IFA 天线、3D 打印外壳和面板原型实物验证。<br>Documents the fabricated 2.4-inch carrier, on-board 1090 MHz IFA antenna, printed enclosure, and faceplate prototype.
 
@@ -142,14 +142,14 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | 功能 | Feature | 状态 / Status |
 |---|---|---|
 | ESP32-P4 + FreeRTOS 固件，无 Linux 启动链路 | ESP32-P4 + FreeRTOS firmware, no Linux boot chain | 已实现 / Implemented |
-| USB 2.0 HS 直连 RTL-SDR，1090 MHz，2 MSPS IQ8 数据流（v1/v2 载板路径） | USB 2.0 HS RTL-SDR path at 1090 MHz, 2 MSPS IQ8 (v1/v2 carrier path) | 已实现 / Implemented |
-| 512 KiB IQ ring buffer、非阻塞 USB 回调、DSP 任务解码 | 512 KiB IQ ring buffer, non-blocking USB callback, DSP decode task | 已实现 / Implemented |
+| RP2040 拓展板双沿捕获 1090 MHz ADS-B，921600 UART 送 P4 解码（USB RTL-SDR 路径已退役） | RP2040 add-on dual-edge capture of 1090 MHz ADS-B, raw frames to the P4 over 921600-baud UART (USB RTL-SDR path retired) | 已实现 / Implemented |
+| `adsb_lnk` 任务：921600 UART 收 RP2040 帧、CRC 过滤后进 CPR/融合与记录链 | `adsb_lnk` task: RP2040 frames over 921600-baud UART, CRC-filtered into the CPR/fusion and recording chain | 已实现 / Implemented |
 | dump1090 派生 Mode-S 解码、CRC 过滤、CPR 全球定位 | dump1090-derived Mode-S decode, CRC filtering, CPR global position decode | 已实现 / Implemented |
 | 最多同时跟踪 64 个 ADS-B / Mode-S 目标，并聚合呼号、高度、位置、速度、垂直速度、应答机码和机型信息 | Tracks up to 64 ADS-B / Mode-S targets at once, aggregating callsign, altitude, position, velocity, vertical rate, squawk, and aircraft type | 已实现 / Implemented |
 | UART、LittleFS / MicroSD 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS/MicroSD files, and BLE raw ts-line output | 已实现 / Implemented |
 | BLE GATT：GDL90 Ownship、Traffic、Heartbeat、Raw、Time Sync | BLE GATT: GDL90 Ownship, Traffic, Heartbeat, Raw, and Time Sync | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
-| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 未实现 / Implemented; PPS not implemented |
+| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 已接入时间锁定 / Implemented; PPS consumed for time-lock status |
 | BMP388 气压高度和升降率，QNH 可调 | BMP388 barometric altitude and vertical speed with adjustable QNH | 已实现 / Implemented |
 | ST7701 480×800 MIPI-DSI 面板，PPA 转为 800×480 横屏，双 DPI buffer | ST7701 480×800 MIPI-DSI panel, PPA-transformed to 800×480 landscape with dual DPI buffers | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |
@@ -161,7 +161,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | Settings / About / Diagnostics / Compass Calibration 中英文 UI，配置写入 NVS | English/Chinese Settings, About, Diagnostics, and Compass Calibration UI with NVS persistence | 已实现 / Implemented |
 | Noto Sans SC 字形生成、中文 LCD 锐化曲线、英文硬像素路径 | Noto Sans SC glyph generation, sharpened CJK LCD alpha curve, crisp English bitmap path | 已实现 / Implemented |
 | GT911 触摸 FAB 打开全屏导航网格直接切页（两页 10 项可翻页），FAB 可拖动记忆，详情页三路返回 | GT911 touch FAB opens a full-screen nav grid (10 items on two swipeable pages), remembers FAB position, and provides three detail-page back paths | 已实现 / Implemented |
-| RTL-SDR IQ stall 触发软重连，多次失败后才重启整机（v1/v2 载板路径） | RTL-SDR IQ-stall soft re-init before full restart fallback (v1/v2 carrier path) | 已实现 / Implemented |
+| RP2040 链路健康监测：HELLO 心跳、链路停滞检测，诊断页显示收帧/坏 CRC | RP2040 link health: HELLO heartbeat and stalled-link detection; the diag page shows link rx/bad-CRC | 已实现 / Implemented |
 
 ## 硬件清单 / Hardware Bill of Materials
 
@@ -218,11 +218,11 @@ board. Legacy EasyEDA sources:
 |---|---|---|
 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Rev1.2 一体板：ESP32-P4NRW32、32 MB NOR、32 MB PSRAM、ESP32-C6、ST7701 和 GT911。<br>Rev1.2 integrated board with ESP32-P4NRW32, 32 MB NOR, 32 MB PSRAM, ESP32-C6, ST7701, and GT911. |
 | USB-C 数据线 | USB-C data cable | 用于 P4 烧录、串口监视和供电；必须是数据线。<br>Used for P4 flashing, serial monitoring, and power; it must support data, not charge-only. |
-| RTL-SDR FC0013 USB Dongle | RTL-SDR FC0013 USB dongle | 当前推荐 FC0013 tuner 版本，成本低，适合本项目 1090 MHz ADS-B 接收；固件按 1090 MHz / 2 MSPS 配置，并使用最大手动增益。<br>Currently recommended with the FC0013 tuner because it is inexpensive and suitable for this 1090 MHz ADS-B receiver; firmware defaults to 1090 MHz / 2 MSPS and max manual gain. |
-| USB-C OTG 转接头或有源 USB Hub | USB-C OTG adapter or powered USB hub | 仅裸板需要：把 RTL-SDR 接到 H2 原生 USB 2.0 HS Type-C。装上载板时 dongle 直接插载板 USB-A（走 J3-27/25），H2 空置；P1 是 C6 下载排针。<br>Bare board only: connects RTL-SDR to the H2 native USB 2.0 HS Type-C. With the carrier fitted the dongle plugs into the carrier USB-A (J3-27/25) and H2 stays empty; P1 is the C6 download header. |
-| 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接 RTL-SDR；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the RTL-SDR; real-world range depends strongly on antenna placement and power noise. |
+| 1090 MHz 前端：v3/v4 RP2040 扩展板 | 1090 MHz front-end: v3/v4 RP2040 expansion board | 板载接收链（QPL9547 LNA + TA0970A SAW + AD8313 + TLV3501）与 RP2040 解码，天线接扩展板天线接口（V4 为板载 ANT1）。<br>Onboard receive chain (QPL9547 LNA + TA0970A SAW + AD8313 + TLV3501) with RP2040 decode; the antenna connects to the expansion board's antenna port (V4: onboard ANT1). |
+| RTL-SDR FC0013 USB Dongle + OTG 转接头（仅 v1/v2 历史） | RTL-SDR FC0013 USB dongle + OTG adapter (v1/v2 historical only) | 已退役路径的遗留硬件：USB RTL-SDR 支持已从固件与组件树移除，仅旧载板存量用户参考。<br>Legacy hardware of a retired path: USB RTL-SDR support has been removed from the firmware and component tree; kept for reference by legacy v1/v2-carrier users only. |
+| 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接扩展板天线接口；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the expansion board's antenna port; real-world range depends strongly on antenna placement and power noise. |
 | GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
-| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；PPS 接 GPIO50 但固件未使用。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; PPS is wired to GPIO50 but unused by firmware. |
+| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 9600 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；GPIO50 PPS 已被固件消费（1 Hz 快照用于时间锁定状态，授时服务接线为后续任务）。<br>UART1 at 9600 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; the GPIO50 PPS input is consumed by firmware (1 Hz snapshot feeds the time-lock status; time-service wiring remains a follow-up). |
 | BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
 
 ### 集成扩展板 V4.0（研发中）/ Integrated Expansion Board V4.0 (In Development)
@@ -231,18 +231,21 @@ board. Legacy EasyEDA sources:
 |---|---|
 | <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.0, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.0, bottom side" width="420"> |
 
-上面「必备硬件」里的 RTL-SDR dongle、BNO085、GT-U8 和 BMP388 四个分立模块，
-正在被一块**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
-把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，不再需要
-RTL-SDR dongle**。工程、文档与制造包在
+上面「必备硬件」里的 BNO085、GT-U8 和 BMP388 三个分立模块，正在被一块
+**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
+把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，
+不再需要 RTL-SDR dongle**（该 USB 路径已随 v1/v2 载板退役，固件与组件树
+均不再包含）。工程、文档与制造包在
 [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)（该目录的
 [README](hardware/expansion-board-v4/README.md) 是双语的）。
 
-The four discrete modules listed under Required Hardware above (RTL-SDR dongle,
-BNO085, GT-U8, BMP388) are being replaced by a single **integrated expansion
+The three discrete modules listed under Required Hardware above (BNO085,
+GT-U8, BMP388) are being replaced by a single **integrated expansion
 board**. It stacks onto the Waveshare carrier's 2×20 header as a HAT and folds
 the receive chains, sensors, and power into one 6-layer PCB — including its own
-**1090 MHz receive chain, so no RTL-SDR dongle is needed**.
+**1090 MHz receive chain, so no RTL-SDR dongle is needed** (that USB path is
+retired along with the v1/v2 carriers; neither the firmware nor the component
+tree still carries it).
 
 | 项目 | Item | 规格 / Specification |
 |---|---|---|
@@ -303,7 +306,7 @@ counterpart; see the v4 README for the full index.
 | 杜邦线 / 短接线 | Jumper wires / shorting wire | 连接 IMU/GPS/BMP388，以及 C6 首次烧录时把 P1-3 IO9 短接到 GND。<br>Used for IMU/GPS/BMP388 wiring and shorting P1-3 IO9 to GND during first-time C6 flashing. |
 | 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | 电池供电版本使用；给系统提供稳定 5V 输入。<br>Used in battery-powered builds to provide a stable 5V system input. |
 | 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | 便携版本的电源选项；容量可按外壳和续航目标调整。<br>Portable power option; capacity can be adjusted for enclosure size and endurance target. |
-| 5 V 外部供电 | External 5 V power | RTL-SDR 功耗约数百 mA，电脑 USB 口供电不稳时建议使用更可靠供电。<br>RTL-SDR dongles can draw a few hundred mA; use a reliable 5V supply if a computer USB port is unstable. |
+| 5 V 外部供电 | External 5 V power | 1090 MHz 接收链（LNA 偏置 + RP2040 扩展板）功耗数百 mA，电脑 USB 口供电不稳时建议使用更可靠供电。<br>The 1090 MHz receive chain (LNA bias + RP2040 expansion board) draws a few hundred mA; use a reliable 5V supply if a computer USB port is unstable. |
 | 外壳、支架、屏蔽和固定件 | Enclosure, mounts, shielding, fixtures | 当前仓库主要维护固件和接线文档，机械结构可按实际安装补充。<br>This repository mainly maintains firmware and wiring docs; mechanical parts should be adapted to the actual installation. |
 
 ### 板载资源 / On-board Resources
@@ -324,7 +327,7 @@ counterpart; see the v4 README for the full index.
 |---|---|---|
 | `firmware/` | `firmware/` | ESP-IDF v6.0.1 固件工程 / ESP-IDF v6.0.1 firmware project |
 | `firmware/main/` | `firmware/main/` | 应用层 C 源码和编进固件的识别数据表（航司代码、ICAO24 国家段） / Application C sources and the identity tables compiled into the firmware (airline codes, ICAO24 countries) |
-| `firmware/components/esp32-rtl-sdr/` | `firmware/components/esp32-rtl-sdr/` | RTL-SDR USB/SDR 组件 / RTL-SDR USB/SDR component |
+| `firmware/components/` | `firmware/components/` | 工程内组件（adsb_link 编解码、LCD 驱动等） / In-tree components (adsb_link codec, LCD drivers, …) |
 | `firmware/scripts/` | `firmware/scripts/` | 字体、数据库和测试脚本 / Font, database, and test scripts |
 | `hardware/expansion-board-v4/` | `hardware/expansion-board-v4/` | **当前硬件目标**：6 层集成扩展板 KiCad 工程、生成/校验脚本与装配文档 / **Current hardware target**: 6-layer integrated expansion board — KiCad project, generator/verification scripts, and assembly docs |
 | `hardware/expansion-board-v3/` | `hardware/expansion-board-v3/` | 上一版 4 层扩展板（v3.2 已打样，已归档；仍用于固件调试）——见其 [README](hardware/expansion-board-v3/README.md) / Previous 4-layer expansion board (v3.2 fabricated, **archived**; still used for firmware debugging) — see its [README](hardware/expansion-board-v3/README.md) |
@@ -359,7 +362,7 @@ The box uses three local identity databases so ICAO24 addresses and ADS-B callsi
 | 集成移动端 BLE | Integrate a mobile BLE client | [`docs/ble_protocol.md`](docs/ble_protocol.md) | [`docs/ble_protocol-zh_CN.md`](docs/ble_protocol-zh_CN.md) |
 | 维护航空识别数据库 | Maintain the aviation identity databases | [`docs/database_maintenance.md`](docs/database_maintenance.md) | [`docs/database_maintenance-zh_CN.md`](docs/database_maintenance-zh_CN.md) |
 | 使用 4.3 寸触摸 UI 和 PFD | Use the 4.3-inch touch UI and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
-| 接 IMU、GPS、BMP388、RTL-SDR 或 J3 扩展 | Wire IMU, GPS, BMP388, RTL-SDR, or J3 expansion | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
+| 接 IMU、GPS、BMP388 或 J3 扩展（v1/v2 的 RTL-SDR 路径已退役） | Wire IMU, GPS, BMP388, or J3 expansion (v1/v2 RTL-SDR path retired) | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
 | 装配 / 复刻 V4 扩展板 | Assemble or replicate the V4 expansion board | [`hardware/expansion-board-v4/README.md`](hardware/expansion-board-v4/README.md) | 同左（各文档附 `-zh_CN.md` 中文版）/ same (each doc has a `-zh_CN.md` counterpart) |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |
 | 浏览全部文档语言覆盖 | Browse all docs and language coverage | [`docs/README.md`](docs/README.md) | [`docs/README-zh_CN.md`](docs/README-zh_CN.md) |
@@ -399,7 +402,7 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - GDL90 Heartbeat 的 `utc_ok` 位尚未随 GPS/BLE 校时状态更新；客户端应以时间戳值为准。
 - Wi-Fi 分发、BLE 配置写特征和 OTA A/B 分区仍是后续工作。
 - GDL90 Ownship Report 需要有效 GPS fix 或编译期配置的本机 ICAO；无有效位置时不会发送可信本机位置。
-- GPIO50 PPS 只是接线预留；当前固件没有 PPS GPIO 中断或授时纪律。
+- GPIO50 PPS 已由固件消费：PPS GPIO 中断（1 Hz 快照）与时间锁定状态已实现；授时（settimeofday 级）接线仍为后续任务。
 - 当前触摸 UI 没有旧 TARE 十秒工厂重置/DCD 擦除入口。
 
 - The current GT911 firmware consumes only the first contact; five-point gestures are not enabled.
@@ -407,7 +410,7 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - The GDL90 Heartbeat `utc_ok` bit does not yet follow GPS/BLE clock discipline; clients should use the timestamp value.
 - Wi-Fi distribution, BLE configuration-write characteristics, and OTA A/B partitions remain future work.
 - GDL90 Ownship Report requires a valid GPS fix or a compile-time own-ship ICAO; the firmware does not advertise a trustworthy own position without one.
-- GPIO50 PPS is only a wiring reservation; current firmware has no PPS GPIO interrupt or time discipline.
+- The GPIO50 PPS input is now consumed by firmware: a PPS GPIO interrupt (1 Hz snapshot) and the time-lock status are in place; time discipline at the settimeofday level remains a follow-up.
 - The touch UI has no equivalent of the former ten-second TARE factory-reset/DCD-wipe gesture.
 
 ## 致谢 / Credits
