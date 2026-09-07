@@ -64,18 +64,27 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
    命令待发或 (b) SUBG_IRQ 为高时发起事务；slave 无时钟即无法应答，故 slave
    从不"主动说话"，只能经 IRQ 声明（§1）。
 3. **slave pending 装载规则**（CSN 上升沿时刻按序判定，唯一结果；决定下一
-   事务的 MISO）：
+   事务的 MISO）。**直接应答优先于事件**：应答（PONG/STATUS 等）没有后备
+   队列，单槽下被事件挤掉即**永久丢失**；而事件始终留在 slave 事件队列、
+   IRQ 保持有效，延后一取零丢失——故顺序为：
    1. 上一事务交付的 RX_DESCRIPTOR 尚有未取分片，且本事务命令为 IRQ_ACK →
-      装入下一片 RX_PAYLOAD_CHUNK（§4.4）；
-   2. 否则存在顺延的 ERROR 待交付（§5.6）→ 装入该 ERROR；
-   3. 否则事件队列非空 → 装入队头事件（RX_DESCRIPTOR 或 QUEUE_FULL）；
-   4. 否则本事务命令有直接应答（HELLO→HELLO、PING→PONG、RF_CONFIG→
+      装入下一片 RX_PAYLOAD_CHUNK（§4.4；取片是 IRQ_ACK 读的延续，同属
+      直接应答——命令非 IRQ_ACK 时本条不适用，分片保持已装载不丢失）；
+   2. 否则存在顺延的 ERROR 待交付（§5.6）→ 装入该 ERROR（错误申报同样
+      无后备队列，不许被事件覆盖）；
+   3. 否则本事务命令有直接应答（HELLO→HELLO、PING→PONG、RF_CONFIG→
       RF_CONFIG_STATUS、RESET_STATUS_REQ→RESET_STATUS、UPGRADE_STATUS_REQ→
-      UPGRADE_STATUS）→ 装入应答；
-   5. 否则装入全 0x00（无帧）。查询类命令在事件队列非空时其应答顺延到队列空
-      （事件优先于查询应答）。**全 0x00 的事务是合法的『无帧』结果**：接收方
+      UPGRADE_STATUS）→ 装入应答（seq 回显本命令，§3.5）；
+   4. 否则事件队列非空 → 装入队头事件（RX_DESCRIPTOR 或 QUEUE_FULL）；
+   5. 否则装入全 0x00（无帧）。**全 0x00 的事务是合法的『无帧』结果**：接收方
       校验 MISO 时，magic 不符且整缓冲为全 0x00 → 合法空事务，不计任何错误；
       magic 不符且缓冲含非 0 字节 → 才计 resyncs（§5.2）。
+   **饥饿权衡（诚实声明）**：规则 3 使事件在命令连续到达时被推迟，v1 接受此
+   权衡——master 命令速率低（PING 1 Hz、查询按需、drain 态禁一切命令），
+   事件永不丢失（队列 + IRQ 仍有效，命令一停即被取走），不存在无界等待的
+   单边路径（§6.6 看护、§7.2 drain 均兜底）。走查：①队列非空时收到
+   RF_CONFIG → STATUS 胜出装入，事件延后、IRQ 保持高，下一事务 IRQ_ACK 取走；
+   ②PING 同理（PONG 胜出）；③背靠背命令——各应答即时装入、事件排队等待。
 4. **不是寄存器模型。** 本协议是消息协议：slave 不暴露任何寄存器地址空间，
    一切交互经帧内 msg_type 语义（PLAN §0.1/§5.2 约束：不得把 CC1312R 当作
    无固件寄存器外设）。
@@ -111,11 +120,14 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 - **3.4 seq 回绕**：接收方以 `(u16)(seq_now − seq_prev)` 做无符号差值判定（§5.5）；
   `0xFFFF → 0x0000` 为正常回绕，不是错误。
 - **3.5 seq 回显（延迟应答模型，§2.2）**：应答类帧（HELLO 应答、PONG、
-  RF_CONFIG_STATUS、RESET_STATUS、UPGRADE_STATUS、ERROR、RX_PAYLOAD_CHUNK）
-  的 seq = 其所应答命令帧的 seq 原样回显；事件类帧（RX_DESCRIPTOR、
-  QUEUE_FULL）的 seq = slave 自有计数器，每发一帧 +1（模 2^16）。接收方
-  seq_gaps 判定（§5.5）仅对事件类帧按到达顺序执行，应答类帧不参与 gap 判定
-  （其 seq 由命令决定，回显重复/乱序均合法）。
+  RF_CONFIG_STATUS、RESET_STATUS、UPGRADE_STATUS、命令性 ERROR）的 seq =
+  其所应答命令帧的 seq 原样回显；事件类帧（RX_DESCRIPTOR、QUEUE_FULL）的
+  seq = slave 自有计数器，每发一帧 +1（模 2^16）。接收方 seq_gaps 判定
+  （§5.5）仅对事件类帧按到达顺序执行，应答类帧不参与 gap 判定（其 seq 由
+  命令决定，回显重复/乱序均合法）。**ERROR 的 seq 按 code 分两类**：
+  0x01–0x03（版本/状态/RF_CONFIG，回应具体命令）回显命令 seq；0x04（溢出
+  通报）/0x05（内部错误）为**异步事件**、无对应命令——seq 恒为 `0x0000`
+  哨兵（『无命令』），接收方不得对其做 seq 对账或 gap 判定（§4.9）。
 
 ## 4. 消息类型（v1）
 
@@ -123,8 +135,8 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 |---|---|---|---|---|
 | 0x01 | HELLO | 双向 | §4.1 | 未 LINKED 时 master 每 500 ms 重发 |
 | 0x02 | IRQ_ACK | master→slave | 空（len=0） | 每取一事件/一片一发 |
-| 0x03 | PING | master→slave | 空（len=0） | LINKED 后 1 Hz 看护（drain 挂起） |
-| 0x04 | PONG | slave→master | 空（len=0） | 仅应答 PING |
+| 0x03 | PING | master→slave | 空（len=0） | LINKED 后 1 Hz 看护（drain 挂起）；WAIT_HELLO 对 PING 静默（§6.2） |
+| 0x04 | PONG | slave→master | 空（len=0） | 仅 **LINKED 态**应答 PING（§6.2） |
 | 0x10 | RX_DESCRIPTOR | slave→master | §4.3 | 事件到达即入队 |
 | 0x11 | RX_PAYLOAD_CHUNK | slave→master | §4.4 | 仅紧随其 RX_DESCRIPTOR |
 | 0x12 | QUEUE_FULL | slave→master | §4.5 | 队列满置位时入队一次，清空后复置可再发 |
@@ -229,7 +241,9 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 `{u8 code; u8 len; u8 msg[len]}`，len ≤ 32，msg 为 UTF-8 诊断串（非 NUL 结尾
 也合法，以 len 为准）。code：0x01=版本不符（拒收异版本帧后的主动申报）、
 0x02=命令与接收方状态机不符、0x03=RF_CONFIG 写被拒、0x04=slave RX 溢出通报、
-0x05=固件内部错误。保留 code ≥ 0x06。接收方对 ERROR 仅计数，不改变自身
+0x05=固件内部错误。保留 code ≥ 0x06。**seq 语义（§3.5）**：code 0x01–0x03
+回显其所应答命令的 seq；code 0x04/0x05 为异步事件、seq 恒 = `0x0000` 哨兵。
+接收方对 ERROR 仅计数，不改变自身
 状态机（发送方状态机亦不受对方 ERROR 影响——错误经计数器与诊断呈现）。
 
 ## 5. 接收校验与恢复行为（两侧行为一致，由共享 codec 保证）
@@ -260,10 +274,14 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 2. **WAIT_HELLO**：master 每 500 ms 发 HELLO。复位后 slave 的 pending 槽为空
    （§2.2），故事务 1 的 MISO 为全 0x00（合法『无帧』）；slave 在事务 1 完成
    时装入 HELLO 应答（seq 回显，§3.5），事务 2——即 500 ms 后的 HELLO 重发
-   ——取走：**握手在首次重发事务完成，≈ 500 ms**。master 在 WAIT_HELLO 态
-   收到全 0x00 MISO 按 §2.3 规则 5 合法『无帧』处理：忽略、不计错误、继续
-   重试。slave 在 WAIT_HELLO 态仅受理 HELLO/PING/ERROR，其余命令整事务作废
-   并计 prelink_reject（pending 装载为全 0，不回 ERROR）。master 收到 ver=1
+   ——取走：**握手在首次重发事务完成，≈ 500 ms**。
+   **WAIT_HELLO 应答策略（完整裁决，仅此一处）**：HELLO → 装入 HELLO 应答
+   （握手段，不删）；PING → **静默**（装入全 0——PONG 是 LINKED 态专属，
+   否则 slave 自复位后 master 会永远收到合法 PONG、3 s 看护永不触发，形成
+   假活/split-brain）；ERROR → 仅计数、不装载应答；其余命令（业务/查询/写）
+   → 整事务作废、计 prelink_reject、装载全 0。master 在 WAIT_HELLO 态收到
+   全 0x00 MISO 按 §2.3 规则 5 合法『无帧』处理：忽略、不计错误、继续重试。
+   master 收到 ver=1
    的合法 slave HELLO → LINKED；slave 同理。
    **任一侧 ver ≠ 1：拒收、计 version_mismatch、装入 ERROR{0x01} 于下一事务、
    永不进入 LINKED**（禁盲目互通，对齐 P0a §3.2）。连续 10 次 HELLO 无合法
@@ -283,11 +301,14 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
    随重启清零，与本条不冲突。
 6. **IRQ 丢失恢复（超时轮询兜底）**：LINKED 态 master 以 1 Hz 发 PING，
    **不看 IRQ**。延迟应答下 PING 事务 N 的 MISO 是 N−1 的结果（§2.2）；PING
-   自身的应答按 §2.3 装入 pending（有事件装事件、无事件装 PONG），由下一
-   事务取走。三态走查（无死锁/活锁）：① **drain 态**（§7.2）——PING 挂起，
-   全部事务为 IRQ_ACK 流水，事件流即活性证明；② **WAIT_HELLO 态**——master
-   只发 HELLO，应答一拍后到达（§6.2），继续按 500 ms 重试即可；③ **LINKED
-   空闲态**——PING→PONG 一拍往返，1 Hz 看护成立。
+   自身的应答按 §2.3 装入 pending——PONG 优先于事件（§2.3 规则 3），队列非
+   空时事件顺延一拍——由下一事务取走。三态走查（无死锁/活锁）：① **drain
+   态**（§7.2）——PING 挂起，全部事务为 IRQ_ACK 流水，事件流即活性证明；
+   ② **WAIT_HELLO 态**——master 只发 HELLO，应答一拍后到达（§6.2），继续按
+   500 ms 重试即可；**PING 在此态被 slave 静默**——这正是 slave 自复位后
+   master 看护得以触发的机制（B.3 走查 B30：PING 落空 > 3 s → RECOVERY →
+   RESET → 重握手 → RF_CONFIG 重发）；③ **LINKED 空闲态**——PING→PONG 一拍
+   往返，1 Hz 看护成立。
    以下任一条件成立 → master 进入 RECOVERY：RESET_N 低 ≥ 1 ms → 回步骤 1：
    - LINKED 态 > 3 s 未收到任何合法 MISO 帧（drain 挂起 PING 时以事件流为
      活性证明，不计时）；
@@ -480,6 +501,16 @@ B29 N9 掩码 HELLO   seq=0002 fw=1.2 reset 源值 0x1F → 线上 0x0F
   500 ms 重发）的 MISO = slave HELLO（**seq 回显 A**，非 A+1——应答对应的是
   它所应答的命令）→ master 判 LINKED。帧本体复用 B2（解码路径）与 B23
   （全 0 事务路径），无独立十六进制。
+- **B30（§6.2/§6.6）slave 自复位恢复走查**：LINKED 态 slave 自复位（pending
+  槽清空、回 WAIT_HELLO、RF 配置清零）→ master PING 落入静默（WAIT_HELLO
+  对 PING 装载全 0，§6.2 应答策略）→ > 3 s 无任何合法 MISO 帧 → §6.6
+  RECOVERY（RESET_N ≥ 1 ms）→ slave 全态清零重来 → HELLO ×2（T1 全 0、
+  T2 应答，同 B26）→ LINKED → 1 s 内 RF_CONFIG 查询/重发（§6.4）。旧模型
+  「WAIT_HELLO 仍答 PING」造成的 PONG 假活/split-brain 路径已由 P1-b 关闭。
+- **B31（§2.3 规则 3/4）应答优先走查**：队列非空时 master 发 RF_CONFIG →
+  事务 N+1 的 MISO = RF_CONFIG_STATUS（直接应答胜出，seq 回显）；事件仍在
+  队头、IRQ 保持高 → 事务 N+2 发 IRQ_ACK 取走该事件。PING 落在队列非空时
+  同理（PONG 胜出）。无后备队列的应答不再可能被单槽覆盖丢失。
 
 正向向量 B2–B17 覆盖 §4 表全部 14 种 msg_type（5 条空载荷命令共用
 `rp_cc13xx_encode_empty`）；负路径 B18–B23、B27–B29 对应 §5.2/§5.4/§6.2/
@@ -532,3 +563,4 @@ B29 N9 掩码 HELLO   seq=0002 fw=1.2 reset 源值 0x1F → 线上 0x0F
 | R2（`e33db63`） | 0x00/0xFF 合法帧（magic+CRC 合法）接收行为入文（按未知类型容忍）；RX_DESCRIPTOR flags 与 QUEUE_FULL reserved 的接收校验规则补齐（同 §4.8 句式） | §4 表注、§4.3、§4.5 |
 | R3（`af3a5cb`） | **事务模型修订为延迟应答（pending）**：同事务请求→应答在 SPI 全双工线上无因果路径（命令类型在 MOSI 字节 3，MISO 字节 0 已先移出）——事务 N 的 MISO = 事务 N−1 命令的应答；单 pending 槽、空槽装全 0；应答 seq 回显（§3.5）；IRQ_ACK 即读触发；握手改为 T2（首次重发）完成；PING/drain 走查入 B.3。依据：独立审计指出物理不可实现性（SPI 从机 CSN 下降沿预装 DMA 缓冲的实现合同随之入文 §2.1） | §2、§3.5、§4.2、§5.5、§5.6、§6.2、§6.6、§7.2、B.3、C.2 |
 | R4（本提交） | 边界强制补齐：零长分片拒绝（§4.4，防重组活锁）；total_len ≤ 4096 编码/解码两侧强制（§4.3，此前仅重组侧拒绝）；reset_reason 发送边界掩码 &0x0F（§4.1，线上合同）。新负向量 B27/B28/B29 | §4.1、§4.3、§4.4、B.1/B.2 |
+| R5（本提交） | 审计 round 6 状态机裁决：①**直接应答优先于事件**（§2.3——单槽下无后备队列的应答被事件挤掉即永久丢失；事件有队列 + IRQ 兜底，延后零丢失；饥饿权衡诚实声明 + B31 走查）；②**WAIT_HELLO 对 PING 静默**（§6.2 完整应答策略；关闭 slave 自复位后 PONG 假活/split-brain，3 s 看护自此可触发；PING/PONG 表行限定 + B30 走查）；③**异步 ERROR seq 哨兵**（§3.5/§4.9——code 0x01–0x03 回显命令 seq，0x04/0x05 恒 0x0000） | §2.3、§3.5、§4 表、§4.9、§6.2、§6.6、B.3 |
