@@ -357,6 +357,7 @@ The box uses three local identity databases so ICAO24 addresses and ADS-B callsi
 | 从零安装、编译、烧录 | Set up, build, and flash from scratch | [`docs/BUILD.md`](docs/BUILD.md) | [`docs/BUILD-zh_CN.md`](docs/BUILD-zh_CN.md) |
 | 用网页更新 ESP32-P4 固件 | Update ESP32-P4 firmware from browser | [updater.pilotkit.app](https://updater.pilotkit.app) | [updater.pilotkit.app](https://updater.pilotkit.app) |
 | 发布维护者固件包 | Publish a maintainer firmware release | [`docs/firmware_update.md`](docs/firmware_update.md) | [`docs/firmware_update-zh_CN.md`](docs/firmware_update-zh_CN.md) |
+| 更新扩展板 RP2040 固件（Release 附 UF2） | Update the RP2040 expansion-board firmware (UF2 shipped with releases) | [`docs/firmware_update.md`](docs/firmware_update.md) | [`docs/firmware_update-zh_CN.md`](docs/firmware_update-zh_CN.md) |
 | 看运行时任务和数据流 | Understand runtime tasks and data flow | [`docs/architecture.md`](docs/architecture.md) | [`docs/architecture-zh_CN.md`](docs/architecture-zh_CN.md) |
 | 调整 sdkconfig | Tune sdkconfig options | [`docs/configuration.md`](docs/configuration.md) | [`docs/configuration-zh_CN.md`](docs/configuration-zh_CN.md) |
 | 集成移动端 BLE | Integrate a mobile BLE client | [`docs/ble_protocol.md`](docs/ble_protocol.md) | [`docs/ble_protocol-zh_CN.md`](docs/ble_protocol-zh_CN.md) |
@@ -415,8 +416,8 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 
 ## 致谢 / Credits
 
-- [`kvhnuke/esp32-rtl-sdr`](https://github.com/kvhnuke/esp32-rtl-sdr) — librtlsdr API 封装参考 / librtlsdr API wrapper reference
-- [`XTR1984/xtrsdr`](https://github.com/XTR1984/xtrsdr) — ESP32 USB DMA 分包与吞吐调优参考 / ESP32 USB DMA transfer tuning reference
+- [`kvhnuke/esp32-rtl-sdr`](https://github.com/kvhnuke/esp32-rtl-sdr) — librtlsdr API 封装参考（历史：该路径已于 2026-09 移除）/ librtlsdr API wrapper reference (historical: that path was removed in 2026-09)
+- [`XTR1984/xtrsdr`](https://github.com/XTR1984/xtrsdr) — ESP32 USB DMA 分包与吞吐调优参考（历史：该路径已于 2026-09 移除）/ ESP32 USB DMA transfer tuning reference (historical: that path was removed in 2026-09)
 - dump1090 社区实现 — ADS-B / Mode-S 解码算法基础 / ADS-B / Mode-S decode algorithm foundation
 
 ## 开源协议 / License

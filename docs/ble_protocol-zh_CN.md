@@ -171,7 +171,10 @@ GDL90 byte stuffing 规则：
 - `0x7D` -> `0x7D 0x5D`
 - `0x7E` -> `0x7D 0x5E`
 
-CRC 为 CCITT-16，多项式 `0x1021`，init `0x0000`，低字节先发。
+FCS 为 CRC-CCITT，严格按 ICD §2.2.3 参考算法（256 项表驱动，init
+`0x0000`，**不做增强**——`0xF0B8` 属于 HDLC/X.25，不属于 GDL90），
+低字节先发；已用 ICD §2.2.4 的 golden heartbeat
+`7E 00 81 41 DB D0 08 02 B3 8B 7E` 验证。
 
 发送节奏：存在有效本机来源时，每秒先发送一条 Ownship Report；手动绑定
 ADS-B 本机目标优先，GT-U8 GPS 作兜底。随后对最近 60 秒内仍新鲜的每架
@@ -197,7 +200,10 @@ ADS-B 本机目标优先，GT-U8 GPS 作兜底。随后对最近 60 秒内仍新
 
 GDL90 Heartbeat（msg ID `0x00`），6 字节 payload，同样使用 GDL90 framing。连接且订阅后每秒发送一次。客户端可把超过 5 秒无 Heartbeat 视为链路失效。
 
-`gps_valid` 跟随 GT-U8 RMC 定位状态，`uat_initialised = 1`。当前
+`gps_valid` 跟随 GT-U8 RMC 定位状态。`uat_initialised` 位恒为 1——ICD
+§3.1.1 要求所有 Heartbeat 中该位为 1；尽管名字如此，它表示 GDL90
+*接口*已初始化，与是否存在 UAT 接收机无关（本机没有 UAT 接收机，
+978 MHz 链路尚未实装）。当前
 `v0.8.0` 实现即使已经通过 GPS/BLE 校准系统时间，Heartbeat 的
 `utc_ok` 位仍保持 0；客户端应使用时间戳值，并把该标志视为尚未实现。
 

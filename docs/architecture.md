@@ -13,8 +13,8 @@ diagnostics, IMU and i18n.
 > widths — decodes Mode S, and ships raw frames to the P4's `adsb_lnk` task
 > at 921600 baud for CRC filtering and the on-device fusion chain. Capture /
 > decode details live in `firmware/rp2040`. The v1/v2-era USB RTL-SDR source
-> is retired and no longer diagrammed; it survives only as history rows in
-> the task and memory tables below.
+> was removed in 2026-09 and is no longer diagrammed; see git history for
+> details.
 
 ## Big picture
 
@@ -134,12 +134,13 @@ flowchart LR
 | Task              | CPU | Prio | Stack | Role |
 |-------------------|-----|------|-------|------|
 | `adsb_lnk`        | 1   | 5    | 8 KiB | Runs the RP2040 UART link (adsb_link codec @ 921600 baud, 256-byte reads): feeds CRC-pre Mode-S frames from the RP2040 front-end into modes_ingest, replies to each HELLO, and carries the former DSP business chain (CPR/track/records/1 Hz dashboard). The RP2040 itself captures dual edges via PIO+DMA and decodes 56/112-bit frames with modes_edge; the USB RTL-SDR task pair (`usb_host_lib`/`sdr`) is retired. |
-| `dsp`             | —   | —    | —     | **RETIRED** (v1/v2 USB RTL-SDR era): drained the 512 KiB IQ ring buffer and ran dump1090 magnitude + Manchester decode. Not created anymore; its decode/dispatch duties now live in the RP2040 (`modes_edge`) + `adsb_lnk`/modes_ingest chain. Row kept for history. |
+| `dsp`             | —   | —    | —     | **RETIRED** — removed with the v1/v2 USB RTL-SDR path (2026-09); see git history. Its decode/dispatch duties live in the RP2040 (`modes_edge`) + `adsb_lnk`/modes_ingest chain. |
 | `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the link/decode path off storage writes. |
 | `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot); feeding it into the system clock is a follow-up task. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
+| `pwr`             | 0   | 3    | 4 KiB | 1 Hz poll task behind `power_service`: SY6970 (v4 powered, I²C 0x6A) and ETA6098 (carrier BAT_ADC/STAT) backends feed one stale-aware snapshot; when the SY6970 goes stale the service falls back to the ETA6098. Consumed by the diag battery card and the status bar. |
 | `buttons`         | —   | —    | — | Legacy source retained but not started on the 4.3-inch touch board. |
 | `pfd`             | 0   | 4    | 6 KiB | Renders PFD and UI views into the 800×480 logical framebuffer at ~30 FPS. |
 | `nimble_host`     | 0   | 4    | 4 KiB | NimBLE host event loop, hosts the GATT server; events arrive from the C6 controller over the SDIO/VHCI transport. |
@@ -149,9 +150,7 @@ flowchart LR
 
 | Region | Size | Owner |
 |--------|------|-------|
-| IQ ring buffer | 512 KiB | **RETIRED (v1/v2 USB RTL-SDR era):** `g_iq_ringbuf` — removed with the retired receive path; PSRAM now backs map tiles/fonts/recording and the other working sets below |
-| URB pool       | ~96 KiB | **RETIRED:** 15 × 6400 B in-flight USB transfers |
-| DSP working set| ~12 KiB | **RETIRED:** 8 KiB IQ buf + 4 KiB magnitude buf |
+| IQ ring buffer / URB pool / DSP working set | freed | **RETIRED** with the v1/v2 USB RTL-SDR path (removed 2026-09) — see git history; the PSRAM they held now backs map tiles/fonts/recording and the other working sets below |
 | CPR table      | ~5 KiB  | 64 aircraft slots in `cpr_decode.c` |
 | aircraft_state | ~7 KiB  | 64 slots in `aircraft_state.c` (callsign + alt + position + velocity) |
 | Application framebuffer | 750 KiB | 800×480×16 bpp RGB565-swapped in PSRAM |

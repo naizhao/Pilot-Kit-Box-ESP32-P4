@@ -2,12 +2,12 @@
 
 Chinese version: [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md)
 
-This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware releases, and how end users update the ESP32-P4 main firmware from a browser.
+This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware releases, and how end users update the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2) from a browser.
 
 ## Scope
 
 - Applies to devices whose on-board ESP32-C6 has already been flashed with the ESP-Hosted slave firmware.
-- Updates only the ESP32-P4 main firmware.
+- Updates the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2).
 - Does not update the ESP32-C6 co-processor firmware.
 - Does not require end users to install ESP-IDF, Python, CMake, or Ninja.
 
@@ -104,6 +104,43 @@ If connection fails:
 2. Tap RESET.
 3. Release BOOT.
 4. Return to the web page and reconnect.
+
+## RP2040 Co-processor Firmware (1090 MHz, expansion board)
+
+The RP2040 on the v3/v4 expansion board decodes 1090 MHz Mode-S and runs its
+own firmware (`adsb1090`). It is a separate chip: the web flasher cannot reach
+it (no Web Serial), and it is not part of the ESP32-P4 assets above. The image
+is board-family independent — there is no v3/v4 profile to pick.
+
+### Routine update — BOOTSEL drag-and-drop
+
+1. Get the UF2: the flasher page's RP2040 download card links the latest
+   `adsb1090.uf2`, and every release also ships
+   `pilot-kit-box-rp2040-<version>.uf2` as a Release asset.
+2. Hold **BOOTSEL** on the expansion board and plug the RP2040's USB port into
+   the computer. The RP2040 enumerates as a USB mass-storage drive (`RPI-RP2`).
+3. Drag the `.uf2` onto the drive. The RP2040 reboots into the new firmware
+   automatically.
+
+To build the image from source instead, see
+[`../firmware/rp2040/README.md`](../firmware/rp2040/README.md) for toolchain
+requirements, pinned dependencies, and `./build.sh`.
+
+### Recovery from bad firmware
+
+Repeat the same BOOTSEL procedure. The RP2040's USB mass-storage mode lives in
+its boot ROM and does not depend on the flashed firmware, so a broken image
+cannot lock you out: enter BOOTSEL again and drop the UF2 once more. (ROM
+capability, guaranteed by design; not yet verified on a real board — bench
+validation pending.) Note that the v4 board removed the RP2040 SWD test
+points, so BOOTSEL is the practical recovery path there; a debugger would
+require flying wires to the chip's SWCLK/SWDIO pins.
+
+### CC1312R first flash (978 MHz front-end)
+
+The CC1312R transceiver on the v4 board needs its first flash over the board's
+cJTAG connection; this path has not been exercised yet — bench validation
+pending.
 
 ## Limits
 

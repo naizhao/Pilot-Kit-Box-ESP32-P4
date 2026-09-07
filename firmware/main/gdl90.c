@@ -6,10 +6,12 @@
  *   - SoftRF's gdl90.c
  *   - cyoung/stratux gen_gdl90.go
  *
- * The CRC is computed bytewise without a lookup table — the encoder
- * only runs once per aircraft per second (plus heartbeat 1 Hz), so
- * the constant-factor cost is invisible against the BLE I/O budget,
- * and skipping the table saves ~512 B of flash + simplifies audit.
+ * The FCS is the ICD's own reference algorithm (FAA 560-1058-00 Rev A
+ * §2.2.3): a 256-entry table built once at first use — the table costs
+ * 512 B of RAM but the byte-update line the ICD specifies is the
+ * table form, which is NOT algebraically equal to a bitwise loop
+ * (that mismatch was the original encoder bug; see the gdl90_crc
+ * comment below).
  */
 
 #include "gdl90.h"
@@ -19,18 +21,46 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* CRC-16-CCITT (poly 0x1021, init 0x0000, no reflect, no xorout).    */
+/* FCS — FAA 560-1058-00 Rev A §2.2.3, reference algorithm, verbatim   */
+/* semantics.  Two traps, both cost us a round trip:                   */
+/*                                                                     */
+/*   1. The ICD's byte update is `crc = Table[crc >> 8] ^ (crc << 8)   */
+/*      ^ block[i]` (init 0).  This is NOT algebraically equal to the  */
+/*      common bitwise `crc ^= b << 8; 8x shift` loop — our original   */
+/*      encoder used that loop and produced non-compliant FCS bytes    */
+/*      on the wire.                                                   */
+/*                                                                     */
+/*   2. NO 0xF0B8 augmentation.  That constant belongs to HDLC/X.25,   */
+/*      not GDL90.  An augmentation attempt (2026-09-07) was reverted  */
+/*      after golden-vector verification against §2.2.4:               */
+/*         [7E 00 81 41 DB D0 08 02 B3 8B 7E]  (FCS 0x8BB3, LSB first) */
+/*                                                                     */
+/* The table is read-only once built; the BLE emitter task is the      */
+/* only caller today, so the lazy init below has no race in practice.  */
 /* ------------------------------------------------------------------ */
+
+static uint16_t crc_table[256];
+static bool     crc_table_ready;
+
+static void gdl90_crc_init(void)
+{
+    /* ICD §2.2.3 table init, verbatim. */
+    for (int i = 0; i < 256; ++i) {
+        uint16_t crc = (uint16_t)(i << 8);
+        for (int b = 0; b < 8; ++b)
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        crc_table[i] = crc;
+    }
+    crc_table_ready = true;
+}
 
 static uint16_t gdl90_crc(const uint8_t *data, size_t len)
 {
+    if (!crc_table_ready) gdl90_crc_init();
     uint16_t crc = 0;
-    for (size_t i = 0; i < len; ++i) {
-        crc ^= ((uint16_t)data[i]) << 8;
-        for (int b = 0; b < 8; ++b) {
-            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
-        }
-    }
+    for (size_t i = 0; i < len; ++i)
+        crc = (uint16_t)(crc_table[crc >> 8] ^ (uint16_t)(crc << 8) ^ data[i]);
     return crc;
 }
 
@@ -80,17 +110,21 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
 
 size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
                               bool gps_valid,
-                              bool uat_initialised,
                               bool utc_ok,
                               uint32_t uat_timestamp_s,
                               uint8_t msg_count_uplink,
                               uint16_t msg_count_basic_long)
 {
-    /* Status Byte 1: GPS valid + UAT initialised. Everything else is
-     * left at 0 (no maintenance request, no IDENT pressed, etc.). */
-    uint8_t status1 = 0;
-    if (gps_valid)        status1 |= (1 << 7);
-    if (uat_initialised)  status1 |= (1 << 0);
+    /* Status Byte 1: bit 0 is ONE in ALL Heartbeat messages — ICD
+     * §3.1.1 h): "UAT Initialized: This bit is set to ONE in all
+     * Heartbeat messages." It is the interface-initialised talkback;
+     * despite the name it says nothing about UAT receiver capability.
+     * (2026-09-07: a branch briefly cleared this bit to "retire fake
+     * UAT capability" — that was a misreading of the bit name;
+     * reverted, and the trap-named parameter removed.) Everything else
+     * is left at 0 (no maintenance request, no IDENT pressed, etc.). */
+    uint8_t status1 = 0x01;
+    if (gps_valid) status1 |= (1 << 7);
 
     /* Status Byte 2: bit 7 carries the MSB of the 17-bit UAT timestamp;
      * bit 0 is UTC OK. We use 17-bit seconds-since-midnight. */
@@ -102,13 +136,13 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
     uint8_t ts_lsb = (uint8_t)(uat_timestamp_s & 0xFF);
     uint8_t ts_msb = (uint8_t)((uat_timestamp_s >> 8) & 0xFF);
 
-    /* Message Counts: byte 1 carries 5 bits of basic-long uplink count
-     * (bits 6..2) and 5 bits of UAT uplink count (bits 4..0); byte 2
-     * carries the lower 8 bits of basic-long. We approximate by packing
-     * the basic-long count straight and clamping uplink to 5 bits. */
+    /* Message Counts (ICD §3.1.4): byte 1 = uplink count (5 bits) in
+     * [7:3], bit 2 reserved 0, and the two MSBs of the basic/long
+     * count in [1:0]; byte 2 = the lower 8 bits of basic/long. */
     if (msg_count_basic_long > 0x3FF) msg_count_basic_long = 0x3FF;
     if (msg_count_uplink     > 0x1F)  msg_count_uplink     = 0x1F;
-    uint8_t mc1 = ((msg_count_basic_long >> 8) & 0x03) << 5 | (msg_count_uplink & 0x1F);
+    uint8_t mc1 = (uint8_t)(((msg_count_uplink & 0x1F) << 3)
+                            | ((msg_count_basic_long >> 8) & 0x03));
     uint8_t mc2 = (uint8_t)(msg_count_basic_long & 0xFF);
 
     uint8_t payload[6] = { status1, status2, ts_lsb, ts_msb, mc1, mc2 };
@@ -163,7 +197,8 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             int      track_deg,
                             int      ground_speed_kt,
                             int      vert_rate_fpm,
-                            const char *callsign)
+                            const char *callsign,
+                            size_t   callsign_len)
 {
     uint8_t p[27];
     memset(p, 0, sizeof(p));
@@ -242,14 +277,14 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
     /* Byte 17: Emitter Category. 1 = Light aircraft (fits most GA targets). */
     p[17] = 1;
 
-    /* Bytes 18..25: Callsign, 8 ASCII chars padded with space. */
+    /* Bytes 18..25: Callsign, 8 ASCII chars padded with space.  Only
+     * the first callsign_len bytes of callsign are readable — it is
+     * NOT guaranteed NUL-terminated (ble_gatt.c passes a 1-byte ""),
+     * so a length bound is mandatory here; a NUL inside the range
+     * simply pads the rest with spaces. */
     for (int i = 0; i < 8; ++i) {
-        char c = (callsign && callsign[i]) ? callsign[i] : ' ';
-        if (c == '\0') {
-            /* Pad remainder with spaces. */
-            for (int j = i; j < 8; ++j) p[18 + j] = ' ';
-            break;
-        }
+        char c = (callsign && (size_t)i < callsign_len) ? callsign[i] : ' ';
+        if (c == '\0') c = ' ';
         p[18 + i] = (uint8_t)toupper((unsigned char)c);
     }
 

@@ -1,0 +1,99 @@
+# PR 级固件 CI 门禁（WP-F）。在此之前，本仓库没有任何 pull_request 触发的
+# CI：host 套件（统一单测 + host 模拟器 + 协议 codec / mode-s / gdl90 golden
+# vectors）和发布工具单测全靠开发者记得在本地跑。漏跑的那一个，就是合进主线
+# 之后、下次 tag 发布才炸的那一个。这个 workflow 只做"不需要 ESP-IDF 就能
+# 证明"的事，三个 job 相互独立并行，任一失败即门禁失败。
+#
+# 范围取舍（有意为之）：ESP-IDF 双板构建**不进** PR 门禁。单次 IDF 双板构建
+# 是 10 分钟量级，放进每个 PR 会让门禁反馈从分钟级退化成"泡咖啡"级别的等待；
+# 它由 tag 发布流程兜底——release-esp32p4-firmware.yml 发布必跑双板构建，
+# 构建不过资产就发不出去，坏代码到不了用户手里。PR 级门禁的价值是快速挡住
+# "本可以在合入前发现"的回归，不是复刻整个发布验证。
+#
+# 首版不做缓存（apt 工具链、pico-sdk tarball 都直拉）：确定性优先于速度。
+# 缓存命中路径上的陈旧/不一致惊喜，对"结果可信"这个门禁首要目标是负资产；
+# 缓存留作后续可测的优化（YAGNI）。
+name: Firmware PR CI
+
+on:
+  pull_request:
+    paths:
+      # 固件本体、发布工具、发布/部署 workflow 自身，本 workflow，以及
+      # web/flasher 刷机页（release-tools 的测试覆盖刷机页的 manifest
+      # 路径，只改 flasher 的 PR 也必须跑它们）。之外的改动（文档、
+      # KiCad 硬件侧等）不值得烧 PR 分钟数。
+      - "firmware/**"
+      - "tools/firmware_release/**"
+      - "web/flasher/**"
+      - ".github/workflows/firmware-ci.yml"
+      - ".github/workflows/release-esp32p4-firmware.yml"
+      - ".github/workflows/deploy-esp32p4-pages.yml"
+
+permissions:
+  contents: read
+
+# 同一 PR 连续 push 时，旧 commit 的运行结论已无人关心，取消它让最新代码
+# 最先跑。与 release workflow 的 concurrency（cancel-in-progress: false）
+# 互不相干：发布不允许中途取消，PR 门禁恰好相反——留下的必须是最新结论。
+concurrency:
+  group: firmware-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Host 测试套件：统一单测 + 模拟器 + 协议 golden vectors ───────────
+  # run_host_tests.py 从每个测试文件头解析它自己声明的编译命令，编完即跑，
+  # 所以只需要系统 gcc + python3（ubuntu-latest 自带），不需要 ESP-IDF、
+  # 不需要容器——这正是它进得了 PR 级门禁的原因。SKIP（缺第三方依赖）不算
+  # 失败，但会在汇总里单独点名，不会混进"全部通过"。
+  host-tests:
+    name: Host suite (unit + simulator + protocol vectors)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run host test suite
+        run: python3 firmware/test/run_host_tests.py
+
+  # ── 发布工具单测 ────────────────────────────────────────────────────
+  # prepare_esp32p4_release 等工具决定 Release 资产长什么样，坏了要到 tag
+  # 发布才暴露，所以提前到 PR 级。-t . 让 unittest 以仓库根为顶层目录解析
+  # 包结构，与 release workflow 内的调用路径约定一致。
+  release-tools:
+    name: Release tooling unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run release tools unit tests
+        run: python3 -m unittest discover -s tools/firmware_release -t . -q
+
+  # ── RP2040 协处理器固件编译门禁（adsb1090.uf2，1090 解调）────────────
+  # 与 release workflow 的 RP2040 step 用同一份脚本（firmware/rp2040/build.sh，
+  # 本地与 CI 共用，环境差异由脚本自己挡：残留的 PICO_SDK_PATH 会被它主动
+  # unset，避免"本地能用 CI 不能用"的版本 skew）。工具链注意点照搬：
+  # - arm-none-eabi-gcc 走 apt，**必须带 newlib**（pico-sdk 硬编码
+  #   --specs=nosys.specs，缺 libnewlib-arm-none-eabi 必编不过）；
+  # - pico-sdk / tinyusb / picotool 由工程 CMakeLists.txt 的 FetchContent
+  #   tarball pin（带 URL_HASH）自取，无需预装 SDK；cmake / python3
+  #   ubuntu-latest 自带。
+  # 它走 pico-sdk 而非 ESP-IDF，与 IDF 10 分钟量级无关，所以配得上 PR 级。
+  rp2040-build:
+    name: RP2040 coprocessor firmware build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build RP2040 coprocessor firmware
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi
+          arm-none-eabi-gcc --version
+          ./firmware/rp2040/build.sh
+          # build.sh 末尾已断言产物存在；这里再摆一道，让"没有 UF2"失败在
+          # 最直观的一行，而不是埋在几百行 cmake 输出里。
+          test -f firmware/rp2040/build/adsb1090.uf2

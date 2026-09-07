@@ -95,7 +95,7 @@ Leveling cannot correct a wrong axis mapping; it only cages the horizon.
 | **Search** | Search the local aviation databases for airports, navaids and fixes; open details or show one on the map |
 | **Setup** | Language, QNH, map orientation, range, log backend, demo mode and MicroSD formatting controls |
 | **About** | Project version, build information and hardware summary |
-| **Diag** | Live SDR/DSP, BLE, GPS, IMU, barometer, storage, temperature and other subsystem cards; tap a card for detail |
+| **Diag** | Live SDR (ADS-B link), BLE, GPS, IMU, barometer, battery, storage and other subsystem cards; tap a card for detail. The battery card follows the power backend: SY6970 charger state on powered v4 boards, ETA6098 carrier voltage sampling otherwise (percentage is voltage-estimated, not a coulomb count) |
 
 **Log** and **Tools** are greyed placeholders in the grid; those pages are
 not implemented yet. The grid switches top-level pages only; detail pages

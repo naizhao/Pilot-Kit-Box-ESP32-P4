@@ -101,6 +101,41 @@ jobs:
             want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d ' ')
             test "$(ls -1 ../dist/release/*-factory.bin | wc -l)" -eq "${want}"
 
+      # ── RP2040 扩展板固件（adsb1090.uf2，1090 解调协处理器）─────────────
+      # 与 P4 板型无关，只在完整构建时编：半套 P4 发布不允许配一套完整
+      # RP2040。必须放在 ESP-IDF 容器 step 之外——容器里只有 ESP-IDF 工具
+      # 链，RP2040 构建要的是宿主 arm-none-eabi-gcc + cmake + python3
+      # （ubuntu-latest 自带后两者，工具链走 apt，含 newlib 的
+      # libnewlib-arm-none-eabi；pico-sdk/tinyusb/picotool 由工程
+      # CMakeLists.txt 的 FetchContent tarball pin 自取，无需预装 SDK，
+      # 也不读 PICO_SDK_PATH）。
+      #
+      # 顺序契约（探明于 tools/firmware_release/prepare_esp32p4_release.py）：
+      # prepare 刻意**不清空** dist（增量式，两个板型各跑一次，
+      # mkdir(exist_ok=True) + 逐文件 copy，也不触碰 site/firmware/ 子树），
+      # 所以在 P4 构建之后把 rp2040 文件拷进 dist 是安全的——上传时两套
+      # P4 manifest 与 rp2040 UF2 必然同时在。谁给 prepare 加了清理逻辑，
+      # test_prepare_esp32p4_release.py 的 rp2040 断言会先红。
+      - name: Build RP2040 coprocessor firmware
+        if: env.BUILD_IS_COMPLETE == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi
+          arm-none-eabi-gcc --version
+          ./firmware/rp2040/build.sh
+          mkdir -p dist/site/firmware/rp2040/latest
+          cp firmware/rp2040/build/adsb1090.uf2 \
+            dist/site/firmware/rp2040/latest/adsb1090.uf2
+          # 版本号与 P4 资产同规则归一（剥 refs/tags/ 与 esp32p4- 前缀），
+          # 同一个 Release 里的资产名才对得齐。RELEASE_VERSION 来自
+          # workflow 级 env，普通 run step 可直接读。
+          RP2040_VERSION="${RELEASE_VERSION#refs/tags/}"
+          RP2040_VERSION="${RP2040_VERSION#esp32p4-}"
+          cp firmware/rp2040/build/adsb1090.uf2 \
+            "dist/release/pilot-kit-box-rp2040-${RP2040_VERSION}.uf2"
+
       - name: Upload firmware package artifact
         uses: actions/upload-artifact@v4
         with:
@@ -143,8 +178,12 @@ jobs:
           the artificial horizon still shows a live attitude, simply rolled by 90 degrees.
           The boot log line "imu: board profile V3.9|V4.3" confirms what is running.
 
-          Release assets intentionally include "esp32p4" in their filenames so future board families can coexist safely.
-          This release updates only the ESP32-P4 main firmware. It does not update the ESP32-C6 hosted slave firmware.
+          The RP2040 ADS-B coprocessor firmware is published as the pilot-kit-box-rp2040-*.uf2 asset.
+          It cannot be flashed from the browser: hold BOOTSEL while plugging the RP2040 USB port,
+          then drop the .uf2 onto the RPI-RP2 drive that appears. See docs/firmware_update.md.
+
+          Release assets carry board-family identifiers (esp32p4 / rp2040) in their filenames so future board families can coexist safely.
+          This release updates the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2). It does not update the ESP32-C6 hosted slave firmware.
           EOF
 
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then

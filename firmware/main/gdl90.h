@@ -40,11 +40,18 @@
  * bytes written, or 0 if `out_cap` is too small.
  *
  *   gps_valid        — GPS Position Valid flag (Status Byte 1, bit 7)
- *   uat_initialised  — UAT Initialised flag (Status Byte 1, bit 0)
  *   utc_ok           — UTC OK flag (Status Byte 2, bit 0)
  *   uat_timestamp_s  — seconds-since-midnight UTC (0..86400)
  *   msg_count_uplink — running count of received uplink frames (0..31)
  *   msg_count_basic_long — running count of basic/long ADS-B frames (0..1023)
+ *
+ * Status Byte 1 bit 0 ("UAT Initialized") is set to ONE by the encoder
+ * unconditionally: ICD §3.1.1 h) requires it in ALL Heartbeat messages.
+ * Despite the name, the bit is the GDL90 interface-initialised talkback
+ * and says nothing about UAT receiver capability. (2026-09-07: a branch
+ * briefly cleared it via a `uat_initialised` parameter to "retire fake
+ * UAT capability" — a misreading of the bit name; reverted, and the
+ * trap-named parameter removed.)
  *
  * The Heartbeat is the EFB's keep-alive: most apps stop displaying the
  * receiver if no Heartbeat arrives for >5 s, so this MUST be emitted
@@ -52,7 +59,6 @@
  */
 size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
                               bool gps_valid,
-                              bool uat_initialised,
                               bool utc_ok,
                               uint32_t uat_timestamp_s,
                               uint8_t msg_count_uplink,
@@ -62,6 +68,10 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
  * Encode an Ownship (msg ID 0x0A) or Traffic (msg ID 0x14) report.
  * Both message types use the identical 27-byte payload format; pass
  * `is_ownship = true` to set the ID byte to GDL90_ID_OWNSHIP.
+ *
+ * `callsign` is NOT assumed NUL-terminated: only the first
+ * `callsign_len` bytes are read. Bytes beyond the length (or a NUL
+ * inside it) are emitted as spaces, per the 8-char field format.
  *
  * The function clamps each input to its valid range and substitutes
  * the spec's "no data" sentinels (0xFFF for altitude / speed, 0x800
@@ -79,4 +89,5 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             int      track_deg,
                             int      ground_speed_kt,
                             int      vert_rate_fpm,
-                            const char *callsign);
+                            const char *callsign,
+                            size_t   callsign_len);

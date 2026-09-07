@@ -28,7 +28,7 @@
 
 | 选配硬件 | 用途 | 对应功能 |
 |----------|------|-------------|
-| RTL-SDR FC0013 USB dongle | （已退役路径，仅 v1/v2 载板存量用户）1090 MHz ADS-B 接收；**当前固件已不支持**——v3/v4 扩展板自带 1090 MHz 接收链与 RP2040 解码 | ADS-B 数据链路（历史） |
+| RTL-SDR FC0013 USB dongle（仅 v1/v2 历史） | 已退役路径（2026-09 移除，历史细节见 git 历史）：固件不再支持 USB dongle 接收，1090 MHz 接收链在 v3/v4 扩展板上 | —（历史） |
 | BNO085 IMU 模块 | 姿态融合 | PFD 姿态显示 |
 | USB-UART 转接器 (CP2102 / FTDI / CH340 任一即可) | 烧录 C6 hosted slave 固件 | BLE bring-up |
 
@@ -361,6 +361,14 @@ pilot_kit_box.bin binary size 0x2c93b0 bytes. Smallest app partition is 0xc00000
 - `bootloader/bootloader.bin` — 二级 bootloader (~23 KiB)
 - `partition_table/partition-table.bin` — 分区表 (~3 KiB)
 - `pilot_kit_box.bin` — 主固件 (~2.9 MB；8 MB 机型库搬到 SD 卡之前是 ~11.5 MB)
+
+### 扩展板 RP2040 固件（独立工程，可选）
+
+v3/v4 扩展板上的 RP2040（1090 MHz 解码协处理器）是独立芯片、跑独立固件，
+**不是** ESP-IDF 工程：进入 `firmware/rp2040/` 跑 `./build.sh` 构建。工具链
+要求、依赖 pin 与注意事项见
+[`../firmware/rp2040/README.md`](../firmware/rp2040/README.md)；烧录/恢复走
+BOOTSEL 拖放，步骤见 [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md)。
 
 ---
 
