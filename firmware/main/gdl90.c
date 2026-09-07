@@ -6,10 +6,12 @@
  *   - SoftRF's gdl90.c
  *   - cyoung/stratux gen_gdl90.go
  *
- * The CRC is computed bytewise without a lookup table — the encoder
- * only runs once per aircraft per second (plus heartbeat 1 Hz), so
- * the constant-factor cost is invisible against the BLE I/O budget,
- * and skipping the table saves ~512 B of flash + simplifies audit.
+ * The FCS is the ICD's own reference algorithm (FAA 560-1058-00 Rev A
+ * §2.2.3): a 256-entry table built once at first use — the table costs
+ * 512 B of RAM but the byte-update line the ICD specifies is the
+ * table form, which is NOT algebraically equal to a bitwise loop
+ * (that mismatch was the original encoder bug; see the gdl90_crc
+ * comment below).
  */
 
 #include "gdl90.h"
@@ -19,20 +21,46 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* CRC-16-CCITT (poly 0x1021, init 0x0000, no reflect).  The raw       */
-/* remainder is not what goes on the wire: gdl90_frame() augments it   */
-/* (xor 0xF0B8, FAA 560-1058 §2.3) before appending.                   */
+/* FCS — FAA 560-1058-00 Rev A §2.2.3, reference algorithm, verbatim   */
+/* semantics.  Two traps, both cost us a round trip:                   */
+/*                                                                     */
+/*   1. The ICD's byte update is `crc = Table[crc >> 8] ^ (crc << 8)   */
+/*      ^ block[i]` (init 0).  This is NOT algebraically equal to the  */
+/*      common bitwise `crc ^= b << 8; 8x shift` loop — our original   */
+/*      encoder used that loop and produced non-compliant FCS bytes    */
+/*      on the wire.                                                   */
+/*                                                                     */
+/*   2. NO 0xF0B8 augmentation.  That constant belongs to HDLC/X.25,   */
+/*      not GDL90.  An augmentation attempt (2026-09-07) was reverted  */
+/*      after golden-vector verification against §2.2.4:               */
+/*         [7E 00 81 41 DB D0 08 02 B3 8B 7E]  (FCS 0x8BB3, LSB first) */
+/*                                                                     */
+/* The table is read-only once built; the BLE emitter task is the      */
+/* only caller today, so the lazy init below has no race in practice.  */
 /* ------------------------------------------------------------------ */
+
+static uint16_t crc_table[256];
+static bool     crc_table_ready;
+
+static void gdl90_crc_init(void)
+{
+    /* ICD §2.2.3 table init, verbatim. */
+    for (int i = 0; i < 256; ++i) {
+        uint16_t crc = (uint16_t)(i << 8);
+        for (int b = 0; b < 8; ++b)
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        crc_table[i] = crc;
+    }
+    crc_table_ready = true;
+}
 
 static uint16_t gdl90_crc(const uint8_t *data, size_t len)
 {
+    if (!crc_table_ready) gdl90_crc_init();
     uint16_t crc = 0;
-    for (size_t i = 0; i < len; ++i) {
-        crc ^= ((uint16_t)data[i]) << 8;
-        for (int b = 0; b < 8; ++b) {
-            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
-        }
-    }
+    for (size_t i = 0; i < len; ++i)
+        crc = (uint16_t)(crc_table[crc >> 8] ^ (uint16_t)(crc << 8) ^ data[i]);
     return crc;
 }
 
@@ -53,11 +81,7 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
     memcpy(tmp + tmp_len, payload, payload_len);
     tmp_len += payload_len;
 
-    /* FAA 560-1058 §2.3: what goes on the wire is the remainder XORed
-     * with 0xF0B8 (the "augmented" CRC); decoders validate against the
-     * same constant, so a bare-CRC frame fails the check and is
-     * silently dropped. TX only here — no receive side. */
-    uint16_t crc = gdl90_crc(tmp, tmp_len) ^ 0xF0B8;
+    uint16_t crc = gdl90_crc(tmp, tmp_len);
     tmp[tmp_len++] = (uint8_t)(crc & 0xFF);          /* LSB first */
     tmp[tmp_len++] = (uint8_t)((crc >> 8) & 0xFF);
 

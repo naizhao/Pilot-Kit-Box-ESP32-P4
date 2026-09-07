@@ -265,9 +265,12 @@ Each notification payload is one complete GDL90 **Ownship Report**
 
 Byte stuffing (replace `0x7D`→`0x7D 0x5D`, `0x7E`→`0x7D 0x5E`)
 applies inside the frame but never to the bracketing `0x7E`
-flag bytes. CRC is CCITT-16 (poly `0x1021`, init `0x0000`,
-no reflect) augmented with `0xF0B8` per FAA 560-1058 §2.3,
-LSB transmitted first, computed over `msg ID + payload` before stuffing.
+flag bytes. The FCS is CRC-CCITT exactly per the ICD's §2.2.3
+reference algorithm (256-entry table, init `0x0000`, **no
+augmentation** — the `0xF0B8` xor belongs to HDLC/X.25, not GDL90),
+LSB transmitted first, computed over `msg ID + payload` before
+stuffing; verified against the ICD's §2.2.4 golden heartbeat
+`7E 00 81 41 DB D0 08 02 B3 8B 7E`.
 
 #### Cadence
 

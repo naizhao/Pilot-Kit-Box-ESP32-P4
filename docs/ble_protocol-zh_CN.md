@@ -171,8 +171,10 @@ GDL90 byte stuffing 规则：
 - `0x7D` -> `0x7D 0x5D`
 - `0x7E` -> `0x7D 0x5E`
 
-CRC 为 CCITT-16，多项式 `0x1021`，init `0x0000`，发送前与 `0xF0B8`
-异或（FAA 560-1058 §2.3 要求的增强 CRC），低字节先发。
+FCS 为 CRC-CCITT，严格按 ICD §2.2.3 参考算法（256 项表驱动，init
+`0x0000`，**不做增强**——`0xF0B8` 属于 HDLC/X.25，不属于 GDL90），
+低字节先发；已用 ICD §2.2.4 的 golden heartbeat
+`7E 00 81 41 DB D0 08 02 B3 8B 7E` 验证。
 
 发送节奏：存在有效本机来源时，每秒先发送一条 Ownship Report；手动绑定
 ADS-B 本机目标优先，GT-U8 GPS 作兜底。随后对最近 60 秒内仍新鲜的每架

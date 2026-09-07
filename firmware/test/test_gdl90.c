@@ -7,10 +7,10 @@
  *
  * 背景：设备的 978 MHz UAT 链路固件不存在（WP-E 未开始），但 BLE 调用点
  * （ble_gatt.c）曾恒传 uat_initialised=true——对 ForeFlight 等 EFB 谎报
- * 不存在的接收能力。编码器的帧格式与位序无缺陷，缺陷在调用点实参；调用点
- * 依赖 NimBLE，没有 host 测试缝，所以这里钉死编码器的位级合同，防止将来
- * 有人"顺手修好"调用点时把位序也改坏。位序依据 gdl90.c 与 FAA 560-1058
- * ICD 派生实现（SoftRF rotobox/gdl90.c）双重取证：
+ * 不存在的接收能力。调用点依赖 NimBLE，没有 host 测试缝，所以这里钉死
+ * 编码器的位级合同，防止将来有人"顺手修好"调用点时把位序也改坏。
+ *
+ * 帧字节布局（依据 gdl90.c 与 ICD §2.2.4 golden vector 取证）：
  *
  *   out[0]  = 0x7E 帧界
  *   out[1]  = 0x00 msg id
@@ -20,16 +20,25 @@
  *   out[5]  = 时间戳低 16 位的 MSB
  *   out[6]  = Message Counts 字节 1（basic-long 高 2 位<<5 | uplink 低 5 位）
  *   out[7]  = Message Counts 字节 2（basic-long 低 8 位）
- *   out[8]  = 增强后 CRC 的低字节
- *   out[9]  = 增强后 CRC 的高字节
+ *   out[8]  = FCS 低字节
+ *   out[9]  = FCS 高字节
  *   out[10] = 0x7E 帧界
  *
- * CRC 合同（FAA 560-1058 §2.3）：对 msg_id+payload 算 CCITT-16
- * （poly 0x1021，init 0，MSB-first），发送前与 0xF0B8 异或（增强 CRC），
- * LSB 在前。裸 CRC 帧会被 EFB 校验静默丢弃。用例 (d) 在测试内写了一份
- * 独立的表驱动 CCITT-16 + 0xF0B8 实现（不调用 gdl90.c），并与硬编码
- * 常数比对——若两边犯同一个错，(a)/(c) 的硬编码全帧（由 Python 按上述
- * poly/init/增强独立推导）仍然能抓到。
+ * FCS 合同（FAA 560-1058-00 Rev A §2.2.3 参考算法，语义照抄）：
+ * 256 项表（表初始化也按 ICD 原文）+ 更新行
+ * `crc = Table[crc >> 8] ^ (crc << 8) ^ block[i]`（初值 0），对
+ * msg_id + payload 计算，LSB 在前。两个坑都有前科，都有测试钉着：
+ *
+ *   1. 这条更新行与常见逐位循环 `crc ^= b << 8; 8 次移位` **不是**
+ *      代数等价的——原编码器用的就是逐位循环，FCS 不合规（已被
+ *      golden vector 证实）；
+ *   2. GDL90 **不做** 0xF0B8 增强（那是 HDLC/X.25 的常数）。2026-09-07
+ *      曾按错误裁决加过增强，后被 §2.2.4 golden vector 推翻回退：
+ *      [7E 00 81 41 DB D0 08 02 B3 8B 7E]（FCS 0x8BB3，LSB first）。
+ *
+ * (d)/(e) 在测试内写了一份**独立照抄 ICD 更新行**的实现（不调用
+ * gdl90.c），自身先与硬编码常数锚定；(a)/(c)/(e) 的硬编码全帧由
+ * Python 按 ICD 算法独立推导后写入——两边若犯同一个错，锚常数仍能抓到。
  */
 
 #include <stdio.h>
@@ -45,9 +54,36 @@ static int g_fail = 0;
     } \
 } while (0)
 
+/* ── 测试内独立的 ICD §2.2.3 参考实现（不调用 gdl90.c）──────────────── */
+
+static uint16_t g_crc_table[256];
+
+static void crc_table_init(void)
+{
+    /* ICD §2.2.3 表初始化，逐字语义。 */
+    for (int i = 0; i < 256; ++i) {
+        uint16_t crc = (uint16_t)(i << 8);
+        for (int b = 0; b < 8; ++b)
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        g_crc_table[i] = crc;
+    }
+}
+
+/* 注意是 ICD 的更新行 `Table[crc>>8] ^ (crc<<8) ^ b`，不是教科书
+ * 标准形 `Table[(crc>>8) ^ b] ^ (crc<<8)`，也不是逐位循环——三者互
+ * 不等价，只有 ICD 这条与真实设备一致（§2.2.4 golden vector 判定）。 */
+static uint16_t crc_icd_reference(const uint8_t *d, size_t n)
+{
+    uint16_t crc = 0;
+    for (size_t i = 0; i < n; ++i)
+        crc = (uint16_t)(g_crc_table[crc >> 8] ^ (uint16_t)(crc << 8) ^ d[i]);
+    return crc;
+}
+
 /* ── (a) uat_initialised=false：Status Byte 1 bit0 必须是 0 ────────── */
 /* 全帧钉死：gps=F，uat=F，utc=F，ts=0xE1A4（57636 s），计数 0/0。
- * 期望 CRC = 0x473E（裸余数 0xB786 与 0xF0B8 异或，独立推导），
+ * 期望 FCS = 0x3CB5（ICD §2.2.3 算法独立推导），
  * 全帧无 0x7D/0x7E，不需要转义。 */
 static void test_heartbeat_uat_not_initialised_is_zero(void)
 {
@@ -58,7 +94,7 @@ static void test_heartbeat_uat_not_initialised_is_zero(void)
         0x00,                          /* Status2: bit7=0(ts bit16=0) bit0=0 */
         0xA4, 0xE1,                    /* ts 低 16 位，LSB first          */
         0x00, 0x00,                    /* message counts                  */
-        0x3E, 0x47,                    /* 增强 CRC LSB/MSB                */
+        0xB5, 0x3C,                    /* FCS 0x3CB5，LSB first           */
         0x7E                           /* 帧界                            */
     };
 
@@ -96,11 +132,11 @@ static void test_heartbeat_status_bit_positions(void)
     CHECK((buf[6] & 0x1F) == 0);       /* uplink 低 5 位                  */
 }
 
-/* ── (c) CRC 字节正确：非零向量全帧比对 ────────────────────────────── */
+/* ── (c) FCS 字节正确：非零计数向量全帧比对 ────────────────────────── */
 /* gps=T，uat=F，utc=F，ts=0x12345（bit16=1），uplink=0，basic_long=0x123。
- * 裸余数 0xE958 与 0xF0B8 异或得 0x19E0，LSB 在前。
- * counts 打包：mc1=(0x123>>8&3)<<5=0x20，mc2=0x23。全帧硬编码比对，
- * 任何一个字节位序/打包/CRC 回归都会被抓到。 */
+ * counts 打包：mc1=(0x123>>8&3)<<5=0x20，mc2=0x23。FCS 0x2079（ICD
+ * 算法独立推导），LSB 在前。全帧硬编码比对，任何一个字节位序/打包/
+ * FCS 回归都会被抓到。 */
 static void test_heartbeat_crc_bytes(void)
 {
     uint8_t buf[64] = { 0 };
@@ -110,7 +146,7 @@ static void test_heartbeat_crc_bytes(void)
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
         0x20, 0x23,                    /* counts：高 2 位 + 低 8 位       */
-        0xE0, 0x19,                    /* 增强 CRC LSB/MSB                */
+        0x79, 0x20,                    /* FCS 0x2079，LSB first           */
         0x7E
     };
 
@@ -123,38 +159,12 @@ static void test_heartbeat_crc_bytes(void)
     CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
 }
 
-/* ── (d) 增强_crc（0xF0B8）判别用例：测试内独立 CRC 实现 ───────────── */
-/* 裁决记录（WP-F Task 1 跟进）：裸 CRC 帧过不了 EFB 的校验，会被静默
- * 丢弃——FAA 560-1058 §2.3 要求发送前把余数与 0xF0B8 异或。这里在测试
- * 内写一份独立的表驱动 CCITT-16（init 0，MSB-first）+ 0xF0B8 异或，
- * 不调用 gdl90.c 的任何函数；其自身输出先与硬编码常数 0x0B07 比对
- * （Python 独立推导），再与编码器发出的 CRC 字节比对。向量：
- * gps=T，uat=F，utc=F，ts=0x12345，counts 0/0 → msg 00 80 80 45 23 00 00。
- * 裸 CRC 会得到 0xFBBF，两个 CRC 字节全不同——本用例对"忘了增强"是
- * 判别性的。 */
-
-static uint16_t g_crc_table[256];
-
-static void crc_table_init(void)
-{
-    for (int i = 0; i < 256; ++i) {
-        uint16_t crc = (uint16_t)(i << 8);
-        for (int b = 0; b < 8; ++b)
-            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
-                                 : (uint16_t)(crc << 1);
-        g_crc_table[i] = crc;
-    }
-}
-
-static uint16_t crc_ccitt_augmented(const uint8_t *d, size_t n)
-{
-    uint16_t crc = 0;
-    for (size_t i = 0; i < n; ++i)
-        crc = (uint16_t)((crc << 8) ^ g_crc_table[(crc >> 8) ^ d[i]]);
-    return (uint16_t)(crc ^ 0xF0B8);
-}
-
-static void test_heartbeat_crc_augmentation_f0b8(void)
+/* ── (d) 编码器 FCS == ICD 参考实现（非零向量，测试内独立实现）─────── */
+/* 向量：gps=T，uat=F，utc=F，ts=0x12345，counts 0/0 →
+ * msg 00 80 80 45 23 00 00，ICD 算法 FCS = 0x005A。
+ * 独立实现与编码器对同一 message 必须给出同一 FCS；任何一边改用别的
+ * CRC 族（逐位循环 / 增强版）都会让比对或锚常数变红。 */
+static void test_heartbeat_fcs_matches_icd_reference(void)
 {
     static const uint8_t msg[] = { 0x00, 0x80, 0x80, 0x45, 0x23, 0x00, 0x00 };
     uint8_t buf[64] = { 0 };
@@ -164,12 +174,12 @@ static void test_heartbeat_crc_augmentation_f0b8(void)
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
         0x00, 0x00,                    /* counts                          */
-        0x07, 0x0B,                    /* 增强 CRC 0x0B07，LSB first      */
+        0x5A, 0x00,                    /* FCS 0x005A，LSB first           */
         0x7E
     };
 
-    /* 独立实现自身的锚：常数 0x0B07 来自 Python 独立推导，不是抄实现。 */
-    CHECK(crc_ccitt_augmented(msg, sizeof(msg)) == 0x0B07);
+    /* 独立实现自身的锚：常数 0x005A 来自 Python 独立推导，不是抄实现。 */
+    CHECK(crc_icd_reference(msg, sizeof(msg)) == 0x005A);
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
@@ -178,7 +188,49 @@ static void test_heartbeat_crc_augmentation_f0b8(void)
                                       0x12345, /*uplink=*/0, /*basic_long=*/0);
     CHECK(n == sizeof(expect));
     CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
-    CHECK(buf[8] == 0x07 && buf[9] == 0x0B);  /* 点名 CRC 字节位置       */
+    CHECK(buf[8] == 0x5A && buf[9] == 0x00);  /* 点名 FCS 字节位置       */
+}
+
+/* ── (e) ICD §2.2.4 golden heartbeat：规格自己发布的测试向量 ────────── */
+/* golden message = msg id + payload = 00 81 41 DB D0 08 02，ICD 原文
+ * 发布的 FCS = 0x8BB3（帧 [7E 00 81 41 DB D0 08 02 B3 8B 7E]）。
+ *
+ * 复现说明：golden payload 分解为 status1=0x81(GPS+UAT)、
+ * status2=0x41(bit6 CSA Requested + bit0 UTC)、ts=0xD0DB、uplink=8、
+ * basic=2。本编码器不实现 CSA 位（status2 bit6 恒 0，参数表里也没有
+ * 它，签名是任务合同），golden 帧无法逐字节从公共 API 产出；能产出的
+ * 最近向量只差 status2 一个字节（0x01 vs 0x41）。所以钉两层：
+ *   1. 测试内 ICD 参考实现对 **完整 golden message** 的输出 == ICD
+ *      发布的 0x8BB3——常数照抄规格原文，是全文件最硬的锚；
+ *   2. 编码器对可产出向量（其余字节全同 golden）的全帧输出，且其
+ *      FCS 与参考实现对同一 message 的输出一致——证明线上 FCS 就是
+ *      ICD §2.2.3 算法。 */
+static void test_heartbeat_icd_golden_vector(void)
+{
+    static const uint8_t golden_msg[] = { 0x00, 0x81, 0x41, 0xDB, 0xD0, 0x08, 0x02 };
+    CHECK(crc_icd_reference(golden_msg, sizeof(golden_msg)) == 0x8BB3);
+
+    uint8_t buf[64] = { 0 };
+    static const uint8_t expect[] = {
+        0x7E, 0x00,
+        0x81,                          /* Status1: GPS=1，UAT=1（同 golden）*/
+        0x01,                          /* Status2: UTC=1；bit6 CSA 不实现   */
+        0xDB, 0xD0,                    /* ts 0xD0DB，LSB first（同 golden） */
+        0x08, 0x02,                    /* counts：uplink=8，basic=2（同 golden）*/
+        0x1E, 0x96,                    /* FCS 0x961E，LSB first             */
+        0x7E
+    };
+    static const uint8_t produced_msg[] = { 0x00, 0x81, 0x01, 0xDB, 0xD0, 0x08, 0x02 };
+    CHECK(crc_icd_reference(produced_msg, sizeof(produced_msg)) == 0x961E);
+
+    size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
+                                      /*gps_valid=*/true,
+                                      /*uat_initialised=*/true,
+                                      /*utc_ok=*/true,
+                                      0xD0DB, /*uplink=*/8, /*basic_long=*/2);
+    CHECK(n == sizeof(expect));
+    CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
+    CHECK(buf[8] == 0x1E && buf[9] == 0x96);  /* 点名 FCS 字节位置       */
 }
 
 int main(void)
@@ -187,7 +239,8 @@ int main(void)
     test_heartbeat_uat_not_initialised_is_zero();
     test_heartbeat_status_bit_positions();
     test_heartbeat_crc_bytes();
-    test_heartbeat_crc_augmentation_f0b8();
+    test_heartbeat_fcs_matches_icd_reference();
+    test_heartbeat_icd_golden_vector();
 
     if (g_fail == 0) {
         printf("test_gdl90: all OK\n");
