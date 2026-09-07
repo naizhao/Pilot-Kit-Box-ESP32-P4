@@ -117,7 +117,9 @@ GPIO function select table (RP2040.pdf p.238, Table 279, §2.19.2):
 - Boot-state behaviour: RP2040 GPIOs come out of reset in pull-down state
   (RP2040.pdf p.613 Table 615 "Reset State", pull resistance 50–80 kΩ on
   p.617). The external 10 kΩ pull-ups (R56 on CSN, R47 on RESET_N) dominate
-  that weak pull-down (~2.7–2.8 V divider result), keeping CSN deasserted and
+  that weak pull-down (divider result 2.75–2.93 V, computed from
+  3.3 V × R_pulldown/(R_pulldown + 10 kΩ) over the 50–80 kΩ reset-state range;
+  audit 2026-09-08 reviewer note), keeping CSN deasserted and
   the CC1312R out of reset while the RP2040 boots or its firmware is absent.
 
 ## cJTAG boundary
