@@ -197,7 +197,8 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             int      track_deg,
                             int      ground_speed_kt,
                             int      vert_rate_fpm,
-                            const char *callsign)
+                            const char *callsign,
+                            size_t   callsign_len)
 {
     uint8_t p[27];
     memset(p, 0, sizeof(p));
@@ -276,14 +277,14 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
     /* Byte 17: Emitter Category. 1 = Light aircraft (fits most GA targets). */
     p[17] = 1;
 
-    /* Bytes 18..25: Callsign, 8 ASCII chars padded with space. */
+    /* Bytes 18..25: Callsign, 8 ASCII chars padded with space.  Only
+     * the first callsign_len bytes of callsign are readable — it is
+     * NOT guaranteed NUL-terminated (ble_gatt.c passes a 1-byte ""),
+     * so a length bound is mandatory here; a NUL inside the range
+     * simply pads the rest with spaces. */
     for (int i = 0; i < 8; ++i) {
-        char c = (callsign && callsign[i]) ? callsign[i] : ' ';
-        if (c == '\0') {
-            /* Pad remainder with spaces. */
-            for (int j = i; j < 8; ++j) p[18 + j] = ' ';
-            break;
-        }
+        char c = (callsign && (size_t)i < callsign_len) ? callsign[i] : ' ';
+        if (c == '\0') c = ' ';
         p[18 + i] = (uint8_t)toupper((unsigned char)c);
     }
 

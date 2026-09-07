@@ -1,9 +1,14 @@
 /*
- * test_gdl90.c — GDL90 Heartbeat 编码器的 host 单测（WP-F Task 1）。
+ * test_gdl90.c — GDL90 编码器（Heartbeat + Traffic）的 host 单测（WP-F Task 1）。
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 \
  *      -o /tmp/test_gdl90 firmware/test/test_gdl90.c \
  *      firmware/main/gdl90.c -lm && /tmp/test_gdl90
+ *
+ * 越界/未定义行为检测（可选加强跑法，默认入口不执行）：
+ *   cc -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+ *      -o /tmp/test_gdl90_asan firmware/test/test_gdl90.c \
+ *      firmware/main/gdl90.c -lm && /tmp/test_gdl90_asan
  *
  * 背景：本任务的"清退假 UAT 能力"在终审被推翻了一半——真正的假能力
  * 表述只在文档里（位名 misleading），**线上行为从来不该改**：ICD
@@ -270,6 +275,51 @@ static void test_heartbeat_message_counts_packing(void)
     CHECK(buf[6] == 0xAA && buf[7] == 0xAB);  /* 点名 counts 字节位置    */
 }
 
+/* ── (g) Traffic callsign：长度受界，绝不越界读 ────────────────────── */
+/* 回归（审计 P2-b）：原实现对 callsign[i] 无长度上限逐位读，而调用方
+ * （ble_gatt.c）传的是 1 字节的 ""——越界读 7 字节，还可能把栈上垃圾
+ * 写进报文。现契约：只读前 callsign_len 字节，不假定 NUL 结尾
+ * （见 gdl90.h）。全帧无转义字节，固定 32 字节（1+1+27+2+1）。 */
+static void test_traffic_callsign_bounded(void)
+{
+    static const uint8_t spaces[8] = { 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20 };
+    uint8_t buf[64] = { 0 };
+
+    /* 空串（len=0）：8 个空格。 */
+    size_t n = gdl90_encode_traffic(buf, sizeof(buf),
+                                    /*is_ownship=*/false, /*icao24=*/0x000001,
+                                    /*have_position=*/false, 0, 0,
+                                    /*have_altitude=*/false, 0,
+                                    /*have_velocity=*/false, 0, 0, 0,
+                                    /*callsign=*/"", /*callsign_len=*/0);
+    CHECK(n == 32);
+    CHECK(memcmp(&buf[20], spaces, 8) == 0);   /* p[18..25] → out[20..27] */
+
+    /* 短串：大写化 + 空格补齐。 */
+    n = gdl90_encode_traffic(buf, sizeof(buf),
+                             /*is_ownship=*/false, /*icao24=*/0x000001,
+                             /*have_position=*/false, 0, 0,
+                             /*have_altitude=*/false, 0,
+                             /*have_velocity=*/false, 0, 0, 0,
+                             /*callsign=*/"n123ab", /*callsign_len=*/6);
+    CHECK(n == 32);
+    CHECK(buf[20] == 'N' && buf[21] == '1' && buf[22] == '2' && buf[23] == '3'
+       && buf[24] == 'A' && buf[25] == 'B' && buf[26] == ' ' && buf[27] == ' ');
+
+    /* 非 NUL 结尾缓冲：只允许读 len 字节——旧实现在这里越界。 */
+    const char raw[3] = { 'n', '1', '2' };     /* 故意不带 NUL */
+    n = gdl90_encode_traffic(buf, sizeof(buf),
+                             /*is_ownship=*/false, /*icao24=*/0x000001,
+                             /*have_position=*/false, 0, 0,
+                             /*have_altitude=*/false, 0,
+                             /*have_velocity=*/false, 0, 0, 0,
+                             /*callsign=*/raw, /*callsign_len=*/sizeof(raw));
+    CHECK(n == 32);
+    CHECK(buf[20] == 'N' && buf[21] == '1' && buf[22] == '2'
+       && buf[23] == ' ' && buf[24] == ' ' && buf[25] == ' '
+       && buf[26] == ' ' && buf[27] == ' ');
+}
+
 int main(void)
 {
     crc_table_init();
@@ -279,6 +329,7 @@ int main(void)
     test_heartbeat_fcs_matches_icd_reference();
     test_heartbeat_icd_golden_vector();
     test_heartbeat_message_counts_packing();
+    test_traffic_callsign_bounded();
 
     if (g_fail == 0) {
         printf("test_gdl90: all OK\n");

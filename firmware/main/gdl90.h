@@ -69,6 +69,10 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
  * Both message types use the identical 27-byte payload format; pass
  * `is_ownship = true` to set the ID byte to GDL90_ID_OWNSHIP.
  *
+ * `callsign` is NOT assumed NUL-terminated: only the first
+ * `callsign_len` bytes are read. Bytes beyond the length (or a NUL
+ * inside it) are emitted as spaces, per the 8-char field format.
+ *
  * The function clamps each input to its valid range and substitutes
  * the spec's "no data" sentinels (0xFFF for altitude / speed, 0x800
  * for vertical rate, etc.) when have_xxx flags are false.
@@ -85,4 +89,5 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             int      track_deg,
                             int      ground_speed_kt,
                             int      vert_rate_fpm,
-                            const char *callsign);
+                            const char *callsign,
+                            size_t   callsign_len);

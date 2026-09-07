@@ -688,7 +688,7 @@ static void emitter_task(void *arg)
                         own.have_altitude, own.altitude_ft,
                         own.have_velocity, own.heading_deg,
                         own.ground_speed_kt, own.vert_rate_fpm,
-                        /*callsign=*/"");
+                        /*callsign=*/"", /*callsign_len=*/sizeof(""));
                     if (no > 0) { notify_bytes(s_chr_traffic_handle, frame, no); }
                 }
 
@@ -708,7 +708,8 @@ static void emitter_task(void *arg)
                         a->have_altitude, a->altitude_ft,
                         a->have_velocity, a->heading_deg,
                         a->ground_speed_kt, a->vert_rate_fpm,
-                        a->have_callsign ? a->callsign : "");
+                        a->have_callsign ? a->callsign : "",
+                        /*callsign_len=*/a->have_callsign ? sizeof(a->callsign) : 0);
                     if (n > 0) { notify_bytes(s_chr_traffic_handle, frame, n); ++traffic_count; }
                 }
             }
