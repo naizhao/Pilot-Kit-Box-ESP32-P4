@@ -456,7 +456,10 @@ rp_cc13xx_status_t rp_cc13xx_reasm_feed(rp_cc13xx_reasm_t *r,
 {
     if (!r || !c) return RP_CC13XX_ERR_ARG;
     if (!r->active) return RP_CC13XX_ERR_ARG;   /* §6.5 清态后旧分片不命中 */
-    if (c->data_len == 0) return RP_CC13XX_ERR_LEN;   /* §4.4：空分片停滞防御 */
+    if (c->data_len == 0 || c->data_len > RP_CC13XX_CHUNK_MAX_DATA)
+        return RP_CC13XX_ERR_LEN;   /* §4.4：空片停滞防御；data_len > 496 会
+                                     * 越界读调用方 data[496] 数组（先于
+                                     * memcpy 拒绝——审计 P1-c ASan 复现项） */
     if (c->desc_id != r->desc_id || c->total_len != r->total_len ||
         c->offset != r->have ||
         (uint32_t)c->offset + c->data_len > r->total_len)

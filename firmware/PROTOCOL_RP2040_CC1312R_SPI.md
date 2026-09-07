@@ -414,6 +414,8 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 | B27 | N7 零长分片拒收 | §4.4 | s→m | encode(0)→0；decode_frame → ERR_LEN；reasm_feed → ERR_LEN |
 | B28 | N8 total_len>4096 拒收 | §4.3 | s→m | encode→0；decode_frame/typed decode → ERR_LEN |
 | B29 | N9 reset_reason 发送掩码 | §4.1 | — | 源值 0x1F → 线上 0x0F（&0x0F），解码见 0x0F |
+| B32 | N10 异步 ERROR seq 哨兵 | §3.5/§4.9 | s→m | code=0x04、seq=0x0000 往返 OK；对账/gap 跳过 |
+| B33 | N11 reasm 越界片拒收 | §4.4 | — | app 侧 data_len=497（total=4096）→ ERR_LEN，先于 memcpy |
 
 ### B.2 十六进制字面量
 
@@ -485,6 +487,11 @@ B28 N8 total=4097   B6 的 total 字段改 0x1001 后重算 CRC（死于 §4.3 �
     50 4B 01 10 04 00 0E 00 01 00 80 18 4B 3A E8 03 00 00 01 10 C4 01 94 94
 B29 N9 掩码 HELLO   seq=0002 fw=1.2 reset 源值 0x1F → 线上 0x0F
     50 4B 01 01 02 00 08 00 01 00 02 00 0F 00 00 00 9F 41
+B32 N10 异步 ERROR  seq=0000（哨兵）code=0x04 len=0
+    50 4B 01 7F 00 00 02 00 04 00 20 34
+B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结构体）：
+    chunk{desc_id=1, offset=0, total_len=4096, data_len=497}
+    → reasm_feed 必须先于 memcpy 拒绝（ERR_LEN；data[496] 容量越界防御）
 ```
 
 ### B.3 会话级行为向量（延迟应答模型 §2.2 下的走查）
@@ -564,3 +571,4 @@ B29 N9 掩码 HELLO   seq=0002 fw=1.2 reset 源值 0x1F → 线上 0x0F
 | R3（`af3a5cb`） | **事务模型修订为延迟应答（pending）**：同事务请求→应答在 SPI 全双工线上无因果路径（命令类型在 MOSI 字节 3，MISO 字节 0 已先移出）——事务 N 的 MISO = 事务 N−1 命令的应答；单 pending 槽、空槽装全 0；应答 seq 回显（§3.5）；IRQ_ACK 即读触发；握手改为 T2（首次重发）完成；PING/drain 走查入 B.3。依据：独立审计指出物理不可实现性（SPI 从机 CSN 下降沿预装 DMA 缓冲的实现合同随之入文 §2.1） | §2、§3.5、§4.2、§5.5、§5.6、§6.2、§6.6、§7.2、B.3、C.2 |
 | R4（本提交） | 边界强制补齐：零长分片拒绝（§4.4，防重组活锁）；total_len ≤ 4096 编码/解码两侧强制（§4.3，此前仅重组侧拒绝）；reset_reason 发送边界掩码 &0x0F（§4.1，线上合同）。新负向量 B27/B28/B29 | §4.1、§4.3、§4.4、B.1/B.2 |
 | R5（本提交） | 审计 round 6 状态机裁决：①**直接应答优先于事件**（§2.3——单槽下无后备队列的应答被事件挤掉即永久丢失；事件有队列 + IRQ 兜底，延后零丢失；饥饿权衡诚实声明 + B31 走查）；②**WAIT_HELLO 对 PING 静默**（§6.2 完整应答策略；关闭 slave 自复位后 PONG 假活/split-brain，3 s 看护自此可触发；PING/PONG 表行限定 + B30 走查）；③**异步 ERROR seq 哨兵**（§3.5/§4.9——code 0x01–0x03 回显命令 seq，0x04/0x05 恒 0x0000） | §2.3、§3.5、§4 表、§4.9、§6.2、§6.6、B.3 |
+| R6（本提交） | 审计 round 6 codec/测试修复：reasm_feed 补 data_len > 496 越界防御（P1-c，ASan 复现项——app 侧 chunk 先于 memcpy 拒绝）；B28 typed-decode 测试改为显式构造合法 msg（P2-b，旧写法复用未初始化对象属假通过）；异步 ERROR seq=0 哨兵向量 B32 + 越界片向量 B33 + 回归测试 case 23/24 | rp_cc13xx_codec.c、test case 21/23/24、B.1/B.2 |

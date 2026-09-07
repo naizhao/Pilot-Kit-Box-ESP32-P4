@@ -46,6 +46,8 @@
  *   B27 N7 零长分片拒绝（encode/decode/reasm 三处）     §4.4
  *   B28 N8 descriptor total_len>4096 双侧拒绝           §4.3
  *   B29 N9 reset_reason 发送边界掩码 &0x0F              §4.1
+ *   （B30/B31 = §6.2/§6.6/§2.3 会话级走查，规范附录 B.3；无独立十六进制）
+ *   B31' N10 异步 ERROR code=0x04 seq=0x0000 哨兵        §3.5/§4.9（case 24）
  *
  * B8/B19/B23 的 512 B 全帧以「构造规则」收录于附录 B（帧头/CRC 字面 +
  * data 按规则/零填充），本文件同规则逐字节断言；其余向量在附录 B 与本文件
@@ -634,6 +636,14 @@ int main(void)
         CHECK(rp_cc13xx_decode_frame(V_b28_n8_total_4097,
                                      sizeof(V_b28_n8_total_4097), &m)
               == RP_CC13XX_ERR_LEN, "total4097 decode_frame\n");
+        /* P2-b：decode_frame 拒收时不填 out——typed decode 必须用显式构造的
+         * 合法 msg（total_len=4097、保留位合规）单独证明 typed 路径本身
+         * 拒绝，不得复用未初始化对象（旧写法是假通过）。 */
+        m.type = RP_CC13XX_MSG_RX_DESCRIPTOR;
+        m.seq = 0x0004;
+        m.payload_len = RP_CC13XX_RX_DESCRIPTOR_LEN;
+        memcpy(m.payload, V_b28_n8_total_4097 + RP_CC13XX_HDR_LEN,
+               RP_CC13XX_RX_DESCRIPTOR_LEN);
         CHECK(rp_cc13xx_decode_rx_descriptor(&m, &d) == RP_CC13XX_ERR_LEN,
               "total4097 typed decode\n");
     }
@@ -663,6 +673,40 @@ int main(void)
         CHECK(n == 18 && memcmp(buf + 8, "\x00\x00\x00\x00", 4) == 0 &&
               buf[12] == 77,   /* reset_reason 在 payload[0..3]=帧偏移 8..11 */
               "masked reset_status wire\n");
+    }
+
+    /* 23. 审计 P1-c（§4.4）：reasm_feed 对 app 侧自组 chunk 必须先做
+        data_len 上限防御——497 > data[496] 数组容量，旧实现直接 memcpy
+        越界读（ASan 复现）。total_len=4096 使既有溢出判据不拦截，故须
+        显式上限。 */
+    {
+        rp_cc13xx_reasm_t r;
+        rp_cc13xx_reasm_init(&r);
+        rp_cc13xx_rx_desc_t d = { .desc_id = 1, .total_len = 4096 };
+        CHECK(rp_cc13xx_reasm_start(&r, &d) == RP_CC13XX_OK, "oob start\n");
+        rp_cc13xx_chunk_t c = { .desc_id = 1, .offset = 0, .total_len = 4096,
+                                .data_len = 497 };
+        memset(c.data, 0xA5, sizeof(c.data));   /* 恰好填满 496 B 容量 */
+        CHECK(rp_cc13xx_reasm_feed(&r, &c) == RP_CC13XX_ERR_LEN && r.have == 0,
+              "oob chunk rejected\n");
+    }
+
+    /* 24. 审计 P2-a（§3.5/§4.9）：异步 ERROR（code 0x04/0x05）无对应命令，
+        seq 恒 0x0000 哨兵——编码按此构造、解码原样接受，seq 对账跳过由
+        调用方按 code 区分（codec 不解释语义，只钉住线格式可往返）。 */
+    {
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        rp_cc13xx_error_t e = { .code = 0x04, .msg_len = 0 };
+        size_t n = rp_cc13xx_encode_error(buf, sizeof(buf), 0x0000, &e);
+        CHECK(n == 12, "async err len got=%zu\n", n);
+
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
+              m.type == RP_CC13XX_MSG_ERROR && m.seq == 0x0000,
+              "async err seq0\n");
+        rp_cc13xx_error_t out;
+        CHECK(rp_cc13xx_decode_error(&m, &out) == RP_CC13XX_OK &&
+              out.code == 0x04 && out.msg_len == 0, "async err parse\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
