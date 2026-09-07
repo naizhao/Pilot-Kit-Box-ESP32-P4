@@ -205,7 +205,7 @@ static void test_heartbeat_fcs_matches_icd_reference(void)
  * 发布的 FCS = 0x8BB3（帧 [7E 00 81 41 DB D0 08 02 B3 8B 7E]）。
  *
  * 复现说明：golden payload 分解为 status1=0x81(GPS+UAT 位)、
- * status2=0x41(bit6 CSA Requested + bit0 UTC)、ts=0xD0DB、uplink=8、
+ * status2=0x41(bit6 CSA Requested + bit0 UTC)、ts=0xD0DB、uplink=1、
  * basic=2。bit0=1 本编码器现在无条件置位 ✓；status2 bit6 = CSA
  * Requested 不实现（恒 0，参数表里也没有它，签名是任务合同），
  * golden 帧无法逐字节从公共 API 产出；能产出的最近向量只差 status2

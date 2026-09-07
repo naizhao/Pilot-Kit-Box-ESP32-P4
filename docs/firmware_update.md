@@ -2,12 +2,12 @@
 
 Chinese version: [`firmware_update-zh_CN.md`](firmware_update-zh_CN.md)
 
-This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware releases, and how end users update the ESP32-P4 main firmware from a browser.
+This document explains how maintainers publish Pilot Kit Box ESP32-P4 firmware releases, and how end users update the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2) from a browser.
 
 ## Scope
 
 - Applies to devices whose on-board ESP32-C6 has already been flashed with the ESP-Hosted slave firmware.
-- Updates only the ESP32-P4 main firmware.
+- Updates the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2).
 - Does not update the ESP32-C6 co-processor firmware.
 - Does not require end users to install ESP-IDF, Python, CMake, or Ninja.
 

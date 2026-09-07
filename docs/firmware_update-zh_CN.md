@@ -2,12 +2,12 @@
 
 英文版：[`firmware_update.md`](firmware_update.md)
 
-本文档说明如何发布 Pilot Kit Box 的 ESP32-P4 主固件，以及普通用户如何通过网页完成更新。
+本文档说明如何发布 Pilot Kit Box 的 ESP32-P4 固件，以及普通用户如何通过网页更新 ESP32-P4 主固件与 RP2040 1090 接收机固件（UF2）。
 
 ## 适用范围
 
 - 适用于已经出厂预刷 ESP32-C6 hosted slave 固件的设备。
-- 只更新 ESP32-P4 主固件。
+- 更新 ESP32-P4 主固件与 RP2040 1090 接收机固件（UF2）。
 - 不更新 ESP32-C6 协处理器固件。
 - 不要求用户安装 ESP-IDF、Python、CMake 或 Ninja。
 
