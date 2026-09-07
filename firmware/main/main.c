@@ -48,7 +48,8 @@
 #include "imu_task.h"
 #include "baro.h"
 #include "qmc5883p.h"
-#include "battery.h"
+#include "power_eta6098.h"
+#include "power_service.h"
 #include "config_ble.h"
 #include "config_demo.h"
 #include "config_devname.h"
@@ -98,7 +99,14 @@ void app_main(void)
     /* microSD 探测 + 日志存储位置设置必须先于 file sink 创建：
      * record_sink_file_create() 据此决定写 flash LittleFS 还是 /sdcard。 */
     pk_config_storage_load();
-    pk_batt_init();
+    /* 电源链（原 pk_batt_init 单口，WP-D Task 2 拆成两步）：
+     * ETA6098 在两代载板上都必然在位，先装好并注册，再起 1 Hz 轮询任务。
+     * 注册次序=优先级（首个非 stale 者赢，见 power_service.h:15-20）：
+     * 当前只有这一个 backend；v4 上 T4 会在本调用**之前**插入 SY6970 的
+     * 探测注册（权威源排前），届时 ETA6098 自然回落为兜底。
+     * 两个调用都幂等。 */
+    power_eta6098_init();
+    power_service_init();
     pk_sdcard_init();
     /* ADS-B / 本机数据落盘的 session 目录管理，须晚于 pk_sdcard_init()。
      * 阶段 3a：只建目录/开文件，不接数据源（ADS-B 解码链 / own_ship / 相位

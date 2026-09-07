@@ -108,5 +108,6 @@ config PK_BATT_DIVIDER_X100
       分压（=300），差的那 1.5% 是 ADC 非线性——单点标定把它一起吸收掉了，
       所以在 3.7~4.2 V 工作区间内比填 300 更准。
 
-      换板子或换电芯要重标：把 battery.c 里那条 "batt: raw ..." 日志调到
-      INFO，量一次电压除以 raw，×100 填进来。
+      换板子或换电芯要重标：把 power_eta6098.c 里那条 "batt: raw ..." 日志
+      调到 DEBUG（esp_log_level_set("batt", ESP_LOG_DEBUG)），量一次电压
+      除以 raw，×100 填进来。
