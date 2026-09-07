@@ -101,11 +101,13 @@
 
 /* ── F1 初始化序列（数据表，host 可测）────────────────────────────────
  * 顺序：写前先回读校验 REG00（器件在应答且不在 HIZ 的在位证据，读、
- * 不改状态）→ 关狗 → 喂狗 → **写后再回读一次 REG00**：计划约束是
- * 「写入后必须回读 REG00 验证」——只有写后回读能证明 RMW 真的落到了
- * 寄存器里（写前那步只证明器件在场）。关狗用 RMW 清位而不是整字节
- * 覆盖：REG07 其余位（终止使能/安全定时器等）保持芯片当前值，不去赌
- * POR 值没被别人改过。 */
+ * 不改状态）→ 关狗 → 喂狗 → **写后再回读 REG07 与 REG00**：审计 F2
+ * 裁定只回读 REG00 只能证明器件在场，证明不了配置真的落定——REG07
+ * 回读钉死「WATCHDOG[5:4]=00 关狗已落定」（DS p.19），REG00 回读保持
+ * 计划约束「写入后必须回读 REG00 验证」+ RMW 落定证据。关狗用 RMW
+ * 清位而不是整字节覆盖：REG07 其余位（终止使能/安全定时器等）保持
+ * 芯片当前值，不去赌 POR 值没被别人改过。REG02（开 ADC）的写后回读
+ * 在 bring_up() 里做（CONV_START 写 1 自清，进不了这张表）。 */
 static const sy6970_init_step_t s_init_seq[] = {
     { SY6970_SEQ_VERIFY, SY6970_REG00,
       SY6970_REG00_VERIFY_MASK, SY6970_REG00_VERIFY_VAL,
@@ -118,6 +120,10 @@ static const sy6970_init_step_t s_init_seq[] = {
     { SY6970_SEQ_RMW_SET, SY6970_REG03,
       SY6970_WDRST_MASK, 0,
       "WD_RST=1 喂狗，写 1 自清 (DS p.17 / ALT p.14 / AN p.17)" },
+    { SY6970_SEQ_VERIFY, SY6970_REG07,
+      SY6970_WATCHDOG_MASK, 0,
+      "写后回读：REG07 WATCHDOG[5:4]==00 证明关狗已落定 "
+      "(DS p.19 / ALT p.16 / AN p.19)" },
     { SY6970_SEQ_VERIFY, SY6970_REG00,
       SY6970_REG00_VERIFY_MASK, SY6970_REG00_VERIFY_VAL,
       "写后回读验证写入已落定（计划约束：写入后必须回读 REG00；"
@@ -202,6 +208,7 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
 #ifndef SY6970_HOST_TEST
 
 #include <string.h>
+#include <stdatomic.h>
 
 #include "esp_log.h"
 #include "pk_i2c0_bus.h"
@@ -222,7 +229,9 @@ static const char *TAG = "sy6970";
  * REG0E~12 全是陈旧值——轮询侧的职责（Task 3 取证表事实 14）。
  * 用 RMW 置位而不是整字节覆盖：REG02 其余位（AICL_EN/HVDCP_EN 等
  * POR=1）保持芯片当前值，与 F1 对 REG07 的 RMW 同一哲学。 */
-#define SY6970_CONV_MASK      0xC0  /* CONV_START | CONV_RATE          */
+#define SY6970_CONV_RATE_MASK 0x40  /* CONV_RATE bit6：写后回读判据      */
+#define SY6970_CONV_START_MASK 0x80 /* CONV_START bit7：写 1 自清，不验  */
+#define SY6970_CONV_MASK      (SY6970_CONV_START_MASK | SY6970_CONV_RATE_MASK)
 
 /* 自愈节拍：连续 10 拍（≈10 s）才动一次 bring-up 级重试，与 qmc5883p
  * 的失明自愈一致——单拍抖动不值得动配置写。!s_ready 补试与代数失配
@@ -240,21 +249,37 @@ static const char *TAG = "sy6970";
 
 static i2c_master_dev_handle_t s_dev;
 
-/* ── 单写者状态（写者 = power_service 的 1 Hz poll 任务；读者自由拷贝，
- * 撕裂容忍口径同 power_service.h:27-32）────────────────────────────── */
-static bool            s_ready;      /* bring-up 成功（在读数）            */
-static sy6970_status_t s_status;     /* 最近一次成功解码                   */
-static uint8_t         s_regs[SY6970_WIN_LEN];  /* 原始窗口字节（F7）     */
-static uint8_t         s_reg00;      /* 最近一次 REG00 回读（F1 证据）     */
-static int64_t         s_updated_us; /* 最近成功采集时刻（0=从未）         */
+/* ── 单写者状态（写者 = power_service 的 1 Hz poll 任务）───────────────
+ * 诊断态（st/regs/reg00/ready/updated_us）捆在 s_diag 一份里，poll 末尾
+ * 走 seqlock 整体提交、sy6970_diag_get()（UI 上下文）走 seqlock 整体读
+ * ——审计 F2/F4/F3：读者会抢占写者，RV32 上 int64_t 的 updated_us 撕成
+ * 两条 store 就是垃圾时间戳；而"窗口读失败仍把旧解码状态配新写进去的
+ * 原始字节"更是把矛盾证据摆上台面。旧口径「撕裂最坏混到相邻两拍」
+ * 不覆盖字内撕裂，已废弃（合同见 power_sy6970.h 线程合同一节）。 */
+static bool            s_ready;      /* bring-up 成功（在读数）；仅 poll
+                                      * 上下文读写，诊断页经 s_diag.ready
+                                      * 取副本                             */
+static uint8_t         s_reg00;      /* 最近一次 REG00 回读（F1 证据），
+                                      * 仅 poll 上下文，随每拍提交进 s_diag */
 static power_snapshot_t s_last_good; /* 最近一份好快照：读失败时原样上报，
-                                     * 让服务端按 updated_us 判 stale 回落 */
+                                      * 让服务端按 updated_us 判 stale 回落 */
 static uint32_t        s_bus_gen;    /* 已认账的总线代数                   */
 static int             s_fail_streak;
 static int             s_boot_streak;   /* !s_ready 补试连击（日志节流）   */
 static int             s_gen_streak;    /* 代数失配重放连击（日志节流）    */
+static int             s_wd_streak;     /* WATCHDOG_FAULT 重放连击（节流） */
 static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
 static bool            s_ichg_recheck_done;
+
+/* 诊断单快照（seqlock）：偶 = 稳定，奇 = 写到一半。 */
+static struct {
+    _Atomic uint32_t seq;
+    sy6970_status_t  st;           /* 最近一次成功解码                     */
+    uint8_t          regs[SY6970_WIN_LEN]; /* 提交当拍的原始窗口字节      */
+    uint8_t          reg00;        /* 提交当拍的 REG00 回读（F1 证据）     */
+    bool             ready;
+    int64_t          updated_us;   /* 最近成功采集时刻（0=从未）           */
+} s_diag;
 
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
 {
@@ -272,11 +297,14 @@ static esp_err_t reg_write(uint8_t reg, uint8_t val)
  * F1 看门狗管理 + ADC 连续转换开启（bring-up）。
  *
  * 序列按 sy6970_init_seq() **逐字执行**（顺序不得重排）：写前 REG00
- * 在位校验 → REG07 关狗 → REG03 喂狗 → 写后 REG00 回读验证。两次 REG00
- * 回读值都以 INFO 进日志（write-intent + write-result 证据，计划约束）；
- * 任一步失败 WARN 带 why 并返回 false。本文件唯一的寄存器写豁免是
- * 看门狗管理（F1，计划全局约束）+ ADC 转换开启（Task 3 取证表事实 14
- * 点名 Task 4 职责）；充电参数（IINLIM/ICHG/VREG 等）一概不碰。
+ * 在位校验 → REG07 关狗 → REG03 喂狗 → 写后 REG07 回读（关狗落定）
+ * → 写后 REG00 回读验证。开 ADC 的 REG02 写后也回读验证 CONV_RATE
+ * （审计 F2：不回读就证明不了配置真的落进寄存器，REG00 回读只能
+ * 证明器件在场）。各回读值都以 INFO 进日志（write-intent +
+ * write-result 证据，计划约束）；任一步失败 WARN 带 why 并返回
+ * false。本文件唯一的寄存器写豁免是看门狗管理（F1，计划全局约束）
+ * + ADC 转换开启（Task 3 取证表事实 14 点名 Task 4 职责）；充电参数
+ * （IINLIM/ICHG/VREG 等）一概不碰。
  */
 static bool bring_up(void)
 {
@@ -294,6 +322,24 @@ static bool bring_up(void)
         ESP_LOGW(TAG, "REG02 写入失败");
         return false;
     }
+    /* 审计 F2 写后回读：只验 CONV_RATE(bit6)=1——CONV_START(bit7) 写 1
+     * 自清（转换期只读保持 1），不要求它回读为 1（[DS] p.16）。
+     * 回读成功值照 F1 的 write-intent/result 证据链以 INFO 记账
+     * （审计修复 P3：只写在失败分支的话，"各回读值都以 INFO 进日志"
+     * 就是空话，台架核对清单也少一环）。 */
+    uint8_t r02_rb = 0;
+    const esp_err_t rb = reg_read(SY6970_REG02, &r02_rb, 1);
+    if (rb != ESP_OK) {
+        ESP_LOGW(TAG, "REG02 写后回读失败（%s）", esp_err_to_name(rb));
+        return false;
+    }
+    if ((r02_rb & SY6970_CONV_RATE_MASK) == 0) {
+        ESP_LOGW(TAG, "REG02 写后回读 0x%02X：CONV_RATE 未落定（期望 bit6=1）",
+                 r02_rb);
+        return false;
+    }
+    ESP_LOGI(TAG, "REG02 写后回读：0x%02X（CONV_RATE=1 已落定，[DS] p.16）",
+             r02_rb);
 
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_init_seq(&n);
@@ -315,9 +361,9 @@ static bool bring_up(void)
                 return false;
             }
             if (st->reg == SY6970_REG00) s_reg00 = val;
-            ESP_LOGI(TAG, "F1 %s：REG00=0x%02X（掩码 0x%02X==0x%02X）",
+            ESP_LOGI(TAG, "F1 %s：REG%02X=0x%02X（掩码 0x%02X==0x%02X）",
                      i == 0 ? "写前在位校验" : "写后回读验证",
-                     val, st->mask, st->val);
+                     st->reg, val, st->mask, st->val);
             break;
         }
         case SY6970_SEQ_RMW_CLEAR:
@@ -350,24 +396,26 @@ static bool bring_up(void)
  * 2026-08-04 按那颗芯片实测标定的，直接套用到 SY6970 属于编造，标定
  * 数据到手前如实带着偏差（ichg_ma/charging 已在诊断快照里，标定有据
  * 可依）。量程闸与 ETA6098 backend 同口径。 */
-static power_snapshot_t build_snapshot(int64_t now_us)
+static power_snapshot_t build_snapshot(const sy6970_status_t *st,
+                                       int64_t now_us)
 {
     power_snapshot_t out;
-    out.batt_mv          = s_status.batt_mv;
-    out.pct_est          = (uint8_t)power_eta6098_mv_to_pct(s_status.batt_mv);
+    out.source           = st->vbus_present ? POWER_SRC_SY6970_VBUS
+                                            : POWER_SRC_BATTERY;
+    out.backend          = POWER_BACKEND_SY6970;
+    out.batt_mv          = st->batt_mv;
+    out.pct_est          = (uint8_t)power_eta6098_mv_to_pct(st->batt_mv);
     out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
-    out.charging         = s_status.charging;
+    out.charging         = st->charging;
     /* F6 范围裁定（controller 2026-09-07）：计划里的 VBUS 分压网络
      * （v4=30k/10k、v3=10k/10k）物理上接在 **RP2040 的 ADC**（U8 pin 40，
      * 网络 USB_VBUS_SENSE，取证 hardware/test_component_contract.py:33-50
      * 与 :568-570），不在 ESP32-P4 上；P4 要读它得扩展 RP2040 UART 协议
      * （v1.0 已冻结），超出本任务范围、明确不做。因此 vbus_present 与
      * VBUS 电压取自 SY6970 自己的 BUSV ADC（[DS] p.24：2.6V+code×100mV，
-     * 2.6~15.3V，已在 s_status.vbus_mv），覆盖 5V/9V 档判别；7V 中点
+     * 2.6~15.3V，已在 st->vbus_mv），覆盖 5V/9V 档判别；7V 中点
      * 阈值只在 60 s 复检日志里作诊断参考。 */
-    out.vbus_present     = s_status.vbus_present;
-    out.source           = s_status.vbus_present ? POWER_SRC_SY6970_VBUS
-                                                 : POWER_SRC_BATTERY;
+    out.vbus_present     = st->vbus_present;
     /* 没有库仑计，剩余时间不可估，如实标注（同 ETA6098 backend）。 */
     out.time_degraded_na = true;
     out.updated_us       = now_us;
@@ -375,6 +423,28 @@ static power_snapshot_t build_snapshot(int64_t now_us)
 }
 
 static power_snapshot_t poll_fail(int64_t now_us);
+
+/*
+ * 诊断态整体提交（seqlock 写协议，同 power_service.c）：进临界区先把
+ * 序号打成奇数（release），提交后打回偶数。只在"读 ok + 解码 ok"的
+ * 完整成功拍调用（审计 F4：候选帧半路失败不许污染已提交证据）——
+ * 含 wd_fault 帧（审计修复 P2）：诊断证据与服务新鲜度分账，故障帧
+ * 照常上屏；服务快照（s_last_good）是否刷新由调用方决定。
+ */
+static void diag_commit(const sy6970_status_t *st, const uint8_t *win,
+                        int64_t now_us)
+{
+    const uint32_t seq = atomic_load_explicit(&s_diag.seq,
+                                              memory_order_relaxed);
+    atomic_store_explicit(&s_diag.seq, seq | 1u, memory_order_release);
+    s_diag.st         = *st;
+    memcpy(s_diag.regs, win, SY6970_WIN_LEN);
+    s_diag.reg00      = s_reg00;
+    s_diag.ready      = s_ready;
+    s_diag.updated_us = now_us;
+    atomic_store_explicit(&s_diag.seq, (seq | 1u) + 1u,
+                          memory_order_release);
+}
 
 /*
  * 服务的 1 Hz 轮询入口（单写者）。连读两遍窗口取 REG0C 实况，第二遍帧
@@ -429,28 +499,59 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
     /* REG0C 故障锁存到被读走，取实况须连读两遍（[DS] p.29 / [AN] p.29，
      * 连读两遍的示例见 [AN] p.35）；唯一例外 NTC_FAULT 不锁存、恒如实
      * （[DS] p.29）。第一遍把上次的锁存冲掉，第二遍帧整体解码——其余
-     * 寄存器是 ADC 快照，用同一帧保持整帧一致。顺序读窗口也清 REG0C
-     * 的锁存：锁存语义挂在"寄存器被读"这个事件上，与单字节/顺序读无关。 */
+     * 寄存器是 ADC 快照，用同一帧保持整帧一致。
+     * 审计 F4：第二遍读进**本地候选帧**，不直接写诊断态——读失败或
+     * 解码失败（全 0xFF）时已提交的证据原封不动，不再出现"旧解码状态
+     * 配 0xFF 原始字节"的矛盾快照。 */
     uint8_t flush[SY6970_WIN_LEN];
+    uint8_t win[SY6970_WIN_LEN];
     if (reg_read(SY6970_WIN_REG0, flush, SY6970_WIN_LEN) != ESP_OK ||
-        reg_read(SY6970_WIN_REG0, s_regs, SY6970_WIN_LEN) != ESP_OK) {
+        reg_read(SY6970_WIN_REG0, win, SY6970_WIN_LEN) != ESP_OK) {
         return poll_fail(now_us);
     }
 
     sy6970_status_t st;
-    if (!sy6970_decode_status(s_regs, sizeof(s_regs), &st)) {
+    if (!sy6970_decode_status(win, sizeof(win), &st)) {
         /* 整窗全 0xFF = 器件掉电/离线（窗口合同，power_sy6970.h）。 */
         return poll_fail(now_us);
     }
 
-    s_status      = st;
-    s_updated_us  = now_us;
+    /* 看门狗自愈（审计 F2）：WATCHDOG_FAULT（REG0C[7]，[DS] p.29"超时
+     * → 回默认模式"）意味着关狗写已被默认模式吃掉——与总线代数失配
+     * 同一个「配置丢了」条件，走同款连击节流重放 bring-up。重放成功
+     * 前不提交**服务快照**（不刷 s_last_good/updated_us）：本帧窗口读
+     * 于默认模式（ADC 可能已停，值是陈货），提交它就是"新鲜时间戳盖
+     * 冻结读数"；原样回旧快照，让服务端看到的是 staleness。
+     * 诊断证据是另一回事（审计修复 P2）：本帧读+解码都成功，照常
+     * diag_commit——不然 WDFAULT 的屏上证据（REG0C 原始字节 + 译码）
+     * 永远不可达，只剩一条控制台 WARN。 */
+    if (st.wd_fault) {
+        diag_commit(&st, win, now_us);
+        s_wd_streak++;
+        if (s_wd_streak != 1 &&
+            s_wd_streak % SY6970_FAIL_STREAK_MAX != 0) {
+            return s_last_good;               /* 节流拍：静默守旧 */
+        }
+        ESP_LOGW(TAG, "WATCHDOG_FAULT（REG0C[7]）— 寄存器被打回默认模式，"
+                      "重放 SY6970 bring-up");
+        if (!bring_up()) {
+            ESP_LOGW(TAG, "看门狗自愈重放失败，再等 %d 拍后重试",
+                     SY6970_FAIL_STREAK_MAX);
+            return s_last_good;
+        }
+        s_wd_streak = 0;
+        ESP_LOGI(TAG, "看门狗自愈：SY6970 配置重放成功（本拍弃用，下拍取新）");
+        return s_last_good;                   /* 本帧来自默认模式，弃用 */
+    }
+    s_wd_streak = 0;
+
     s_fail_streak = 0;
     if (s_up_us == 0) s_up_us = now_us;    /* 60 s 复检的锚：首拍成功时刻 */
-    s_last_good   = build_snapshot(now_us);
+    s_last_good   = build_snapshot(&st, now_us);
+    diag_commit(&st, win, now_us);
 
     /* 开机 60 s 复检充电电流（一次性）：CH224K 诱骗与配置此时都该稳定。
-     * ICHGR 在窗口帧的 REG12（regs[7]；注意 REG11 是 BUSV 不是 ICHG）。
+     * ICHGR 在窗口帧的 REG12（win[7]；注意 REG11 是 BUSV 不是 ICHG）。
      * 若期间看门狗曾把寄存器打回默认模式，这拍数据就是证据。 */
     if (!s_ichg_recheck_done &&
         now_us - s_up_us >= SY6970_ICHG_RECHECK_US) {
@@ -459,10 +560,10 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
          * （2600 mV 下限），照常判档会把无输入报成"5V档"。 */
         ESP_LOGI(TAG, "60s 复检：ICHG=%umA VBUS=%umV chg=%d —— %s"
                       "（7V 中点判档，诊断参考；VBAT<VSHORT 时芯片自报 0mA）",
-                 (unsigned)s_status.ichg_ma, (unsigned)s_status.vbus_mv,
-                 (int)s_status.charging,
-                 !s_status.vbus_present    ? "无 VBUS"
-                     : s_status.vbus_mv >= SY6970_VBUS_9V_MIDPOINT_MV
+                 (unsigned)st.ichg_ma, (unsigned)st.vbus_mv,
+                 (int)st.charging,
+                 !st.vbus_present          ? "无 VBUS"
+                     : st.vbus_mv >= SY6970_VBUS_9V_MIDPOINT_MV
                                            ? "9V档" : "5V档");
     }
 
@@ -486,24 +587,40 @@ static power_snapshot_t poll_fail(int64_t now_us)
     return s_last_good;
 }
 
-/* F7 诊断快照：单写者/无锁读者合同（见 sy6970_diag_t 处注释）。 */
+/* F7 诊断快照：seqlock 读协议（写者 = poll 任务，见 s_diag 处注释）。
+ * 序号奇数或拷贝前后不符即重试，上限 4 次——写临界区只有一次结构体
+ * 拷贝，1 Hz 写者下连撞 4 次意味着系统已经病了，此时按「本拍无数据」
+ * 返回 false：诊断页宁可闪一拍无数据，也不能把 REG0C 原始字节和它的
+ * 译码对不上号。从未拿到过数据（updated_us==0）同样返回 false。 */
 bool sy6970_diag_get(sy6970_diag_t *out)
 {
     if (out == NULL) return false;
     *out = (sy6970_diag_t){0};
-    if (s_updated_us == 0) return false;   /* 从未拿到过数据 */
 
-    out->st         = s_status;
-    out->reg00      = s_reg00;
-    memcpy(out->regs, s_regs, sizeof(out->regs));
-    out->ready      = s_ready;
-    out->updated_us = s_updated_us;
-    return true;
+    for (int attempt = 0; attempt < 4; attempt++) {
+        const uint32_t s1 = atomic_load_explicit(&s_diag.seq,
+                                                 memory_order_acquire);
+        if (s1 & 1u) continue;                 /* 写到一半：重试 */
+        sy6970_diag_t c;
+        c.st         = s_diag.st;
+        c.reg00      = s_diag.reg00;
+        memcpy(c.regs, s_diag.regs, sizeof(c.regs));
+        c.ready      = s_diag.ready;
+        c.updated_us = s_diag.updated_us;
+        const uint32_t s2 = atomic_load_explicit(&s_diag.seq,
+                                                 memory_order_acquire);
+        if (s1 != s2) continue;                /* 拷贝期间被写入：重试 */
+        if (c.updated_us == 0) return false;   /* 从未拿到过数据 */
+        *out = c;
+        return true;
+    }
+    return false;                              /* 重试耗尽：按无数据处理 */
 }
 
-/* backend 登记项：name 仅用于日志。 */
+/* backend 登记项：name 仅用于日志；id 由服务盖进聚合快照（同源守卫）。 */
 static const power_backend_t s_backend = {
     .name = "sy6970",
+    .id   = POWER_BACKEND_SY6970,
     .poll = sy6970_poll,
 };
 

@@ -11,6 +11,7 @@
 #include "power_service.h"
 
 #include <stddef.h>
+#include <stdatomic.h>
 
 #ifndef POWER_SERVICE_HOST_TEST
 #include "esp_log.h"
@@ -18,9 +19,11 @@ static const char *TAG = "pwr";
 #endif
 
 /* 注册表：指针数组 + 平行快照槽位。槽位只有一个写者（poll 任务），
- * 读者自由拷贝（合同见头文件）。 */
+ * 读者（UI 任务）经 seqlock 协议拷贝（合同见头文件线程合同一节）：
+ * 序号偶数 = 槽位稳定，奇数 = 写到一半。 */
 static const power_backend_t *s_backends[POWER_SERVICE_MAX_BACKENDS];
 static power_snapshot_t s_slots[POWER_SERVICE_MAX_BACKENDS];
+static _Atomic uint32_t s_slot_seq[POWER_SERVICE_MAX_BACKENDS];
 static size_t s_count;
 
 /* "无数据"槽位初值 / 无 backend 时的返回值。time_degraded_na=true：
@@ -29,6 +32,7 @@ static power_snapshot_t unknown_snapshot(void)
 {
     power_snapshot_t s;
     s.source           = POWER_SRC_UNKNOWN;
+    s.backend          = POWER_BACKEND_NONE;
     s.charging         = false;
     s.vbus_present     = false;
     s.batt_mv          = 0;
@@ -91,38 +95,77 @@ void power_service_poll_tick(int64_t now_us)
         /* stale 由服务端按统一时序重算，backend 的自报不作数。 */
         s.stale = snapshot_is_stale(&s, now_us);
 
+        /* seqlock 写协议：进临界区先把序号打成奇数（release，读者见之
+         * 即重试），槽位提交后再打回偶数（release，读者的一致性闸）。
+         * 从「seq|1」起算保证收尾必是偶数——就算序号曾被外部掰成奇数
+         * （仅 host 测试 seam 干得出来），写者一拍就恢复不变式。 */
+        const uint32_t seq = atomic_load_explicit(&s_slot_seq[i],
+                                                  memory_order_relaxed);
+        atomic_store_explicit(&s_slot_seq[i], seq | 1u,
+                              memory_order_release);
+        s.backend = b->id;         /* 身份戳：赢家是谁由注册项自带 */
         s_slots[i] = s;
+        atomic_store_explicit(&s_slot_seq[i], (seq | 1u) + 1u,
+                              memory_order_release);
     }
+}
+
+/*
+ * 槽位一致性拷贝（seqlock 读协议）：取序号（acquire）→ 拷贝 → 复核，
+ * 奇数或复核不符即重试。上限 4 次：写临界区只有一次结构体赋值，1 Hz
+ * 写者下读者连撞 4 次意味着系统已经病了——此时宁可按「本拍没读到」
+ * 处理（调用方拿 UNKNOWN/stale），也绝不交出可能撕裂的副本（RV32 上
+ * int64_t 的 updated_us 撕了就是垃圾时间戳， 见头文件线程合同）。
+ */
+static bool slot_copy(size_t i, power_snapshot_t *out)
+{
+    for (int attempt = 0; attempt < 4; attempt++) {
+        const uint32_t s1 = atomic_load_explicit(&s_slot_seq[i],
+                                                 memory_order_acquire);
+        if (s1 & 1u) continue;                    /* 写到一半：重试 */
+        *out = s_slots[i];
+        const uint32_t s2 = atomic_load_explicit(&s_slot_seq[i],
+                                                 memory_order_acquire);
+        if (s1 == s2) return true;                /* 一致副本 */
+    }
+    return false;
 }
 
 power_snapshot_t power_service_snapshot_at(int64_t now_us)
 {
-    const power_snapshot_t *freshest = NULL;
+    power_snapshot_t freshest;
+    bool have_freshest = false;
 
     for (size_t i = 0; i < s_count; i++) {
-        const power_snapshot_t *s = &s_slots[i];
-        if (!snapshot_is_stale(s, now_us)) {
-            power_snapshot_t out = *s;             /* 首个新鲜的赢 */
-            out.stale = false;
-            return out;
+        power_snapshot_t s;
+        if (!slot_copy(i, &s)) continue;   /* 重试耗尽：本拍跳过该槽 */
+        if (!snapshot_is_stale(&s, now_us)) {
+            s.stale = false;
+            return s;                      /* 首个新鲜的赢 */
         }
-        if (freshest == NULL || s->updated_us > freshest->updated_us) {
-            freshest = s;                          /* 记录最近更新的 */
+        if (!have_freshest || s.updated_us > freshest.updated_us) {
+            freshest = s;                  /* 记录最近更新的 */
+            have_freshest = true;
         }
     }
 
-    if (freshest != NULL) {
-        power_snapshot_t out = *freshest;          /* 全 stale：给最近的 */
-        out.stale = true;                          /* 但必须如实标过期 */
-        return out;
+    if (have_freshest) {
+        freshest.stale = true;             /* 全 stale：给最近的，如实标 */
+        return freshest;
     }
-    return unknown_snapshot();                     /* 无 backend：UNKNOWN */
+    return unknown_snapshot();             /* 无 backend（或全没读到） */
 }
 
 #ifdef POWER_SERVICE_HOST_TEST
 void power_service_reset(void)
 {
     s_count = 0;
+}
+
+void power_service_test_seq_break(size_t slot)
+{
+    if (slot >= POWER_SERVICE_MAX_BACKENDS) return;
+    atomic_store_explicit(&s_slot_seq[slot], 1u, memory_order_relaxed);
 }
 #endif
 

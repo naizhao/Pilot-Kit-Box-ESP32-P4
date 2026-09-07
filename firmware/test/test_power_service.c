@@ -23,7 +23,13 @@
  *   4. 钳位：pct_est>100 一律收 100（uint8_t 无负值，下界 0 天然成立）
  *      ——backend 自身的 bug 不得把百分比显示成 250；
  *   5. poll 合同：backend 收到的 now_us 与轮询拍传参一致（µs 单调时钟，
- *      与 esp_timer_get_time() 同源同单位）。
+ *      与 esp_timer_get_time() 同源同单位）；
+ *   6. backend 身份戳：注册项自报的 id 由服务盖进聚合快照（诊断页同源
+ *      守卫的依据）；未声明身份的 backend 盖 NONE；
+ *   7. seqlock：序号奇数（写到一半）时读者重试耗尽后按「本拍没读到」
+ *      处理（UNKNOWN/stale），绝不交出撕裂副本；写者下一拍恢复偶数后
+ *      数据重新可读。单线程可测的靠山是 host seam：把序号掰成奇数，
+ *      模拟读者撞上槽位写到一半。
  */
 
 #include <stdio.h>
@@ -52,9 +58,12 @@ static power_snapshot_t fake_poll_0(int64_t us) { return fake_poll(0, us); }
 static power_snapshot_t fake_poll_1(int64_t us) { return fake_poll(1, us); }
 static power_snapshot_t fake_poll_2(int64_t us) { return fake_poll(2, us); }
 
-static const power_backend_t s_b0 = { "fake-0", fake_poll_0 };
-static const power_backend_t s_b1 = { "fake-1", fake_poll_1 };
-static const power_backend_t s_b2 = { "fake-2", fake_poll_2 };
+static const power_backend_t s_b0 = { "fake-0", POWER_BACKEND_NONE,
+                                      fake_poll_0 };
+static const power_backend_t s_b1 = { "fake-1", POWER_BACKEND_NONE,
+                                      fake_poll_1 };
+static const power_backend_t s_b2 = { "fake-2", POWER_BACKEND_NONE,
+                                      fake_poll_2 };
 
 static power_snapshot_t mk_snap(power_src_t src, int64_t updated_us,
                                 uint16_t mv, uint8_t pct)
@@ -69,6 +78,7 @@ static power_snapshot_t mk_snap(power_src_t src, int64_t updated_us,
     s.time_degraded_na = false;
     s.updated_us       = updated_us;
     s.stale            = false;   /* 服务端按 updated_us 重算，不信 backend */
+    s.backend          = POWER_BACKEND_NONE;   /* 身份戳由服务端盖，自报不作数 */
     return s;
 }
 
@@ -261,7 +271,8 @@ static void test_invalid_register_rejected(void)
     power_service_register(NULL);
     CHECK(power_service_backend_count() == 0);
 
-    static const power_backend_t no_poll = { "no-poll", NULL };
+    static const power_backend_t no_poll = { "no-poll", POWER_BACKEND_NONE,
+                                             NULL };
     power_service_register(&no_poll);
     CHECK(power_service_backend_count() == 0);
 }
@@ -298,6 +309,59 @@ static void test_fields_pass_through(void)
     CHECK(e.vbus_present == true);
 }
 
+/* ── 13 backend 身份戳：服务把赢家的 id 盖进聚合快照 ───────────────── */
+static void test_backend_id_stamped_into_snapshot(void)
+{
+    const int64_t now = 110000000;
+
+    /* 注册项声明了身份：快照盖它的 id（诊断页同源守卫的依据） */
+    power_service_reset();
+    static const power_backend_t b_id = { "fake-sy", POWER_BACKEND_SY6970,
+                                          fake_poll_0 };
+    power_service_register(&b_id);
+    s_ret[0] = mk_snap(POWER_SRC_SY6970_VBUS, now, 3700, 50);
+    power_service_poll_tick(now);
+    CHECK(power_service_snapshot_at(now).backend == POWER_BACKEND_SY6970);
+
+    /* 未声明身份的 backend：盖 NONE（消费方据此拒绝同源合并） */
+    power_service_reset();
+    power_service_register(&s_b0);
+    s_ret[0] = mk_snap(POWER_SRC_BATTERY, now, 3700, 50);
+    power_service_poll_tick(now);
+    CHECK(power_service_snapshot_at(now).backend == POWER_BACKEND_NONE);
+}
+
+/* ── 14 seqlock：序号奇数（写到一半）读者不得拿到撕裂副本 ──────────── */
+static void test_seqlock_write_in_progress_readers_get_no_data(void)
+{
+    power_service_reset();
+    power_service_register(&s_b0);
+
+    const int64_t now = 120000000;
+    s_ret[0] = mk_snap(POWER_SRC_BATTERY, now, 3700, 50);
+    power_service_poll_tick(now);
+
+    /* 正常路径：已提交快照的一次一致读 */
+    power_snapshot_t s = power_service_snapshot_at(now);
+    CHECK(s.stale == false);
+    CHECK(s.batt_mv == 3700);
+
+    /* 把序号掰成奇数，模拟读者撞上「槽位写到一半」 */
+    power_service_test_seq_break(0);
+    s = power_service_snapshot_at(now);
+    /* 重试耗尽：本拍按「没读到」处理——宁可 UNKNOWN/stale，也绝不把
+     * 可能撕裂的副本交出去（RV32 上 int64_t updated_us 撕了就是垃圾） */
+    CHECK(s.source == POWER_SRC_UNKNOWN);
+    CHECK(s.stale == true);
+    CHECK(s.updated_us == 0);
+
+    /* 写者下一拍走完整写协议（收尾必回偶数），数据重新可读 */
+    power_service_poll_tick(now + 1000000);
+    s = power_service_snapshot_at(now + 1000000);
+    CHECK(s.stale == false);
+    CHECK(s.batt_mv == 3700);
+}
+
 int main(void)
 {
     test_no_backend_unknown_stale();
@@ -312,6 +376,8 @@ int main(void)
     test_duplicate_register_is_idempotent();
     test_invalid_register_rejected();
     test_fields_pass_through();
+    test_backend_id_stamped_into_snapshot();
+    test_seqlock_write_in_progress_readers_get_no_data();
 
     if (g_fail == 0) {
         printf("test_power_service: all OK\n");

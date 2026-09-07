@@ -677,7 +677,13 @@ void pk_diag_page_render(uint16_t *fb)
         sy6970_diag_t d;
         if (sy6970_live(&d)) {
             const power_snapshot_t s = power_service_snapshot();
-            if (s.stale) {
+            /* 同源守卫（审计）：快照赢家不是 SY6970——典型是 SY6970 stale
+             * 后服务端已回落 ETA6098——时，快照里的电量/电压就是另一个源
+             * 的数据，并进本卡等于张冠李戴；此时只渲染诊断快照（寄存器
+             * 译码）自己的字段。stale 闸也只对同源快照有意义：过期的是
+             * 别人的数据，不该替 SY6970 的译码顶罪。 */
+            const bool same_src = (s.backend == POWER_BACKEND_SY6970);
+            if (same_src && s.stale) {
                 /* 服务端 5 s 无新数据：宁可说过期，也不把旧数当实时。
                  * 常规路径到不了这里（diag 新鲜则快照同拍新鲜），摆出来
                  * 是把「数据过期就别信数字」这条规则钉死在这格上。 */
@@ -685,15 +691,22 @@ void pk_diag_page_render(uint16_t *fb)
                           pk_i18n_text(PK_TR_DIAG_V_PWR_STALE), ST_WARN);
             } else {
                 const sy6970_status_t *st = &d.st;
-                /* 电量/电压取公共快照（pct_valid 是服务端与 ETA6098 同口径
-                 * 的量程闸），故障/电流/VBUS 取诊断快照的寄存器译码。
-                 * 两份快照同一拍更新，最坏混到相邻 1 s 的字段（线程合同
-                 * 见 power_sy6970.h:107-112），诊断页场景无害。 */
-                int p = s.pct_valid
-                    ? snprintf(buf, sizeof(buf), "%u%% %.2fV",
-                               (unsigned)s.pct_est, (double)s.batt_mv / 1000.0)
-                    : snprintf(buf, sizeof(buf), "%.2fV",
-                               (double)s.batt_mv / 1000.0);
+                /* 电量/电压：仅同源时取公共快照（pct_valid 是服务端与
+                 * ETA6098 同口径的量程闸）；不同源时电压取 SY6970 自己的
+                 * BATV 译码、不显示电量（本层不出 pct 的合同不变）。
+                 * 故障/电流/VBUS 恒取诊断快照（seqlock 一致性拷贝，线程
+                 * 合同见 power_sy6970.h）。 */
+                int p;
+                if (same_src) {
+                    p = s.pct_valid
+                        ? snprintf(buf, sizeof(buf), "%u%% %.2fV",
+                                   (unsigned)s.pct_est, (double)s.batt_mv / 1000.0)
+                        : snprintf(buf, sizeof(buf), "%.2fV",
+                                   (double)s.batt_mv / 1000.0);
+                } else {
+                    p = snprintf(buf, sizeof(buf), "%.2fV",
+                                 (double)st->batt_mv / 1000.0);
+                }
                 /* 故障优先级：看门狗故障意味着寄存器被整体打回默认（关狗
                  * 写被清掉，F1 的前提没了），比一次充电故障更要紧；CHRG_
                  * FAULT 的 01/10/11 各指向不同的排查方向（适配器/散热/
@@ -720,11 +733,12 @@ void pk_diag_page_render(uint16_t *fb)
                     p = snprintf(buf + p, sizeof(buf) - p, " %.1fA",
                                  (double)st->ichg_ma / 1000.0);
                 /* 状态灯：REG0C 任一硬故障即红；插着电（充电或充满维持）
-                 * 绿；纯电池放电沿用 20% 琥珀线——还够飞就不打扰。 */
+                 * 绿；纯电池放电沿用 20% 琥珀线——还够飞就不打扰（琥珀线
+                 * 依据的是公共快照的电量，仅同源时有意义）。 */
                 draw_card(fb, 0, 5, card_title(10), buf,
                           fault ? ST_BAD
                           : (st->charging || st->vbus_present) ? ST_OK
-                          : (s.pct_valid && s.pct_est < 20) ? ST_WARN : ST_OK);
+                          : (same_src && s.pct_valid && s.pct_est < 20) ? ST_WARN : ST_OK);
             }
         } else {
             /* v3 / 未上电的 v4：ETA6098 分压采样，呈现原样保留。 */
@@ -1346,9 +1360,11 @@ static void draw_detail(uint16_t *fb, int which)
             /* v4 powered：SY6970 的寄存器级取证。这一页的读者在排查供电，
              * 给原始证据（REG00 回读、REG0C 故障字节）比只给结论更能定位
              * ——F1 的关狗写还在不在、REG0C 锁了哪个 bit，看这两行就知道。
-             * 电量/电压仍取公共快照，与状态栏、总览卡同一口径。 */
+             * 电量/电压在**同源**时取公共快照，与状态栏、总览卡同一口径
+             * （同源守卫见下：快照赢家不是 SY6970 时不用它的字段）。 */
             const power_snapshot_t s = power_service_snapshot();
-            if (s.stale) {
+            const bool same_src = (s.backend == POWER_BACKEND_SY6970);
+            if (same_src && s.stale) {
                 /* 服务端 5 s 无新数据：说过期，不报旧数（同总览卡的取舍）。 */
                 det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATUS,
                            PK_TR_DIAG_V_PWR_STALE, COL_WARN);
@@ -1364,12 +1380,15 @@ static void draw_detail(uint16_t *fb, int which)
                        : st->vbus_present ? PK_TR_DIAG_V_PWR_EXT
                                           : PK_TR_DIAG_V_PWR_DISCHG,
                        st->charging ? COL_ONLINE : COL_VAL);
-            if (s.pct_valid) {
+            if (same_src && s.pct_valid) {
                 snprintf(buf, sizeof(buf), "%u %%", (unsigned)s.pct_est);
                 det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
                           s.pct_est >= 20 ? COL_ONLINE : COL_WARN);
             }
-            snprintf(buf, sizeof(buf), "%.3f V", (double)s.batt_mv / 1000.0);
+            /* 电压：同源取公共快照；不同源取 SY6970 自己的 BATV 译码
+             * （回落源的电压不是这颗芯片的读数，不并进来）。 */
+            snprintf(buf, sizeof(buf), "%.3f V",
+                     (double)(same_src ? s.batt_mv : st->batt_mv) / 1000.0);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_VOLTAGE, buf, COL_VAL);
             /* BUSV/ICHGR 是 SY6970 自己的 ADC（REG11/REG12，[DS] p.24-25）。
              * ICHGR 在 VBAT<VSHORT 时芯片读回 0mA——那是芯片口径，不是读

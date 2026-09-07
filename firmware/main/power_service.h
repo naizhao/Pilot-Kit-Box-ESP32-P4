@@ -26,11 +26,17 @@
  *
  * ── 线程合同 ────────────────────────────────────────────────────────
  * 槽位只有一个写者（poll 任务，见 power_service.c 的 1 Hz 任务）；
- * 读者（UI 任务）自由拷贝快照。不上锁：撕裂最坏混到相邻两拍（1 s）的
- * 字段，与今天 battery.c 无锁读的容忍口径一致，状态栏场景无害。
- * register() 在 bring-up 早期（任务起跑前后都允许）调用——"前后都允许"
- * 依赖 poll_tick 的空槽免疫兜底（power_service.c：调 poll 前先判槽位
- * NULL）；晚注册的 backend 下一拍自然进入轮询。
+ * 读者（UI 任务）会抢占写者，RV32 上一次普通结构体拷贝会被撕裂——
+ * int64_t 的 updated_us 拆成两条 store，撞上抢占就是垃圾时间戳或拼错
+ * 的字段组合，旧的「最坏混到相邻两拍」口径从不覆盖这种字内撕裂。
+ * 槽位提交走 seqlock（C11 原子，同 qmc5883p.c 的口径）：写者进临界区
+ * 前把槽位序号打成奇数、提交后打回偶数（release）；读者取序号
+ * （acquire）→ 拷贝 → 复核序号，奇数或不符即重试，上限 4 次——耗尽
+ * 则本拍按「没读到」处理（调用方拿到 UNKNOWN/stale），绝不交出撕裂
+ * 副本。全程无阻塞、无长自旋。register() 在 bring-up 早期（任务起跑
+ * 前后都允许）调用——"前后都允许"依赖 poll_tick 的空槽免疫兜底
+ * （power_service.c：调 poll 前先判槽位 NULL）；晚注册的 backend
+ * 下一拍自然进入轮询。
  *
  * ── battery.h 的迁移映射（Task 2 的合同）────────────────────────────
  *   pk_batt_t.valid    → pct_valid（batt_mv 量程 2500..4500 的判定留在
@@ -60,9 +66,21 @@ typedef enum {
     POWER_SRC_SY6970_VBUS,
 } power_src_t;
 
+/* backend 身份：注册项自报，服务在聚合时把赢家的 id 盖进快照。
+ * 诊断页用它做同源守卫——快照的赢家不是 SY6970（如 SY6970 stale 后
+ * 服务端已回落 ETA6098）时，不许把快照字段并进 SY6970 的卡片。
+ * NONE = 无 backend / backend 未声明身份。 */
+typedef enum {
+    POWER_BACKEND_NONE = 0,
+    POWER_BACKEND_ETA6098,
+    POWER_BACKEND_SY6970,
+} power_backend_id_t;
+
 /* 一份电源快照（字段最小集，消费方：状态栏 / 诊断页 / 将来的续航估计）。 */
 typedef struct {
     power_src_t source;      /* 电从哪来（档位语义见文件头）        */
+    power_backend_id_t backend; /* 赢家 backend 身份（服务端盖戳，
+                                  * backend 自报不作数；同源守卫见上） */
     bool        charging;    /* 正在充电                            */
     bool        vbus_present;/* 外部电在位（比 charging 宽：充满维持
                               * 时 charging=false 但 vbus 仍在）    */
@@ -81,6 +99,7 @@ typedef struct {
  */
 typedef struct {
     const char      *name;
+    power_backend_id_t id;   /* 身份自报（NONE=未声明）；服务盖进快照 */
     power_snapshot_t (*poll)(int64_t now_us);
 } power_backend_t;
 
@@ -133,4 +152,8 @@ power_snapshot_t power_service_snapshot(void);
 /* 仅 host 单测：清空注册表（POWER_SERVICE_HOST_TEST 才声明/定义）。 */
 #ifdef POWER_SERVICE_HOST_TEST
 void power_service_reset(void);
+/* 仅 host 单测：把指定槽位的 seqlock 序号掰成奇数，单线程模拟「读者
+ * 撞上槽位写到一半」，验证读侧重试耗尽后按无数据处理（写者下一拍走
+ * 完整写协议会把偶数态恢复回来）。 */
+void power_service_test_seq_break(size_t slot);
 #endif

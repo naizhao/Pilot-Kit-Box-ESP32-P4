@@ -15,6 +15,8 @@
 
 #include "power_service.h"
 
+#include <stdatomic.h>
+
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
@@ -35,8 +37,12 @@ static adc_cali_handle_t         s_cali;
 static adc_channel_t             s_chan;
 static bool                      s_ready;
 
-static int64_t s_last_us;
-static int     s_ema_mv;        /* 平滑后的引脚电压 */
+static int64_t s_last_us;   /* 最近一次**成功采样**的时刻（0=从未采到） */
+/* EMA 平滑后的引脚电压。poll 任务写、诊断页经 raw_mv 读（UI 可抢占
+ * poll）——C11 原子 relaxed（同 qmc5883p.c 的诊断计数口径）：单字访存
+ * 不撕裂即可，该值本就是诊断/标定辅助量。其余 statics 只有 poll 任务
+ * 摸（写者唯一、无跨任务读者），保持普通变量。 */
+static _Atomic int s_ema_mv;
 static int     s_prev_mv;       /* 上一次判充电用 */
 static int     s_trend_mv;      /* 30 s 前的读数，长窗口趋势判据用 */
 static int     s_raw_prev;      /* 上一次**原始**读数，阶跃检测用（不能用 EMA 后的） */
@@ -125,8 +131,10 @@ static int supply_drop_mv(int batt_mv, bool vbus, bool charging)
 
 /*
  * 服务的 1 Hz 轮询入口：采一拍（内部保留原 1 Hz 节拍闸），把状态摊成一份
- * 公共快照。now_us 直接来自服务（时序合同见 power_service.h），照填
- * updated_us，stale 由服务端统一重算。
+ * 公共快照。now_us 直接来自服务（时序合同见 power_service.h），stale 由
+ * 服务端统一重算。updated_us 如实盖「最近一次**成功采样**」的时刻
+ * （s_last_us）——审计 F1：ADC 持续失败时旧读数绝不能顶着 now_us 冒充
+ * 新鲜数据；从未采到过则 updated_us=0（从未报数哨兵，服务端恒判 stale）。
  */
 static power_snapshot_t eta6098_poll(int64_t now_us)
 {
@@ -136,6 +144,7 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
      * 防御（服务层不假设 backend 的内部状态）。 */
     if (!s_ready) {
         out.source           = POWER_SRC_UNKNOWN;
+        out.backend          = POWER_BACKEND_ETA6098;
         out.charging         = false;
         out.vbus_present     = false;
         out.batt_mv          = 0;
@@ -152,6 +161,8 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
         if (adc_oneshot_read(s_adc, s_chan, &raw) == ESP_OK) {
             int mv = raw;
             if (s_cali) adc_cali_raw_to_voltage(s_cali, raw, &mv);
+            int ema = atomic_load_explicit(&s_ema_mv,
+                                           memory_order_relaxed);
 
             /* --- 充电状态判断 ---
              *
@@ -219,32 +230,33 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
                  */
                 if (now - s_trend_us >= 30000000LL) {
                     if (s_trend_mv != 0) {
-                        if (s_ema_mv > s_trend_mv + 5)      s_charging = true;
-                        else if (s_ema_mv < s_trend_mv - 5) s_charging = false;
+                        if (ema > s_trend_mv + 5)      s_charging = true;
+                        else if (ema < s_trend_mv - 5) s_charging = false;
                     }
-                    s_trend_mv  = s_ema_mv;
+                    s_trend_mv  = ema;
                     s_trend_us  = now;
                 }
             }
             s_raw_prev = mv;
 
-            if (s_ema_mv == 0) s_ema_mv = mv;
-            else s_ema_mv += (mv - s_ema_mv) * BATT_EMA_NUM / BATT_EMA_DEN;
-            s_prev_mv = s_ema_mv;
+            if (ema == 0) ema = mv;
+            else ema += (mv - ema) * BATT_EMA_NUM / BATT_EMA_DEN;
+            atomic_store_explicit(&s_ema_mv, ema, memory_order_relaxed);
+            s_prev_mv = ema;
 
             ESP_LOGD(TAG, "STAT(%d)=%d valid=%d mv=%d chg=%d",
                      BATT_STAT_GPIO, stat, (int)s_stat_valid,
-                     s_ema_mv, (int)s_charging);
-            s_last_us = now;
+                     ema, (int)s_charging);
+            s_last_us = now;   /* 只有成功采样才推进（新鲜度锚） */
             /* 标定用：万用表量到的电池电压 ÷ 这里的 raw = 分压比。
              * 2026-07-29 已用它标出 296（raw 1387 mV ↔ 实测 4.10 V），故降到
              * DEBUG。换板子或换电芯要重标时，esp_log_level_set("batt",
              * ESP_LOG_DEBUG) 打开即可，不必回头改代码。 */
-            const int batt_mv_dbg = s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100;
+            const int batt_mv_dbg = ema * CONFIG_PK_BATT_DIVIDER_X100 / 100;
             const int drop_dbg    = supply_drop_mv(batt_mv_dbg, s_vbus, s_charging);
             ESP_LOGD(TAG, "raw %d mV (x%.2f -> %d mV) vbus=%d chg=%d drop=%d mV "
                           "-> %d mV = %d%%",
-                     s_ema_mv, CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
+                     ema, CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
                      batt_mv_dbg, (int)s_vbus, (int)s_charging, drop_dbg,
                      batt_mv_dbg - drop_dbg,
                      power_eta6098_mv_to_pct(batt_mv_dbg - drop_dbg));
@@ -258,7 +270,13 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
      *
      * 补偿看 s_vbus（插没插电），不看 s_charging（在不在充电）：充满停充
      * 时充电器仍在维持电压，读数照样虚高一档。见 supply_drop_mv 的 HOLD。 */
-    out.batt_mv      = (uint16_t)(s_ema_mv * CONFIG_PK_BATT_DIVIDER_X100 / 100);
+    const int ema    = atomic_load_explicit(&s_ema_mv,
+                                            memory_order_relaxed);
+    /* source 档位：这块板没有 power path——USB 在位时整机由 USB 供电、
+     * 电池只在充电，所以 vbus 在位即"外部电"；不在位即电池放电。 */
+    out.source       = s_vbus ? POWER_SRC_EXTERNAL : POWER_SRC_BATTERY;
+    out.backend      = POWER_BACKEND_ETA6098;
+    out.batt_mv      = (uint16_t)(ema * CONFIG_PK_BATT_DIVIDER_X100 / 100);
     const int drop   = supply_drop_mv(out.batt_mv, s_vbus, s_charging);
     out.pct_est      = (uint8_t)power_eta6098_mv_to_pct(out.batt_mv - drop);
     /* 满电仍如实报充电状态：阶跃检测能证明线插着，不必再靠"电压还在涨"
@@ -268,26 +286,30 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
     /* 合理量程之外判为无效：没接电池时引脚是浮空的，读数会乱跳，
      * 显示一个煞有介事的百分比比不显示更糟。 */
     out.pct_valid    = (out.batt_mv > 2500 && out.batt_mv < 4500);
-    /* source 档位：这块板没有 power path——USB 在位时整机由 USB 供电、
-     * 电池只在充电，所以 vbus 在位即"外部电"；不在位即电池放电。 */
-    out.source       = s_vbus ? POWER_SRC_EXTERNAL : POWER_SRC_BATTERY;
     /* 没有电流采样/库仑计，剩余时间永远不可估，如实标注。 */
     out.time_degraded_na = true;
-    out.updated_us   = now_us;
+    /* 审计 F1：新鲜度锚 = 最近一次成功采样（s_last_us）。ADC 失败的拍
+     * 原样带旧时间戳返回——读数与时间戳一致地"旧"，服务端 5 s 后判
+     * stale；从未成功则为 0（从未报数哨兵）。绝不拿 now_us 给旧读数
+     * 顶新鲜。 */
+    out.updated_us   = s_last_us;
     return out;
 }
 
 bool power_eta6098_raw_mv(int *out_mv)
 {
     if (out_mv == NULL) return false;
-    if (s_ema_mv == 0) return false;   /* 一拍都没采过：无从谈起 */
-    *out_mv = s_ema_mv;
+    const int ema = atomic_load_explicit(&s_ema_mv,
+                                         memory_order_relaxed);
+    if (ema == 0) return false;   /* 一拍都没采过：无从谈起 */
+    *out_mv = ema;
     return true;
 }
 
-/* backend 登记项：name 仅用于日志。 */
+/* backend 登记项：name 仅用于日志；id 由服务盖进聚合快照。 */
 static const power_backend_t s_backend = {
     .name = "eta6098",
+    .id   = POWER_BACKEND_ETA6098,
     .poll = eta6098_poll,
 };
 

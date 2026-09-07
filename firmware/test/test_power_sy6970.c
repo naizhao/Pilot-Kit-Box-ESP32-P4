@@ -25,9 +25,12 @@
  *   5. ADC 换算（整数、无浮点）：BATV/SYSV=2304mV+code×20mV，
  *      BUSV=2600mV+code×100mV，ICHGR=code×50mA，NTCPCT=21%+code×0.465%
  *      （×1000 整数化）；
- *   6. init 序列表：4 步（写前 REG00 校验 → REG07 关看门狗 → REG03
- *      喂狗 → 写后 REG00 回读验证），地址/掩码/期望值与取证表一致，
- *      每步 why 非空。
+ *   6. init 序列表：5 步（写前 REG00 校验 → REG07 关看门狗 → REG03
+ *      喂狗 → 写后 REG07 回读验证 → 写后 REG00 回读验证），地址/掩码/
+ *      期望值与取证表一致，每步 why 非空。写后两行分别钉死「关狗已
+ *      落定」（REG07[5:4]==0，DS p.19）与计划约束「写入后必须回读
+ *      REG00」（DS p.15）——审计 F2：只回读 REG00 证明不了看门狗位
+ *      真的落进寄存器。
  */
 
 #include <stdio.h>
@@ -248,7 +251,7 @@ static void test_init_seq_matches_evidence(void)
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_init_seq(&n);
     CHECK(seq != NULL);
-    CHECK(n == 4);
+    CHECK(n == 5);
 
     /* 步骤 0（写前）：REG00 回读校验——EN_HIZ=0|EN_ILIM=1（POR 位值，
      * DS p.15），在位证据 */
@@ -267,12 +270,20 @@ static void test_init_seq_matches_evidence(void)
     CHECK(seq[2].reg == 0x03);
     CHECK(seq[2].mask == 0x40);
 
-    /* 步骤 3（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
-     * 必须回读 REG00 验证」，掩码/期望值与写前一行同源（DS p.15）*/
+    /* 步骤 3（写后）：回读 REG07 验证关狗已落定——WATCHDOG[5:4]=00
+     * （掩码 0x30 期望 0；DS p.19）。审计 F2：REG0C 的 WATCHDOG_FAULT
+     * 只能靠这行把「关狗写被默认模式吃掉」的配置丢失在当轮拦下 */
     CHECK(seq[3].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[3].reg == 0x00);
-    CHECK(seq[3].mask == 0xC0);
-    CHECK(seq[3].val == 0x40);
+    CHECK(seq[3].reg == 0x07);
+    CHECK(seq[3].mask == 0x30);
+    CHECK(seq[3].val == 0x00);
+
+    /* 步骤 4（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
+     * 必须回读 REG00 验证」，掩码/期望值与写前一行同源（DS p.15）*/
+    CHECK(seq[4].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[4].reg == 0x00);
+    CHECK(seq[4].mask == 0xC0);
+    CHECK(seq[4].val == 0x40);
 
     for (size_t i = 0; i < n; i++) {
         CHECK(seq[i].why != NULL && seq[i].why[0] != '\0');
