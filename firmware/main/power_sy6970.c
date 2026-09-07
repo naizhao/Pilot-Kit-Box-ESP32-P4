@@ -224,8 +224,10 @@ static const char *TAG = "sy6970";
  * POR=1）保持芯片当前值，与 F1 对 REG07 的 RMW 同一哲学。 */
 #define SY6970_CONV_MASK      0xC0  /* CONV_START | CONV_RATE          */
 
-/* 自愈阈值：连续 10 拍（≈10 s）拿不到有效窗口才重放 bring-up，节拍
- * 与 qmc5883p 的失明自愈一致——单拍抖动不值得动配置写。 */
+/* 自愈节拍：连续 10 拍（≈10 s）才动一次 bring-up 级重试，与 qmc5883p
+ * 的失明自愈一致——单拍抖动不值得动配置写。!s_ready 补试与代数失配
+ * 重放同用这个节拍做失败日志节流：首拍立试立报，之后每 10 拍一次，
+ * 失败 WARN 不以 1 Hz 刷日志。 */
 #define SY6970_FAIL_STREAK_MAX 10
 
 /* 开机 60 s 后复检充电电流（F1 配套）：CH224K 诱骗 + SY6970 配置都该
@@ -249,6 +251,8 @@ static power_snapshot_t s_last_good; /* 最近一份好快照：读失败时原�
                                      * 让服务端按 updated_us 判 stale 回落 */
 static uint32_t        s_bus_gen;    /* 已认账的总线代数                   */
 static int             s_fail_streak;
+static int             s_boot_streak;   /* !s_ready 补试连击（日志节流）   */
+static int             s_gen_streak;    /* 代数失配重放连击（日志节流）    */
 static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
 static bool            s_ichg_recheck_done;
 
@@ -298,8 +302,13 @@ static bool bring_up(void)
         switch (st->op) {
         case SY6970_SEQ_VERIFY: {
             uint8_t val = 0;
-            if (reg_read(st->reg, &val, 1) != ESP_OK ||
-                (val & st->mask) != st->val) {
+            const esp_err_t rd = reg_read(st->reg, &val, 1);
+            if (rd != ESP_OK) {
+                ESP_LOGW(TAG, "F1 第 %u 步校验失败：REG%02X 读失败（%s）— %s",
+                         (unsigned)i, st->reg, esp_err_to_name(rd), st->why);
+                return false;
+            }
+            if ((val & st->mask) != st->val) {
                 ESP_LOGW(TAG, "F1 第 %u 步校验失败：REG%02X=0x%02X（掩码 0x%02X "
                               "期望 0x%02X）— %s",
                          (unsigned)i, st->reg, val, st->mask, st->val, st->why);
@@ -377,25 +386,44 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
 {
     /* 防御闸（同 eta6098_poll 的口径，服务层不假设 backend 内部状态）：
      * 正常路径注册前 bring-up 已成功；唯一能走到 !s_ready 的场景是
-     * init 期 bring-up 失败但 ACK 已注册——每拍重试一次。 */
+     * init 期 bring-up 失败但 ACK 已注册——按连击节流补试：首拍立试
+     * 立报，之后每 SY6970_FAIL_STREAK_MAX 拍一试，失败 WARN 不以 1 Hz
+     * 刷日志；成功只报一条恢复行。 */
     if (!s_ready) {
-        if (!bring_up()) return s_last_good;   /* 初值=全零快照，恒 stale */
-        s_ready   = true;
-        s_bus_gen = pk_i2c0_bus_generation();
-        ESP_LOGI(TAG, "SY6970 bring-up 成功（补试）");
+        s_boot_streak++;
+        if (s_boot_streak != 1 &&
+            s_boot_streak % SY6970_FAIL_STREAK_MAX != 0) {
+            return s_last_good;               /* 初值=全零快照，恒 stale */
+        }
+        if (!bring_up()) return s_last_good;
+        s_ready       = true;
+        s_boot_streak = 0;
+        s_bus_gen     = pk_i2c0_bus_generation();
+        ESP_LOGI(TAG, "SY6970 bring-up 成功");
     }
 
     /* 总线被救回来 → 重放配置 + F1。器件 handle 不重建（总线复位不清
-     * add_device，qmc5883p 同款契约）；重放失败不提交代数，下一拍重试。 */
+     * add_device，qmc5883p 同款契约）；重放失败不提交代数，按连击节流
+     * 重试：首拍立试立报，之后每 SY6970_FAIL_STREAK_MAX 拍一试（总线
+     * 一直挂着时每拍两条 WARN 会刷日志），成功只报一条恢复行。 */
     const uint32_t gen = pk_i2c0_bus_generation();
     if (gen != s_bus_gen) {
+        s_gen_streak++;
+        if (s_gen_streak != 1 &&
+            s_gen_streak % SY6970_FAIL_STREAK_MAX != 0) {
+            return s_last_good;               /* 节流拍：静默回落旧快照 */
+        }
         ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 SY6970 bring-up",
                  (unsigned long)gen);
         if (!bring_up()) {
-            ESP_LOGW(TAG, "重放失败，下一拍重试");
+            ESP_LOGW(TAG, "重放失败，再等 %d 拍后重试",
+                     SY6970_FAIL_STREAK_MAX);
             return s_last_good;
         }
-        s_bus_gen = gen;
+        s_bus_gen    = gen;
+        s_gen_streak = 0;
+        ESP_LOGI(TAG, "I²C0 总线恢复：SY6970 配置重放成功（第 %lu 轮）",
+                 (unsigned long)gen);
     }
 
     /* REG0C 故障锁存到被读走，取实况须连读两遍（[DS] p.29 / [AN] p.29，
@@ -427,11 +455,15 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
     if (!s_ichg_recheck_done &&
         now_us - s_up_us >= SY6970_ICHG_RECHECK_US) {
         s_ichg_recheck_done = true;
-        ESP_LOGI(TAG, "60s 复检：ICHG=%umA VBUS=%umV chg=%d —— %s档"
+        /* 档位标签只在 VBUS 真在位时给：没插电时 BUSV 寄存器是残值
+         * （2600 mV 下限），照常判档会把无输入报成"5V档"。 */
+        ESP_LOGI(TAG, "60s 复检：ICHG=%umA VBUS=%umV chg=%d —— %s"
                       "（7V 中点判档，诊断参考；VBAT<VSHORT 时芯片自报 0mA）",
                  (unsigned)s_status.ichg_ma, (unsigned)s_status.vbus_mv,
                  (int)s_status.charging,
-                 s_status.vbus_mv >= SY6970_VBUS_9V_MIDPOINT_MV ? "9V" : "5V");
+                 !s_status.vbus_present    ? "无 VBUS"
+                     : s_status.vbus_mv >= SY6970_VBUS_9V_MIDPOINT_MV
+                                           ? "9V档" : "5V档");
     }
 
     return s_last_good;

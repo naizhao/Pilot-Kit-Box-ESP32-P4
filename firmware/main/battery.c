@@ -42,9 +42,12 @@ bool pk_batt_get(pk_batt_t *out)
     out->batt_mv  = s.batt_mv;
     out->pct      = s.pct_est;
     out->charging = s.charging;
-    /* raw_mv 没有公共快照字段：直接找 ETA6098 backend 要。快照可用却要
-     * 不到的情况只剩"赢家不是 ETA6098"（v4 上 SY6970 在前，T4 接入后才
-     * 会发生），届时报 0 而不是张冠李戴。 */
+    /* raw_mv 没有公共快照字段：恒取 ETA6098 引脚侧 EMA 毫伏——没有
+     * 赢家检测，也不做（YAGNI：消费方都不在 SY6970 赢家状态下依赖它，
+     * 诊断页只在 ETA6098 分支渲染 raw）。注意 v4 上 SY6970 是快照赢家
+     * 时（v4 供电），raw_mv × 分压比 ≠ batt_mv（batt_mv 来自 SY6970
+     * 的 BATV，battery.h 注释里的等式在那个状态下不成立），消费方
+     * 不得依赖该等式。 */
     int raw = 0;
     (void)power_eta6098_raw_mv(&raw);
     out->raw_mv = raw;

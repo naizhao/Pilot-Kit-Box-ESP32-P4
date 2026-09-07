@@ -1351,7 +1351,7 @@ static void draw_detail(uint16_t *fb, int which)
             if (s.stale) {
                 /* 服务端 5 s 无新数据：说过期，不报旧数（同总览卡的取舍）。 */
                 det_kv_tr2(fb, line++, PK_TR_DIAG_K_STATUS,
-                           PK_TR_DIAG_V_PWR_STALE, COL_ALERT);
+                           PK_TR_DIAG_V_PWR_STALE, COL_WARN);
                 break;
             }
             const sy6970_status_t *st = &d.st;

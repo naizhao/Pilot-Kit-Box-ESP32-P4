@@ -28,8 +28,9 @@
  * 槽位只有一个写者（poll 任务，见 power_service.c 的 1 Hz 任务）；
  * 读者（UI 任务）自由拷贝快照。不上锁：撕裂最坏混到相邻两拍（1 s）的
  * 字段，与今天 battery.c 无锁读的容忍口径一致，状态栏场景无害。
- * register() 在 bring-up 早期（任务起跑前后都允许）调用；poll_tick 对
- * 空槽免疫，晚注册的 backend 下一拍自然进入轮询。
+ * register() 在 bring-up 早期（任务起跑前后都允许）调用——"前后都允许"
+ * 依赖 poll_tick 的空槽免疫兜底（power_service.c：调 poll 前先判槽位
+ * NULL）；晚注册的 backend 下一拍自然进入轮询。
  *
  * ── battery.h 的迁移映射（Task 2 的合同）────────────────────────────
  *   pk_batt_t.valid    → pct_valid（batt_mv 量程 2500..4500 的判定留在
