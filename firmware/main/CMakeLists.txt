@@ -157,6 +157,11 @@ idf_component_register(
         "touch_gt911.c"
         "pk_touch_arbiter.c"
         "battery.c"
+        # 公共电源状态模型 + backend 注册表（WP-D Task 1）：battery.c 的
+        # ETA6098（Task 2 迁移）与 SY6970（Task 4 新增）都注册到这里。
+        # 纯模型 host 单测 test_power_service.c 直编（POWER_SERVICE_HOST_TEST
+        # 隔离，模式同 qmc5883p.c）；目标端只有 1 Hz 轮询任务胶水。
+        "power_service.c"
         "soc_temp.c"
         "config_fab.c"
         "logo_blob.c"
