@@ -22,8 +22,8 @@
  *   out[3]  = Status Byte 2（bit7 = 17 位时间戳的 bit16，bit0 = UTC OK）
  *   out[4]  = 时间戳低 16 位的 LSB（小端在前）
  *   out[5]  = 时间戳低 16 位的 MSB
- *   out[6]  = Message Counts 字节 1（basic-long 高 2 位<<5 | uplink 低 5 位
- *             ——已知偏差：与 ICD §3.1.4 不一致，见 gdl90.c 注）
+ *   out[6]  = Message Counts 字节 1（uplink 5 位在 [7:3]，bit2 保留 0，
+ *             basic/long 高 2 位在 [1:0]——ICD §3.1.4）
  *   out[7]  = Message Counts 字节 2（basic-long 低 8 位）
  *   out[8]  = FCS 低字节
  *   out[9]  = FCS 高字节
@@ -138,9 +138,9 @@ static void test_heartbeat_status_bit_positions(void)
 
 /* ── (c) FCS 字节正确：非零计数向量全帧比对 ────────────────────────── */
 /* gps=T，utc=F，ts=0x12345（bit16=1），uplink=0，basic_long=0x123。
- * counts 打包：mc1=(0x123>>8&3)<<5=0x20，mc2=0x23。Status1=0x81。
- * FCS 0x56CD（ICD 算法独立推导），LSB 在前。全帧硬编码比对，任何一
- * 个字节位序/打包/FCS 回归都会被抓到。 */
+ * counts 打包（§3.1.4）：mc1=(0<<3)|((0x123>>8)&3)=0x01，mc2=0x23。
+ * Status1=0x81。FCS 0x77CD（ICD 算法独立推导），LSB 在前。全帧硬编码
+ * 比对，任何一个字节位序/打包/FCS 回归都会被抓到。 */
 static void test_heartbeat_crc_bytes(void)
 {
     uint8_t buf[64] = { 0 };
@@ -149,10 +149,8 @@ static void test_heartbeat_crc_bytes(void)
         0x81,                          /* Status1: GPS=1，bit0 恒 1       */
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
-        0x20, 0x23,                    /* counts：高 2 位 + 低 8 位——钉当前
-                                        * 行为（已知偏差，非 §3.1.4 合规，
-                                        * 见 gdl90.c 注）                  */
-        0xCD, 0x56,                    /* FCS 0x56CD，LSB first           */
+        0x01, 0x23,                    /* counts §3.1.4：uplink[7:3]+b1[1:0] */
+        0xCD, 0x77,                    /* FCS 0x77CD，LSB first           */
         0x7E
     };
 
@@ -224,10 +222,9 @@ static void test_heartbeat_icd_golden_vector(void)
         0x81,                          /* Status1: GPS=1，bit0=1（同 golden）*/
         0x01,                          /* Status2: UTC=1；bit6 CSA 不实现   */
         0xDB, 0xD0,                    /* ts 0xD0DB，LSB first（同 golden） */
-        0x08, 0x02,                    /* counts：uplink=8，basic=2——钉当前
-                                        * 打包行为（已知偏差，见 gdl90.c
-                                        * 注；此两字节恰与 golden 相同，
-                                        * 纯属向量巧合）                    */
+        0x08, 0x02,                    /* counts §3.1.4：uplink=1、basic=2
+                                        * 恰好产出 golden 的 08 02——合规
+                                        * 打包下对得上，不是巧合           */
         0x1E, 0x96,                    /* FCS 0x961E，LSB first             */
         0x7E
     };
@@ -237,10 +234,40 @@ static void test_heartbeat_icd_golden_vector(void)
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
                                       /*utc_ok=*/true,
-                                      0xD0DB, /*uplink=*/8, /*basic_long=*/2);
+                                      0xD0DB, /*uplink=*/1, /*basic_long=*/2);
     CHECK(n == sizeof(expect));
     CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
     CHECK(buf[8] == 0x1E && buf[9] == 0x96);  /* 点名 FCS 字节位置       */
+}
+
+/* ── (f) Message Counts §3.1.4 打包：非零 uplink + 跨字节 basic/long ── */
+/* gps=T，utc=F，ts=0（ts bit16=0），uplink=0x15（21），basic_long=0x2AB
+ * （683，10 位跨字节）。§3.1.4：byte1=(0x15<<3)|((0x2AB>>8)&3)
+ * =0xA8|0x02=0xAA（bit2 保留 0），byte2=0xAB。FCS 0x0127（ICD 算法
+ * 独立推导）。锁死打包公式：谁把 uplink/basic 挪回别的位序，这里红。 */
+static void test_heartbeat_message_counts_packing(void)
+{
+    static const uint8_t msg[] = { 0x00, 0x81, 0x00, 0x00, 0x00, 0xAA, 0xAB };
+    uint8_t buf[64] = { 0 };
+    static const uint8_t expect[] = {
+        0x7E, 0x00,
+        0x81,                          /* Status1: GPS=1，bit0 恒 1       */
+        0x00,                          /* Status2: ts bit16=0，UTC=0      */
+        0x00, 0x00,                    /* ts 0 低 16 位                   */
+        0xAA, 0xAB,                    /* counts §3.1.4（见上）           */
+        0x27, 0x01,                    /* FCS 0x0127，LSB first           */
+        0x7E
+    };
+
+    CHECK(crc_icd_reference(msg, sizeof(msg)) == 0x0127);
+
+    size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
+                                      /*gps_valid=*/true,
+                                      /*utc_ok=*/false,
+                                      0, /*uplink=*/0x15, /*basic_long=*/0x2AB);
+    CHECK(n == sizeof(expect));
+    CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
+    CHECK(buf[6] == 0xAA && buf[7] == 0xAB);  /* 点名 counts 字节位置    */
 }
 
 int main(void)
@@ -251,6 +278,7 @@ int main(void)
     test_heartbeat_crc_bytes();
     test_heartbeat_fcs_matches_icd_reference();
     test_heartbeat_icd_golden_vector();
+    test_heartbeat_message_counts_packing();
 
     if (g_fail == 0) {
         printf("test_gdl90: all OK\n");

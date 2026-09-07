@@ -136,19 +136,13 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
     uint8_t ts_lsb = (uint8_t)(uat_timestamp_s & 0xFF);
     uint8_t ts_msb = (uint8_t)((uat_timestamp_s >> 8) & 0xFF);
 
-    /* Message Counts: byte 1 carries 5 bits of basic-long uplink count
-     * (bits 6..2) and 5 bits of UAT uplink count (bits 4..0); byte 2
-     * carries the lower 8 bits of basic-long. We approximate by packing
-     * the basic-long count straight and clamping uplink to 5 bits.
-     *
-     * 已知偏差（2026-09 记录）：打包位序与 ICD §3.1.4 不一致（本实现
-     * basic-long 高位在 bit6..5、uplink 在 bit4..0；ICD 规定
-     * uplink=byte1[7:3]、bit2 保留、basic/long 10 位跨
-     * byte1[1:0]+byte2）。ForeFlight 现不消费该字段，无用户可见影响；
-     * 重打包属 F2/HIL 范围。 */
+    /* Message Counts (ICD §3.1.4): byte 1 = uplink count (5 bits) in
+     * [7:3], bit 2 reserved 0, and the two MSBs of the basic/long
+     * count in [1:0]; byte 2 = the lower 8 bits of basic/long. */
     if (msg_count_basic_long > 0x3FF) msg_count_basic_long = 0x3FF;
     if (msg_count_uplink     > 0x1F)  msg_count_uplink     = 0x1F;
-    uint8_t mc1 = ((msg_count_basic_long >> 8) & 0x03) << 5 | (msg_count_uplink & 0x1F);
+    uint8_t mc1 = (uint8_t)(((msg_count_uplink & 0x1F) << 3)
+                            | ((msg_count_basic_long >> 8) & 0x03));
     uint8_t mc2 = (uint8_t)(msg_count_basic_long & 0xFF);
 
     uint8_t payload[6] = { status1, status2, ts_lsb, ts_msb, mc1, mc2 };
