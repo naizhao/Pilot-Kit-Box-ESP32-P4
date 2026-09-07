@@ -54,7 +54,8 @@
 #define RP_CC13XX_ERROR_MSG_MAX      32   /* §4.9 */
 #define RP_CC13XX_MAX_MSG_LEN        4096 /* §4.3：报文总长上限（超限截断） */
 
-/* reset_reason 位图（§4.1；保留位发送方必须置 0，接收方不解释未定义位） */
+/* reset_reason 位图（§4.1）：定义位仅 bit0–3。发送方在编码边界掩码 & 0x0F
+ * （复位原因源可带厂商/平台位，线上只允许已定义位）；接收方不解释未定义位。 */
 #define RP_CC13XX_RESET_POR      0x1  /* bit0：上电复位 */
 #define RP_CC13XX_RESET_RESETN   0x2  /* bit1：RESET_N 引脚复位 */
 #define RP_CC13XX_RESET_SOFTWARE 0x4  /* bit2：软件复位 */
@@ -126,7 +127,8 @@ int rp_cc13xx_seq_gap(uint16_t prev_seq, uint16_t now_seq);
 
 /* ── 每条 v1 消息一对 encode/decode（payload 布局的 codec 断言，§4.x）────
  * encode_* 返回帧总长，0 = 参数/超限错误（发送方约束在此把守：保留位
- * 一律写 0，data/msg 长度超限拒绝）。decode_* 输入已解出的 msg，返回
+ * 一律写 0（reset_reason 在编码边界掩码 &0x0F，§4.1）、total_len ≤ 4096、
+ * data/msg 长度超限与空分片拒绝）。decode_* 输入已解出的 msg，返回
  * OK 或 ERR_LEN（payload 长度/结构/保留位违规），可独立于 decode_frame 使用。 */
 
 /* 空载荷命令共用：IRQ_ACK/PING/PONG/RESET_STATUS_REQ/UPGRADE_STATUS_REQ
@@ -164,7 +166,7 @@ typedef struct {
     uint16_t desc_id;
     uint16_t offset;            /* 本片在报文内的字节偏移 */
     uint16_t total_len;         /* 必须与对应 RX_DESCRIPTOR 一致 */
-    uint16_t data_len;          /* = payload_len − 6，≤ 496 */
+    uint16_t data_len;          /* = payload_len − 6，∈ [1, 496]（空片拒绝） */
     uint8_t  data[RP_CC13XX_CHUNK_MAX_DATA];
 } rp_cc13xx_chunk_t;
 size_t rp_cc13xx_encode_rx_chunk(uint8_t *out, size_t cap, uint16_t seq,
@@ -246,7 +248,8 @@ void rp_cc13xx_reasm_on_hello(rp_cc13xx_reasm_t *r);
 rp_cc13xx_status_t rp_cc13xx_reasm_start(rp_cc13xx_reasm_t *r,
                                          const rp_cc13xx_rx_desc_t *d);
 
-/* 积累一片：非 active → ERR_ARG（调用序错误）；desc_id/total_len 不一致、
- * offset 未按 have 递进、data 溢出 → ERR_LEN（§4.4 约束）。 */
+/* 积累一片：非 active → ERR_ARG（调用序错误）；data_len == 0（§4.4 空片
+ * 停滞防御）、desc_id/total_len 不一致、offset 未按 have 递进、data 溢出
+ * → ERR_LEN（§4.4 约束）。 */
 rp_cc13xx_status_t rp_cc13xx_reasm_feed(rp_cc13xx_reasm_t *r,
                                         const rp_cc13xx_chunk_t *c);

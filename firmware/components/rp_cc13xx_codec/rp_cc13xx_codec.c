@@ -83,11 +83,15 @@ static rp_cc13xx_status_t payload_check(uint8_t type, const uint8_t *p,
     case RP_CC13XX_MSG_UPGRADE_STATUS_REQ:
         return plen == 0 ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_RX_DESCRIPTOR:
-        return (plen == RP_CC13XX_RX_DESCRIPTOR_LEN && (p[13] & 0xFC) == 0)
+        /* §4.3：len=14、保留位 0、total_len ≤ 4096（编码/解码两侧强制，
+         * 超限即 len 违规——线上不存在 4097+ 的合法描述符）。 */
+        return (plen == RP_CC13XX_RX_DESCRIPTOR_LEN && (p[13] & 0xFC) == 0 &&
+                rd_le16(p + 10) <= RP_CC13XX_MAX_MSG_LEN)
                ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_RX_PAYLOAD_CHUNK:
-        /* data 长度 = plen − 6 ∈ [0, 496]（§4.4） */
-        return (plen >= RP_CC13XX_CHUNK_HDR_LEN &&
+        /* data 长度 = plen − 6 ∈ [1, 496]（§4.4：空分片拒绝——无推进的
+         * 合法片会令重组流水停滞） */
+        return (plen > RP_CC13XX_CHUNK_HDR_LEN &&
                 plen <= RP_CC13XX_MAX_PAYLOAD)
                ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_QUEUE_FULL:
@@ -198,7 +202,10 @@ size_t rp_cc13xx_encode_hello(uint8_t *out, size_t cap, uint16_t seq,
     uint8_t pl[RP_CC13XX_HELLO_LEN];
     wr_le16(pl, h->fw_ver_major);
     wr_le16(pl + 2, h->fw_ver_minor);
-    wr_le32(pl + 4, h->reset_reason);
+    /* §4.1：发送方在编码边界把 reset_reason 掩码到已定义 bit0–3——复位
+     * 原因源可能带厂商/平台位，掩码即线上合同；接收方保持容忍（不解释
+     * 未定义位），故对端无须预处理。 */
+    wr_le32(pl + 4, h->reset_reason & 0x0F);
     return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_HELLO, seq, pl, sizeof pl);
 }
 
@@ -218,7 +225,10 @@ rp_cc13xx_status_t rp_cc13xx_decode_hello(const rp_cc13xx_msg_t *m,
 size_t rp_cc13xx_encode_rx_descriptor(uint8_t *out, size_t cap, uint16_t seq,
                                       const rp_cc13xx_rx_desc_t *d)
 {
-    if (!d || (d->flags & 0xFC)) return 0;   /* 保留位发送方置 0（§4.3） */
+    /* §4.3：保留位发送方置 0；total_len ≤ 4096 发送侧强制（P2-a：
+     * 截断只发生在 slave 入队前并置 flags bit1，编码器不得透传超限值）。 */
+    if (!d || (d->flags & 0xFC) || d->total_len > RP_CC13XX_MAX_MSG_LEN)
+        return 0;
     uint8_t pl[RP_CC13XX_RX_DESCRIPTOR_LEN];
     wr_le16(pl, d->desc_id);
     wr_le32(pl + 2, d->freq_hz);
@@ -236,6 +246,8 @@ rp_cc13xx_status_t rp_cc13xx_decode_rx_descriptor(const rp_cc13xx_msg_t *m,
     if (!m || !d) return RP_CC13XX_ERR_ARG;
     if (m->payload_len != RP_CC13XX_RX_DESCRIPTOR_LEN || (m->payload[13] & 0xFC))
         return RP_CC13XX_ERR_LEN;
+    if (rd_le16(m->payload + 10) > RP_CC13XX_MAX_MSG_LEN)
+        return RP_CC13XX_ERR_LEN;   /* §4.3：total_len ≤ 4096 接收侧强制 */
     d->desc_id = rd_le16(m->payload);
     d->freq_hz = rd_le32(m->payload + 2);
     d->ts_us = rd_le32(m->payload + 6);
@@ -250,7 +262,10 @@ rp_cc13xx_status_t rp_cc13xx_decode_rx_descriptor(const rp_cc13xx_msg_t *m,
 size_t rp_cc13xx_encode_rx_chunk(uint8_t *out, size_t cap, uint16_t seq,
                                  const rp_cc13xx_chunk_t *c)
 {
-    if (!c || c->data_len > RP_CC13XX_CHUNK_MAX_DATA) return 0;   /* §4.4 */
+    /* §4.4：data_len ∈ [1, 496]——空分片发送侧拒绝（P1：无推进的合法片
+     * 会令重组流水停滞） */
+    if (!c || c->data_len == 0 || c->data_len > RP_CC13XX_CHUNK_MAX_DATA)
+        return 0;
     uint8_t pl[RP_CC13XX_CHUNK_HDR_LEN + RP_CC13XX_CHUNK_MAX_DATA];
     wr_le16(pl, c->desc_id);
     wr_le16(pl + 2, c->offset);
@@ -264,7 +279,7 @@ rp_cc13xx_status_t rp_cc13xx_decode_rx_chunk(const rp_cc13xx_msg_t *m,
                                              rp_cc13xx_chunk_t *c)
 {
     if (!m || !c) return RP_CC13XX_ERR_ARG;
-    if (m->payload_len < RP_CC13XX_CHUNK_HDR_LEN ||
+    if (m->payload_len <= RP_CC13XX_CHUNK_HDR_LEN ||   /* §4.4：data ≥ 1 */
         m->payload_len > RP_CC13XX_MAX_PAYLOAD)
         return RP_CC13XX_ERR_LEN;
     c->desc_id = rd_le16(m->payload);
@@ -332,7 +347,7 @@ size_t rp_cc13xx_encode_reset_status(uint8_t *out, size_t cap, uint16_t seq,
 {
     if (!s) return 0;
     uint8_t pl[RP_CC13XX_RESET_STATUS_LEN];
-    wr_le32(pl, s->reset_reason);
+    wr_le32(pl, s->reset_reason & 0x0F);   /* §4.1：发送边界掩码，同 HELLO */
     wr_le32(pl + 4, s->uptime_ms);
     return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_RESET_STATUS, seq,
                             pl, sizeof pl);
@@ -441,6 +456,7 @@ rp_cc13xx_status_t rp_cc13xx_reasm_feed(rp_cc13xx_reasm_t *r,
 {
     if (!r || !c) return RP_CC13XX_ERR_ARG;
     if (!r->active) return RP_CC13XX_ERR_ARG;   /* §6.5 清态后旧分片不命中 */
+    if (c->data_len == 0) return RP_CC13XX_ERR_LEN;   /* §4.4：空分片停滞防御 */
     if (c->desc_id != r->desc_id || c->total_len != r->total_len ||
         c->offset != r->have ||
         (uint32_t)c->offset + c->data_len > r->total_len)

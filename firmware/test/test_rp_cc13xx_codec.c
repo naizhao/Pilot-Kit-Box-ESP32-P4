@@ -42,6 +42,10 @@
  *   B23 N6 全 0x00 事务 = 合法『无帧』                  §2.3 规则 5
  *   B24 seq 0xFFFF→0x0000 回绕不是 gap                  §3.4/§5.5
  *   B25 re-HELLO 清分片半交付态                         §6.5
+ *   （B26 延迟握手走查 = §2.2/§6.2 会话时序，复用 case 2/16 的帧级断言）
+ *   B27 N7 零长分片拒绝（encode/decode/reasm 三处）     §4.4
+ *   B28 N8 descriptor total_len>4096 双侧拒绝           §4.3
+ *   B29 N9 reset_reason 发送边界掩码 &0x0F              §4.1
  *
  * B8/B19/B23 的 512 B 全帧以「构造规则」收录于附录 B（帧头/CRC 字面 +
  * data 按规则/零填充），本文件同规则逐字节断言；其余向量在附录 B 与本文件
@@ -171,6 +175,18 @@ static const uint8_t V_b24_ping_seq_ffff[10] = {
 };
 static const uint8_t V_b24_ping_seq_0000[10] = {
     0x50, 0x4B, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEB, 0xC7,
+};
+static const uint8_t V_b27_n7_zerolen_chunk[16] = {
+    0x50, 0x4B, 0x01, 0x11, 0x09, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x14, 0x00, 0xDE, 0x7B,
+};
+static const uint8_t V_b28_n8_total_4097[24] = {
+    0x50, 0x4B, 0x01, 0x10, 0x04, 0x00, 0x0E, 0x00, 0x01, 0x00, 0x80, 0x18,
+    0x4B, 0x3A, 0xE8, 0x03, 0x00, 0x00, 0x01, 0x10, 0xC4, 0x01, 0x94, 0x94,
+};
+static const uint8_t V_b29_n9_masked_hello[18] = {
+    0x50, 0x4B, 0x01, 0x01, 0x02, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x00,
+    0x0F, 0x00, 0x00, 0x00, 0x9F, 0x41,
 };
 
 int main(void)
@@ -574,6 +590,79 @@ int main(void)
         rp_cc13xx_upgrade_status_t u;
         CHECK(rp_cc13xx_decode_upgrade_status(&m, &u) == RP_CC13XX_ERR_LEN,
               "upgrade reserved!=0\n");
+    }
+
+    /* 20. B27（§4.4）：零长分片三处拒绝——encode(0)=0、decode_frame ERR_LEN
+        （CRC 合法、死于 data≥1）、typed decode ERR_LEN、reasm_feed ERR_LEN。
+        反证：若接受零长片，reasm have 不变而流水继续，重组永久停滞。 */
+    {
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        rp_cc13xx_chunk_t c = { .desc_id = 1, .offset = 0, .total_len = 20,
+                                .data_len = 0 };
+        CHECK(rp_cc13xx_encode_rx_chunk(buf, sizeof(buf), 0x0009, &c) == 0,
+              "zero-len encode\n");
+
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(V_b27_n7_zerolen_chunk,
+                                     sizeof(V_b27_n7_zerolen_chunk), &m)
+              == RP_CC13XX_ERR_LEN, "zero-len decode_frame\n");
+        m.type = RP_CC13XX_MSG_RX_PAYLOAD_CHUNK;   /* typed decode 单测：
+            payload = V_b27 帧本体前 6 B（data_len=0） */
+        m.payload_len = 6;
+        memcpy(m.payload, V_b27_n7_zerolen_chunk + RP_CC13XX_HDR_LEN, 6);
+        CHECK(rp_cc13xx_decode_rx_chunk(&m, &c) == RP_CC13XX_ERR_LEN,
+              "zero-len typed decode\n");
+
+        rp_cc13xx_reasm_t r;
+        rp_cc13xx_reasm_init(&r);
+        rp_cc13xx_rx_desc_t d = { .desc_id = 1, .total_len = 20 };
+        CHECK(rp_cc13xx_reasm_start(&r, &d) == RP_CC13XX_OK, "b27 start\n");
+        c.data_len = 0;
+        CHECK(rp_cc13xx_reasm_feed(&r, &c) == RP_CC13XX_ERR_LEN && r.have == 0,
+              "zero-len reasm\n");
+    }
+
+    /* 21. B28（§4.3）：total_len > 4096 编码侧拒绝；解码侧（decode_frame 与
+        typed decode）计 len 违规——此前仅 reasm_start 拒绝，边界不齐。 */
+    {
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        rp_cc13xx_rx_desc_t d = { .desc_id = 1, .total_len = 4097 };
+        CHECK(rp_cc13xx_encode_rx_descriptor(buf, sizeof(buf), 0, &d) == 0,
+              "total4097 encode\n");
+
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(V_b28_n8_total_4097,
+                                     sizeof(V_b28_n8_total_4097), &m)
+              == RP_CC13XX_ERR_LEN, "total4097 decode_frame\n");
+        CHECK(rp_cc13xx_decode_rx_descriptor(&m, &d) == RP_CC13XX_ERR_LEN,
+              "total4097 typed decode\n");
+    }
+
+    /* 22. B29（§4.1）：reset_reason 源值带保留/厂商位（0x1F）→ 编码边界
+        掩码为 0x0F 上线；解码端只见 0x0F（接收方容忍语义不受影响）。
+        RESET_STATUS 同掩码。 */
+    {
+        rp_cc13xx_hello_t h = { .fw_ver_major = 1, .fw_ver_minor = 2,
+                                .reset_reason = 0x1Fu };
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        size_t n = rp_cc13xx_encode_hello(buf, sizeof(buf), 0x0002, &h);
+        CHECK(n == sizeof(V_b29_n9_masked_hello) && n == 18,
+              "masked hello len got=%zu\n", n);
+        CHECK(memcmp(buf, V_b29_n9_masked_hello, n) == 0, "masked hello bytes\n");
+
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK,
+              "masked hello decode\n");
+        rp_cc13xx_hello_t out;
+        CHECK(rp_cc13xx_decode_hello(&m, &out) == RP_CC13XX_OK &&
+              out.reset_reason == 0x0Fu, "masked hello wire value\n");
+
+        rp_cc13xx_reset_status_t s = { .reset_reason = 0x00000030u,
+                                       .uptime_ms = 77 };
+        n = rp_cc13xx_encode_reset_status(buf, sizeof(buf), 0x0003, &s);
+        CHECK(n == 18 && memcmp(buf + 8, "\x00\x00\x00\x00", 4) == 0 &&
+              buf[12] == 77,   /* reset_reason 在 payload[0..3]=帧偏移 8..11 */
+              "masked reset_status wire\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

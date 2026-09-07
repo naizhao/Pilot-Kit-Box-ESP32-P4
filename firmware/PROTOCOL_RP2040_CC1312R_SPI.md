@@ -149,6 +149,9 @@ payload 布局的每个字段偏移/单位均为 codec 断言的直接引用对�
 协议版本在帧头 ver；本消息携带**固件**版本。`reset_reason` 位图（置 1 有效，
 保留位必须为 0）：bit0=上电复位（POR）、bit1=RESET_N 引脚复位、bit2=软件复位、
 bit3=看门狗/时钟安全复位。双方各自填充自己的复位原因；接收方不解释未定义位。
+**发送方掩码**：reset_reason 源可能带厂商/平台位，发送方在编码边界把它掩码
+到已定义低 4 位（`& 0x0F`）再上线——掩码即线上合同；接收方保持容忍（§5.4
+精神：不因未定义位拒收），线外寄存器值无须预处理。
 
 ### 4.2 IRQ_ACK
 
@@ -166,6 +169,8 @@ u8 flags}`，共 14 B。`desc_id`：slave 侧单调递增（模 2^16），关联
 消费者用无符号差值 `(u32)(t_now − t_prev)`，回绕不是回跳——同 P0a §2 勘误
 精神）；`total_len`：报文总长，≤ 4096（超限报文被 slave 截断到 4096 并置
 flags bit1，4096 ≥ 10× UAT 上行帧 432 B，裕量充足且 master 缓冲可静态分配）；
+**该上限在发送与接收两侧均强制**（超限 → len 违规，§5.2）——截断只由 slave
+在入队前执行，线上不存在 total_len > 4096 的合法描述符；
 `rssi`：0.5 dB/LSB、无符号，0xFF=无值（P0a MODES_RAW 同族单位）；`flags`：
 bit0=高优先级（建议 master 尽快取走）、bit1=截断，其余保留必须为 0（接收方
 校验非 0 视为 payload 违规，与 len 违规同计 len_errors 并作废整事务，§5.2；
@@ -174,7 +179,9 @@ bit0=高优先级（建议 master 尽快取走）、bit1=截断，其余保留�
 ### 4.4 RX_PAYLOAD_CHUNK
 
 `{u16le desc_id; u16le offset; u16le total_len; u8 data[≤496]}`。
-`data` 长度 = payload_len − 6，**单片上限 496**（= 502 − 6，§3.1 上限推导）；
+`data` 长度 = payload_len − 6，∈ **[1, 496]**（上限 = 502 − 6，§3.1；下限：
+**空分片非法**——不推进重组的合法片会令取毕流水永远停滞，而取毕信号是
+集齐 total_len 本身，不需要空片；编码/解码/重组三处均拒绝，len 违规 §5.2）；
 `offset` 为该片在报文内的字节偏移；除最后一片外 offset 必须按 data 长度递进，
 `total_len` 必须与对应 RX_DESCRIPTOR 一致。master 按 offset 升序重组；帧级
 CRC16（§3.2）即传输完整性校验，不另设报文级 CRC（slave 在入队前已完成 RF
@@ -383,6 +390,9 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 | B24 | seq 回绕 | §3.4/§5.5 | m→s | 两帧 OK；0xFFFF→0x0000 不是 gap |
 | B25 | re-HELLO 清分片态 | §6.5 | m→s | 半交付态作废，旧分片不再命中 |
 | B26 | 延迟握手走查 | §2.2/§6.2 | — | T1 MISO 全 0；T2 = slave HELLO（seq 回显 T1 命令） |
+| B27 | N7 零长分片拒收 | §4.4 | s→m | encode(0)→0；decode_frame → ERR_LEN；reasm_feed → ERR_LEN |
+| B28 | N8 total_len>4096 拒收 | §4.3 | s→m | encode→0；decode_frame/typed decode → ERR_LEN |
+| B29 | N9 reset_reason 发送掩码 | §4.1 | — | 源值 0x1F → 线上 0x0F（&0x0F），解码见 0x0F |
 
 ### B.2 十六进制字面量
 
@@ -447,6 +457,13 @@ B23 N6 全 0 事务    0x00 ×512（构造规则向量；合法『无帧』）
 B24 seq 回绕        PING seq=0xFFFF 与 PING seq=0x0000
     50 4B 01 03 FF FF 00 00 2B 43
     50 4B 01 03 00 00 00 00 EB C7
+B27 N7 零长分片     seq=0009 desc_id=1 offset=0 total=20 data_len=0（plen=6，
+    CRC 合法——死于 §4.4 data≥1，计 len）
+    50 4B 01 11 09 00 06 00 01 00 00 00 14 00 DE 7B
+B28 N8 total=4097   B6 的 total 字段改 0x1001 后重算 CRC（死于 §4.3 上限）
+    50 4B 01 10 04 00 0E 00 01 00 80 18 4B 3A E8 03 00 00 01 10 C4 01 94 94
+B29 N9 掩码 HELLO   seq=0002 fw=1.2 reset 源值 0x1F → 线上 0x0F
+    50 4B 01 01 02 00 08 00 01 00 02 00 0F 00 00 00 9F 41
 ```
 
 ### B.3 会话级行为向量（延迟应答模型 §2.2 下的走查）
@@ -512,5 +529,6 @@ B24 seq 回绕        PING seq=0xFFFF 与 PING seq=0x0000
 |---|---|---|
 | R1（`595e11c`） | UPGRADE_STATUS `reserved[3]` 约束；re-HELLO 分片态清理 | §4.8、§6.5 |
 | R2（本提交） | drain 退出改为事务粒度停滞判定（连续 8 事务空转），废除墙钟 100 ms 上限——线速/队列深度的合法组合下墙钟上限会误杀健康 drain | §7.2、§6.6 |
-| R2（本提交） | 0x00/0xFF 合法帧（magic+CRC 合法）接收行为入文（按未知类型容忍）；RX_DESCRIPTOR flags 与 QUEUE_FULL reserved 的接收校验规则补齐（同 §4.8 句式） | §4 表注、§4.3、§4.5 |
-| R3（本提交） | **事务模型修订为延迟应答（pending）**：同事务请求→应答在 SPI 全双工线上无因果路径（命令类型在 MOSI 字节 3，MISO 字节 0 已先移出）——事务 N 的 MISO = 事务 N−1 命令的应答；单 pending 槽、空槽装全 0；应答 seq 回显（§3.5）；IRQ_ACK 即读触发；握手改为 T2（首次重发）完成；PING/drain 走查入 B.3。依据：独立审计指出物理不可实现性（SPI 从机 CSN 下降沿预装 DMA 缓冲的实现合同随之入文 §2.1） | §2、§3.5、§4.2、§5.5、§5.6、§6.2、§6.6、§7.2、B.3、C.2 |
+| R2（`e33db63`） | 0x00/0xFF 合法帧（magic+CRC 合法）接收行为入文（按未知类型容忍）；RX_DESCRIPTOR flags 与 QUEUE_FULL reserved 的接收校验规则补齐（同 §4.8 句式） | §4 表注、§4.3、§4.5 |
+| R3（`af3a5cb`） | **事务模型修订为延迟应答（pending）**：同事务请求→应答在 SPI 全双工线上无因果路径（命令类型在 MOSI 字节 3，MISO 字节 0 已先移出）——事务 N 的 MISO = 事务 N−1 命令的应答；单 pending 槽、空槽装全 0；应答 seq 回显（§3.5）；IRQ_ACK 即读触发；握手改为 T2（首次重发）完成；PING/drain 走查入 B.3。依据：独立审计指出物理不可实现性（SPI 从机 CSN 下降沿预装 DMA 缓冲的实现合同随之入文 §2.1） | §2、§3.5、§4.2、§5.5、§5.6、§6.2、§6.6、§7.2、B.3、C.2 |
+| R4（本提交） | 边界强制补齐：零长分片拒绝（§4.4，防重组活锁）；total_len ≤ 4096 编码/解码两侧强制（§4.3，此前仅重组侧拒绝）；reset_reason 发送边界掩码 &0x0F（§4.1，线上合同）。新负向量 B27/B28/B29 | §4.1、§4.3、§4.4、B.1/B.2 |
