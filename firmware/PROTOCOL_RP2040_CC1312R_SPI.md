@@ -289,14 +289,119 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 | SUBG_RESET | pad29 = GPIO18 | pad35 = RESET_N | master 驱动，低有效（§1） |
 | SUBG_TCKC/TMSC | pad28/27 = GPIO17/16 | pad25/24 | cJTAG，与 SPI 无交叠（§8） |
 
-## 附录 B：golden vectors（Task 3 回填契约）
+## 附录 B：golden vectors
 
-向量由 Task 3（`firmware/test/test_rp_cc13xx_codec.c`）依据本规范产出并回填
-于此，逐条标注「规范 § 条款号」；每条消息类型至少 1 条正常向量，另含：
-HELLO 异版本拒收（§6.2）、len > 502 拒收（§5.2）、坏 CRC 拒收（§5.2）、
-RX_PAYLOAD_CHUNK 分片重组（§4.4/§7.1）、QUEUE_FULL 计数器回绕（§4.5）、
-seq 0xFFFF→0x0000 回绕（§3.4）。CRC 已知答案 `crc16("123456789") = 0x29B1`
-（§3.2）为 codec 首条断言。
+向量由 Task 3 依据本规范字段表产出并回填于此（Task 3 即首次具体化者），
+可执行镜像在 `firmware/test/test_rp_cc13xx_codec.c`（向量 id ↔ 本附录条目
+一一对应，文件头有总表）。CRC 已知答案 `crc16("123456789") = 0x29B1`
+（§3.2）为 codec 首条断言。十六进制为帧本体（§3 布局），帧尾补 0x00 至
+512 B 由 SPI 驱动完成、不计入向量。
+
+### B.1 向量总表
+
+| id | 名称 | 条款 | 方向 | 判定期望（codec 返回 / 语义） |
+|---|---|---|---|---|
+| B1 | CRC KAT | §3.2 | — | `crc16("123456789") = 0x29B1` |
+| B2 | HELLO 正常 | §4.1 | m→s | OK，字段逐项一致 |
+| B3 | IRQ_ACK 正常 | §4.2 | m→s | OK，len=0 |
+| B4 | PING 正常 | §4 表 | m→s | OK |
+| B5 | PONG 正常 | §4 表 | s→m | OK |
+| B6 | RX_DESCRIPTOR 正常 | §4.3 | s→m | OK，978 MHz 等字段逐项一致 |
+| B7 | 分片重组 | §4.4/§7.1 | s→m | 两片 OK，offset 升序重组逐字节一致 |
+| B8 | 单片极限帧 | §3.1/§4.4 | s→m | 整帧恰 512 B，OK + 往返一致 |
+| B9 | QUEUE_FULL + 回绕 | §4.5 | s→m | OK；0xFFFE→0x0001 无符号差值 = +3 |
+| B10 | RF_CONFIG 写 | §4.6 | m→s | OK，config_version=3 |
+| B11 | RF_CONFIG 只读查询 | §4.6 | m→s | OK，config_version=0 |
+| B12 | RF_CONFIG_STATUS 回读 | §4.6 | s→m | OK，与 B10 同 digest |
+| B13 | RESET_STATUS_REQ 正常 | §4 表 | m→s | OK |
+| B14 | RESET_STATUS 正常 | §4.7 | s→m | OK |
+| B15 | UPGRADE_STATUS_REQ 正常 | §4 表 | m→s | OK |
+| B16 | UPGRADE_STATUS 正常 | §4.8 | s→m | OK，state=0x00 |
+| B17 | ERROR 正常 | §4.9 | 双向 | OK，code=0x03、msg="DENY" |
+| B18 | N1 异版本拒收 | §6.2/§5.1 | m→s | ERR_VERSION（CRC 合法，死于版本） |
+| B19 | N2 len 超限拒收 | §3.1/§5.2 | m→s | ERR_LEN（len 判定先于 CRC） |
+| B20 | N3 坏 CRC 拒收 | §5.1/§5.2 | 双向 | ERR_CRC；ver=2+坏 CRC 亦只计 CRC |
+| B21 | N4 reserved≠0 | §4.8 | s→m | ERR_LEN（payload 违规同计 len） |
+| B22 | N5 未知类型容忍 | §3.3/§5.4 | 双向 | UNKNOWN_TYPE，消息原样可读 |
+| B23 | N6 全 0 事务 | §2.3 规则 5 | — | NO_FRAME（合法『无帧』，不计错） |
+| B24 | seq 回绕 | §3.4/§5.5 | m→s | 两帧 OK；0xFFFF→0x0000 不是 gap |
+| B25 | re-HELLO 清分片态 | §6.5 | m→s | 半交付态作废，旧分片不再命中 |
+
+### B.2 十六进制字面量
+
+```
+B2  HELLO           seq=0001 fw=1.2 reset=POR(0x1)
+    50 4B 01 01 01 00 08 00 01 00 02 00 01 00 00 00 5A E6
+B3  IRQ_ACK         seq=0002
+    50 4B 01 02 02 00 00 00 D2 80
+B4  PING            seq=0003
+    50 4B 01 03 03 00 00 00 37 5C
+B5  PONG            seq=0001
+    50 4B 01 04 01 00 00 00 8B D6
+B6  RX_DESCRIPTOR   seq=0004 desc_id=1 freq=978000000 ts=1000 total=20
+    rssi=0xC4 flags=0x01
+    50 4B 01 10 04 00 0E 00 01 00 80 18 4B 3A E8 03 00 00 14 00 C4 01 15 70
+B7  分片重组：报文 20 B = "0123456789ABCDEFGHIJ"（total_len=20, desc_id=1）
+    chunk0  seq=0005 offset=0    data=12 B（"0123456789AB"）
+    50 4B 01 11 05 00 12 00 01 00 00 00 14 00 30 31 32 33 34 35 36 37 38 39
+    41 42 C2 C5
+    chunk1  seq=0006 offset=12   data=8 B（"CDEFGHIJ"）
+    50 4B 01 11 06 00 0E 00 01 00 0C 00 14 00 43 44 45 46 47 48 49 4A 12 11
+B8  单片极限：desc_id=2 offset=0 total=496 data[k]=k&0xFF（k=0..495）
+    → plen=502、整帧 512 B = 事务长度（构造规则向量；帧头/CRC 字面：）
+    50 4B 01 11 07 00 F6 01 ‖ 02 00 00 00 F0 01 ‖ data(496) ‖ 46 F3
+B9  QUEUE_FULL      seq=0008 dropped=0xFFFE depth=8
+    50 4B 01 12 08 00 04 00 FE FF 08 00 32 69
+B9' QUEUE_FULL 回绕 seq=0009 dropped=0x0001 depth=0
+    50 4B 01 12 09 00 04 00 01 00 00 00 88 23
+B10 RF_CONFIG 写    seq=000A ver=3 digest=00 11 22 .. EE FF
+    50 4B 01 20 0A 00 14 00 03 00 00 00 00 11 22 33 44 55 66 77 88 99 AA BB
+    CC DD EE FF 47 E7
+B11 RF_CONFIG 查询  seq=000B ver=0 digest=00×16（只读，§4.6）
+    50 4B 01 20 0B 00 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 D9 9C
+B12 RF_CONFIG_STATUS seq=0001 ver=3 digest 同 B10（回读）
+    50 4B 01 21 01 00 14 00 03 00 00 00 00 11 22 33 44 55 66 77 88 99 AA BB
+    CC DD EE FF CF 53
+B13 RESET_STATUS_REQ seq=000C
+    50 4B 01 22 0C 00 00 00 3C 2A
+B14 RESET_STATUS    seq=0002 reset=RESET_N(0x2) uptime=123456 ms
+    50 4B 01 23 02 00 08 00 02 00 00 00 40 E2 01 00 16 E2
+B15 UPGRADE_STATUS_REQ seq=000D
+    50 4B 01 24 0D 00 00 00 0D 91
+B16 UPGRADE_STATUS  seq=0003 state=normal(0x00) img=0x00000102
+    50 4B 01 25 03 00 08 00 00 00 00 00 02 01 00 00 0A A8
+B17 ERROR           seq=000E code=0x03 len=4 msg="DENY"
+    50 4B 01 7F 0E 00 06 00 03 04 44 45 4E 59 2F A0
+B18 N1 HELLO ver=2  CRC 合法（B2 同 payload，帧头 ver 改 0x02 后重算 CRC）
+    50 4B 02 01 01 00 08 00 01 00 02 00 01 00 00 00 F9 6B
+B19 N2 len=503>502  帧头 8 B 字面 + 0x00 填充至 512 B（构造规则向量；
+    len 判定先于 CRC，故无合法 CRC 亦必拒）
+    50 4B 01 01 01 00 F7 01 ‖ 00×504
+B20 N3a 坏 CRC      B2 末字节翻转（E6→E7）
+    50 4B 01 01 01 00 08 00 01 00 02 00 01 00 00 00 5A E7
+B20 N3b ver=2+坏CRC B18 末字节翻转（6B→6A）——必须计 CRC 不计 version（§5.1）
+    50 4B 02 01 01 00 08 00 01 00 02 00 01 00 00 00 F9 6A
+B21 N4 reserved≠0   B16 payload[1] 置 0x01 后重算 CRC（死于 payload 校验）
+    50 4B 01 25 03 00 08 00 00 01 00 00 02 01 00 00 6B 10
+B22 N5 未知类型     type=0x55 len=2 payload=CA FE，CRC 合法
+    50 4B 01 55 0F 00 02 00 CA FE 11 57
+B23 N6 全 0 事务    0x00 ×512（构造规则向量；合法『无帧』）
+B24 seq 回绕        PING seq=0xFFFF 与 PING seq=0x0000
+    50 4B 01 03 FF FF 00 00 2B 43
+    50 4B 01 03 00 00 00 00 EB C7
+```
+
+### B.3 会话级行为向量
+
+- **B25（§6.5）**：以 B6 开启重组、B7 chunk0 积累至 12 B 后，收到合法
+  HELLO → 半交付态立即作废（active=0、have=0），后续 B7 chunk1 不再命中
+  （按 §6.5 已放弃该报文）；随后新 descriptor（新 desc_id）可干净重组至
+  完成。可执行断言见测试 case 18。
+
+正向向量 B2–B17 覆盖 §4 表全部 14 种 msg_type（5 条空载荷命令共用
+`rp_cc13xx_encode_empty`）；负路径 B18–B23 六条对应 §5.2/§5.4/§6.2 的
+拒收与容忍语义。
 
 ## 附录 C：自审清单（本规范冻结时已核）
 
