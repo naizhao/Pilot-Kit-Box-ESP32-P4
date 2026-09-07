@@ -110,17 +110,21 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
 
 size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
                               bool gps_valid,
-                              bool uat_initialised,
                               bool utc_ok,
                               uint32_t uat_timestamp_s,
                               uint8_t msg_count_uplink,
                               uint16_t msg_count_basic_long)
 {
-    /* Status Byte 1: GPS valid + UAT initialised. Everything else is
-     * left at 0 (no maintenance request, no IDENT pressed, etc.). */
-    uint8_t status1 = 0;
-    if (gps_valid)        status1 |= (1 << 7);
-    if (uat_initialised)  status1 |= (1 << 0);
+    /* Status Byte 1: bit 0 is ONE in ALL Heartbeat messages — ICD
+     * §3.1.1 h): "UAT Initialized: This bit is set to ONE in all
+     * Heartbeat messages." It is the interface-initialised talkback;
+     * despite the name it says nothing about UAT receiver capability.
+     * (2026-09-07: a branch briefly cleared this bit to "retire fake
+     * UAT capability" — that was a misreading of the bit name;
+     * reverted, and the trap-named parameter removed.) Everything else
+     * is left at 0 (no maintenance request, no IDENT pressed, etc.). */
+    uint8_t status1 = 0x01;
+    if (gps_valid) status1 |= (1 << 7);
 
     /* Status Byte 2: bit 7 carries the MSB of the 17-bit UAT timestamp;
      * bit 0 is UTC OK. We use 17-bit seconds-since-midnight. */

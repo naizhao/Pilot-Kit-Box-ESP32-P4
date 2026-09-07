@@ -665,12 +665,11 @@ static void emitter_task(void *arg)
                 struct timeval tv; gettimeofday(&tv, NULL);
                 /* Seconds-since-midnight UTC (will read low until SNTP). */
                 uint32_t sod = (uint32_t)(tv.tv_sec % 86400);
-                /* uat_initialised 恒为 false：本机无 UAT 接收能力
-                 * （978/WP-E 未实装），对 EFB 谎报 initialised 会让它
-                 * 显示一条不存在数据源的 UI。 */
+                /* 注意：没有 uat_initialised 实参——Status1 bit0 恒 1 是
+                 * 编码器按 ICD §3.1.1 h) 无条件置位的（接口初始化
+                 * talkback，与 UAT 接收能力无关），见 gdl90.h。 */
                 size_t n = gdl90_encode_heartbeat(frame, sizeof(frame),
                                                   /*gps_valid=*/gps_fix,
-                                                  /*uat_initialised=*/false,
                                                   /*utc_ok=*/false,
                                                   sod,
                                                   /*uplink=*/0,

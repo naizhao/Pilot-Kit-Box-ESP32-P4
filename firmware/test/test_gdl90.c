@@ -5,16 +5,20 @@
  *      -o /tmp/test_gdl90 firmware/test/test_gdl90.c \
  *      firmware/main/gdl90.c -lm && /tmp/test_gdl90
  *
- * 背景：设备的 978 MHz UAT 链路固件不存在（WP-E 未开始），但 BLE 调用点
- * （ble_gatt.c）曾恒传 uat_initialised=true——对 ForeFlight 等 EFB 谎报
- * 不存在的接收能力。调用点依赖 NimBLE，没有 host 测试缝，所以这里钉死
- * 编码器的位级合同，防止将来有人"顺手修好"调用点时把位序也改坏。
+ * 背景：本任务的"清退假 UAT 能力"在终审被推翻了一半——真正的假能力
+ * 表述只在文档里（位名 misleading），**线上行为从来不该改**：ICD
+ * §3.1.1 h) 原文 "UAT Initialized: This bit is set to ONE in all
+ * Heartbeat messages"——bit0 是接口初始化 talkback，与 UAT 接收能力
+ * 无关，ICD 自己的 golden heartbeat（§2.2.4，status1=0x81）bit0 也是
+ * 1。本分支曾按位名把调用点改成 false，产出不合规心跳；现回退：参数
+ * 从编码器签名里整体删除（名字即陷阱），bit0 由编码器无条件置 1。
+ * 调用点依赖 NimBLE，没有 host 测试缝，所以这里钉死编码器的位级合同。
  *
  * 帧字节布局（依据 gdl90.c 与 ICD §2.2.4 golden vector 取证）：
  *
  *   out[0]  = 0x7E 帧界
  *   out[1]  = 0x00 msg id
- *   out[2]  = Status Byte 1（bit7 = GPS valid，bit0 = UAT initialised）
+ *   out[2]  = Status Byte 1（bit7 = GPS valid；bit0 恒 1，§3.1.1 h)）
  *   out[3]  = Status Byte 2（bit7 = 17 位时间戳的 bit16，bit0 = UTC OK）
  *   out[4]  = 时间戳低 16 位的 LSB（小端在前）
  *   out[5]  = 时间戳低 16 位的 MSB
@@ -82,39 +86,39 @@ static uint16_t crc_icd_reference(const uint8_t *d, size_t n)
     return crc;
 }
 
-/* ── (a) uat_initialised=false：Status Byte 1 bit0 必须是 0 ────────── */
-/* 全帧钉死：gps=F，uat=F，utc=F，ts=0xE1A4（57636 s），计数 0/0。
- * 期望 FCS = 0x3CB5（ICD §2.2.3 算法独立推导），
+/* ── (a) Status Byte 1 默认位：bit0 恒 1，bit7 随 gps_valid ────────── */
+/* 全帧钉死：gps=F，utc=F，ts=0xE1A4（57636 s），计数 0/0。
+ * Status1 = 0x01：bit7(GPS)=0，bit0 恒 1（ICD §3.1.1 h)）。
+ * 期望 FCS = 0x4A01（ICD §2.2.3 算法独立推导），
  * 全帧无 0x7D/0x7E，不需要转义。 */
-static void test_heartbeat_uat_not_initialised_is_zero(void)
+static void test_heartbeat_status1_defaults(void)
 {
     uint8_t buf[64] = { 0 };
     static const uint8_t expect[] = {
         0x7E, 0x00,                    /* 帧界 | msg id 0x00              */
-        0x00,                          /* Status1: bit7=0 bit0=0          */
+        0x01,                          /* Status1: bit7(GPS)=0，bit0 恒 1  */
         0x00,                          /* Status2: bit7=0(ts bit16=0) bit0=0 */
         0xA4, 0xE1,                    /* ts 低 16 位，LSB first          */
         0x00, 0x00,                    /* message counts                  */
-        0xB5, 0x3C,                    /* FCS 0x3CB5，LSB first           */
+        0x01, 0x4A,                    /* FCS 0x4A01，LSB first           */
         0x7E                           /* 帧界                            */
     };
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/false,
-                                      /*uat_initialised=*/false,
                                       /*utc_ok=*/false,
                                       0xE1A4, /*uplink=*/0, /*basic_long=*/0);
     CHECK(n == sizeof(expect));
     CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
-    /* 单独再点名 bit0：这条是本任务的合同核心，即使全帧比对因别的
-     * 字节回归而失败，也要能看出 UAT 位是不是被翻回 1。 */
-    CHECK((buf[2] & 0x01) == 0);
+    /* 单独点名 bit0：合同核心。谁把它清回 0（哪怕是"诚实"理由），
+     * 每秒的心跳就是不合规帧。 */
+    CHECK((buf[2] & 0x01) == 1);
 }
 
 /* ── (b) 位序钉死：gps bit7 / utc bit0 / 时间戳小端 ────────────────── */
-/* gps=T，uat=F，utc=F，ts=0x10FF0（bit16 置位，0x10FF0=69616 s <2^17）。
- * Status1 bit7 必须是 1、bit0 必须是 0；Status2 bit7=1（ts bit16）、
- * bit0=0（utc_ok=false）。防的是"修 UAT 位时把整个 Status Byte 清零"
+/* gps=T，uat 位恒 1，utc=F，ts=0x10FF0（bit16 置位，0x10FF0=69616 s）。
+ * Status1 = 0x81（bit7=1、bit0=1）；Status2 bit7=1（ts bit16）、
+ * bit0=0（utc_ok=false）。防的是"修某一位时把整个 Status Byte 清零"
  * 这类误伤。 */
 static void test_heartbeat_status_bit_positions(void)
 {
@@ -122,40 +126,38 @@ static void test_heartbeat_status_bit_positions(void)
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
-                                      /*uat_initialised=*/false,
                                       /*utc_ok=*/false,
                                       0x10FF0, /*uplink=*/0, /*basic_long=*/0);
     CHECK(n == 11);
     CHECK(buf[0] == 0x7E && buf[1] == 0x00);
-    CHECK(buf[2] == 0x80);             /* bit7(GPS)=1，bit0(UAT)=0        */
+    CHECK(buf[2] == 0x81);             /* bit7(GPS)=1，bit0 恒 1           */
     CHECK(buf[3] == 0x80);             /* bit7(ts bit16)=1，bit0(UTC)=0   */
     CHECK(buf[4] == 0xF0 && buf[5] == 0x0F);  /* ts 低 16 位，LSB first   */
     CHECK((buf[6] & 0x1F) == 0);       /* uplink 低 5 位                  */
 }
 
 /* ── (c) FCS 字节正确：非零计数向量全帧比对 ────────────────────────── */
-/* gps=T，uat=F，utc=F，ts=0x12345（bit16=1），uplink=0，basic_long=0x123。
- * counts 打包：mc1=(0x123>>8&3)<<5=0x20，mc2=0x23。FCS 0x2079（ICD
- * 算法独立推导），LSB 在前。全帧硬编码比对，任何一个字节位序/打包/
- * FCS 回归都会被抓到。 */
+/* gps=T，utc=F，ts=0x12345（bit16=1），uplink=0，basic_long=0x123。
+ * counts 打包：mc1=(0x123>>8&3)<<5=0x20，mc2=0x23。Status1=0x81。
+ * FCS 0x56CD（ICD 算法独立推导），LSB 在前。全帧硬编码比对，任何一
+ * 个字节位序/打包/FCS 回归都会被抓到。 */
 static void test_heartbeat_crc_bytes(void)
 {
     uint8_t buf[64] = { 0 };
     static const uint8_t expect[] = {
         0x7E, 0x00,
-        0x80,                          /* Status1: GPS=1，UAT=0           */
+        0x81,                          /* Status1: GPS=1，bit0 恒 1       */
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
         0x20, 0x23,                    /* counts：高 2 位 + 低 8 位——钉当前
                                         * 行为（已知偏差，非 §3.1.4 合规，
                                         * 见 gdl90.c 注）                  */
-        0x79, 0x20,                    /* FCS 0x2079，LSB first           */
+        0xCD, 0x56,                    /* FCS 0x56CD，LSB first           */
         0x7E
     };
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
-                                      /*uat_initialised=*/false,
                                       /*utc_ok=*/false,
                                       0x12345, /*uplink=*/0, /*basic_long=*/0x123);
     CHECK(n == sizeof(expect));
@@ -163,52 +165,54 @@ static void test_heartbeat_crc_bytes(void)
 }
 
 /* ── (d) 编码器 FCS == ICD 参考实现（非零向量，测试内独立实现）─────── */
-/* 向量：gps=T，uat=F，utc=F，ts=0x12345，counts 0/0 →
- * msg 00 80 80 45 23 00 00，ICD 算法 FCS = 0x005A。
- * 独立实现与编码器对同一 message 必须给出同一 FCS；任何一边改用别的
- * CRC 族（逐位循环 / 增强版）都会让比对或锚常数变红。 */
+/* 向量：gps=T，utc=F，ts=0x12345，counts 0/0 →
+ * msg 00 81 80 45 23 00 00（Status1=0x81：bit0 恒 1），ICD 算法
+ * FCS = 0x76EE。独立实现与编码器对同一 message 必须给出同一 FCS；
+ * 任何一边改用别的 CRC 族（逐位循环 / 增强版）都会让比对或锚常数
+ * 变红。 */
 static void test_heartbeat_fcs_matches_icd_reference(void)
 {
-    static const uint8_t msg[] = { 0x00, 0x80, 0x80, 0x45, 0x23, 0x00, 0x00 };
+    static const uint8_t msg[] = { 0x00, 0x81, 0x80, 0x45, 0x23, 0x00, 0x00 };
     uint8_t buf[64] = { 0 };
     static const uint8_t expect[] = {
         0x7E, 0x00,
-        0x80,                          /* Status1: GPS=1，UAT=0           */
+        0x81,                          /* Status1: GPS=1，bit0 恒 1       */
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
         0x00, 0x00,                    /* counts（钉当前打包行为，见
                                         * gdl90.c 的 §3.1.4 偏差注）       */
-        0x5A, 0x00,                    /* FCS 0x005A，LSB first           */
+        0xEE, 0x76,                    /* FCS 0x76EE，LSB first           */
         0x7E
     };
 
-    /* 独立实现自身的锚：常数 0x005A 来自 Python 独立推导，不是抄实现。 */
-    CHECK(crc_icd_reference(msg, sizeof(msg)) == 0x005A);
+    /* 独立实现自身的锚：常数 0x76EE 来自 Python 独立推导，不是抄实现。 */
+    CHECK(crc_icd_reference(msg, sizeof(msg)) == 0x76EE);
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
-                                      /*uat_initialised=*/false,
                                       /*utc_ok=*/false,
                                       0x12345, /*uplink=*/0, /*basic_long=*/0);
     CHECK(n == sizeof(expect));
     CHECK(memcmp(buf, expect, sizeof(expect)) == 0);
-    CHECK(buf[8] == 0x5A && buf[9] == 0x00);  /* 点名 FCS 字节位置       */
+    CHECK(buf[8] == 0xEE && buf[9] == 0x76);  /* 点名 FCS 字节位置       */
 }
 
 /* ── (e) ICD §2.2.4 golden heartbeat：规格自己发布的测试向量 ────────── */
 /* golden message = msg id + payload = 00 81 41 DB D0 08 02，ICD 原文
  * 发布的 FCS = 0x8BB3（帧 [7E 00 81 41 DB D0 08 02 B3 8B 7E]）。
  *
- * 复现说明：golden payload 分解为 status1=0x81(GPS+UAT)、
+ * 复现说明：golden payload 分解为 status1=0x81(GPS+UAT 位)、
  * status2=0x41(bit6 CSA Requested + bit0 UTC)、ts=0xD0DB、uplink=8、
- * basic=2。本编码器不实现 CSA 位（status2 bit6 恒 0，参数表里也没有
- * 它，签名是任务合同），golden 帧无法逐字节从公共 API 产出；能产出的
- * 最近向量只差 status2 一个字节（0x01 vs 0x41）。所以钉两层：
+ * basic=2。bit0=1 本编码器现在无条件置位 ✓；status2 bit6 = CSA
+ * Requested 不实现（恒 0，参数表里也没有它，签名是任务合同），
+ * golden 帧无法逐字节从公共 API 产出；能产出的最近向量只差 status2
+ * 一个字节（0x01 vs 0x41）。所以钉两层：
  *   1. 测试内 ICD 参考实现对 **完整 golden message** 的输出 == ICD
  *      发布的 0x8BB3——常数照抄规格原文，是全文件最硬的锚；
  *   2. 编码器对可产出向量（其余字节全同 golden）的全帧输出，且其
  *      FCS 与参考实现对同一 message 的输出一致——证明线上 FCS 就是
- *      ICD §2.2.3 算法。 */
+ *      ICD §2.2.3 算法。注意该向量同时从侧面印证 bit0 合同：status1
+ *      的 0x81 与 golden 完全一致（GPS+UAT 位）。 */
 static void test_heartbeat_icd_golden_vector(void)
 {
     static const uint8_t golden_msg[] = { 0x00, 0x81, 0x41, 0xDB, 0xD0, 0x08, 0x02 };
@@ -217,13 +221,13 @@ static void test_heartbeat_icd_golden_vector(void)
     uint8_t buf[64] = { 0 };
     static const uint8_t expect[] = {
         0x7E, 0x00,
-        0x81,                          /* Status1: GPS=1，UAT=1（同 golden）*/
+        0x81,                          /* Status1: GPS=1，bit0=1（同 golden）*/
         0x01,                          /* Status2: UTC=1；bit6 CSA 不实现   */
         0xDB, 0xD0,                    /* ts 0xD0DB，LSB first（同 golden） */
-        0x08, 0x02,                    /* counts：uplink=8，basic=2——钉
-                                        * 当前打包行为（已知偏差，见
-                                        * gdl90.c 注；此两字节恰与 golden
-                                        * 相同，纯属向量巧合）            */
+        0x08, 0x02,                    /* counts：uplink=8，basic=2——钉当前
+                                        * 打包行为（已知偏差，见 gdl90.c
+                                        * 注；此两字节恰与 golden 相同，
+                                        * 纯属向量巧合）                    */
         0x1E, 0x96,                    /* FCS 0x961E，LSB first             */
         0x7E
     };
@@ -232,7 +236,6 @@ static void test_heartbeat_icd_golden_vector(void)
 
     size_t n = gdl90_encode_heartbeat(buf, sizeof(buf),
                                       /*gps_valid=*/true,
-                                      /*uat_initialised=*/true,
                                       /*utc_ok=*/true,
                                       0xD0DB, /*uplink=*/8, /*basic_long=*/2);
     CHECK(n == sizeof(expect));
@@ -243,7 +246,7 @@ static void test_heartbeat_icd_golden_vector(void)
 int main(void)
 {
     crc_table_init();
-    test_heartbeat_uat_not_initialised_is_zero();
+    test_heartbeat_status1_defaults();
     test_heartbeat_status_bit_positions();
     test_heartbeat_crc_bytes();
     test_heartbeat_fcs_matches_icd_reference();
