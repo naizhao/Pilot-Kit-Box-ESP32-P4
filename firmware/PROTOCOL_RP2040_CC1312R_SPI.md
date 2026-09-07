@@ -178,6 +178,8 @@ CRC16（§3.2）即传输完整性校验，不另设报文级 CRC（slave 在入
 
 `{u8 state; u8 reserved[3]; u32le running_image_version}`，共 8 B。`state`：
 0x00=normal、0x01=bootloader、0x02=upgrading（WP-E 二期实现）、0x03=failed；
+`reserved[3]` 必须为 0（发送方置 0；接收方校验非 0 视为 payload 违规，与
+len 违规同计 len_errors 并作废整事务，§5.2）。
 `running_image_version`：当前运行固件版本（与 §4.1 fw_ver 同编码）。
 **cJTAG 状态不在本消息内**：cJTAG 是独立硬件调试路径，CC1312R 固件无法观测
 （事实卡「cJTAG boundary」）——本消息只描述固件侧升级状态机（§8）。
@@ -225,7 +227,12 @@ CRC16（§3.2）即传输完整性校验，不另设报文级 CRC（slave 在入
 4. **LINKED 后首务**：master 必须在 LINKED 后 1 s 内发 RF_CONFIG 查询
    （§4.6），发现版本落后则写；slave 不得主动要求配置。
 5. **seq 基线**：收到对端 HELLO 即以该帧 seq 为新基线（对端重启检测——
-   HELLO 中 reset_reason 为证），基线重置不计 seq_gaps（§5.5）。
+   HELLO 中 reset_reason 为证），基线重置不计 seq_gaps（§5.5）。收到合法
+   HELLO 时 slave 同时清理半交付态：已交付的 RX_DESCRIPTOR 及其已积累分片
+   一并作废、不重新入队（master 重启即放弃该报文），后续 IRQ_ACK 不再命中
+   §2.3 规则 1；事件队列与 RF 配置保留（与 §6.6 slave 侧看护同一保留范围）。
+   §6.6 的 master RECOVERY 则经 RESET_N 复位 slave，其全部会话态（含队列）
+   随重启清零，与本条不冲突。
 6. **IRQ 丢失恢复（超时轮询兜底）**：LINKED 态 master 以 1 Hz 发 PING，
    **不看 IRQ**；slave 对 PING 的应答按 §2.3（有事件回事件，无事件回 PONG）。
    以下任一条件成立 → master 进入 RECOVERY：RESET_N 低 ≥ 1 ms → 回步骤 1：
