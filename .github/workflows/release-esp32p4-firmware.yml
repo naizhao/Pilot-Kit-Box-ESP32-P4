@@ -183,7 +183,7 @@ jobs:
           then drop the .uf2 onto the RPI-RP2 drive that appears. See docs/firmware_update.md.
 
           Release assets carry board-family identifiers (esp32p4 / rp2040) in their filenames so future board families can coexist safely.
-          This release updates only the ESP32-P4 main firmware. It does not update the ESP32-C6 hosted slave firmware.
+          This release updates the ESP32-P4 main firmware and the RP2040 1090 receiver firmware (UF2). It does not update the ESP32-C6 hosted slave firmware.
           EOF
 
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then

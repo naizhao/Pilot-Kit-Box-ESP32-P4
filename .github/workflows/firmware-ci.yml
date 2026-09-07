@@ -18,11 +18,14 @@ name: Firmware PR CI
 on:
   pull_request:
     paths:
-      # 固件本体、发布工具、以及本 workflow 自身。之外的改动（文档、web、
-      # KiCad 硬件侧等）不触碰上述三者的行为，不值得烧 PR 分钟数。
+      # 固件本体、发布工具、发布/部署 workflow 自身，以及本 workflow。
+      # 之外的改动（文档、web、KiCad 硬件侧等）不触碰上述三者的行为，
+      # 不值得烧 PR 分钟数。
       - "firmware/**"
       - "tools/firmware_release/**"
       - ".github/workflows/firmware-ci.yml"
+      - ".github/workflows/release-esp32p4-firmware.yml"
+      - ".github/workflows/deploy-esp32p4-pages.yml"
 
 permissions:
   contents: read
