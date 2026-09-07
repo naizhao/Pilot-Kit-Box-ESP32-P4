@@ -665,9 +665,12 @@ static void emitter_task(void *arg)
                 struct timeval tv; gettimeofday(&tv, NULL);
                 /* Seconds-since-midnight UTC (will read low until SNTP). */
                 uint32_t sod = (uint32_t)(tv.tv_sec % 86400);
+                /* uat_initialised 恒为 false：本机无 UAT 接收能力
+                 * （978/WP-E 未实装），对 EFB 谎报 initialised 会让它
+                 * 显示一条不存在数据源的 UI。 */
                 size_t n = gdl90_encode_heartbeat(frame, sizeof(frame),
                                                   /*gps_valid=*/gps_fix,
-                                                  /*uat_initialised=*/true,
+                                                  /*uat_initialised=*/false,
                                                   /*utc_ok=*/false,
                                                   sod,
                                                   /*uplink=*/0,

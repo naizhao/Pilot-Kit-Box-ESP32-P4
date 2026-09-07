@@ -19,7 +19,9 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* CRC-16-CCITT (poly 0x1021, init 0x0000, no reflect, no xorout).    */
+/* CRC-16-CCITT (poly 0x1021, init 0x0000, no reflect).  The raw       */
+/* remainder is not what goes on the wire: gdl90_frame() augments it   */
+/* (xor 0xF0B8, FAA 560-1058 §2.3) before appending.                   */
 /* ------------------------------------------------------------------ */
 
 static uint16_t gdl90_crc(const uint8_t *data, size_t len)
@@ -51,7 +53,11 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
     memcpy(tmp + tmp_len, payload, payload_len);
     tmp_len += payload_len;
 
-    uint16_t crc = gdl90_crc(tmp, tmp_len);
+    /* FAA 560-1058 §2.3: what goes on the wire is the remainder XORed
+     * with 0xF0B8 (the "augmented" CRC); decoders validate against the
+     * same constant, so a bare-CRC frame fails the check and is
+     * silently dropped. TX only here — no receive side. */
+    uint16_t crc = gdl90_crc(tmp, tmp_len) ^ 0xF0B8;
     tmp[tmp_len++] = (uint8_t)(crc & 0xFF);          /* LSB first */
     tmp[tmp_len++] = (uint8_t)((crc >> 8) & 0xFF);
 

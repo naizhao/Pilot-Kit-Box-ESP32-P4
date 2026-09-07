@@ -266,8 +266,8 @@ Each notification payload is one complete GDL90 **Ownship Report**
 Byte stuffing (replace `0x7D`→`0x7D 0x5D`, `0x7E`→`0x7D 0x5E`)
 applies inside the frame but never to the bracketing `0x7E`
 flag bytes. CRC is CCITT-16 (poly `0x1021`, init `0x0000`,
-no reflect, no xorout), LSB transmitted first, computed over
-`msg ID + payload` before stuffing.
+no reflect) augmented with `0xF0B8` per FAA 560-1058 §2.3,
+LSB transmitted first, computed over `msg ID + payload` before stuffing.
 
 #### Cadence
 
@@ -306,13 +306,14 @@ clients **SHOULD** treat absence for > 5 s as a stale link.
 
 | Bytes (raw payload) | Meaning |
 |---------------------|---------|
-| 0 | Status Byte 1 (bit 7 = GPS valid, bit 0 = UAT initialised) |
+| 0 | Status Byte 1 (bit 7 = GPS valid, bit 0 = UAT initialised — always 0: this device has no UAT receiver; the 978 chain is not implemented yet) |
 | 1 | Status Byte 2 (bit 7 = TS MSB, bit 0 = UTC OK) |
 | 2..3 | UAT Time Stamp lower 16 bits (LSB first), seconds since 0000Z UTC |
 | 4..5 | Message counts (uplink + basic/long, see spec §3.1) |
 
-`gps_valid` follows the current GT-U8 RMC fix state and
-`uat_initialised` is set to 1. In the current `v0.8.0` implementation,
+`gps_valid` follows the current GT-U8 RMC fix state. `uat_initialised`
+is always 0: this device has no UAT receiver (the 978 MHz chain is not
+implemented yet). In the current `v0.8.0` implementation,
 the Heartbeat `utc_ok` bit remains 0 even when GPS/BLE has disciplined
 the system clock; clients should use the timestamp value and treat the
 flag as not yet implemented.
