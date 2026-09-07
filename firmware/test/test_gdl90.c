@@ -18,7 +18,8 @@
  *   out[3]  = Status Byte 2（bit7 = 17 位时间戳的 bit16，bit0 = UTC OK）
  *   out[4]  = 时间戳低 16 位的 LSB（小端在前）
  *   out[5]  = 时间戳低 16 位的 MSB
- *   out[6]  = Message Counts 字节 1（basic-long 高 2 位<<5 | uplink 低 5 位）
+ *   out[6]  = Message Counts 字节 1（basic-long 高 2 位<<5 | uplink 低 5 位
+ *             ——已知偏差：与 ICD §3.1.4 不一致，见 gdl90.c 注）
  *   out[7]  = Message Counts 字节 2（basic-long 低 8 位）
  *   out[8]  = FCS 低字节
  *   out[9]  = FCS 高字节
@@ -145,7 +146,9 @@ static void test_heartbeat_crc_bytes(void)
         0x80,                          /* Status1: GPS=1，UAT=0           */
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
-        0x20, 0x23,                    /* counts：高 2 位 + 低 8 位       */
+        0x20, 0x23,                    /* counts：高 2 位 + 低 8 位——钉当前
+                                        * 行为（已知偏差，非 §3.1.4 合规，
+                                        * 见 gdl90.c 注）                  */
         0x79, 0x20,                    /* FCS 0x2079，LSB first           */
         0x7E
     };
@@ -173,7 +176,8 @@ static void test_heartbeat_fcs_matches_icd_reference(void)
         0x80,                          /* Status1: GPS=1，UAT=0           */
         0x80,                          /* Status2: ts bit16=1，UTC=0      */
         0x45, 0x23,                    /* ts 0x12345 低 16 位，LSB first  */
-        0x00, 0x00,                    /* counts                          */
+        0x00, 0x00,                    /* counts（钉当前打包行为，见
+                                        * gdl90.c 的 §3.1.4 偏差注）       */
         0x5A, 0x00,                    /* FCS 0x005A，LSB first           */
         0x7E
     };
@@ -216,7 +220,10 @@ static void test_heartbeat_icd_golden_vector(void)
         0x81,                          /* Status1: GPS=1，UAT=1（同 golden）*/
         0x01,                          /* Status2: UTC=1；bit6 CSA 不实现   */
         0xDB, 0xD0,                    /* ts 0xD0DB，LSB first（同 golden） */
-        0x08, 0x02,                    /* counts：uplink=8，basic=2（同 golden）*/
+        0x08, 0x02,                    /* counts：uplink=8，basic=2——钉
+                                        * 当前打包行为（已知偏差，见
+                                        * gdl90.c 注；此两字节恰与 golden
+                                        * 相同，纯属向量巧合）            */
         0x1E, 0x96,                    /* FCS 0x961E，LSB first             */
         0x7E
     };

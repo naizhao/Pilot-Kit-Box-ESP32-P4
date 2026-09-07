@@ -135,7 +135,13 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
     /* Message Counts: byte 1 carries 5 bits of basic-long uplink count
      * (bits 6..2) and 5 bits of UAT uplink count (bits 4..0); byte 2
      * carries the lower 8 bits of basic-long. We approximate by packing
-     * the basic-long count straight and clamping uplink to 5 bits. */
+     * the basic-long count straight and clamping uplink to 5 bits.
+     *
+     * 已知偏差（2026-09 记录）：打包位序与 ICD §3.1.4 不一致（本实现
+     * basic-long 高位在 bit6..5、uplink 在 bit4..0；ICD 规定
+     * uplink=byte1[7:3]、bit2 保留、basic/long 10 位跨
+     * byte1[1:0]+byte2）。ForeFlight 现不消费该字段，无用户可见影响；
+     * 重打包属 F2/HIL 范围。 */
     if (msg_count_basic_long > 0x3FF) msg_count_basic_long = 0x3FF;
     if (msg_count_uplink     > 0x1F)  msg_count_uplink     = 0x1F;
     uint8_t mc1 = ((msg_count_basic_long >> 8) & 0x03) << 5 | (msg_count_uplink & 0x1F);
