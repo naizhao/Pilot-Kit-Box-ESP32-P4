@@ -47,6 +47,7 @@ Official links:
 | File | Purpose |
 |---|---|
 | [`board_pinout.md`](board_pinout.md) / [`board_pinout-zh_CN.md`](board_pinout-zh_CN.md) | Complete J3, GPIO0–54, connector and Pilot wiring reference |
+| [`pinmap_978.md`](pinmap_978.md) | RP2040 ↔ CC1312R Sub-GHz (978 MHz) pin fact sheet: SUBG_* nets, SPI1 verdict, cJTAG boundary, v3/v4 diff |
 | [`c6_slave_firmware.md`](c6_slave_firmware.md) / [`c6_slave_firmware-zh_CN.md`](c6_slave_firmware-zh_CN.md) | One-time C6 slave flashing guide using P1 |
 | [`ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf`](ESP32-P4-WIFI6-Touch-LCD-4.3-schematic.pdf) | **Board authority:** Rev1.2 schematic and assembly drawing |
 | [`ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md`](ESP32-P4-WIFI6-Touch-LCD-4.3-wiki.md) | Offline official-resource digest and BSP parameters |
