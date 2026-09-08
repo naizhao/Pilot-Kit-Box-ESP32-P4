@@ -69,7 +69,9 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
    应答与自己的历史命令对账。**IRQ 读路径**：SUBG_IRQ 高电平 = 「存在待交付
    事件」（§1）；master 的读触发 = **IRQ_ACK 事务**（不设专用 POLL——
    IRQ_ACK 即"请装载下一事件/分片"）：事务 N 的 IRQ_ACK 使 slave 在其 CSN
-   上升沿按 §2.3 规则 1/3 装载，事件帧出现在事务 N+1 的 MISO；取空 =
+   上升沿按 §2.3 规则 1/4 装载（取片延续或 IRQ 背书事件——普通事件/
+   QUEUE_FULL/异步 ERROR 均走规则 4；IRQ_ACK 无直接应答，规则 3 不适用），
+   事件帧出现在事务 N+1 的 MISO；取空 =
    IRQ_ACK 流水（§7.2 drain），每事务推进一个事件/分片。master 仅在 (a) 有
    命令待发或 (b) SUBG_IRQ 为高时发起事务；slave 无时钟即无法应答，故 slave
    从不"主动说话"，只能经 IRQ 声明（§1）。
