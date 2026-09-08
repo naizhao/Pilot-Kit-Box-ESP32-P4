@@ -83,6 +83,7 @@ add_executable(adsb1090
     selftest_gen.pio
     threshold_ctl.c
     p4_link.c
+    spi_master.c
     ../components/adsb_link_codec/adsb_link_codec.c   # 共享 codec：与 P4 侧同一份源
     ../components/rp_cc13xx_codec/rp_cc13xx_codec.c   # CC1312R 链路共享 codec（协议 v1.0）；
                                                       # WP-P0b Task 3 仅无害编译进产物，
@@ -108,6 +109,7 @@ target_link_libraries(adsb1090 PRIVATE
     hardware_dma
     hardware_pwm
     hardware_adc
+    hardware_spi
     pico_stdio_usb
 )
 pico_enable_stdio_usb(adsb1090 1)
