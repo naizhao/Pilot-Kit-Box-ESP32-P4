@@ -446,10 +446,14 @@ void spim_poll(spi_master_t *m, uint32_t now_us)
     const bool irq = gpio_get(SPIM_PIN_IRQ);
     if (spi_master_next_txn(m, now_us, mosi, irq) == 0) return;
     spim_hw_transfer(mosi, miso);
-    /* 事务时长（4 MHz × 512 B ≈ 1 ms）——看护时基用近似常量；
-     * 节流基准同样锚定到事务结束（now+1024，而非轮询入口）。 */
-    spi_master_digest(m, 1024, miso);
-    last_txn_end_us = now_us + 1024;
+    /* 实测时基（审计 WP-E-3 P1）：CSN 拉高后取真实结束时刻——
+     * 125 MHz 外设时钟下 4 MHz 请求实际得 3.90625 MHz（分频离散），
+     * 512 B 事务 ≈1048.6 µs；从入口时间推算（+1024 常量）会把结束
+     * 时刻记早 ≥24.6 µs，吞掉 R14 的 1 ms CSN 高电平合同。digest 的
+     * 看护时基同样用实测 delta。 */
+    const uint32_t end_us = time_us_32();
+    spi_master_digest(m, end_us - now_us, miso);
+    last_txn_end_us = end_us;
 }
 
 #endif /* SPI_MASTER_HOST_TEST */

@@ -17,15 +17,25 @@ from pathlib import Path
 
 # 函数名 → 栈帧预算（字节）。预算依据：静态化后实测 + 余量；
 # 回归即红（改函数/编译器版本会翻新预算——更新时注明依据）。
+# 覆盖面（审计 WP-E-3 P2）：UAT 链的关键 codec/解码原语一并入表——
+# 门禁只做单帧预算、无链求和，遗漏函数的栈增长曾可静默通过。
 BUDGET = {
     "main": 256,
     "spim_poll": 128,           # 静态化前 1064
     "spi_master_digest": 128,   # 静态化前 1040
+    "spi_master_next_txn": 256,
     "on_uat_frame": 64,
     "p4_link_send_uat": 128,    # 静态化前 1168
-    "spi_master_next_txn": 256,
     "tx_frame": 64,
     "adsb_link_uat_uplink_encode": 128,
+    # codec 链（components/ 源直编进 target，.su 同目录生成）
+    "adsb_link_encode": 192,
+    "adsb_link_crc16": 64,
+    "rp_cc13xx_decode_frame": 128,
+    "rp_cc13xx_decode_rx_chunk": 64,
+    "rp_cc13xx_decode_rx_descriptor": 64,
+    "rp_cc13xx_reasm_feed": 64,
+    "rp_cc13xx_crc16": 64,
 }
 
 
