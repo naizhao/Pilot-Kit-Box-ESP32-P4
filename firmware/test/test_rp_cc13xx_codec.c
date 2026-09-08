@@ -47,7 +47,10 @@
  *   B28 N8 descriptor total_len>4096 双侧拒绝           §4.3
  *   B29 N9 reset_reason 发送边界掩码 &0x0F              §4.1
  *   （B30/B31 = §6.2/§6.6/§2.3 会话级走查，规范附录 B.3；无独立十六进制）
- *   B31' N10 异步 ERROR code=0x04 seq=0x0000 哨兵        §3.5/§4.9（case 24）
+ *   B32 N10 异步 ERROR code=0x04 seq=0x0000 哨兵        §3.5/§4.9（case 24）
+ *   B36 N12 分片帧参与 seq_gaps 链（事件类，§3.5/§5.5）  §3.5（case 25）
+ *   （B30/B31/B34/B35 = §6.2/§6.6/§2.3/§4.5/§7.2 会话级走查，
+ *     规范附录 B.3；无独立十六进制——事务级状态机非 codec 可表达）
  *
  * B8/B19/B23 的 512 B 全帧以「构造规则」收录于附录 B（帧头/CRC 字面 +
  * data 按规则/零填充），本文件同规则逐字节断言；其余向量在附录 B 与本文件
@@ -715,6 +718,41 @@ int main(void)
         n = rp_cc13xx_encode_error(buf, sizeof(buf), 0x1234, &e);
         CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
               m.seq == 0x1234, "cmd err echo seq\n");
+    }
+
+    /* 25. B36（§3.5/§5.5，round 8 Ruling 3）：RX_PAYLOAD_CHUNK 为事件类、
+        回显 IRQ_ACK seq 且参与 seq_gaps 链式判定——与 RX_DESCRIPTOR/
+        QUEUE_FULL 同规则。codec 级可表达部分 = 解码取 seq + seq_gap 链；
+        装载/清挂起等事务级行为见规范附录 B.3 走查（非 codec 可表达）。
+        链：B6 desc(seq=0x0004) → B7 chunk0(回显 0x0005) → B7 chunk1
+        (0x0006) → B9 queue_full(0x0008)——末跳 +2 = gap。 */
+    {
+        rp_cc13xx_msg_t m;
+        uint16_t seqs[4];
+        CHECK(rp_cc13xx_decode_frame(V_b6_rx_descriptor,
+                                     sizeof(V_b6_rx_descriptor), &m)
+              == RP_CC13XX_OK, "b36 desc\n");
+        seqs[0] = m.seq;
+        CHECK(rp_cc13xx_decode_frame(V_b7_chunk0, sizeof(V_b7_chunk0), &m)
+              == RP_CC13XX_OK && m.type == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK,
+              "b36 chunk0\n");
+        seqs[1] = m.seq;   /* 回显 IRQ_ACK seq——事件类参与链 */
+        CHECK(rp_cc13xx_decode_frame(V_b7_chunk1, sizeof(V_b7_chunk1), &m)
+              == RP_CC13XX_OK && m.type == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK,
+              "b36 chunk1\n");
+        seqs[2] = m.seq;
+        CHECK(rp_cc13xx_decode_frame(V_b9_queue_full,
+                                     sizeof(V_b9_queue_full), &m)
+              == RP_CC13XX_OK && m.type == RP_CC13XX_MSG_QUEUE_FULL,
+              "b36 queue_full\n");
+        seqs[3] = m.seq;
+        CHECK(seqs[0] == 0x0004 && seqs[1] == 0x0005 &&
+              seqs[2] == 0x0006 && seqs[3] == 0x0008, "b36 seq chain\n");
+        CHECK(rp_cc13xx_seq_gap(seqs[0], seqs[1]) == 0 &&
+              rp_cc13xx_seq_gap(seqs[1], seqs[2]) == 0,
+              "b36 chunk hops in-chain\n");
+        CHECK(rp_cc13xx_seq_gap(seqs[2], seqs[3]) == 1,
+              "b36 skip is gap (chunk participates)\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
