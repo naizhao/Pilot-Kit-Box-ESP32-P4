@@ -79,6 +79,11 @@ idf_component_register(
         # docs/internal/firmware-v3v4/UAT-PROTOCOL-FACTS.md。目标端调用
         # 点在 T3/T4（CC1312R 链路就绪后接入）。
         "uat_decode.c"
+        # UAT 上行解码前门（WP-E Task 2，镜像 modes_ingest 的
+        # init(sink)/feed/get_stats 模式）：adsb_link UAT_UPLINK（协议
+        # v1.1 §6）→ uat_ingest_feed → uat_decode → sink。host 单测
+        # test_uat_ingest.c 直编（无 ESP-IDF 依赖）。
+        "uat_ingest.c"
         # RP2040 UART 链路任务：接收 MODES_RAW，并承载原 dsp_task 的
         # 报文后业务链（CPR/航迹/记录/看板），2026-09-05 WP-C1 迁移。
         "adsb_link_task.c"

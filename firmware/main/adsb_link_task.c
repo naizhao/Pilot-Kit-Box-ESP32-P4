@@ -19,6 +19,7 @@
 
 #include "adsb_link.h"
 #include "modes_ingest.h"
+#include "uat_ingest.h"
 #include "pilot_kit.h"
 #include "cpr_decode.h"
 #include "aircraft_state.h"
@@ -587,6 +588,18 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
                  (unsigned)icao_seen);
     }
 
+    /* UAT 前门累计计数（uat_ingest 口径同 modes_ingest：成功/RS 不可纠/
+     * 全零无帧分桶、单调累计；诊断页接入属后续任务）。只在出现过 UAT
+     * 帧后输出，纯 1090 环境不加常驻噪声。 */
+    {
+        uint32_t uat_ok = 0, uat_bad = 0, uat_nosync = 0;
+        uat_ingest_get_stats(&uat_ok, &uat_bad, &uat_nosync);
+        if (uat_ok || uat_bad)
+            ESP_LOGI(TAG, "uat uplink: ok=%u bad_rs=%u no_sync=%u",
+                     (unsigned)uat_ok, (unsigned)uat_bad,
+                     (unsigned)uat_nosync);
+    }
+
 reset:;
 
     /* Flush 1-Hz window totals into boot-lifetime cumulative counters
@@ -609,6 +622,26 @@ reset:;
     s_msgs_df20_21  = 0;
     s_msgs_other    = 0;
     s_pos_decoded   = 0;
+}
+
+/* --- UAT 上行 sink（协议 v1.1 §6 UAT_UPLINK；前门 uat_ingest 的业务层）--
+ *
+ * 融合口径（Task 2 裁决，证据 = UAT 事实卡 §4/§9）：UAT **上行**消息层
+ * 没有目标身份字段——帧头的 lat/lon 是地面站站点坐标，信息帧载荷
+ * （FIS-B 产品数据 / TIS-B 目标报告）语义要到 T5 才解码。所以本 sink
+ * 目前只打日志，不喂 aircraft_state；T5 解出 TIS-B/ADS-R 目标后，目标
+ * 必须走与 1090 相同的 aircraft_state 入口（icao24 键、同一张表，见
+ * uat_ingest.h 头注释的融合约定），不得另起并行状态库。地面站 1 帧/s，
+ * 每帧一条 LOGI 的量级与 Mode-S 逐帧日志一致。 */
+static void on_uat_uplink(const uat_uplink_t *up,
+                          const uat_ingest_meta_t *meta,
+                          uint8_t rs_corrected, void *user)
+{
+    (void)meta; (void)user;
+    ESP_LOGI(TAG_ADSB,
+             "UAT uplink: site=%.5f,%.5f slot=%u tisb=%u info=%u rs_corr=%u",
+             up->lat_deg_e6 / 1e6, up->lon_deg_e6 / 1e6,
+             up->slot_id, up->tisb_site_id, up->num_info_frames, rs_corrected);
 }
 
 /* --- 链路消息分发 ------------------------------------------------------ */
@@ -640,6 +673,18 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         };
         modes_ingest_feed(m->payload + 6, msgbits, &meta);
         atomic_fetch_add_explicit(&s_stats.modes_fed, 1, memory_order_relaxed);
+        break;
+    }
+    case ADSB_LINK_MSG_UAT_UPLINK: {
+        /* v1.1 §6：固定 557 B payload = 5 B 元数据 + 552 B 交织帧原样
+         * （帧内容合同见 uat_decode.h / 事实卡 §7）。RP2040 侧生产者
+         * （CC1312R 经 SPI 转发）在 T3 实装——本分发先就位。 */
+        uint8_t u_rssi; uint32_t u_ts; const uint8_t *u_fr;
+        if (!adsb_link_uat_uplink_decode(m->payload, m->payload_len,
+                                         &u_rssi, &u_ts, &u_fr))
+            break;                     /* 长度不符：整帧丢弃（协议 §6.1）*/
+        uat_ingest_meta_t meta = { .rssi = u_rssi, .rp_ts_us = u_ts };
+        uat_ingest_feed(u_fr, &meta);
         break;
     }
     case ADSB_LINK_MSG_HELLO:
@@ -695,6 +740,7 @@ static void adsb_link_task(void *arg)
 
     cpr_init();
     modes_ingest_init(on_ingest_msg, NULL);
+    uat_ingest_init(on_uat_uplink, NULL);
     adsb_link_dec_init(&s_dec, on_link_msg, NULL);
     atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
                           memory_order_relaxed);

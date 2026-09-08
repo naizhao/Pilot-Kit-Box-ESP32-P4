@@ -10,7 +10,8 @@
  *      firmware/components/adsb_link_codec/adsb_link_codec.c \
  *   && /tmp/test_adsb_link_codec
  *
- * 判据来源：firmware/PROTOCOL_P4_RP2040_UART.md v1.0。
+ * 判据来源：firmware/PROTOCOL_P4_RP2040_UART.md（v1.0 + v1.1 §6：
+ * UAT_UPLINK/payload 上限 576；case 15-21 为 v1.1 改写/新增）。
  * CRC 已知答案 + 独立参考实现（双实现互证）；恢复行为逐条对应规范 §3。
  */
 #include "adsb_link.h"
@@ -176,7 +177,8 @@ int main(void)
               g_msgs, d.seq_gaps);
     }
 
-    /* 10. 超限输入防御：payload 超 464 编码返回 0；cap 不足返回 0。 */
+    /* 10. 超限输入防御：payload 超 ADSB_LINK_MAX_PAYLOAD（v1.1=576）编码
+        返回 0；cap 不足返回 0。 */
     {
         uint8_t big[ADSB_LINK_MAX_PAYLOAD + 1] = {0};
         uint8_t out[600];
@@ -269,19 +271,20 @@ int main(void)
         CHECK(d.crc_errors == 1, "crc_errors=%u\n", d.crc_errors);
     }
 
-    /* 15. 审计复现（round 3）：协议最长帧（plen=464，共 474 B = 缓冲容量）
-        后紧跟下一帧，按 P4 实际读长 256 B 分块喂入。两段式 drain 在第二块
-        的入栈阶段不跑判据，紧随其后的字节触发洪泛防御把已完整的 474 B 帧
-        头部滑掉 → 第一帧丢失（实测 resyncs=474、msgs=1）。修复后必须
-        msgs=2 且按序（seq 60 → 61）、无多余 resync。 */
+    /* 15. 审计复现（round 3）：协议最长帧（plen=576，共 586 B = 缓冲容量，
+        v1.1 扩容后的上限）后紧跟下一帧，按 P4 实际读长 256 B 分块喂入。
+        两段式 drain 在第二块的入栈阶段不跑判据，紧随其后的字节触发洪泛
+        防御把已完整的 586 B 帧头部滑掉 → 第一帧丢失（464 B 时代实测
+        resyncs=474、msgs=1）。修复后必须 msgs=2 且按序（seq 60 → 61）、
+        无多余 resync。 */
     {
         g_msgs = 0; g_seq_hist_n = 0;
-        uint8_t stream[600];
+        uint8_t stream[1024];
         uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
         memset(bigpl, 0x77, sizeof bigpl);
-        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+        size_t n1 = adsb_link_encode(stream, sizeof stream, ADSB_LINK_MSG_HEALTH_STATS,
                                      60, bigpl, sizeof bigpl);
-        CHECK(n1 == 474, "max frame len got=%zu\n", n1);
+        CHECK(n1 == 586, "max frame len got=%zu\n", n1);
         size_t n2 = build_modes_raw(stream + n1, 61);
         adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
         adsb_link_dec_feed(&d, stream, 256);                    /* 第一块 */
@@ -293,15 +296,15 @@ int main(void)
         CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
     }
 
-    /* 16. 边界：plen=464 帧单独一次喂入（恰满缓冲）→ 必须解出。 */
+    /* 16. 边界：plen=576 帧单独一次喂入（恰满缓冲）→ 必须解出。 */
     {
         g_msgs = 0;
-        uint8_t stream[512];
+        uint8_t stream[640];
         uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
         memset(bigpl, 0x33, sizeof bigpl);
-        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+        size_t n1 = adsb_link_encode(stream, sizeof stream, ADSB_LINK_MSG_HEALTH_STATS,
                                      62, bigpl, sizeof bigpl);
-        CHECK(n1 == 474, "len got=%zu\n", n1);
+        CHECK(n1 == 586, "len got=%zu\n", n1);
         adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
         adsb_link_dec_feed(&d, stream, n1);
         CHECK(g_msgs == 1 && g_last.seq == 62, "msgs=%d seq=%u\n",
@@ -309,14 +312,14 @@ int main(void)
         CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
     }
 
-    /* 17. 边界：464 帧紧跟下一帧，单次 feed 全量入栈（无分块）→ msgs=2。
+    /* 17. 边界：576 帧紧跟下一帧，单次 feed 全量入栈（无分块）→ msgs=2。
         与 case 15 同根：满容后随字节在旧代码里同样触发洪泛滑窗。 */
     {
         g_msgs = 0;
-        uint8_t stream[600];
+        uint8_t stream[1024];
         uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
         memset(bigpl, 0x11, sizeof bigpl);
-        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+        size_t n1 = adsb_link_encode(stream, sizeof stream, ADSB_LINK_MSG_HEALTH_STATS,
                                      63, bigpl, sizeof bigpl);
         size_t n2 = build_modes_raw(stream + n1, 64);
         adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
@@ -326,14 +329,14 @@ int main(void)
         CHECK(d.resyncs == 0, "resyncs=%u\n", d.resyncs);
     }
 
-    /* 18. 边界：473 B 截断（差 1 字节）必须 hold 不产帧、不计数；
+    /* 18. 边界：585 B 截断（差 1 字节）必须 hold 不产帧、不计数；
         补上末字节后立即解出。 */
     {
         g_msgs = 0;
-        uint8_t stream[512];
+        uint8_t stream[640];
         uint8_t bigpl[ADSB_LINK_MAX_PAYLOAD];
         memset(bigpl, 0x99, sizeof bigpl);
-        size_t n1 = adsb_link_encode(stream, 512, ADSB_LINK_MSG_HEALTH_STATS,
+        size_t n1 = adsb_link_encode(stream, sizeof stream, ADSB_LINK_MSG_HEALTH_STATS,
                                      65, bigpl, sizeof bigpl);
         adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
         adsb_link_dec_feed(&d, stream, n1 - 1);
@@ -343,6 +346,100 @@ int main(void)
         adsb_link_dec_feed(&d, stream + n1 - 1, 1);
         CHECK(g_msgs == 1 && g_last.seq == 65, "msgs=%d seq=%u\n",
               g_msgs, g_last.seq);
+    }
+
+    /* 19. v1.1 UAT_UPLINK payload 助手（协议 §6.1）：roundtrip + 错误语义。
+        合成 552 B 帧不依赖解码向量，golden 向量（UP-CLEAN + CRC 0x5FAD）
+        在 test_uat_ingest.c 钉死。 */
+    {
+        uint8_t frame[ADSB_LINK_UAT_FRAME_BYTES];
+        for (size_t i = 0; i < sizeof frame; i++) frame[i] = (uint8_t)(i * 7);
+
+        uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
+        CHECK(adsb_link_uat_uplink_encode(pl, sizeof pl, 0x37, 0x11223344,
+                                          frame) == ADSB_LINK_UAT_PAYLOAD_LEN,
+              "payload len\n");
+        CHECK(pl[0] == 0x37, "rssi byte\n");
+        CHECK(pl[1] == 0x44 && pl[2] == 0x33 && pl[3] == 0x22 && pl[4] == 0x11,
+              "rp_ts_us LE\n");
+        CHECK(memcmp(pl + ADSB_LINK_UAT_META_BYTES, frame, sizeof frame) == 0,
+              "frame verbatim\n");
+
+        uint8_t rssi; uint32_t ts; const uint8_t *fr;
+        CHECK(adsb_link_uat_uplink_decode(pl, sizeof pl, &rssi, &ts, &fr),
+              "decode ok\n");
+        CHECK(rssi == 0x37 && ts == 0x11223344 && fr == pl + ADSB_LINK_UAT_META_BYTES,
+              "fields\n");
+        CHECK(memcmp(fr, frame, sizeof frame) == 0, "frame ptr\n");
+
+        /* 错误语义：长度不符（556/558）拒绝且不写输出；encode cap 不足返回 0
+         * （与 adsb_link_encode 同款返回约定）。 */
+        rssi = 1; ts = 1; fr = pl;
+        CHECK(!adsb_link_uat_uplink_decode(pl, ADSB_LINK_UAT_PAYLOAD_LEN - 1,
+                                           &rssi, &ts, &fr), "short plen\n");
+        CHECK(!adsb_link_uat_uplink_decode(pl, ADSB_LINK_UAT_PAYLOAD_LEN + 1,
+                                           &rssi, &ts, &fr), "long plen\n");
+        CHECK(rssi == 1 && ts == 1 && fr == pl, "outputs untouched on fail\n");
+        CHECK(adsb_link_uat_uplink_encode(pl, ADSB_LINK_UAT_PAYLOAD_LEN - 1,
+                                          0x37, 1, frame) == 0, "small cap\n");
+    }
+
+    /* 20. v1.1 全线上走：UAT_UPLINK 整帧（567 B）经编码→分块喂入→递交，
+        头部逐字节（ver=1.1/type/plen LE）+ CRC 用独立参考实现互证，
+        payload 逐字节往返。 */
+    {
+        g_msgs = 0;
+        uint8_t frame[ADSB_LINK_UAT_FRAME_BYTES];
+        for (size_t i = 0; i < sizeof frame; i++) frame[i] = (uint8_t)(i * 3 + 1);
+        uint8_t wire[ADSB_LINK_MAX_FRAME];
+        uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
+        CHECK(adsb_link_uat_uplink_encode(pl, sizeof pl, 0xC4, 0xCAFEBABE,
+                                          frame) == ADSB_LINK_UAT_PAYLOAD_LEN,
+              "payload build\n");
+        size_t n = adsb_link_encode(wire, sizeof wire, ADSB_LINK_MSG_UAT_UPLINK,
+                                    9, pl, ADSB_LINK_UAT_PAYLOAD_LEN);
+        CHECK(n == ADSB_LINK_HDR_LEN + ADSB_LINK_UAT_PAYLOAD_LEN + 2,
+              "wire len got=%zu\n", n);
+        static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x01, 0x11, 0x09,
+                                        0x2D, 0x02 };
+        CHECK(memcmp(wire, HDR, 8) == 0, "header bytes\n");
+        uint16_t c = ref_crc16(wire, n - 2);
+        CHECK(wire[n - 2] == (uint8_t)c && wire[n - 1] == (uint8_t)(c >> 8),
+              "crc16 LE placement\n");
+
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        for (size_t off = 0; off < n; off += 256)          /* 分块：模拟 P4 读长 */
+            adsb_link_dec_feed(&d, wire + off,
+                               (n - off < 256) ? n - off : 256);
+        CHECK(g_msgs == 1 && g_last.type == ADSB_LINK_MSG_UAT_UPLINK &&
+              g_last.seq == 9 && g_last.payload_len == ADSB_LINK_UAT_PAYLOAD_LEN,
+              "deliver msgs=%d type=%02x plen=%u\n",
+              g_msgs, g_last.type, g_last.payload_len);
+        CHECK(memcmp(g_last.payload, pl, ADSB_LINK_UAT_PAYLOAD_LEN) == 0,
+              "payload bytes\n");
+        uint8_t rssi; uint32_t ts; const uint8_t *fr;
+        CHECK(adsb_link_uat_uplink_decode(g_last.payload, g_last.payload_len,
+                                          &rssi, &ts, &fr));
+        CHECK(rssi == 0xC4 && ts == 0xCAFEBABE, "meta rssi=%02x ts=%08x\n",
+              rssi, ts);
+        CHECK(memcmp(fr, frame, sizeof frame) == 0, "frame roundtrip\n");
+    }
+
+    /* 21. v1.1 长度边界：plen=577（> 576 上限）伪头 → len_errors 作废，
+        随后合法帧仍可解（§3.3/§3.7 在新上限下的行为）。 */
+    {
+        g_msgs = 0;
+        uint8_t buf[1024];
+        size_t k = 0;
+        buf[k++] = ADSB_LINK_MAGIC0; buf[k++] = ADSB_LINK_MAGIC1;
+        buf[k++] = 1; buf[k++] = 1; buf[k++] = 0x11; buf[k++] = 0;
+        buf[k++] = 0x41; buf[k++] = 0x02;             /* plen=577：超 v1.1 上限 */
+        for (int i = 0; i < 10; i++) buf[k++] = (uint8_t)i;
+        size_t n2 = build_modes_raw(buf + k, 5);
+        adsb_link_dec_t d; adsb_link_dec_init(&d, sink, NULL);
+        adsb_link_dec_feed(&d, buf, k + n2);
+        CHECK(g_msgs == 1, "msgs=%d\n", g_msgs);
+        CHECK(d.len_errors == 1, "len_errors=%u\n", d.len_errors);
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

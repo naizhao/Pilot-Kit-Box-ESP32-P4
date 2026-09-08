@@ -36,6 +36,33 @@ size_t adsb_link_encode(uint8_t *out, size_t cap, uint8_t msg_type,
     return total;
 }
 
+size_t adsb_link_uat_uplink_encode(uint8_t *out, size_t cap, uint8_t rssi,
+                                   uint32_t rp_ts_us,
+                                   const uint8_t frame[ADSB_LINK_UAT_FRAME_BYTES])
+{
+    if (cap < ADSB_LINK_UAT_PAYLOAD_LEN) return 0;
+    out[0] = rssi;                                /* 0.5 dB/LSB，0xFF=无值 */
+    out[1] = (uint8_t)rp_ts_us;                   /* 模 2^32 单调 µs，LE */
+    out[2] = (uint8_t)(rp_ts_us >> 8);
+    out[3] = (uint8_t)(rp_ts_us >> 16);
+    out[4] = (uint8_t)(rp_ts_us >> 24);
+    memcpy(out + ADSB_LINK_UAT_META_BYTES, frame, ADSB_LINK_UAT_FRAME_BYTES);
+    return ADSB_LINK_UAT_PAYLOAD_LEN;
+}
+
+bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
+                                 uint8_t *rssi, uint32_t *rp_ts_us,
+                                 const uint8_t **frame)
+{
+    /* 固定长度消息（规范 §6.1）：长度即完整性判据，不符整帧丢弃。 */
+    if (len != ADSB_LINK_UAT_PAYLOAD_LEN) return false;
+    *rssi = payload[0];
+    *rp_ts_us = (uint32_t)payload[1] | ((uint32_t)payload[2] << 8) |
+                ((uint32_t)payload[3] << 16) | ((uint32_t)payload[4] << 24);
+    *frame = payload + ADSB_LINK_UAT_META_BYTES;
+    return true;
+}
+
 static void dec_shift1(adsb_link_dec_t *d)
 {
     d->fill--;
@@ -112,8 +139,10 @@ void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
      * 都立即基于当前缓冲重跑判据，推进不依赖新输入。
      *
      * 满容即判（audit round 3）：fill 恰好到达缓冲容量时立刻 drain——
-     * 协议最长帧（474 B）恰好填满缓冲，若等本批入栈完再判，其后随字节
-     * 会在入栈阶段触发洪泛防御把完整帧的头部滑掉（实测：474 B 帧 + 后随
+     * 协议最长帧（586 B = 缓冲容量，v1.1 上限）恰好填满缓冲，若等本批
+     * 入栈完再判，其后随字节
+     * 会在入栈阶段触发洪泛防御把完整帧的头部滑掉（实测：v1.0 时代 474 B
+     * 帧 + 后随
      * 帧按 256 B 分块喂入 → resyncs=474、首帧丢失）。满容时若内容不是
      * 完整帧，drain 只会滑窗后返回，洪泛防御语义不变。 */
     while (n--) {

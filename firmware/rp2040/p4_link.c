@@ -72,6 +72,13 @@ bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi)
     return true;
 }
 
+/* UAT_UPLINK（协议 v1.1 §6，type 0x11）转发桩——T3 实装：CC1312R 的
+ * 978 上行帧经 SPI（RX_DESCRIPTOR/分片）到达后，在此用
+ * adsb_link_uat_uplink_encode() 组 557 B payload（rssi/rp_ts_us 取自
+ * SPI 描述符同名字段，单位不改写）调 tx_frame() 发 P4。帧边界 = UAT
+ * 事实卡 §7 裁决：552 B 交织帧原样（含 RS 校验字），解交织/RS/消息层
+ * 解码在 P4 侧（uat_ingest 前门）。 */
+
 void p4_link_poll_rx(void)
 {
     uint8_t b;
