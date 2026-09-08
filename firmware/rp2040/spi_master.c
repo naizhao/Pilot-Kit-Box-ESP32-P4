@@ -224,7 +224,10 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
 {
     m->t_now += txn_us;
 
-    rp_cc13xx_msg_t msg;
+    /* 大对象静态化（审计 WP-E-2 P1 栈越界）：msg ~510 B / chunk
+     * ~500 B 曾占本函数栈帧主体。单调用者合同：仅 core0 的
+     * spim_poll → digest 路径调用（host 测试单线程同安全）。 */
+    static rp_cc13xx_msg_t msg;
     const rp_cc13xx_status_t st =
         rp_cc13xx_decode_frame(miso, 512, &msg);
     bool ev_txn = false;             /* 事件事务（drain 活性证明，§7.2） */
@@ -253,7 +256,7 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
         }
 
         case RP_CC13XX_MSG_RX_PAYLOAD_CHUNK: {
-            rp_cc13xx_chunk_t c;
+            static rp_cc13xx_chunk_t c;   /* ~500 B：静态化（栈审计） */
             if (rp_cc13xx_decode_rx_chunk(&msg, &c) == RP_CC13XX_OK &&
                 rp_cc13xx_reasm_feed(&m->reasm, &c) == RP_CC13XX_OK) {
                 track_event_seq(m, msg.seq);
@@ -385,9 +388,15 @@ void spim_hw_init(void)
     gpio_init(SPIM_PIN_RESET);
     gpio_put(SPIM_PIN_RESET, 1);       /* 高 = 不复位（低有效，§1） */
     gpio_set_dir(SPIM_PIN_RESET, GPIO_OUT);
+
+    /* §6.1 上电路径（审计 WP-E-2 P2-1）：RESET_N 低脉冲 ≥1 ms →
+     * 回高 → 启动等待 ≥100 ms——此前只在 RECOVERY 才发脉冲，slave
+     * 上电初态不受控（可能残留旧会话）。前向声明（定义在下方）。 */
+    void spim_hw_reset_pulse(void);
+    spim_hw_reset_pulse();
 }
 
-static void spim_hw_reset_pulse(void)
+void spim_hw_reset_pulse(void)
 {
     gpio_put(SPIM_PIN_RESET, 0);
     sleep_ms(2);                        /* ≥1 ms（§1/§6.1） */
@@ -418,6 +427,10 @@ static void spim_hw_transfer(const uint8_t *mosi, uint8_t *miso)
 
 void spim_poll(spi_master_t *m, uint32_t now_us)
 {
+    /* 大缓冲静态化（审计 WP-E-2 P1 栈越界）：mosi/miso 各 512 B
+     * 曾是本函数的栈帧主体（链路最深 3448 B > core0 栈 2048 B）。
+     * 单调用者合同：仅 core0 主循环调用本函数。 */
+    static uint8_t mosi[512], miso[512];
     static uint32_t last_txn_end_us;
 
     if (spi_master_reset_requested(m)) {
@@ -430,7 +443,6 @@ void spim_poll(spi_master_t *m, uint32_t now_us)
      * 验证轮 P1-B：以入口时刻为基准会被事务耗时吞掉整个窗口）。 */
     if (now_us - last_txn_end_us < SPIM_INTER_TXN_US) return;
 
-    uint8_t mosi[512], miso[512];
     const bool irq = gpio_get(SPIM_PIN_IRQ);
     if (spi_master_next_txn(m, now_us, mosi, irq) == 0) return;
     spim_hw_transfer(mosi, miso);

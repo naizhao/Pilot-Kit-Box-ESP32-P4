@@ -28,7 +28,7 @@ make            # 产物 build/adsb978_cc13.bin（ELF: build/adsb978_cc13.elf）
 ## 骨架边界（诚实声明）
 
 - RF Core / 978 PHY：未实现（台架期任务）
-- SSI：轮询流式（无 DMA/中断——8 MHz 事务 512 µs，48 MHz CPU 轮询
+- SSI：轮询流式（无 DMA/中断——4 MHz 事务 ≈1 ms，48 MHz CPU 轮询
   余量充分；优化留后续）
 - 看门狗：未开启（CC13x2 复位后默认不使能；台架前必须补）
 - §6.6 slave 侧 5 s 无事务回 WAIT_HELLO 看护：**未实现**——纯逻辑

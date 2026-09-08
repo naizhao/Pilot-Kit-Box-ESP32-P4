@@ -26,7 +26,9 @@ static const char BUILD_TAG[16] = "rp2040-mvp";
 
 static void tx_frame(uint8_t type, const uint8_t *pl, size_t n)
 {
-    uint8_t buf[ADSB_LINK_MAX_FRAME];
+    /* 586 B 帧缓冲静态化（WP-E-2 P1 栈审计：UAT 链最深
+     * tx_frame 曾 +616 B；单调用者 = core0 发送语境）。 */
+    static uint8_t buf[ADSB_LINK_MAX_FRAME];
     size_t len = adsb_link_encode(buf, sizeof buf, type, s_seq++, pl, n);
     if (len == 0) { s_encode_fail++; return; }
     uart_write_blocking(P4_UART, buf, len);   /* core0 sender 语境，允许阻塞 */
@@ -80,7 +82,9 @@ bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi)
 bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
                       uint32_t ts_us)
 {
-    uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
+    /* 557 B 载荷缓冲静态化（审计 WP-E-2 P1 栈越界：SPI digest →
+     * 本回调链曾达 3448 B > core0 栈 2048 B）。单调用者：core0。 */
+    static uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
     if (adsb_link_uat_uplink_encode(pl, sizeof(pl), rssi, ts_us,
                                     frame552) != ADSB_LINK_UAT_PAYLOAD_LEN) {
         s_encode_fail++;
