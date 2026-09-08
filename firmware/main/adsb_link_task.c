@@ -52,6 +52,8 @@ static struct {
     atomic_uint rx_seq_gaps;
     atomic_uint rx_resyncs;
     atomic_uint modes_fed;     /* 实际送入 modes_ingest 的 MODES_RAW 帧数 */
+    atomic_uint uat_len_drop;  /* UAT_UPLINK 长度不符丢弃（CRC 已过，
+                                * codec 统计不可见——单独计数） */
 } s_stats;
 /* 单写者（本任务写 true，永不复位）跨任务读的布尔旗标。选 atomic_bool
  * 而非 volatile bool：同样的"编译器不得跨调用缓存"保证，但语义由 C11
@@ -681,8 +683,14 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * （CC1312R 经 SPI 转发）在 T3 实装——本分发先就位。 */
         uint8_t u_rssi; uint32_t u_ts; const uint8_t *u_fr;
         if (!adsb_link_uat_uplink_decode(m->payload, m->payload_len,
-                                         &u_rssi, &u_ts, &u_fr))
-            break;                     /* 长度不符：整帧丢弃（协议 §6.1）*/
+                                         &u_rssi, &u_ts, &u_fr)) {
+            /* 长度不符：整帧丢弃（协议 §6.1）。CRC 已过所以 codec
+             * 统计不可见——这里单独计数（终审 Minor：集成诊断页时
+             * 消费）。 */
+            atomic_fetch_add_explicit(&s_stats.uat_len_drop, 1,
+                                      memory_order_relaxed);
+            break;
+        }
         uat_ingest_meta_t meta = { .rssi = u_rssi, .rp_ts_us = u_ts };
         uat_ingest_feed(u_fr, &meta);
         break;

@@ -24,9 +24,14 @@
 typedef struct {
     uint8_t  rssi;      /* 0.5 dB 单位；0xFF = 未提供（协议 §6.1，与 SPI
                           * RX_DESCRIPTOR §4.3 / MODES_RAW 同族单位）*/
-    uint32_t rp_ts_us;  /* RP2040 单调 µs（帧 preamble 首沿）；模 2^32 单调、
-                          * 差值按 (u32)(now − prev) 无符号解释——同 §2
-                          * MODES_RAW 勘误，0 是合法回绕值（无哨兵）*/
+    uint32_t rp_ts_us;  /* **CC1312R 描述符时钟**（SPI §4.3 ts_us，经
+                          * RP2040 原样转发——UART v1.1 §6.1；字名沿用
+                          * rp_ts_us 是 v1.1 载荷族惯例，时钟域不是
+                          * RP2040 的 preamble 沿，与 MODES_RAW 的
+                          * rp_ts_us **不同源**）。模 2^32 单调、差值按
+                          * (u32)(now − prev) 无符号解释，0 是合法回绕值
+                          * （无哨兵）。跨链（978 vs 1090）时效比较不得
+                          * 混用两域。*/
 } uat_ingest_meta_t;
 
 /* rs_corrected：本帧 RS 纠正的字节总数（≤60，事实卡 §2/§7——跨链路保留
