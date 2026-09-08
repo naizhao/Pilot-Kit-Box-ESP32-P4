@@ -16,6 +16,7 @@
 #include "selftest_gen.h"
 #include "threshold_ctl.h"
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
+#include "cjtag.h"           /* CC13 代刷：cJTAG 位脉冲（CDC 'F' 命令） */
 
 #define FRAME_RING_LEN 64u
 
@@ -182,6 +183,21 @@ int main(void)
                    "ringdrop=%u tx=%u rx=%u linked=%d\n",
                    h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
                    (int)p4_link_linked());
+        } else if (c == 'F') {
+            /* CC1312R 代刷模式（cJTAG 位脉冲）：暂停 1090 解码、
+             * 独占 SUBG_TMSC/TCKC/RESET → 读 IDCODE → 流式收镜像 →
+             * 擦/写/校验 → RESET → 恢复 SPI master。
+             * 完整操作流见 docs/firmware_update.md CC1312R 段。 */
+            if (cjtag_cdc_enter()) {
+                printf("FLASH-MODE READY (CC1312R IDCODE=0x%08X)\n",
+                       cjtag_read_idcode());
+                printf("Send firmware binary, then 'Q' to finish.\n");
+            } else {
+                printf("FLASH-MODE FAIL (no JTAG response — check CC1312R power/clock)\n");
+            }
+        } else if (c == 'Q' && cjtag_cdc_active()) {
+            cjtag_cdc_quit();
+            printf("FLASH-DONE\n");
         } else if (c == 'H') {
             printf("tl_level=%dmV rssi_raw=%d\n",
                    threshold_ctl_read_level_mv(),

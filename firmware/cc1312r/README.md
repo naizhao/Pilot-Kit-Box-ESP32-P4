@@ -25,6 +25,19 @@ make            # 产物 build/adsb978_cc13.bin（ELF: build/adsb978_cc13.elf）
   （与 RP2040 侧 spi_master 对跑：握手/事件流/队满重填/异步竞争/
   分裂脑恢复端到端可执行）
 
+## 烧录方式：RP2040 代刷（cJTAG 位脉冲）
+
+**不需要外部调试器、不需要飞线**——用扩展板自己的 USB-C 口即可。
+
+```sh
+# 1. 确认 RP2040 固件已包含代刷功能（含 cjtag.c 模块）
+# 2. 连接扩展板 USB-C 口到电脑
+# 3. 运行：
+python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
+```
+
+详见 `docs/firmware_update.md` CC1312R 段（完整的故障排查表）。
+
 ## 骨架边界（诚实声明）
 
 - RF Core / 978 PHY：未实现（台架期任务）
@@ -34,4 +47,4 @@ make            # 产物 build/adsb978_cc13.bin（ELF: build/adsb978_cc13.elf）
 - §6.6 slave 侧 5 s 无事务回 WAIT_HELLO 看护：**未实现**——纯逻辑
   spi_slave 无时间基，需目标端定时器胶水（台架期任务）；主循环
   不退出、master 侧 3 s RECOVERY 兜底单向覆盖
-- 烧录：cJTAG（R4——未实测，见 docs/firmware_update.md）
+- 烧录：**RP2040 代刷**（cJTAG 位脉冲，见上方"烧录方式"段——不再需要外部 JTAG 调试器）

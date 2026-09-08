@@ -35,7 +35,7 @@ Firmware-side change volume: only one added UART driver (GPIO46/32); zero change
 | GPIO2 / GPIO3 | BIAS_EN_1090 / BIAS_EN_978 | antenna bias-tee PMOS gates (active-low, 10k pull-up keeps them off by default)〔D〕 |
 | GPIO10 / 11 / 12 / 13 | SUBG_SCK / SUBG_MOSI / SUBG_MISO / SUBG_CSN | SPI1 master → CC1312R slave〔A〕 |
 | GPIO14 / 15 | SUBG_IRQ / SUBG_SYNC | CC1312R interrupt + sync/bootloader trigger〔A〕 |
-| GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG for reflashing CC1312R firmware〔A〕 |
+| GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG for reflashing CC1312R firmware〔A〕— **proxy-flash implemented** (RP2040 bit-bang, `cjtag.c`; see `docs/firmware_update.md` CC1312R section) |
 | GPIO19 | PULSES | comparator output → PIO0 preamble detection〔A〕 |
 | GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. **No landing point in V4**: the original TP3–TP6 were removed, leaving the net with only the RP2040 end |
 | GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. TP7/RECOVERED_CLK **存在于正式 PCB**（kicad_pcb:38901），可作 RP2040 GPIO24 自检/调试落点（硬件文档勘误 2026-09-05，与 PCB 源核对；自检跳线步骤以 `firmware/rp2040/selftest_gen.h` 为准） |

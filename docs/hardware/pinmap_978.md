@@ -31,9 +31,9 @@ Evidence sources:
 | `SUBG_CSN` | 16 → GPIO13 | RP2040.pdf p.613, Table 615 | 17 → DIO_11 | CC1312R.pdf p.7 Fig. 7-1, p.8 Table 7-1 | SPI1 CSn; R56 10 kΩ pull-up to `3V3_DIG` (pull, **not** series) |
 | `SUBG_IRQ` | 17 → GPIO14 | RP2040.pdf p.613, Table 615 | 18 → DIO_12 | CC1312R.pdf p.7 Fig. 7-1, p.8 Table 7-1 | CC1312R → RP2040 interrupt (direction is the firmware contract; both ends are plain GPIO) |
 | `SUBG_SYNC` | 18 → GPIO15 | RP2040.pdf p.613, Table 615 | 19 → DIO_13 | CC1312R.pdf p.7 Fig. 7-1, p.8 Table 7-1 | Generic GPIO at both ends — no fixed hardware function (see rulings) |
-| `SUBG_RESET` | 29 → GPIO18 | RP2040.pdf p.613–614, Table 615 | 35 → RESET_N | CC1312R.pdf p.8 Table 7-1 | RP2040 drives; R47 10 kΩ pull-up to `3V3_DIG`; RESET_N has **no internal pull-up** (CC1312R.pdf p.8) |
-| `SUBG_TCKC` | 28 → GPIO17 | RP2040.pdf p.614, Table 615 | 25 → JTAG_TCKC | CC1312R.pdf p.8 Table 7-1 | cJTAG clock; input (`I`) on CC1312R |
-| `SUBG_TMSC` | 27 → GPIO16 | RP2040.pdf p.614, Table 615 | 24 → JTAG_TMSC | CC1312R.pdf p.8 Table 7-1 | cJTAG TMS/TDO bidirectional; high-drive pin on CC1312R (p.7) |
+| `SUBG_RESET` | 29 → GPIO18 | RP2040.pdf p.613–614, Table 615 | 35 → RESET_N | CC1312R.pdf p.8 Table 7-1 | RP2040 drives; R47 10 kΩ pull-up to `3V3_DIG`; RESET_N has **no internal pull-up** (CC1312R.pdf p.8); **also used by cJTAG flash proxy for reset pulse** |
+| `SUBG_TCKC` | 28 → GPIO17 | RP2040.pdf p.614, Table 615 | 25 → JTAG_TCKC | CC1312R.pdf p.8 Table 7-1 | cJTAG clock; **RP2040 代刷输出**（`cjtag.c` 位脉冲） |
+| `SUBG_TMSC` | 27 → GPIO16 | RP2040.pdf p.614, Table 615 | 24 → JTAG_TMSC | CC1312R.pdf p.8 Table 7-1 | cJTAG data (bidirectional); **RP2040 代刷双向**（`cjtag.c` 位脉冲）; high-drive pin on CC1312R (p.7) |
 | `BIAS_EN_978` | 5 → GPIO3 | RP2040.pdf p.613, Table 615 | — (Q2 gate, not a CC1312R pin) | netlist | Antenna DC-bias enable, default off (see rulings) |
 
 Direction contract (design-level, consistent with the pins above): the RP2040 is

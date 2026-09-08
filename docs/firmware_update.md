@@ -136,11 +136,57 @@ validation pending.) Note that the v4 board removed the RP2040 SWD test
 points, so BOOTSEL is the practical recovery path there; a debugger would
 require flying wires to the chip's SWCLK/SWDIO pins.
 
-### CC1312R first flash (978 MHz front-end)
+### CC1312R firmware (978 MHz front-end) — RP2040 proxy flash
 
-The CC1312R transceiver on the v4 board needs its first flash over the board's
-cJTAG connection; this path has not been exercised yet — bench validation
-pending.
+The CC1312R on the v4 expansion board is flashed **through the RP2040** via
+cJTAG bit-bang — no external JTAG debugger, no flying wires. The RP2040's
+USB-C port (J4) is all you need.
+
+**Hardware path**: PC USB → RP2040 USB-C (J4) → cJTAG bit-bang
+(GPIO16=TMSC / GPIO17=TCKC / GPIO18=RESET) → CC1312R ICEPICK → Flash.
+
+#### Prerequisites
+
+- RP2040 firmware with the cJTAG flash module (look for "FLASH-MODE" support
+  in the console — type `F` in a serial terminal to check)
+- The expansion board's USB-C port (J4) connected to your computer
+- Python 3 with pyserial (`pip3 install pyserial`)
+
+#### Flash procedure
+
+```sh
+python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
+```
+
+The tool will:
+1. Send `F` to put the RP2040 into flash-proxy mode (1090 decode pauses)
+2. Verify cJTAG communication by reading the CC1312R IDCODE
+3. Stream the firmware image to the RP2040
+4. Erase, program, and verify the CC1312R flash
+5. Reset the CC1312R and restore the RP2040 to normal SPI-master mode
+
+#### Interactive fallback (serial terminal)
+
+If you prefer a serial terminal (e.g. `screen /dev/ttyACM0 115200`):
+
+1. Type `F` → should print `FLASH-MODE READY (CC1312R IDCODE=0x...)`
+2. Paste/binary-transfer the firmware image
+3. Type `Q` → should print `FLASH-DONE`
+
+#### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `FLASH-MODE FAIL` | CC1312R not powered or clock not running; check VDDS and X48M crystal |
+| Garbage IDCODE | Signal integrity on TMSC/TCKC; try lower TCKC speed in cjtag.c |
+| Verify mismatch | Flash sector not fully erased; re-run with fresh erase |
+| No serial port | RP2040 BOOTSEL mode needed first; hold BOOTSEL, plug USB, flash RP2040 firmware |
+
+#### Bench validation status
+
+The cJTAG bit-bang engine, TAP state machine, and flash programming sequence
+are structurally complete. **First-board verification is the next step** —
+the IDCODE read serves as the communication proof.
 
 ## Limits
 
