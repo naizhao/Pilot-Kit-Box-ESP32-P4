@@ -23,9 +23,16 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 - `SUBG_IRQ`（GPIO14 ↔ DIO_12）：**电平触发、高有效**，slave 持有驱动。
   **置位条件（四源枚举，全或）**：事件队列非空 ∨ 已交付的 RX_DESCRIPTOR
   尚有未取分片 ∨ `queue_full_pending`（§4.5）∨ `async_error_pending`
-  （§2.3 规则 4，code 0x04/0x05）。**生命周期不变式**：任一挂起源置位即
-  拉高 IRQ；该源交付即清并落低（若无其他源仍置位）——IRQ 电平与挂起源
-  集合严格同步，不存在「有源无 IRQ」或「有 IRQ 无源」的稳态。事实卡
+  （§2.3 规则 4，code 0x04/0x05）。**生命周期不变式（各源清除时点的唯一
+  规范出处）**：IRQ 置位 ⟺ 存在**尚未完成 MISO 交付**的挂起源。
+  「交付完成」= 携带该源帧的事务之 **CSN 上升沿**；**装载（§2.3）不清除
+  任何源**——已装入 pending 槽但尚未经 MISO 交付的帧仍算置位，装载与交付
+  相隔一事务，期间 IRQ 保持高（不存在装载后提前落低的窗口）。各源清除
+  时点：`queue_full_pending` 于 QUEUE_FULL 帧交付事务的 CSN 上升沿；
+  `async_error_pending` 于该 ERROR 帧交付事务的 CSN 上升沿；事件队列于
+  队头事件帧交付事务的 CSN 上升沿弹出；分片源于其 descriptor 的最后一
+  片交付完成时清；RESET 清除一切。IRQ 电平与「未完成交付的挂起源集合」
+  严格同步——不存在「有源无 IRQ」或「有 IRQ 无源」的稳态。事实卡
   Unresolved #3（电平/极性未定）由本条裁决，WP-E 实现可复核。
 - `SUBG_RESET`（GPIO18 ↔ RESET_N）：RP2040 驱动，低有效，复位脉冲 ≥ 1 ms。
   R47 10 kΩ 上拉、RESET_N 无内部上拉（事实卡「Digital interface nets」）。
@@ -81,11 +88,14 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
       命令，§3.5）；
    4. 否则按序交付 IRQ 背书事件：`queue_full_pending`（§4.5 挂起标志）→
       装入 QUEUE_FULL——**一切状态下照常装载**（drain 与否是 master 内部
-      状态，slave 不感知、不依赖；交付即清，§4.5）；否则事件队列非空 →
+      状态，slave 不感知、不依赖）；否则事件队列非空 →
       装入队头事件（RX_DESCRIPTOR——QUEUE_FULL 不占队列，见 §4.5）；否则
       存在待交付的**异步 ERROR**（code 0x04/0x05，§3.5——视为可保留事件，
       `async_error_pending` 挂起标志等待，随本规则交付、延后零丢失）→ 装入
-      该 ERROR（seq=0x0000 哨兵）并清 `async_error_pending`；
+      该 ERROR（seq=0x0000 哨兵）。**装载不清除任何挂起源**：清除时点统一
+      为交付完成（各源时点的唯一规范出处见 §1 生命周期不变式）——装载与
+      交付相隔一事务，期间 IRQ 保持高，master 的 §6.7 调度与 §7.2 停滞
+      判定均以**事务 MISO 内容**为据（装载不是事务）；
    5. 否则装入全 0x00（无帧）。**全 0x00 的事务是合法的『无帧』结果**：接收方
       校验 MISO 时，magic 不符且整缓冲为全 0x00 → 合法空事务，不计任何错误；
       magic 不符且缓冲含非 0 字节 → 才计 resyncs（§5.2）。
@@ -157,7 +167,7 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 | 0x04 | PONG | slave→master | 空（len=0） | 仅 **LINKED 态**应答 PING（§6.2） |
 | 0x10 | RX_DESCRIPTOR | slave→master | §4.3 | 事件到达即入队 |
 | 0x11 | RX_PAYLOAD_CHUNK | slave→master | §4.4 | 仅紧随其 RX_DESCRIPTOR |
-| 0x12 | QUEUE_FULL | slave→master | §4.5 | 队满置位、交付即清（§4.5；一切状态照常装载） |
+| 0x12 | QUEUE_FULL | slave→master | §4.5 | 队满置位、交付完成清（§1；一切状态照常装载） |
 | 0x20 | RF_CONFIG | master→slave | §4.6 | （re)LINKED 后 1 s 内先查询，按需写 |
 | 0x21 | RF_CONFIG_STATUS | slave→master | §4.6 | 仅应答 0x20 |
 | 0x22 | RESET_STATUS_REQ | master→slave | 空（len=0） | 按需；drain 期间禁止 |
@@ -225,14 +235,16 @@ CRC16（§3.2）即传输完整性校验，不另设报文级 CRC（slave 在入
 队列本身不动（队头交付不受影响），slave 置单个 `queue_full_pending` 标志
 （幂等，重复触发不叠加）；其交付优先级在直接应答与普通事件之间（§2.3 规则
 4 首位——流控信号必须尽快到达 master，否则 drain 永不启动、978 丢弃无信号）；
-交付 QUEUE_FULL **不清空队列**。**清除时机**：装载交付即清（一次交付 =
-一次通报——QUEUE_FULL 是通知，不是队列成员，不存在"入队后待清"的残留）。
-**清除规则（唯一）**：装载交付即清，或 RESET 清除一切挂起态。drain 期间
+交付 QUEUE_FULL **不清空队列**。**清除时点（规范出处 §1 生命周期不变式）**：
+QUEUE_FULL 帧**交付完成**之事務的 CSN 上升沿清——装载不清（装载与交付相隔
+一事务，IRQ 在此期间保持高）。一次交付 = 一次通报——QUEUE_FULL 是通知，
+不是队列成员。RESET 清除一切挂起态。drain 期间
 照常装载——drain 是 master 内部状态，slave 不感知、不依赖（本规范 v1.0
 修订记录：曾尝试 drain-skip，因 slave 不可见 master 状态而废弃，C.3 R9/R10）；
-drain 中队列重新填满会再次置位并再次交付——每次满期至少一次 QUEUE_FULL
-交付，且交付即事件事务、使 §7.2 停滞计数保持复位，不构成非终止。payload：
-`events_dropped` 为开机累计丢弃数（模 2^16 单调），
+drain 中队列重新填满会再次置位并再次交付——重填只可能在队列被取出一部分后
+发生（队满才触发），普通事件在两次 QUEUE_FULL 交付之间照常流动，不存在
+QUEUE_FULL 抢占流；且每次交付都是事件事务、使 §7.2 停滞计数保持复位，
+不构成非终止。payload：`events_dropped` 为开机累计丢弃数（模 2^16 单调），
 `queue_depth` 为当前队列占用（观测值，深度本身是 slave 资源参数、不经协议
 冻结），`reserved` 必须为 0（接收方校验非 0 视为 payload 违规，与 len 违规
 同计 len_errors 并作废整事务，§5.2；同 §4.8）。master 行为见 §7.2。
@@ -369,9 +381,11 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
    事件、同时令 slave 装载下一个——每事务推进一个事件/分片，直至一个事务
    满足「MISO 无事件且 IRQ 为低」→ drain 正常结束。**停滞判定（stall）**：
    连续 **8** 个事务 MISO 均无事件而 SUBG_IRQ 仍为高 → 按 §6.6 RECOVERY。
-   drain 中队列重填 → `queue_full_pending` 再次置位并照常装载交付（§4.5，
-   一切状态装载）——每次交付都是事件事务、复位停滞计数，不构成停滞；队列
-   取空后出现无事件事务，本出口在任意重填场景下保持可达。
+   **装载不是事务**：挂起源在装载后、交付完成前仍置位（§1 不变式）、IRQ
+   保持高；停滞计数只统计 MISO 无事件的事务，携带已装载帧的事务是事件
+   事务。drain 中队列重填 → `queue_full_pending` 再次置位并照常装载交付
+   （§4.5，一切状态装载）——每次交付都是事件事务、复位停滞计数，不构成
+   停滞；队列取空后出现无事件事务，本出口在任意重填场景下保持可达。
    阈值依据：按**单事务空转次数**而非墙钟计——SPI 时钟速率未冻结（§1）、
    queue_depth 未冻结（§4.5，u8 ≤ 255），任何墙钟上限都会在合法低速 + 深队列
    组合下误杀健康 drain（且 RECOVERY 的 RESET 脉冲会清空正在排水的队列）；
@@ -561,19 +575,24 @@ B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结�
   「WAIT_HELLO 仍答 PING」造成的 PONG 假活/split-brain 路径已由 P1-b 关闭。
 - **B34（§4.5/§2.3/§7.2）QUEUE_FULL 满期全生命周期走查**（spec 级——装载/
   清除是 slave 状态机，纯 codec 只钉帧格式 B9/B9'）：T1 IRQ_ACK → MISO =
-  QUEUE_FULL（置位于 T1 前；seq=事件计数）→ 交付即清；T2 IRQ_ACK → MISO =
+  QUEUE_FULL（置位于 T1 前、装载于 T0 上升沿；seq=事件计数）→ **T1 的
+  CSN 上升沿（交付完成）清**；T2 IRQ_ACK → MISO =
   RX_DESCRIPTOR（队头）→ 分片流水 T3..Tk（IRQ_ACK ×N）；drain 期间队列重填
   → `queue_full_pending` 再置位 → Tj MISO = QUEUE_FULL **再次交付**（事件
-  事务、复位停滞计数）→ 清；队列终空 → Tm MISO 全 0 且 IRQ 低 → §7.2 停滞
+  事务、复位停滞计数）→ Tj 上升沿交付完成清；队列终空 → Tm MISO 全 0 且
+  IRQ 低 → §7.2 停滞
   出口可达（若第 1–7 个无事件事务内即满足则正常退出）。任何事务都不依赖
   master 的 drain 私有状态。
 - **B35（§1 四源/§2.3 规则 4/§6.7）异步 ERROR 单源生命周期走查**（spec 级，
   codec 级钉点 = B32/case 24 的 seq 哨兵帧）：LINKED 空闲、队列空 → slave
-  内部错误 → `async_error_pending` 置位、IRQ 高 → master 按 §6.7 连发
-  IRQ_ACK → 事务 N+1 MISO = ERROR{code=0x05, seq=0x0000}（规则 4）→
-  `async_error_pending` 清、IRQ 低。变体：若 IRQ 置位后 master 先到点 PING
-  —— PONG 直接应答胜出（规则 3）、pending 不清、IRQ 仍高 → 下一事务
-  IRQ_ACK 取走 ERROR（§6.7 上界内），异步 ERROR 不再因 PING 竞争而饥饿。
+  内部错误 → `async_error_pending` 置位、IRQ 高 → master 按 §6.7 发 T1
+  IRQ_ACK（MISO = 全 0——槽此前为空）→ **T1 上升沿装载 ERROR，装载不清、
+  IRQ 保持高** → T2 IRQ_ACK 的 MISO = ERROR{code=0x05, seq=0x0000} →
+  **T2 上升沿交付完成 → `async_error_pending` 清、IRQ 落低**（无提前落低
+  窗口，master 在 T2 的 MISO 中实际读到该帧）。变体：若 IRQ 置位后 master
+  先到点 PING—— PONG 直接应答胜出（规则 3）、装载与清除均不发生、IRQ 仍
+  高 → 下一事务 IRQ_ACK 走 T1/T2 流程取走 ERROR（§6.7 上界内），异步
+  ERROR 不再因 PING 竞争而饥饿。
 - **B31（§2.3 规则 3/4）应答优先走查**：队列非空时 master 发 RF_CONFIG →
   事务 N+1 的 MISO = RF_CONFIG_STATUS（直接应答胜出，seq 回显）；事件仍在
   队头、IRQ 保持高 → 事务 N+2 发 IRQ_ACK 取走该事件。PING 落在队列非空时
@@ -640,3 +659,4 @@ B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结�
 | R9（本提交） | 验证轮修订：①**queue_full_pending 交付即清 + drain 不装载**（§4.5——QUEUE_FULL 是通知不是队列成员；旧"drain 进入才清"在 drain 中重填时标志反复装载、MISO 永不空转、§7.2 停滞出口永不触发 → 只能 RESET 逃逸的非终止 drain，已关闭）；②§2.3 规则 4 陈旧括注修正（QUEUE_FULL 已是队列外标志，不再列为队列成员）；③§4 表 0x12 频率约束格由「入队一次/清空后复置」改为「队满置位、交付即清、drain 不装载」，与 §4.5 对齐（grep 全文复查，其余「入队」均指 RX_DESCRIPTOR 或 slave RF 侧，无残留）；§7.2 重填场景出口可达性注记 |
 | R10（本提交） | 审计 round 8 裁决：①**废除 drain-skip**（R9 的"drain 期间不装载"使 slave 装载规则依赖 master 私有状态，物理不可知且状态机不可闭——queue_full_pending 一切状态照常装载、交付即清；重填再置位再交付，交付即事件事务复位停滞计数，§7.2 出口恒可达；§4.5/§7.2/§4 表同步，B34 满期全生命周期走查）；②**IRQ 四源枚举**（§1——事件队列 ∨ 分片未取完 ∨ queue_full_pending ∨ async_error_pending，生命周期不变式"置位即高、交付即清"，关闭异步 ERROR 无 IRQ 背书的永久饥饿；B35 单源生命周期走查含 PING 竞争变体）。R9 的 drain-skip 行文就此撤回，仅存本修订记录 | §1、§2.3、§4 表、§4.5、§7.2、B.3 |
 | R11（本提交） | 审计 round 8 Ruling 3：RX_PAYLOAD_CHUNK seq 语义归位——§3.5 事件类清单显式含分片（seq=回显触发取片的 IRQ_ACK seq，背靠背递增故分片 seq 亦递增），与 RX_DESCRIPTOR/QUEUE_FULL 同参与 §5.5 seq_gaps 链式判定；§4.2 措辞对齐引用 §3.5。codec 级钉点 B36/case 25（复用 B6/B7/B9 组链断言 gap 参与）；B34/B35 为 spec 级事务走查（装载/清除/IRQ 状态机非纯 codec 可表达） | §3.5、§4.2、B.1、test case 25 |
+| R12（本提交） | 审计 round 9 Ruling 1：**清除时点统一为交付完成**——携带该源帧之事務的 CSN 上升沿（装载不清；装载与交付相隔一事务，IRQ 期间保持高，关闭装载即清导致的 IRQ 提前落低/QUEUE_FULL 抢占流）。§1 升级为「IRQ 置位 ⟺ 存在尚未完成 MISO 交付的挂起源」并成为各源清除时点的唯一规范出处（四源逐条）；§2.3 规则 4 移除装载伴随清除语义；§4.5/§4 表/§7.2（装载不是事务）同步；B34/B35 走查补时间点 | §1、§2.3、§4 表、§4.5、§7.2、B.3 |
