@@ -72,12 +72,23 @@ bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi)
     return true;
 }
 
-/* UAT_UPLINK（协议 v1.1 §6，type 0x11）转发桩——T3 实装：CC1312R 的
- * 978 上行帧经 SPI（RX_DESCRIPTOR/分片）到达后，在此用
- * adsb_link_uat_uplink_encode() 组 557 B payload（rssi/rp_ts_us 取自
- * SPI 描述符同名字段，单位不改写）调 tx_frame() 发 P4。帧边界 = UAT
- * 事实卡 §7 裁决：552 B 交织帧原样（含 RS 校验字），解交织/RS/消息层
- * 解码在 P4 侧（uat_ingest 前门）。 */
+/* UAT_UPLINK（协议 v1.1 §6，type 0x11）：CC1312R 的 978 上行帧经
+ * SPI（RX_DESCRIPTOR/分片）由 spi_master 重组完成后经此转发 P4。
+ * 557 B payload = rssi + ts_us + 552 B 交织帧原样（单位不改写，
+ * 时钟域=CC1312R 描述符时钟——见 uat_ingest.h 的域警告）；
+ * 解交织/RS/消息层解码在 P4 侧（uat_ingest 前门）。 */
+bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
+                      uint32_t ts_us)
+{
+    uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
+    if (adsb_link_uat_uplink_encode(pl, sizeof(pl), rssi, ts_us,
+                                    frame552) != ADSB_LINK_UAT_PAYLOAD_LEN) {
+        s_encode_fail++;
+        return false;
+    }
+    tx_frame(ADSB_LINK_MSG_UAT_UPLINK, pl, sizeof(pl));
+    return true;
+}
 
 void p4_link_poll_rx(void)
 {

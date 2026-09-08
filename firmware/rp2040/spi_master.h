@@ -71,6 +71,7 @@ typedef struct {
     uint32_t crc_errors;        /* codec ERR_CRC 累计                     */
     uint32_t len_errors;        /* codec ERR_LEN 累计                     */
     uint32_t version_mismatch;  /* codec ERR_VERSION 累计                 */
+    uint32_t unknown_types;     /* codec UNKNOWN_TYPE 容忍累计（§5.3/§5.4）*/
     uint32_t seq_gaps;          /* 事件类 seq_gap 判定累计（§5.5）        */
     uint32_t recoveries;        /* 进入 RECOVERY 次数                     */
     uint32_t uat_complete;      /* 重组完成的 UAT 帧                      */
@@ -140,3 +141,13 @@ static inline bool spi_master_reset_requested(const spi_master_t *m)
     return m->reset_req;
 }
 void spi_master_reset_done(spi_master_t *m, uint32_t now_us);
+
+/* ── 目标端胶水（host 测试不编译；实现见 spi_master.c 目标区）────── */
+
+/* 硬件初始化：SPI1（GPIO10-13，mode 0，SPIM_HZ）、CSN/RESET/IRQ GPIO。 */
+void spim_hw_init(void);
+
+/* 单步轮询（core0 主循环调用；now_us 用 time_us_32()）：采样 IRQ →
+ * 决策/编码 → 512 B 事务（阻塞）→ digest；含 RESET 脉冲执行与
+ * 事务间隔节流（见 SPIM_INTER_TXN_US）。 */
+void spim_poll(spi_master_t *m, uint32_t now_us);

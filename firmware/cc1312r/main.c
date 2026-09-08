@@ -19,6 +19,7 @@
 #include <stdbool.h>
 
 #include <ti/devices/DeviceFamily.h>
+#include DeviceFamily_constructPath(driverlib/prcm.h)
 #include DeviceFamily_constructPath(driverlib/sys_ctrl.h)
 #include DeviceFamily_constructPath(driverlib/ssi.h)
 #include DeviceFamily_constructPath(driverlib/ioc.h)
@@ -70,7 +71,24 @@ static void irq_set(bool level)
 
 int main(void)
 {
-    /* 时钟：SDK 启动默认 48 MHz RCOSC（骨架不调频、不进 standby）。 */
+    /* 时钟：SDK 启动默认 48 MHz RCOSC（骨架不调频、不进 standby）。
+     *
+     * 电源域/外设时钟（审计 round-WP-E-1 P1-1）：CC13x2 复位后
+     * PERIPH/SERIAL 域与 GPIO/SSI0 运行时钟默认关闭，裸启动代码
+     * （startup_gcc.c）只做 trim/BSS/FPU——不使能就访问 GPIO/SSI
+     * 是未定义行为（实机可能首访即停）。SDK 的域就绪查询是
+     * PRCMPowerDomainsAllOn()（全部就绪布尔值，非逐域状态）。 */
+    PRCMPowerDomainOn(PRCM_DOMAIN_PERIPH | PRCM_DOMAIN_SERIAL);
+    /* PRCMPowerDomainsAllOn 返回域状态位图（POWER_ON=0x1），须与
+     * PRCM_DOMAIN_POWER_ON 比较而非当布尔用（验证轮抓过空转反例：
+     * POWER_OFF=0x2 也非零，!x 恒假）。 */
+    while (PRCMPowerDomainsAllOn(PRCM_DOMAIN_PERIPH | PRCM_DOMAIN_SERIAL)
+           != PRCM_DOMAIN_POWER_ON) { }
+    PRCMPeripheralRunEnable(PRCM_PERIPH_GPIO);
+    PRCMPeripheralRunEnable(PRCM_PERIPH_SSI0);
+    PRCMLoadSet();
+    while (!PRCMLoadGet()) { }
+
     IOCPortConfigureSet(PIN_SCLK, IOC_PORT_MCU_SSI0_CLK,
                         IOC_STD_INPUT | IOC_HYST_ENABLE);
     IOCPortConfigureSet(PIN_MOSI_RX, IOC_PORT_MCU_SSI0_RX,
@@ -84,9 +102,14 @@ int main(void)
     IOCPinTypeGpioOutput(PIN_IRQ);
     irq_set(false);
 
-    /* SSI0：slave、mode 0（协议 §1）、8-bit、时钟由 master 提供。 */
+    /* SSI0：slave、mode 0（协议 §1）、8-bit、时钟由 master 提供。
+     * bitrate 参数在 slave 模式不驱动时钟，但参与 SDK 的分频计算
+     * （ssi.c 直接 ui32SSIClk/ui32BitRate——传 0 是除零，审计
+     * round-WP-E-1 P1-2）；传 4 Mbps 与 master 侧一致。TI 要求
+     * slave 模式 FSSI >= 12×bitrate：48 MHz/12 = 4 MHz 上限，
+     * master 侧（rp2040 spi_master.c SPIM_HZ）已同步降到 4 MHz。 */
     SSIConfigSetExpClk(SSI_BASE, 48000000, SSI_FRF_MOTO_MODE_0,
-                       SSI_MODE_SLAVE, 0, 8);
+                       SSI_MODE_SLAVE, 4000000, 8);
     SSIEnable(SSI_BASE);
 
     cc13s_init(&g_slave, CC13_FW_VER_MAJOR, CC13_FW_VER_MINOR);

@@ -183,6 +183,29 @@ static void test_uplink_clean(void)
     CHECK(corr == 0);                       /* 无错帧 0 纠正            */
     CHECK(memcmp(data, exp, UAT_UPLINK_DATA_BYTES) == 0);
 
+    /* ── GF 边界回归（审计 WP-E-1 P1-5 的证伪向量）────────────────
+     * 逐位置单字节注入：552 个位置全部必须可纠（RS(92,72) 单错远在
+     * 能力内）。历史缺陷：gf_alpha[255] 未填 → ginv(1)=0 → 末 RS 块
+     * 最后符号（546..551）单错全部误判不可纠——本循环按位钉死。 */
+    int gf_ok = 1;
+    for (int pos = 0; pos < UAT_UPLINK_FRAME_BYTES && gf_ok; pos++) {
+        uint8_t bad[UAT_UPLINK_FRAME_BYTES];
+        memcpy(bad, frame, sizeof bad);
+        bad[pos] ^= 0x5A;
+        uint8_t d2[UAT_UPLINK_DATA_BYTES];
+        uat_uplink_t u2;
+        uint8_t c2 = 255;
+        if (!uat_uplink_decode(bad, d2, &u2, &c2)) {
+            fprintf(stderr, "FAIL pos=%d uncorrectable (GF boundary)\n",
+                    pos);
+            gf_ok = 0;
+        } else if (memcmp(d2, exp, UAT_UPLINK_DATA_BYTES) != 0) {
+            fprintf(stderr, "FAIL pos=%d wrong data\n", pos);
+            gf_ok = 0;
+        }
+    }
+    CHECK(gf_ok);
+
     /* 消息层期望值经上游 uat2text 对同条捕获逐项核对（事实卡 §8）。 */
     CHECK(up.raw_lat == 1739364);           /* → +37.3227°             */
     CHECK(up.raw_lon == 11103022);          /* → −121.7550°            */

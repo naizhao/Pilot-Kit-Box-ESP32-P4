@@ -22,7 +22,7 @@
 
 /* ── GF(256)（本原多项式 0x187，事实卡 §2）────────────────────── */
 
-static uint8_t gf_alpha[256]; /* 指数→元素，gf_alpha[255] 未用       */
+static uint8_t gf_alpha[256]; /* 指数→元素；alpha^255 = 1（见 init）   */
 static uint8_t gf_log[256];   /* 元素→指数；gf_log[0]=0xFF 即 -inf   */
 
 static uint8_t gmul(uint8_t a, uint8_t b)
@@ -34,6 +34,10 @@ static uint8_t gmul(uint8_t a, uint8_t b)
 
 static uint8_t ginv(uint8_t a)
 {
+    /* ginv(1) 必须经过 gf_alpha[255]（log[1]=0 → 255-0=255）——审计
+     * round-WP-E-1 实测反例：表未填满 255 号槽时 ginv(1)=0，末块
+     * 最后符号的单字节错被误判不可纠（6/552）。alpha^255 = 1（本原
+     * 多项式循环周期 255）。 */
     return gf_alpha[255 - gf_log[a]];
 }
 
@@ -52,8 +56,9 @@ void uat_fec_init(void)
         if (v & 0x100)
             v ^= 0x187;
     }
-    /* v 应回到 1（0x187 是本原多项式，事实卡 §2）。
-     * 解码只需 GF 表：BM 从伴随式自推 λ，不需要生成多项式。 */
+    /* v 现在回到 1：alpha^255 = alpha^0 = 1——填入第 255 槽，ginv(1)
+     * 的取径才闭合（见 ginv 注释）。 */
+    gf_alpha[255] = 1;
     fec_ready = 1;
 }
 

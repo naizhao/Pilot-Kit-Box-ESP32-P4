@@ -333,7 +333,9 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
     case RP_CC13XX_ERR_SHORT:    m->stats.len_errors++;     break;
     case RP_CC13XX_ERR_ARG:                              break;
     case RP_CC13XX_UNKNOWN_TYPE:
-        /* CRC 合法但类型未知：容忍忽略（§5.4），合法帧、非事件。 */
+        /* CRC 合法但类型未知：容忍忽略（§5.4），合法帧、非事件。
+         * §5.3 计数器集之 unknown_types（审计 round-WP-E-1 P2-3）。 */
+        m->stats.unknown_types++;
         m->stats.legal_frames++;
         m->t_last_legal = m->t_now;
         break;
@@ -363,9 +365,12 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
 #define SPIM_PIN_CSN   13
 #define SPIM_PIN_IRQ   14
 #define SPIM_PIN_RESET 18
-#define SPIM_HZ        8000000
+/* 4 MHz = CC1312R slave 模式硬上限（TI ssi.h：FSSI >= 12×bitrate，
+ * 48 MHz/12；审计 round-WP-E-1 P1-2 从 8 MHz 下调）。时钟未冻结
+ * （协议 §1），台架验证后可再压。 */
+#define SPIM_HZ        4000000
 
-static void spim_hw_init(void)
+void spim_hw_init(void)
 {
     spi_init(spi1, SPIM_HZ);
     spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
@@ -402,19 +407,37 @@ static void spim_hw_transfer(const uint8_t *mosi, uint8_t *miso)
 /* 单步轮询（与 host 测试同构的事务循环）。装配进 1090 主循环的集成点
  * 与 UAT 回调 → adsb_link UAT_UPLINK → p4_link 队列的接线属后续任务
  * （本任务只交付状态机与胶水原语，spec §6.7 合同的可执行证明在 host）。 */
+/* 事务间隔（协议 R14 修订：master 行为合同）：CSN 高电平 ≥1 ms
+ * ——slave 在 CSN↑ 后要完成帧校验（CRC ≈ 506 B）、512 B 装载缓冲
+ * 复制与下一 pending 装载（48 MHz 下最坏数百 µs），1 µs 的线级
+ * CSN 高不足以保证 MISO 头 8 字节在下一次 FSS↓ 前入 FIFO（审计
+ * round-WP-E-1 P1-4 的连续事务竞态）。master 在此节流；线级
+ * 硬件保证仍是 ≥1 µs，1 ms 是骨架的软件合同（台架实测后可压缩
+ * 并回写协议）。 */
+#define SPIM_INTER_TXN_US 1000u
+
 void spim_poll(spi_master_t *m, uint32_t now_us)
 {
+    static uint32_t last_txn_end_us;
+
     if (spi_master_reset_requested(m)) {
         spim_hw_reset_pulse();
         spi_master_reset_done(m, now_us);
+        last_txn_end_us = now_us;
         return;
     }
+    /* 节流基准是**上一事务结束时刻**（含阻塞事务自身耗时 ≈1 ms，
+     * 验证轮 P1-B：以入口时刻为基准会被事务耗时吞掉整个窗口）。 */
+    if (now_us - last_txn_end_us < SPIM_INTER_TXN_US) return;
+
     uint8_t mosi[512], miso[512];
     const bool irq = gpio_get(SPIM_PIN_IRQ);
     if (spi_master_next_txn(m, now_us, mosi, irq) == 0) return;
     spim_hw_transfer(mosi, miso);
-    /* 事务时长（8 MHz × 512 B ≈ 512 µs）——看护时基用近似常量。 */
-    spi_master_digest(m, 512, miso);
+    /* 事务时长（4 MHz × 512 B ≈ 1 ms）——看护时基用近似常量；
+     * 节流基准同样锚定到事务结束（now+1024，而非轮询入口）。 */
+    spi_master_digest(m, 1024, miso);
+    last_txn_end_us = now_us + 1024;
 }
 
 #endif /* SPI_MASTER_HOST_TEST */

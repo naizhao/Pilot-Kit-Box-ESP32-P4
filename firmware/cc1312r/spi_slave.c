@@ -55,7 +55,11 @@ void cc13s_pending(const cc13s_slave_t *s, uint8_t miso[CC13S_TXN_LEN])
 
 bool cc13s_irq(const cc13s_slave_t *s)
 {
-    if (s->state != CC13S_LINKED) return false;   /* §6.2：WAIT_HELLO 不驱动 */
+    /* §1 不变式：IRQ = 四源之或，严格 iff（审计 round-WP-E-1 P2-1：
+     * 不按状态短路——生产路径上 WAIT_HELLO 态源恒空【复位清一切】，
+     * iff 自然成立；若测试注入造成"未握手却有源"，iff 语义也保持
+     * 诚实：源在即报。WAIT_HELLO 的 master 行为不受影响——master
+     * 在该态只发 HELLO，不看 IRQ【§6.2】）。 */
     if (s->qfull || s->aerr) return true;
     if (s->cur >= 0 && s->cur_sent < s->cur_total) return true;
     return s->qn > 0;
@@ -295,16 +299,24 @@ void cc13s_txn_done(cc13s_slave_t *s, const uint8_t mosi[CC13S_TXN_LEN])
     case RP_CC13XX_ERR_CRC:    s->crc_errors++;      break;
     case RP_CC13XX_ERR_VERSION:
         s->version_mismatch++;
-        /* §6.2：ver≠1 → 拒收、装入 ERROR{0x01} 于下一事务（规则 2 槽
-         * 位，seq 回显被拒命令——帧头 offset 4 提取，decode 失败路径
-         * 上 codec 不保证填充 out）。 */
-        if (s->state == CC13S_WAIT_HELLO && !s->cmd_err_pending) {
+        /* §6.2：任一态 ver≠1 → 拒收、装 ERROR{0x01} 于下一事务
+         * （规则 2 槽位；LINKED 中收到坏 ver 帧同样拒——审计
+         * round-WP-E-1 P2-2：对端不会因已 LINKED 而豁免版本合同）。
+         * seq 从帧头 offset 4 提取（decode 失败路径 codec 不保证
+         * 填充 out）。 */
+        if (!s->cmd_err_pending) {
             s->cmd_err_pending = true;
             s->cmd_err_code     = 0x01;
             s->cmd_err_seq      = (uint16_t)(mosi[4] | ((uint16_t)mosi[5] << 8));
         }
         break;
     case RP_CC13XX_ERR_LEN:    s->len_errors++;      break;
+    case RP_CC13XX_UNKNOWN_TYPE:
+        /* CRC 合法但类型未知：容忍忽略（§5.4）；合法帧——但 slave 对
+         * 未知类型命令不装载应答（prelink_reject 同款语义：整事务
+         * 作废，回全 0），仅计数（§5.3，审计 round-WP-E-1 P2-3）。 */
+        s->unknown_types++;
+        break;
     default: break;
     }
 

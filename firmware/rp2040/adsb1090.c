@@ -15,6 +15,7 @@
 #include "p4_link.h"
 #include "selftest_gen.h"
 #include "threshold_ctl.h"
+#include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 
 #define FRAME_RING_LEN 64u
 
@@ -26,6 +27,22 @@ static slot_t s_ring[FRAME_RING_LEN];
 static atomic_uint s_ring_head, s_ring_tail;
 static atomic_uint s_ring_drops;
 static atomic_uint s_core1_beat;
+
+/* ── CC1312R SPI master（WP-E）───────────────────────────────────────
+ * core0 轮询驱动（审计 round-WP-E-1 P1-3：此前 spim_hw_init/spim_poll
+ * 无调用点、UF2 不含 SUBG 路径——现在正式接线）。UAT 帧经回调转
+ * p4_link_send_uat() 上送 P4。事务间隔节流（协议 R14）在 spim_poll
+ * 内部：drain 流水时每事务阻塞 ≈1 ms——1090 帧环积压由 s_ring_drops
+ * 计数暴露，台架期再调（SSI 中断/DMA 化是二期项）。 */
+static spi_master_t s_spim;
+
+static void on_uat_frame(const uint8_t *frame, size_t len,
+                         uint8_t rssi, uint32_t ts_us, void *user)
+{
+    (void)user;
+    if (len != 552) return;             /* UAT 事实卡 §7 定长合同 */
+    p4_link_send_uat(frame, rssi, ts_us);
+}
 
 static modes_edge_t s_edge;
 
@@ -114,6 +131,11 @@ int main(void)
     modes_edge_init(&s_edge, EDGE_CAP_TICK_HZ, on_frame, NULL);
     multicore_launch_core1(core1_entry);
 
+    /* WP-E：SUBG 链路（CC1312R）——握手由 spim_poll 首个 HELLO 发起
+     * （RESET 释放后 ≥100 ms 由 spim_hw_reset_pulse 保证，§6.1）。 */
+    spim_hw_init();
+    spi_master_init(&s_spim, on_uat_frame, NULL);
+
     uint32_t last_beat = 0;
     int stuck_s = 0;
     absolute_time_t next_hz = make_timeout_time_ms(1000);
@@ -130,6 +152,7 @@ int main(void)
                                   memory_order_release);
         }
         p4_link_poll_rx();
+        spim_poll(&s_spim, time_us_32());   /* WP-E：SUBG 事务（R14 节流） */
 
         int c = getchar_timeout_us(0);
         if (c == 'T') {

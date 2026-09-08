@@ -187,3 +187,4 @@ hardware/datasheets/*.png
 # SDD worktrees (isolated implementation workspaces)
 .worktrees/
 firmware/cc1312r/build/
+firmware/build-v3/

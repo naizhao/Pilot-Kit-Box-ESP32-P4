@@ -79,6 +79,7 @@ typedef struct {
     uint32_t legal_frames;
     uint32_t no_frame_txns;
     uint32_t resyncs, crc_errors, len_errors, version_mismatch;
+    uint32_t unknown_types;      /* §5.3/§5.4：CRC 合法但类型未知容忍计数 */
     uint32_t prelink_reject;
 
     /* 本端版本（HELLO §4.1 携带）*/
