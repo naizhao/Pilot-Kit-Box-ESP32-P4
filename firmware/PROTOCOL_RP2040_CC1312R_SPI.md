@@ -149,7 +149,7 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 | 0x04 | PONG | slave→master | 空（len=0） | 仅 **LINKED 态**应答 PING（§6.2） |
 | 0x10 | RX_DESCRIPTOR | slave→master | §4.3 | 事件到达即入队 |
 | 0x11 | RX_PAYLOAD_CHUNK | slave→master | §4.4 | 仅紧随其 RX_DESCRIPTOR |
-| 0x12 | QUEUE_FULL | slave→master | §4.5 | 队列满置位时入队一次，清空后复置可再发 |
+| 0x12 | QUEUE_FULL | slave→master | §4.5 | 队满置位、交付即清（drain 期间不装载，§4.5） |
 | 0x20 | RF_CONFIG | master→slave | §4.6 | （re)LINKED 后 1 s 内先查询，按需写 |
 | 0x21 | RF_CONFIG_STATUS | slave→master | §4.6 | 仅应答 0x20 |
 | 0x22 | RESET_STATUS_REQ | master→slave | 空（len=0） | 按需；drain 期间禁止 |
@@ -609,4 +609,4 @@ B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结�
 | R6（本提交） | 审计 round 6 codec/测试修复：reasm_feed 补 data_len > 496 越界防御（P1-c，ASan 复现项——app 侧 chunk 先于 memcpy 拒绝）；B28 typed-decode 测试改为显式构造合法 msg（P2-b，旧写法复用未初始化对象属假通过）；异步 ERROR seq=0 哨兵向量 B32 + 越界片向量 B33 + 回归测试 case 23/24 | rp_cc13xx_codec.c、test case 21/23/24、B.1/B.2 |
 | R7（本提交） | 审计 round 7 裁决：①**异步 ERROR 降位**（§2.3 规则 2 限定命令性 0x01–0x03；0x04/0x05 视为可保留事件走规则 4，关闭其覆盖直接应答的永久丢失路径，B31 走查补充）；②**§6.7 master 调度合同**（规范性：IRQ 高电平后至多完成在途应答必须连发 IRQ_ACK 直至读低——事件/QUEUE_FULL/异步 ERROR 交付延迟确定性封顶，关闭背靠背命令无限饥饿）；③**queue_full_pending 挂起标志**（§4.5——队满时队列不动、置单个标志，交付优先级在直接应答与普通事件之间、不清队列、drain/RESET 清除）；④§3 seq 表行语义改指 §3.5（命令/回显/哨兵三分类） | §2.3、§3 表、§4.5、§5.6、§6.7（新）、B.3 |
 | R8（本提交） | 审计 round 7 P2-b：encode_error 对 code 0x04/0x05 强制 seq=0x0000 上线（调用方取值不透传——线上合同固定）；回归测试证伪透传（code=0x04/seq=0x1234 → 线上 00 00）并钉住命令码回显（0x03/0x1234 → 0x1234） | rp_cc13xx_codec.c、test case 24、§4.9 |
-| R9（本提交） | 验证轮修订：①**queue_full_pending 交付即清 + drain 不装载**（§4.5——QUEUE_FULL 是通知不是队列成员；旧"drain 进入才清"在 drain 中重填时标志反复装载、MISO 永不空转、§7.2 停滞出口永不触发 → 只能 RESET 逃逸的非终止 drain，已关闭）；②§2.3 规则 4 陈旧括注修正（QUEUE_FULL 已是队列外标志，不再列为队列成员）；§7.2 重填场景出口可达性注记 | §2.3、§4.5、§7.2 |
+| R9（本提交） | 验证轮修订：①**queue_full_pending 交付即清 + drain 不装载**（§4.5——QUEUE_FULL 是通知不是队列成员；旧"drain 进入才清"在 drain 中重填时标志反复装载、MISO 永不空转、§7.2 停滞出口永不触发 → 只能 RESET 逃逸的非终止 drain，已关闭）；②§2.3 规则 4 陈旧括注修正（QUEUE_FULL 已是队列外标志，不再列为队列成员）；③§4 表 0x12 频率约束格由「入队一次/清空后复置」改为「队满置位、交付即清、drain 不装载」，与 §4.5 对齐（grep 全文复查，其余「入队」均指 RX_DESCRIPTOR 或 slave RF 侧，无残留）；§7.2 重填场景出口可达性注记 | §2.3、§4 表、§4.5、§7.2 |
