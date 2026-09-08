@@ -143,16 +143,17 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
   容忍"（§5.4）即 minor 兼容规则；升 minor 不得改动既有类型语义。
 - **3.4 seq 回绕**：接收方以 `(u16)(seq_now − seq_prev)` 做无符号差值判定（§5.5）；
   `0xFFFF → 0x0000` 为正常回绕，不是错误。
-- **3.5 seq 回显（延迟应答模型，§2.2）**：应答类帧（HELLO 应答、PONG、
-  RF_CONFIG_STATUS、RESET_STATUS、UPGRADE_STATUS、命令性 ERROR）的 seq =
-  其所应答命令帧的 seq 原样回显；**事件类帧（RX_DESCRIPTOR、
-  RX_PAYLOAD_CHUNK、QUEUE_FULL、异步 ERROR）**中 RX_DESCRIPTOR/QUEUE_FULL
-  的 seq = slave 自有计数器每帧 +1（模 2^16），RX_PAYLOAD_CHUNK 的 seq =
-  回显触发取片的 IRQ_ACK seq（背靠背 IRQ_ACK 递增，故分片 seq 亦递增），
-  异步 ERROR 恒 0x0000 哨兵。**RX_PAYLOAD_CHUNK 与 RX_DESCRIPTOR/QUEUE_FULL
-  同为事件类，参与 §5.5 seq_gaps 判定**（回显的 IRQ_ACK seq 依到达顺序参与
-  链式判定）；应答类帧不参与 gap 判定（其 seq 由命令决定，回显重复/乱序均
-  合法）。**ERROR 的 seq 按 code 分两类**：0x01–0x03（版本/状态/RF_CONFIG，
+- **3.5 seq 语义（延迟应答模型，§2.2；单一计数域）**：应答类帧（HELLO
+  应答、PONG、RF_CONFIG_STATUS、RESET_STATUS、UPGRADE_STATUS、命令性
+  ERROR）的 seq = 其所应答命令帧的 seq 原样回显；**事件类帧
+  （RX_DESCRIPTOR、RX_PAYLOAD_CHUNK、QUEUE_FULL）的 seq 一律取 slave
+  事件计数器，每发出一帧 +1（模 2^16）**——分片与 IRQ_ACK 的关联由
+  desc_id/offset/total_len 结构性表达（§4.4），不依赖 seq（round 9 废除
+  分片回显 IRQ_ACK seq：master 命令计数与 slave 事件计数是两个互不同步
+  的域，混入同一条 §5.5 链必然在 descriptor→chunk 与 chunk→下一事件
+  的切换处产生假 gap）；异步 ERROR 恒 0x0000 哨兵、不占计数域。§5.5
+  seq_gaps 判定对事件类帧按到达顺序**单域**执行；应答类帧不参与
+  （其 seq 由命令决定，回显重复/乱序均合法）。**ERROR 的 seq 按 code 分两类**：0x01–0x03（版本/状态/RF_CONFIG，
   回应具体命令）回显命令 seq；0x04（溢出通报）/0x05（内部错误）为**异步
   事件**、无对应命令——seq 恒为 `0x0000` 哨兵（『无命令』），接收方不得
   对其做 seq 对账或 gap 判定（§4.9）。
@@ -198,9 +199,9 @@ bit3=看门狗/时钟安全复位。双方各自填充自己的复位原因；�
 len=0。语义：**读触发**（§2.2 IRQ 读路径）——事务 N 的 IRQ_ACK 命令使 slave
 在其 CSN 上升沿按 §2.3 装载下一个事件/下一分片，装载结果出现在**事务 N+1 的
 MISO**。若上一事务交付的是 RX_DESCRIPTOR，则装载其下一分片。IRQ 线在最后
-一片被**实际交付**（而非仅装载）后拉低（§1）。seq = 所应答 IRQ_ACK 的 seq
-回显（§3.5）——分片帧为事件类，其回显 seq 参与 §5.5 seq_gaps 链式判定
-（§3.5）。
+一片被**实际交付**（而非仅装载）后拉低（§1）。分片帧为事件类：seq 走
+slave 事件计数器（§3.5 单一计数域）；分片与 IRQ_ACK 的关联由
+desc_id/offset/total_len 结构性表达（§4.4），seq 不承担该职责。
 
 ### 4.3 RX_DESCRIPTOR
 
@@ -474,7 +475,8 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 | B29 | N9 reset_reason 发送掩码 | §4.1 | — | 源值 0x1F → 线上 0x0F（&0x0F），解码见 0x0F |
 | B32 | N10 异步 ERROR seq 哨兵 | §3.5/§4.9 | s→m | code=0x04、seq=0x0000 往返 OK；对账/gap 跳过 |
 | B33 | N11 reasm 越界片拒收 | §4.4 | — | app 侧 data_len=497（total=4096）→ ERR_LEN，先于 memcpy |
-| B36 | N12 分片帧参与 seq_gaps 链 | §3.5/§5.5 | s→m | 复用 B6/B7×2/B9 组链 0004→0005→0006→0008：chunk 两跳无 gap、跳号判 gap |
+| B36 | N12 分片帧参与 seq_gaps 链 | §3.5/§5.5 | s→m | 复用 B6/B7×2/B9 组链 0004→0005→0006→0008（全 slave 单域）：chunk 两跳无 gap、跳号判 gap |
+| B37 | N13 单域 vs 回显域判别 | §3.5 | s→m | 构造规则：desc seq=0x0011 后 chunk 取 0x0012（单域，无 gap）；若按已废回显域取 master 值 0x01F4 则必假 gap——钉住裁决判别 |
 
 ### B.2 十六进制字面量
 
@@ -557,7 +559,8 @@ B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结�
 
 - **B25（§6.5）**：事务级流水（每事件一事务，应答延迟一拍）：T1 IRQ_ACK
   取走 pending 的 B6 descriptor（此前已装载）并令 slave 装载 chunk0；T2
-  IRQ_ACK 的 MISO = B7 chunk0（seq 回显 T1 命令 seq），积累至 12 B；此刻
+  IRQ_ACK 的 MISO = B7 chunk0（seq=slave 事件计数器，§3.5 单一域），积累至
+  12 B；此刻
   master 收到合法 HELLO → 半交付态立即作废（active=0、have=0），旧 chunk1
   不再命中（§6.5 已放弃该报文）；随后新 descriptor（新 desc_id）可干净重组
   至完成。可执行断言见测试 case 18。
@@ -660,3 +663,4 @@ B33 N11 越界片      构造规则向量（无线上帧——app 侧 chunk 结�
 | R10（本提交） | 审计 round 8 裁决：①**废除 drain-skip**（R9 的"drain 期间不装载"使 slave 装载规则依赖 master 私有状态，物理不可知且状态机不可闭——queue_full_pending 一切状态照常装载、交付即清；重填再置位再交付，交付即事件事务复位停滞计数，§7.2 出口恒可达；§4.5/§7.2/§4 表同步，B34 满期全生命周期走查）；②**IRQ 四源枚举**（§1——事件队列 ∨ 分片未取完 ∨ queue_full_pending ∨ async_error_pending，生命周期不变式"置位即高、交付即清"，关闭异步 ERROR 无 IRQ 背书的永久饥饿；B35 单源生命周期走查含 PING 竞争变体）。R9 的 drain-skip 行文就此撤回，仅存本修订记录 | §1、§2.3、§4 表、§4.5、§7.2、B.3 |
 | R11（本提交） | 审计 round 8 Ruling 3：RX_PAYLOAD_CHUNK seq 语义归位——§3.5 事件类清单显式含分片（seq=回显触发取片的 IRQ_ACK seq，背靠背递增故分片 seq 亦递增），与 RX_DESCRIPTOR/QUEUE_FULL 同参与 §5.5 seq_gaps 链式判定；§4.2 措辞对齐引用 §3.5。codec 级钉点 B36/case 25（复用 B6/B7/B9 组链断言 gap 参与）；B34/B35 为 spec 级事务走查（装载/清除/IRQ 状态机非纯 codec 可表达） | §3.5、§4.2、B.1、test case 25 |
 | R12（本提交） | 审计 round 9 Ruling 1：**清除时点统一为交付完成**——携带该源帧之事務的 CSN 上升沿（装载不清；装载与交付相隔一事务，IRQ 期间保持高，关闭装载即清导致的 IRQ 提前落低/QUEUE_FULL 抢占流）。§1 升级为「IRQ 置位 ⟺ 存在尚未完成 MISO 交付的挂起源」并成为各源清除时点的唯一规范出处（四源逐条）；§2.3 规则 4 移除装载伴随清除语义；§4.5/§4 表/§7.2（装载不是事务）同步；B34/B35 走查补时间点 | §1、§2.3、§4 表、§4.5、§7.2、B.3 |
+| R13（本提交） | 审计 round 9 Ruling 2：**分片 seq 归入 slave 事件计数器（单一计数域）**——废除 R11 的"分片回显 IRQ_ACK seq"（master 命令计数与 slave 事件计数互不同步，双域混入同一条 §5.5 链在 descriptor→chunk 与 chunk→下一事件切换处必然假 gap）；分片↔IRQ_ACK 关联由 desc_id/offset/total_len 结构性表达（§4.4）。§3.5 重写、§4.2 回显句删除、B.3 B25 措辞同步；B6/B7/B8/B9 十六进制不变（其 seq 值本就单域相容，仅解释变更）；判别回归 B37/case 26（单域 0x0011→0x0012 无 gap vs 回显域值 0x01F4 必假 gap） | §3.5、§4.2、B.1（B37）、B.3、test case 25/26 |

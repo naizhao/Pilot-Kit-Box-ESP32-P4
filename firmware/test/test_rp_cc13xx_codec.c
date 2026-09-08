@@ -49,6 +49,7 @@
  *   （B30/B31 = §6.2/§6.6/§2.3 会话级走查，规范附录 B.3；无独立十六进制）
  *   B32 N10 异步 ERROR code=0x04 seq=0x0000 哨兵        §3.5/§4.9（case 24）
  *   B36 N12 分片帧参与 seq_gaps 链（事件类，§3.5/§5.5）  §3.5（case 25）
+ *   B37 N13 单域 vs 回显域判别（round 9 Ruling 2）        §3.5（case 26）
  *   （B30/B31/B34/B35 = §6.2/§6.6/§2.3/§4.5/§7.2 会话级走查，
  *     规范附录 B.3；无独立十六进制——事务级状态机非 codec 可表达）
  *
@@ -720,12 +721,13 @@ int main(void)
               m.seq == 0x1234, "cmd err echo seq\n");
     }
 
-    /* 25. B36（§3.5/§5.5，round 8 Ruling 3）：RX_PAYLOAD_CHUNK 为事件类、
-        回显 IRQ_ACK seq 且参与 seq_gaps 链式判定——与 RX_DESCRIPTOR/
-        QUEUE_FULL 同规则。codec 级可表达部分 = 解码取 seq + seq_gap 链；
-        装载/清挂起等事务级行为见规范附录 B.3 走查（非 codec 可表达）。
-        链：B6 desc(seq=0x0004) → B7 chunk0(回显 0x0005) → B7 chunk1
-        (0x0006) → B9 queue_full(0x0008)——末跳 +2 = gap。 */
+    /* 25. B36（§3.5/§5.5，round 8 Ruling 3 + round 9 Ruling 2）：分片帧为
+        事件类、seq 走 slave 事件计数器（单一计数域）并参与 seq_gaps 链式
+        判定——与 RX_DESCRIPTOR/QUEUE_FULL 同规则。codec 级可表达部分 =
+        解码取 seq + seq_gap 链；装载/清挂起等事务级行为见规范附录 B.3
+        走查（非 codec 可表达）。链：B6 desc(seq=0x0004) → B7 chunk0
+        (0x0005) → B7 chunk1(0x0006) → B9 queue_full(0x0008)——全 slave
+        单域递增，末跳 +2 = gap。 */
     {
         rp_cc13xx_msg_t m;
         uint16_t seqs[4];
@@ -736,7 +738,7 @@ int main(void)
         CHECK(rp_cc13xx_decode_frame(V_b7_chunk0, sizeof(V_b7_chunk0), &m)
               == RP_CC13XX_OK && m.type == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK,
               "b36 chunk0\n");
-        seqs[1] = m.seq;   /* 回显 IRQ_ACK seq——事件类参与链 */
+        seqs[1] = m.seq;   /* slave 事件计数器——事件类参与链（§3.5） */
         CHECK(rp_cc13xx_decode_frame(V_b7_chunk1, sizeof(V_b7_chunk1), &m)
               == RP_CC13XX_OK && m.type == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK,
               "b36 chunk1\n");
@@ -753,6 +755,34 @@ int main(void)
               "b36 chunk hops in-chain\n");
         CHECK(rp_cc13xx_seq_gap(seqs[2], seqs[3]) == 1,
               "b36 skip is gap (chunk participates)\n");
+    }
+
+    /* 26. B37（§3.5，round 9 Ruling 2 判别回归）：分片 seq 单域裁决的
+        证伪式钉点——desc seq=0x0011 后，单域 chunk 取 0x0012（无 gap）；
+        若按已废除的回显域取 master 计数值 0x01F4(500)，同一判定必假 gap。
+        两链仅 chunk seq 来源不同，判别即裁决本身。 */
+    {
+        rp_cc13xx_rx_desc_t d = { .desc_id = 7, .freq_hz = 978000000u,
+                                  .ts_us = 1, .total_len = 8, .rssi = 0xFF,
+                                  .flags = 0 };
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        size_t n = rp_cc13xx_encode_rx_descriptor(buf, sizeof(buf),
+                                                  0x0011, &d);
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
+              m.seq == 0x0011, "b37 desc seq\n");
+
+        rp_cc13xx_chunk_t c = { .desc_id = 7, .offset = 0, .total_len = 8,
+                                .data_len = 8 };
+        memcpy(c.data, "PENDING!", 8);
+        n = rp_cc13xx_encode_rx_chunk(buf, sizeof(buf), 0x0012, &c);
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
+              m.type == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK && m.seq == 0x0012,
+              "b37 chunk slave-counter seq\n");
+        CHECK(rp_cc13xx_seq_gap(0x0011, 0x0012) == 0,
+              "b37 single-domain chain closed\n");
+        CHECK(rp_cc13xx_seq_gap(0x0011, 0x01F4) == 1,
+              "b37 echo-domain value would false-gap\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
