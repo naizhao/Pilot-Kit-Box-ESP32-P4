@@ -37,6 +37,10 @@ cmake --build build
 # 产物断言：UF2 由 picotool 在 POST_BUILD 生成，缺了说明后处理没跑完。
 test -f build/adsb1090.uf2
 
+# 栈预算门禁（WP-E-2 P1）：UAT 链路关键函数帧 ≤ 预算（.su 来自
+# -fstack-usage，见 CMakeLists 注释）。任一 GATE-FAIL 即退出非零。
+python3 stack_budget_gate.py build build/adsb1090.elf
+
 # sha256：Linux 有 sha256sum，macOS 有 shasum，二者取其一。
 if command -v sha256sum >/dev/null 2>&1; then
     sha256sum build/adsb1090.uf2

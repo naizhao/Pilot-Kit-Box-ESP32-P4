@@ -26,7 +26,9 @@ static const char BUILD_TAG[16] = "rp2040-mvp";
 
 static void tx_frame(uint8_t type, const uint8_t *pl, size_t n)
 {
-    uint8_t buf[ADSB_LINK_MAX_FRAME];
+    /* 586 B 帧缓冲静态化（WP-E-2 P1 栈审计：UAT 链最深
+     * tx_frame 曾 +616 B；单调用者 = core0 发送语境）。 */
+    static uint8_t buf[ADSB_LINK_MAX_FRAME];
     size_t len = adsb_link_encode(buf, sizeof buf, type, s_seq++, pl, n);
     if (len == 0) { s_encode_fail++; return; }
     uart_write_blocking(P4_UART, buf, len);   /* core0 sender 语境，允许阻塞 */
@@ -69,6 +71,26 @@ bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi)
     memcpy(pl + 6, f->frame, nb);
     if (6 + nb > ADSB_LINK_MAX_PAYLOAD) { s_encode_fail++; return false; }
     tx_frame(ADSB_LINK_MSG_MODES_RAW, pl, 6 + nb);
+    return true;
+}
+
+/* UAT_UPLINK（协议 v1.1 §6，type 0x11）：CC1312R 的 978 上行帧经
+ * SPI（RX_DESCRIPTOR/分片）由 spi_master 重组完成后经此转发 P4。
+ * 557 B payload = rssi + ts_us + 552 B 交织帧原样（单位不改写，
+ * 时钟域=CC1312R 描述符时钟——见 uat_ingest.h 的域警告）；
+ * 解交织/RS/消息层解码在 P4 侧（uat_ingest 前门）。 */
+bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
+                      uint32_t ts_us)
+{
+    /* 557 B 载荷缓冲静态化（审计 WP-E-2 P1 栈越界：SPI digest →
+     * 本回调链曾达 3448 B > core0 栈 2048 B）。单调用者：core0。 */
+    static uint8_t pl[ADSB_LINK_UAT_PAYLOAD_LEN];
+    if (adsb_link_uat_uplink_encode(pl, sizeof(pl), rssi, ts_us,
+                                    frame552) != ADSB_LINK_UAT_PAYLOAD_LEN) {
+        s_encode_fail++;
+        return false;
+    }
+    tx_frame(ADSB_LINK_MSG_UAT_UPLINK, pl, sizeof(pl));
     return true;
 }
 

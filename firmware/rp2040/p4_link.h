@@ -13,6 +13,11 @@
 
 void p4_link_init(void);
 bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi);
+/* UAT_UPLINK 转发（协议 v1.1 §6，type 0x11）：552 B 交织帧原样 +
+ * rssi（0.5 dB/LSB，0xFF=无值）+ ts_us（CC1312R 描述符时钟，单位
+ * 不改写）。帧内容合同见 uat_decode.h / UAT 事实卡 §7。 */
+bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
+                      uint32_t ts_us);
 void p4_link_send_error(uint8_t code);
 void p4_link_poll_rx(void);
 void p4_link_tick_health(const uint32_t counters10[10]);

@@ -83,6 +83,7 @@ add_executable(adsb1090
     selftest_gen.pio
     threshold_ctl.c
     p4_link.c
+    spi_master.c
     ../components/adsb_link_codec/adsb_link_codec.c   # 共享 codec：与 P4 侧同一份源
     ../components/rp_cc13xx_codec/rp_cc13xx_codec.c   # CC1312R 链路共享 codec（协议 v1.0）；
                                                       # WP-P0b Task 3 仅无害编译进产物，
@@ -98,6 +99,11 @@ target_include_directories(adsb1090 PRIVATE
 # 必须显式声明才会生成头（.pio 仅列进 add_executable 不会触发）。
 pico_generate_pio_header(adsb1090 ${CMAKE_CURRENT_LIST_DIR}/edge_cap.pio)
 pico_generate_pio_header(adsb1090 ${CMAKE_CURRENT_LIST_DIR}/selftest_gen.pio)
+# 栈用量审计（WP-E-2 P1 门禁）：-fstack-usage 生成 .su 文件，
+# build.sh 的门禁脚本据此把 UAT 链路各函数栈帧钉在预算内
+# （core0 栈 2048 B，最深链 main→spim_poll→digest→uat 回调≈800 B
+# + 库/中断余量）。改动这些函数后构建即复核。
+target_compile_options(adsb1090 PRIVATE -fstack-usage)
 # picotool（含 2.1.1 release）按扩展名识别输入文件；
 # 无后缀的默认产物名会被拒（"no recognized file type"），显式用 .elf 后缀。
 set_target_properties(adsb1090 PROPERTIES SUFFIX ".elf")
@@ -108,6 +114,7 @@ target_link_libraries(adsb1090 PRIVATE
     hardware_dma
     hardware_pwm
     hardware_adc
+    hardware_spi
     pico_stdio_usb
 )
 pico_enable_stdio_usb(adsb1090 1)
