@@ -14,7 +14,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C3** | 1uF | C_0603_1608Metric | (70.8, 98.9) | A Power |  |
 | ☐ | **C4** | 1uF | C_0603_1608Metric | (78.7, 97.8) | A Power |  |
 | ☐ | **C5** | 1uF | C_0402_1005Metric | (85.9, 96.7) | A Power |  |
-| ☐ | **C6** | 1uF | C_0603_1608Metric | (92.1, 97.9) | A Power | Board silkscreen reads C18; use coordinates |
+| ☐ | **C6** | 1uF | C_0603_1608Metric | (92.1, 97.9) | A Power |  |
 | ☐ | **C10** | 100nF | C_0603_1608Metric | (61.0, 92.6) | C Sensors + GNSS |  |
 | ☐ | **C11** | 100nF | C_0603_1608Metric | (64.6, 87.2) | C Sensors + GNSS |  |
 | ☐ | **C12** | 100nF | C_0603_1608Metric | (56.5, 87.7) | C Sensors + GNSS |  |
@@ -23,19 +23,19 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C15** | 4.7uF | C_0603_1608Metric | (59.9, 99.3) | C Sensors + GNSS |  |
 | ☐ | **C16** | 100nF | C_0603_1608Metric | (64.6, 92.5) | C Sensors + GNSS |  |
 | ☐ | **C17** | 100nF | C_0603_1608Metric | (71.4, 81.0) | C Sensors + GNSS |  |
-| ☐ | **C18** | 10uF | C_0805_2012Metric | (74.4, 80.8) | C Sensors + GNSS | Board silkscreen reads C6; use coordinates |
+| ☐ | **C18** | 10uF | C_0805_2012Metric | (74.4, 80.8) | C Sensors + GNSS |  |
 | ☐ | **C19** | 15pF C0G | C_0603_1608Metric | (88.4, 69.1) | B MCU + Flash |  |
 | ☐ | **C20** | 15pF C0G | C_0603_1608Metric | (79.8, 69.1) | B MCU + Flash |  |
 | ☐ | **C21** | 100pF | C_0402_1005Metric | (103.6, 59.7) | E 1090 Receive Chain |  |
 | ☐ | **C22** | 100nF | C_0603_1608Metric | (93.2, 75.8) | B MCU + Flash |  |
 | ☐ | **C23** | 100nF | C_0603_1608Metric | (91.8, 81.5) | B MCU + Flash |  |
 | ☐ | **C24** | 100nF | C_0603_1608Metric | (80.9, 80.2) | B MCU + Flash |  |
-| ☐ | **C25** | 100nF | C_0603_1608Metric | (83.2, 71.6) | B MCU + Flash | Board silkscreen reads R33; use coordinates |
+| ☐ | **C25** | 100nF | C_0603_1608Metric | (83.2, 71.6) | B MCU + Flash |  |
 | ☐ | **C26** | 100nF | C_0603_1608Metric | (78.9, 74.6) | B MCU + Flash |  |
 | ☐ | **C27** | 100nF | C_0603_1608Metric | (77.9, 82.5) | B MCU + Flash |  |
 | ☐ | **C28** | 1uF | C_0603_1608Metric | (83.1, 83.3) | B MCU + Flash |  |
 | ☐ | **C29** | 1uF | C_0603_1608Metric | (80.9, 83.3) | B MCU + Flash |  |
-| ☐ | **C30** | 100pF | C_0402_1005Metric | (102.8, 67.5) | E 1090 Receive Chain | Board silkscreen reads L14; use coordinates |
+| ☐ | **C30** | 100pF | C_0402_1005Metric | (102.8, 67.5) | E 1090 Receive Chain |  |
 | ☐ | **C31** | 100pF C0G | C_0402_1005Metric | (111.3, 62.2) | E 1090 Receive Chain |  |
 | ☐ | **C32** | 100pF C0G | C_0402_1005Metric | (114.3, 62.2) | E 1090 Receive Chain |  |
 | ☐ | **C33** | 100pF C0G | C_0402_1005Metric | (120.4, 63.2) | E 1090 Receive Chain |  |
@@ -51,8 +51,8 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C43** | 3pF | C_0402_1005Metric | (115.9, 92.8) | D 978 Transceiver |  |
 | ☐ | **C44** | 3.6pF | C_0402_1005Metric | (112.8, 96.5) | D 978 Transceiver |  |
 | ☐ | **C45** | 100pF | C_0402_1005Metric | (110.7, 90.2) | D 978 Transceiver |  |
-| ☐ | **C46** | 3pF | C_0603_1608Metric | (104.9, 78.5) | E 1090 Receive Chain | Board silkscreen reads C47; use coordinates |
-| ☐ | **C47** | 200pF | C_0603_1608Metric | (104.9, 80.4) | E 1090 Receive Chain | Board silkscreen reads C46; use coordinates |
+| ☐ | **C46** | 3pF | C_0603_1608Metric | (104.9, 78.5) | E 1090 Receive Chain |  |
+| ☐ | **C47** | 200pF | C_0603_1608Metric | (104.9, 80.4) | E 1090 Receive Chain |  |
 | ☐ | **C48** | 1uF | C_0402_1005Metric | (107.4, 64.3) | E 1090 Receive Chain |  |
 | ☐ | **C49** | 100nF | C_0603_1608Metric | (76.7, 75.4) | E 1090 Receive Chain |  |
 | ☐ | **C51** | 1nF | C_0603_1608Metric | (77.0, 81.0) | E 1090 Receive Chain |  |
@@ -116,7 +116,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | — | **R30** | 1k DNP | R_0402_1005Metric | (96.8, 77.2) | **Not placed** (DNP) |  |
 | ☐ | **R31** | 1k | R_0603_1608Metric | (101.6, 75.7) | E 1090 Receive Chain |  |
 | ☐ | **R32** | 10k | R_0603_1608Metric | (104.9, 75.7) | E 1090 Receive Chain |  |
-| ☐ | **R33** | 100k | R_0603_1608Metric | (100.9, 82.7) | E 1090 Receive Chain | Board silkscreen reads C25; use coordinates |
+| ☐ | **R33** | 100k | R_0603_1608Metric | (100.9, 82.7) | E 1090 Receive Chain |  |
 | ☐ | **R34** | 10k | R_0603_1608Metric | (77.0, 73.2) | E 1090 Receive Chain |  |
 | ☐ | **R35** | 10k | R_0603_1608Metric | (77.0, 78.4) | E 1090 Receive Chain |  |
 | — | **R36** | 1k DNP | R_0603_1608Metric | (96.5, 81.8) | **Not placed** (DNP) |  |
@@ -150,7 +150,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **L11** | 6.8nH | L_0402_1005Metric | (118.2, 97.5) | D 978 Transceiver |  |
 | ☐ | **L12** | 6.8nH | L_0402_1005Metric | (118.2, 95.2) | D 978 Transceiver |  |
 | ☐ | **L13** | 7.5nH | L_0402_1005Metric | (110.7, 92.2) | D 978 Transceiver |  |
-| ☐ | **L14** | 100nH | L_0402_1005Metric | (101.1, 70.6) | E 1090 Receive Chain | Board silkscreen reads C30; use coordinates |
+| ☐ | **L14** | 100nH | L_0402_1005Metric | (101.1, 70.6) | E 1090 Receive Chain |  |
 | ☐ | **L15** | 33nH | L_0402_1005Metric | (57.6, 68.7) | C Sensors + GNSS |  |
 | ☐ | **L16** | 1uH | L_Bourns-SRN4018 | (139.7, 83.6) | A Power |  |
 | ☐ | **L17** | 4.7uH XEL4030-472MEC | L_Coilcraft_XxL4030 | (144.8, 95.0) | A Power |  |
