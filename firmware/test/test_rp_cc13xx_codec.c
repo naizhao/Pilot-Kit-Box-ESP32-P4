@@ -691,14 +691,17 @@ int main(void)
               "oob chunk rejected\n");
     }
 
-    /* 24. 审计 P2-a（§3.5/§4.9）：异步 ERROR（code 0x04/0x05）无对应命令，
-        seq 恒 0x0000 哨兵——编码按此构造、解码原样接受，seq 对账跳过由
-        调用方按 code 区分（codec 不解释语义，只钉住线格式可往返）。 */
+    /* 24. 审计 P2-a/P2-b（§3.5/§4.9）：异步 ERROR（code 0x04/0x05）无对应
+        命令，编码器强制 seq=0x0000 上线（P2-b：透传调用方非零 seq 即证伪）；
+        命令性 ERROR（0x01–0x03）保持回显。解码原样接受，对账跳过由调用方
+        按 code 区分（codec 不解释语义，只钉住线格式可往返）。 */
     {
         uint8_t buf[RP_CC13XX_MAX_FRAME];
         rp_cc13xx_error_t e = { .code = 0x04, .msg_len = 0 };
-        size_t n = rp_cc13xx_encode_error(buf, sizeof(buf), 0x0000, &e);
+        size_t n = rp_cc13xx_encode_error(buf, sizeof(buf), 0x1234, &e);
         CHECK(n == 12, "async err len got=%zu\n", n);
+        CHECK(buf[4] == 0x00 && buf[5] == 0x00,   /* 编码器强制哨兵 */
+              "async err wire seq forced\n");
 
         rp_cc13xx_msg_t m;
         CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
@@ -707,6 +710,11 @@ int main(void)
         rp_cc13xx_error_t out;
         CHECK(rp_cc13xx_decode_error(&m, &out) == RP_CC13XX_OK &&
               out.code == 0x04 && out.msg_len == 0, "async err parse\n");
+
+        e.code = 0x03;                          /* 命令性：回显保持 */
+        n = rp_cc13xx_encode_error(buf, sizeof(buf), 0x1234, &e);
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
+              m.seq == 0x1234, "cmd err echo seq\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

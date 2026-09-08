@@ -397,6 +397,10 @@ size_t rp_cc13xx_encode_error(uint8_t *out, size_t cap, uint16_t seq,
                               const rp_cc13xx_error_t *e)
 {
     if (!e || e->msg_len > RP_CC13XX_ERROR_MSG_MAX) return 0;   /* §4.9 */
+    /* §3.5/§4.9（round 7 P2-b）：异步 ERROR（code 0x04/0x05）无对应命令，
+     * 线上 seq 恒 0x0000 哨兵——强制覆盖调用方取值（调用方持有厂商上下文，
+     * 线上合同固定）；命令性 ERROR（0x01–0x03）保持回显语义。 */
+    if (e->code == 0x04 || e->code == 0x05) seq = 0x0000;
     uint8_t pl[2 + RP_CC13XX_ERROR_MSG_MAX];
     pl[0] = e->code;
     pl[1] = e->msg_len;
