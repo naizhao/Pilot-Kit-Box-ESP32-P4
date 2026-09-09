@@ -483,9 +483,21 @@ for f in sorted(board.GetFootprints(), key=_prio):
         _REF_Y[f.GetReference()] = cy
         n_ok += 1
     else:
-        ref.SetLayer(pcbnew.F_Fab)   # 找不到位：降到装配图层，不占板面丝印
+        # 找不到位：**仍然留在丝印层**，摆到本体正上方 1.0mm 处。
+        #
+        # 原来是降到 F.Fab（"不占板面丝印"），但那样在 KiCad 板编辑器里根本
+        # 看不见，手工精修时不知道该拖哪个；印出来的板子上那个件也就没有名字，
+        # 贴片时认不出是谁。v4 已于 2026-08-22 按同样理由改掉
+        # （评审原话："很多位号丝印出不来，是缺失的，**我调都没法调**"），
+        # 2026-09-10 v4 清掉最后一处 F.Fab 搬迁时同步到这里。
+        # 宁可重叠也要可见：重叠是 warning，看不见是没法干活。
+        # 真正的根治是给这些元件腾出位号空间（板面密度问题），不是把它藏起来。
+        _tw2, _th2 = _txt_wh(ref)
+        ref.SetPosition(pcbnew.VECTOR2I_MM(
+            round((bx0 + bx1) / 2, 3), round(by0 - 1.0 - _th2 / 2, 3)))
+        ref.SetTextAngleDegrees(0)
         n_fab += 1
-print(f"位号丝印: {n_ok} 个留在 F.SilkS，{n_fab} 个因无位降到 F.Fab")
+print(f"位号丝印: {n_ok} 个自动试位成功，{n_fab} 个无位→强制摆本体上方（可见但可能重叠）")
 
 # ---------------- ③ 品牌（背面）----------------
 CX = (X0 + X1) / 2
