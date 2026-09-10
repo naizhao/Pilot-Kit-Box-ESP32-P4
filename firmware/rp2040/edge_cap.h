@@ -103,6 +103,10 @@ void   edge_cap_start(void);
  * burst。RXSTALL 单沿丢失不置位（帧内损伤，该帧自然判负；见
  * edge_cap.c）。 */
 size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity);
+/* DMA 重武装/恢复入口（**core0 独占，主循环每次调用**）：处理满环停机
+ * （lost）与静默停摆（≥5 ms 无完成中断）。core1 侧调用 rearm 实测不生效
+ * （2026-09-10），故重武装统一归 core0。 */
+void edge_cap_service(void);
 uint32_t edge_cap_overruns(void);
 /* 诊断：等待消费的**FULL 块数**（0..7，不折算条目数；含消费者正在
  * 转换中的那块）。按块计——满块发布粒度下它以 256 条/块为台阶跳动。 */

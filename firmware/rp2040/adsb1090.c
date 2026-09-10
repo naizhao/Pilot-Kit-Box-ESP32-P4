@@ -17,6 +17,7 @@
 #include "selftest_gen.h"
 #include "threshold_ctl.h"
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
+#include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
 
 #define FRAME_RING_LEN 64u
 
@@ -154,6 +155,7 @@ int main(void)
         }
         p4_link_poll_rx();
         spim_poll(&s_spim, time_us_32());   /* WP-E：SUBG 事务（R14 节流） */
+        edge_cap_service();                 /* core0：DMA 重武装/停摆恢复 */
 
         int c = getchar_timeout_us(0);
         if (c == 'T') {
@@ -187,6 +189,43 @@ int main(void)
             printf("tl_level=%dmV rssi_raw=%d\n",
                    threshold_ctl_read_level_mv(),
                    threshold_ctl_read_rssi_raw());
+        } else if (c == 'A') {
+            /* 1090 天线切外接 J6（U16 SPDT：A=0/B=1） */
+            gpio_put(PIN_ANT_SEL_1090_A, 0);
+            gpio_put(PIN_ANT_SEL_1090_B, 1);
+            printf("1090 ant -> EXTERNAL (J6)\n");
+        } else if (c == 'a') {
+            /* 1090 天线切板载 IFA（U16：A=1/B=0，boot 默认） */
+            gpio_put(PIN_ANT_SEL_1090_A, 1);
+            gpio_put(PIN_ANT_SEL_1090_B, 0);
+            printf("1090 ant -> ONBOARD IFA\n");
+        } else if (c == 'N') {
+            /* GNSS 天线切 J2（U17：A=0/B=1，boot 默认） */
+            gpio_put(PIN_GNSS_SEL_A, 0);
+            gpio_put(PIN_GNSS_SEL_B, 1);
+            printf("GNSS ant -> J2\n");
+        } else if (c == 'n') {
+            /* GNSS 天线切 J8 内置 patch 位（U17：A=1/B=0） */
+            gpio_put(PIN_GNSS_SEL_A, 1);
+            gpio_put(PIN_GNSS_SEL_B, 0);
+            printf("GNSS ant -> J8\n");
+        } else if (c == 'P') {
+            /* 运行期设门限：'P' 后跟 1–4 位十进制 permille（0..1000），
+             * 非数字字符结束。闭环/协议下发是后续项（PLAN.md §6.5）。 */
+            int v = 0, d, n = 0;
+            for (;;) {
+                d = getchar_timeout_us(200000);
+                if (d < '0' || d > '9') break;
+                v = v * 10 + (d - '0');
+                if (++n >= 4) break;
+            }
+            if (n > 0 && v <= 1000) {
+                threshold_ctl_set_permille(v);
+                printf("tl -> %d permille (level=%dmV)\n", v,
+                       threshold_ctl_read_level_mv());
+            } else {
+                printf("tl set: 'P' + 0..1000\n");
+            }
         } else if (c == 'B') {
             /* 软入口回 BOOTSEL：现场重刷不用再拆机短接 SW2/SW1（J1 扣上
              * 时插拔 USB 不产生复位，硬进 BOOTSEL 很麻烦）。 */

@@ -31,7 +31,8 @@ void threshold_ctl_init(void)
     pwm_config_set_wrap(&c, TL_PWM_WRAP);
     pwm_init(slice, &c, true);
     pwm_set_chan_level(slice, pwm_gpio_to_channel(PIN_TL_PWM),
-                       (TL_PWM_WRAP + 1) / 2);      /* 50% */
+                       (uint16_t)((uint32_t)THRESHOLD_CTL_DEFAULT_PERMILLE *
+                                  (TL_PWM_WRAP + 1) / 1000));  /* 实测定值 */
     adc_init();
     adc_gpio_init(PIN_ADC_LEVEL);
     adc_gpio_init(PIN_ADC_RSSI);

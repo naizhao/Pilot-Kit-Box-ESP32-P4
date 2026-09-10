@@ -50,9 +50,9 @@ static uint32_t s_blocks[EDGE_CAP_Q_N_BLOCKS][EDGE_CAP_Q_BLOCK_ITEMS];
  * 写者 = 本 IRQ（core0）；consume_idx 唯一写者 = drain（core1）。 */
 static edgecap_q_t s_q;
 static atomic_uint s_overruns;      /* drain/IRQ 写、health 只读（诊断）*/
-static atomic_uint s_lost;          /* IRQ 满环停机置位（release）→ drain
-                                     * acquire 取走并尝试重启；单消费者
-                                     * 独占，无并发取用 */
+static atomic_uint s_lost;          /* IRQ 满环停机置位（release）→ core0
+                                     * service acquire 取走并尝试重启 */
+static atomic_uint s_completions;   /* IRQ 完成计数：core0 service 判停摆 */
 
 static void edge_cap_rearm(uint slot)
 {
@@ -94,6 +94,7 @@ static void __not_in_flash_func(edge_cap_dma_irq)(void)
     if (!intr)
         return;
     dma_hw->intr = intr;
+    atomic_fetch_add_explicit(&s_completions, 1, memory_order_relaxed);
 
     uint32_t next;
     if (edgecap_q_push_full(&s_q, &next)) {
@@ -199,35 +200,44 @@ size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
     if (disc && discontinuity)
         *discontinuity = true;
 
-    /* 满环停机的重启：lost 由 IRQ release 置位；取走（acquire）后尝试
-     * 重武装。arm_slot 失败 = 环仍满（保留槽未释放）→ 恢复标志等下一拍
-     * （arm_slot 失败无副作用，fill_idx 未动）。
-     *
-     * 重启卫生（round-2 Fix 3，确定性重初始化）：
-     *   1. edge_cap_pio_flush（停用 → pio_sm_restart → 清 FIFO →
-     *      pio_sm_init 重装配置 + PC 回程序起点 → 使能）在武装**之前**
-     *      执行——停机窗口里 PIO 塞进 RX FIFO 的残缺值整体丢弃，且 SM
-     *      从程序头干净起跑（旧"仅 restart + 清 FIFO"不复位 PC/X，SM
-     *      可能从中段带残缺 X 续跑，审计指认已修复）。新流从下一沿干净
-     *      开始：首条间隔自重启时刻起算，线路空闲低电平时 X 饱和推送
-     *      超大空闲标记，解码端按 >5µs 长隔关 burst、不与旧流拼接；
-     *      接缝处若恰有半截 burst，由 disc → modes_edge_reset 丢弃。
-     *   2. 重启武装的第一块 mark disc——该块数据之前有一段整段缺失的
-     *      真实时间，消费侧必须先 modes_edge_reset 丢弃半截 burst 再喂，
-     *      否则断点前后 delta 拼成假 burst（时间基保留、见 modes_edge.h，
-     *      断点后 start_tick 单调、轻微提前偏置）。 */
-    if (atomic_exchange_explicit(&s_lost, 0u, memory_order_acq_rel)) {
-        uint32_t slot;
-        if (edgecap_q_arm_slot(&s_q, &slot)) {
-            edge_cap_pio_flush();
-            edge_cap_rearm(slot);
-            edgecap_q_mark_disc(&s_q, slot);
-        } else {
-            atomic_store_explicit(&s_lost, 1u, memory_order_relaxed);
-        }
-    }
-
+    /* 满环停机的重启**不在这里做**：实测（2026-09-10）core1 侧调用
+     * edge_cap_rearm 会返回 BUSY=1 但完成中断再不来，管道永久静默；
+     * 同一条序列从 core0 调用则有效。故 DMA 重武装统一收归 core0 的
+     * edge_cap_service()（见下），core1 只做消费。 */
     return EDGE_CAP_Q_BLOCK_ITEMS;
+}
+
+/* core0 唯一的 DMA 重武装/恢复入口（主循环每次调用）：
+ *   · lost 置位（IRQ 满环停机）→ 立即尝试重启；
+ *   · ≥5 ms 无完成中断且 DMA 已停 → 判定静默停摆，重启。
+ * 重启卫生（round-2 Fix 3，确定性重初始化）：先 edge_cap_pio_flush
+ * （停用 → restart → 清 FIFO → pio_sm_init 重装配置 + PC 回程序起点 →
+ * 使能）丢弃停机窗口里的残缺流，再重武装；首块 mark disc，消费侧先
+ * modes_edge_reset 再喂（时间基保留、断点后单调，见 modes_edge.h）。 */
+void edge_cap_service(void)
+{
+    if (!s_started)
+        return;
+    static uint32_t last_seen, last_ms;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    uint32_t c = atomic_load_explicit(&s_completions, memory_order_relaxed);
+    if (c != last_seen) {
+        last_seen = c;
+        last_ms = now;
+    }
+    bool lost = atomic_load_explicit(&s_lost, memory_order_acquire);
+    if (!lost && (uint32_t)(now - last_ms) < 5u)
+        return;                       /* 刚完成过且无 lost：正常，不动 */
+    if (dma_channel_is_busy(s_dma_ch))
+        return;                       /* 仍在飞：正常，不动 */
+    uint32_t slot;
+    if (!edgecap_q_arm_slot(&s_q, &slot))
+        return;                       /* 环满：保留 lost，下拍再试 */
+    edge_cap_pio_flush();
+    edge_cap_rearm(slot);
+    edgecap_q_mark_disc(&s_q, slot);
+    atomic_store_explicit(&s_lost, 0u, memory_order_relaxed);
+    last_ms = now;
 }
 
 uint32_t edge_cap_overruns(void)
