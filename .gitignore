@@ -188,3 +188,7 @@ hardware/datasheets/*.png
 .worktrees/
 firmware/cc1312r/build/
 firmware/build-v3/
+
+# 仓库根的一次性产物：JLC 库检查输出、商店截图（无人引用，不进版本库）
+/jlc_libcheck.json
+/official-store-*.png
