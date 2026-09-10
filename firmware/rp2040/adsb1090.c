@@ -191,6 +191,15 @@ static void core0_poll_control(void *user)
         return;
     }
 
+    /* CC1312R 代刷模式（方案 A：先 4 字节小端长度，再是镜像）：进入后
+     * 所有字节都是镜像数据，交给 cjtag 引擎流式接收，不再按命令解析
+     * （镜像里的 'T'/'A'/'Q' 等字节不能当命令）。 */
+    if (cjtag_cdc_active()) {
+        if (c != PICO_ERROR_TIMEOUT)
+            cjtag_cdc_data((uint8_t)c);
+        return;
+    }
+
     if (c == 'T') {
         /* 闭环自检（审计 Fix 2）：DF17 要走通 PIO→DMA→解码全链路，
          * frames_112 增长才算收到；P4 侧 CRC 门在 P4 控制台另行
@@ -230,7 +239,7 @@ static void core0_poll_control(void *user)
         if (cjtag_cdc_enter()) {
             printf("FLASH-MODE READY (CC1312R IDCODE=0x%08X)\n",
                    cjtag_read_idcode());
-            printf("Send firmware binary, then 'Q' to finish.\n");
+            printf("Send 4-byte LE length, then the image.\n");
         } else {
             printf("FLASH-MODE FAIL (no JTAG response — check CC1312R "
                    "power/clock)\n");

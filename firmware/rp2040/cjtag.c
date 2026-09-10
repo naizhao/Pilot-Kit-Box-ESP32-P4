@@ -446,10 +446,26 @@ bool cjtag_flash_program(uint32_t addr, const uint8_t *data, size_t len)
 
 /* ── CDC 接口 ────────────────────────────────────────────────────── */
 
-static bool s_active = false;
+static bool     s_active = false;
 static uint8_t  s_buf[CC13_SECTOR_SIZE];
 static size_t   s_buf_len = 0;
-static uint32_t s_flash_addr = 0;
+static uint32_t s_flash_addr = 0;   /* 当前 sector 的 flash 地址（镜像从 0 起） */
+static uint32_t s_total = 0;        /* 镜像总长（4 字节小端头） */
+static uint32_t s_received = 0;     /* 已接收的数据字节数 */
+static uint8_t  s_hdr[4];
+static uint8_t  s_hdr_len = 0;
+static bool     s_hdr_done = false;
+
+/* 解锁 flash + 使能 DAP 电源（整个烧录期间保持；见 cjtag_flash_program）。 */
+static void flash_unlock(void)
+{
+    cjtag_ahb_write32(0x5000130C, 0xC35A01E2);
+    jtag_dp_write(DP_CTRLSTAT, DP_CTRL_CSYSPWRUP | DP_CTRL_CDBGPWRUP);
+}
+static void flash_lock(void)
+{
+    cjtag_ahb_write32(0x5000130C, 0xC35A01E3);
+}
 
 bool cjtag_cdc_enter(void)
 {
@@ -463,30 +479,89 @@ bool cjtag_cdc_enter(void)
         return false;
     }
 
+    flash_unlock();
     s_active = true;
-    s_buf_len = 0;
-    s_flash_addr = 0;
+    s_buf_len = 0; s_flash_addr = 0; s_total = 0; s_received = 0;
+    s_hdr_len = 0; s_hdr_done = false;
     return true;
 }
 
-bool cjtag_cdc_data(uint8_t byte)
+/* 把当前 4KB 缓冲擦→写→校验进 s_flash_addr，然后前进一个 sector。 */
+static bool flash_sector_flush(void)
 {
-    if (!s_active) return false;
-    if (s_buf_len < sizeof(s_buf)) {
-        s_buf[s_buf_len++] = byte;
-        return true;
+    if (s_buf_len == 0) return true;
+    if (!cjtag_flash_erase_sector(s_flash_addr)) return false;
+    for (size_t i = 0; i < s_buf_len; i += 4) {
+        uint32_t word = 0xFFFFFFFFu;
+        size_t n = (s_buf_len - i >= 4) ? 4 : (s_buf_len - i);
+        memcpy(&word, s_buf + i, n);
+        if (!cjtag_flash_write_word(s_flash_addr + i, word)) return false;
     }
-    return false;  /* 缓冲满 */
+    if (!cjtag_flash_verify(s_flash_addr, s_buf, s_buf_len)) return false;
+    s_flash_addr += CC13_SECTOR_SIZE;
+    s_buf_len = 0;
+    return true;
 }
 
+/* 中止：锁 flash、复位 CC1312、退出。 */
 void cjtag_cdc_quit(void)
 {
     if (!s_active) return;
-    if (s_buf_len > 0 && s_flash_addr > 0) {
-        cjtag_flash_program(s_flash_addr, s_buf, s_buf_len);
-    }
+    flash_lock();
     cjtag_exit();
     s_active = false;
+    printf("FLASH-ABORT\n");
+}
+
+/*
+ * 方案 A 流式接收：先 4 字节小端长度（镜像字节数），再是镜像本体。
+ * 边收边按 4KB 擦写校验；收满 s_total 即完成（无需终止符，避免镜像里
+ * 的 'Q'(0x51) 被当结束符截断）。任一 sector 失败即中止。
+ */
+bool cjtag_cdc_data(uint8_t byte)
+{
+    if (!s_active) return false;
+
+    if (!s_hdr_done) {
+        s_hdr[s_hdr_len++] = byte;
+        if (s_hdr_len < 4) return true;
+        s_total = (uint32_t)s_hdr[0] | ((uint32_t)s_hdr[1] << 8) |
+                  ((uint32_t)s_hdr[2] << 16) | ((uint32_t)s_hdr[3] << 24);
+        s_hdr_done = true;
+        if (s_total == 0 || s_total > CC13_FLASH_SIZE) {
+            printf("FLASH-FAIL: bad length %lu (max %u)\n",
+                   (unsigned long)s_total, (unsigned)CC13_FLASH_SIZE);
+            cjtag_cdc_quit();
+            return false;
+        }
+        printf("FLASH-RECV %lu bytes...\n", (unsigned long)s_total);
+        return true;
+    }
+
+    s_buf[s_buf_len++] = byte;
+    s_received++;
+
+    if (s_buf_len == sizeof(s_buf)) {
+        if (!flash_sector_flush()) {
+            printf("FLASH-FAIL: sector @0x%05lX\n", (unsigned long)s_flash_addr);
+            cjtag_cdc_quit();
+            return false;
+        }
+    }
+
+    if (s_received >= s_total) {
+        if (!flash_sector_flush()) {
+            printf("FLASH-FAIL: final sector @0x%05lX\n",
+                   (unsigned long)s_flash_addr);
+            cjtag_cdc_quit();
+            return false;
+        }
+        flash_lock();
+        cjtag_exit();                 /* 复位 CC1312，跑新镜像 */
+        s_active = false;
+        printf("FLASH-DONE %lu bytes\n", (unsigned long)s_total);
+    }
+    return true;
 }
 
 bool cjtag_cdc_active(void)
