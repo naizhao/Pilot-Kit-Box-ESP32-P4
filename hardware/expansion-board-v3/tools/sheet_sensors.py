@@ -6,7 +6,11 @@
   CLKSEL0=1+CLKSEL1(内部下拉)=0→内部振荡器；BOOTN 10k 上拉
 - BMP388: DS001-07 — CSB=VDDIO→I2C 锁定；SDO=GND→0x76（与 baro_task.c:29 一致）
 - QMC5883P: 13-52-19 RevA — C1 脚 4.7µF 储能；SET/RST 电容不需要（内置驱动）
-- ATGM336H: 6N 手册 — ON/OFF 拉高常开；nRESET 可悬空；RF_IN 由板上偏置支路供电
+- ATGM336H: 6N 手册 — ON/OFF 拉高常开；nRESET 可悬空。手册 §1.11/§2.7：VCC_RF
+  (pin14) 是模块的 +3.3V 天线馈电输出，模块内部经电感接到 RF_IN 并据此做
+  天线接入/断开/短路检测。本板 RF_IN 与天线之间隔着不能过直流的射频开关，
+  内部馈电到不了天线，所以把 VCC_RF 引出当作两路偏置 Tee 的电源——模块的
+  检测电流即被选通支路的天线电流，$GPTXT 才会报 OK/OPEN/SHORT。
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -73,7 +77,7 @@ s.place("C16", "Device", "C", 165.1, 71.12, {"1": "3V3_DIG", "2": "GND"}, value=
 # ---- ATGM336H-6N-74 ----
 s.place("U7", PRJ, "ATGM336H", 190.5, 137.16, {
     "8": "3V3_GNSS", "6": "3V3_GNSS",
-    "14": "NC", "11": "GNSS_RF_IN",
+    "14": "GNSS_VCC_RF", "11": "GNSS_RF_IN",
     "1": "GND", "10": "GND", "12": "GND",
     "2": "GNSS_TXD", "3": "GNSS_RXD", "4": "GNSS_PPS",
     "5": "3V3_GNSS",       # ON/OFF 拉高常开
@@ -84,6 +88,8 @@ s.place("U7", PRJ, "ATGM336H", 190.5, 137.16, {
 # 开关 RF 口不能过直流 → 每支路各一个偏置 Tee，且都在隔直电容外侧。
 # AS179/XA17 真值表：V1低/V2高选J2，V1高/V2低选J3。
 # 高边 PMOS 低有效，因此外接 J2 的 Q4 栅极接 V1/A，内置 J3 的 Q5 栅极接 V2/B。
+# 两路 PMOS 的源极接模块 VCC_RF(U7.14) 而非 LDO 轨 3V3_GNSS：有源天线的电流必须
+# 从 VCC_RF 流出，模块才能做接入检测；选通仍由 Q4/Q5 完成，未选通支路不耗电。
 s.place("C57", "Device", "C", 215.9, 71.12, {"1": "GNSS_RF_IN", "2": "SW2_J1"},
         value="100pF", footprint=C0402)
 s.place("U17", "RF_Switch", "AS179-92LF", 241.3, 88.9, {
@@ -97,7 +103,7 @@ s.place("U17", "RF_Switch", "AS179-92LF", 241.3, 88.9, {
 s.place("C58", "Device", "C", 266.7, 71.12, {"1": "ANT_GNSS_EXT", "2": "SW2_J2"},
         value="100pF", footprint=C0402)
 s.place("Q4", "Transistor_FET", "AO3401A", 279.4, 88.9,
-        {"G": "ANT_SEL_GNSS_A", "S": "3V3_GNSS", "D": "GNSS_EXT_FUSE"},
+        {"G": "ANT_SEL_GNSS_A", "S": "GNSS_VCC_RF", "D": "GNSS_EXT_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
 s.place("F4", "Device", "Polyfuse", 292.1, 71.12, {"1": "GNSS_EXT_FUSE", "2": "GNSS_EXT_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")
@@ -107,7 +113,7 @@ s.place("L2", "Device", "L", 304.8, 71.12, {"1": "GNSS_EXT_FEED", "2": "ANT_GNSS
 s.place("C59", "Device", "C", 266.7, 96.52, {"1": "ANT_GNSS_INT", "2": "SW2_J3"},
         value="100pF", footprint=C0402)
 s.place("Q5", "Transistor_FET", "AO3401A", 279.4, 114.3,
-        {"G": "ANT_SEL_GNSS_B", "S": "3V3_GNSS", "D": "GNSS_INT_FUSE"},
+        {"G": "ANT_SEL_GNSS_B", "S": "GNSS_VCC_RF", "D": "GNSS_INT_FUSE"},
         value="AO3401A", footprint="Package_TO_SOT_SMD:SOT-23")
 s.place("F5", "Device", "Polyfuse", 292.1, 96.52, {"1": "GNSS_INT_FUSE", "2": "GNSS_INT_FEED"},
         value="6V/200mA", footprint="Fuse:Fuse_0805_2012Metric")

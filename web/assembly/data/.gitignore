@@ -1,0 +1,6 @@
+# 采购批次来自 ~/Downloads/BOM_采购清单*.xlsx，是个人采购数据
+# （含采购量、已购状态），不进仓库。
+#
+# 缺这个文件网页照常工作，只是不显示「第几批」。
+# 重新生成：hardware/tools/gen_assembly_web.py
+batches.json

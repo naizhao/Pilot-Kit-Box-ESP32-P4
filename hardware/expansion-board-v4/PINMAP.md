@@ -1,4 +1,4 @@
-# Expansion Board V4.4 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
+# Expansion Board V4.5 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -81,7 +81,8 @@ only the HS pair (pin27/25) can be used, at the cost of permanently occupying H2
 ```
 J3 VCC_5V ──┬── ME6211C33 (500mA) ──→ 3V3_DIG: RP2040, Flash, CC1312R (via ferrite bead), BNO085, BMP388, QMC5883P
             ├── TPS7A2033 #1 ──────→ 3V3_RF: QPL9547, BGA2817, AD8313, TLV3501 comparator domain
-            └── TPS7A2033 #2 ──────→ 3V3_GNSS: ATGM336H-6N-74 + two antenna bias tees
+            └── TPS7A2033 #2 ──────→ 3V3_GNSS: ATGM336H-6N-74
+GNSS active-antenna bias (×2: internal patch / external SMA): ATGM336H VCC_RF (U7.14) → PMOS high-side switch (Q4/Q5) → 6V/200mA fuse → 33nH feed inductor → antenna. The module senses the VCC_RF current to report ANTENNA OK/OPEN/SHORT.
 Bias tees (×2: 1090 / 978)〔A〕: PMOS high-side switch + 6V/200mA fuse + 100nH feed inductor + ESD (0.6pF class)
 ```
 
@@ -116,7 +117,7 @@ stopping at 50.0mm. In the case with the battery fitted it measured **1082.5MHz,
 | BNO085 | I2C address 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1 and SA0 tied low; CLKSEL0 and H_CSN tied high; V4.4 footprint rotation is 90° |
 | BMP388 | I2C addr 0x76 (baro_task.c:29) + BARO_INT(GPIO31) | case keeps a vent hole |
 | QMC5883P | I2C address 0x2C | keep away from inductors / high-current traces; pins and support network verified against the datasheet |
-| ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3; 1PPS → GPIO50; VCC_RF feeds the active antenna | 18-pin LCC, pin diagram verified (manual §2.3) |
+| ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3; 1PPS → GPIO50; VCC_RF (pin 14) powers the two bias-tee PMOS sources (Q4/Q5) so the module can detect the active antenna | 18-pin LCC, pin diagram verified (manual §2.3, §2.7) |
 | GNSS antenna | third U.FL | V1 uses fully external antennas |
 
 ## 7. Known conflicts / to-verify list

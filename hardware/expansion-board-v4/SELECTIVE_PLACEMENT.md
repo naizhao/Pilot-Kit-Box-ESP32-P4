@@ -1,4 +1,4 @@
-# V4.4 Selective Placement / Mutually Exclusive Parts Reference
+# V4.5 Selective Placement / Mutually Exclusive Parts Reference
 
 Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
@@ -87,6 +87,8 @@ GNSS front end ──[C57]── SW2_J1 ──(U17)──┬── SW2_J2 ──
 
 **Difference from the 1090 side: the GNSS side has no bypass resistor** — without `U17` there is no path at all.
 **`U17` must be placed at assembly**; otherwise GNSS receives no signal at all.
+
+**Active-antenna bias:** both branches are active antennas, so each has its own bias tee (the switch's RF port cannot pass DC). The PMOS source is the module's `VCC_RF` (U7.14), not the 3V3_GNSS LDO rail — that is what lets the module sense the antenna current and report `ANTENNA OK/OPEN/SHORT`.
 
 ---
 

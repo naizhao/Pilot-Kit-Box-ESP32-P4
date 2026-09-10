@@ -1,4 +1,4 @@
-# V4.4 Onboard 1090MHz IFA Verification and Tuning Spares List
+# V4.5 Onboard 1090MHz IFA Verification and Tuning Spares List
 Chinese version: [`BOM_IFA_TUNING-zh_CN.md`](BOM_IFA_TUNING-zh_CN.md)
 
 > Purpose: verify the measured 50.0mm v4 onboard 1090MHz IFA, and keep optional matching-network spares for enclosure or laminate changes.

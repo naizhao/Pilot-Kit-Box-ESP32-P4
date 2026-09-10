@@ -981,13 +981,17 @@ class ComponentContractTest(unittest.TestCase):
                         )
 
     def test_bias_and_antenna_select_pullups_track_driver_rail(self):
-        """四颗栅极上拉必须与驱动源同轨（3V3_DIG），不能挂在 3V3_GNSS 上。
+        """四颗栅极上拉必须与驱动源同轨（3V3_DIG），不能挂在偏置源上。
 
-        Q2/Q3/Q4/Q5 的源极都是 3V3_GNSS，把栅极上拉也接到 3V3_GNSS 看似能保证
-        Vgs=0 关断，但驱动端是 RP2040 的 GPIO（3V3_DIG 域）：数字域掉电时
-        3V3_GNSS 会经 10k 倒灌进未上电的 IO。改到 3V3_DIG 后这条路径消失，
-        而上电时序仍安全——3V3_DIG 由 ME6211（无软启动）供给，3V3_GNSS 由
-        TPS7A20（软启动 750-1150µs）供给，数字轨先建立，全程 Vgs >= 0。
+        Q2/Q3/Q4/Q5 的栅极由 RP2040 的 GPIO 驱动（3V3_DIG 域），把上拉也接到
+        偏置源看似能保证 Vgs=0 关断，但数字域掉电时偏置源会经 10k 倒灌进未上电的
+        IO。改到 3V3_DIG 后这条路径消失，而上电时序仍安全——3V3_DIG 由 ME6211
+        （无软启动）供给，3V3_GNSS 由 TPS7A20（软启动 750-1150µs）供给，数字轨先
+        建立，全程 Vgs >= 0。
+
+        V4.5 起 GNSS 两路 PMOS(Q4/Q5) 的源极从 3V3_GNSS 改为模块的 VCC_RF，
+        978/1090 两路(Q2/Q3) 仍留在 3V3_GNSS：GNSS 天线电流必须从 VCC_RF 流出，
+        模块才能做接入检测。
         """
         expected = {
             ("R17", "1"): "3V3_DIG", ("R17", "2"): "BIAS_EN_978",
@@ -995,7 +999,8 @@ class ComponentContractTest(unittest.TestCase):
             ("R26", "1"): "3V3_DIG", ("R26", "2"): "ANT_SEL_GNSS_A",
             ("R27", "1"): "3V3_DIG", ("R27", "2"): "ANT_SEL_GNSS_B",
         }
-        sources = {("Q2", "2"), ("Q3", "2"), ("Q4", "2"), ("Q5", "2")}
+        sources_ldo = {("Q2", "2"), ("Q3", "2")}        # 978 / 1090 bias tees
+        sources_vccrf = {("Q4", "2"), ("Q5", "2")}      # GNSS bias tees
         for board, (pin_nets, values) in self.schematic.items():
             if board != "expansion-board-v4":
                 continue  # V3 在 Task 13（V3-BACKPORT）回灌
@@ -1003,9 +1008,10 @@ class ComponentContractTest(unittest.TestCase):
                 self.assertEqual({key: pin_nets.get(key) for key in expected}, expected)
                 for ref in ("R17", "R18", "R26", "R27"):
                     self.assertEqual(values.get(ref), "10k")
-                # 源极仍应全部在 3V3_GNSS：本修复只改电源端，不动功率路径。
-                for key in sources:
+                for key in sources_ldo:
                     self.assertEqual(pin_nets.get(key), "3V3_GNSS", key)
+                for key in sources_vccrf:
+                    self.assertEqual(pin_nets.get(key), "GNSS_VCC_RF", key)
 
     def test_reset_chipselect_pullups_and_pulses_series_damping(self):
         """P1-14：IMU_RST/SUBG_CSN 在 MCU 复位期不能悬空；P2-10：PULSES 需源端阻尼。

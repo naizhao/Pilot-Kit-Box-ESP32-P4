@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilot Kit 贴片助手</title>
+<style>
+/* 焊接台前用的工具：深色底不刺眼，字号往大了给，关键信息一眼可读。
+   配色只用三个状态色——当前(琥珀)、已贴(绿)、同组待贴(蓝)，多了就分不清。 */
+:root{
+  --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e;
+  --cur:#f0a020; --done:#3fb950; --peer:#58a6ff; --warn:#f85149;
+  --copper:#4a3f30; --board:#12351f;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text); overflow:hidden;
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;text-align:left}
+kbd{
+  display:inline-block;padding:1px 6px;border:1px solid var(--line);border-bottom-width:2px;
+  border-radius:4px;background:#21262d;font:600 12px/1.4 ui-monospace,monospace;color:var(--dim);
+}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+/* ── 版本选择 ───────────────────────────────────────────── */
+#picker{
+  position:fixed;inset:0;z-index:50;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding:40px;
+}
+#picker h1{font-size:26px;font-weight:650;letter-spacing:.3px}
+#picker .lead{color:var(--dim);font-size:14px;margin-top:-18px}
+.cards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;max-width:1000px}
+.card{
+  width:290px;padding:22px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);transition:border-color .15s,transform .15s;
+}
+.card:hover{border-color:var(--cur);transform:translateY(-2px)}
+.card h2{font-size:19px;margin-bottom:8px}
+.card .sub{color:var(--dim);font-size:13px;min-height:38px}
+.card .num{margin-top:14px;color:var(--cur);font-size:13px}
+.card .resume{margin-top:8px;color:var(--done);font-size:12px}
+.err{color:var(--warn);max-width:540px;line-height:1.7}
+
+/* ── 主界面 ─────────────────────────────────────────────── */
+#app{display:none;height:100%;flex-direction:column}
+#app.on{display:flex}
+header{border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.hrow{display:flex;align-items:stretch}
+
+/* 当前料信息：这块是「准备元件」时盯着看的，所以给最大的字 */
+#spec{flex:1;padding:14px 20px;min-width:0}
+#specTop{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+#specVal{font-size:30px;font-weight:680;letter-spacing:.2px;line-height:1.15;overflow-wrap:anywhere}
+#specFp{font-size:16px;color:var(--dim);font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+.tag{font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+.tag.lcsc{border-color:#2d4a6b;color:var(--peer)}
+.tag.polar{border-color:var(--warn);color:var(--warn)}
+.tag.back{border-color:var(--cur);color:var(--cur)}
+.tag.batch{border-color:#2dd4bf;color:#5eead4;font-weight:600}
+
+/* 介质：0402 的 100pF C0G 和 100pF X7R 外观一模一样，混在桌上分不回来，
+   而射频位锁死要 C0G。所以介质比别的标签都要抢眼——粗体、实底、三档三色。 */
+.diel{
+  font:700 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  padding:3px 11px;border-radius:6px;letter-spacing:.6px;border:1px solid;
+}
+.diel.C0G{background:#0d3b3a;border-color:#2dd4bf;color:#5eead4}
+.diel.X7R{background:#14264d;border-color:#60a5fa;color:#93c5fd}
+.diel.X5R{background:#2c1d4d;border-color:#a78bfa;color:#c4b5fd}
+.diel.other{background:#2a2419;border-color:#a1874a;color:#d8bd7c}
+/* 材质要求跟实配不一样时的小字说明（要求 X7R、实配 C0G，向上兼容） */
+.diel-req{font-size:11.5px;color:var(--dim)}
+#specMeta{margin-top:5px;color:var(--dim);font-size:13.5px}
+#specNote{
+  margin-top:6px;font-size:12.5px;color:#a9b4c0;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+
+/* 数量：换料时一次抓够几个，是这个工具存在的理由之一 */
+#qty{
+  flex:none;width:172px;padding:14px 18px;border-left:1px solid var(--line);
+  display:flex;flex-direction:column;justify-content:center;text-align:center;
+}
+#qtyNum{font-size:38px;font-weight:700;line-height:1;color:var(--cur)}
+#qtyNum small{font-size:19px;color:var(--dim);font-weight:500}
+#qtyLbl{font-size:12px;color:var(--dim);margin-top:5px;letter-spacing:.4px}
+#curRef{
+  flex:none;width:190px;border-left:1px solid var(--line);padding:14px 18px;
+  display:flex;flex-direction:column;justify-content:center;text-align:center;
+}
+#curRefTxt{font-size:40px;font-weight:700;line-height:1;color:var(--cur);font-family:ui-monospace,monospace}
+#curRefSub{font-size:12px;color:var(--dim);margin-top:6px}
+/* 分类导航条 */
+#kinds{
+  display:flex;gap:6px;padding:0 16px 10px;overflow-x:auto;scrollbar-width:thin;
+}
+.kind{
+  flex:none;display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:8px;
+  border:1px solid var(--line);font-size:13px;color:var(--dim);white-space:nowrap;
+}
+.kind:hover{border-color:var(--peer);color:var(--text)}
+.kind .n{font:600 12px/1 ui-monospace,monospace;opacity:.85}
+.kind.cur{border-color:var(--cur);color:var(--cur);background:#2a2010}
+.kind.cur .n{opacity:1}
+.kind.fin{border-color:#1f4a2c;color:var(--done)}
+.kind.fin .n::before{content:"✓ "}
+
+#bar{height:3px;background:#21262d}
+#barFill{height:100%;background:var(--done);width:0;transition:width .2s}
+
+/* 板上的浮动 tips：眼睛盯着板子时，值和封装就在高亮旁边，
+   不用抬头去看顶栏。用 HTML 浮层而不是 SVG 文字——SVG 里字号是 mm，
+   缩放时会跟着变大变小，这块信息必须任何缩放下都一样清楚。 */
+#tip{
+  position:absolute;z-index:5;pointer-events:none;display:none;
+  padding:7px 12px;border-radius:9px;border:1px solid var(--cur);
+  background:#1a1305f2;box-shadow:0 6px 20px rgba(0,0,0,.55);
+  transform:translate(-50%,-100%);white-space:nowrap;
+}
+#tip.on{display:block}
+#tipMain{display:flex;align-items:baseline;gap:9px}
+#tipVal{font:700 24px/1.1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--cur)}
+#tipSize{
+  font:700 15px/1.1 ui-monospace,monospace;color:#1a1200;background:var(--cur);
+  padding:3px 8px;border-radius:5px;letter-spacing:.5px;
+}
+#tipSub{margin-top:4px;display:flex;align-items:center;gap:7px;font-size:12px;color:#c9b28a}
+#tip .diel{font-size:11.5px;padding:1px 7px}
+/* 小尖角指向元件；tips 翻到元件下方时尖角也要跟着翻到顶上 */
+#tip::after{
+  content:"";position:absolute;left:50%;bottom:-6px;width:10px;height:10px;
+  margin-left:-5px;background:#1a1305;border-right:1px solid var(--cur);
+  border-bottom:1px solid var(--cur);transform:rotate(45deg);
+}
+#tip.below::after{
+  bottom:auto;top:-6px;border-right:none;border-bottom:none;
+  border-left:1px solid var(--cur);border-top:1px solid var(--cur);
+}
+
+/* ── 主体 ──────────────────────────────────────────────── */
+main{flex:1;display:flex;min-height:0}
+#boardWrap{flex:1;position:relative;min-width:0;background:#0a0d12}
+#board{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#board.drag{cursor:grabbing}
+
+/* 放大镜：0402 在全板视图上只有几个像素，找焊盘全靠这块 */
+#zoom{
+  position:absolute;right:14px;bottom:14px;width:290px;height:200px;
+  border:1px solid var(--line);border-radius:10px;background:#0a0d12;overflow:hidden;
+  box-shadow:0 8px 28px rgba(0,0,0,.6);
+}
+#zoomSvg{width:100%;height:100%;display:block}
+#zoomLbl{
+  position:absolute;top:0;left:0;right:0;padding:5px 9px;font-size:11px;color:var(--dim);
+  background:linear-gradient(#0a0d12ee,#0a0d1200);letter-spacing:.4px;pointer-events:none;
+}
+#sideNote{
+  position:absolute;left:50%;top:16px;transform:translateX(-50%);
+  padding:8px 18px;border-radius:99px;font-size:14px;font-weight:600;
+  background:var(--cur);color:#1a1200;display:none;pointer-events:none;
+}
+#sideNote.on{display:block}
+
+/* 批量操作的反馈条。一键标 23 个必须有回执，否则不知道到底动了什么 */
+#toast{
+  position:absolute;left:50%;bottom:20px;transform:translate(-50%,8px);
+  z-index:9;pointer-events:none;opacity:0;transition:opacity .16s,transform .16s;
+  display:flex;align-items:center;gap:12px;
+  padding:11px 20px;border-radius:10px;font-size:14px;
+  background:#10241af5;border:1px solid #2f7a4d;color:#b9f0cd;
+  box-shadow:0 10px 34px rgba(0,0,0,.6);white-space:nowrap;
+}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+#toast .hint{
+  font-size:12px;color:#7fb896;border-left:1px solid #2f7a4d;padding-left:12px;
+}
+
+/* 换料卡。只在切到新的一种料时弹一次——每个位号都弹就成了噪音，
+   而换料是唯一需要离开板子、去翻料盒的时刻，值得打断一下。 */
+#swap{
+  position:absolute;left:50%;top:22%;transform:translate(-50%,-8px) scale(.97);
+  z-index:8;pointer-events:none;opacity:0;
+  padding:20px 34px 18px;border-radius:16px;text-align:center;
+  background:#161005f5;border:2px solid var(--cur);
+  box-shadow:0 18px 60px rgba(0,0,0,.7), 0 0 0 1px #f0a02033;
+  transition:opacity .18s ease-out, transform .18s ease-out;
+}
+#swap.on{opacity:1;transform:translate(-50%,0) scale(1)}
+#swap .lbl{
+  font-size:12px;letter-spacing:4px;color:var(--cur);opacity:.8;margin-bottom:8px;
+}
+#swap .row{display:flex;align-items:baseline;justify-content:center;gap:14px}
+#swapVal{
+  font:700 46px/1.05 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);
+}
+#swapSize{
+  font:700 26px/1 ui-monospace,monospace;color:#1a1200;background:var(--cur);
+  padding:5px 13px;border-radius:8px;letter-spacing:1px;
+}
+#swap .qty{margin-top:12px;font-size:17px;color:#d8c39a}
+#swap .qty b{font:700 30px/1 ui-monospace,monospace;color:var(--cur);margin:0 3px}
+#swap .meta{
+  margin-top:10px;display:flex;align-items:center;justify-content:center;gap:9px;
+  font-size:13px;color:var(--dim);flex-wrap:wrap;
+}
+/* 采购批次：换料时第一件事就是去翻哪一袋，所以给它独立一行、够大的字 */
+#swapBatch{display:none}
+#swapBatch.on{
+  display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
+  margin-top:13px;padding-top:12px;border-top:1px solid #3a2c12;
+}
+#swapBatch .no{
+  font:700 20px/1 ui-monospace,monospace;color:#7ee2c0;
+  background:#0d3b3a;border:1px solid #2dd4bf;border-radius:7px;padding:5px 12px;
+}
+#swapBatch .nm{font-size:13px;color:#9fb0a8}
+#swapBatch.none .nm{color:#7d7466}
+
+/* 组内位号列表：能看到这种料还要贴哪几个 */
+#side{
+  flex:none;width:250px;border-left:1px solid var(--line);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0;
+}
+/* 封装名能有 40 多字符（PinHeader_2x20_P2.54mm_Vertical_SMD），必须断行不能截断 */
+#sideHead{
+  padding:11px 15px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim);
+  letter-spacing:.4px;overflow-wrap:anywhere;line-height:1.5;
+}
+#sideHead .t{display:block}
+.allBtn{
+  margin-top:8px;width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:7px;
+  font-size:12.5px;color:var(--dim);text-align:center;letter-spacing:.3px;
+}
+.allBtn:hover{border-color:var(--done);color:var(--done);background:#3fb95012}
+.allBtn.sheet{width:auto;margin:0 0 0 10px;padding:4px 11px;font-size:12px}
+#refList{flex:1;overflow-y:auto;padding:7px}
+.refItem{
+  display:flex;align-items:center;gap:9px;width:100%;padding:8px 11px;border-radius:7px;
+  font-size:15px;font-family:ui-monospace,monospace;
+}
+.refItem:hover{background:#21262d}
+.refItem .dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.refItem .pos{margin-left:auto;font-size:11px;color:var(--dim);flex:none;padding-left:8px}
+/* 合并同料号后各位号的用途（U.FL 的 5 个射频口），接错就是接错天线 */
+.refItem .use{
+  font-size:11px;color:var(--peer);font-family:inherit;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.refItem.done{color:var(--done)}
+.refItem.done .dot{background:var(--done)}
+.refItem.cur{background:#2a2010;color:var(--cur);font-weight:700}
+.refItem.cur .dot{background:var(--cur);box-shadow:0 0 0 3px #f0a02033}
+.refItem.pending .dot{background:var(--peer)}
+.refItem.skip{color:#8a6a3a;text-decoration:line-through}
+
+footer{
+  flex:none;border-top:1px solid var(--line);background:var(--panel);
+  padding:9px 16px;display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--dim);
+}
+footer .sp{flex:1}
+.act{padding:5px 13px;border:1px solid var(--line);border-radius:7px}
+.act:hover{border-color:var(--cur);color:var(--cur)}
+
+/* ── 焊接表 ────────────────────────────────────────────── */
+/* 背景要压住底下的板视图：留一点透明能看出层次，但底下 30px 的规格大字会
+   透过来跟表格文字叠在一起，糊成一片。加毛玻璃把它彻底压掉。 */
+#sheet{
+  position:fixed;inset:0;z-index:40;background:#0d1117f7;display:none;
+  flex-direction:column;padding:26px 30px;backdrop-filter:blur(14px);
+}
+.grp.here{border-color:var(--cur)}
+#sheet.on{display:flex}
+#sheetHead{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex:none}
+#sheetHead h2{font-size:21px}
+#sheetStat{color:var(--dim);font-size:13.5px}
+#sheetBody{flex:1;overflow-y:auto}
+.grp{margin-bottom:22px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.grpHead{display:flex;align-items:center;gap:12px;padding:11px 15px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.grpHead .v{font-size:16px;font-weight:650}
+.grpHead .f{font-size:13px;color:var(--dim);font-family:ui-monospace,monospace}
+.grpHead .c{margin-left:auto;font-size:13px;color:var(--dim)}
+.grpRefs{display:flex;flex-wrap:wrap;gap:7px;padding:12px 15px}
+.chk{
+  display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);
+  border-radius:7px;font-family:ui-monospace,monospace;font-size:14px;
+}
+.chk:hover{border-color:var(--peer)}
+.chk .box{
+  width:16px;height:16px;border:1.5px solid var(--dim);border-radius:4px;flex:none;
+  display:flex;align-items:center;justify-content:center;font-size:11px;color:transparent;
+}
+.chk.on{border-color:var(--done);color:var(--done);background:#3fb95015}
+.chk.on .box{border-color:var(--done);background:var(--done);color:#0d1117}
+.chk .b{font-size:10px;color:var(--cur)}
+.chk .u{font-size:10.5px;color:var(--peer);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chk .go{font-size:11px;color:var(--dim);padding:0 2px}
+.chk .go:hover{color:var(--cur)}
+</style>
+</head>
+<body>
+
+<div id="picker">
+  <h1>Pilot Kit 贴片助手</h1>
+  <div class="lead">选一个版本开始。进度存在本机浏览器里，关掉再开还在。</div>
+  <div class="cards" id="cards"></div>
+  <div style="color:var(--dim);font-size:12.5px;text-align:center">
+    <kbd>空格</kbd> 标记已贴并跳下一个 &nbsp;·&nbsp; <kbd>←</kbd> 退回上一个 &nbsp;·&nbsp;
+    <kbd>S</kbd> 跳过 &nbsp;·&nbsp; <kbd>Tab</kbd> 焊接表
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <div class="hrow">
+      <div id="spec">
+        <div id="specTop">
+          <span id="specVal">—</span>
+          <span id="specFp"></span>
+          <span id="specTags"></span>
+        </div>
+        <div id="specMeta"></div>
+        <div id="specNote"></div>
+      </div>
+      <div id="qty">
+        <div id="qtyNum">—</div>
+        <div id="qtyLbl">这种料要贴</div>
+      </div>
+      <div id="curRef">
+        <div id="curRefTxt">—</div>
+        <div id="curRefSub"></div>
+      </div>
+    </div>
+    <!-- 分类导航：贴完电容直接跳电阻，不用一路按空格穿过去 -->
+    <div id="kinds"></div>
+    <div id="bar"><div id="barFill"></div></div>
+  </header>
+
+  <main>
+    <div id="boardWrap">
+      <svg id="board"></svg>
+      <div id="tip">
+        <div id="tipMain"><span id="tipVal"></span><span id="tipSize"></span></div>
+        <div id="tipSub"></div>
+      </div>
+      <!-- 换料卡：切到新的一种料时弹一次，告诉你去料盒里拿什么、拿几颗 -->
+      <div id="swap">
+        <div class="lbl">换料</div>
+        <div class="row"><span id="swapVal"></span><span id="swapSize"></span></div>
+        <div class="qty">备料 <b id="swapQty"></b> 颗</div>
+        <div id="swapBatch"></div>
+        <div class="meta" id="swapMeta"></div>
+      </div>
+      <div id="sideNote"></div>
+      <div id="toast"></div>
+      <div id="zoom"><svg id="zoomSvg"></svg><div id="zoomLbl">放大</div></div>
+    </div>
+    <div id="side">
+      <div id="sideHead">这种料的位置</div>
+      <div id="refList"></div>
+    </div>
+  </main>
+
+  <footer>
+    <span><kbd>空格</kbd> 已贴 → 下一个</span>
+    <span><kbd>Enter</kbd> 整组已贴</span>
+    <span><kbd>Z</kbd> 撤销</span>
+    <span><kbd>←</kbd> 退回</span>
+    <span><kbd>S</kbd> 跳过</span>
+    <span><kbd>F</kbd> 翻面</span>
+    <span><kbd>0</kbd> 复位</span>
+    <span class="sp"></span>
+    <span id="src" class="mono" style="opacity:.65"></span>
+    <span id="stat" class="mono"></span>
+    <button class="act" id="btnSheet">焊接表 <kbd>Tab</kbd></button>
+    <button class="act" id="btnBack">换版本</button>
+  </footer>
+</div>
+
+<div id="sheet">
+  <div id="sheetHead">
+    <h2>焊接表</h2>
+    <span id="sheetStat"></span>
+    <span style="flex:1"></span>
+    <button class="act" id="btnReset">全部清空</button>
+    <button class="act" id="btnClose">关闭 <kbd>Esc</kbd></button>
+  </div>
+  <div id="sheetBody"></div>
+</div>
+
+<script>
+"use strict";
+
+// ── 状态 ────────────────────────────────────────────────────
+let DOC = null;          // 当前变体的完整数据
+let FLAT = [];           // 展平的推进序列 [{gi, pi, part, group}]
+let cursor = 0;          // FLAT 的下标
+let done = new Set();    // 已贴位号
+let skipped = new Set(); // 主动跳过的位号
+let viewSide = "F";      // 当前显示哪一面
+let view = null;         // 板视图的 viewBox {x, y, w, h}
+
+const $ = (id) => document.getElementById(id);
+const KEY = (id) => "pk-assembly-" + id;
+
+/* DOM 一律用 createElement + textContent 拼，不走 innerHTML 字符串插值。
+   位号、规格、备注都来自 BOM/PCB 文件——那是数据，不是代码，不该有机会
+   变成 DOM 结构。事件也全部 addEventListener，没有内联 onclick。 */
+function h(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const k in props || {}) {
+    if (k === "class") n.className = props[k];
+    else if (k === "text") n.textContent = props[k];
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), props[k]);
+    else n.setAttribute(k, props[k]);
+  }
+  for (const kid of kids) if (kid) n.appendChild(kid);
+  return n;
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+// ── 版本选择 ────────────────────────────────────────────────
+fetch("data/index.json")
+  .then((r) => r.json())
+  .then((list) => {
+    const box = $("cards");
+    clear(box);
+    for (const v of list) {
+      let saved = 0;
+      try {
+        saved = (JSON.parse(localStorage.getItem(KEY(v.id)) || "{}").done || []).length;
+      } catch (e) { /* 存档坏了就当没有，不该挡住开工 */ }
+      box.appendChild(h("button", { class: "card", onclick: () => load(v.id) },
+        h("h2", { text: v.title }),
+        h("div", { class: "sub", text: v.subtitle || "" }),
+        h("div", { class: "num", text: `${v.total} 个位号 · ${v.groups} 种料` }),
+        saved ? h("div", { class: "resume", text: `已贴 ${saved} / ${v.total}，继续` }) : null,
+      ));
+    }
+  })
+  .catch(() => {
+    const box = $("cards");
+    clear(box);
+    const e = h("div", { class: "err" });
+    e.appendChild(h("div", { text: "读不到 data/index.json。这个页面要从 http 打开，不能直接双击 html（浏览器会拦本地跨源读取）。在仓库根目录跑：" }));
+    e.appendChild(h("div", { class: "mono", style: "margin:10px 0", text: "python3 -m http.server 8000" }));
+    e.appendChild(h("div", { text: "然后开 http://localhost:8000/web/assembly/" }));
+    box.appendChild(e);
+  });
+
+/* 采购批次：一个工作表 = 一批料。这是个人数据，单独一个 gitignore 的文件，
+   读不到就不显示批次，其余功能照常——所以这里失败要静默降级，不能拦住开工。 */
+let BATCH = null;
+fetch("data/batches.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((b) => { BATCH = b; if (DOC) render(); })
+  .catch(() => { BATCH = null; });
+
+function batchOf(group) {
+  if (!BATCH || !DOC) return null;
+  const v = BATCH.variants && BATCH.variants[DOC.id];
+  return (v && v[group.key]) || null;
+}
+
+function load(id) {
+  fetch(`data/${id}.json`).then((r) => r.json()).then((doc) => {
+    DOC = doc;
+    FLAT = [];
+    doc.groups.forEach((g, gi) => g.parts.forEach((p, pi) =>
+      FLAT.push({ gi, pi, part: p, group: g })));
+    restore(id);
+    resetView();
+    drawBoard();
+    lastGroupKey = null;   // 换版本后第一组要重新弹换料卡
+    // 从第一个没处理的开始——续做时不用一路按空格穿过已贴的件
+    const first = FLAT.findIndex((f) => !done.has(f.part.ref) && !skipped.has(f.part.ref));
+    cursor = first >= 0 ? first : 0;
+    // 数据是从 PCB 生成后提交进仓库的，改板不重跑就会悄悄过期。
+    // 把源 PCB 的日期摆在页脚——对不上就该重跑 gen_assembly_web.py。
+    $("src").textContent = doc.pcb_date ? `PCB ${doc.pcb_date}` : "";
+    $("picker").style.display = "none";
+    $("app").classList.add("on");
+    render();
+  });
+}
+
+function restore(id) {
+  done = new Set(); skipped = new Set();
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY(id)) || "{}");
+    // 只认当前板上真实存在的位号：改板后旧存档里的幽灵位号不该算进进度
+    const live = new Set(FLAT.map((f) => f.part.ref));
+    done = new Set((s.done || []).filter((r) => live.has(r)));
+    skipped = new Set((s.skipped || []).filter((r) => live.has(r)));
+  } catch (e) { /* 存档坏了从零开始 */ }
+}
+
+function save() {
+  if (!DOC) return;
+  localStorage.setItem(KEY(DOC.id), JSON.stringify({ done: [...done], skipped: [...skipped] }));
+}
+
+// ── 板子渲染 ────────────────────────────────────────────────
+const SVGNS = "http://www.w3.org/2000/svg";
+function s(tag, attrs) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+function polyPath(poly) {
+  return "M" + poly.map((p) => `${p[0]},${p[1]}`).join("L") + "Z";
+}
+
+function resetView() {
+  const pad = 3;
+  view = { x: -pad, y: -pad, w: DOC.board.w + pad * 2, h: DOC.board.h + pad * 2 };
+}
+function applyView() {
+  $("board").setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+  // tips 贴着元件走，缩放平移后必须重新定位，否则它会飘在空白处指着不存在的件
+  if (DOC && FLAT.length) drawTip();
+}
+
+/** 画整块板。焊盘按位号打 id，之后只改属性不重画——重画 185 个件会掉帧。 */
+function drawBoard() {
+  const svg = $("board");
+  clear(svg);
+  const b = DOC.board;
+  applyView();
+
+  // B 面镜像：翻过板子看到的左右是反的，不镜像会照着图贴到对称的位置上去
+  const g = s("g", viewSide === "B" ? { transform: `translate(${b.w},0) scale(-1,1)` } : {});
+  svg.appendChild(g);
+
+  g.appendChild(s("rect", { x: 0, y: 0, width: b.w, height: b.h, rx: 1.2, fill: "var(--board)" }));
+  for (const [x1, y1, x2, y2] of b.edges) {
+    g.appendChild(s("line", { x1, y1, x2, y2, stroke: "#2f7a4d", "stroke-width": .18 }));
+  }
+
+  for (const f of FLAT) {
+    const p = f.part;
+    const node = s("g", { id: "fp-" + p.ref, style: "cursor:pointer" });
+    // 背面件在本面视图里画得很淡：看得到它在哪，又不会跟本面的件混淆
+    if (p.layer !== viewSide) node.setAttribute("opacity", .22);
+    if (p.courtyard.length > 2) {
+      node.appendChild(s("path", {
+        d: polyPath(p.courtyard), fill: "none", stroke: "#3d4757", "stroke-width": .05, class: "crt",
+      }));
+    }
+    for (const pad of p.pads) {
+      node.appendChild(s("path", { d: polyPath(pad.poly), fill: "var(--copper)", class: "pad" }));
+    }
+    node.addEventListener("click", (ev) => { ev.stopPropagation(); jumpToRef(p.ref); });
+    g.appendChild(node);
+  }
+  g.appendChild(s("g", { id: "marks" }));   // 高亮画最上层，不会被后面的元件盖住
+  paint();
+}
+
+/** 只改颜色，不动 DOM 结构。 */
+function paint() {
+  const cur = FLAT[cursor];
+  const curRef = cur ? cur.part.ref : null;
+  const peers = cur ? new Set(cur.group.parts.map((p) => p.ref)) : new Set();
+
+  for (const f of FLAT) {
+    const p = f.part;
+    const node = $("fp-" + p.ref);
+    if (!node) continue;
+    let fill = "var(--copper)", w = 0;
+    if (p.ref === curRef)        { fill = "var(--cur)";  w = .12; }
+    else if (done.has(p.ref))    { fill = "var(--done)"; }
+    else if (peers.has(p.ref))   { fill = "var(--peer)"; w = .06; }
+    else if (skipped.has(p.ref)) { fill = "#6e4a1f"; }
+    for (const n of node.querySelectorAll(".pad")) {
+      n.setAttribute("fill", fill);
+      n.setAttribute("stroke", w ? fill : "none");
+      n.setAttribute("stroke-width", w);
+    }
+    const crt = node.querySelector(".crt");
+    if (crt) crt.setAttribute("stroke", p.ref === curRef ? "var(--cur)" : "#3d4757");
+  }
+
+  const marks = $("marks");
+  if (!marks) return;
+  clear(marks);
+  if (!cur) return;
+
+  // 当前件框起来。**框必须贴着件走，不能按件尺寸等比放大**——J1 是 2×20 排针，
+  // 按半径放大画出来的圆环半径 50mm，成了横跨整块板的一道弧，反而看不出件在哪。
+  const p = cur.part;
+  const box = partBox(p);
+  const pad = 0.55;
+  marks.appendChild(s("rect", {
+    x: box.x0 - pad, y: box.y0 - pad,
+    width: box.w + pad * 2, height: box.h + pad * 2,
+    rx: .4, fill: "none", stroke: "var(--cur)", "stroke-width": .17, opacity: .95,
+  }));
+
+  // 小件（0402 只有 1×0.5mm）光靠框在全板视图上看不见，再套一圈脉冲环拉视线。
+  // 环的半径跟件的大小无关，固定按视野给——它的作用是「指路」不是「描边」。
+  if (Math.max(box.w, box.h) < 4) {
+    const r0 = 2.4;
+    const ring = s("circle", {
+      cx: box.cx, cy: box.cy, r: r0, fill: "none",
+      stroke: "var(--cur)", "stroke-width": .14, opacity: .55,
+    });
+    ring.appendChild(s("animate", {
+      attributeName: "r", values: `${r0};${r0 * 2.1};${r0}`, dur: "1.5s", repeatCount: "indefinite",
+    }));
+    ring.appendChild(s("animate", {
+      attributeName: "opacity", values: ".55;0;.55", dur: "1.5s", repeatCount: "indefinite",
+    }));
+    marks.appendChild(ring);
+  }
+
+  // 位号画在元件**下方**：上方留给 HTML tips（值 + 封装 + 介质）。
+  // 两个都往上放会叠在一起，而 tips 是不透明的，直接把位号盖没。
+  const label = s("text", {
+    x: box.cx, y: box.y0 + box.h + pad + 2.3, fill: "var(--cur)", "font-size": 2.1,
+    "text-anchor": "middle", "font-weight": 700, "font-family": "ui-monospace,monospace",
+    "paint-order": "stroke", stroke: "#0a0d12", "stroke-width": .55,
+  });
+  // 镜像视图里文字会反过来，就地翻回来
+  if (viewSide === "B") label.setAttribute("transform", `translate(${box.cx * 2},0) scale(-1,1)`);
+  label.textContent = p.ref;
+  marks.appendChild(label);
+
+  drawZoom();
+}
+
+/** 元件的实际包围盒。焊盘和外框都算进去——有些封装的焊盘伸在外框之外。 */
+function partBox(p) {
+  const pts = p.courtyard.concat(p.pads.flatMap((d) => d.poly));
+  if (!pts.length) return { x0: p.x, y0: p.y, w: 1, h: 1, cx: p.x, cy: p.y };
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(...xs) - x0, hh = Math.max(...ys) - y0;
+  return { x0, y0, w, h: hh, cx: x0 + w / 2, cy: y0 + hh / 2 };
+}
+
+/** 放大镜。0402 在全板视图上只有几个像素，实际找焊盘全靠这块。
+ *
+ * 视野必须有上限：J1 是 2×20 排针，按件尺寸等比放的话视野要 88mm，
+ * 整块板都塞进来了，"放大镜"反而比主视图还小。大件超出边界没关系——
+ * 它本来就好找，放大镜是给小件用的。 */
+function drawZoom() {
+  const svg = $("zoomSvg");
+  clear(svg);
+  const cur = FLAT[cursor];
+  if (!cur) return;
+  const p = cur.part;
+  const box = partBox(p);
+  const half = Math.min(22, Math.max(4.2, Math.max(box.w, box.h) * 1.15 + 2.5));
+  const w = half * 2, hh = w * (200 / 290);
+  svg.setAttribute("viewBox", `${box.cx - half} ${box.cy - hh / 2} ${w} ${hh}`);
+
+  const g = s("g", p.layer === "B" ? { transform: `translate(${box.cx * 2},0) scale(-1,1)` } : {});
+  svg.appendChild(g);
+
+  // 邻居也画出来：光有目标焊盘悬空一个，对不上眼前的板子
+  for (const f of FLAT) {
+    const q = f.part;
+    if (Math.abs(q.x - box.cx) > half * 1.6 || Math.abs(q.y - box.cy) > hh) continue;
+    const isCur = q.ref === p.ref;
+    const fill = isCur ? "var(--cur)"
+      : done.has(q.ref) ? "var(--done)"
+      : cur.group.parts.some((z) => z.ref === q.ref) ? "var(--peer)" : "var(--copper)";
+    if (q.courtyard.length > 2) {
+      g.appendChild(s("path", {
+        d: polyPath(q.courtyard), fill: "none",
+        stroke: isCur ? "var(--cur)" : "#39414f", "stroke-width": .05,
+      }));
+    }
+    for (const pad of q.pads) {
+      g.appendChild(s("path", {
+        d: polyPath(pad.poly), fill, opacity: q.layer === p.layer ? 1 : .25,
+      }));
+    }
+    if (!isCur) {
+      // 字号跟视野走，不能写死：视野缩到 9mm 时固定 0.78mm 的字会盖住整个焊盘
+      const fs = half * 0.075;
+      const t = s("text", {
+        x: q.x, y: q.y + fs * .38, fill: "#7d8590", "font-size": fs,
+        "text-anchor": "middle", "font-family": "ui-monospace,monospace", opacity: .8,
+      });
+      if (p.layer === "B") t.setAttribute("transform", `translate(${q.x * 2},0) scale(-1,1)`);
+      t.textContent = q.ref;
+      g.appendChild(t);
+    }
+  }
+  $("zoomLbl").textContent = `${p.ref} 附近 ${(half * 2).toFixed(1)} mm`
+    + (Math.max(box.w, box.h) > half * 2 ? "（件比视野大，看主图）" : "");
+}
+
+// ── 顶部信息 ────────────────────────────────────────────────
+// 有极性/有方向的件贴反了不工作。位号前缀 + 封装名两个判据，宁可多提醒。
+const POLAR_REF = /^(D|LED|Q|U|J|SW|Y|RT|BT|F)\d/;
+const POLAR_FP = /Polarized|SOT|SOIC|QFN|DFN|SON|TSSOP|BGA|LGA|MX1\.25|USB|SMA|IPEX/i;
+const isPolar = (p) => POLAR_REF.test(p.ref) || POLAR_FP.test(p.fp);
+
+// 介质配色只认这三档；别的（X6S/Y5V 等）走统一的兜底色，
+// 不认识就不上色比上错色好——上错色会让人以为分好了。
+const dielClass = (d) => (["C0G", "X7R", "X5R"].includes(d) ? d : "other");
+
+function render() {
+  const cur = FLAT[cursor];
+  if (!cur) return;
+  const { part: p, group: g } = cur;
+
+  // 换面：贴 B 面件之前必须翻板，漏了会贴到正面对称的位置上
+  if (p.layer !== viewSide) { viewSide = p.layer; drawBoard(); }
+
+  const gDone = g.parts.filter((q) => done.has(q.ref)).length;
+  $("specVal").textContent = g.spec || p.val || "—";
+  $("specFp").textContent = g.fp;
+
+  const tags = $("specTags");
+  clear(tags);
+  const addTag = (cls, txt) => tags.appendChild(h("span", { class: cls, text: txt }));
+  // 介质排最前：拿错介质是电路故障，拿错别的顶多是外观不一样
+  if (g.dielectric) addTag("diel " + dielClass(g.dielectric), g.dielectric);
+  if (g.category) addTag("tag", g.category);
+  if (g.lcsc) addTag("tag lcsc", g.lcsc);
+  // 换料卡只停 4.5 秒，顶栏这个是常驻的——中途想起来"这是第几批"时看这里
+  const bt = batchOf(g);
+  if (bt) addTag("tag batch", `第 ${bt.n} 批`);
+  if (!g.has_bom) addTag("tag", "无料号信息");
+  if (p.layer === "B") addTag("tag back", "B 面 · 需翻板");
+  if (isPolar(p)) addTag("tag polar", "⚠ 有方向");
+
+  // 材质列是**要求下限**，介质标签是实际配的料。两者一样就不用重复说，
+  // 不一样才写一句：100pF 那组要求 X7R、配的 C1546 是 C0G，向上兼容。
+  // 不点破的话，两个介质代号并排出现看着像数据打架。
+  const req = g.required && g.required !== g.dielectric
+    ? (g.dielectric ? `要求 ${g.required}，配的是 ${g.dielectric}（向上兼容）`
+                    : `要求 ${g.required}`)
+    : "";
+  $("specMeta").textContent =
+    [req, g.voltage, g.part_no, g.grade].filter(Boolean).join(" · ");
+  // BOM 里有些备注格是占位符（"?"、"—"、"待定"）。原样显示出来是一个孤零零的
+  // 问号，看着像出错了；这类值当空处理。
+  const noteText = (g.note || "").trim();
+  $("specNote").textContent = /^[?？—\-–\s]*$/.test(noteText) ? "" : noteText;
+
+  clear($("qtyNum"));
+  $("qtyNum").appendChild(document.createTextNode(String(g.qty - gDone)));
+  $("qtyNum").appendChild(h("small", { text: ` / ${g.qty}` }));
+  $("qtyLbl").textContent = gDone ? "这种料还剩" : "这种料要贴";
+
+  $("curRefTxt").textContent = p.ref;
+  $("curRefSub").textContent = `${p.rot}° · ${p.x.toFixed(1)}, ${p.y.toFixed(1)} mm · ${p.layer} 面`;
+
+  $("barFill").style.width = (done.size / FLAT.length * 100) + "%";
+  $("stat").textContent =
+    `已贴 ${done.size} / ${FLAT.length}` +
+    (skipped.size ? ` · 跳过 ${skipped.size}` : "") +
+    ` · 第 ${cur.gi + 1}/${DOC.groups.length} 种料`;
+
+  const sh = $("sideHead");
+  clear(sh);
+  sh.appendChild(h("span", { class: "t", text: `${g.spec} · ${g.fp} · ${g.qty} 个` }));
+  if (gDone < g.qty) {
+    sh.appendChild(h("button", {
+      class: "allBtn", text: `整组已贴 ${g.qty - gDone}`,
+      title: "把这一种料剩下的全部标记为已贴（Z 可撤销）",
+      onclick: () => markGroupDone(g),
+    }));
+  }
+  const list = $("refList");
+  clear(list);
+  let curItem = null;
+  for (const q of g.parts) {
+    const cls = q.ref === p.ref ? "cur" : done.has(q.ref) ? "done"
+      : skipped.has(q.ref) ? "skip" : "pending";
+    // q.use 只在这个位号的用途跟组标题不同才有值——合并同料号后
+    // U.FL 那 5 个座子分别是 GNSS_EXT / 978 / 1090_EXT / IFA_TEST / 内置patch，
+    // 接错口就是接错天线，用途必须逐个标出来
+    const item = h("button", { class: "refItem " + cls, onclick: () => jumpToRef(q.ref) },
+      h("span", { class: "dot" }),
+      h("span", { text: q.ref }),
+      q.use ? h("span", { class: "use", text: q.use }) : null,
+      h("span", {
+        class: "pos",
+        text: `${q.x.toFixed(1)}, ${q.y.toFixed(1)}${q.layer === "B" ? " · B" : ""}`,
+      }),
+    );
+    if (q.ref === p.ref) curItem = item;
+    list.appendChild(item);
+  }
+  // 一组能有 23 个位号，超出列表高度；当前项跑到视野外就等于没标
+  if (curItem) curItem.scrollIntoView({ block: "nearest" });
+
+  const note = $("sideNote");
+  note.textContent = "⚠️ 这个件在 B 面，翻板";
+  note.classList.toggle("on", p.layer === "B");
+
+  renderKinds(p.kind);
+  paint();
+  ensureVisible(p);
+  drawTip();
+  maybeSwap(g);
+}
+
+/** 换料卡。**只在组真正变化时弹**——每个位号都弹就成了噪音，
+ *  而换料是唯一需要离开板子去翻料盒的时刻。 */
+let lastGroupKey = null;
+let swapTimer = null;
+function maybeSwap(g) {
+  if (g.key === lastGroupKey) return;
+  lastGroupKey = g.key;
+
+  const left = g.parts.filter((q) => !done.has(q.ref)).length;
+  $("swapVal").textContent = g.spec || "—";
+  $("swapSize").textContent = g.size || "";
+  // 中途跳回来时按「还要贴几颗」算，不是组的总数——照总数备料会多拿
+  $("swapQty").textContent = left;
+
+  // 批次排最前：换料时第一件事是去翻哪一袋料
+  const b = batchOf(g);
+  const bat = $("swapBatch");
+  clear(bat);
+  if (b) {
+    bat.appendChild(h("span", { class: "no", text: `第 ${b.n} 批` }));
+    bat.appendChild(h("span", { class: "nm", text: b.name }));
+    if (b.qty) bat.appendChild(h("span", { class: "nm", text: `买了 ${b.qty} 个` }));
+    bat.className = "on";
+  } else {
+    // 留白会被当成"不用管"，明确写出来
+    bat.appendChild(h("span", { class: "nm", text: "未在采购表中（多半是库存已有）" }));
+    bat.className = "on none";
+  }
+
+  const meta = $("swapMeta");
+  clear(meta);
+  if (g.dielectric) meta.appendChild(h("span", { class: "diel " + dielClass(g.dielectric), text: g.dielectric }));
+  if (g.lcsc) meta.appendChild(h("span", { class: "tag lcsc", text: g.lcsc }));
+  if (g.kind) meta.appendChild(h("span", { class: "tag", text: g.kind }));
+  if (left !== g.qty) meta.appendChild(h("span", { text: `（本组共 ${g.qty}，已贴 ${g.qty - left}）` }));
+
+  const box = $("swap");
+  box.classList.add("on");
+  clearTimeout(swapTimer);
+  // 4.5 秒够去料盒里拿一趟；信息不会丢，顶栏一直显示着同样的内容
+  swapTimer = setTimeout(() => box.classList.remove("on"), 4500);
+}
+
+function hideSwap() {
+  clearTimeout(swapTimer);
+  $("swap").classList.remove("on");
+}
+
+/** 分类导航。贴完电容直接点「电阻」，不用一路按空格穿过去。 */
+function renderKinds(curKind) {
+  const box = $("kinds");
+  // 统计走位号而不是组：同一料号可以跨大类（C21189 那盘 0R 里
+  // ZS1 属匹配网络、R21~R23 属电阻），按组统计会让 ZS1 从导航里消失
+  const stat = new Map();
+  for (const f of FLAT) {
+    const k = f.part.kind || "其他";
+    if (!stat.has(k)) stat.set(k, { total: 0, done: 0, firstIdx: -1 });
+    const s = stat.get(k);
+    s.total += 1;
+    if (done.has(f.part.ref)) s.done += 1;
+    // 记住这一类第一个还没处理的位号，点击直接跳到那儿接着贴
+    else if (!skipped.has(f.part.ref) && s.firstIdx < 0) s.firstIdx = FLAT.indexOf(f);
+  }
+
+  clear(box);
+  for (const [kind, s] of stat) {
+    const fin = s.done >= s.total;
+    const btn = h("button", {
+      class: "kind" + (kind === curKind ? " cur" : "") + (fin ? " fin" : ""),
+      onclick: () => {
+        // 整类贴完了就跳到这一类的第一个（方便复查），否则跳到第一个没贴的
+        const target = s.firstIdx >= 0
+          ? s.firstIdx
+          : FLAT.findIndex((f) => (f.part.kind || "其他") === kind);
+        if (target >= 0) { cursor = target; render(); }
+      },
+    }, h("span", { text: kind }), h("span", { class: "n", text: `${s.done}/${s.total}` }));
+    box.appendChild(btn);
+  }
+  const cur = box.querySelector(".kind.cur");
+  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** 板上跟随高亮的 tips：值和封装就在元件旁边，眼睛不用离开板子。
+ *
+ * 位置直接取元件的 getBoundingClientRect()——它已经包含了 viewBox 缩放和
+ * B 面镜像的所有 transform，自己拿 view 换算迟早在镜像那里算错。
+ */
+function drawTip() {
+  const tip = $("tip");
+  const cur = FLAT[cursor];
+  if (!cur) { tip.classList.remove("on"); return; }
+  const node = $("fp-" + cur.part.ref);
+  const wrap = $("boardWrap");
+  if (!node) { tip.classList.remove("on"); return; }
+
+  const g = cur.group;
+  $("tipVal").textContent = g.spec || cur.part.val || "—";
+  $("tipSize").textContent = g.size || "";
+
+  const sub = $("tipSub");
+  clear(sub);
+  sub.appendChild(h("span", { text: cur.part.ref }));
+  if (g.dielectric) sub.appendChild(h("span", { class: "diel " + dielClass(g.dielectric), text: g.dielectric }));
+  if (isPolar(cur.part)) sub.appendChild(h("span", { text: "⚠ 有方向", style: "color:var(--warn)" }));
+  if (cur.part.layer === "B") sub.appendChild(h("span", { text: "B 面", style: "color:var(--cur)" }));
+
+  const r = node.getBoundingClientRect();
+  const w = wrap.getBoundingClientRect();
+  tip.classList.add("on");
+  // 元件贴着上边缘时把 tips 翻到下方，否则会被顶栏切掉
+  const above = r.top - w.top > tip.offsetHeight + 14;
+  tip.style.left = (r.left - w.left + r.width / 2) + "px";
+  tip.style.top = above
+    ? (r.top - w.top - 9) + "px"
+    : (r.bottom - w.top + 9 + tip.offsetHeight) + "px";
+  tip.style.transform = "translate(-50%,-100%)";
+  tip.classList.toggle("below", !above);
+}
+
+/** 当前件跑到视野外就把视图移过去。只平移不改缩放，保住人对板子的空间感。 */
+function ensureVisible(p) {
+  const m = 4;
+  let moved = false;
+  if (p.x < view.x + m) { view.x = p.x - m; moved = true; }
+  if (p.x > view.x + view.w - m) { view.x = p.x - view.w + m; moved = true; }
+  if (p.y < view.y + m) { view.y = p.y - m; moved = true; }
+  if (p.y > view.y + view.h - m) { view.y = p.y - view.h + m; moved = true; }
+  if (moved) applyView();
+}
+
+// ── 推进 ────────────────────────────────────────────────────
+function next() {
+  const cur = FLAT[cursor];
+  if (!cur) return;
+  done.add(cur.part.ref);
+  skipped.delete(cur.part.ref);
+  save();
+  advance(1);
+}
+
+function skip() {
+  const cur = FLAT[cursor];
+  if (!cur) return;
+  skipped.add(cur.part.ref);
+  done.delete(cur.part.ref);
+  save();
+  advance(1);
+}
+
+/** 往前找下一个还没处理的；前面没有了就回头捡漏；全处理完打开焊接表。 */
+function advance(dir) {
+  for (let i = cursor + dir; i >= 0 && i < FLAT.length; i += dir) {
+    const r = FLAT[i].part.ref;
+    if (!done.has(r) && !skipped.has(r)) { cursor = i; render(); return; }
+  }
+  if (done.size + skipped.size >= FLAT.length) { render(); openSheet(); return; }
+  const back = FLAT.findIndex((f) => !done.has(f.part.ref) && !skipped.has(f.part.ref));
+  cursor = back >= 0 ? back : Math.min(Math.max(cursor + dir, 0), FLAT.length - 1);
+  render();
+}
+
+/** 退回上一个，**同时取消它的已贴标记**——回退的唯一理由就是刚才那下按错了。 */
+function prev() {
+  if (cursor <= 0) return;
+  cursor -= 1;
+  const r = FLAT[cursor].part.ref;
+  done.delete(r);
+  skipped.delete(r);
+  save();
+  render();
+}
+
+function jumpToRef(ref) {
+  const i = FLAT.findIndex((f) => f.part.ref === ref);
+  if (i < 0) return;
+  cursor = i;
+  closeSheet();
+  render();
+}
+
+/** 整组一键已贴。一次性用钢网刷完一种料、或者事后补记时用。
+ *
+ * **必须可撤销**：一下标 23 个，误触又回不去的话代价太大。只标当前还没贴的，
+ * 撤销时也只回滚这次标的那些——不会把之前手动勾过的一起清掉。
+ */
+let lastBulk = null;
+function markGroupDone(group, opts) {
+  const g = group || (FLAT[cursor] && FLAT[cursor].group);
+  if (!g) return;
+  const fresh = g.parts.filter((p) => !done.has(p.ref)).map((p) => p.ref);
+  if (!fresh.length) { toast(`${g.spec} 这组已经全贴完了`); return; }
+
+  fresh.forEach((r) => { done.add(r); skipped.delete(r); });
+  lastBulk = { refs: fresh, cursor, spec: g.spec, size: g.size };
+  save();
+  toast(`已标记 ${fresh.length} 个 ${g.spec}${g.size ? " " + g.size : ""} 为已贴`, "撤销按 Z");
+
+  if (opts && opts.stay) {          // 焊接表里操作时不动光标
+    paint();
+    renderKinds(FLAT[cursor] ? FLAT[cursor].part.kind : null);
+    return;
+  }
+  // 这组贴完了，直接推到下一个没处理的
+  advance(1);
+}
+
+function undoBulk() {
+  if (!lastBulk) { toast("没有可撤销的批量操作"); return; }
+  lastBulk.refs.forEach((r) => done.delete(r));
+  cursor = Math.min(lastBulk.cursor, FLAT.length - 1);
+  toast(`已撤销：${lastBulk.refs.length} 个 ${lastBulk.spec} 恢复为未贴`);
+  lastBulk = null;
+  save();
+  render();
+}
+
+let toastTimer = null;
+function toast(msg, hint) {
+  const t = $("toast");
+  clear(t);
+  t.appendChild(h("span", { text: msg }));
+  if (hint) t.appendChild(h("span", { class: "hint", text: hint }));
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("on"), 3200);
+}
+
+// ── 焊接表 ──────────────────────────────────────────────────
+function sheetStatText() {
+  return `已贴 ${done.size} / ${FLAT.length}　点方块打勾／取消，点位号跳到板上`;
+}
+
+function openSheet() {
+  const body = $("sheetBody");
+  clear(body);
+  const hereGi = FLAT[cursor] ? FLAT[cursor].gi : -1;
+  let hereNode = null;
+  for (const g of DOC.groups) {
+    const n = g.parts.filter((p) => done.has(p.ref)).length;
+    const head = h("div", { class: "grpHead" },
+      h("span", { class: "v", text: g.spec }),
+      g.dielectric ? h("span", { class: "diel " + dielClass(g.dielectric), text: g.dielectric }) : null,
+      h("span", { class: "f", text: g.fp }),
+    );
+    if (g.lcsc) head.appendChild(h("span", { class: "tag lcsc", text: g.lcsc }));
+    const gb = batchOf(g);
+    if (gb) head.appendChild(h("span", { class: "tag batch", text: `第 ${gb.n} 批` }));
+    if (g.category) head.appendChild(h("span", { class: "tag", text: g.category }));
+    const counter = h("span", { class: "c", text: `${n} / ${g.qty}` });
+    head.appendChild(counter);
+    // 焊接表里也能整组打勾——事后核对时一行一行点太慢
+    head.appendChild(h("button", {
+      class: "allBtn sheet", text: "整组打勾",
+      onclick: () => { markGroupDone(g, { stay: true }); openSheet(); },
+    }));
+
+    const refs = h("div", { class: "grpRefs" });
+    for (const p of g.parts) {
+      const box = h("span", { class: "box", text: "✓" });
+      const item = h("div", { class: "chk" + (done.has(p.ref) ? " on" : "") },
+        box,
+        h("button", { class: "go", text: p.ref, onclick: (ev) => { ev.stopPropagation(); jumpToRef(p.ref); } }),
+      );
+      if (p.use) item.appendChild(h("span", { class: "u", text: p.use }));
+      if (p.layer === "B") item.appendChild(h("span", { class: "b", text: "B面" }));
+      item.addEventListener("click", () => {
+        if (done.has(p.ref)) done.delete(p.ref);
+        else { done.add(p.ref); skipped.delete(p.ref); }
+        item.classList.toggle("on", done.has(p.ref));
+        counter.textContent = `${g.parts.filter((q) => done.has(q.ref)).length} / ${g.qty}`;
+        $("sheetStat").textContent = sheetStatText();
+        $("barFill").style.width = (done.size / FLAT.length * 100) + "%";
+        save();
+        paint();
+        // 导航条的计数也要跟着动，否则关掉焊接表看到的还是旧数
+        renderKinds(FLAT[cursor] ? FLAT[cursor].part.kind : null);
+      });
+      refs.appendChild(item);
+    }
+    const isHere = DOC.groups.indexOf(g) === hereGi;
+    const node = h("div", { class: "grp" + (isHere ? " here" : "") }, head, refs);
+    if (isHere) hereNode = node;
+    body.appendChild(node);
+  }
+  $("sheetStat").textContent = sheetStatText();
+  hideSwap();
+  $("sheet").classList.add("on");
+  // 88 种料，不定位的话每次打开都要从头滚到手上正在贴的那一组
+  if (hereNode) hereNode.scrollIntoView({ block: "center" });
+}
+
+function closeSheet() {
+  if (!$("sheet").classList.contains("on")) return;
+  $("sheet").classList.remove("on");
+  render();
+}
+
+function resetAll() {
+  if (!confirm("清空这块板的全部焊接记录？")) return;
+  done = new Set(); skipped = new Set();
+  save();
+  cursor = 0;
+  openSheet();
+  render();
+}
+
+$("btnSheet").addEventListener("click", () =>
+  $("sheet").classList.contains("on") ? closeSheet() : openSheet());
+$("btnBack").addEventListener("click", () => location.reload());
+$("btnReset").addEventListener("click", resetAll);
+$("btnClose").addEventListener("click", closeSheet);
+
+// ── 键盘 ────────────────────────────────────────────────────
+document.addEventListener("keydown", (e) => {
+  if (!$("app").classList.contains("on")) return;
+  // 按了键说明料已经拿到手、正在贴了，换料卡不该再挡着板子。
+  // 放在最前面：如果这次按键又切到新的一组，下面的 render 会重新弹。
+  hideSwap();
+  if (e.key === "Escape") { closeSheet(); return; }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    $("sheet").classList.contains("on") ? closeSheet() : openSheet();
+    return;
+  }
+  if ($("sheet").classList.contains("on")) return;
+  const k = e.key.toLowerCase();
+  if (e.key === " ") { e.preventDefault(); next(); }
+  else if (e.key === "ArrowLeft" || e.key === "Backspace") { e.preventDefault(); prev(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); advance(1); }
+  // 整组一键已贴。Enter 离空格远，不容易在连续按空格时误触
+  else if (e.key === "Enter" || k === "a") { e.preventDefault(); markGroupDone(); }
+  else if (k === "z") { e.preventDefault(); undoBulk(); }
+  else if (k === "s") skip();
+  else if (k === "f") { viewSide = viewSide === "F" ? "B" : "F"; drawBoard(); }
+  else if (e.key === "0") { resetView(); applyView(); }
+});
+
+// ── 缩放平移 ────────────────────────────────────────────────
+const bd = $("board");
+bd.addEventListener("wheel", (e) => {
+  if (!DOC) return;
+  e.preventDefault();
+  const r = bd.getBoundingClientRect();
+  const mx = view.x + (e.clientX - r.left) / r.width * view.w;
+  const my = view.y + (e.clientY - r.top) / r.height * view.h;
+  const k = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+  const w = Math.min(DOC.board.w * 2.5, Math.max(4, view.w * k));
+  const hh = view.h * (w / view.w);
+  view = { x: mx - (mx - view.x) * (w / view.w), y: my - (my - view.y) * (hh / view.h), w, h: hh };
+  applyView();
+}, { passive: false });
+
+let drag = null;
+bd.addEventListener("pointerdown", (e) => {
+  if (!DOC) return;
+  drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+  bd.setPointerCapture(e.pointerId);
+  bd.classList.add("drag");
+});
+bd.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const r = bd.getBoundingClientRect();
+  view.x = drag.vx - (e.clientX - drag.x) / r.width * view.w;
+  view.y = drag.vy - (e.clientY - drag.y) / r.height * view.h;
+  applyView();
+});
+bd.addEventListener("pointerup", () => { drag = null; bd.classList.remove("drag"); });
+bd.addEventListener("pointercancel", () => { drag = null; bd.classList.remove("drag"); });
+
+window.addEventListener("resize", () => { if (DOC) applyView(); });
+</script>
+</body>
+</html>

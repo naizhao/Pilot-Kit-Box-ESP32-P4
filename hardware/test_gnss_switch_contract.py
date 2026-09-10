@@ -169,7 +169,7 @@ def load_pcb_pad_nets(board: str) -> dict[tuple[str, str], str]:
     pcb = ROOT / "hardware" / board / "kicad" / f"{board}.kicad_pcb"
     text = pcb.read_text(encoding="utf-8")
     result: dict[tuple[str, str], str] = {}
-    for reference in ("Q4", "Q5"):
+    for reference in ("U7", "Q4", "Q5"):
         marker = f'(property "Reference" "{reference}"'
         marker_at = text.index(marker)
         footprint_at = text.rfind("\n\t(footprint ", 0, marker_at) + 2
@@ -217,6 +217,32 @@ class GnssSwitchContractTest(unittest.TestCase):
                 self.assertEqual(
                     {key: pin_nets[key] for key in expected},
                     expected,
+                )
+
+    def test_vcc_rf_feeds_gnss_bias_tee_sources(self):
+        """ATGM336H 的 VCC_RF(U7.14) 必须作为两路偏置 PMOS 的源极电源。
+
+        旧版把 U7.14 留 NC、由 LDO 轨 3V3_GNSS 经 Q4/Q5 给有源天线供电，模块内部
+        的天线电流检测（$GPTXT ANTENNA OK/OPEN/SHORT）因此看不到任何天线电流，
+        即使天线正常也恒报 OPEN。VCC_RF 与 3V3_GNSS 必须是**两个不同网络**——
+        同网会把模块的 3.3V 输出直接短到 LDO 输出（双驱），检测也失去意义。
+        """
+        expected = {
+            ("U7", "14"): "GNSS_VCC_RF",
+            ("Q4", "2"): "GNSS_VCC_RF",
+            ("Q5", "2"): "GNSS_VCC_RF",
+        }
+        for board, pin_nets in self.pin_nets.items():
+            with self.subTest(board=board, check="原理图"):
+                self.assertEqual({key: pin_nets.get(key) for key in expected}, expected)
+                self.assertNotEqual(
+                    pin_nets.get(("Q4", "2")), "3V3_GNSS",
+                    "偏置源仍是 LDO 轨 3V3_GNSS，模块检测不到天线电流",
+                )
+            with self.subTest(board=board, check="最终 PCB 焊盘"):
+                pad_nets = self.pcb_pad_nets[board]
+                self.assertEqual(
+                    {key: pad_nets.get(key) for key in expected}, expected,
                 )
 
     def test_xa17_and_as179_truth_tables_are_identical(self):

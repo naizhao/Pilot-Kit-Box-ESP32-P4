@@ -112,5 +112,6 @@ The IFA is given the left side because the 1090 LNA is broadband and most vulner
 
 **Both GNSS paths are active antennas** → each branch gets its own bias tee (the switch's RF port cannot pass DC);
 the two PMOS are driven complementarily by the same GPIO pair, so power switches together with the RF. Increment ≈¥1.
+The bias source is the ATGM336H's own `VCC_RF` (U7.14) — the module senses that current for its `ANTENNA OK/OPEN/SHORT` detection, so it must not be fed from the 3V3_GNSS LDO rail.
 
 ⚠️ 5mm behind the patch sits the expansion board's solid ground plane, which will affect the radiation pattern and the resonant point → **the V1 case gets an adjustable mounting position; V2 freezes it after measurement**.

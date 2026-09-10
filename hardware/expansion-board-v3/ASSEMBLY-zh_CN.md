@@ -1,4 +1,4 @@
-# V3.10 手工贴片点位清单
+# V3.11 手工贴片点位清单
 > 由 `tools/gen_assembly.py` 从原理图分页 + PCB 坐标自动生成，改板后重跑。
 
 配套看图：板上位置 `render/top.png`，丝印和 pin1 `render/silk.svg`。
@@ -161,6 +161,7 @@ IMU / 气压 / 磁力计 / GNSS，都是 I2C 和 UART 慢速接口。
 
 **贴完验证**：刷个扫描固件，I2C 上逐个点名：BNO085、BMP388、QMC5883P 应各自应答。
   - GNSS 看 `U7.2`(GNSS_TXD) 有没有 NMEA 输出，**室内收不到星是正常的**，有 `$GPTXT` 和 `$GPGSV` 输出就说明模块活着
+  - 有源天线检测：`$GPTXT` 应报 `ANTENNA OK`；报 `OPEN` 说明该路天线没接/没贴，报 `SHORT` 说明馈电短路。U7.14(VCC_RF) 是检测电流的来源，量它应约 3.3V
 
 ## 阶段 D：978 收发（34 件）
 CC1312R 和它的 48MHz / 32.768kHz 两颗晶振。

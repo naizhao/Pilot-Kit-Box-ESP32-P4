@@ -41,10 +41,13 @@
                  CC1312R 复位上拉、USB ESD 与 VBUS 检测
   V3.9  → V3.10  板载1090MHz IFA按V4.0实板装盒VNA结果定型：铜箔外包络
                  50.0mm（中心线48.5mm），取代53.5mm画长待切版本
+  V3.10 → V3.11  GNSS 有源天线检测修复：U7.14(VCC_RF) 不再悬空，改作两路偏置
+                 PMOS(Q4/Q5)源极电源，替换原 3V3_GNSS 馈电。模块内部按 VCC_RF
+                 电流判定天线 OK/OPEN/SHORT，旧接法恒报 OPEN
 """
 
 BOARD_NAME = "Pilot Kit Avionics Board"
-BOARD_REV = "V3.10"
+BOARD_REV = "V3.11"
 BOARD_DATE = "2026-09"
 COPYRIGHT = "(c) Pilot Kit"
 WEBSITE = "https://air.club"

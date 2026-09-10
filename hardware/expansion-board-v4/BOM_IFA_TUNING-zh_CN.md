@@ -1,4 +1,4 @@
-# V4.4 板载 1090MHz IFA 复核与调试备料单
+# V4.5 板载 1090MHz IFA 复核与调试备料单
 
 英文版：[`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md)
 

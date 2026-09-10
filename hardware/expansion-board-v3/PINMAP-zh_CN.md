@@ -1,4 +1,4 @@
-# 扩展板 V3.10 — 权威引脚/网络映射（原理图单一事实来源）
+# 扩展板 V3.11 — 权威引脚/网络映射（原理图单一事实来源）
 
 英文版：[`PINMAP.md`](PINMAP.md)
 
@@ -94,7 +94,7 @@ ANT1090(U.FL) → 偏置Tee → C 100pF 隔直 → L 27nH 串 + 82nH 偏置馈�
 | BNO085 | I2C addr 0x4A + IMU_INT(GPIO34) + IMU_RST(GPIO28) | PS0/PS1/SA0 均接地，CLKSEL0/H_CSN 拉高；V3.10 封装旋转 0° |
 | BMP388 | I2C addr 0x76（baro_task.c:29）+ BARO_INT(GPIO31) | 壳体留通气孔 |
 | QMC5883P | I2C addr 0x2C | 远离电感/大电流走线；引脚与外围已按手册复核 |
-| ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3；1PPS → GPIO50；VCC_RF 馈有源天线 | 18 脚 LCC，pin 图已核（手册 §2.3）|
+| ATGM336H-6N-74 | UART0(RXD0/TXD0) → J3；1PPS → GPIO50；VCC_RF(pin 14) 作两路偏置 Tee PMOS(Q4/Q5) 源极电源，供模块检测有源天线 | 18 脚 LCC，pin 图已核（手册 §2.3、§2.7）|
 | GNSS 天线 | 第三个 U.FL | V1 全外置天线 |
 
 ## 7. 已知冲突/待核清单

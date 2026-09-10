@@ -1,0 +1,23 @@
+[
+  {
+    "id": "v4-pwr",
+    "title": "V4.4 带电源版",
+    "subtitle": "贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+    "total": 185,
+    "groups": 78
+  },
+  {
+    "id": "v4-nopwr",
+    "title": "V4.4 不带电源版",
+    "subtitle": "电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+    "total": 159,
+    "groups": 64
+  },
+  {
+    "id": "v3",
+    "title": "V3.10",
+    "subtitle": "单一版本，全部在 F 面，无电源变体",
+    "total": 158,
+    "groups": 66
+  }
+]

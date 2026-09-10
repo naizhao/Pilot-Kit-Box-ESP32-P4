@@ -1,4 +1,4 @@
-# V3.10 BOM Verification Checklist (reference-designator order)
+# V3.11 BOM Verification Checklist (reference-designator order)
 
 Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 

@@ -1,4 +1,4 @@
-# V3.10 Manual SMT Placement List
+# V3.11 Manual SMT Placement List
 
 Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 
