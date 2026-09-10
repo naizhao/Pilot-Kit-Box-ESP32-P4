@@ -253,9 +253,10 @@ static uint32_t jtag_shift_dr(uint32_t tdi, int bits)
     tap_goto(TAP_SHIFT_DR);
     for (int i = 0; i < bits; i++) {
         hw_drive_tdi((tdi >> i) & 1);
-        hw_tck_high();
+        hw_tck_high();                          /* ↑ 目标采样 TDI */
+        gpio_set_dir(CJTAG_PIN_TMSC, GPIO_IN);  /* ↓ 之前释放 TMSC,让目标驱动 TDO */
         hw_tck_low();
-        uint8_t rbit = hw_sample_tdo();
+        uint8_t rbit = (uint8_t)gpio_get(CJTAG_PIN_TMSC);
         tdo |= (uint32_t)rbit << i;
     }
     tap_clock_tms(1);              /* SHIFT_DR → EXIT1_DR */
@@ -339,7 +340,7 @@ void cjtag_exit(void)
 
 uint32_t cjtag_read_idcode(void)
 {
-    jtag_shift_ir(JTAG_IR_IDCODE, 4);
+    jtag_shift_ir(JTAG_IR_IDCODE, ICEPICK_IR_BITS);
     uint32_t id = jtag_shift_dr(0, 32);
     return id;
 }

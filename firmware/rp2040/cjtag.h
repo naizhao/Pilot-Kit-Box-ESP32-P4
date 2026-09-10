@@ -36,11 +36,21 @@
 #define CJTAG_TCK_DELAY_NS  2000   /* ~250 kHz TCKC；正确性优先 */
 
 /* ── TAP 指令寄存器（CC13x2 ICEPICK-D3）────────────────────────── */
-#define JTAG_IR_IDCODE    0x2    /* 32-bit Device ID */
-#define JTAG_IR_DPACC     0xA    /* Debug Port Access */
-#define JTAG_IR_APACC     0xB    /* Access Port Access */
-#define JTAG_IR_BYPASS    0xF    /* Bypass (1-bit DR) */
-#define JTAG_IR_ICEPICK   0x10   /* ICEPICK-D3 router (4-bit IR on ICEPICK) */
+/* ── ICEPick Type C TAP 指令（TI SPRUH35 Table 2-1）─────────────────
+ * IR 是 **6 位**，不是 4 位。指令值：
+ *   ROUTER=000010b=0x02  IDCODE=000100b=0x04  ICEPICKCODE=000101b=0x05
+ *   BYPASS=111111b=0x3F
+ * ⚠ 旧代码把 IDCODE 写成 0x2 且只移 4 位：0x2 其实是 ROUTER，IR 宽度也不对，
+ *   所以既没选中 IDCODE、也读不回来（恒 0）。 */
+#define ICEPICK_IR_BITS      6
+#define JTAG_IR_ROUTER       0x02
+#define JTAG_IR_IDCODE       0x04
+#define JTAG_IR_ICEPICKCODE  0x05
+#define JTAG_IR_BYPASS       0x3F
+
+/* 二级 TAP（Cortex-M DAP）的 4 位 IR —— 必须先用 ROUTER+SDTAP 路由后才可见。 */
+#define JTAG_IR_DPACC        0xA    /* Debug Port Access */
+#define JTAG_IR_APACC        0xB    /* Access Port Access */
 
 /* ── ARM ADIv5 常量 ──────────────────────────────────────────────── */
 #define DP_CTRLSTAT        0x4   /* DP register: Control/Status */
