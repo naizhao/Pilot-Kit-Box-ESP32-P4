@@ -271,21 +271,25 @@ static uint32_t jtag_shift_dr(uint32_t tdi, int bits)
  * [2:1]  = 寄存器地址 (DP: 0=CTRLSTAT/1=SELECT/2=RDBUFF / AP: 0=CSW...)
  * [0]    = RnW (0=写, 1=读)
  */
+/* ADIv5 DPACC/APACC 的 35-bit DR：[34:3]=数据，[2:1]=寄存器地址 A[3:2]，
+ * [0]=RnW。A[3:2] 取**字节地址**的 bit[3:2]（OpenOCD adi_v5_jtag.c：
+ * ((reg_addr>>1)&0x6)|rnw）。旧代码用 (reg&0x3)<<1，对 0x4/0x8/0xC 恒为 0，
+ * 全部打到寄存器 0。 */
 static void jtag_dp_write(uint8_t reg, uint32_t data)
 {
-    uint64_t dr = ((uint64_t)data << 3) | ((reg & 0x3) << 1) | 0;  /* 写 */
+    uint64_t dr = ((uint64_t)data << 3) | (uint64_t)(((reg >> 1) & 0x6) | 0);
     jtag_shift_ir(JTAG_IR_DPACC, 4);
     jtag_shift_dr((uint32_t)dr, 35);  /* 低 35 位 */
 }
 
 static MAYBE_UNUSED uint32_t jtag_dp_read(uint8_t reg)
 {
-    uint64_t dr = ((uint64_t)0 << 3) | ((reg & 0x3) << 1) | 1;  /* 读 */
+    uint64_t dr = ((uint64_t)0 << 3) | (uint64_t)(((reg >> 1) & 0x6) | 1);
     jtag_shift_ir(JTAG_IR_DPACC, 4);
     jtag_shift_dr((uint32_t)dr, 35);
-    /* 读结果在下一次 DPACC RDBUFF 读取 */
+    /* 读结果要读 DP_RDBUFF（RnW=1），不是 DR=0 */
     jtag_shift_ir(JTAG_IR_DPACC, 4);
-    uint32_t result = jtag_shift_dr(0, 35);
+    uint32_t result = jtag_shift_dr((uint32_t)(((DP_RDBUFF >> 1) & 0x6) | 1), 35);
     return result;  /* 高 32 位是数据 */
 }
 
@@ -294,7 +298,7 @@ static void jtag_ap_write(uint8_t ap, uint8_t reg, uint32_t data)
     /* 先选 AP */
     jtag_dp_write(DP_SELECT, (uint32_t)(ap << 24) | (reg & 0xF0));
     /* 再写 AP 寄存器 */
-    uint64_t dr = ((uint64_t)data << 3) | ((reg & 0x3) << 1) | 0;
+    uint64_t dr = ((uint64_t)data << 3) | (uint64_t)(((reg >> 1) & 0x6) | 0);
     jtag_shift_ir(JTAG_IR_APACC, 4);
     jtag_shift_dr((uint32_t)dr, 35);
 }
@@ -302,12 +306,12 @@ static void jtag_ap_write(uint8_t ap, uint8_t reg, uint32_t data)
 static uint32_t jtag_ap_read(uint8_t ap, uint8_t reg)
 {
     jtag_dp_write(DP_SELECT, (uint32_t)(ap << 24) | (reg & 0xF0));
-    uint64_t dr = ((uint64_t)0 << 3) | ((reg & 0x3) << 1) | 1;
+    uint64_t dr = ((uint64_t)0 << 3) | (uint64_t)(((reg >> 1) & 0x6) | 1);
     jtag_shift_ir(JTAG_IR_APACC, 4);
     jtag_shift_dr((uint32_t)dr, 35);
-    /* 结果在 RDBUFF */
+    /* 结果要读 DP_RDBUFF */
     jtag_shift_ir(JTAG_IR_DPACC, 4);
-    uint32_t result = jtag_shift_dr(0, 35);
+    uint32_t result = jtag_shift_dr((uint32_t)(((DP_RDBUFF >> 1) & 0x6) | 1), 35);
     return result;
 }
 
@@ -390,7 +394,7 @@ bool cjtag_flash_write_word(uint32_t addr, uint32_t val)
 bool cjtag_flash_verify(uint32_t addr, const uint8_t *data, size_t len)
 {
     for (size_t i = 0; i < len; i += 4) {
-        uint32_t expect;
+        uint32_t expect = 0xFFFFFFFFu;   /* 未写的高字节 = flash 擦除态 */
         memcpy(&expect, data + i, (len - i >= 4) ? 4 : (len - i));
         uint32_t got = cjtag_ahb_read32(addr + i);
         if (got != expect) return false;
@@ -445,8 +449,11 @@ static bool     s_hdr_done = false;
 /* 解锁 flash + 使能 DAP 电源（整个烧录期间保持；见 cjtag_flash_program）。 */
 static void flash_unlock(void)
 {
-    cjtag_ahb_write32(0x5000130C, 0xC35A01E2);
+    /* 顺序：先给调试域上电，再配 MEM-AP CSW（Size=32bit, AddrInc=single），
+     * 最后才发 AHB 事务——反了首次访问会 fault/尺寸错。 */
     jtag_dp_write(DP_CTRLSTAT, DP_CTRL_CSYSPWRUP | DP_CTRL_CDBGPWRUP);
+    jtag_ap_write(0, AP_CSW, 0x23000052u);   /* Size=0b010, AddrInc=0b01 */
+    cjtag_ahb_write32(0x5000130C, 0xC35A01E2);
 }
 static void flash_lock(void)
 {

@@ -27,7 +27,7 @@ import serial
 
 def flash(port: str, fw_path: str) -> bool:
     try:
-        ser = serial.Serial(port, 115200, timeout=5)
+        ser = serial.Serial(port, 115200, timeout=1)
     except serial.SerialException as e:
         print(f"ERROR: cannot open {port}: {e}")
         return False
@@ -61,8 +61,16 @@ def flash(port: str, fw_path: str) -> bool:
     print()
 
     # 收满长度即自动擦写校验 + RESET（无需 'Q'）；等待 FLASH-DONE。
-    print("Waiting for erase + program + verify + reset...")
-    resp = ser.read(4096).decode("utf-8", errors="replace")
+    # 352KB 按 250kHz 位脉冲要分钟级，不能用固定短超时。
+    print("Waiting for erase + program + verify + reset (may take minutes)...")
+    resp = ""
+    deadline = time.time() + 900
+    while time.time() < deadline:
+        d = ser.read(4096)
+        if d:
+            resp += d.decode("utf-8", errors="replace")
+            if any(k in resp for k in ("FLASH-DONE", "FLASH-FAIL", "FLASH-ABORT")):
+                break
     if "FLASH-DONE" in resp:
         print(f"SUCCESS: {resp.strip()}")
         ser.close()
