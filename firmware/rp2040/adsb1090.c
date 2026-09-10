@@ -8,6 +8,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/bootrom.h"
 
 #include "rf_safety.h"
 #include "edge_cap.h"
@@ -186,6 +187,12 @@ int main(void)
             printf("tl_level=%dmV rssi_raw=%d\n",
                    threshold_ctl_read_level_mv(),
                    threshold_ctl_read_rssi_raw());
+        } else if (c == 'B') {
+            /* 软入口回 BOOTSEL：现场重刷不用再拆机短接 SW2/SW1（J1 扣上
+             * 时插拔 USB 不产生复位，硬进 BOOTSEL 很麻烦）。 */
+            printf("-> BOOTSEL\n");
+            sleep_ms(50);
+            reset_usb_boot(0, 0);
         }
 
         if (absolute_time_diff_us(get_absolute_time(), next_hz) < 0) {
