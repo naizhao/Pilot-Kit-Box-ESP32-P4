@@ -33,6 +33,7 @@
 #include "demo_data.h"
 #include "pk_i2c0_bus.h"      /* I²C0 总线已上移为板级模块（bus handle 来源） */
 #include "pk_i2c0_recover.h"  /* 总线级恢复：坏的是总线时 bno_bring_up 救不回来 */
+#include "pk_bringup_retry.h" /* 必装器件的开机 bring-up 退避重试（见该头文件的病因） */
 #include "pk_board.h"      /* 板型 profile：V3.9/V4.3 的 BNO085 安装变换不同 */
 #include "pk_vib.h"        /* vib_level：加速度模长滑动窗口 RMS */
 
@@ -116,7 +117,20 @@ static SemaphoreHandle_t          s_sample_lock;
 static pk_imu_sample_t            s_sample;
 static uint8_t                    s_tx_seq[6];   /* per-channel SHTP sequence */
 static uint8_t                    s_cmd_seq;     /* SH-2 Command Request sequence */
-static bool                       s_imu_ready;   /* true after pk_imu_init() succeeds */
+
+/* 芯片握过手、并且真的出过一条 Rotation Vector 才算 ready。
+ *
+ * 这面旗的含义在 2026-09-09 收紧过：bring-up 挪进 imu 任务之后，
+ * pk_imu_init() 返回 ESP_OK 只证明"任务建起来了"，不证明 BNO085 回话。若
+ * 仍拿 init 成功当 ready，退避重试期间按 TARE 会把默认单位四元数当成"当前
+ * 姿态"存进 NVS（下次开机地平线偏着），FACTORY RESET 更会在另一个任务里发
+ * SH-2 命令，与 imu 任务正在跑的 bring-up 并发写 s_dev / s_tx_seq / s_cmd_seq。
+ * 判据因此改成"收到过有效姿态"，置位点在 parse_rotation_vector()。
+ *
+ * 置 true 之后不再清零：瞬时 stall 期间用户按 TARE 仍然应该有效（下一帧就
+ * 生效），把按键做成时灵时不灵比拒绝一次更糟。
+ * volatile：写在 imu 任务，读在 UI 任务。 */
+static volatile bool              s_imu_ready;
 
 /* Vibration-RMS sliding window — fed from parse_linear_acceleration(),
  * consumed via pk_vib_level() into s_sample.vib_level. Only the 50
@@ -540,6 +554,8 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     s_sample.accuracy  = status & 0x03;
     s_sample.valid     = true;
     xSemaphoreGive(s_sample_lock);
+    /* 第一条真实姿态到手 = tare / factory reset 的门禁打开（见 s_imu_ready）。 */
+    s_imu_ready = true;
     return true;
 }
 
@@ -611,9 +627,16 @@ static bool parse_linear_acceleration(const uint8_t *cargo, size_t cargo_len)
  * from any task. Resets the SHTP per-channel sequence counters too —
  * BNO085 starts back at seq=0 after a reset and would reject our
  * frames if our side kept counting. */
+/* 本次开机是否已经存过 DCD。定义提前到 bno_bring_up 之前：硬复位会丢掉
+ * 芯片 RAM 里的校准，复位后必须允许重新落盘，否则形成"复位→掉精度→
+ * 重校准→不落盘"的死循环（2026-09-10）。volatile：置位/清零跨任务，
+ * 单字节读写原子，最坏多存/少存一次，不值得引锁。 */
+static volatile bool s_dcd_saved;
+
 static esp_err_t bno_bring_up(void)
 {
     bno_reset_pulse();
+    s_dcd_saved = false;   /* 芯片 RAM 校准已被复位丢弃，允许重新落盘 */
 
     /* SHTP and command-request sequence numbers restart at 0 on the
      * BNO085 side after a hard reset. Mirror that on our side. */
@@ -651,25 +674,20 @@ static esp_err_t bno_bring_up(void)
  * 落在 ESP32 的 NVS，明确不碰 DCD（见 imu_task.h 的说明）。这里存的是芯片
  * 自己的校准数据、落在芯片自己的 flash。 */
 
-/* acc 必须连续这么多秒都是 3（最高档）才落盘。
+/* acc 连续这么多秒 >= 2（中档及以上）才落盘。
  *
- * 用 3 不用 2：存一份半吊子校准进 flash，下次开机恢复出来的还是半吊子，
- * 还不如让它重新收敛。
+ * 2026-09-10 由 `== 3` 放宽到 `>= 2`：原判据要求顶档，但真实环境（机坪/
+ * 机库/含铁结构附近）磁场融合常常只到中档，于是**永远不落盘**——每次开机
+ * 都从 0 收敛，校准页反复弹。存一份中档校准、开机即恢复，远好于反复从零
+ * 收敛；DCD 本就是可继续演进的运行时数据，不是一次性终值。
  *
- * 5 秒这个时长取自真机日志——acc 是一档一档往上爬的（t=36.4s acc=1 →
- * 38.4s acc=2 → 40.4s acc=3，每档约 2 秒），连续 5 秒读到 3 说明已经越过
- * 整个爬升过程稳定停在顶档，而不是路过。多等这几秒没有代价，早存一次的
- * 代价是一份写死在 flash 里、下次开机还要拖累收敛的坏校准。 */
+ * 5 秒这个时长取自真机日志（acc 逐档爬升、每档约 2 秒），连续 5 秒 >= 2
+ * 说明已越过爬升过程稳定下来，而不是路过。 */
 #define IMU_DCD_SAVE_DWELL_S     5
 
-/* 本次开机是否已经存过。BNO08x 的 FRS flash 有写入寿命，所以判据是"每次
- * 开机最多一次"，而不是"只要 acc=3 就周期性存"——后者会在一次长途飞行里
- * 写掉成百上千次。
- *
- * volatile：置位在 imu_task，清零在 pk_imu_factory_reset()（另一个任务）。
- * 单字节读写在 RV32 上是原子的，两边交错最坏也就是多存/少存一次，不值得
- * 为它引一把锁。 */
-static volatile bool s_dcd_saved;
+/* s_dcd_saved 的语义与并发说明见文件上方（定义已提前到 bno_bring_up 之前，
+ * 因为硬复位路径要清零它）。BNO08x 的 FRS flash 有写入寿命，判据是"每次
+ * 开机最多一次"，而不是"只要 acc>=2 就周期性存"。 */
 
 static esp_err_t bno_save_dcd(void)
 {
@@ -726,6 +744,66 @@ static void imu_note_save_dcd_response(const uint8_t *cargo, size_t len)
 #define IMU_STALL_TIMEOUT_US      (5 * 1000000LL)   /* 5 s with no valid RV report → re-init */
 #define IMU_REINIT_MIN_GAP_US     (3 * 1000000LL)   /* don't retry sooner than this after a re-init attempt */
 
+/* --- 开机 bring-up 的退避重试 ---------------------------------------- *
+ *
+ * 过去 bno_bring_up() 跑在 pk_imu_init() 里、**在任务被创建之前**，失败就
+ * return：整次开机没有 imu 任务，于是下面那条 5 s stall watchdog、总线
+ * generation 重放、RST 自愈全都没有执行者，只能重启整机。而开机那一瞬恰恰
+ * 最不可靠（2026-08-03 真机日志里的总线塌陷就在开机阶段）。现在任务先存在，
+ * 握手是它循环里的第一步，失败就退避重试到成功为止。 */
+
+/* 退避涨到这一档才把失败升级成**总线级**恢复请求。判据与节流的论证同
+ * baro_task.c 的 BARO_UP_RECOVER_MIN_BACKOFF_MS：总线复位会打扰同一条总线
+ * 上的 baro / touch / codec，开机头几秒的失败多半是别人还没让开，那种瞬态
+ * 自己会好。 */
+#define IMU_UP_RECOVER_MIN_BACKOFF_MS  8000
+
+typedef struct {
+    bool    ever_recovered;   /* 请求过总线恢复没有（区分"从没请求过"与 t=0） */
+    int64_t last_recover_us;
+} imu_up_ctx_t;
+
+static bool imu_bring_up_attempt(void *ctx)
+{
+    (void)ctx;
+    esp_err_t err = bno_bring_up();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "BNO085 bring-up 失败: %s", esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "BNO085 rotation vector @ 100 Hz + linear accel @ 50 Hz enabled");
+    return true;
+}
+
+static void imu_on_failed_bring_up(void *ctx, uint32_t attempt_no, uint32_t backoff_ms)
+{
+    imu_up_ctx_t *up = (imu_up_ctx_t *)ctx;
+
+    /* 没握上手就别对外冒充有姿态：PFD 宁可画"无姿态"，也不能拿默认的单位
+     * 四元数当成一个水平的地平线（那在飞行中是致命的谎）。 */
+    xSemaphoreTake(s_sample_lock, portMAX_DELAY);
+    s_sample.valid      = false;
+    s_sample.have_accel = false;
+    xSemaphoreGive(s_sample_lock);
+
+    ESP_LOGW(TAG, "BNO085 bring-up 第 %u 次失败 — %u ms 后重试",
+             (unsigned)attempt_no, (unsigned)backoff_ms);
+
+    if (backoff_ms < IMU_UP_RECOVER_MIN_BACKOFF_MS) return;
+
+    const int64_t now = esp_timer_get_time();
+    if (up->ever_recovered &&
+        now - up->last_recover_us < (int64_t)IMU_UP_RECOVER_MIN_BACKOFF_MS * 1000) {
+        return;
+    }
+    up->ever_recovered  = true;
+    up->last_recover_us = now;
+    /* 拉了 RST 还是一个字节都发不出去 —— 这是**总线**级故障的直接证据，
+     * 不是 BNO085 挂了（芯片挂了会 NACK，不会让主控发不出去）。和 stall
+     * watchdog 里那条 "bring-up after stall failed" 是同一个判据。 */
+    (void)pk_i2c0_recover_request("imu/bring-up");
+}
+
 static void imu_task(void *arg)
 {
     (void)arg;
@@ -733,7 +811,7 @@ static void imu_task(void *arg)
 
     uint8_t cargo[SHTP_MAX_PAYLOAD];
     int64_t last_log_us    = 0;
-    int64_t last_valid_us  = esp_timer_get_time();
+    int64_t last_valid_us  = 0;
     int64_t last_reinit_us = 0;
 
     /* 总线级故障的上报口。门槛 2 次、不看时长：这里的"一次失败"已经是
@@ -758,6 +836,26 @@ static void imu_task(void *arg)
     /* acc 已经连续读到 3 多少秒（在 1 Hz 那一段累加，掉档即清零）。
      * 攒够 IMU_DCD_SAVE_DWELL_S 就落盘一次，见下面的调用点。 */
     uint32_t dcd_dwell_s = 0;
+
+    /* --- 开机 bring-up：退避重试到芯片回话为止，永不放弃、永不删任务 --- */
+    imu_up_ctx_t up_ctx = { .ever_recovered = false, .last_recover_us = 0 };
+    const pk_bringup_retry_t up_cfg = {
+        .name              = "bno085",
+        .attempt           = imu_bring_up_attempt,
+        .on_failed_attempt = imu_on_failed_bring_up,
+        .ctx               = &up_ctx,
+    };
+    pk_bringup_retry_run(&up_cfg);
+
+    /* 重试期间总线可能被谁复位过（也可能是我们自己请求的）。握上手用的就是
+     * 复位之后的总线，所以把代数对齐，免得下面第一轮就判"代数变了"再白重放
+     * 一次 bring-up。失败计数同理清零。 */
+    bus_gen = pk_i2c0_bus_generation();
+    pk_i2c0_client_reset(&i2c_client);
+
+    /* stall 时钟从**握手成功**那一刻起算：从任务创建起算的话，一次几十秒的
+     * bring-up 重试之后一进循环就会立刻判 stall，白拉一次 RST。 */
+    last_valid_us = esp_timer_get_time();
 
     while (1) {
         /* --- 总线被别人救回来了？先把自己重新初始化，再谈轮询 --- */
@@ -904,7 +1002,7 @@ static void imu_task(void *arg)
                 hw_valid = s_sample.valid;
                 xSemaphoreGive(s_sample_lock);
 
-                if (hw_valid && hw_acc == 3) dcd_dwell_s++;
+                if (hw_valid && hw_acc >= 2) dcd_dwell_s++;
                 else                         dcd_dwell_s = 0;
 
                 if (dcd_dwell_s >= IMU_DCD_SAVE_DWELL_S) {
@@ -915,7 +1013,7 @@ static void imu_task(void *arg)
                     s_dcd_saved = true;
                     esp_err_t derr = bno_save_dcd();
                     if (derr == ESP_OK) {
-                        ESP_LOGI(TAG, "BNO: 已发出 Save DCD（acc=3 连续 %u s）"
+                        ESP_LOGI(TAG, "BNO: 已发出 Save DCD（acc>=2 连续 %u s）"
                                       "— 磁场校准写入芯片 flash，下次开机应直接高 acc",
                                  (unsigned)IMU_DCD_SAVE_DWELL_S);
                     } else {
@@ -1006,20 +1104,27 @@ esp_err_t pk_imu_init(void)
     esp_err_t err = i2c_add_device();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2c_add_device: %s", esp_err_to_name(err));
+        vSemaphoreDelete(s_sample_lock);
+        s_sample_lock = NULL;
         return err;
     }
 
-    err = bno_bring_up();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bno_bring_up: %s", esp_err_to_name(err));
-        return err;
-    }
-    ESP_LOGI(TAG, "BNO085 rotation vector @ 100 Hz + linear accel @ 50 Hz enabled");
-
+    /* 这里**不**跑 bno_bring_up()：握手是 imu_task 循环里的第一步，失败就在
+     * 任务里退避重试（见 imu_bring_up_attempt）。过去在这里同步握手、失败即
+     * return，任务从来没被创建，整次开机再没有姿态——那正是要修的病。
+     * 于是本函数只做"装配"：装不上（内存/总线）才返回错误。 */
     BaseType_t ok = xTaskCreatePinnedToCore(
         imu_task, "imu", 4096, NULL, 5, NULL, 0);
-    if (ok != pdTRUE) return ESP_ERR_NO_MEM;
-    s_imu_ready = true;
+    if (ok != pdTRUE) {
+        /* 建不起任务就没人去摘器件、没人去还锁：这里必须自己收干净，否则
+         * 上层若重试一次 init，i2c device 会被挂第二遍、mutex 漏第二把。 */
+        ESP_LOGE(TAG, "imu task create failed");
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
+        vSemaphoreDelete(s_sample_lock);
+        s_sample_lock = NULL;
+        return ESP_ERR_NO_MEM;
+    }
     return ESP_OK;
 }
 

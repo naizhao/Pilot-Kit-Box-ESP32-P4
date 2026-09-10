@@ -69,10 +69,6 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
         st->acc_high_prev = acc_high;
         st->acc_seeded    = true;
 
-        /* 记住本次开机是否到过 EXIT_ACCURACY：冷启动宽限只给「从未收敛过」。
-         * 一帧 acc>=2 即置位——后续即便退化也不再享受宽限。 */
-        if (acc_high) st->ever_converged = true;
-
         if (accuracy < PK_CAL_EXIT_ACCURACY) {
             /* D2(c)：低精度判据从 ==0 改成 <EXIT_ACCURACY（即 0 或 1）。
              * BNO 冷启动后停在 0 还是 1 是随机的：停在 0 → 旧逻辑起算；
@@ -90,6 +86,13 @@ pk_cal_advice_t pk_cal_advisor_update(pk_cal_advisor_t *st, uint32_t now_ms,
                 st->high_since_ms = now_ms;
             }
             st->low_active = false;
+            /* 记住本次开机是否"到过收敛"：冷启动宽限只给从未收敛过者。
+             * 2026-09-10 由"一帧 acc>=2 即置位"改为"连续 PK_CAL_EXIT_MS
+             * 保持 >=2 才置位"——该信号本身在 0↔1↔2 抖动，单帧噪声就会
+             * 作废 120s 宽限，把偶发抖动放大成频繁弹页。 */
+            if ((uint32_t)(now_ms - st->high_since_ms) >= PK_CAL_EXIT_MS) {
+                st->ever_converged = true;
+            }
         }
         /* accuracy 在 EXIT_ACCURACY 之上但不到 high？不存在——EXIT_ACCURACY 就是
          * high 的阈值，这两条分支互斥且穷尽。 */

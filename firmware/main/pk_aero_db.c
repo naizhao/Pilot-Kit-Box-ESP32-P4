@@ -315,9 +315,15 @@ static bool aero_load_once(void)
         int rc = pk_aero_init(&db, buf, len, true);  /* magic/version 2|3|4/段表 */
         if (rc != PK_AERO_OK) {
             ok = false;
-            why = rc == PK_AERO_ERR_MAGIC   ? "bad magic"
-                : rc == PK_AERO_ERR_VERSION ? "bad version"
-                                            : "bad layout";
+            /* 拆分错误码：旧实现把 TRUNCATED/ENCRYPTED/SECTION/ARG 全兜底成
+             * "bad layout"，导致密钥不匹配（表现为 parse_index 的
+             * ERR_TRUNCATED）被误报成"布局错"，排障方向被带偏。 */
+            why = rc == PK_AERO_ERR_MAGIC     ? "bad magic"
+                : rc == PK_AERO_ERR_VERSION   ? "bad version"
+                : rc == PK_AERO_ERR_TRUNCATED ? "truncated (key mismatch?)"
+                : rc == PK_AERO_ERR_ENCRYPTED ? "encrypted"
+                : rc == PK_AERO_ERR_SECTION   ? "bad layout"
+                                              : "bad arg";
         }
     }
     if (ok && !aero_sha_verify(&db)) {

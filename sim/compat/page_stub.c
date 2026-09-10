@@ -410,7 +410,7 @@ void pk_settings_apply(int row, int v) { (void)row; (void)v; }
  */
 #include "baro.h"
 #include "battery.h"
-#include "dsp_task.h"
+#include "modes_ingest.h"   /* pk_dsp_stats_t；dsp_task.h 已随 SDR 退役删除 */
 #include "gps.h"
 #include "pilot_kit.h"
 #include "pk_aero_db.h"
@@ -519,8 +519,8 @@ void pk_sim_clock_freeze(void)
 void pk_dsp_get_stats(pk_dsp_stats_t *o)
 {
     if (!o) return;
-    o->msgs_total    = diag_ok() ? 18432 : 0;
-    o->iq_drop_total = 0;
+    o->msgs_total     = diag_ok() ? 18432 : 0;
+    o->frames_bad_crc = 0;
 }
 
 bool pk_gps_get(pk_gps_state_t *o)
@@ -573,12 +573,6 @@ bool pk_sdcard_info(uint64_t *total, uint64_t *free_b)
     if (total)  *total  = 31914983424ULL;
     if (free_b) *free_b = 28991029248ULL;
     return diag_ok();
-}
-
-pk_sdr_state_t pk_sdr_state_get(uint32_t *drop_kb)
-{
-    if (drop_kb) *drop_kb = 0;
-    return diag_ok() ? PK_SDR_STREAMING : PK_SDR_NO_DEVICE;
 }
 
 bool pk_soc_temp_get(int *temp_c) { if (temp_c) *temp_c = 47; return false; }

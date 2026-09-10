@@ -17,6 +17,7 @@
 #include "esp_intr_alloc.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
 
 #include "pilot_kit.h"
 #include "adsb_link_task.h"
@@ -83,6 +84,26 @@ void app_main(void)
     ESP_LOGI(TAG, "Free internal heap at boot: %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
+    /* NVS 的唯一初始化点（2026-09-10）：分区异常时**只在这里擦一次**。
+     * 此前 11 个模块各自 nvs_flash_init()+nvs_flash_erase()，任一模块命中
+     * NO_FREE_PAGES / NEW_VERSION_FOUND 就会把整个分区擦掉——包括 IMU 的
+     * pk_imu/tare_quat，表现为"长按调平重启后不生效"。这里统一处理；各模块
+     * 的 ensure_nvs() 只保留幂等 init（见 config_*.c）。 */
+    {
+        esp_err_t nvs_err = nvs_flash_init();
+        if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES ||
+            nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_LOGW(TAG, "NVS needs erase (%s) — erasing once",
+                     esp_err_to_name(nvs_err));
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            nvs_err = nvs_flash_init();
+        }
+        if (nvs_err != ESP_OK) {
+            ESP_LOGW(TAG, "nvs_flash_init: %s — persistence degraded",
+                     esp_err_to_name(nvs_err));
+        }
+    }
+
     /* ADS-B 链路任务的 UART 在 adsb_link_task 内部初始化，
      * 这里不再有 USB host 栈的启动次序约束。 */
 
@@ -112,16 +133,16 @@ void app_main(void)
                       "IMU/baro/touch (1090 unaffected)", esp_err_to_name(bus_err));
     }
 
-    /* 电源链（原 pk_batt_init 单口，WP-D 拆成三步）：
-     * 1. SY6970 探测：ACK（= v4 powered 充电芯片在位）→ 注册为权威源；
-     *    NACK（v3 载板 / 未上电 v4 的**预期路径**）→ 不注册，仅 INFO。
-     * 2. ETA6098 装好并注册（两代载板都必然在位，兜底源）。
-     * 3. 起 1 Hz 轮询任务。
-     * 注册次序=优先级（首个非 stale 者赢，见 power_service.h:15-20）：
-     * SY6970 掉线时服务自动回落 ETA6098。powered/unpowered 只由 ACK
-     * 表达，与 Kconfig 板型正交（pk_board.h:30-32）。三个调用都幂等。 */
+    /* 电源链（用户 2026-09-10 口径）：电池挂在扩展板，链路是
+     * 「电池→扩展板 USB-C→微雪 USB-C」。SY6970 是扩展板充电芯片，
+     * **唯一权威电池源**；微雪主板 BATT（ETA6098）不再读（用不上），
+     * 故**不注册**——此前"两块板电池值互跳"按构造消失。
+     * SY6970 探测：ACK（powered 扩展板在位）→ 注册；NACK（v3 载板 /
+     * 未上电 v4 的预期路径）→ 不注册，仅 INFO。powered/unpowered 只由
+     * ACK 表达，与 Kconfig 板型正交（pk_board.h:30-32）。两个调用都幂等。
+     * 注：SY6970 无"电池在位"寄存器，空座检测需实板标定
+     * （见 IMPLEMENTATION_PLAN.md B6）。 */
     power_sy6970_init();
-    power_eta6098_init();
     power_service_init();
     pk_sdcard_init();
     /* ADS-B / 本机数据落盘的 session 目录管理，须晚于 pk_sdcard_init()。
@@ -313,7 +334,9 @@ void app_main(void)
         ESP_LOGW(TAG, "IMU init failed (%s) — PFD will run without attitude",
                  esp_err_to_name(imu_err));
     } else {
-        ESP_LOGI(TAG, "BNO085 IMU online");
+        /* 别写成 "IMU online"：这里只证明任务建起来了，BNO085 回没回话要看
+         * imu 任务自己那条 bring-up 日志（失败会退避重试，见 imu_task.c）。 */
+        ESP_LOGI(TAG, "BNO085 IMU task started (bring-up runs in-task)");
     }
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */

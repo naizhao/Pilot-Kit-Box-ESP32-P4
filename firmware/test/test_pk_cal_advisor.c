@@ -167,6 +167,10 @@ static void test_sc4_unknown_phase_allows_wizard(void)
 /* ===================== SC5/SC6 共用：打进 jammed ===================== */
 static uint32_t drive_into_jam(pk_cal_advisor_t *st, uint32_t base_ms)
 {
+    /* 本 helper 只测干扰识别，直接预置 ever_converged：2026-09-10 起
+     * ever_converged 需连续 PK_CAL_EXIT_MS 保持 >=2 才置位，而这里只喂
+     * 单帧 acc=2（跨阈用）。两者正交，预置可让用例只考干扰语义。 */
+    st->ever_converged = true;
     pk_cal_advisor_update(st, base_ms, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
     CHECK(pk_cal_advisor_is_jammed(st) == false);
     pk_cal_advisor_update(st, base_ms + 1000u, true, 2, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
@@ -326,11 +330,33 @@ static void test_sc13_converged_then_degrade_uses_fast_path(void)
 {
     pk_cal_advisor_t st; pk_cal_advisor_reset(&st); uint32_t t = 0;
     feed(&st, &t, 600, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC13 冷启动宽限中");
-    pk_cal_advice_t adv = pk_cal_advisor_update(&st, t, true, 2, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
-    CHECK_ADVICE(adv, PK_CAL_ADVICE_NONE);
-    t += TICK_MS;
+    /* 2026-09-10：ever_converged 要求连续 PK_CAL_EXIT_MS 保持 >=2，单帧不再
+     * 置位。喂 5 s acc=2 代表"真的收敛过"。 */
+    feed(&st, &t, 50, true, 2, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC13 持续高精度");
+    CHECK(st.ever_converged == true);
     feed(&st, &t, 200, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC13 快通道累计");
-    adv = pk_cal_advisor_update(&st, t, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
+    pk_cal_advice_t adv = pk_cal_advisor_update(&st, t, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
+    CHECK_ADVICE(adv, PK_CAL_ADVICE_WIZARD);
+}
+
+/* ============ SC16 (2026-09-10): 短暂 acc>=2 不作废冷启动宽限 ============ */
+static void test_sc16_brief_high_blip_keeps_coldstart_grace(void)
+{
+    pk_cal_advisor_t st; pk_cal_advisor_reset(&st); uint32_t t = 0;
+    /* 冷启动宽限 120 s。中途蹦一小段 acc=2（< EXIT_MS）再回 0：旧逻辑"一帧
+     * 即置 ever_converged"会把宽限塌成 20 s、很快弹页；新逻辑要求连续
+     * EXIT_MS，宽限应保留。 */
+    feed(&st, &t, 100, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC16 累计");
+    feed(&st, &t, 20, true, 2, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC16 短暂高精度");
+    CHECK(st.ever_converged == false);
+    /* 回到 0 再累计 25 s：总量 < 120 s 宽限 → 仍不弹 */
+    feed(&st, &t, 250, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE, PK_CAL_ADVICE_NONE, "SC16 宽限内");
+    /* 越过 120 s 宽限后才弹 */
+    pk_cal_advice_t adv = PK_CAL_ADVICE_NONE;
+    for (int i = 0; i < 1000 && adv != PK_CAL_ADVICE_WIZARD; i++) {
+        adv = pk_cal_advisor_update(&st, t, true, 0, PK_PHASE_GROUND_STOPPED, VIB_MOVE);
+        t += TICK_MS;
+    }
     CHECK_ADVICE(adv, PK_CAL_ADVICE_WIZARD);
 }
 
@@ -449,6 +475,7 @@ int main(void)
     test_sc13_converged_then_degrade_uses_fast_path();
     test_sc14_acc1_now_starts_timer();
     test_sc15_user_open_then_dismiss_then_auto_still_exits();
+    test_sc16_brief_high_blip_keeps_coldstart_grace();
     test_invalid_does_not_reset_timers();
     test_invalid_samples_do_not_count_as_crossings();
     test_user_open_rearms_and_clears_timers();

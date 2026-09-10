@@ -442,15 +442,11 @@ void pk_diag_page_render(uint16_t *fb)
             /* 曾经在讲话，现在哑了 = 掉线/供电/接触不良，跟没装是两回事。 */
             draw_card(fb, 0, 1, card_title(2),
                       pk_i18n_text(PK_TR_DIAG_V_MODULE_SILENT), ST_BAD);
-        } else if (g.ant_status == PK_GPS_ANT_OPEN) {
-            /* 模块自检报的天线开路，比"没星"精确得多——直接说结论。 */
-            draw_card(fb, 0, 1, card_title(2),
-                      pk_i18n_text(PK_TR_DIAG_V_ANT_OPEN), ST_BAD);
-        } else if (g.ant_status == PK_GPS_ANT_SHORT) {
-            draw_card(fb, 0, 1, card_title(2),
-                      pk_i18n_text(PK_TR_DIAG_V_ANT_SHORT), ST_BAD);
         } else if (fresh) {
-            /* 数字与量词分开取：整句进 catalog 就等于把 snprintf 的格式串
+            /* 有效定位优先于天线自检：ATGM336H-6N 对无源/某些有源天线会
+             * 恒报 ANTENNA OPEN（手册 §2.8），若把 OPEN 画在 fix 之前，
+             * 会出现"35 颗星、定位正常"却报红色天线开路（2026-09-10 实板）。
+             * 数字与量词分开取：整句进 catalog 就等于把 snprintf 的格式串
              * 交给翻译者改，参数个数一对不上就是越界读栈。中英的词序在这里
              * 恰好一致（"fix 7 sats" / "已定位 7 星"），拼起来都读得通。 */
             snprintf(buf, sizeof(buf), "%s   %d %s   HDOP %.1f",
@@ -463,6 +459,13 @@ void pk_diag_page_render(uint16_t *fb)
                      pk_i18n_text(PK_TR_DIAG_V_NO_FIX), g.snr_count,
                      pk_i18n_text(PK_TR_DIAG_U_VISIBLE));
             draw_card(fb, 0, 1, card_title(2), buf, ST_WARN);
+        } else if (g.ant_status == PK_GPS_ANT_OPEN) {
+            /* 无 fix、无可见星，且模块自检报开路 —— 这才是真该查天线。 */
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_ANT_OPEN), ST_BAD);
+        } else if (g.ant_status == PK_GPS_ANT_SHORT) {
+            draw_card(fb, 0, 1, card_title(2),
+                      pk_i18n_text(PK_TR_DIAG_V_ANT_SHORT), ST_BAD);
         } else {
             /* 模块在讲话、天线自检没报错、但一颗星都没看见：冷启动搜星中，
              * 或者被完全遮挡。这才是"再等等"，不该报成天线故障。 */
@@ -1119,14 +1122,19 @@ static void draw_detail(uint16_t *fb, int which)
         snprintf(buf, sizeof(buf), "%.1f", (double)g.hdop);
         det_kv_tr(fb, line++, PK_TR_DIAG_K_HDOP, buf, COL_VAL);
 
-        /* 天线自检单独一行：它比"没星"精确得多，直接给结论。 */
+        /* 天线自检单独一行。注意：U7 pin14 VCC_RF 在 v3/v4 均悬空（有源天线
+         * 改由 3V3_GNSS 经 Q4/Q5 偏置），模块的天线检测回路被旁路，对无源/
+         * 旁路馈电的天线**恒报 OPEN**（ATGM336H-6N 手册 §2.8）。所以有定位或
+         * 有可见星时把 OPEN 降级为中性值色，只有无 fix 且无可见星才当告警。 */
         static const pk_tr_id_t kAnt[] = {
             PK_TR_DIAG_V_ANT_UNKNOWN, PK_TR_DIAG_V_ANT_OK,
             PK_TR_DIAG_V_ANT_OPEN_S,  PK_TR_DIAG_V_ANT_SHORT_S };
+        bool ant_receiving = fresh || g.snr_count > 0;
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_ANTENNA,
                    kAnt[g.ant_status <= PK_GPS_ANT_SHORT ? g.ant_status : 0],
                    g.ant_status == PK_GPS_ANT_OK ? COL_ONLINE
-                   : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE : COL_ALERT);
+                   : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE
+                   : (ant_receiving ? COL_VAL : COL_ALERT));
 
         if (fresh) snprintf(buf, sizeof(buf), "%.5f  %.5f", g.lat, g.lon);
         else       snprintf(buf, sizeof(buf), "---");
@@ -1282,9 +1290,28 @@ static void draw_detail(uint16_t *fb, int which)
             }
             snprintf(buf, sizeof(buf), "%lu", (unsigned long)written);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_WRITTEN, buf, COL_VAL);
-            snprintf(buf, sizeof(buf), "%lu", (unsigned long)dropped);
+
+            /* 丢弃这一行说两路 sink，不是只说 file（P1-D）。
+             *
+             * UART sink 改成非阻塞入队之后，控制台吃不下的部分记进它自己的
+             * dropped。没有消费者的计数器等于没有计数器：改造前丢帧是"丢在
+             * UART 驱动里、无计数"，如果只是把丢弃搬进一个没人读的计数器，
+             * 运维侧看到的东西一点没变。
+             *
+             * 复用同一行而不是新开一格：两者都是"这一路丢了多少"，语义同类；
+             * 而且值文本全是 ASCII，不引入新的 i18n 词条（新增中文要改
+             * i18n_catalog.py 并重跑字库生成，见该脚本的说明）。sink 没起来
+             * 时不显示 uart 段——那时报 0 是假话，这一路压根不存在。 */
+            uint32_t uart_dropped = 0;
+            const bool uart_up = record_sink_uart_stats(NULL, &uart_dropped, NULL);
+            if (uart_up) {
+                snprintf(buf, sizeof(buf), "file %lu  uart %lu",
+                         (unsigned long)dropped, (unsigned long)uart_dropped);
+            } else {
+                snprintf(buf, sizeof(buf), "%lu", (unsigned long)dropped);
+            }
             det_kv_tr(fb, line++, PK_TR_DIAG_K_DROPPED, buf,
-                      dropped ? COL_WARN : COL_VAL);
+                      (dropped || uart_dropped) ? COL_WARN : COL_VAL);
         } else {
             det_kv_tr2(fb, line++, PK_TR_DIAG_K_SINK, PK_TR_DIAG_V_DOWN,
                        COL_ALERT);

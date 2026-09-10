@@ -652,7 +652,7 @@ static bool resolve_shape(pk_win_shape_t *out, bool *out_ground)
     /* 用 track（地面航迹）而不是 heading（机头朝向）：预取要的是"地面往哪
      * 走"，侧风下机头与航迹能差十几度（文档 §1.4）。ADS-B 时 heading_deg
      * 是自报 track、GPS 时是 GPS track，都是真北。 */
-    const bool have_track = own.have_velocity &&
+    const bool have_track = own.have_heading && own.have_ground_speed &&
                             own.ground_speed_kt >= WIN_MIN_GS_KT;
     bool turning = false;
 
@@ -687,7 +687,9 @@ static bool resolve_shape(pk_win_shape_t *out, bool *out_ground)
     /* 地面判据：ADS-B 的 on_ground 位 + 地速门槛。pk_flight_phase 的全局态
      * 依赖 IMU/气压的融合，这里只需要"要不要退化成圆 + 要不要一律让路"
      * 这两个粗结论，用最直接的信号即可。 */
-    *out_ground = own.on_ground || !have_track;
+    /* on_ground 是三态：不知道时按"不在地面"算，与 !have_track 那一半
+     * 兜底叠加即可——把"不知道"当成"在地面"会让空中也一直让路给瓦片。 */
+    *out_ground = (own.have_air_ground && own.on_ground) || !have_track;
 
     if (!have_track || turning) {
         pk_win_shape_circle(out, own.lat, own.lon, PK_WIN_CIRCLE_NM);
@@ -892,6 +894,7 @@ static void win_task(void *arg)
                 pk_aero_span_close();
                 xSemaphoreTake(s_lock, portMAX_DELAY);
                 slots_clear_all();
+                s_st.open = false;   /* 卡拔出后不再报 open（旧实现卡在 filling） */
                 xSemaphoreGive(s_lock);
                 dirs_free();
             }
