@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "esp_attr.h"   /* IRAM_ATTR —— 显式包含，别靠别的头间接带进来 */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <sys/time.h>
@@ -23,14 +24,15 @@ static const char *TAG = "gps";
 #define GPS_UART    UART_NUM_1
 #define GPS_TX_PIN  49   /* P4 TX → GPS RXD; moved to J3 Pin 32 (upper) */
 #define GPS_RX_PIN  51   /* GPS TXD → P4 RX; J3 Pin 36 = GPIO51 (J3 Pin 34 / GPIO50 is GPS_PPS) */
-#define GPS_BAUD    9600
+#define GPS_BAUD    115200   /* ATGM336H-6N(AT6668B) 默认 115200，非 5N/AT6558 的 9600 */
 #define GPS_BUF_SZ  512
 
 #define GPS_PPS_PIN  50          /* GNSS 1PPS → P4，J3 Pin 34（board_pinout.md §10 GPS 表） */
 #define GPS_PPS_LOCK_US 2000000LL /* 时间锁定窗口：PPS 距今 <2 s 视为在锁 */
-#define GPS_NMEA_LOCK_US 5000000LL /* 时间锁定还要求**有效 RMC** 距今 <5 s
-                                    * （updated_us；任何完整行都算的 last_nmea_us
-                                    * 只用于诊断「模块在不在」）*/
+/* 时间锁定还要求**有效 RMC** 距今 <5 s（updated_us；任何完整行都算的
+ * last_nmea_us 只用于诊断「模块在不在」）。与位置 fix 的新鲜度窗口共用同一个
+ * 常量：两处都在问「最近一条有效 RMC 有多旧」，分成两个字面量就会各改各的。 */
+#define GPS_NMEA_LOCK_US PK_GPS_FIX_MAX_AGE_US
 
 static pk_gps_state_t    s_gps;
 static SemaphoreHandle_t s_lock;
@@ -63,6 +65,29 @@ static void IRAM_ATTR pps_isr(void *arg){
     portEXIT_CRITICAL_ISR(&s_pps_mux);
 }
 
+/* 逐字段过期：见 gps.h 的 PK_GPS_FIX_MAX_AGE_US。就地改写快照，过期的
+ * have_* 置 false **并把值清零**——只清标志位挡不住任何直接读坐标的路径
+ * （own_ship 的 GPS 兜底、pk_own_sampler 的轨迹、地面 CPR 的参考点都是
+ * 先看别的条件再读 lat/lon 的）。 */
+static void gps_apply_freshness(pk_gps_state_t *g, int64_t now_us){
+    if(!g->have_fix || g->updated_us == 0 ||
+       (now_us - g->updated_us) >= PK_GPS_FIX_MAX_AGE_US){
+        g->have_fix          = false;
+        g->lat               = 0.0;
+        g->lon               = 0.0;
+        g->have_ground_speed = false;
+        g->ground_speed_kt   = 0;
+        g->have_track        = false;
+        g->track_deg         = 0;
+    }
+    /* GGA 高度是独立的一路：RMC 一直新鲜、GGA 断供时高度照样必须过期。 */
+    if(!g->have_altitude || g->altitude_us == 0 ||
+       (now_us - g->altitude_us) >= PK_GPS_FIX_MAX_AGE_US){
+        g->have_altitude = false;
+        g->altitude_ft   = 0;
+    }
+}
+
 bool pk_gps_get(pk_gps_state_t *out){
     if(!out) return false;
     /* 演示模式接管点，理由同 pk_imu_sample_get()。
@@ -72,19 +97,59 @@ bool pk_gps_get(pk_gps_state_t *out){
      * 跟着有了数据，不必再单独去桩 own_ship。 */
     if(pk_demo_enabled()) return pk_demo_gps(esp_timer_get_time(), out);
     if(!s_lock) return false;
+    int64_t now = esp_timer_get_time();
     take(); *out = s_gps; give();
+    gps_apply_freshness(out, now);
     return out->have_fix;
 }
 
-/* NMEA ddmm.mmmm + hemisphere → decimal degrees (+N/+E) */
-static double nmea_to_deg(const char *val, const char *hemi){
-    if(!val || !*val) return 0.0;
-    double raw = atof(val);
+/* --- 严格字段解析 ---------------------------------------------------------
+ * atof/atoi 没有任何方式把"解析失败"与"值恰好是 0"分开：空字段、
+ * "12.3abc"、"nan" 全都变成一个看起来合法的数。RMC 的 speed/track 在模块
+ * 半死时真的会是空的，而 0 kt / 航迹正北都是合法读数——于是本机在 EFB 上
+ * 变成一架笃定停在原地、机头朝北的飞机。
+ *
+ * 这里只接受 [+-]?digits[.digits] 且必须消费到串尾：strtod 会吃下
+ * "nan"/"inf"/"0x1p3"，不能用。 */
+static bool parse_num(const char *s, double *out){
+    if(!s || !*s) return false;
+    const char *p = s;
+    if(*p == '+' || *p == '-') p++;
+    int digits = 0;
+    while(*p >= '0' && *p <= '9'){ p++; digits++; }
+    if(*p == '.'){ p++; while(*p >= '0' && *p <= '9'){ p++; digits++; } }
+    if(digits == 0 || *p != '\0') return false;
+    *out = atof(s);
+    return true;
+}
+
+/* NMEA ddmm.mmmm / dddmm.mmmm + 半球 → 十进制度 (+N/+E)。
+ * 任何一处不合法都返回 false，调用方据此**不采信这条定位**：
+ *   - 字段空/带垃圾（模块半死时 status 仍报 A，坐标却是空的 → 0°,0° 几内亚湾）
+ *   - 分位 ≥ 60′（3160.0000）
+ *   - 度数越界（纬度 >90、经度 >180）
+ *   - 半球字符不是恰好一个 N/S（纬度）或 E/W（经度）*/
+static bool nmea_to_deg(const char *val, const char *hemi, bool is_lat, double *out){
+    double raw;
+    if(!parse_num(val, &raw) || raw < 0.0) return false;
+    if(!hemi || hemi[0] == '\0' || hemi[1] != '\0') return false;
+    bool neg;
+    if(is_lat){
+        if(hemi[0] == 'N')      neg = false;
+        else if(hemi[0] == 'S') neg = true;
+        else return false;
+    } else {
+        if(hemi[0] == 'E')      neg = false;
+        else if(hemi[0] == 'W') neg = true;
+        else return false;
+    }
     int    deg = (int)(raw / 100.0);
     double min = raw - deg * 100.0;
-    double d   = deg + min / 60.0;
-    if(hemi && (*hemi == 'S' || *hemi == 'W')) d = -d;
-    return d;
+    if(min >= 60.0) return false;
+    double d = deg + min / 60.0;
+    if(d > (is_lat ? 90.0 : 180.0)) return false;
+    *out = neg ? -d : d;
+    return true;
 }
 
 /* RMC 的 hhmmss(.sss) 与 ddmmyy 都是定长数字串 → epoch 毫秒。
@@ -113,19 +178,54 @@ static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
 
 static void parse_rmc(const gps_nmea_msg_t *msg){
     if(msg->n < 10) return;                 /* 需含日期字段 f[9] */
-    bool valid = (msg->f[2][0] == 'A');
+    /* status 必须**恰好**是 "A"：'AV' 这类残句的首字母同样是 'A'。 */
+    bool status_a = (msg->f[2][0] == 'A' && msg->f[2][1] == '\0');
+
+    /* 坐标解析失败 = 没有定位。status='A' 但经纬度是空的/越界的（模块半死时
+     * 真实存在）不能当成定位——老代码的 atof 会把它变成 0°,0°。 */
+    double lat = 0.0, lon = 0.0;
+    bool   valid = status_a &&
+                   nmea_to_deg(msg->f[3], msg->f[4], /*is_lat=*/true,  &lat) &&
+                   nmea_to_deg(msg->f[5], msg->f[6], /*is_lat=*/false, &lon);
+
+    /* 地速/航迹各自独立采信：同一句里坏掉一个不连累另一个，也不连累位置。 */
+    double v;
+    bool have_gs = valid && parse_num(msg->f[7], &v) && v >= 0.0 && v < 10000.0;
+    int    gs_kt = have_gs ? (int)(v + 0.5) : 0;
+    bool have_trk = valid && parse_num(msg->f[8], &v) && v >= 0.0 && v <= 360.0;
+    int    trk_deg = have_trk ? ((int)(v + 0.5)) % 360 : 0;
+
     take();
     s_gps.have_fix = valid;
     if(valid){
-        s_gps.lat = nmea_to_deg(msg->f[3], msg->f[4]);
-        s_gps.lon = nmea_to_deg(msg->f[5], msg->f[6]);
-        s_gps.ground_speed_kt = (int)(atof(msg->f[7]) + 0.5);
-        s_gps.track_deg       = (int)(atof(msg->f[8]) + 0.5);
+        s_gps.lat = lat;
+        s_gps.lon = lon;
+        s_gps.have_ground_speed = have_gs;
+        s_gps.ground_speed_kt   = gs_kt;
+        s_gps.have_track        = have_trk;
+        s_gps.track_deg         = trk_deg;
         s_gps.updated_us = esp_timer_get_time();
+    } else {
+        /* status='V'（进隧道）或坐标非法：位置与运动量一起撤。只清 have_fix
+         * 会留下 have_fix=false 而 lat/lon 还是旧值，任何只读坐标的路径照样
+         * 拿到冻结位置。
+         *
+         * 对**外**的那道闸是 gps_apply_freshness()（读侧，pk_gps_get 与 1 Hz
+         * 心跳都过它），合同测试钉的也是它；这里是写侧的第二道，管的是任何
+         * 直接读 s_gps 的未来代码。两道都在，删掉任何一道都不该被当成
+         * "反正另一道会兜住"。 */
+        s_gps.lat = 0.0;
+        s_gps.lon = 0.0;
+        s_gps.have_ground_speed = false;
+        s_gps.ground_speed_kt   = 0;
+        s_gps.have_track        = false;
+        s_gps.track_deg         = 0;
     }
     give();
 
-    /* 两段式校时（锁外做：settimeofday 不碰 s_gps）。 */
+    /* 两段式校时（锁外做：settimeofday 不碰 s_gps）。
+     * 精校门槛用 valid（整句自洽）而不是裸 status_a：一条报着 'A' 却给不出
+     * 合法坐标的句子，其时间字段同样不值得当卫星授时用。 */
     int64_t gps_ms;
     if(!rmc_epoch_ms(msg->f[1], msg->f[9], &gps_ms)) return;
     if(valid){
@@ -141,18 +241,25 @@ static void parse_rmc(const gps_nmea_msg_t *msg){
 }
 
 static void parse_gga(const gps_nmea_msg_t *msg){
-    if(msg->n < 10) return;
+    if(msg->n < 11) return;                  /* 需含高度单位字段 f[10] */
     int    q     = atoi(msg->f[6]);          /* fix quality, 0 = no fix */
     int    sats  = atoi(msg->f[7]);
-    double alt_m = atof(msg->f[9]);
+    /* 高度同样严格解析，并核对单位字段是 'M'——模块只会发米，但一个空的/
+     * 别的单位的字段意味着这句本身不可信，不该被当成高度。 */
+    double alt_m;
+    bool   alt_ok = q > 0 && parse_num(msg->f[9], &alt_m) &&
+                    msg->f[10][0] == 'M' && msg->f[10][1] == '\0';
     take();
     s_gps.sats = sats;
     s_gps.hdop = (float)atof(msg->f[8]);     /* GGA field 8 = HDOP */
-    if(q > 0){
-        s_gps.altitude_ft  = (int)(alt_m * 3.28084 + 0.5);
+    if(alt_ok){
+        /* GNSS 正高 (MSL)，**不是**气压高度——见 gps.h 的 pk_gps_get 注释。 */
+        s_gps.altitude_ft   = (int)(alt_m * 3.28084 + 0.5);
         s_gps.have_altitude = true;
+        s_gps.altitude_us   = esp_timer_get_time();
     } else {
         s_gps.have_altitude = false;
+        s_gps.altitude_ft   = 0;
     }
     give();
 }
@@ -207,7 +314,27 @@ static void parse_txt(const gps_nmea_msg_t *msg){
     take(); s_gps.ant_status = a; give();
 }
 
-static void handle_line(char *line){
+void pk_gps_state_init(void){
+    if(!s_lock){
+        s_lock = xSemaphoreCreateMutex();
+        configASSERT(s_lock != NULL);
+    }
+    take();
+    memset(&s_gps, 0, sizeof(s_gps));
+    give();
+    /* GSV 累积器与诊断计数器同属解析状态：不一并清零，下一段测试/下一次
+     * 重启就会继承上一段的可见星数与字节计数。 */
+    s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
+    s_rx_bytes = 0; s_nmea_lines = 0;
+    portENTER_CRITICAL(&s_pps_mux);
+    s_pps_count   = 0;
+    s_last_pps_us = 0;
+    portEXIT_CRITICAL(&s_pps_mux);
+}
+
+void pk_gps_feed_line(const char *line){
+    if(!line) return;
+    if(!s_lock) pk_gps_state_init();   /* 生产路径上 pk_gps_start 已建好 */
     s_nmea_lines++;
     /* 收到任何一行就更新——诊断页据此区分「模块没插」与「模块在讲话但没星」。
      * checksum 不过的行同样算「在讲话」，所以计数/时间戳必须在解析之前。 */
@@ -238,7 +365,7 @@ static void gps_task(void *arg){
         for(int i = 0; i < len; i++){
             char c = (char)buf[i];
             if(c == '\n' || c == '\r'){
-                if(li > 0){ line[li] = '\0'; handle_line(line); li = 0; }
+                if(li > 0){ line[li] = '\0'; pk_gps_feed_line(line); li = 0; }
             } else if(li < (int)sizeof(line) - 1){
                 line[li++] = c;
             } else { li = 0; }   /* overflow → drop line */
@@ -294,6 +421,10 @@ static void gps_task(void *arg){
              * 数据，于是没插 GPS 板卡时串口上照样印着 "fix=1 sats=11"——这条
              * 心跳存在的唯一目的就是排查真实模块，绝不能被演示数据污染。 */
             pk_gps_state_t g; take(); g = s_gps; give();
+            /* 但**要**过 pk_gps_get 同一道新鲜度闸：否则模块掉线后这条心跳
+             * 会一直印着最后一次定位，而消费者看到的早已是"无 fix"——两边
+             * 说法不一致，排障时会去查根本不存在的分歧。 */
+            gps_apply_freshness(&g, now);
             /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
              * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
@@ -308,9 +439,7 @@ static void gps_task(void *arg){
 }
 
 void pk_gps_start(void){
-    s_lock = xSemaphoreCreateMutex();
-    configASSERT(s_lock != NULL);
-    memset(&s_gps, 0, sizeof(s_gps));
+    pk_gps_state_init();
     uart_config_t cfg = {
         .baud_rate  = GPS_BAUD,
         .data_bits  = UART_DATA_8_BITS,
