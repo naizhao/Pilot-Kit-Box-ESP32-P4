@@ -95,6 +95,14 @@ static inline uint8_t hw_sample_tdo(void)
     if (h_log_n < 4096) h_log_tdo[h_log_n] = bit;
     return bit;
 }
+/* host：Oscan1 扫描位（记录 TMS/TDI，TDO 由 hw_sample_tdo 注入）。 */
+static uint8_t hw_scan_bit(uint8_t tms, uint8_t tdi)
+{
+    hw_drive_tms(tms);
+    hw_drive_tdi(tdi);
+    return hw_sample_tdo();
+}
+static void hw_activate(void) { /* host：模拟 */ }
 static MAYBE_UNUSED inline void hw_delay_ns(int ns) { (void)ns; }
 
 /* host 测试注入：设置模拟 IDCODE */
@@ -156,34 +164,62 @@ static inline uint8_t hw_sample_tdo(void)
     /* TCKC 低电平期间目标驱动 TMSC，在 TCKC↑ 之前采样 */
     return (uint8_t)gpio_get(CJTAG_PIN_TMSC);
 }
+
+/* cJTAG Oscan1 扫描位（IEEE 1149.7 T4）：1 个 JTAG 位 = **3 个 TCKC 周期**
+ *   周期1 nTDI(主机驱动, ~TDI) / 周期2 TMS(主机驱动) / 周期3 TDO(目标驱动,主机采样)
+ * 主机在周期3 前必须释放 TMSC。（旧代码 1 个 TCKC 当 1 位，协议根本不对。） */
+static uint8_t hw_scan_bit(uint8_t tms, uint8_t tdi)
+{
+    hw_drive_tdi((uint8_t)(tdi ^ 1));       /* cycle 1: nTDI */
+    hw_tck_high(); hw_tck_low();
+    hw_drive_tms(tms);                      /* cycle 2: TMS */
+    hw_tck_high(); hw_tck_low();
+    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_IN);  /* cycle 3: TDO（目标驱动） */
+    hw_tck_high();
+    uint8_t tdo = (uint8_t)gpio_get(CJTAG_PIN_TMSC);
+    hw_tck_low();
+    return tdo;
+}
+
+/* 进入 cJTAG 在线态（OFFLINE→ONLINE）：
+ * 1) escape：TCKC 拉高、TMSC 翻转 6 次（selection）；
+ * 2) 激活包：12 位、每 TCKC 一位、LSB 先出。OAC=0xC, EC=0x8, CP=OAC^EC=0x4
+ *    → 12 位值 = 0xC | (0x8<<4) | (0x4<<8) = 0x48C。 */
+static void hw_activate(void)
+{
+    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_OUT);
+    gpio_put(CJTAG_PIN_TCKC, 1);
+    /* escape：TCKC 高、TMSC 恰好翻转 6 次（6-7=selection；≥8 会被当 reset）。 */
+    uint8_t v = 0;
+    gpio_put(CJTAG_PIN_TMSC, v);
+    hw_delay_ns(CJTAG_TCK_DELAY_NS);
+    for (int i = 0; i < 6; i++) {
+        v ^= 1;
+        gpio_put(CJTAG_PIN_TMSC, v);
+        hw_delay_ns(CJTAG_TCK_DELAY_NS);
+    }
+    uint16_t pkt = 0x48C;
+    for (int i = 0; i < 12; i++) {
+        gpio_put(CJTAG_PIN_TMSC, (pkt >> i) & 1);
+        hw_tck_high(); hw_tck_low();
+    }
+}
 #endif
 
 /* ── TAP 操作原语 ────────────────────────────────────────────────── */
 
-/* 发一个 TCKC 时钟（带 TMS 位），更新状态机 */
+/* 发一个 JTAG 位（TMS=tms, TDI=0）并更新状态机。cJTAG 下这是一个
+ * 3-TCKC 周期的 Oscan1 扫描包（见 hw_scan_bit）。 */
 static void tap_clock_tms(uint8_t tms)
 {
-    hw_drive_tms(tms);
-    hw_tck_high();                        /* 目标在↑采样 TMS */
-    hw_tck_low();
+    (void)hw_scan_bit(tms, 0);
     s_tap = tap_next[s_tap][tms];
 }
 
-/* Shift 状态发一个时钟（TDI 写入或 TDO 读取） */
-static void tap_shift_write(uint8_t tdi)
+/* Shift 态写一位（TMS=0 留在 Shift），返回 TDO。 */
+static uint8_t tap_shift_write_read(uint8_t tdi)
 {
-    hw_drive_tdi(tdi);
-    hw_tck_high();
-    hw_tck_low();
-}
-
-static MAYBE_UNUSED uint8_t tap_shift_read(void)
-{
-    hw_tck_low();                         /* 确保低，目标驱动 TMSC */
-    uint8_t tdo = hw_sample_tdo();
-    hw_tck_high();                        /* ↑锁存 */
-    hw_tck_low();
-    return tdo;
+    return hw_scan_bit(0, tdi);
 }
 
 /* 走到指定状态（驱动 TMS 序列） */
@@ -237,9 +273,10 @@ static void jtag_shift_ir(uint32_t instr, int bits)
 {
     tap_goto(TAP_SHIFT_IR);
     for (int i = 0; i < bits; i++) {
-        tap_shift_write((instr >> i) & 1);
+        uint8_t tms = (i == bits - 1) ? 1 : 0;   /* 末位 TMS=1 退 Shift */
+        (void)hw_scan_bit(tms, (instr >> i) & 1);
     }
-    tap_clock_tms(1);              /* SHIFT_IR → EXIT1_IR */
+    s_tap = TAP_EXIT1_IR;
     tap_goto(TAP_UPDATE_IR);
     tap_goto(TAP_RTI);
 }
@@ -252,14 +289,11 @@ static uint32_t jtag_shift_dr(uint32_t tdi, int bits)
     uint32_t tdo = 0;
     tap_goto(TAP_SHIFT_DR);
     for (int i = 0; i < bits; i++) {
-        hw_drive_tdi((tdi >> i) & 1);
-        hw_tck_high();                          /* ↑ 目标采样 TDI */
-        gpio_set_dir(CJTAG_PIN_TMSC, GPIO_IN);  /* ↓ 之前释放 TMSC,让目标驱动 TDO */
-        hw_tck_low();
-        uint8_t rbit = (uint8_t)gpio_get(CJTAG_PIN_TMSC);
+        uint8_t tms = (i == bits - 1) ? 1 : 0;   /* 末位 TMS=1 退 Shift */
+        uint8_t rbit = hw_scan_bit(tms, (tdi >> i) & 1);
         tdo |= (uint32_t)rbit << i;
     }
-    tap_clock_tms(1);              /* SHIFT_DR → EXIT1_DR */
+    s_tap = TAP_EXIT1_DR;
     tap_goto(TAP_UPDATE_DR);
     tap_goto(TAP_RTI);
     return tdo;
@@ -322,11 +356,10 @@ void cjtag_enter(void)
 {
     hw_pin_init();
     hw_reset_pulse();
-    /* 5 个 TCKI(TMS=1) → Test-Logic-Reset */
-    for (int i = 0; i < 5; i++) tap_clock_tms(1);
-    s_tap = TAP_TLR;
-    /* 到 Run-Test/Idle */
-    tap_clock_tms(0);
+    /* cJTAG：设备复位后处于 OFFLINE，必须先发激活序列才响应任何 TAP 操作。
+     * 激活包 EC=1000 → 适配器内部 TAP 落在 Run-Test/Idle。 */
+    hw_activate();
+    s_tap = TAP_RTI;
 }
 
 void cjtag_exit(void)
