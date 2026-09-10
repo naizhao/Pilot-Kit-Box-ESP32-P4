@@ -165,6 +165,11 @@ static void core0_poll_p4_rx(void *user)
 static void core0_poll_spim(void *user)
 {
     (void)user;
+    /* 代刷期间独占 GPIO16/17/18（含 CC1312R RESET_N = GPIO18），必须暂停
+     * SPI master：否则 spim 收不到 HELLO 会周期进 RECOVERY 并拉低 GPIO18
+     * 复位 CC1312R，打断 cJTAG 会话/把 flash 留在半编程态（见 cjtag.h 的
+     * 互斥合同）。 */
+    if (cjtag_cdc_active()) return;
     spim_poll(&s_spim, time_us_32());
 }
 

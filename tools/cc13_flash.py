@@ -12,13 +12,14 @@
 流程:
     1. 打开 RP2040 USB CDC 串口
     2. 发 'F' → RP2040 进代刷模式（读 IDCODE 作为通信证明）
-    3. 流式发送固件镜像
-    4. 发 'Q' → RP2040 擦写校验 → RESET CC1312R → 恢复正常模式
+    3. 发 4 字节小端长度（方案 A），再流式发送固件镜像
+    4. 收满长度即自动擦写校验 → RESET CC1312R → 打印 FLASH-DONE
 
 注意:
     - 需要 pyserial: pip3 install pyserial
     - 串口波特率 115200（CDC 虚拟串口，实际不限速）
 """
+import struct
 import sys
 import time
 import serial
@@ -46,6 +47,9 @@ def flash(port: str, fw_path: str) -> bool:
         return False
     print(f"  {resp.strip()}")
 
+    # 方案 A：先发 4 字节小端长度（镜像字节数），再发镜像本体。
+    ser.write(struct.pack("<I", len(fw)))
+
     # 流式发送镜像
     CHUNK = 4096
     for i in range(0, len(fw), CHUNK):
@@ -56,10 +60,8 @@ def flash(port: str, fw_path: str) -> bool:
 
     print()
 
-    # 完成烧录
-    print("Finalizing (erase + program + verify + reset)...")
-    ser.write(b"Q")
-    time.sleep(2)  # 等待擦写校验
+    # 收满长度即自动擦写校验 + RESET（无需 'Q'）；等待 FLASH-DONE。
+    print("Waiting for erase + program + verify + reset...")
     resp = ser.read(4096).decode("utf-8", errors="replace")
     if "FLASH-DONE" in resp:
         print(f"SUCCESS: {resp.strip()}")

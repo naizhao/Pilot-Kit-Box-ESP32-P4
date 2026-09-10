@@ -214,14 +214,15 @@ static void tap_goto(tap_state_t target)
             return;
         }
         if (target == TAP_UPDATE_DR || target == TAP_UPDATE_IR) {
-            /* 从 Shift 态到 Update */
-            tap_clock_tms(1);  /* EXIT1 */
-            tap_clock_tms(1);  /* UPDATE */
+            /* 调用点：shift 后 s_tap=EXIT1_x → 一拍 TMS=1 到 UPDATE_x。
+             * （旧代码发两拍会多走到 SELECT_x。） */
+            tap_clock_tms(1);
             return;
         }
         if (target == TAP_RTI) {
-            tap_clock_tms(1); tap_clock_tms(0);
-            s_tap = TAP_RTI;
+            /* 调用点：s_tap=UPDATE_x → 一拍 TMS=0 回 RTI。
+             * （旧代码发 TMS=1,TMS=0 并强置 s_tap=RTI，物理态与软件分叉。） */
+            tap_clock_tms(0);
             return;
         }
         /* 兜底：TMS=1 五次回 TLR */
@@ -229,54 +230,35 @@ static void tap_goto(tap_state_t target)
     }
 }
 
-/* 移位 IR（LSB 先出） */
+/* 移位 IR（LSB 先出）。TMSC 在 Shift 态承载 TDI，退出必须用**独立**的
+ * TMS=1 时钟——不能和末位数据同拍（同拍会把末位数据覆盖成 1，实测把
+ * IDCODE(0x2) 装成 DPACC(0xA)）。 */
 static void jtag_shift_ir(uint32_t instr, int bits)
 {
     tap_goto(TAP_SHIFT_IR);
     for (int i = 0; i < bits; i++) {
-        uint8_t bit = (instr >> i) & 1;
-        if (i == bits - 1) {
-            /* 最后一位带 TMS=1 → EXIT1_IR */
-            hw_drive_tdi(bit);
-            /* drive TMS=1 for exit */
-            hw_drive_tms(1);  /* 在同一时钟发 TDI+TMS */
-            hw_tck_high();
-            hw_tck_low();
-            s_tap = TAP_EXIT1_IR;
-        } else {
-            tap_shift_write(bit);
-        }
+        tap_shift_write((instr >> i) & 1);
     }
+    tap_clock_tms(1);              /* SHIFT_IR → EXIT1_IR */
     tap_goto(TAP_UPDATE_IR);
     tap_goto(TAP_RTI);
 }
 
-/* 移位 DR（LSB 先出，返回读到的值） */
+/* 移位 DR（LSB 先出，返回读到的值）。同样：数据位全部用 TDI 时钟，
+ * 退出用独立的 TMS=1 时钟——避免「末位数据本身决定是否退出 SHIFT_DR」
+ * 造成软件 s_tap 与目标物理态分叉。 */
 static uint32_t jtag_shift_dr(uint32_t tdi, int bits)
 {
     uint32_t tdo = 0;
     tap_goto(TAP_SHIFT_DR);
     for (int i = 0; i < bits; i++) {
-        uint8_t wbit = (tdi >> i) & 1;
-        if (i == bits - 1) {
-            /* 最后一位：写 TDI + TMS=1（exit）+ 读 TDO */
-            hw_drive_tdi(wbit);
-            /* TMS=1 在同一时钟 */
-            hw_tck_high();
-            /* TDO 采样（目标的最后一位） */
-            hw_tck_low();
-            uint8_t rbit = hw_sample_tdo();
-            tdo |= (uint32_t)rbit << i;
-            s_tap = TAP_EXIT1_DR;
-        } else {
-            /* 写 TDI 同时读 TDO */
-            hw_drive_tdi(wbit);
-            hw_tck_high();
-            hw_tck_low();
-            uint8_t rbit = hw_sample_tdo();
-            tdo |= (uint32_t)rbit << i;
-        }
+        hw_drive_tdi((tdi >> i) & 1);
+        hw_tck_high();
+        hw_tck_low();
+        uint8_t rbit = hw_sample_tdo();
+        tdo |= (uint32_t)rbit << i;
     }
+    tap_clock_tms(1);              /* SHIFT_DR → EXIT1_DR */
     tap_goto(TAP_UPDATE_DR);
     tap_goto(TAP_RTI);
     return tdo;
@@ -375,15 +357,19 @@ void cjtag_ahb_write32(uint32_t addr, uint32_t val)
 
 /* ── Flash 操作 ─────────────────────────────────────────────────── */
 
-/* 等待 flash controller 空闲 */
+/* 等待 flash controller 空闲。位脉冲下每次 AHB 读要几十个 TCKC，用「读次数」
+ * 当时间上界（≈ timeout_ms）。BUSY 恒不清（目标被复位/链路坏）时返回 false，
+ * 不让 core0 永久自旋——项目未启用看门狗，死循环只能断电恢复。 */
 static bool flash_wait_ready(int timeout_ms)
 {
-    (void)timeout_ms;  /* 位脉冲较慢，每个操作本身在 JTAG 时钟粒度完成 */
+    if (timeout_ms < 1) timeout_ms = 1;
+    int budget = timeout_ms * 8 + 16;
     uint32_t stat;
     do {
         stat = cjtag_ahb_read32(FLASH_FSTAT);
-    } while (stat & FSTAT_BUSY);
-    return true;
+        if (!(stat & FSTAT_BUSY)) return true;
+    } while (--budget > 0);
+    return false;
 }
 
 bool cjtag_flash_erase_sector(uint32_t addr)

@@ -170,8 +170,8 @@ The tool will:
 If you prefer a serial terminal (e.g. `screen /dev/ttyACM0 115200`):
 
 1. Type `F` → should print `FLASH-MODE READY (CC1312R IDCODE=0x...)`
-2. Paste/binary-transfer the firmware image
-3. Type `Q` → should print `FLASH-DONE`
+2. Send 4 bytes little-endian length (image size in bytes), then the image bytes
+3. Once the full length is received it auto-erases/programs/verifies → prints `FLASH-DONE`
 
 #### Troubleshooting
 
