@@ -6,7 +6,8 @@
  * registered sink then sees the same record and decides what to do
  * with it:
  *
- *   - record_sink_uart  prints "<ts_ms> *<HEX>;" to the console
+ *   - record_sink_uart  queues "<ts_ms> *<HEX>;" for a background task
+ *                       to print to the console (never prints inline)
  *   - record_sink_file  appends the same line to a rotated LittleFS
  *                       log file (later: SD card variant)
  *   - record_sink_ble   encodes GDL90 + queues to GATT notify
@@ -82,6 +83,31 @@ const char *record_sinks_install_defaults(void);
  */
 
 record_sink_t *record_sink_uart_create(void);
+
+/*
+ * 出队并打印最多 max_lines 行，返回实际打印的行数。
+ *
+ * 正常情况下由 uart sink 自己的排空任务调用，不需要外部干预；公开出来是因为
+ * "限量"本身就是合同的一部分——持续过载时排空必须尊重上限，否则它会独占
+ * 115200 波特的控制台，把别的任务的日志全堵在后面。
+ *
+ * 返回 0 表示队列为空或 sink 从未起来。
+ */
+size_t record_sink_uart_drain(size_t max_lines);
+
+/*
+ * 自启动累计的已打印 / 丢弃行数，以及当前在途（已入队未打印）条数。
+ * 任一出参可为 NULL。
+ *
+ * 恒等式 written + dropped + pending == record_dispatch() 次数 始终成立——
+ * 这是"过载不会被无声吞掉"的形式化表述，也是 1 Hz dashboard 与诊断页 LOG
+ * 卡片报丢弃数的依据。
+ *
+ * 返回 false 表示 sink 从未起来（队列或排空任务创建失败）。此时**不得**把
+ * 三个 0 当成"活着且一条没丢"——那一路压根不存在。
+ */
+bool record_sink_uart_stats(uint32_t *out_written, uint32_t *out_dropped,
+                            uint32_t *out_pending);
 
 /*
  * file_sink writes ts-format lines to LittleFS, mounted at

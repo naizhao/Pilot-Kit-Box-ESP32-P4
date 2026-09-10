@@ -18,16 +18,40 @@ typedef struct {
     float dist_nm;
     bool  rel_alt_valid; /* own_press_alt != UNAVAIL && tgt_has_alt */
     int   rel_alt_ft;    /* 负=低于本机 */
-    int   vs_fpm;        /* 目标升降率 */
+    bool  vs_valid;      /* 目标报过垂速吗——0 fpm(平飞) 与"没数据"是两回事 */
+    int   vs_fpm;        /* 目标升降率；vs_valid=false 时恒 0，不得据此画箭头 */
 } pk_traffic_rel_t;
 
+/*
+ * 相对高度的本机基准 —— 唯一的合法来源是**绑定 ADS-B 本机自报的气压高度**。
+ *
+ * 目标高度是 Mode-C/DF17 的气压高度（1013.25 基准）。要与它相减，本机那一侧
+ * 必须是同一个基准的同一种量：
+ *   - 绑定了 ADS-B 本机且它报过高度 → 用它，同源同基准；
+ *   - 其余一切情况 → PK_ALT_UNAVAIL（不可用），**不拿盒子自己的 BMP388 兜底**。
+ *
+ * 那个兜底是曾经的缺陷：BMP388 装在座舱里，增压座舱内它读到的恒等于座舱
+ * 高度（约 8000 ft）。巡航 FL350、目标也在 FL350 的同高度迎头，屏上算出
+ * +27000 ft——目标被显示成远在高空，威胁着色与告警一起被抑制。spec §4.2
+ * 原文即「气压高度在增压环境不可信，不替代 ADS-B / 绑定飞机的高度作为权威
+ * 源」。显示 N/A 会让人去看别的信息源，显示一个错的数不会。
+ *
+ * 纯函数，无 I/O：三页（交通页 / ADS-B 列表 / PFD HSI 叠加层）共用同一条
+ * 判据，谁也别再就地写一遍 if-else。
+ */
+int pk_traffic_own_press_alt(bool own_bound_adsb,
+                             bool own_has_press_alt,
+                             int  own_press_alt_ft);
+
 /* own_heading_mag_deg: 本机磁航向(IMU yaw); mag_var_deg: 磁偏角(东+);
- * own_press_alt_ft: 本机标准气压高度(1013.25 参考)，PK_ALT_UNAVAIL=不可用 */
+ * own_press_alt_ft: 本机标准气压高度(1013.25 参考)，PK_ALT_UNAVAIL=不可用。
+ * 该实参一律取自 pk_traffic_own_press_alt()，不要就地拼。 */
 pk_traffic_rel_t pk_traffic_rel_calc(
     bool own_has_pos, double own_lat, double own_lon,
     float own_heading_mag_deg, float mag_var_deg, int own_press_alt_ft,
     bool tgt_has_pos, double tgt_lat, double tgt_lon,
-    bool tgt_has_alt, int tgt_alt_ft, int tgt_vs_fpm);
+    bool tgt_has_alt, int tgt_alt_ft,
+    bool tgt_has_vs,  int tgt_vs_fpm);
 
 /*
  * 目标剪影该朝哪儿——屏幕系方向角，0=正上、顺时针为正。

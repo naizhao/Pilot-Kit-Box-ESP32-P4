@@ -20,6 +20,11 @@
 #include <math.h>
 #include <string.h>
 
+/* pk_wake_t 的取值定义。gdl90_emitter_from_wake() 按枚举名而不是裸数字做
+ * 映射：类别表若有增补，改一处就够，而抄一份数字过来的版本会静默漂移。
+ * aircraft_state.h 只依赖 stdbool/stdint，不把 IDF 拖进这个纯协议 TU。 */
+#include "aircraft_state.h"
+
 /* ------------------------------------------------------------------ */
 /* FCS — FAA 560-1058-00 Rev A §2.2.3, reference algorithm, verbatim   */
 /* semantics.  Two traps, both cost us a round trip:                   */
@@ -185,6 +190,32 @@ static int32_t encode_lon(double deg)
     return i;
 }
 
+uint8_t gdl90_emitter_from_wake(int wake)
+{
+    /* ICD §3.5.1.10 的 Emitter Category 表。留空的档（8/13/16）在规范里就是
+     * unassigned，本项目的类别枚举里也没有对应项。 */
+    switch (wake) {
+    case PK_WAKE_LIGHT:            return 1;   /* A1 Light                  */
+    case PK_WAKE_SMALL:            return 2;   /* A2 Small                  */
+    case PK_WAKE_LARGE:            return 3;   /* A3 Large                  */
+    case PK_WAKE_HIGH_VORTEX:      return 4;   /* A4 High Vortex Large      */
+    case PK_WAKE_HEAVY:            return 5;   /* A5 Heavy                  */
+    case PK_WAKE_HIGH_PERF:        return 6;   /* A6 Highly Maneuverable    */
+    case PK_WAKE_ROTOR:            return 7;   /* A7 Rotorcraft             */
+    case PK_WAKE_GLIDER:           return 9;   /* B1 Glider/sailplane       */
+    case PK_WAKE_LTA:              return 10;  /* B2 Lighter than air       */
+    case PK_WAKE_PARACHUTE:        return 11;  /* B3 Parachutist            */
+    case PK_WAKE_ULTRALIGHT:       return 12;  /* B4 Ultralight/hang glider */
+    case PK_WAKE_UAV:              return 14;  /* B6 UAV                    */
+    case PK_WAKE_SPACE:            return 15;  /* B7 Space/transatmospheric */
+    case PK_WAKE_SURFACE_EMERG:    return 17;  /* C1 Surface — emergency    */
+    case PK_WAKE_SURFACE_SERVICE:  return 18;  /* C3 Surface — service      */
+    case PK_WAKE_SURFACE_OBSTACLE: return 19;  /* C4..C7 Point obstacle     */
+    case PK_WAKE_NONE:
+    default:                       return 0;   /* 没报过类别 = 没有信息     */
+    }
+}
+
 size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             bool     is_ownship,
                             uint32_t icao24,
@@ -193,10 +224,15 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             double   lon,
                             bool     have_altitude,
                             int      altitude_ft,
-                            bool     have_velocity,
-                            int      track_deg,
+                            bool     have_ground_speed,
                             int      ground_speed_kt,
+                            bool     have_track,
+                            int      track_deg,
+                            bool     have_vertical_rate,
                             int      vert_rate_fpm,
+                            bool     have_air_ground,
+                            bool     on_ground,
+                            uint8_t  emitter_category,
                             const char *callsign,
                             size_t   callsign_len)
 {
@@ -228,9 +264,17 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
 
     /* Bytes 10..11:
      *   bits 31..20 → 12-bit altitude (25 ft resolution, -1000 ft offset)
-     *   bits 19..16 → 4-bit Misc indicator (NIC-Baro etc.); set to 0x9
-     *                 ("True Track Angle + airborne + report extrapolated")
-     *                 for traffic reports — matches what Stratux emits. */
+     *   bits 19..16 → 4-bit Misc indicator
+     *
+     * Misc (ICD §3.5.1.5) —— 每一位都由入参决定，没有一个常量：
+     *   bit 3  Airborne : 1 = airborne, 0 = on ground
+     *   bit 2  Report   : 0 = updated, 1 = extrapolated
+     *   bits1-0 tt      : 00 = tt 无效, 01 = True Track Angle,
+     *                     10 = Magnetic Heading, 11 = True Heading
+     *
+     * 原实现恒写 0x9（airborne + extrapolated + true track），三处都是凭空
+     * 断言：地面上的目标被报成在空中；每一帧实测数据被标成外推；没有航迹的
+     * 目标让接收端去读 byte16 里的那个 0，读成"航迹正北"。 */
     uint16_t alt_enc = 0xFFF;  /* invalid */
     if (have_altitude) {
         int v = (altitude_ft + 1000) / 25;
@@ -238,25 +282,32 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
         if (v > 0xFFE)    v = 0xFFE;
         alt_enc = (uint16_t)v;
     }
+    uint8_t misc = 0;
+    if (have_track) misc |= 0x1;                        /* tt = True Track  */
+    /* 空地未知按 airborne 编：见 gdl90.h 的取舍说明（本机不走这条降级）。 */
+    if (!have_air_ground || !on_ground) misc |= 0x8;
     p[10] = (uint8_t)((alt_enc >> 4) & 0xFF);
-    p[11] = (uint8_t)(((alt_enc & 0x0F) << 4) | 0x9);
+    p[11] = (uint8_t)(((alt_enc & 0x0F) << 4) | misc);
 
-    /* Byte 12: NIC (4 bits) | NACp (4 bits). 0x9 / 0x9 = ±30 m, both
-     * fine for ADS-B-derived data. */
-    p[12] = 0x99;
+    /* Byte 12: NIC (4 bits) | NACp (4 bits). 有位置时 0x9 / 0x9 = ±30 m，
+     * 对 ADS-B/GNSS 来源都合适；没有位置时必须是 0（"unknown"）——给一份
+     * 空位置配上 ±30 m 的完好性声明，是在替接收端担保一个不存在的点。 */
+    p[12] = have_position ? 0x99 : 0x00;
 
     /* Bytes 13..15:
      *   bits 23..12 → 12-bit horizontal velocity (kt, 1 kt res, 0xFFF=N/A)
      *   bits 11..0  → 12-bit signed vertical velocity (64 fpm res, 0x800=N/A)
+     * 两者各自独立：只有地速没有垂速（ADS-B 地面帧、GPS 兜底本机）是常态。
      */
     uint16_t hv = 0xFFF;
     uint16_t vv = 0x800;
-    if (have_velocity) {
+    if (have_ground_speed) {
         int v = ground_speed_kt;
         if (v < 0)        v = 0;
         if (v > 0xFFE)    v = 0xFFE;
         hv = (uint16_t)v;
-
+    }
+    if (have_vertical_rate) {
         int vr = vert_rate_fpm / 64;
         if (vr >  0x1FE) vr =  0x1FE;
         if (vr < -0x1FE) vr = -0x1FE;
@@ -266,16 +317,19 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
     p[14] = (uint8_t)(((hv & 0x0F) << 4) | ((vv >> 8) & 0x0F));
     p[15] = (uint8_t)(vv & 0xFF);
 
-    /* Byte 16: Track / Heading. 360/256 deg/LSB. */
-    if (have_velocity) {
+    /* Byte 16: Track / Heading. 360/256 deg/LSB. tt=00 时接收端本不该读它，
+     * 但仍然置 0，免得别人的宽容解析读到上一帧的残留。 */
+    if (have_track) {
         int t = ((track_deg % 360) + 360) % 360;
         p[16] = (uint8_t)((t * 256 + 180) / 360);
     } else {
         p[16] = 0;
     }
 
-    /* Byte 17: Emitter Category. 1 = Light aircraft (fits most GA targets). */
-    p[17] = 1;
+    /* Byte 17: Emitter Category —— 由调用方给出，见 gdl90_emitter_from_wake。
+     * 原来恒写 1(Light)：没报过类别的目标、直升机、重型机在 EFB 上全成了
+     * 轻型机，尾流间隔与图标都跟着错。 */
+    p[17] = emitter_category;
 
     /* Bytes 18..25: Callsign, 8 ASCII chars padded with space.  Only
      * the first callsign_len bytes of callsign are readable — it is

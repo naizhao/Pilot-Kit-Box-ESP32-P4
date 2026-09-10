@@ -192,34 +192,40 @@ void pk_settings_apply(int row, int v)
         pk_qnh_set(pk_qnh_get() + (v > 0 ? 0.01f : -0.01f));
         break;
 
-    case 2:   /* 地图朝向 */
+    case 3:   /* 地图朝向 */
         pk_map_orient_set(v == 0 ? PK_MAP_HEADING_UP : PK_MAP_NORTH_UP);
         break;
 
-    case 3:   /* 雷达量程 */
+    case 2:   /* QNH 来源：AUTO(用 GPS 正高自动标定)/ MANUAL(用户拨的值)。
+               * 切到 MANUAL 时保留当前 QNH 值作手动基准；切回 AUTO 由
+               * baro_task 下一拍重新收敛。 */
+        pk_qnh_set_mode(v == 0 ? PK_QNH_MODE_AUTO : PK_QNH_MODE_MANUAL);
+        break;
+
+    case 4:   /* 雷达量程 */
         pk_traffic_range_idx_set(v);
         break;
 
-    case 4:   /* 屏幕亮度。传的是段序号，不是占空比——档位到亮度值的映射在
+    case 5:   /* 屏幕亮度。传的是段序号，不是占空比——档位到亮度值的映射在
                * display.c 的 s_bl_step_duty[]。只有 LOW/MID/HIGH 三档：
                * 板上没有环境光传感器，AUTO 那一格已经从控件里去掉了。 */
         pk_backlight_step_set((uint8_t)v);
         break;
 
-    case 5:   /* 日间/夜间配色 —— 尚未接入，整行置灰，点击无动作 */
+    case 6:   /* 日间/夜间配色 —— 尚未接入，整行置灰，点击无动作 */
         break;
 
-    case 6:   /* 记录存储。无卡时选 SD 没意义，直接忽略——渲染那边也是置灰的，
+    case 7:   /* 记录存储。无卡时选 SD 没意义，直接忽略——渲染那边也是置灰的，
                * 两处判据要一致，否则会出现"看着灰的却点得动"。 */
         if (pk_sdcard_is_mounted() || v == 0)
             pk_log_store_set(v == 1 ? PK_LOG_STORE_SD : PK_LOG_STORE_FLASH);
         break;
 
-    case 7:   /* 蓝牙开关（下次开机生效，行尾已标 restart） */
+    case 8:   /* 蓝牙开关（下次开机生效，行尾已标 restart） */
         pk_ble_enabled_set(v == 1);
         break;
 
-    case 8:   /* 设备名（P2-5）—— 不在这里改值，弹出受限 ASCII 编辑器。
+    case 9:   /* 设备名（P2-5）—— 不在这里改值，弹出受限 ASCII 编辑器。
                * 传进去的是**用户串**（NVS 里那一条），不是屏上显示的广播名：
                * 没设过名字时屏上显示的是出厂默认 "Pilot Kit Box-AABBCC"，
                * 把那一串塞进输入框等于让用户在别人的默认名上改，而且 MAC
@@ -230,7 +236,7 @@ void pk_settings_apply(int row, int v)
                                 PK_DEVNAME_MAX_LEN, devname_commit, NULL); }
         break;
 
-    case 9:   /* 演示模式（安全件，见 config_demo.h）。
+    case 10:  /* 演示模式（安全件，见 config_demo.h）。
                *
                * 立即生效，不像蓝牙那行要等重启：各数据源 getter 每次调用都重新
                * 问一遍 pk_demo_enabled()，没有缓存，所以"退出演示模式"能立刻恢复
@@ -244,14 +250,14 @@ void pk_settings_apply(int row, int v)
                          v == 1);
         break;
 
-    case 10:  /* 机型分类（阶段 5a）—— 分段序号 0..4，枚举从 1 开始（0=unknown
+    case 11:  /* 机型分类（阶段 5a）—— 分段序号 0..4，枚举从 1 开始（0=unknown
                * 保留），与 settings_draw.c 渲染时"减 1 取当前档"对称地加回去。
                * 立即生效：own_sampler 每 tick 都重新问一遍 pk_ac_category_get()，
                * 没有缓存，改了设置本次飞行剩余部分立刻用新阈值。 */
         pk_ac_category_set((pk_ac_category_t)(v + 1));
         break;
 
-    case 11:  /* 罗盘校准 —— 与设备名那行同类：不改值，跳到另一个界面。
+    case 12:  /* 罗盘校准 —— 与设备名那行同类：不改值，跳到另一个界面。
                *
                * 走 pk_ui_cal_wizard_enter() 而不是 pk_ui_set_mode()：后者只切页，
                * 而校准页的自动弹出被「稍后再说」关过闸门之后不会自己恢复，
@@ -260,7 +266,7 @@ void pk_settings_apply(int row, int v)
         pk_ui_cal_wizard_enter();
         break;
 
-    case 12:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 13:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

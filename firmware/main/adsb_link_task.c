@@ -92,6 +92,10 @@ static uint32_t s_pos_decoded    = 0;
 /* 链路计数 1 Hz 窗口基线：emit 时与累计值求差得本窗增量，之后追平。 */
 static uint32_t s_win_rx  = 0;
 static uint32_t s_win_crc = 0;
+/* UART sink 丢弃数的窗口基线。record_sink_uart_stats() 报的是**自启动累计**，
+ * 不比基线就会在丢过一次之后每秒都打——而那正是控制台已经拥塞时最不该做的
+ * 事。见 dashboard_emit_and_reset()。 */
+static uint32_t s_win_uart_drop = 0;
 
 /* --- Cumulative diagnostic counters (boot-lifetime, never reset) ------- *
  * Written only from this task; read cross-task by pk_dsp_get_stats() and
@@ -151,10 +155,23 @@ static void icao_seen_insert(uint32_t icao24)
  * check. We filter by CRC and dispatch a human-readable log line per
  * recognised message family. Runs on adsb_link_task; no synchronisation
  * needed for the static counters.
+ *
+ * 逐帧日志一律 ESP_LOGD，不是 ESP_LOGI（P1-D）。这里是整条链路最热的一段：
+ * 一条 INFO 带上 "I (12345) adsb: " 前缀后约 90 字节，115200 波特的控制台上
+ * ≈ 7.8 ms，而本任务是 921600 波特链路唯一的 RX 消费者，RX 环只有 4096 字节
+ * （≈ 44 ms 的数据量）。繁忙空域每秒几百帧时，这一秒里要等掉几百个 7.8 ms，
+ * RX 环必然溢出——帧丢在 UART 驱动里，没有任何计数看得见。
+ *
+ * CONFIG_LOG_MAXIMUM_LEVEL=INFO（本工程默认）下 ESP_LOGD 在编译期就没了，
+ * 阻塞预算恒为 0；要看逐帧解码就把等级开到 DEBUG，那是排障场景，丢帧可以
+ * 接受。常驻可观测性由 1 Hz 的 dashboard_emit_and_reset() 承担。
  */
-static void on_ingest_msg(const struct mode_s_msg *mm,
-                          const modes_ingest_meta_t *meta,
-                          void *user)
+#ifndef PK_HOST_TEST
+static
+#endif
+void on_ingest_msg(const struct mode_s_msg *mm,
+                   const modes_ingest_meta_t *meta,
+                   void *user)
 {
     (void)meta; (void)user;
 
@@ -167,7 +184,10 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
                     | (uint32_t)mm->aa3;
 
     s_msgs_total++;
-    icao_seen_insert(icao24);
+    /* 「本次开机见过多少架飞机」只数真 ICAO 地址：DF18 的 TIS-B / 匿名
+     * 报文里那三个字节可能是 Mode-A 码 + 航迹文件号，地面站会复用它，
+     * 数进去等于把同一架飞机数成好几架。 */
+    if (mm->aa_is_icao) icao_seen_insert(icao24);
 
     /* 落盘：呼号是否变化要在 ingest 覆盖 aircraft_state 之前判断——ingest
      * 一跑完，表里就只剩新呼号了。只有 DF17/18 metype 1-4（身份帧）才需要
@@ -214,13 +234,19 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
     switch (mm->msgtype) {
     case 11:
         s_msgs_df11++;
-        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF11 all-call (ca=%d)", icao24, mm->ca);
+        ESP_LOGD(TAG_ADSB, "[%06" PRIX32 "] DF11 all-call (ca=%d)", icao24, mm->ca);
         break;
 
     case 17:
+    case 18:
+        /* aircraft_state_ingest() already rejects non-ICAO DF18 addresses.
+         * The post-ingest CPR fan-out below must not bypass that gate:
+         * CF3/4/7 leave the standard ME fields zeroed, so decoding them as
+         * surface CPR would invent a ground target at the reference point. */
+        if (!mm->aa_is_icao) break;
         if (mm->metype >= 1 && mm->metype <= 4) {
             s_msgs_df17_id++;
-            ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF17 ident   callsign=\"%s\"",
+            ESP_LOGD(TAG_ADSB, "[%06" PRIX32 "] DF17 ident   callsign=\"%s\"",
                      icao24, mm->flight);
 
             /* 落盘：呼号变化时写一条 traffic.trk 身份记录（rec_type=1）。
@@ -240,7 +266,8 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
                                            (uint8_t)cur_ac.wake);
                 }
             }
-        } else if (mm->metype >= 9 && mm->metype <= 18) {
+        } else if ((mm->metype >= 9 && mm->metype <= 18) ||
+                   (mm->metype >= 20 && mm->metype <= 22)) {
             s_msgs_df17_pos++;
             cpr_position_t pos = { .valid = false };
             bool fresh = cpr_decode_position(icao24, mm->fflag, /*is_surface=*/false,
@@ -259,33 +286,42 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
                      * 会重复写同一个位置（spec「写入时机」节点名的这条）。
                      * gs/track/vs 这三个不在本消息里（来自 metype 19），从
                      * aircraft_state 融合表取当前已知值——空中位置帧里这
-                     * 三者总是同生共死，一个 have_velocity 传三次即可；
-                     * altitude 就是本消息自己的（ingest 已经在上面把它写
-                     * 进了 aircraft_state，这里复用同一份转换结果，不用
-                     * 再重算一次 m→ft）。 */
+                     * 三者各自有独立的有效位（垂速会单独 N/A，地速与航迹
+                     * 的两个分量也会各自 N/A），必须分别传——早先一个
+                     * have_velocity 传三次，等于把"没报垂速"落盘成
+                     * "垂速 0"；altitude 就是本消息自己的（ingest 已经在
+                     * 上面把它写进了 aircraft_state，这里复用同一份转换
+                     * 结果，不用再重算一次 m→ft）。
+                     *
+                     * 注意 aircraft_state_get_own() 现在自带字段级过期：
+                     * 这里传的 24 小时窗口只决定"这架飞机还在不在表里"，
+                     * 拿到的每个字段都已经按 60 s 判过新鲜度。 */
                     aircraft_t cur_ac;
                     bool have_cur = aircraft_state_get_own(icao24, now_us,
                                                            PK_REC_LOOKUP_MAX_AGE_US, &cur_ac);
-                    bool have_vel = have_cur && cur_ac.have_velocity;
                     struct timeval tv_pos;
                     gettimeofday(&tv_pos, NULL);
                     int64_t ts_ms = (int64_t)tv_pos.tv_sec * 1000LL + tv_pos.tv_usec / 1000LL;
                     pk_rec_ingest_position(icao24, ts_ms, pos.lat, pos.lon,
                                            have_cur && cur_ac.have_altitude,
                                            have_cur ? cur_ac.altitude_ft : 0,
-                                           have_vel, have_cur ? cur_ac.ground_speed_kt : 0,
-                                           have_vel, have_cur ? cur_ac.heading_deg : 0,
-                                           have_vel, have_cur ? cur_ac.vert_rate_fpm : 0,
-                                           have_cur && cur_ac.on_ground,
+                                           have_cur && cur_ac.have_ground_speed,
+                                           have_cur ? cur_ac.ground_speed_kt : 0,
+                                           have_cur && cur_ac.have_heading,
+                                           have_cur ? cur_ac.heading_deg : 0,
+                                           have_cur && cur_ac.have_vertical_rate,
+                                           have_cur ? cur_ac.vert_rate_fpm : 0,
+                                           have_cur && cur_ac.have_air_ground &&
+                                               cur_ac.on_ground,
                                            /*from_surface_cpr=*/false);
                 }
 
-                ESP_LOGI(TAG_ADSB,
+                ESP_LOGD(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 air-pos alt=%d%s  pos=%.5f,%.5f%s",
                          icao24, mm->altitude, unit_str, pos.lat, pos.lon,
                          fresh ? "  (fresh)" : "");
             } else {
-                ESP_LOGI(TAG_ADSB,
+                ESP_LOGD(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 air-pos alt=%d%s  pos=pending "
                          "(%s frame, awaiting %s)",
                          icao24, mm->altitude, unit_str,
@@ -360,20 +396,27 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
                                        /*have_vs=*/false, 0,
                                        /*on_ground=*/true, /*from_surface_cpr=*/true);
 
-                ESP_LOGI(TAG_ADSB,
+                ESP_LOGD(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 surf-pos pos=%.5f,%.5f (ref=%s)",
                          icao24, pos.lat, pos.lon, ref_src);
             } else {
-                ESP_LOGI(TAG_ADSB,
+                ESP_LOGD(TAG_ADSB,
                          "[%06" PRIX32 "] DF17 surf-pos pos=pending (ref=%s)",
                          icao24, ref_src);
             }
         } else if (mm->metype == 19) {
             s_msgs_df17_vel++;
-            ESP_LOGI(TAG_ADSB,
-                     "[%06" PRIX32 "] DF17 velocity hdg=%d speed=%d "
-                     "vrate=%d (mesub=%d)",
-                     icao24, mm->heading, mm->velocity, mm->vert_rate,
+            /* subtype 1/2 是地速矢量，3/4 是空速 + 空中航向；两者的
+             * heading/velocity 含义不同，日志里点明 mesub 才看得懂。
+             * "n/a" 直接写出来——排障时"没报"与"报了 0"必须一眼可分。 */
+            ESP_LOGD(TAG_ADSB,
+                     "[%06" PRIX32 "] DF17 %s hdg=%.1f%s speed=%d%s "
+                     "vrate=%d%s (mesub=%d)",
+                     icao24,
+                     (mm->mesub <= 2) ? "velocity" : "airspeed",
+                     mm->heading, mm->heading_is_valid ? "" : " n/a",
+                     mm->velocity, mm->velocity_valid ? "" : " n/a",
+                     mm->vert_rate, mm->vert_rate_valid ? "" : " n/a",
                      mm->mesub);
         } else {
             s_msgs_other++;
@@ -384,7 +427,7 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
 
     case 20:
         s_msgs_df20_21++;
-        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF20 Mode-S long  alt=%d%s",
+        ESP_LOGD(TAG_ADSB, "[%06" PRIX32 "] DF20 Mode-S long  alt=%d%s",
                  icao24, mm->altitude, unit_str);
         break;
 
@@ -394,7 +437,7 @@ static void on_ingest_msg(const struct mode_s_msg *mm,
          * populate mm->altitude for DF21 (so it's stack residue from the
          * previous decode); only mm->identity is meaningful here. */
         s_msgs_df20_21++;
-        ESP_LOGI(TAG_ADSB, "[%06" PRIX32 "] DF21 Mode-S long  squawk=%04d",
+        ESP_LOGD(TAG_ADSB, "[%06" PRIX32 "] DF21 Mode-S long  squawk=%04d",
                  icao24, mm->identity);
         break;
 
@@ -449,12 +492,19 @@ static void format_aircraft_line(char *buf, size_t bufsz,
         pos += snprintf(buf + pos, bufsz - pos, " pos=--,--");
     }
 
-    if (a->have_velocity) {
-        pos += snprintf(buf + pos, bufsz - pos,
-                        " hdg=%3d° spd=%dkt vrt=%+dfpm",
-                        a->heading_deg,
-                        a->ground_speed_kt,
-                        a->vert_rate_fpm);
+    /* 三个量各自独立有效——诊断行分别打，"没报"与"报了 0"混在一起，
+     * 排障时会把一架不广播垂速的飞机看成平飞。 */
+    if (a->have_heading) {
+        pos += snprintf(buf + pos, bufsz - pos, " hdg=%3d°", a->heading_deg);
+    }
+    if (a->have_ground_speed) {
+        pos += snprintf(buf + pos, bufsz - pos, " spd=%dkt", a->ground_speed_kt);
+    }
+    if (a->have_vertical_rate) {
+        pos += snprintf(buf + pos, bufsz - pos, " vrt=%+dfpm", a->vert_rate_fpm);
+    }
+    if (a->have_air_ground && a->on_ground) {
+        pos += snprintf(buf + pos, bufsz - pos, " GND");
     }
 
     int64_t age_us = now_us - a->last_seen_us;
@@ -468,6 +518,18 @@ static void format_aircraft_line(char *buf, size_t bufsz,
 
 static void aircraft_summary_emit(int64_t now_us)
 {
+    /* 等级门必须排在 aircraft_state_snapshot() **之前**（P1-D）。
+     *
+     * 光把下面的 ESP_LOGI 降成 ESP_LOGD 是不够的：快照要拷最多 64 个
+     * aircraft_t 并且要拿 aircraft_state 的表锁，format_aircraft_line() 每架
+     * 还要一次 snprintf——这些都不在日志宏里，降等级它们照跑。默认等级下整段
+     * 直接返回，代价只剩一次 esp_log_level_get()。
+     *
+     * 为什么这段非降不可：最多 ~26 行 × ~10 ms ≈ 260 ms 连续阻塞，而它跑在
+     * RX 任务的循环里。那 260 ms 内 921600 波特的链路能灌进约 30 KB，RX 环
+     * 是 4096 字节——溢出是必然，不是概率。 */
+    if (esp_log_level_get(TAG) < ESP_LOG_DEBUG) return;
+
     size_t n = aircraft_state_snapshot(s_summary_snap,
                                        AIRCRAFT_TABLE_CAPACITY,
                                        now_us,
@@ -476,17 +538,17 @@ static void aircraft_summary_emit(int64_t now_us)
     /* Block-bracket the whole report with a visible divider so it
      * stands out against the per-second "dsp:" / "pfd:" / "adsb:"
      * heartbeat lines. */
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==================== AIRCRAFT SUMMARY ====================");
+    ESP_LOGD(TAG, "");
+    ESP_LOGD(TAG, "==================== AIRCRAFT SUMMARY ====================");
     /* 演示模式下这张表来自 demo_data.c 而不是空中收到的报文。不标出来的话，
      * 一份串口日志里既有"SDR 没插"又有 17 架飞机，看的人只会认为解码坏了。 */
     if (pk_demo_enabled())
-        ESP_LOGW(TAG, "  *** DEMO MODE — the contacts below are SIMULATED ***");
+        ESP_LOGD(TAG, "  *** DEMO MODE — the contacts below are SIMULATED ***");
 
     if (n == 0) {
-        ESP_LOGI(TAG, "  (no contacts in the last 30 min)");
-        ESP_LOGI(TAG, "==========================================================");
-        ESP_LOGI(TAG, "");
+        ESP_LOGD(TAG, "  (no contacts in the last 30 min)");
+        ESP_LOGD(TAG, "==========================================================");
+        ESP_LOGD(TAG, "");
         return;
     }
 
@@ -498,7 +560,7 @@ static void aircraft_summary_emit(int64_t now_us)
         else if (age <= SUMMARY_TIER_RECENT_US) ++recent_cnt;
         else                                    ++older_cnt;
     }
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "  %u tracked  |  fresh<60s: %u   recent<15min: %u   older<30min: %u",
              (unsigned)n,
              (unsigned)fresh_cnt, (unsigned)recent_cnt, (unsigned)older_cnt);
@@ -533,23 +595,23 @@ static void aircraft_summary_emit(int64_t now_us)
                 continue;
             }
             if (!header_printed) {
-                ESP_LOGI(TAG, "  --- %s ---", tiers[t].label);
+                ESP_LOGD(TAG, "  --- %s ---", tiers[t].label);
                 header_printed = true;
             }
             char line[160];
             format_aircraft_line(line, sizeof(line), &s_summary_snap[i], now_us);
-            ESP_LOGI(TAG, "%s", line);
+            ESP_LOGD(TAG, "%s", line);
             printed[i] = true;
             tier_emitted++;
         }
         if (tier_total > SUMMARY_TIER_PRINT_CAP) {
-            ESP_LOGI(TAG, "    ... and %u more in this tier",
+            ESP_LOGD(TAG, "    ... and %u more in this tier",
                      (unsigned)(tier_total - SUMMARY_TIER_PRINT_CAP));
         }
     }
 
-    ESP_LOGI(TAG, "==========================================================");
-    ESP_LOGI(TAG, "");
+    ESP_LOGD(TAG, "==========================================================");
+    ESP_LOGD(TAG, "");
 }
 
 static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
@@ -559,6 +621,30 @@ static void dashboard_emit_and_reset(int64_t now_us, int64_t window_start_us)
                                               memory_order_relaxed) - s_win_rx;
     const uint32_t crc = atomic_load_explicit(&s_stats.rx_crc_errors,
                                               memory_order_relaxed) - s_win_crc;
+
+    /* UART sink 的丢弃行。
+     *
+     * 看串口的人恰恰是被丢弃直接影响的那个人（丢掉的就是他本该看到的那几
+     * 行），得当场告诉他，而不是只留在诊断页里等他自己去翻。
+     *
+     * 但只在本窗口**有新增**丢弃时出这一行：计数是自启动累计的，写成
+     * `if (uart_drop)` 就是无条件打印——丢过一次之后每秒都打，给已经拥塞的
+     * 控制台再加负载。预算：这一行约 80 字节 ≈ 7 ms，1 Hz 且仅在丢弃期间，
+     * 相对同期 256 行/秒的正常输出是 0.4%。
+     *
+     * 排在下面的"无链路则静默"之前：那条 goto 会跳过整段输出，基线也就不再
+     * 推进，等链路恢复时会把停摆期间的陈旧累计一次性报出来。 */
+    {
+        uint32_t uart_drop = 0;
+        if (record_sink_uart_stats(NULL, &uart_drop, NULL) &&
+            uart_drop != s_win_uart_drop) {
+            ESP_LOGW(TAG, "uart sink dropped %u this window (%u since boot) — "
+                          "console can't keep up",
+                     (unsigned)(uart_drop - s_win_uart_drop),
+                     (unsigned)uart_drop);
+            s_win_uart_drop = uart_drop;
+        }
+    }
 
     /* Stay quiet when there's no link to talk about. This happens
      * whenever the RP2040 isn't wired up / isn't sending yet; printing

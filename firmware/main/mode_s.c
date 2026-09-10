@@ -115,11 +115,16 @@ uint32_t mode_s_checksum(unsigned char *msg, int bits)
 
 // Given the Downlink Format (DF) of the message, return the message length in
 // bits.
+//
+// DF18（TIS-B / ADS-R / 非应答机 ADS-B）与 DF24-31（Comm-D ELM）原本漏在
+// 短帧一侧：112 bit 的帧按 56 bit 去算校验和，CRC 永远对不上，整类报文在
+// modes_ingest 的 CRC 门那里被静默丢掉——地面站转播的 TIS-B 目标一架都收
+// 不到，而计数器只会显示"坏 CRC 帧数"在涨。
 int mode_s_msg_len_by_type(int type)
 {
-    if (type == 16 || type == 17 ||
+    if (type == 16 || type == 17 || type == 18 ||
         type == 19 || type == 20 ||
-        type == 21)
+        type == 21 || type >= 24)
         return MODE_S_LONG_MSG_BITS;
     else
         return MODE_S_SHORT_MSG_BITS;
@@ -296,59 +301,141 @@ int brute_force_ap(mode_s_t *self, unsigned char *msg, struct mode_s_msg *mm)
     return 0;
 }
 
-// Decode the 13 bit AC altitude field (in DF 20 and others). Returns the
-// altitude, and set 'unit' to either MODE_S_UNIT_METERS or MDOES_UNIT_FEETS.
-int decode_ac13_field(unsigned char *msg, int *unit)
+// ─────────────── Gillham（Mode-C，Q=0 的 100 ft 编码）───────────────
+//
+// 上游 dump1090 在这两处只留了 "TODO: Implement altitude where Q=0"，直接
+// return 0。后果不是"少一个字段"而是"错一个字段"：Q=0 的帧在国内空域并不
+// 罕见（100 ft 分辨率的老应答机），返回 0 之后调用方无法把它与"合法的 0
+// 英尺"区分开，只能靠 `altitude != 0` 这种哨兵去猜。补齐解码 + 显式的
+// altitude_valid 才能让"解不出来"和"就是 0 英尺"是两件事。
+//
+// 13 bit ID 字段 → Gillham 位序（C1 A1 C2 A2 C4 A4 M B1 D1 B2 D2 B4 D4），
+// 与 Squawk 用的是同一张交织表，只是解释不同。
+static int gillham_id13_to_hex(int id13)
 {
+    int hex = 0;
+    if (id13 & 0x1000) hex |= 0x0010; // C1
+    if (id13 & 0x0800) hex |= 0x1000; // A1
+    if (id13 & 0x0400) hex |= 0x0020; // C2
+    if (id13 & 0x0200) hex |= 0x2000; // A2
+    if (id13 & 0x0100) hex |= 0x0040; // C4
+    if (id13 & 0x0080) hex |= 0x4000; // A4
+    /* bit 6 是 M（单位位），不参与高度格雷码 */
+    if (id13 & 0x0020) hex |= 0x0100; // B1
+    if (id13 & 0x0010) hex |= 0x0001; // D1（高度里不用，保留位序）
+    if (id13 & 0x0008) hex |= 0x0200; // B2
+    if (id13 & 0x0004) hex |= 0x0002; // D2
+    if (id13 & 0x0002) hex |= 0x0400; // B4
+    if (id13 & 0x0001) hex |= 0x0004; // D4
+    return hex;
+}
+
+#define GILLHAM_INVALID (-9999)
+
+// Gillham 位 → 100 ft 为单位的高度码。非法组合返回 GILLHAM_INVALID：
+// C 组必须落在 1..5（0/6/7 是非法码），全 0 的 C 组表示该帧根本没带高度。
+static int gillham_hex_to_alt100(int hex)
+{
+    int five_hundreds = 0;
+    int one_hundreds = 0;
+
+    if (((unsigned)hex & 0xFFFF8889u) || ((hex & 0x000000F0) == 0))
+        return GILLHAM_INVALID;
+
+    if (hex & 0x0010) one_hundreds ^= 0x007; // C1
+    if (hex & 0x0020) one_hundreds ^= 0x003; // C2
+    if (hex & 0x0040) one_hundreds ^= 0x001; // C4
+
+    // 去掉 7（7↔5 互换）
+    if ((one_hundreds & 5) == 5) one_hundreds ^= 2;
+    if (one_hundreds > 5) return GILLHAM_INVALID;
+
+    // D1 在高度编码里恒不用
+    if (hex & 0x0002) five_hundreds ^= 0x0FF; // D2
+    if (hex & 0x0004) five_hundreds ^= 0x07F; // D4
+    if (hex & 0x1000) five_hundreds ^= 0x03F; // A1
+    if (hex & 0x2000) five_hundreds ^= 0x01F; // A2
+    if (hex & 0x4000) five_hundreds ^= 0x00F; // A4
+    if (hex & 0x0100) five_hundreds ^= 0x007; // B1
+    if (hex & 0x0200) five_hundreds ^= 0x003; // B2
+    if (hex & 0x0400) five_hundreds ^= 0x001; // B4
+
+    if (five_hundreds & 1) one_hundreds = 6 - one_hundreds;
+
+    return (five_hundreds * 5) + one_hundreds - 13;
+}
+
+// 13 bit（含 M/Q）的 Gillham 高度 → 英尺，失败返回 GILLHAM_INVALID。
+static int gillham_ac13_to_feet(int ac13)
+{
+    int alt100 = gillham_hex_to_alt100(gillham_id13_to_hex(ac13));
+    if (alt100 == GILLHAM_INVALID) return GILLHAM_INVALID;
+    return alt100 * 100;
+}
+
+// Decode the 13 bit AC altitude field (in DF 20 and others). Returns the
+// altitude, and set 'unit' to either MODE_S_UNIT_METERS or MODE_S_UNIT_FEET.
+// *valid 为 0 时返回值无意义。
+int decode_ac13_field(unsigned char *msg, int *unit, int *valid)
+{
+    int ac13 = ((msg[2] & 0x1F) << 8) | msg[3];
     int m_bit = msg[3] & (1 << 6);
     int q_bit = msg[3] & (1 << 4);
 
-    if (!m_bit)
+    *unit = MODE_S_UNIT_FEET;
+    *valid = 0;
+    if (ac13 == 0) return 0; // 全 0 = 本帧不带高度
+
+    if (m_bit)
     {
-        *unit = MODE_S_UNIT_FEET;
-        if (q_bit)
-        {
-            // N is the 11 bit integer resulting from the removal of bit Q and M
-            int n = ((msg[2] & 31) << 6) |
-                    ((msg[3] & 0x80) >> 2) |
-                    ((msg[3] & 0x20) >> 1) |
-                    (msg[3] & 15);
-            // The final altitude is due to the resulting number multiplied by
-            // 25, minus 1000.
-            return n * 25 - 1000;
-        }
-        else
-        {
-            // TODO: Implement altitude where Q=0 and M=0
-        }
-    }
-    else
-    {
+        // 公制单位：DO-260B 允许但实际空域里没有应答机在用；解不出来就
+        // 老实说不可用，不要返回一个假的英尺值。
         *unit = MODE_S_UNIT_METERS;
-        // TODO: Implement altitude when meter unit is selected.
+        return 0;
     }
-    return 0;
+    if (q_bit)
+    {
+        // N is the 11 bit integer resulting from the removal of bit Q and M
+        int n = ((msg[2] & 31) << 6) |
+                ((msg[3] & 0x80) >> 2) |
+                ((msg[3] & 0x20) >> 1) |
+                (msg[3] & 15);
+        *valid = 1;
+        // The final altitude is due to the resulting number multiplied by
+        // 25, minus 1000.
+        return n * 25 - 1000;
+    }
+    int ft = gillham_ac13_to_feet(ac13);
+    if (ft == GILLHAM_INVALID) return 0;
+    *valid = 1;
+    return ft;
 }
 
-// Decode the 12 bit AC altitude field (in DF 17 and others). Returns the
-// altitude or 0 if it can't be decoded.
-int decode_ac12_field(unsigned char *msg, int *unit)
+// Decode the 12 bit AC altitude field (in DF 17 and others). *valid 为 0 时
+// 返回值无意义（**不要**再用 "== 0" 当哨兵，0 英尺是合法高度）。
+int decode_ac12_field(unsigned char *msg, int *unit, int *valid)
 {
-    int q_bit = msg[5] & 1;
+    int ac12 = (msg[5] << 4) | (msg[6] >> 4);
+    int q_bit = ac12 & 0x10;
+
+    *unit = MODE_S_UNIT_FEET;
+    *valid = 0;
+    if (ac12 == 0) return 0; // 全 0 = 本帧不带高度
 
     if (q_bit)
     {
         // N is the 11 bit integer resulting from the removal of bit Q
-        *unit = MODE_S_UNIT_FEET;
-        int n = ((msg[5] >> 1) << 4) | ((msg[6] & 0xF0) >> 4);
+        int n = ((ac12 & 0x0FE0) >> 1) | (ac12 & 0x000F);
+        *valid = 1;
         // The final altitude is due to the resulting number multiplied by 25,
         // minus 1000.
         return n * 25 - 1000;
     }
-    else
-    {
-        return 0;
-    }
+    // Q=0：把 M 位（bit 6）插回去还原成 13 bit 字段，再走 Gillham。
+    int ft = gillham_ac13_to_feet(((ac12 & 0x0FC0) << 1) | (ac12 & 0x003F));
+    if (ft == GILLHAM_INVALID) return 0;
+    *valid = 1;
+    return ft;
 }
 
 static const char *ais_charset = "?ABCDEFGHIJKLMNOPQRSTUVWXYZ????? ???????????????0123456789??????";
@@ -398,9 +485,17 @@ static double decode_movement_field(int movement)
 void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
 {
     uint32_t crc2; // Computed CRC, used to verify the message CRC.
+    unsigned char raw[MODE_S_LONG_MSG_BYTES];
 
-    // Work on our local copy
-    memcpy(mm->msg, msg, MODE_S_LONG_MSG_BYTES);
+    // Work on our local copy.
+    //
+    // 先整体清零再填：本函数只显式写"本帧真的带了"的字段，其余一律留 0/
+    // false。上游实现不清零，于是 DF21 的 mm->altitude 是上一次解码残留在
+    // 栈上的**别人家飞机的高度**（mode_s_msg 在调用方通常是未初始化的局部
+    // 变量）。中转的 raw[] 是为了让 msg == mm->msg 的调用也安全。
+    memcpy(raw, msg, sizeof(raw));
+    memset(mm, 0, sizeof(*mm));
+    memcpy(mm->msg, raw, sizeof(raw));
     msg = mm->msg;
 
     // Get the message type ASAP as other operations depend on this
@@ -482,9 +577,36 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
         mm->identity = a * 1000 + b * 100 + c * 10 + d;
     }
 
-    // DF 11 & 17: try to populate our ICAO addresses whitelist. DFs with an AP
-    // field (xored addr and crc), try to decode it.
-    if (mm->msgtype != 11 && mm->msgtype != 17)
+    // DF18 的 Control Field 与地址语义。必须在"要不要把地址塞进最近可见
+    // 缓存"之前定下来：一个 Mode-A 航迹文件号被当成 ICAO 记进缓存，之后任何
+    // 一条 AP 帧都可能被它误"解"出来并当成合法帧。
+    mm->aa_is_icao = 1;
+    if (mm->msgtype == 18)
+    {
+        mm->cf = msg[0] & 7;
+        // IMF 的位置随报文类型变：细格式位置报文（TC 5-18）在 ME bit 8，
+        // 速度报文（TC 19）在 ME bit 9。只有 CF=2/6 才有 IMF 这个字段，
+        // 其它 CF 下同一位是 ADS-B 的单天线标志，读了就是读错。
+        if (mm->cf == 2 || mm->cf == 6)
+        {
+            if (mm->metype >= 5 && mm->metype <= 18)
+                mm->imf = msg[4] & 1;
+            else if (mm->metype == 19)
+                mm->imf = (msg[5] & 0x80) ? 1 : 0;
+        }
+        switch (mm->cf)
+        {
+        case 0:            mm->aa_is_icao = 1;        break;
+        case 2: case 6:    mm->aa_is_icao = !mm->imf; break;
+        default:           mm->aa_is_icao = 0;        break; // CF 1/3/4/5/7
+        }
+    }
+
+    // DF 11 / 17 / 18: 校验和是"裸"的，可以直接校验并把地址收进白名单。
+    // 其余 DF 的校验和与 ICAO 地址异或过（AP 字段），只能靠最近可见地址
+    // 暴力反解。DF18 早先漏在这里，连同 56/112 长度那处一起，整类 TIS-B /
+    // ADS-R 报文都进不来。
+    if (mm->msgtype != 11 && mm->msgtype != 17 && mm->msgtype != 18)
     {
         // Check if we can check the checksum for the Downlink Formats where
         // the checksum is xored with the aircraft ICAO address. We try to
@@ -501,9 +623,10 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
     }
     else
     {
-        // If this is DF 11 or DF 17 and the checksum was ok, we can add this
-        // address to the list of recently seen addresses.
-        if (mm->crcok && mm->errorbit == -1)
+        // If this is DF 11 / 17 / 18 and the checksum was ok, we can add this
+        // address to the list of recently seen addresses — but only when it
+        // really is an ICAO address (see aa_is_icao above).
+        if (mm->crcok && mm->errorbit == -1 && mm->aa_is_icao)
         {
             uint32_t addr = (mm->aa1 << 16) | (mm->aa2 << 8) | mm->aa3;
             add_recently_seen_icao_addr(self, addr);
@@ -514,11 +637,16 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
     if (mm->msgtype == 0 || mm->msgtype == 4 ||
         mm->msgtype == 16 || mm->msgtype == 20)
     {
-        mm->altitude = decode_ac13_field(msg, &mm->unit);
+        mm->altitude = decode_ac13_field(msg, &mm->unit, &mm->altitude_valid);
+        mm->altitude_source = MODE_S_ALTITUDE_BARO;
     }
 
     // Decode extended squitter specific stuff.
-    if (mm->msgtype == 17)
+    // DF18 的 ME 字段与 DF17 同构，但只有 CF 0/1/2/5/6 携带标准 ME；CF=3 是
+    // 另一种（粗格式）布局，CF=4 是管理报文，CF=7 保留——按标准 ME 去解会
+    // 得到一堆像模像样的假字段。
+    if (mm->msgtype == 17 ||
+        (mm->msgtype == 18 && mm->cf != 3 && mm->cf != 4 && mm->cf != 7))
     {
         // Decode the extended squitter message.
 
@@ -566,10 +694,12 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
         }
         else if (mm->metype >= 9 && mm->metype <= 18)
         {
-            // Airborne position Message
+            // Airborne position Message（气压高度）
             mm->fflag = msg[6] & (1 << 2);
             mm->tflag = msg[6] & (1 << 3);
-            mm->altitude = decode_ac12_field(msg, &mm->unit);
+            mm->altitude = decode_ac12_field(msg, &mm->unit,
+                                             &mm->altitude_valid);
+            mm->altitude_source = MODE_S_ALTITUDE_BARO;
             mm->raw_latitude = ((msg[6] & 3) << 15) |
                                (msg[7] << 7) |
                                (msg[8] >> 1);
@@ -577,49 +707,91 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg)
                                 (msg[9] << 8) |
                                 msg[10];
         }
+        else if (mm->metype >= 20 && mm->metype <= 22)
+        {
+            // Airborne position Message（GNSS 椭球高 HAE）。CPR 位置字段与
+            // TC9-18 同一偏移；高度那 12 bit 没有 Q 位，直接是**米**。
+            // 早先整段没解：TC20-22 的位置帧连 CPR 都拿不到，一架只发
+            // GNSS 高度帧的飞机在图上没有位置。
+            mm->fflag = msg[6] & (1 << 2);
+            mm->tflag = msg[6] & (1 << 3);
+            mm->raw_latitude = ((msg[6] & 3) << 15) |
+                               (msg[7] << 7) |
+                               (msg[8] >> 1);
+            mm->raw_longitude = ((msg[8] & 1) << 16) |
+                                (msg[9] << 8) |
+                                msg[10];
+            int hae_m = (msg[5] << 4) | (msg[6] >> 4);
+            mm->altitude = hae_m;
+            mm->unit = MODE_S_UNIT_METERS;
+            mm->altitude_valid = (hae_m != 0);
+            mm->altitude_source = MODE_S_ALTITUDE_GNSS;
+        }
         else if (mm->metype == 19 && mm->mesub >= 1 && mm->mesub <= 4)
         {
-            // Airborne Velocity Message
+            // Airborne Velocity Message.
+            //
+            // DO-260B Table 2-69：每个速度类字段都是"编码值 0 = 不可用，
+            // 否则真实幅值 = (编码值 - 1) × 步进"，超音速子类型（2/4）的
+            // 步进是 4 kt。上游把编码值直接当 kt 用，于是每个速度都偏大
+            // 1 kt、超音速帧偏 4 倍，而"不可用"被当成 0 kt——一架没报速度
+            // 的飞机在 GDL90 上是"地速 0"而不是"未知"。
+            const int scale = (mm->mesub == 2 || mm->mesub == 4) ? 4 : 1;
+
+            mm->vert_rate_source = (msg[8] & 0x10) >> 4;
+            mm->vert_rate_sign = (msg[8] & 0x8) >> 3;
+            mm->vert_rate = ((msg[8] & 7) << 6) | ((msg[9] & 0xfc) >> 2);
+            mm->vert_rate_valid = (mm->vert_rate != 0);
+
             if (mm->mesub == 1 || mm->mesub == 2)
             {
+                // 地速矢量：E/W 与 N/S 两个分量各自带"不可用"编码。缺一个
+                // 分量就既合不出地速也合不出航迹——两者必须一起判无效，
+                // 只清速度会留下一个方向笃定、大小为 0 的假矢量。
+                int ew_raw = ((msg[5] & 3) << 8) | msg[6];
+                int ns_raw = ((msg[7] & 0x7f) << 3) | ((msg[8] & 0xe0) >> 5);
                 mm->ew_dir = (msg[5] & 4) >> 2;
-                mm->ew_velocity = ((msg[5] & 3) << 8) | msg[6];
                 mm->ns_dir = (msg[7] & 0x80) >> 7;
-                mm->ns_velocity = ((msg[7] & 0x7f) << 3) | ((msg[8] & 0xe0) >> 5);
-                mm->vert_rate_source = (msg[8] & 0x10) >> 4;
-                mm->vert_rate_sign = (msg[8] & 0x8) >> 3;
-                mm->vert_rate = ((msg[8] & 7) << 6) | ((msg[9] & 0xfc) >> 2);
-                // Compute velocity and angle from the two speed components
-                mm->velocity = sqrt(mm->ns_velocity * mm->ns_velocity +
-                                    mm->ew_velocity * mm->ew_velocity);
-                if (mm->velocity)
+                if (ew_raw != 0 && ns_raw != 0)
                 {
-                    int ewv = mm->ew_velocity;
-                    int nsv = mm->ns_velocity;
-                    double heading;
+                    mm->ew_velocity = (ew_raw - 1) * scale;
+                    mm->ns_velocity = (ns_raw - 1) * scale;
+                    mm->velocity = (int)sqrt(
+                        (double)mm->ns_velocity * mm->ns_velocity +
+                        (double)mm->ew_velocity * mm->ew_velocity);
+                    mm->velocity_valid = 1;
 
-                    if (mm->ew_dir)
-                        ewv *= -1;
-                    if (mm->ns_dir)
-                        nsv *= -1;
-                    heading = atan2(ewv, nsv);
-
-                    // Convert to degrees.
-                    mm->heading = heading * 360 / (M_PI * 2);
-                    // We don't want negative values but a 0-360 scale.
-                    if (mm->heading < 0)
-                        mm->heading += 360;
-                }
-                else
-                {
-                    mm->heading = 0;
+                    int ewv = mm->ew_dir ? -mm->ew_velocity : mm->ew_velocity;
+                    int nsv = mm->ns_dir ? -mm->ns_velocity : mm->ns_velocity;
+                    if (ewv != 0 || nsv != 0)
+                    {
+                        double heading = atan2((double)ewv, (double)nsv) *
+                                         180.0 / M_PI;
+                        if (heading < 0) heading += 360.0;
+                        mm->heading = heading;
+                        mm->heading_is_valid = 1;
+                    }
                 }
             }
-            else if (mm->mesub == 3 || mm->mesub == 4)
+            else
             {
-                mm->heading_is_valid = msg[5] & (1 << 2);
-                mm->heading = (360.0 / 128) * (((msg[5] & 3) << 5) |
-                                               (msg[6] >> 3));
+                // subtype 3/4：磁/真**空中航向** + 空速（IAS 或 TAS）。
+                // 这不是地速矢量，不能顶替地面航迹（有风时差十几度），也
+                // 不能当 GDL90 的地速用。
+                mm->heading_is_valid = (msg[5] & (1 << 2)) ? 1 : 0;
+                if (mm->heading_is_valid)
+                {
+                    // 10 bit 航向，步进 360/1024。上游按 7 bit / (360/128)
+                    // 解，解出来永远是错的角度。
+                    int hdg_raw = ((msg[5] & 3) << 8) | msg[6];
+                    mm->heading = hdg_raw * (360.0 / 1024.0);
+                }
+                int as_raw = ((msg[7] & 0x7f) << 3) | ((msg[8] & 0xe0) >> 5);
+                if (as_raw != 0)
+                {
+                    mm->velocity = (as_raw - 1) * scale;
+                    mm->velocity_valid = 1;
+                }
             }
         }
     }

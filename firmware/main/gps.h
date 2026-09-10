@@ -25,15 +25,40 @@ typedef enum {
     PK_GNSS_COUNT
 } pk_gnss_t;
 
+/* 位置 fix 与 GGA 高度的新鲜度窗口。
+ *
+ * 「上一次收到过有效数据」不等于「现在有数据」：天线被遮、模块掉线、UART
+ * 断了，这些情况下**一行 NMEA 都不会来**，于是任何只在收到新数据时才写的
+ * have_* 都会永远停在 true，坐标冻在最后一次定位上。屏上/手机上看到的是一个
+ * 静止不动但完全笃定的本机位置——那比显示"无 GPS"危险得多，后者会让人去看
+ * 别的信息源，前者不会。
+ *
+ * 因此每个字段各带一个 *_us 时间戳，只在**携带它的那句报文**真的解析成功时
+ * 才刷新；pk_gps_get() 在交出快照前按这个窗口逐字段过期，过期的 have_* 置
+ * false 并把值清零（留着旧经纬度等于把冻结坐标继续递给消费者）。
+ *
+ * 5 s：模块 1 Hz 出 RMC/GGA，允许连丢 4 句。与 time_locked 的 NMEA 新鲜度项
+ * 同一口径（见下方 time_locked 注释）。 */
+#define PK_GPS_FIX_MAX_AGE_US   5000000LL
+
 typedef struct {
-    bool    have_fix;          /* RMC status == 'A' */
+    bool    have_fix;          /* RMC status == 'A' **且**经纬度解析合法 */
     double  lat, lon;          /* decimal degrees, +N/+E */
-    bool    have_altitude;
-    int     altitude_ft;       /* MSL, from GGA */
+    bool    have_altitude;     /* GGA 正高(MSL)有效——与 fix 各自独立过期 */
+    int     altitude_ft;       /* MSL, from GGA —— **不是**气压高度，见下 */
+
+    /* 地速与航迹各自独立有效：RMC 的 speed/track 字段可以单独为空（模块半死
+     * 时真实存在），也可以单独是垃圾。atof 把空字段和 "12.3abc" 都变成一个
+     * 看起来合法的 0，而 0 kt / 航迹正北是两个**合法读数**——读的人分不出
+     * "静止朝北"和"没有数据"。 */
+    bool    have_ground_speed;
     int     ground_speed_kt;
+    bool    have_track;
     int     track_deg;         /* 0..359 true */
+
     int     sats;              /* GGA: 参与定位解算的卫星数 (in use) */
     int64_t updated_us;        /* esp_timer_get_time() of last valid fix */
+    int64_t altitude_us;       /* 最近一次**有效 GGA 高度**的时刻；0 = 从未 */
 
     /* --- PPS / 时间锁定（GPIO50 上升沿；ISR 只计数+打戳，1 Hz 快照提交） ---
      * 两条状态语义（刻意分开）：
@@ -74,5 +99,30 @@ typedef struct {
 /* Start UART1 + parser task. Call once at boot, after aircraft_state_init(). */
 void pk_gps_start(void);
 
-/* Snapshot current GPS state into *out. Returns out->have_fix. */
+/* 复位解析状态（互斥量、快照、GSV 累积器、PPS 计数）。pk_gps_start() 内部
+ * 先调它；host 测试直接调它来重置世界，不必去碰 UART。 */
+void pk_gps_state_init(void);
+
+/*
+ * 喂一整行已经组装好的 NMEA 句子（不含 \r\n）。UART 任务拼完一行之后调用的
+ * 就是这个函数——测试因此跑的是**生产解析链路本身**，不是它的复制品。
+ *
+ * checksum 不过、非 '$' 开头、超长的行整句丢弃（gps_nmea_feed_line 的闸），
+ * 但仍然刷新 last_nmea_us：那一位记的是"模块在不在讲话"，坏行同样算讲话。
+ * 非重入（与 gps_nmea 同一约定）：固件侧只有 gps 任务这一个消费者。
+ */
+void pk_gps_feed_line(const char *line);
+
+/*
+ * Snapshot current GPS state into *out. Returns out->have_fix.
+ *
+ * 交出去之前按 PK_GPS_FIX_MAX_AGE_US 做逐字段过期（见该宏注释）：调用方拿到
+ * 的 have_fix / lat / lon / 地速 / 航迹 / 高度要么是新鲜的，要么已经被清成
+ * "没有"。消费方不需要（也不应该）各自再去比 updated_us。
+ *
+ * altitude_ft 是 GGA 的 **GNSS 正高 (MSL)**，不是气压高度：它与 1013.25 基准
+ * 的气压高度差着当地气压偏差，非标准日下地面就能差上千英尺，绝不能拿去和
+ * ADS-B 目标的 Mode-C/DF17 高度相减，也不能编进 GDL90 的高度字段。
+ * 本机三种高度的分离见 own_ship.h 的 pk_own_alt_t。
+ */
 bool pk_gps_get(pk_gps_state_t *out);

@@ -8,14 +8,27 @@
 static float norm360(float a){ a = fmodf(a, 360.0f); if(a < 0) a += 360.0f; return a; }
 static float norm180(float a){ a = norm360(a); return a > 180.0f ? a - 360.0f : a; }
 
+int pk_traffic_own_press_alt(bool own_bound_adsb,
+                             bool own_has_press_alt,
+                             int  own_press_alt_ft)
+{
+    /* 两个条件缺一不可：没绑定 ADS-B 本机 → 手上根本没有本机的气压高度；
+     * 绑定了但它只发过 DF11/身份帧 → 同样没有。见头文件里的增压舱说明。 */
+    if(!own_bound_adsb || !own_has_press_alt) return PK_ALT_UNAVAIL;
+    return own_press_alt_ft;
+}
+
 pk_traffic_rel_t pk_traffic_rel_calc(
     bool own_has_pos, double own_lat, double own_lon,
     float own_heading_mag_deg, float mag_var_deg, int own_press_alt_ft,
     bool tgt_has_pos, double tgt_lat, double tgt_lon,
-    bool tgt_has_alt, int tgt_alt_ft, int tgt_vs_fpm)
+    bool tgt_has_alt, int tgt_alt_ft,
+    bool tgt_has_vs,  int tgt_vs_fpm)
 {
     pk_traffic_rel_t r = (pk_traffic_rel_t){0};
-    r.vs_fpm = tgt_vs_fpm;
+    /* 没报过垂速就是没报过：把 0 fpm 交出去，渲染层分不出"平飞"和"不知道"。 */
+    r.vs_valid = tgt_has_vs;
+    r.vs_fpm   = tgt_has_vs ? tgt_vs_fpm : 0;
     if(!own_has_pos || !tgt_has_pos){ r.valid = false; return r; }
 
     double d, brg_true;

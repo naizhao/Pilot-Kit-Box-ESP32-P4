@@ -126,11 +126,19 @@ typedef struct {
 } pk_imu_sample_t;
 
 /*
- * Bring up I²C, reset the BNO085, drain the SHTP advertisement, enable
- * the Rotation Vector report, and spawn the IMU task. Safe to call
- * once on boot. Returns ESP_OK only when the sensor is fully responsive;
- * downstream code (display task, etc.) checks pk_imu_sample_get()'s
- * `valid` flag rather than relying on this return value.
+ * Attach the BNO085 to I²C0 and spawn the IMU task. Safe to call once
+ * on boot; returns quickly (it does NOT talk to the chip).
+ *
+ * ESP_OK means "the long-lived task exists", NOT "the sensor answered".
+ * The chip handshake (RST pulse, SHTP drain, Set Feature) runs as the
+ * first step of that task and retries with bounded backoff until it
+ * succeeds — so a bus/sensor hiccup during boot no longer costs the
+ * whole power cycle (see pk_bringup_retry.h for the failure this fixes).
+ * A non-OK return means the assembly itself failed (no bus, out of
+ * memory) and no task was created.
+ *
+ * Downstream code checks pk_imu_sample_get()'s `valid` flag rather than
+ * relying on this return value.
  */
 esp_err_t pk_imu_init(void);
 
@@ -164,6 +172,12 @@ bool pk_imu_sample_get(pk_imu_sample_t *out);
  * not converged (acc=0). That makes it the right operation to fire on
  * "cage on power-up before flight" workflows where the operator
  * doesn't want to wait for figure-8 mag calibration.
+ *
+ * There IS an existence precondition: returns ESP_ERR_INVALID_STATE
+ * until the chip has delivered at least one valid Rotation Vector.
+ * Before that there is no "current attitude" to capture — taring
+ * against the default identity quaternion would silently install a
+ * made-up reference (and pk_imu_tare_persist() would write it to NVS).
  *
  * Volatile: the new offset lives only in RAM. It is overwritten on
  * the next tare and wiped on power-cycle. Use pk_imu_tare_persist()
@@ -207,6 +221,12 @@ esp_err_t pk_imu_tare_persist(void);
  * magnetometer fusion re-converges. Once `acc >= 2` on the 1 Hz log
  * line, a TARE long-press persists a clean calibration for the long
  * term.
+ *
+ * Same existence precondition as pk_imu_tare_now(): ESP_ERR_INVALID_STATE
+ * until the chip has delivered a valid Rotation Vector. Steps 3-5 send
+ * SH-2 commands from the caller's task; while the IMU task is still
+ * retrying its own bring-up, that would be two tasks driving the same
+ * SH-2 session (s_dev / s_tx_seq / s_cmd_seq) concurrently.
  */
 esp_err_t pk_imu_factory_reset(void);
 

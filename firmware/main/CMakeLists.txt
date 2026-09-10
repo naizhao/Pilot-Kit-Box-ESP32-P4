@@ -43,6 +43,7 @@ idf_component_register(
         "record_sink_file.c"
         "record_sink_ble.c"
         "config_qnh.c"
+        "qnh_math.c"
         "config_storage.c"
         "config_traffic.c"
         "config_ac_category.c"
@@ -91,6 +92,11 @@ idf_component_register(
         # 不能抽象成整板旋转。必须排在 imu_task.c 之前被链接的语义无关，但
         # 它是 imu_task/未来 qmc5883p 的共同依赖，放在一起看得见。
         "pk_board.c"
+        # 必装器件（BNO085 / BMP388）开机 bring-up 的退避重试。写成一处而不是
+        # 在每个器件里各抄一遍：退避这种「看起来三行、错了也照样跑」的代码已经
+        # 错过一次（qmc5883p 那个越过自己封顶的 *=2）。host 单测
+        # test_imu_bringup.c / test_baro_bringup.c 直接编它。
+        "pk_bringup_retry.c"
         "imu_task.c"
         "pk_vib.c"
         # BMP388 补偿数学（WP-B Task 5 从 baro_task.c 抽出的纯单元，无 ESP

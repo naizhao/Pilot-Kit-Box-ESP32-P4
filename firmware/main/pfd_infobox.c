@@ -80,12 +80,25 @@ static void draw_row(uint16_t *fb, int x0, int row,
  * 删掉的是 MPH：英里/小时在中国空域零使用场景，却占着 200×30 px 一整行；
  * KM/H 保留且不译（SI 符号，中国空域与国产/苏系机型通用）。
  */
+#define LB_ROW_QNH   0
 #define LB_ROW_KMH   1
 #define LB_ROW_OWN   2
 
 void pk_pfd_leftbox_render(uint16_t *fb, const pk_pfd_leftbox_t *d)
 {
     char buf[16];
+
+    /* 顶行：QNH（修正海压）。这一行原本空着（原 mph 位）——气压基准是飞行员
+     * 每次开机/过过渡高度都要核对的东西，不该只藏在设置页里。数值后缀标来源：
+     * 'A'=AUTO（GPS 自动标定）/'M'=MANUAL（用户拨的），与设置页一致。 */
+    if (d->qnh_valid) {
+        snprintf(buf, sizeof(buf), "%.0f%c", (double)d->qnh_hpa,
+                 d->qnh_auto ? 'A' : 'M');
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+    draw_row(fb, PFD_IB_LEFT_X0, LB_ROW_QNH, "QNH", COL_GREY,
+             buf, d->qnh_valid ? COL_WHITE : COL_STALE);
 
     if (d->speed_valid) {
         snprintf(buf, sizeof(buf), "%d", d->kmh);

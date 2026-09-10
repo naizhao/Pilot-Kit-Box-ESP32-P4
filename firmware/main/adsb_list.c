@@ -40,7 +40,6 @@
 #include "aircraft_db.h"
 #include "aircraft_state.h"
 #include "airline_codes.h"
-#include "baro.h"
 #include "display.h"
 #include "i18n.h"
 #include "icao_country.h"
@@ -427,13 +426,6 @@ static void callsign_of(const aircraft_t *a, char *out, size_t cap)
     pk_callsign_display(a->have_callsign, a->callsign, a->icao24, out, cap);
 }
 
-/* 气压 → 1013.25 标准高度(ft)，与目标 Mode-C 同基准（同 traffic_page）。 */
-static int std_alt_ft_from_pa(float pa)
-{
-    float alt_m = 44330.0f * (1.0f - powf(pa / 101325.0f, 0.190295f));
-    return (int)lroundf(alt_m * 3.28084f);
-}
-
 /* 一行的数据 + 算好的相对几何。 */
 typedef struct {
     aircraft_t       *ac;
@@ -481,9 +473,11 @@ static bool row_has_key(const row_t *r, sort_key_t k)
     case SORT_BRG:
     case SORT_DIST: return r->rel.valid;
     case SORT_ALT:  return r->ac->have_altitude;
-    case SORT_VS:
-    case SORT_GS:
-    case SORT_TRK:  return r->ac->have_velocity;
+    /* 三列各有各的有效位：地面目标常常只有航迹没有地速（MOV=0），空中
+     * 目标也会单独不报垂速。共用一个 have_velocity 会让"有数据的行"沉底。 */
+    case SORT_VS:   return r->ac->have_vertical_rate;
+    case SORT_GS:   return r->ac->have_ground_speed;
+    case SORT_TRK:  return r->ac->have_heading;
     case SORT_SEEN:                          /* last_seen 恒有值——能进快照就说明收到过 */
     case SORT_CALL: default: return true;   /* 呼号总有值（退回 ICAO hex） */
     }
@@ -744,34 +738,39 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
     /* ── V/S：箭头分色 + 数值 ──
      * 与交通页同规：爬升绿、下降橙。±200 fpm 内算平飞，不画箭头——ADS-B 的
      * 升降率本身有噪声，几十 fpm 的抖动画成箭头是在报告不存在的机动。 */
-    if (a->have_velocity && a->vert_rate_fpm > 200) {
+    if (a->have_vertical_rate && a->vert_rate_fpm > 200) {
         snprintf(buf, sizeof(buf), "%d", a->vert_rate_fpm);
         const int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
         puts_right(fb, COL_VS_R, ty, buf, ctxt, PK_AA_M);
         LST_PUTS(fb, COL_VS_R - w - PK_AA_M_CJK_W, ty, "↑",
                  sel ? COL_SEL : COL_UP, PK_AA_M);
-    } else if (a->have_velocity && a->vert_rate_fpm < -200) {
+    } else if (a->have_vertical_rate && a->vert_rate_fpm < -200) {
         snprintf(buf, sizeof(buf), "%d", -a->vert_rate_fpm);
         const int w = (int)strlen(buf) * pk_aa_cell_w(PK_AA_M);
         puts_right(fb, COL_VS_R, ty, buf, ctxt, PK_AA_M);
         LST_PUTS(fb, COL_VS_R - w - PK_AA_M_CJK_W, ty, "↓",
                  sel ? COL_SEL : COL_DOWN, PK_AA_M);
     } else {
-        puts_right(fb, COL_VS_R, ty, a->have_velocity ? "0" : "---",
-                   a->have_velocity ? COL_DIM : COL_DIM, PK_AA_M);
+        /* "0"（平飞）与 "---"（没报垂速）必须分开：把没报画成 0 等于
+         * 替发射方断言了一个它从未广播的量。 */
+        puts_right(fb, COL_VS_R, ty, a->have_vertical_rate ? "0" : "---",
+                   COL_DIM, PK_AA_M);
     }
 
     /* ── GS / TRK ──
-     * 两者同源（DF17 metype 19），要缺一起缺，所以共用 have_velocity。
-     * 缺了显 --- 而不是 0：0 kt 是合法读数（地面/悬停），拿它冒充缺数据
-     * 比空着更危险。 */
-    if (a->have_velocity) {
+     * 两者**不是**同生共死：地面帧的 MOV=0 / S=0 会各自单独失效，空中速度
+     * 帧的 E/W 与 N/S 分量也一样。缺了显 --- 而不是 0：0 kt 是合法读数
+     * （地面/悬停），拿它冒充缺数据比空着更危险。 */
+    if (a->have_ground_speed) {
         snprintf(buf, sizeof(buf), "%d", a->ground_speed_kt);
         puts_right(fb, COL_GS_R, ty, buf, ctxt, PK_AA_M);
+    } else {
+        puts_right(fb, COL_GS_R,  ty, "---", COL_DIM, PK_AA_M);
+    }
+    if (a->have_heading) {
         snprintf(buf, sizeof(buf), "%03d", a->heading_deg % 360);
         puts_right(fb, COL_TRK_R, ty, buf, ctxt, PK_AA_M);
     } else {
-        puts_right(fb, COL_GS_R,  ty, "---", COL_DIM, PK_AA_M);
         puts_right(fb, COL_TRK_R, ty, "---", COL_DIM, PK_AA_M);
     }
 
@@ -1024,7 +1023,10 @@ void pk_adsb_list_render(uint16_t *fb)
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
 
     const int64_t now_us = esp_timer_get_time();
-    static aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
+    /* 放 PSRAM（照 pfd.c / traffic_page.c 的 scratch）。64 个 aircraft_t
+     * 随字段级时间戳长到 ~15 KiB，留在内部 .bss 会直接吃掉调度器启动前的
+     * 那点堆窗口——见 firmware/scripts/check_early_heap.py 的头注。 */
+    static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
     size_t n = aircraft_state_snapshot(
         s_scratch, AIRCRAFT_TABLE_CAPACITY, now_us, AIRCRAFT_STALE_AGE_US);
 
@@ -1038,9 +1040,6 @@ void pk_adsb_list_render(uint16_t *fb)
     const bool own_valid = pk_own_ship_resolve(
         now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &src);
 
-    pk_baro_state_t baro;
-    const bool baro_ok = pk_baro_get(&baro);
-
     float own_heading = 0.0f, mag_var = 0.0f;
     {
         pk_hdg_src_t hsrc;
@@ -1050,10 +1049,11 @@ void pk_adsb_list_render(uint16_t *fb)
             mag_var = pk_mag_var_lookup(own.lat, own.lon);
     }
 
-    int own_palt;
-    if (own_valid && own.have_altitude)      own_palt = own.altitude_ft;
-    else if (baro_ok && baro.valid)          own_palt = std_alt_ft_from_pa(baro.pressure_pa);
-    else                                     own_palt = PK_ALT_UNAVAIL;
+    /* 与交通页同一条判据（pk_traffic_own_press_alt）：只有绑定 ADS-B 本机
+     * 自报的气压高度能当基准，舱内 BMP388 不行——见 traffic_geom.h。 */
+    const int own_palt = pk_traffic_own_press_alt(
+        own_valid && src == PK_OWN_SRC_BOUND_ADSB,
+        own.have_altitude, own.altitude_ft);
 
     /* ── 组行 ──
      * 与交通页的关键差别：**没有量程过滤，也不因本机无位置而放弃**。
@@ -1082,7 +1082,8 @@ void pk_adsb_list_render(uint16_t *fb)
         s_rows[nr].rel = pk_traffic_rel_calc(
             own_valid, own.lat, own.lon, own_heading, mag_var, own_palt,
             t->have_position, t->lat, t->lon,
-            t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+            t->have_altitude, t->altitude_ft,
+            t->have_vertical_rate, t->vert_rate_fpm);
         if (is_own) s_rows[nr].rel.valid = false;
         nr++;
     }

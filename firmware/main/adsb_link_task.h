@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 #include "freertos/FreeRTOS.h"
+#include "mode_s.h"
+#include "modes_ingest.h"
 
 typedef enum {
     PK_ADSB_LINK_NO_LINK = 0,    /* 上电后未收到任何合法帧 */
@@ -32,3 +34,11 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
 /* 创建链路任务。前置：record sinks 与 pk_rec_ingest_init() 已就绪
  * （调用点保持在 app_main 末尾，即旧 sdr/dsp 的位置）。 */
 void pk_adsb_link_start(void);
+
+#ifdef PK_HOST_TEST
+/* Host dispatch proof: the task loop cannot run under FreeRTOS stubs, but the
+ * production modes_ingest sink must still be exercised without copying it. */
+void on_ingest_msg(const struct mode_s_msg *mm,
+                   const modes_ingest_meta_t *meta,
+                   void *user);
+#endif

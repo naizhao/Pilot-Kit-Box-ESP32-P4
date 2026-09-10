@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
 import subprocess
@@ -44,6 +45,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 TEST_DIR = ROOT / "firmware" / "test"
 PY_TEST_DIR = ROOT / "firmware" / "scripts"
+
+# MacOSX27.0 is installed with arm64e.x1 TBD targets that the current Apple ld
+# cannot parse.  MacOSX26 is the newest installed SDK whose C runtime links on
+# this host, so use it before each test's self-described compile command runs.
+WORKING_MACOS_SDK = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk"
+if sys.platform == "darwin" and Path(WORKING_MACOS_SDK).is_dir():
+    os.environ.setdefault("SDKROOT", WORKING_MACOS_SDK)
 
 # 文件头注释里第一条以 cc/gcc/clang 开头的命令就是"标准编译方式"。
 # 后面若还有 ASan/UBSan 变体，是可选的加强跑法，不在默认入口里。
@@ -114,12 +122,13 @@ def run_c_tests(selector: str | None) -> list[Result]:
                                   "编译命令里没有 -o <目标>，无法确定要跑哪个二进制"))
             continue
         cp = subprocess.run(build, shell=True, cwd=ROOT,
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, env=os.environ.copy())
         if cp.returncode != 0:
             results.append(Result(src.name, "FAIL", time.monotonic() - t0,
                                   "编译失败：\n" + (cp.stderr or cp.stdout)[-2000:]))
             continue
-        rp = subprocess.run([binary], cwd=ROOT, capture_output=True, text=True)
+        rp = subprocess.run([binary], cwd=ROOT, capture_output=True, text=True,
+                            env=os.environ.copy())
         dt = time.monotonic() - t0
         if rp.returncode == 0:
             results.append(Result(src.name, "PASS", dt))

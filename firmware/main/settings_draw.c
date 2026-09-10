@@ -244,7 +244,7 @@ void pk_settings_page_render(uint16_t *fb)
       hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       row++; }
 
-    /* 2 QNH —— 步进器：它是连续量，分段摆不下。 */
+    /* 2 QNH —— 步进器：它是连续量，分段摆不下。拨一下即转 MANUAL。 */
     { char v[16]; snprintf(v, sizeof(v), "%.2f hPa", (double)pk_qnh_get());
       ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_QNH));
       draw_stepper(fb, ROW_Y(row), v);
@@ -252,7 +252,17 @@ void pk_settings_page_render(uint16_t *fb)
               SEG_MIN_TOUCH_W * 2 + 140, 0, ROW_Y(row));
       row++; }
 
-    /* 3 地图朝向 */
+    /* 3 QNH 来源 —— AUTO:baro_task 用「本站气压 + GPS 正高」自动标定当地海压;
+     * MANUAL:用户拨的值(拨 QNH 步进器即自动切到这一档)。 */
+    { const char *o[] = { pk_i18n_text(PK_TR_QNH_MODE_AUTO),
+                          pk_i18n_text(PK_TR_QNH_MODE_MANUAL) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_QNH_SOURCE));
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
+               pk_qnh_mode_get() == PK_QNH_MODE_AUTO ? 0 : 1, false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
+      row++; }
+
+    /* 4 地图朝向 */
     { const char *o[] = { pk_i18n_text(PK_TR_MAP_ORIENT_HDG_UP),
                           pk_i18n_text(PK_TR_MAP_ORIENT_NORTH_UP) };
       ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_MAP_ORIENT));

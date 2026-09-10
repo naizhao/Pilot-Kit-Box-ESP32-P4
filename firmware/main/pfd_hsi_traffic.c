@@ -26,7 +26,6 @@
 #include "aircraft_state.h"
 #include "own_ship.h"
 #include "imu_task.h"
-#include "baro.h"
 #include "traffic_geom.h"
 #include "mag_var.h"
 
@@ -64,12 +63,6 @@
 #define TGT_LBL_BG    90
 
 static EXT_RAM_BSS_ATTR aircraft_t s_scratch[AIRCRAFT_TABLE_CAPACITY];
-
-static int std_alt_ft_from_pa(float pa)
-{
-    float alt_m = 44330.0f * (1.0f - powf(pa / 101325.0f, 0.190295f));
-    return (int)lroundf(alt_m * 3.28084f);
-}
 
 static void fill_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
 {
@@ -149,15 +142,11 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
                                 &yaw, &hsrc))
         return;                              /* 无航向无法定相对方位 */
 
-    pk_baro_state_t baro;
-    bool baro_ok = pk_baro_get(&baro);
-    /* 相对高度的本机基准:绑定 own 时优先用其 ADS-B 气压高度(与目标 Mode-C 同
-     * 1013.25 基准),否则用 baro 标准气压高度兜底。照 traffic_page.c:273-280
-     * 同一逻辑——原来恒用 baro,绑定高空 own 时相对高度符号会全错。 */
-    int own_palt;
-    if (own.have_altitude)          own_palt = own.altitude_ft;
-    else if (baro_ok && baro.valid) own_palt = std_alt_ft_from_pa(baro.pressure_pa);
-    else                            own_palt = PK_ALT_UNAVAIL;
+    /* 相对高度的本机基准：与交通页 / ADS-B 列表同一条判据，落在
+     * pk_traffic_own_press_alt()。舱内 BMP388 不再兜底——增压座舱里它读到的
+     * 是座舱高度，会把同高度迎头目标算成两万多英尺之外，见 traffic_geom.h。 */
+    const int own_palt = pk_traffic_own_press_alt(
+        src == PK_OWN_SRC_BOUND_ADSB, own.have_altitude, own.altitude_ft);
     const float mag_var = (hsrc == PK_HDG_SRC_IMU)
                         ? pk_mag_var_lookup(own.lat, own.lon) : 0.0f;
 
@@ -202,7 +191,8 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
         pk_traffic_rel_t rel = pk_traffic_rel_calc(
             true, own.lat, own.lon, yaw, mag_var, own_palt,
             t->have_position, t->lat, t->lon,
-            t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+            t->have_altitude, t->altitude_ft,
+            t->have_vertical_rate, t->vert_rate_fpm);
         if (!rel.valid) continue;
 
         float r = rel.rel_bearing;
@@ -227,7 +217,7 @@ void pk_pfd_hsi_traffic_render(uint16_t *fb)
                       : (rel.rel_alt_ft >  1000)         ? COL_TGT_ABOVE
                       : (rel.rel_alt_ft < -1000)         ? COL_TGT_BELOW
                                                          : COL_TGT_LEVEL;
-        if (t->have_velocity) {
+        if (t->have_heading) {   /* 剪影朝向只需要航迹 */
             const float rot = pk_traffic_symbol_rot_deg(
                 true, (float)t->heading_deg, mag_var, yaw);
             pk_pfd_draw_aircraft(fb, tx, ty, rot, ROSE_SC(7), tcol);

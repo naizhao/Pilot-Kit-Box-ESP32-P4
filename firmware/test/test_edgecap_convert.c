@@ -187,7 +187,10 @@ int main(void)
     /* ── edge_cap_queue：块队列所有权协议（block-queue 重设计）────────── */
 
     /* 7. 空队列边界：init 后 pop=false 且不动出参、pending=0；arm_slot
-     *    从 0 起单调前进（首块武装序 = 槽序），空环 guard 恒放行。 */
+     *    从 0 起单调前进（首块武装序 = 槽序）。同时锁定 core0 service
+     *    竞争边界：DMA BUSY 已清但完成 IRQ 尚未 push 时，arm 新槽必须
+     *    被拒绝；随后延迟 IRQ 只能发布旧在飞块，不得把未完成新槽提前
+     *    发布为 FULL。 */
     {
         q_reset();
         uint32_t idx = 123u;
@@ -195,8 +198,27 @@ int main(void)
         CHECK(idx == 123u, "empty pop must not touch idx\n");
         CHECK(edgecap_q_pending(&q) == 0u, "empty pending\n");
         CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 0u, "first arm=0\n");
-        CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 1u, "second arm=1\n");
-        CHECK(edgecap_q_arm_slot(&q, &idx) && idx == 2u, "third arm=2\n");
+        uint32_t completed;
+        CHECK(edgecap_q_push_full(&q, &completed) && completed == 1u,
+              "completion rearm=1\n");
+        CHECK(edgecap_q_push_full(&q, &completed) && completed == 2u,
+              "completion rearm=2\n");
+
+        dma_armed = 2u;
+        dma_running = true;
+        uint32_t racing_slot = 123u;
+        CHECK(!edgecap_q_arm_slot(&q, &racing_slot),
+              "arm must wait for pending completion push\n");
+        CHECK(racing_slot == 123u, "racing arm must not touch slot\n");
+        CHECK(atomic_load(&q.fill_idx) == 3u,
+              "racing arm advanced fill_idx (service/rearm race)\n");
+        uint32_t next;
+        CHECK(edgecap_q_push_full(&q, &next),
+              "delayed IRQ must publish completed slot\n");
+        CHECK(next == 3u, "delayed IRQ rearm next=%u want 3\n", next);
+        CHECK(edgecap_q_pending(&q) == 3u,
+              "only completed slots are FULL, pending=%u\n",
+              edgecap_q_pending(&q));
     }
 
     /* 8. fill→drain 严格顺序，满容量 N−1/批，三圈绕环覆盖全部 8 个槽位

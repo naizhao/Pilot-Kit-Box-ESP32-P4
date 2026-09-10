@@ -45,6 +45,13 @@ typedef struct {
      * 这里只负责把它画成闪烁红字，并让它占满整行——那是要抢注意力的。 */
     bool         adsb_lost_alert;
     bool         alert_blink_on;
+
+    /* 顶行 QNH（修正海压）。左块顶上那一行原本空着（原 mph 位），拿来显示
+     * 当前气压基准：飞行员一眼要能看到自己拨的是哪个 QNH。qnh_auto 为真时
+     * 数值后缀 'A'（AUTO 由 GPS 自动标定），否则 'M'（MANUAL 用户拨的）。 */
+    bool         qnh_valid;
+    float        qnh_hpa;
+    bool         qnh_auto;
 } pk_pfd_leftbox_t;
 
 void pk_pfd_leftbox_render(uint16_t *fb, const pk_pfd_leftbox_t *d);

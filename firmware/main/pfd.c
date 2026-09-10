@@ -33,6 +33,7 @@
 #include "own_ship.h"
 #include "cal_wizard.h"
 #include "config_demo.h"
+#include "config_qnh.h"
 #include "display.h"
 #include "imu_task.h"
 #include "pfd_attitude.h"
@@ -255,8 +256,12 @@ static void pfd_task(void *arg)
              * Stale window is PK_OWN_STALE_AGE_MS. */
             aircraft_t own = {0};
             pk_own_src_t own_src;
-            bool own_valid = pk_own_ship_resolve(
-                now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &own_src);
+            pk_own_alt_t own_alt = {0};
+            /* _ex 版本把三种高度基准分开交出来（见 own_ship.h）：ALT 带需要
+             * 知道自己在显示哪一种，而 own.altitude_ft 按定义只装气压高度。 */
+            bool own_valid = pk_own_ship_resolve_ex(
+                now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL,
+                &own, &own_src, &own_alt);
 
             static int64_t own_log = 0;
             if(now_us - own_log > 1000000){
@@ -318,10 +323,23 @@ static void pfd_task(void *arg)
                 .imu_valid = yaw_valid,
                 .yaw_deg   = yaw_deg,
             };
+            /* ALT 带的取数：绑定机的**气压高度**优先（与 ADS-B 目标同基准），
+             * 没有就退到 GPS 的 **GNSS 正高 (MSL)**。
+             *
+             * 两者都在回答"本机多高"，但基准不同，所以只在这条**显示**链路上
+             * 互为兜底；GDL90 线上高度与交通相对高度那两条链路只认气压高度
+             * （见 own_ship.h 的 pk_own_alt_t 与 traffic_geom.h 的
+             * pk_traffic_own_press_alt）——那里退到 MSL 会让 EFB 拿两个基准
+             * 的数相减。
+             * 已知限制：带子本身没有标注当前是哪一路基准，右下 infobox 的
+             * BARO 字段是另一路（舱内 QNH 高度），三者并列时读者只能靠位置
+             * 区分。登记在案，等 PFD 版面下一轮改动时一并处理。 */
+            const bool alt_press = own_valid && own_alt.have_press_alt;
+            const bool alt_msl   = own_valid && own_alt.have_gnss_msl;
             pk_pfd_alt_tape_t alt = {
-                .valid       = own_valid && own.have_altitude,
-                .altitude_ft = (own_valid && own.have_altitude)
-                                   ? own.altitude_ft : 0,
+                .valid       = alt_press || alt_msl,
+                .altitude_ft = alt_press ? own_alt.press_alt_ft
+                             : alt_msl   ? own_alt.gnss_msl_ft : 0,
             };
 
             /* Attitude fills the full panel as the screen background.
@@ -333,9 +351,11 @@ static void pfd_task(void *arg)
             pk_pfd_statusbar_render(fb, &stat);
             int64_t tm2 = esp_timer_get_time();
             pk_pfd_alt_tape_render(fb, &alt);
+            /* 速度带只要地速。用复合的 have_velocity 会让"有地速没航迹"
+             * 的时候整条带子空掉——地速本身那时是好的。 */
             pk_pfd_speed_tape_t spd = {
-                .valid           = own_valid && own.have_velocity,
-                .ground_speed_kt = (own_valid && own.have_velocity)
+                .valid           = own_valid && own.have_ground_speed,
+                .ground_speed_kt = (own_valid && own.have_ground_speed)
                                        ? own.ground_speed_kt : 0,
             };
             pk_pfd_speed_tape_render(fb, &spd);
@@ -354,7 +374,10 @@ static void pfd_task(void *arg)
                 pk_baro_state_t baro;
                 pk_baro_get(&baro);
 
-                bool adsb_vs = own_valid && own.have_velocity &&
+                /* 判据是垂速自己的有效位：绑定机不广播垂速时必须退到
+                 * 气压微分，而不是拿一个"有效但恒为 0"的 ADS-B 垂速把
+                 * 真的气压 VS 顶掉。 */
+                bool adsb_vs = own_valid && own.have_vertical_rate &&
                                (own_src == PK_OWN_SRC_BOUND_ADSB);
                 pk_pfd_infobox_t ib = {
                     .baro_valid   = baro.valid,
@@ -392,6 +415,10 @@ static void pfd_task(void *arg)
                     .adsb_lost_alert = (s_adsb_lost_us != 0) &&
                                        (now_us - s_adsb_lost_us < 5000000LL),
                     .alert_blink_on  = ((now_us / 400000) & 1) != 0,
+                    /* QNH 恒有值（config_qnh 有默认/auto），来源模式决定后缀 A/M。 */
+                    .qnh_valid = true,
+                    .qnh_hpa   = pk_qnh_get(),
+                    .qnh_auto  = (pk_qnh_mode_get() == PK_QNH_MODE_AUTO),
                 };
 
                 /* 标签的降级链：呼号 → squawk → ICAO hex。依赖 aircraft_t，

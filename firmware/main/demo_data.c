@@ -142,10 +142,17 @@ bool pk_demo_gps(int64_t now_us, pk_gps_state_t *out)
     out->lon             = st.lon;
     out->have_altitude   = true;
     out->altitude_ft     = (int)st.alt_ft;
-    out->ground_speed_kt = (int)st.gs_kt;
-    out->track_deg       = (int)st.track_deg;
+    /* 字段级有效位一并置位：合成数据是"什么都有"的，漏置任何一位都会让演示
+     * 模式下的本机变成"没有地速/没有航迹"，而那正是真实模块半死时的样子。
+     * updated_us/altitude_us 同理——pk_gps_get 的新鲜度闸对演示路径不生效
+     * （演示直接从这里返回），但下游会读这两个戳。 */
+    out->have_ground_speed = true;
+    out->ground_speed_kt   = (int)st.gs_kt;
+    out->have_track        = true;
+    out->track_deg         = (int)st.track_deg;
     out->sats            = 11;
     out->updated_us      = now_us;
+    out->altitude_us     = now_us;
 
     out->sats_in_view     = 17;
     out->sats_in_view_gps = 10;
@@ -225,15 +232,31 @@ static void place(aircraft_t *a, uint32_t icao, float rel_deg, float dist_nm,
 
     a->have_altitude = have_alt;
     a->altitude_ft   = alt_ft;
-    a->have_velocity = have_vel;
-    a->heading_deg   = track_deg;      /* 与方位角无关，各飞各的 */
+    /* 地速与航迹在真实链路上各自独立有效（地面帧的 MOV/S 会单独 N/A），
+     * 合成目标这两个量同源，所以一起给；have_velocity 是复合位，仍要显式
+     * 写出来——aircraft_state 的字段级过期会照常在合成目标上跑一遍，它
+     * 读的就是这几位。 */
+    a->have_ground_speed = have_vel;
+    a->have_heading      = have_vel;
+    a->have_velocity     = have_vel;
+    /* 全表不变量：have_* 为假时值必须是 0。融合表的过期与 N/A 分支都按
+     * 这条清值，合成目标留一个"无效但非零"的航迹会让漏检 have_* 的读法
+     * 在演示模式下反而看起来正常。 */
+    a->heading_deg       = have_vel ? track_deg : 0;  /* 与方位角无关，各飞各的 */
     /* 地速也要喂：右栏列表有这一列，不喂就显示成一个看似真实的 0——比缺数据
      * 更糟，因为 0 kt 是个合法读数（悬停/地面）。按 icao 散开，覆盖巡航到
      * 进近的范围。 */
     a->ground_speed_kt = have_vel ? (120 + (int)(icao % 7) * 55) : 0;
-    /* 升降率跟着高度差走：高的在爬、低的在降，好让列表里的 ^v 有东西可显。 */
+    /* 升降率跟着高度差走：高的在爬、低的在降，好让列表里的 ^v 有东西可显。
+     * 没高度的那几架连垂速也一并标成"不可用"——把它们显示成 VS 0 恰好是
+     * 这套演示数据要压的那类缺陷。 */
+    a->have_vertical_rate = have_alt;
     a->vert_rate_fpm = have_alt ? ((alt_ft % 3 == 0) ? 800
                                 : (alt_ft % 3 == 1) ? -650 : 0) : 0;
+    /* 合成目标全部在空中：空地状态是三态，留 false 表示"不知道"，那会让
+     * 交通页/地图的空地显著性分档在演示模式下永远压不到。 */
+    a->have_air_ground = true;
+    a->on_ground       = false;
 }
 
 size_t pk_demo_traffic(aircraft_t *out, size_t cap,

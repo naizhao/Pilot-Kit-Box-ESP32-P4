@@ -55,7 +55,10 @@ void pk_boot_splash_render(uint16_t *fb);
  *   pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_START),   0, 3);
  *       ← 取代 pk_display_init() 成功分支里那两行 render + flush_full
  *   pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_SENSORS), 1, 3);
- *       ← 紧接在 pk_imu_init() 之前（它 + pk_baro_start() 约 0.9 s）
+ *       ← 紧接在 pk_imu_init() 之前。2026-09-09 之后这一步几乎不耗时：
+ *         BNO085/BMP388 的握手已经挪进各自的长期任务（见 pk_bringup_retry.h），
+ *         init 只做装配；原来那 ~0.9 s 是 imu 在 app_main 里同步拉 RST + 排空
+ *         SHTP 的代价。这一格现在主要是给用户一个"传感器这步过了"的标记。
  *   pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_MAP),     2, 3);
  *       ← 紧接在 pk_tile_loader_init() 之前（最慢的一步，3.9 s）
  *   pk_boot_splash_progress(pk_i18n_text(PK_TR_BOOT_STAGE_READY),   3, 3);

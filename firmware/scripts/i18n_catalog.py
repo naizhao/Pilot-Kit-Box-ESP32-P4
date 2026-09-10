@@ -424,6 +424,28 @@ STRINGS = [
         },
     ),
     (
+        "SETTINGS_QNH_SOURCE",
+        {
+            "en": "QNH SOURCE",
+            "zh": "QNH 来源",
+        },
+    ),
+    (
+        "QNH_MODE_AUTO",
+        {
+            # auto-QNH：用 GPS 正高自动标定当地海压。
+            "en": "AUTO",
+            "zh": "自动",
+        },
+    ),
+    (
+        "QNH_MODE_MANUAL",
+        {
+            "en": "MANUAL",
+            "zh": "手动",
+        },
+    ),
+    (
         "SETTINGS_MAP_ORIENT",
         {
             "en": "MAP ORIENT",

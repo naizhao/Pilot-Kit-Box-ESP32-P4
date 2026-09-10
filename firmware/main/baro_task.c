@@ -22,7 +22,10 @@
 #include "esp_log.h"
 #include "pk_i2c0_bus.h"      /* pk_i2c0_bus_get —— 总线已上移为板级模块 */
 #include "pk_i2c0_recover.h"  /* 总线级恢复:BMP388 挂掉多半是总线塌了,不是它自己 */
+#include "pk_bringup_retry.h" /* 必装器件的开机 bring-up 退避重试(见该头文件的病因) */
 #include "config_qnh.h" /* pk_qnh_get() — 动态 QNH(修正海压) */
+#include "qnh_math.h"   /* pk_qnh_from_pressure_alt() — auto-QNH 反解 */
+#include "gps.h"        /* pk_gps_get() — auto-QNH 用 GPS 正高作基准 */
 #include "config_demo.h"
 #include "demo_data.h"
 
@@ -119,6 +122,83 @@ static esp_err_t load_calibration(void)
 }
 
 /* ─────────────────────────────────────────────────────────────────────── */
+/*  bring-up:一次完整的"把 BMP388 弄到能出数"的尝试                        */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+/* 退避涨到这一档才把失败升级成**总线级**恢复请求。
+ *
+ * 为什么不是每轮都请求:总线复位会打扰同一条总线上的 imu / touch / codec,
+ * 而开机头几秒的失败多半是别人(GT911)还没让开——那种瞬态自己会好,复位反而
+ * 是在别人的初始化中间插一脚。退避涨到 8 s 说明已经连败 4 轮 ≈ 7 s,不再像
+ * 瞬态;同时"退避 ≥8 s"这件事本身就给了两次请求之间 ≥8 s 的间隔,不会打成
+ * reset 风暴(下面仍显式按时间再卡一道,免得以后有人改了退避档位就破功)。 */
+#define BARO_UP_RECOVER_MIN_BACKOFF_MS 8000
+
+typedef struct {
+    bool    ever_recovered;    /* 请求过总线恢复没有(区分"从没请求过"与 t=0) */
+    int64_t last_recover_us;
+} baro_up_ctx_t;
+
+/* 一次 bring-up 尝试:验 CHIP_ID → 配置 OSR/ODR/IIR/PWR + 读标定 → 清 POR。
+ * 全部走同一条判据,所以总线恢复后的重配、器件本地 POR 后的重配、开机首次
+ * 配置都是同一段代码,不存在"只修了开机那条路径"的可能。 */
+static bool baro_bring_up_attempt(void *ctx)
+{
+    (void)ctx;
+
+    uint8_t id = 0;
+    esp_err_t err = reg_read(BMP388_REG_CHIPID, &id, 1);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "CHIP_ID read failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    if (id != BMP388_CHIPID) {
+        ESP_LOGW(TAG, "CHIP_ID=0x%02X (期望 0x%02X)", id, BMP388_CHIPID);
+        return false;
+    }
+
+    if ((err = configure_and_calibrate()) != ESP_OK) {
+        ESP_LOGW(TAG, "configure+calibrate failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    /* 读一次 EVENT 清掉上电 POR 标志（clear-on-read, Table 31）：
+     * 上电/复位后本该就是 1，不留给主循环让第一拍白重配一遍。 */
+    uint8_t ev = 0;
+    if (reg_read(BMP388_REG_EVENT, &ev, 1) != ESP_OK) ev = 0;
+    ESP_LOGI(TAG, "BMP388 chip_id=0x%02X OK (EVENT@bring-up=0x%02X)", id, ev);
+    return true;
+}
+
+static void baro_on_failed_bring_up(void *ctx, uint32_t attempt_no, uint32_t backoff_ms)
+{
+    baro_up_ctx_t *up = (baro_up_ctx_t *)ctx;
+
+    /* 没弄起来就说没弄起来:高度表的消费者(PFD / 飞行记录)看的是这面旗,
+     * 绝不能让上一次工作态的读数一直挂着冒充当前高度。 */
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_state.valid = false;
+    xSemaphoreGive(s_mutex);
+
+    ESP_LOGW(TAG, "BMP388 bring-up 第 %u 次失败 — %u ms 后重试",
+             (unsigned)attempt_no, (unsigned)backoff_ms);
+
+    if (backoff_ms < BARO_UP_RECOVER_MIN_BACKOFF_MS) return;
+
+    const int64_t now = esp_timer_get_time();
+    if (up->ever_recovered &&
+        now - up->last_recover_us < (int64_t)BARO_UP_RECOVER_MIN_BACKOFF_MS * 1000) {
+        return;
+    }
+    up->ever_recovered  = true;
+    up->last_recover_us = now;
+    /* 这里用 recover_request 而不是 client_report:上层已经确信"连着几轮
+     * 一个字节都读不出来 = 总线坏了",不需要再过一遍去抖计数器(见
+     * pk_i2c0_recover.h 对 who 的说明)。两条路径并用会让节流失效。 */
+    (void)pk_i2c0_recover_request("baro/bring-up");
+}
+
+/* ─────────────────────────────────────────────────────────────────────── */
 /*  baro_task                                                               */
 /* ─────────────────────────────────────────────────────────────────────── */
 
@@ -130,55 +210,30 @@ static void baro_task(void *arg)
      *   - 正常读数循环 100 ms 一轮 → 2.0 s 触发。2026-08-03 那次真机日志里
      *     baro 在 13619 ms 挂掉、之后再没恢复,按这个门槛 ~15.6 s 就会发起
      *     总线恢复,比 imu 那条 5 s stall 的路径快得多,也就成了主检测器。
-     *   - 配置失败重试循环 1 s 一轮 → 5.0 s 触发(次数门槛先到)。
-     * 只看次数会让这两条路径的实际去抖时间差十倍,所以要两个门槛并用。 */
+     *   - bring-up 重试那条路径不喂它,自带退避与升级节流(见
+     *     baro_on_failed_bring_up)。 */
     pk_i2c0_client_t i2c_client;
     pk_i2c0_client_init(&i2c_client, "baro", 5, 2 * 1000000LL);
 
     /* 总线恢复代数（住在板级总线模块里）。总线被谁救回来都要重来一遍配置+标定。 */
     uint32_t bus_gen = pk_i2c0_bus_generation();
 
-    /* ── 1. 验证 CHIP_ID ──
-     *
-     * 两轮:第一轮 10 次全败就先请求一次总线级恢复,再试一轮。
-     * 2026-08-03 那次总线塌陷发生在开机阶段(GT911 只 found 没 ready),
-     * 如果它比 baro 起得再早一点,单轮探测就会让这个任务直接 vTaskDelete
-     * ——整机在这次开机里再也没有高度表,比"一直刷 data read failed"更糟。 */
-    uint8_t id = 0;
-    for (int round = 0; round < 2 && id != BMP388_CHIPID; round++) {
-        if (round > 0) {
-            ESP_LOGW(TAG, "CHIP_ID 首轮 10 次全败 — 请求 I²C0 总线恢复后再试一轮");
-            (void)pk_i2c0_recover_request("baro/chipid");
-            bus_gen = pk_i2c0_bus_generation();
-        }
-        for (int retry = 0; retry < 10; retry++) {
-            if (reg_read(BMP388_REG_CHIPID, &id, 1) == ESP_OK && id == BMP388_CHIPID) break;
-            ESP_LOGW(TAG, "CHIP_ID retry %d (got 0x%02X)", retry, id);
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
-    }
-    if (id != BMP388_CHIPID) {
-        ESP_LOGE(TAG, "BMP388 not found (chip_id=0x%02X), task exit", id);
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-        s_state.valid = false;
-        xSemaphoreGive(s_mutex);
-        vTaskDelete(NULL);
-        return;
-    }
-    ESP_LOGI(TAG, "BMP388 chip_id=0x%02X OK", id);
+    /* bring-up 的重试器。任务**先存在**,握手只是它循环里的一步:开机那一瞬
+     * 总线塌了(2026-08-03 GT911 只 found 没 ready)不再等于"这次开机没有高度
+     * 表"。器件真的没焊/坏了也照样留着任务——代价是每分钟一轮探测,收益是
+     * 插回去最迟一分钟自己上线。 */
+    baro_up_ctx_t up_ctx = { .ever_recovered = false, .last_recover_us = 0 };
+    const pk_bringup_retry_t up_cfg = {
+        .name              = "bmp388",
+        .attempt           = baro_bring_up_attempt,
+        .on_failed_attempt = baro_on_failed_bring_up,
+        .ctx               = &up_ctx,
+    };
 
-    /* ── 2+3. 配置 OSR/ODR/PWR_CTRL + 读校准系数(开机尝试一次;失败后进循环内每秒重试) ── */
-    s_ready = (configure_and_calibrate() == ESP_OK);
+    /* 开机时必然是"没就绪",走下面循环里那条统一的 bring-up 路径。 */
+    s_ready = false;
 
-    /* 开机读一次 EVENT 清掉上电 POR 标志（clear-on-read, Table 31）：
-     * 上电本该就是 1，不留在循环里让第一拍就白重配一遍。 */
-    if (s_ready) {
-        uint8_t ev = 0;
-        if (reg_read(BMP388_REG_EVENT, &ev, 1) != ESP_OK) ev = 0;
-        ESP_LOGD(TAG, "EVENT@boot=0x%02X (por 标志已清)", ev);
-    }
-
-    /* ── 4. 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
+    /* ── 循环读温压 → 补偿 → 高度/VS → 填 s_state ── */
     /* QNH_PA 已改为每轮调 pk_qnh_get() * 100.0f(Task 9) */
     /* 高度/VS 防抖(配合 BMP388 硬件 IIR):软件高度低通 + 显示滞回 + VS 基于平滑高度。 */
     static const float ALT_ALPHA   = 0.2f;   /* 高度 EMA(软件低通,补充硬件 IIR) */
@@ -198,8 +253,8 @@ static void baro_task(void *arg)
         /* ── 0. 总线被救回来了？配置和标定都得重来 ──
          *
          * 总线复位只是把线放开了,BMP388 的 PWR_CTRL/OSR/ODR/CONFIG 是不是
-         * 还在、标定系数读得对不对,都得重新验一遍。复用既有的 !s_ready
-         * 分支去跑 configure_and_calibrate(),不另写一份。 */
+         * 还在、标定系数读得对不对,都得重新验一遍。复用下面 !s_ready 那条
+         * 统一的 bring-up 重试路径,不另写一份。 */
         {
             const uint32_t gen = pk_i2c0_bus_generation();
             if (gen != bus_gen) {
@@ -213,19 +268,21 @@ static void baro_task(void *arg)
             }
         }
 
-        /* 配置+校准 gate:开机失败则循环内每秒重试;成功前 valid 恒 false */
+        /* 配置+校准 gate。开机首次、总线复位后重放、器件本地 POR 后重配
+         * 三条路径都汇到这里:退避重试到成功为止,成功前 valid 恒 false。
+         *
+         * pk_bringup_retry_run() 只在成功时返回(不返回失败码、不删任务),
+         * 所以这里不需要再写一份 "失败就 continue" 的循环——那正是过去
+         * 每处各抄一遍、抄错一处就退回忙等的地方。 */
         if (!s_ready) {
-            s_ready = (configure_and_calibrate() == ESP_OK);
-            /* 配置写不进去/标定读不出来,和数据读失败是同一类证据,一起喂
-             * 探测器(这条路径 1 s 一轮,次数门槛 5 → 约 5 s 升级)。 */
-            (void)pk_i2c0_client_report(&i2c_client, s_ready);
-            if (!s_ready) {
-                xSemaphoreTake(s_mutex, portMAX_DELAY);
-                s_state.valid = false;
-                xSemaphoreGive(s_mutex);
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                continue;
-            }
+            pk_bringup_retry_run(&up_cfg);
+            s_ready = true;
+            /* 重试期间别人(或我们自己)可能复位过总线;成功握手用的就是复位
+             * 之后的总线,所以把代数对齐,免得下一轮又判一次"代数变了"白重来。 */
+            bus_gen  = pk_i2c0_bus_generation();
+            has_prev = false;      /* 断档后别让 VS 出尖峰 */
+            vs_ema   = 0.0f;
+            pk_i2c0_client_reset(&i2c_client);
         }
 
         /* ── 每拍先查 EVENT.por_detected，再读数据（DS §4.3.7 Table 31, p.33）──
@@ -239,23 +296,22 @@ static void baro_task(void *arg)
          * 可忽略。
          *
          * por_detected=1 → 本拍数据是复位后垃圾：整拍作废（valid=false、
-         * 跳过发布），并**在同一拍内**重跑器件配置（不是推迟到下一拍的
-         * gate），**不是**总线复位。EVENT 读失败不另生分支：总线真坏了
-         * 走下面的 data read failed 主检测器。 */
+         * 跳过发布），并把 s_ready 打掉交给上面那条 bring-up 重试路径
+         * （它的第一次尝试不等待，所以仍然是"下一轮立刻重配"，只是失败之后
+         * 有了退避而不是无限每拍重试），**不是**总线复位。EVENT 读失败不另
+         * 生分支：总线真坏了走下面的 data read failed 主检测器。 */
         {
             uint8_t ev = 0;
             if (reg_read(BMP388_REG_EVENT, &ev, 1) == ESP_OK &&
                 (ev & BMP388_EVENT_POR)) {
                 ESP_LOGW(TAG, "EVENT.por_detected=1 — BMP388 本地复位,重写配置并重读标定");
-                has_prev = false;   /* 配置断档,VS 别出尖峰 */
-                vs_ema   = 0.0f;
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_state.valid = false;
                 xSemaphoreGive(s_mutex);
-                /* 同拍重配：结果直接落 s_ready；若失败，下一拍的 !s_ready
-                 * gate 会照常每秒重试，不另写路径。 */
-                s_ready = (configure_and_calibrate() == ESP_OK);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                /* 交回上面那条统一的 bring-up 路径:下一轮立刻重试一次(重试器
+                 * 第一次尝试不等待),失败才进退避。这里不另写一份重配代码,
+                 * 也就不会出现"POR 这条路径的重试没有上限"这种同类缺陷。 */
+                s_ready = false;
                 continue;
             }
         }
@@ -293,6 +349,20 @@ static void baro_task(void *arg)
             xSemaphoreGive(s_mutex);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
+        }
+
+        /* ── auto-QNH:用「本站气压 + GPS 正高」反解当地 QNH ──
+         * 只在 AUTO 模式且 GPS 有新鲜正高时更新。慢速一阶滤波(GPS 高度
+         * 有米级噪声,不该直接抖到 QNH 上):0.02/拍 @10Hz ≈ 5s 时间常数。
+         * 不写 NVS(见 pk_qnh_set_auto);GPS 无解时保持上一次的值。 */
+        if (pk_qnh_mode_get() == PK_QNH_MODE_AUTO) {
+            pk_gps_state_t g;
+            if (pk_gps_get(&g) && g.have_fix && g.have_altitude) {
+                float target = pk_qnh_from_pressure_alt(
+                    press_pa, (float)g.altitude_ft / 3.28084f);
+                float cur = pk_qnh_get();
+                pk_qnh_set_auto(cur + 0.02f * (target - cur));
+            }
         }
 
         /* 气压高度(国际民航标准大气公式);QNH 每轮读取,支持运行时调整 */

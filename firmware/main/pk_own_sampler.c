@@ -159,18 +159,28 @@ static void own_sample_task(void *arg)
         bool bound_valid = own_icao != 0 &&
                             aircraft_state_get_own(own_icao, now_us,
                                                    OWN_BOUND_MAX_AGE_US, &own_ac);
+        /* 命中目标 ≠ 拿到了空地状态：身份帧 / DF11 / DF20 / DF21 都能让目标
+         * "新鲜"，却一个都不携带空地信息。喂给相位机的那一位必须另判
+         * have_air_ground，否则 UC6 会拿一个凭空的 on_ground=false 去和 GPS
+         * 做矛盾检测——那是"不知道"，不是"已知在空中"。轨迹位置源（下面的
+         * trail_from_bound）不受这一条约束，它只关心有没有位置。 */
+        const bool bound_ag_valid = bound_valid && own_ac.have_air_ground;
 
         pk_flight_phase_input_t in = {0};
         in.ts_ms          = (uint64_t)ts_ms;
         in.gps_valid       = gps_fix;
         in.lat_e7           = gps_fix ? (int32_t)lround(gps.lat * 1e7) : 0;
         in.lon_e7           = gps_fix ? (int32_t)lround(gps.lon * 1e7) : 0;
-        in.gs_kt            = gps_fix ? (uint16_t)gps.ground_speed_kt : 0;
+        /* 地速另有一位有效位：RMC 的 speed 字段可以单独为空（模块半死时真实
+         * 存在），那时 ground_speed_kt 是 0——喂给相位机就是"停着不动"，
+         * 与"不知道多快"完全不是一回事。 */
+        in.gs_kt            = (gps_fix && gps.have_ground_speed)
+                            ? (uint16_t)gps.ground_speed_kt : 0;
         in.baro_valid       = baro_ok;
         in.vs_fpm           = baro_ok ? (int16_t)baro.vs_fpm : 0;
         in.vib_level        = imu_ok ? imu.vib_level : 0;
-        in.bound_valid      = bound_valid;
-        in.bound_on_ground  = bound_valid && own_ac.on_ground;
+        in.bound_valid      = bound_ag_valid;
+        in.bound_on_ground  = bound_ag_valid && own_ac.on_ground;
         /* near_airport：喂给相位状态机，影响 UC7「跑道口排队 10 分钟不封段」
          * 的不降级优待（设计文档「用户场景」UC7 + pk_flight_phase.h:26）。
          * 2026-08-04 评审拍板阈值 2 NM。W1.5（2026-08-04）：走窗口 nearest
@@ -250,8 +260,14 @@ static void own_sample_task(void *arg)
         rec.lon_e7 = gps_fix ? (int32_t)lround(gps.lon * 1e7) : 0;
         rec.alt_baro_ft     = baro_ok ? (int32_t)baro.alt_ft : 0;
         rec.alt_gnss_msl_ft = (gps_fix && gps.have_altitude) ? (int32_t)gps.altitude_ft : 0;
-        rec.gs_kt       = gps_fix ? (uint16_t)gps.ground_speed_kt : PK_REC_GS_INVALID;
-        rec.track_deg10 = gps_fix ? (uint16_t)(gps.track_deg * 10) : PK_REC_TRACK_INVALID;
+        /* 地速/航迹各自独立有效：RMC 的两个字段会单独缺失，落盘时必须写
+         * 各自的 INVALID 哨兵。写 0 的话，回放端读到的是"停着不动、机头
+         * 正北"——那是一段有据的读数，与"当时没数据"完全不同，而这份
+         * 文件的用途正是事后重建当时到底发生了什么。 */
+        rec.gs_kt       = (gps_fix && gps.have_ground_speed)
+                        ? (uint16_t)gps.ground_speed_kt : PK_REC_GS_INVALID;
+        rec.track_deg10 = (gps_fix && gps.have_track)
+                        ? (uint16_t)(gps.track_deg * 10) : PK_REC_TRACK_INVALID;
         rec.vs_fpm      = baro_ok ? (int16_t)baro.vs_fpm : PK_REC_VS_INVALID;
         rec.roll_d10  = imu_ok ? (int16_t)lroundf(imu.roll_deg  * 10.0f) : 0;
         rec.pitch_d10 = imu_ok ? (int16_t)lroundf(imu.pitch_deg * 10.0f) : 0;

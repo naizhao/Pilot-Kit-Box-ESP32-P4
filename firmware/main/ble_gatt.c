@@ -679,17 +679,40 @@ static void emitter_task(void *arg)
 
             /* Traffic Report per aircraft. */
             if (s_sub_traffic && !demo) {
-                /* Ownship Report (msg 0x0A) — sent before other traffic. */
-                if (own_valid) {
+                /* Ownship Report (msg 0x0A) — sent before other traffic.
+                 *
+                 * 发不发由 pk_own_gdl90_should_emit() 判：空地状态未知时整帧
+                 * 不发。线上没有"未知"编码，Misc bit3 的 0 就是"在地面"，多数
+                 * EFB 会据此抑制本机周边的交通告警——发一个宣称自己在地面的
+                 * 本机报文，比不发危险。判据放在 own_ship.c 而不是这里：这个
+                 * 任务依赖 NimBLE，没有 host 测试缝。 */
+                if (pk_own_gdl90_should_emit(own_valid, &own)) {
                     size_t no = gdl90_encode_traffic(frame, sizeof(frame),
                         /*is_ownship=*/true,
                         own.icao24,
                         own.have_position, own.lat, own.lon,
+                        /* have_altitude 是**气压高度**：GPS 兜底时它恒为 false
+                         * （GGA 给的是 GNSS 正高 MSL，两个基准不可换），于是
+                         * 线上编 0xFFF=未知，而不是把 MSL 冒充成压力高度让
+                         * EFB 拿去跟别的飞机的压力高度比。见 own_ship.h。 */
                         own.have_altitude, own.altitude_ft,
-                        own.have_velocity, own.heading_deg,
-                        own.ground_speed_kt, own.vert_rate_fpm,
+                        own.have_ground_speed, own.ground_speed_kt,
+                        own.have_heading, own.heading_deg,
+                        own.have_vertical_rate, own.vert_rate_fpm,
+                        own.have_air_ground, own.on_ground,
+                        gdl90_emitter_from_wake((int)own.wake),
                         /*callsign=*/"", /*callsign_len=*/sizeof(""));
                     if (no > 0) { notify_bytes(s_chr_traffic_handle, frame, no); }
+                } else if (own_valid) {
+                    /* 压掉了本机报文要说出来：手机上"没有本机位置"与"盒子没
+                     * 连上"长得一样，不留痕迹就会被当成 BLE 故障去查。 */
+                    static int64_t ag_log_us;
+                    if (now_us - ag_log_us > 10000000LL) {
+                        ag_log_us = now_us;
+                        ESP_LOGW(TAG, "ownship 0x0A suppressed: air/ground unknown "
+                                      "(flight phase not settled) — GDL90 has no "
+                                      "\"unknown\" encoding");
+                    }
                 }
 
                 /* GDL90 traffic notifies only the "fresh contact" set;
@@ -706,8 +729,13 @@ static void emitter_task(void *arg)
                         a->icao24,
                         a->have_position, a->lat, a->lon,
                         a->have_altitude, a->altitude_ft,
-                        a->have_velocity, a->heading_deg,
-                        a->ground_speed_kt, a->vert_rate_fpm,
+                        /* 三支有效位各走各的：地面帧常常只有其中一个，
+                         * 用复合位串起来会把缺的那个编成 0 发出去。 */
+                        a->have_ground_speed, a->ground_speed_kt,
+                        a->have_heading, a->heading_deg,
+                        a->have_vertical_rate, a->vert_rate_fpm,
+                        a->have_air_ground, a->on_ground,
+                        gdl90_emitter_from_wake((int)a->wake),
                         a->have_callsign ? a->callsign : "",
                         /*callsign_len=*/a->have_callsign ? sizeof(a->callsign) : 0);
                     if (n > 0) { notify_bytes(s_chr_traffic_handle, frame, n); ++traffic_count; }

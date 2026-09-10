@@ -2,7 +2,9 @@
  * traffic_page.c — 360° 交通雷达页。
  *
  * 数据获取照 pfd.c 的 PFD 分支：own_ship 取位置、IMU yaw 取机头磁航向、
- * baro 算标准气压高度、aircraft_state_snapshot 取目标。几何用纯函数
+ * aircraft_state_snapshot 取目标。相对高度的本机基准走
+ * pk_traffic_own_press_alt()——舱内 BMP388 **不是**合法基准（增压座舱里它
+ * 读到的是座舱高度），所以本页不再读 baro。几何用纯函数
  * pk_traffic_rel_calc（全程磁北系，含磁偏角修正）。绘制用 pfd_draw /
  * pfd_font 原语。像素布局参照原型 traffic_radar_interactive.html。
  *
@@ -34,7 +36,6 @@
 #include "aircraft_state.h"
 #include "own_ship.h"
 #include "imu_task.h"
-#include "baro.h"
 
 #include "config_traffic.h"
 #include "traffic_geom.h"
@@ -138,13 +139,6 @@ static void outline_diamond(uint16_t *fb, int x, int y, int s, uint16_t c)
     pk_pfd_draw_line(fb, x + s, y,     x,     y + s, c);
     pk_pfd_draw_line(fb, x,     y + s, x - s, y,     c);
     pk_pfd_draw_line(fb, x - s, y,     x,     y - s, c);
-}
-
-/* 气压 → 1013.25 标准气压高度(ft)，与目标 Mode-C 同基准。 */
-static int std_alt_ft_from_pa(float pa)
-{
-    float alt_m = 44330.0f * (1.0f - powf(pa / 101325.0f, 0.190295f));
-    return (int)lroundf(alt_m * 3.28084f);
 }
 
 /*
@@ -293,7 +287,10 @@ static void draw_target_symbol(uint16_t *fb, const vis_t *v, int tx, int ty,
      * 背景/其它元素上"抬起来"——与 map_page.c 同一处理，那边的注释里有对着
      * 实拍道路像素量出来的色相分离依据。 */
     const uint16_t halo = pk_pfd_scale_rgb565(TFC_COL_GROUND_HALO, saliency_pct);
-    if (v->ac->have_velocity) {
+    /* 画剪影只需要航迹本身。用复合的 have_velocity 会让"只有航迹没有地速"
+     * 的地面目标（MOV=0，滑行中停住）退化成一个没有朝向的菱形——而朝向恰
+     * 是这时候唯一还成立的信息。 */
+    if (v->ac->have_heading) {
         const float rot = pk_traffic_symbol_rot_deg(
             orient == PK_MAP_HEADING_UP, (float)v->ac->heading_deg,
             mag_var, own_heading);
@@ -540,9 +537,13 @@ static void build_label(lbl_t *e, const vis_t *v, int tx, int ty, bool selected)
     } else {
         snprintf(e->lab, sizeof(e->lab), "---");
     }
-    e->climb = rel->vs_fpm > 0;
+    e->climb = rel->vs_valid && rel->vs_fpm > 0;
 
-    const char *arrow = !rel->rel_alt_valid   ? ""
+    /* \u95e8\u662f vs_valid\uff0c\u4e0d\u662f rel_alt_valid\uff1a\u76ee\u6807\u5728\u722c\u8fd8\u662f\u5728\u964d\u662f**\u5b83\u81ea\u5df1**\u7684\u6570\u636e\uff0c
+     * \u4e0e\u6211\u4eec\u80fd\u4e0d\u80fd\u7b97\u51fa\u76f8\u5bf9\u9ad8\u5ea6\u65e0\u5173\uff08\u6ca1\u7ed1\u5b9a ADS-B \u672c\u673a\u65f6\u76f8\u5bf9\u9ad8\u5ea6\u6052\u4e0d\u53ef\u7528\uff0c
+     * \u89c1 pk_traffic_own_press_alt\u2014\u2014\u62ff\u5b83\u5f53\u95e8\u4f1a\u628a\u597d\u6570\u636e\u4e00\u8d77\u85cf\u6389\uff09\u3002
+     * \u76ee\u6807\u6ca1\u62a5\u8fc7\u5782\u901f\u65f6\u4e0d\u753b\u7bad\u5934\uff1a0 fpm \u662f"\u5e73\u98de"\uff0c\u4e0d\u662f"\u4e0d\u77e5\u9053"\u3002 */
+    const char *arrow = !rel->vs_valid        ? ""
                       : rel->vs_fpm >  200    ? "\u2191"
                       : rel->vs_fpm < -200    ? "\u2193" : "";
     e->arrow = arrow;
@@ -588,7 +589,7 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
     char alts[12];
     if (a->have_altitude) snprintf(alts, sizeof(alts), "%d", a->altitude_ft);
     else                  snprintf(alts, sizeof(alts), "----");
-    int gs     = a->have_velocity ? a->ground_speed_kt : 0;
+    int gs     = a->have_ground_speed ? a->ground_speed_kt : 0;
     int dist10 = (int)lroundf(rel->dist_nm * 10.0f);
     if (dist10 < 0) dist10 = 0;
     int brg = ((int)lroundf(rel->abs_bearing) % 360 + 360) % 360;
@@ -731,7 +732,8 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
          * 「在往哪走」，后者才是判断会不会冲突的第一眼。 */
         const uint16_t COL_UP   = pk_rgb565( 90, 220, 120);
         const uint16_t COL_DOWN = pk_rgb565(255, 170,  70);
-        const char *ar = !v->rel.rel_alt_valid ? ""
+        /* \u95e8\u540c draw_target \u7684\u7bad\u5934\uff1avs_valid\uff0c\u4e0d\u662f rel_alt_valid\u3002 */
+        const char *ar = !v->rel.vs_valid      ? ""
                        : v->rel.vs_fpm >  200  ? "\u2191"
                        : v->rel.vs_fpm < -200  ? "\u2193" : "";
         const int aw = ar[0] ? PK_AA_M_CJK_W : 0;
@@ -746,7 +748,7 @@ static void draw_side_list(uint16_t *fb, const vis_t *vis, int nv, int sel_row)
 
         /* ── 次行：距离 + 地速 ── */
         char l2[20];
-        if (v->ac->have_velocity) {
+        if (v->ac->have_ground_speed) {
             snprintf(l2, sizeof(l2), "%.0f NM   %d kt",
                      v->rel.dist_nm, (int)lroundf(v->ac->ground_speed_kt));
         } else {
@@ -825,9 +827,6 @@ void pk_traffic_page_render(uint16_t *fb)
     bool own_valid = pk_own_ship_resolve(
         now_us, (int64_t)CONFIG_PK_OWN_STALE_AGE_MS * 1000LL, &own, &src);
 
-    pk_baro_state_t baro;
-    bool baro_ok = pk_baro_get(&baro);
-
     /* 显著性跟随本机相位（阶段 4d）：一帧只读一次，见 own_saliency_pct() 与
      * pk_own_sampler_get_phase() 头注（unknown 时两侧都不压暗，安全默认）。 */
     const pk_flight_phase_t own_phase = pk_own_sampler_get_phase();
@@ -848,17 +847,14 @@ void pk_traffic_page_render(uint16_t *fb)
             mag_var = pk_mag_var_lookup(own.lat, own.lon);
     }
 
-    /* 相对高度的本机基准:绑定 own 用其 ADS-B 气压高度(与目标 Mode-C 同基准),
-     * 否则用 baro 标准气压高度。原来恒用 baro,绑定高空 own 时所有目标都会
-     * 算成大正数(全 +,钳到 +99)——这正是相对高度符号全错的根因。 */
-    int own_palt;
-    if (own_valid && own.have_altitude) {
-        own_palt = own.altitude_ft;
-    } else if (baro_ok && baro.valid) {
-        own_palt = std_alt_ft_from_pa(baro.pressure_pa);
-    } else {
-        own_palt = PK_ALT_UNAVAIL;
-    }
+    /* 相对高度的本机基准：唯一合法来源是绑定 ADS-B 本机自报的气压高度，
+     * 判据统一在 pk_traffic_own_press_alt()（三页共用）。
+     * 这里曾经在没有绑定本机时退到舱内 BMP388——增压座舱里那个数恒等于座舱
+     * 高度(约 8000 ft)，巡航 FL350 的同高度迎头目标会被算成 +27000 ft 并被
+     * 判成"远在高空"，告警随之抑制。详见 traffic_geom.h 的说明。 */
+    const int own_palt = pk_traffic_own_press_alt(
+        own_valid && src == PK_OWN_SRC_BOUND_ADSB,
+        own.have_altitude, own.altitude_ft);
 
     pk_map_orient_t orient = pk_map_orient_get();
     /*
@@ -994,7 +990,8 @@ void pk_traffic_page_render(uint16_t *fb)
             pk_traffic_rel_t rel = pk_traffic_rel_calc(
                 true, own.lat, own.lon, own_heading, mag_var, own_palt,
                 t->have_position, t->lat, t->lon,
-                t->have_altitude, t->altitude_ft, t->vert_rate_fpm);
+                t->have_altitude, t->altitude_ft,
+                t->have_vertical_rate, t->vert_rate_fpm);
             if (!rel.valid) continue;
             if (rel.dist_nm > (float)range_nm) { n_out_of_range++; continue; }
             s_vis[nv].ac  = t;

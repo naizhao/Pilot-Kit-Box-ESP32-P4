@@ -290,7 +290,11 @@ static void test_traffic_callsign_bounded(void)
                                     /*is_ownship=*/false, /*icao24=*/0x000001,
                                     /*have_position=*/false, 0, 0,
                                     /*have_altitude=*/false, 0,
-                                    /*have_velocity=*/false, 0, 0, 0,
+                                    /*have_ground_speed=*/false, 0,
+                                    /*have_track=*/false, 0,
+                                    /*have_vertical_rate=*/false, 0,
+                                    /*have_air_ground=*/false, /*on_ground=*/false,
+                                    /*emitter_category=*/0,
                                     /*callsign=*/"", /*callsign_len=*/0);
     CHECK(n == 32);
     CHECK(memcmp(&buf[20], spaces, 8) == 0);   /* p[18..25] → out[20..27] */
@@ -300,7 +304,11 @@ static void test_traffic_callsign_bounded(void)
                              /*is_ownship=*/false, /*icao24=*/0x000001,
                              /*have_position=*/false, 0, 0,
                              /*have_altitude=*/false, 0,
-                             /*have_velocity=*/false, 0, 0, 0,
+                             /*have_ground_speed=*/false, 0,
+                             /*have_track=*/false, 0,
+                             /*have_vertical_rate=*/false, 0,
+                             /*have_air_ground=*/false, /*on_ground=*/false,
+                             /*emitter_category=*/0,
                              /*callsign=*/"n123ab", /*callsign_len=*/6);
     CHECK(n == 32);
     CHECK(buf[20] == 'N' && buf[21] == '1' && buf[22] == '2' && buf[23] == '3'
@@ -312,7 +320,11 @@ static void test_traffic_callsign_bounded(void)
                              /*is_ownship=*/false, /*icao24=*/0x000001,
                              /*have_position=*/false, 0, 0,
                              /*have_altitude=*/false, 0,
-                             /*have_velocity=*/false, 0, 0, 0,
+                             /*have_ground_speed=*/false, 0,
+                             /*have_track=*/false, 0,
+                             /*have_vertical_rate=*/false, 0,
+                             /*have_air_ground=*/false, /*on_ground=*/false,
+                             /*emitter_category=*/0,
                              /*callsign=*/raw, /*callsign_len=*/sizeof(raw));
     CHECK(n == 32);
     CHECK(buf[20] == 'N' && buf[21] == '1' && buf[22] == '2'

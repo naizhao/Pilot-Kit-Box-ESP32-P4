@@ -942,7 +942,7 @@ void pk_map_page_render(uint16_t *fb)
          * pk_aero_layer 的罗盘玫瑰/tick 是同一条公式（screen 方位 = 真方位
          * − map_rot_deg）。航向未知时维持既有降级：画成朝屏幕正上方，这是
          * "不知道"的既有约定，不随地图旋转变化。 */
-        const float rot = a->have_velocity ? (float)a->heading_deg - map_rot_deg : 0.0f;
+        const float rot = a->have_heading ? (float)a->heading_deg - map_rot_deg : 0.0f;
         /* 地面目标画空心剪影——与空中实心目标一眼可辨（阶段 4c，见
          * pfd_draw.h pk_pfd_draw_aircraft_outline 头注）。阶段 4d 起颜色也
          * 独立成一套（COL_GROUND），不再借用空中目标的青色。 */
