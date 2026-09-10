@@ -138,6 +138,27 @@
 			)
 		)
 	)
+	(sheet
+		(at 25.4 127)
+		(size 50.8 25.4)
+		(fields_autoplaced yes)
+		(stroke (width 0.1524) (type solid))
+		(fill (color 0 0 0 0.0000))
+		(uuid "20000000-0000-4000-8000-000000000007")
+		(property "Sheetname" "RF_VHF"
+			(at 25.4 126.2884 0)
+			(effects (font (size 1.27 1.27)) (justify left bottom))
+		)
+		(property "Sheetfile" "rfvhf.kicad_sch"
+			(at 25.4 152.9846 0)
+			(effects (font (size 1.27 1.27)) (justify left top))
+		)
+		(instances
+			(project "expansion-board-v4"
+				(path "/10000000-0000-4000-8000-000000000001" (page "8"))
+			)
+		)
+	)
 	(sheet_instances
 		(path "/" (page "1"))
 	)
