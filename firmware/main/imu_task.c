@@ -74,6 +74,7 @@ static const char *TAG = "imu";
 #define SH2_CMD_RESPONSE         0xF1   /* 芯片对 0xF2 的回执，走控制通道 */
 #define SH2_REPORT_ROTATION_VECTOR      0x05
 #define SH2_REPORT_LINEAR_ACCELERATION  0x04  /* gravity already removed by SH-2 */
+#define SH2_REPORT_MAGNETIC_FIELD       0x03  /* calibrated mag field, Q16 (µT = raw/16) */
 
 /* SH-2 Command Request codes (sent inside a 0xF2 report on the
  * control channel). See SH-2 Reference Manual §6.4. */
@@ -316,6 +317,26 @@ static esp_err_t bno_enable_linear_acceleration(void)
         .feature_flags       = 0,
         .change_sensitivity  = 0,
         .report_interval_us  = 20000,    /* 50 Hz */
+        .batch_interval_us   = 0,
+        .sensor_specific     = 0,
+    };
+    return shtp_send(SHTP_CH_CONTROL, (const uint8_t *)&cmd, sizeof(cmd));
+}
+
+/* --- Set Feature: Magnetic Field at 10 Hz ---------------------------- *
+ *
+ * 诊断用（R6）：BNO085 自己的三轴磁力计读数。加它的唯一目的是回答
+ * "085 处的磁场到底有多大" —— 罗盘航向不对时，必须在 085 自己身上量，
+ * 不能拿同板 QMC5883P 的读数外推（两者间距 12mm，源可能只影响其中一个）。
+ * 1 Hz 日志里打印模长，与地球磁场（~25–65 µT）对比即知是否有强磁源。 */
+static esp_err_t bno_enable_magnetic_field(void)
+{
+    sh2_set_feature_t cmd = {
+        .report_id           = SH2_CMD_SET_FEATURE,
+        .feature_id          = SH2_REPORT_MAGNETIC_FIELD,
+        .feature_flags       = 0,
+        .change_sensitivity  = 0,
+        .report_interval_us  = 100000,   /* 10 Hz */
         .batch_interval_us   = 0,
         .sensor_specific     = 0,
     };
@@ -620,6 +641,36 @@ static bool parse_linear_acceleration(const uint8_t *cargo, size_t cargo_len)
     return true;
 }
 
+/* --- Magnetic Field report parser (diagnostic, R6) ------------------- *
+ *
+ * SH-2 磁力计报文 0x03，布局同其它 3 轴报文（SH-2 §6.5.8）：
+ *   byte 0 reportID=0x03 / 1 seq / 2 status / 3 delay / 4-9 x,y,z (Q16 LE)
+ * Q16：1 LSB = 1/16 µT。仅存最近值供 1 Hz 日志，不参与姿态解算。 */
+static volatile float s_last_mag_ut[3];
+static volatile float s_last_mag_norm_ut;
+
+static bool parse_magnetic_field(const uint8_t *cargo, size_t cargo_len)
+{
+    const uint8_t *p = cargo;
+    size_t remaining = cargo_len;
+    if (remaining >= 5 && p[0] == 0xFB) { p += 5; remaining -= 5; }
+    if (remaining < 10) return false;
+    if (p[0] != SH2_REPORT_MAGNETIC_FIELD) return false;
+
+    int16_t mx_raw = (int16_t)((uint16_t)p[5] << 8 | p[4]);
+    int16_t my_raw = (int16_t)((uint16_t)p[7] << 8 | p[6]);
+    int16_t mz_raw = (int16_t)((uint16_t)p[9] << 8 | p[8]);
+    const float Q16 = 1.0f / 16.0f;
+    float mx = (float)mx_raw * Q16;
+    float my = (float)my_raw * Q16;
+    float mz = (float)mz_raw * Q16;
+    s_last_mag_ut[0] = mx;
+    s_last_mag_ut[1] = my;
+    s_last_mag_ut[2] = mz;
+    s_last_mag_norm_ut = sqrtf(mx * mx + my * my + mz * mz);
+    return true;
+}
+
 /* --- Bring-up sequence (used both at boot and by the watchdog) ------- *
  *
  * Pulses RST, drains the boot-time SHTP advertisement, and re-enables
@@ -658,7 +709,9 @@ static esp_err_t bno_bring_up(void)
 
     esp_err_t err = bno_enable_rotation_vector();
     if (err != ESP_OK) return err;
-    return bno_enable_linear_acceleration();
+    err = bno_enable_linear_acceleration();
+    if (err != ESP_OK) return err;
+    return bno_enable_magnetic_field();
 }
 
 /* --- DCD 落盘（磁场动态校准数据 → BNO085 内部 flash） ----------------- *
@@ -897,6 +950,9 @@ static void imu_task(void *arg)
                 } else if (parse_linear_acceleration(cargo, cargo_len)) {
                     /* Only feeds have_accel/accel_*; doesn't count toward
                      * the attitude-stream watchdog's last_valid_us. */
+                } else if (parse_magnetic_field(cargo, cargo_len)) {
+                    /* Diagnostic only (R6): stores the latest field for the
+                     * 1 Hz log. Doesn't count toward the RV watchdog either. */
                 } else {
                     parse_fail++;
                 }
@@ -970,10 +1026,13 @@ static void imu_task(void *arg)
              * 烧一次就能顺带把静止/运动两种状态的基线采下来。 */
             ESP_LOGI(TAG, "rpy = %+7.2f / %+7.2f / %7.2f  "
                           "raw_q(w,i,j,k) = %+0.4f %+0.4f %+0.4f %+0.4f  "
+                          "mag=(%+7.1f,%+7.1f,%+7.1f)uT |B|=%6.1f  "
                           "(acc=%u valid=%lu parse_fail=%lu "
                           "nf=%lu i2c_err=%lu wrong_ch=%lu vib=%u)",
                      s.roll_deg, s.pitch_deg, s.yaw_deg,
                      s_last_raw_qw, s_last_raw_qi, s_last_raw_qj, s_last_raw_qk,
+                     (double)s_last_mag_ut[0], (double)s_last_mag_ut[1],
+                     (double)s_last_mag_ut[2], (double)s_last_mag_norm_ut,
                      s.accuracy,
                      (unsigned long)valid_count,
                      (unsigned long)parse_fail,
