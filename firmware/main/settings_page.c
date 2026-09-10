@@ -44,7 +44,7 @@
  * 回去了，后面几项按键根本选不到。触摸上线后这条路径没人走，问题才一直
  * 没被发现。
  */
-#define SETTINGS_ROW_COUNT       13
+#define SETTINGS_ROW_COUNT       14
 
 /* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
  * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后

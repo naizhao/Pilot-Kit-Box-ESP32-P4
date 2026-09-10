@@ -53,7 +53,7 @@
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 
-#define SET_ROWS      13
+#define SET_ROWS      14
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
