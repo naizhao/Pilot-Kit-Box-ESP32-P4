@@ -445,6 +445,7 @@ static uint32_t s_received = 0;     /* 已接收的数据字节数 */
 static uint8_t  s_hdr[4];
 static uint8_t  s_hdr_len = 0;
 static bool     s_hdr_done = false;
+static bool     s_failed = false;   /* 某 sector 失败后进入「吞字节」态 */
 
 /* 解锁 flash + 使能 DAP 电源（整个烧录期间保持；见 cjtag_flash_program）。 */
 static void flash_unlock(void)
@@ -475,7 +476,7 @@ bool cjtag_cdc_enter(void)
     flash_unlock();
     s_active = true;
     s_buf_len = 0; s_flash_addr = 0; s_total = 0; s_received = 0;
-    s_hdr_len = 0; s_hdr_done = false;
+    s_hdr_len = 0; s_hdr_done = false; s_failed = false;
     return true;
 }
 
@@ -531,21 +532,31 @@ bool cjtag_cdc_data(uint8_t byte)
         return true;
     }
 
-    s_buf[s_buf_len++] = byte;
     s_received++;
+    if (s_failed) {
+        /* 已失败：继续吞掉剩余字节直到收满长度，避免它们被调用方当命令
+         * 解析（镜像含 'B' 会让 RP2040 进 BOOTSEL）。 */
+        if (s_received >= s_total) cjtag_cdc_quit();
+        return false;
+    }
+
+    s_buf[s_buf_len++] = byte;
 
     if (s_buf_len == sizeof(s_buf)) {
         if (!flash_sector_flush()) {
             printf("FLASH-FAIL: sector @0x%05lX\n", (unsigned long)s_flash_addr);
-            cjtag_cdc_quit();
-            return false;
+            s_failed = true;
+            s_buf_len = 0;                 /* 丢弃，继续吞剩余字节 */
         }
     }
 
     if (s_received >= s_total) {
-        if (!flash_sector_flush()) {
+        if (!s_failed && !flash_sector_flush()) {
             printf("FLASH-FAIL: final sector @0x%05lX\n",
                    (unsigned long)s_flash_addr);
+            s_failed = true;
+        }
+        if (s_failed) {
             cjtag_cdc_quit();
             return false;
         }
