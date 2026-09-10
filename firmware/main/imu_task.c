@@ -112,6 +112,17 @@ typedef struct __attribute__((packed)) {
     uint32_t sensor_specific;    /* 0 */
 } sh2_set_feature_t;
 
+/* 罗盘航向固定修正（度）。
+ *
+ * 2026-09-11 用户实机：V4 竖放，指向真实 180° 时屏上显示 90° —— 固定少 90°。
+ * 排查结论：竖放姿态下 yaw 只由「芯片 Z 轴→机体轴」与 ENU→NED 世界系决定，
+ * 与封装绕法线旋转无关（rot=0/±90 在水平姿态下算出的 yaw 完全相同，已用
+ * 独立矩阵推导验证）。因此这 90° 来自世界系参考方向的假设，先用固定偏移
+ * 纠正到用户实测正确，再继续定位是 BNO 输出参考系还是 q_world_fix。
+ *
+ * 这个值会被实机复验：指向 N/E/S/W 时读数应为 0/90/180/270（±2°）。 */
+#define IMU_YAW_OFFSET_DEG  90.0f
+
 /* --- Module state ---------------------------------------------------- */
 static i2c_master_dev_handle_t    s_dev;
 static SemaphoreHandle_t          s_sample_lock;
@@ -557,6 +568,10 @@ static bool parse_rotation_vector(const uint8_t *cargo, size_t cargo_len)
     quat_to_euler(dqi, dqj, dqk, dqw, &roll, &pitch, &discard_yaw);
     quat_to_euler(aqi, aqj, aqk, aqw, &discard_roll, &discard_pitch, &yaw);
     (void)discard_yaw; (void)discard_roll; (void)discard_pitch;
+
+    /* 罗盘航向固定修正（见 IMU_YAW_OFFSET_DEG）。只加在航向，不碰 roll/pitch。 */
+    yaw = fmodf(yaw + IMU_YAW_OFFSET_DEG, 360.0f);
+    if (yaw < 0.0f) yaw += 360.0f;
 
     /* 这里曾经有一组 invert roll / invert pitch / invert yaw /
      * yaw offset 的手工修正旋钮（旧 breakout 时代的遗留）。2026-09-03 删除：
