@@ -9,19 +9,23 @@ void edgecap_q_init(edgecap_q_t *q)
     atomic_store_explicit(&q->consume_idx, 0u, memory_order_relaxed);
     atomic_store_explicit(&q->disc_bitmap, 0u, memory_order_relaxed);
     q->refused = 0u;
+    q->in_flight = false;
 }
 
 bool edgecap_q_arm_slot(edgecap_q_t *q, uint32_t *slot)
 {
-    /* 仅在 DMA 停止时调用（init 首块 / 消费侧重启）：IRQ 静默，fill_idx
-     * 无并发写者，relaxed 读自身即可；consume_idx 用 acquire——与消费者
-     * free 的 release 配对，释放先于重启武装可见。 */
+    /* 仅在 DMA 停止且完成 IRQ 已处理时调用：in_flight=false 证明旧
+     * push 已结束，fill_idx 无并发写者；consume_idx 用 acquire——与
+     * 消费者 free 的 release 配对，释放先于重启武装可见。 */
+    if (q->in_flight)
+        return false;
     uint32_t next = atomic_load_explicit(&q->fill_idx,
                                          memory_order_relaxed);
     uint32_t consume = atomic_load_explicit(&q->consume_idx,
                                             memory_order_acquire);
     if ((next + 1u) % EDGE_CAP_Q_N_BLOCKS == consume)
         return false;                    /* 环仍满：保留槽未释放，勿武装 */
+    q->in_flight = true;
     atomic_store_explicit(&q->fill_idx, (next + 1u) % EDGE_CAP_Q_N_BLOCKS,
                           memory_order_relaxed);
     *slot = next;
@@ -49,6 +53,7 @@ bool edgecap_q_push_full(edgecap_q_t *q, uint32_t *next)
          * 持有块 = consume_idx 在它前面一格，前沿到此为止。fill_idx
          * 停在 next_slot = 消费者释放后的重启武装目标。 */
         q->refused++;
+        q->in_flight = false;
         return false;
     }
     atomic_store_explicit(&q->fill_idx, (next_slot + 1u) % EDGE_CAP_Q_N_BLOCKS,

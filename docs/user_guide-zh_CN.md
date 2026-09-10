@@ -133,7 +133,7 @@ NVS），而开机画面早于控件层，用户重新上电时必须被单独�
   SDR 数据口，P1 也不是 USB。
 - **BNO085：**当前驱动轮询地址 `0x4A`；INT 已接 GPIO34，但固件未使用。
 - **BMP388：**当前驱动轮询地址 `0x76`；INT 已接 GPIO31，但固件未使用。
-- **GPS：**UART1 使用 P4 TX GPIO49、P4 RX GPIO51，9600 8N1；时间来自
+- **GPS：**UART1 使用 P4 TX GPIO49、P4 RX GPIO51，115200 8N1；时间来自
   NMEA RMC；GPIO50 PPS 已被固件消费、用于 `time_locked` 判定（fix 有效
   + PPS <2 s + NMEA <5 s）；把该新鲜度接入生产时间服务仍是后续任务。
 - **BLE：**新板需要经 P1 一次性烧录 C6 ESP-Hosted slave。参见

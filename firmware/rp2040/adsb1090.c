@@ -18,6 +18,7 @@
 #include "threshold_ctl.h"
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 #include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
+#include "rp_core0_scheduler.h"
 
 #define FRAME_RING_LEN 64u
 
@@ -47,6 +48,28 @@ static void on_uat_frame(const uint8_t *frame, size_t len,
 }
 
 static modes_edge_t s_edge;
+static uint32_t s_last_beat;
+static int s_stuck_s;
+static absolute_time_t s_next_hz;
+
+/* 'P' 设门限的非阻塞状态机：收到 'P' 后逐轮收数字（每轮至多 1 字符），
+ * 非数字字符或 300ms 无输入即提交。避免旧实现 getchar_timeout_us(200000)
+ * ×4 在 poll_control 内阻塞 ~1s，停摆 edge_cap_service/p4_link/spim。 */
+static bool s_tl_pending;
+static int  s_tl_val, s_tl_n;
+static absolute_time_t s_tl_deadline;
+
+static void tl_commit(void)
+{
+    if (s_tl_n > 0 && s_tl_val <= 1000) {
+        threshold_ctl_set_permille(s_tl_val);
+        printf("tl -> %d permille (level=%dmV)\n", s_tl_val,
+               threshold_ctl_read_level_mv());
+    } else {
+        printf("tl set: 'P' + 0..1000\n");
+    }
+    s_tl_pending = false;
+}
 
 static void on_frame(const modes_edge_frame_t *f, void *user)
 {
@@ -118,6 +141,146 @@ static void health_fill(uint32_t c[10])
     c[8] = rx;                                 c[9] = gaps;
 }
 
+static bool core0_send_one_modes(void *user)
+{
+    (void)user;
+    uint32_t tail = atomic_load_explicit(&s_ring_tail, memory_order_relaxed);
+    uint32_t head = atomic_load_explicit(&s_ring_head, memory_order_acquire);
+    if (tail == head)
+        return false;
+
+    p4_link_send_modes(&s_ring[tail].f, 0xFF);
+    atomic_store_explicit(&s_ring_tail, (tail + 1) % FRAME_RING_LEN,
+                          memory_order_release);
+    return true;
+}
+
+static void core0_poll_p4_rx(void *user)
+{
+    (void)user;
+    p4_link_poll_rx();
+}
+
+static void core0_poll_spim(void *user)
+{
+    (void)user;
+    spim_poll(&s_spim, time_us_32());
+}
+
+static void core0_poll_control(void *user)
+{
+    (void)user;
+    edge_cap_service();                 /* core0：DMA 重武装/停摆恢复 */
+
+    int c = getchar_timeout_us(0);
+
+    /* 'P' 门限输入进行中：本轮的字符只当数字处理，不当作命令。 */
+    if (s_tl_pending) {
+        if (c >= '0' && c <= '9') {
+            s_tl_val = s_tl_val * 10 + (c - '0');
+            s_tl_deadline = make_timeout_time_ms(300);
+            if (++s_tl_n >= 4)
+                tl_commit();
+        } else if (c != PICO_ERROR_TIMEOUT) {
+            tl_commit();                /* 任意非数字字符结束 */
+        } else if (absolute_time_diff_us(get_absolute_time(),
+                                         s_tl_deadline) < 0) {
+            tl_commit();                /* 300ms 无输入结束 */
+        }
+        return;
+    }
+
+    if (c == 'T') {
+        /* 闭环自检（审计 Fix 2）：DF17 要走通 PIO→DMA→解码全链路，
+         * frames_112 增长才算收到；P4 侧 CRC 门在 P4 控制台另行
+         * 验证（Task 15）。 */
+        uint32_t f0 = atomic_load_explicit(&s_edge.frames_112,
+                                           memory_order_relaxed);
+        bool sent = selftest_run();
+        uint32_t f1 = f0;
+        for (int i = 0; sent && i < 500 && f1 == f0; i++) {
+            sleep_ms(1);
+            f1 = atomic_load_explicit(&s_edge.frames_112,
+                                      memory_order_relaxed);
+        }
+        if (!sent)
+            printf("selftest: FAILED\n");
+        else if (f1 != f0)
+            printf("selftest: ROUND-TRIP OK (%u frames)\n",
+                   (unsigned)(f1 - f0));
+        else
+            printf("selftest: sent but NOT received within 500ms "
+                   "-- check wire/decode\n");
+    } else if (c == 'S') {
+        uint32_t h[10]; health_fill(h);
+        printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "
+               "ringdrop=%u tx=%u rx=%u linked=%d\n",
+               h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
+               (int)p4_link_linked());
+    } else if (c == 'H') {
+        printf("tl_level=%dmV rssi_raw=%d\n",
+               threshold_ctl_read_level_mv(),
+               threshold_ctl_read_rssi_raw());
+    } else if (c == 'A') {
+        /* 1090 天线切外接 J6（U16 SPDT：A=0/B=1） */
+        gpio_put(PIN_ANT_SEL_1090_A, 0);
+        gpio_put(PIN_ANT_SEL_1090_B, 1);
+        printf("1090 ant -> EXTERNAL (J6)\n");
+    } else if (c == 'a') {
+        /* 1090 天线切板载 IFA（U16：A=1/B=0，boot 默认） */
+        gpio_put(PIN_ANT_SEL_1090_A, 1);
+        gpio_put(PIN_ANT_SEL_1090_B, 0);
+        printf("1090 ant -> ONBOARD IFA\n");
+    } else if (c == 'N') {
+        /* GNSS 天线切 J2（U17：A=0/B=1，boot 默认） */
+        gpio_put(PIN_GNSS_SEL_A, 0);
+        gpio_put(PIN_GNSS_SEL_B, 1);
+        printf("GNSS ant -> J2\n");
+    } else if (c == 'n') {
+        /* GNSS 天线切 J8 内置 patch 位（U17：A=1/B=0） */
+        gpio_put(PIN_GNSS_SEL_A, 1);
+        gpio_put(PIN_GNSS_SEL_B, 0);
+        printf("GNSS ant -> J8\n");
+    } else if (c == 'P') {
+        /* 运行期设门限：'P' 后跟 1–4 位十进制 permille（0..1000），
+         * 非数字字符或 300ms 无输入结束。闭环/协议下发是后续项
+         * （PLAN.md §6.5）。非阻塞状态机见文件上方 tl_commit()。 */
+        s_tl_pending = true;
+        s_tl_val = 0;
+        s_tl_n = 0;
+        s_tl_deadline = make_timeout_time_ms(300);
+    } else if (c == 'B') {
+        /* 软入口回 BOOTSEL：现场重刷不用再拆机短接 SW2/SW1（J1 扣上
+         * 时插拔 USB 不产生复位，硬进 BOOTSEL 很麻烦）。 */
+        printf("-> BOOTSEL\n");
+        sleep_ms(50);
+        reset_usb_boot(0, 0);
+    }
+}
+
+static void core0_poll_periodic(void *user)
+{
+    (void)user;
+    if (absolute_time_diff_us(get_absolute_time(), s_next_hz) < 0) {
+        s_next_hz = make_timeout_time_ms(1000);
+        uint32_t h[10];
+        health_fill(h);
+        p4_link_tick_health(h);
+
+        uint32_t beat = atomic_load_explicit(&s_core1_beat,
+                                             memory_order_acquire);
+        if (beat == s_last_beat) {
+            if (++s_stuck_s >= 5) {
+                printf("ERROR: core1 decoder stalled %ds\n", s_stuck_s);
+                p4_link_send_error(2);      /* code=2: decoder stall */
+            }
+        } else {
+            s_last_beat = beat;
+            s_stuck_s = 0;
+        }
+    }
+}
+
 int main(void)
 {
     stdio_init_all();
@@ -138,115 +301,20 @@ int main(void)
     spim_hw_init();
     spi_master_init(&s_spim, on_uat_frame, NULL);
 
-    uint32_t last_beat = 0;
-    int stuck_s = 0;
-    absolute_time_t next_hz = make_timeout_time_ms(1000);
+    s_last_beat = 0;
+    s_stuck_s = 0;
+    s_next_hz = make_timeout_time_ms(1000);
+
+    rp_core0_ops_t ops = {
+        .send_one_modes = core0_send_one_modes,
+        .poll_p4_rx = core0_poll_p4_rx,
+        .poll_spim = core0_poll_spim,
+        .poll_control = core0_poll_control,
+        .poll_periodic = core0_poll_periodic,
+    };
 
     while (true) {
-        for (;;) {
-            uint32_t tail = atomic_load_explicit(&s_ring_tail,
-                                                 memory_order_relaxed);
-            uint32_t head = atomic_load_explicit(&s_ring_head,
-                                                 memory_order_acquire);
-            if (tail == head) break;
-            p4_link_send_modes(&s_ring[tail].f, 0xFF);
-            atomic_store_explicit(&s_ring_tail, (tail + 1) % FRAME_RING_LEN,
-                                  memory_order_release);
-        }
-        p4_link_poll_rx();
-        spim_poll(&s_spim, time_us_32());   /* WP-E：SUBG 事务（R14 节流） */
-        edge_cap_service();                 /* core0：DMA 重武装/停摆恢复 */
-
-        int c = getchar_timeout_us(0);
-        if (c == 'T') {
-            /* 闭环自检（审计 Fix 2）：DF17 要走通 PIO→DMA→解码全链路，
-             * frames_112 增长才算收到；P4 侧 CRC 门在 P4 控制台另行
-             * 验证（Task 15）。 */
-            uint32_t f0 = atomic_load_explicit(&s_edge.frames_112,
-                                               memory_order_relaxed);
-            bool sent = selftest_run();
-            uint32_t f1 = f0;
-            for (int i = 0; sent && i < 500 && f1 == f0; i++) {
-                sleep_ms(1);
-                f1 = atomic_load_explicit(&s_edge.frames_112,
-                                          memory_order_relaxed);
-            }
-            if (!sent)
-                printf("selftest: FAILED\n");
-            else if (f1 != f0)
-                printf("selftest: ROUND-TRIP OK (%u frames)\n",
-                       (unsigned)(f1 - f0));
-            else
-                printf("selftest: sent but NOT received within 500ms "
-                       "-- check wire/decode\n");
-        } else if (c == 'S') {
-            uint32_t h[10]; health_fill(h);
-            printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "
-                   "ringdrop=%u tx=%u rx=%u linked=%d\n",
-                   h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
-                   (int)p4_link_linked());
-        } else if (c == 'H') {
-            printf("tl_level=%dmV rssi_raw=%d\n",
-                   threshold_ctl_read_level_mv(),
-                   threshold_ctl_read_rssi_raw());
-        } else if (c == 'A') {
-            /* 1090 天线切外接 J6（U16 SPDT：A=0/B=1） */
-            gpio_put(PIN_ANT_SEL_1090_A, 0);
-            gpio_put(PIN_ANT_SEL_1090_B, 1);
-            printf("1090 ant -> EXTERNAL (J6)\n");
-        } else if (c == 'a') {
-            /* 1090 天线切板载 IFA（U16：A=1/B=0，boot 默认） */
-            gpio_put(PIN_ANT_SEL_1090_A, 1);
-            gpio_put(PIN_ANT_SEL_1090_B, 0);
-            printf("1090 ant -> ONBOARD IFA\n");
-        } else if (c == 'N') {
-            /* GNSS 天线切 J2（U17：A=0/B=1，boot 默认） */
-            gpio_put(PIN_GNSS_SEL_A, 0);
-            gpio_put(PIN_GNSS_SEL_B, 1);
-            printf("GNSS ant -> J2\n");
-        } else if (c == 'n') {
-            /* GNSS 天线切 J8 内置 patch 位（U17：A=1/B=0） */
-            gpio_put(PIN_GNSS_SEL_A, 1);
-            gpio_put(PIN_GNSS_SEL_B, 0);
-            printf("GNSS ant -> J8\n");
-        } else if (c == 'P') {
-            /* 运行期设门限：'P' 后跟 1–4 位十进制 permille（0..1000），
-             * 非数字字符结束。闭环/协议下发是后续项（PLAN.md §6.5）。 */
-            int v = 0, d, n = 0;
-            for (;;) {
-                d = getchar_timeout_us(200000);
-                if (d < '0' || d > '9') break;
-                v = v * 10 + (d - '0');
-                if (++n >= 4) break;
-            }
-            if (n > 0 && v <= 1000) {
-                threshold_ctl_set_permille(v);
-                printf("tl -> %d permille (level=%dmV)\n", v,
-                       threshold_ctl_read_level_mv());
-            } else {
-                printf("tl set: 'P' + 0..1000\n");
-            }
-        } else if (c == 'B') {
-            /* 软入口回 BOOTSEL：现场重刷不用再拆机短接 SW2/SW1（J1 扣上
-             * 时插拔 USB 不产生复位，硬进 BOOTSEL 很麻烦）。 */
-            printf("-> BOOTSEL\n");
-            sleep_ms(50);
-            reset_usb_boot(0, 0);
-        }
-
-        if (absolute_time_diff_us(get_absolute_time(), next_hz) < 0) {
-            next_hz = make_timeout_time_ms(1000);
-            uint32_t h[10]; health_fill(h);
-            p4_link_tick_health(h);
-
-            uint32_t beat = atomic_load_explicit(&s_core1_beat,
-                                                 memory_order_acquire);
-            if (beat == last_beat) {
-                if (++stuck_s >= 5) {
-                    printf("ERROR: core1 decoder stalled %ds\n", stuck_s);
-                    p4_link_send_error(2);          /* code=2: decoder stall */
-                }
-            } else { last_beat = beat; stuck_s = 0; }
-        }
+        rp_core0_schedule_once(&ops);
+        tight_loop_contents();
     }
 }

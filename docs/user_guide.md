@@ -164,7 +164,7 @@ turn it off in Setup.
   unused by firmware.
 - **BMP388:** current driver polls address `0x76`; INT is wired to GPIO31 but
   unused by firmware.
-- **GPS:** UART1 uses P4 TX GPIO49 and P4 RX GPIO51 at 9600 8N1. Time comes
+- **GPS:** UART1 uses P4 TX GPIO49 and P4 RX GPIO51 at 115200 8N1. Time comes
   from NMEA RMC; GPIO50 PPS is consumed by firmware for the `time_locked`
   status (valid fix + PPS <2 s + NMEA <5 s) — wiring that freshness into the
   production time service remains a follow-up.

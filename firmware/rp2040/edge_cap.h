@@ -54,22 +54,26 @@ static inline uint32_t edgecap_tick_to_us(uint64_t tick)
  *   · 生产者 = DMA IRQ（core0）：完成 → push_full 发布（release）→
  *     guard 放行则立即重武装下一 FREE 块（write_addr 重写 +
  *     TRANS_COUNT_TRIG 触发）；环满（容量 N−1，保留槽贴着消费游标）则
- *     **DMA 停机**：置 lost 标志、记 overrun。停机到消费侧重启之间的
- *     边沿数据丢失（overrun 语义，真实过载路径，诚实计数）。
+ *     **DMA 停机**：置 lost 标志、记 overrun。停机到 core0 service 重启
+ *     之间的边沿数据丢失（overrun 语义，真实过载路径，诚实计数）。
  *
  *   · 消费者 = edge_cap_drain（core1 独占）：**每次调用至多取走一整块**
  *     （round-2 Fix 4）——弹出 → 逐条换算 → free（release 交还）；队列
  *     空或 cap 不足一块（256 条）时返回 0。理由：一次跨断点的多块批次
  *     无法表达"断点在哪"，消费者要在块间 reset 解码器——逐块交接让断
  *     点位置精确落在块边界。
- *     停机重启：drain 在释放过 ≥1 块后检查 lost 标志，用 arm_slot 的
- *     guard 重新武装（guard 失败 = 环仍满，保持停机等下一拍）。重启
- *     前对 PIO 做**完整确定性重初始化**（停用 → pio_sm_restart → 清
- *     FIFO → pio_sm_init 重装配置 + PC 回程序起点 → 重新使能；单用
- *     restart 不复位 PC/X，见 edge_cap.c edge_cap_pio_flush），丢弃停机
- *     窗口的残缺流，并把重武装的第一块 mark disc
- *     （edgecap_q_t::disc_bitmap）——消费侧见位先 modes_edge_reset 再喂，
- *     断点不拼接（时间基保留，断点后时间戳单调、见 modes_edge.h）。
+ *     停机重启**不在 drain 内做**：2026-09-10 实板定性，core1 侧调用
+ *     edge_cap_rearm 会返回 BUSY=1 但完成中断再不来，管道永久静默，
+ *     只有 core0 手动 rearm 能救活——故重武装统一收归 core0 的
+ *     edge_cap_service()（见下方函数声明），drain 只做消费、不碰 lost。
+ *     service 用 arm_slot 的 guard 重新武装（guard 失败 = 环仍满，保持
+ *     停机等下一拍）。重启前对 PIO 做**完整确定性重初始化**（停用 →
+ *     pio_sm_restart → 清 FIFO → pio_sm_init 重装配置 + PC 回程序起点
+ *     → 重新使能；单用 restart 不复位 PC/X，见 edge_cap.c
+ *     edge_cap_pio_flush），丢弃停机窗口的残缺流，并把重武装的第一块
+ *     mark disc（edgecap_q_t::disc_bitmap）——消费侧见位先
+ *     modes_edge_reset 再喂，断点不拼接（时间基保留，断点后时间戳单调、
+ *     见 modes_edge.h）。
  *     重启 guard 必须走 arm_slot——它复用满环判定，防止把保留槽填满
  *     发布出 fill_done == consume 的 8 块 FULL 态（host 测试 11 的
  *     canary 反例）。

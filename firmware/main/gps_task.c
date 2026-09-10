@@ -39,7 +39,10 @@ static SemaphoreHandle_t s_lock;
 static void take(void){ xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void give(void){ xSemaphoreGive(s_lock); }
 
-/* --- 临时诊断计数器（排查 GPS no-fix；定位到根因后删除） --- */
+/* --- UART 活性诊断计数（**常驻**，非临时）：1 Hz 心跳打印，用于区分
+ * 「模块没在讲话」与「在讲话但无 fix」。2026-09-10 定位 GPS no-fix 根因
+ * （波特率 9600→115200）时启用；根因已修但仍保留为常驻诊断——心跳注释
+ * 「rx/lines 仍便于看 UART 活性」是同一口径。 --- */
 static volatile uint32_t s_rx_bytes;    /* 累计从 UART RX 收到的原始字节 */
 static volatile uint32_t s_nmea_lines;  /* 累计拼成的完整 NMEA 行 */
 

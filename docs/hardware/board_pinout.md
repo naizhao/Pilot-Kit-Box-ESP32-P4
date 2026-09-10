@@ -189,7 +189,7 @@ Important cautions:
 | BNO085 reset | GPIO28 (moved from GPIO21 for PCB routing) | **Project + firmware** |
 | BNO085 interrupt | GPIO34 (J3 pin 28, carrier net `IMU_INT`) | Wired on the carrier; firmware still polls |
 | BMP388 interrupt | GPIO31 (J3 pin 24, carrier net `BARO_INT`) | Wired on the carrier; firmware still polls |
-| GPS UART1 TX / RX | P4 TX GPIO49 (J3 pin 32) / P4 RX GPIO51 (J3 pin 36); P4 TX moved GPIO32→GPIO49 | **Project + firmware**, 9600 8N1 |
+| GPS UART1 TX / RX | P4 TX GPIO49 (J3 pin 32) / P4 RX GPIO51 (J3 pin 36); P4 TX moved GPIO32→GPIO49 | **Project + firmware**, 115200 8N1 |
 | GPS PPS | GPIO50 optional (moved from GPIO46 for PCB routing) | GPIO50 edge ISR feeds the `time_locked` status (valid fix + PPS <2 s + NMEA <5 s); production time-service wiring is a follow-up task |
 | RTL-SDR USB | J3-27 `DP` / J3-25 `DM` | **Carrier USB-A plug** (v1/v2 dongle path, retired in current firmware); leave H2 empty. VBUS comes straight from J3 `VCC_5V`, with no current-limited switch on the carrier |
 
@@ -526,7 +526,7 @@ P4 side (see the UART direction convention at the top of this document).
 | PPS | Optional GPIO50 wiring (moved from GPIO46) |
 | VCC / GND | ESP_3V3 / GND |
 
-Current firmware uses UART1 at 9600 8N1 and derives time from NMEA RMC.
+Current firmware uses UART1 at 115200 8N1 and derives time from NMEA RMC.
 The GPIO50 PPS edge is consumed by an ISR for the `time_locked` status
 (valid fix + PPS <2 s + NMEA <5 s); wiring that freshness into the
 production time service remains a follow-up task.

@@ -74,6 +74,7 @@ add_dependencies(picotool picotoolBuild)
 
 add_executable(adsb1090
     adsb1090.c
+    rp_core0_scheduler.c
     rf_safety.c
     modes_edge.c
     edge_cap.c

@@ -70,23 +70,28 @@ typedef struct {
     atomic_uint consume_idx;  /* 消费者：下一个待消费 FULL 块（release）*/
     atomic_uint disc_bitmap;  /* 重启断点位图：bit i = 块 i 是 lost 停机后
                                * 重武装的**第一块**（其数据之前有一段整段
-                               * 缺失的真实时间）。由重启武装路径 mark、
-                               * 消费者 take 读清——写者/读者同在消费侧
-                               * core1 单任务序列内，atomic 只为 host 台架
-                               * 与跨上下文调用留定义良好的语义。RXSTALL
-                               * 单沿丢失不打位（帧内损伤，该帧自然判负，
-                               * 见 edge_cap.c）。 */
+                               * 缺失的真实时间）。**跨核**：mark 由 core0
+                               * 的 edge_cap_service() 重启路径执行（2026-09-10
+                               * 重武装收归 core0），take 由 core1 的
+                               * edge_cap_drain 读清；两侧都是 atomic RMW
+                               * （fetch_or / fetch_and），故用 atomic 保证
+                               * 无撕裂。RXSTALL 单沿丢失不打位（帧内损伤，
+                               * 该帧自然判负，见 edge_cap.c）。 */
     uint32_t refused;         /* 生产者私有诊断：满环拒发次数（host 测断言用；
                                * 目标侧权威计数在 edge_cap.c 的 s_overruns）*/
+    bool in_flight;           /* 生产者状态：arm 到完成 push 之间为 true。
+                               * DMA BUSY 清零与 IRQ push 之间存在窗口；
+                               * service 重启路径必须用该状态拒绝并发 arm，
+                               * 否则会在旧块发布前推进 fill_idx。 */
 } edgecap_q_t;
 
 /* 全游标归零。调用必须先于任何 arm/push/pop（审计 C1-init：状态清零与
  * IRQ 安装都先于 dma_channel_configure，首块最后武装）。 */
 void edgecap_q_init(edgecap_q_t *q);
 
-/* 取下一个 FREE 槽位下标并把 fill_idx 前进一位。**仅允许在 DMA 停止时
- * 调用**（init 首块武装 / overrun 后消费侧重启）：此刻 IRQ 静默，fill_idx
- * 无并发写者。返回 true → *slot = 应写入 dma_channel_set_write_addr 的块
+/* 取下一个 FREE 槽位下标并把 fill_idx 前进一位。**仅允许在 DMA 停止且
+ * 无待处理完成中断时调用**（init 首块武装 / overrun 后消费侧重启）：此刻
+ * IRQ 静默，fill_idx 无并发写者。返回 true → *slot = 应写入 dma_channel_set_write_addr 的块
  * 下标；返回 false → 环仍满（保留槽尚未被消费者释放，(fill_idx+1) mod N
  * == consume_idx），**不得武装**，保持停机、lost 标志保持置位，等下一次
  * 释放后再试。无副作用（guard 先行，失败时 fill_idx 不动）。 */
