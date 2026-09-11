@@ -270,6 +270,9 @@ static void core0_poll_control(void *user)
                    "—— 跑 'J' 看激活参数矩阵\n",
                    (unsigned long)cjtag_cdc_idcode());
         }
+    } else if (c == 'Z') {
+        /* 释放 cJTAG 三根线，给外接仿真器让路（见 cjtag_release_bus）。 */
+        cjtag_release_bus();
     } else if (c == 'L') {
         /* CC1312R 的 ROM 串行 bootloader 探测（SSI0，不走 cJTAG）。
          * 只读不写 flash，见 cc13_bsl.h 讲为什么这条路存在。 */

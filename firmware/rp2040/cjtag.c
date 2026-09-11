@@ -159,6 +159,9 @@ static cjtag_fmt_t s_fmt = FMT_JSCAN2;
 /* 诊断用：采 TDO 前额外等待的微秒数。 */
 static int s_tdo_settle_us = 0;
 
+/* 总线已交给外部仿真器：spim 必须一直停手，否则会复位掉 CC1312R。 */
+static bool s_bus_released = false;
+
 /*
  * 发一个 JTAG 位。
  *
@@ -714,6 +717,35 @@ static void diag_probe_all_pins(const char *when)
 static void diag_probe_all_pins(const char *when) { (void)when; }
 #endif
 
+/*
+ * 把 TMSC/TCKC/RESET_N 全部置高阻，让外部仿真器接管这三根网络。
+ *
+ * 本板没有给 SUBG_TMSC/TCKC 留测试点（V4 把 TP1–7 都删了），但这三根网络是
+ * **和 RP2040 的 GPIO16/17/18 共用**的。所以外接 J-Link/XDS110 不必另找落点，
+ * 焊到 RP2040 那一侧的脚（或网络上的过孔）即可——前提是 RP2040 得先松手，
+ * 否则它的推挽输出会和仿真器对顶。
+ *
+ * RESET_N 也要松：板上 R47 10k 上拉会把它保持在高，仿真器需要时自己拉低。
+ * 同时必须暂停 SPI master——它在 RECOVERY 里会周期性拉低 GPIO18 复位 CC1312R，
+ * 正好会打断仿真器的会话。
+ */
+void cjtag_release_bus(void)
+{
+    pin_init();
+    pin_tmsc_hiz();
+#ifndef CJTAG_HOST_TEST
+    gpio_set_dir(CJTAG_PIN_TCKC, GPIO_IN);
+    gpio_disable_pulls(CJTAG_PIN_TCKC);
+    gpio_set_dir(CJTAG_PIN_RESET, GPIO_IN);
+    gpio_disable_pulls(CJTAG_PIN_RESET);
+    gpio_disable_pulls(CJTAG_PIN_TMSC);
+#endif
+    s_bus_released = true;
+    printf("cJTAG 总线已释放：GPIO16/17/18 全部高阻，SPI master 已暂停。\n"
+           "外部仿真器可以接管 SUBG_TMSC/TCKC/RESET_N 了（焊 RP2040 侧引脚即可）。\n"
+           "恢复请复位 RP2040。\n");
+}
+
 void cjtag_diag(void)
 {
     pin_init();
@@ -1095,5 +1127,6 @@ bool cjtag_cdc_data(uint8_t byte)
 
 bool cjtag_cdc_active(void)
 {
-    return s_active;
+    /* 总线释放后也算"占用中"，让 core0 一直跳过 spim_poll。 */
+    return s_active || s_bus_released;
 }

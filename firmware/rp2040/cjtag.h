@@ -120,6 +120,11 @@ uint32_t cjtag_read_idcode(void);
 /* 诊断：一次上板跑完激活参数矩阵并打印每个变体读到的原始 DR 值。 */
 void cjtag_diag(void);
 
+/* 把 GPIO16/17/18 全部置高阻并暂停 SPI master，交给外部仿真器
+ * （J-Link/XDS110）接管。本板没给这三根网络留测试点，但它们与 RP2040 共用，
+ * 焊 RP2040 侧引脚即可。恢复靠复位 RP2040。 */
+void cjtag_release_bus(void);
+
 /* AHB-AP 内存读写（经 ICEPICK → DAP → MEM-AP）。 */
 uint32_t cjtag_ahb_read32(uint32_t addr);
 void     cjtag_ahb_write32(uint32_t addr, uint32_t val);
