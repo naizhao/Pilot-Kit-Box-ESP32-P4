@@ -101,6 +101,25 @@ jobs:
             want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d ' ')
             test "$(ls -1 ../dist/release/*-factory.bin | wc -l)" -eq "${want}"
 
+      # ── CC1312R 镜像（978 UAT 前端）─────────────────────────────────
+      # **不在 CI 构建**：它要 TI SimpleLink SDK（体积大、需接受许可）。已构建
+      # 产物提交在 firmware/cc1312r/release/，这里原样带走并核对校验和——
+      # 校验和对不上说明有人改了二进制却没更新 .sha256，必须当场失败而不是
+      # 悄悄发出去一个来路不明的镜像。
+      #
+      # ⚠ 该镜像**未经实板验证**（板上是空片，首刷需外部 cJTAG 仿真器，尚未
+      # 到位）。发布说明里必须保留这条标注，见 firmware/cc1312r/release/README.md。
+      - name: Stage CC1312R image (prebuilt, unverified)
+        run: |
+          set -euo pipefail
+          cd firmware/cc1312r/release
+          shasum -a 256 -c adsb978_cc13.bin.sha256
+          cd -
+          mkdir -p dist/site/firmware/cc1312r/latest
+          cp firmware/cc1312r/release/adsb978_cc13.bin \
+             firmware/cc1312r/release/README.md \
+             dist/site/firmware/cc1312r/latest/
+
       # ── RP2040 扩展板固件（adsb1090.uf2，1090 解调协处理器）─────────────
       # 与 P4 板型无关，只在完整构建时编：半套 P4 发布不允许配一套完整
       # RP2040。必须放在 ESP-IDF 容器 step 之外——容器里只有 ESP-IDF 工具
