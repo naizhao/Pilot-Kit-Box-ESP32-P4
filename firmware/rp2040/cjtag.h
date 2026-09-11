@@ -125,39 +125,23 @@ void cjtag_diag(void);
  * 焊 RP2040 侧引脚即可。恢复靠复位 RP2040。 */
 void cjtag_release_bus(void);
 
-/* AHB-AP 内存读写（经 ICEPICK → DAP → MEM-AP）。 */
-uint32_t cjtag_ahb_read32(uint32_t addr);
-void     cjtag_ahb_write32(uint32_t addr, uint32_t val);
-
-/* ── Flash 操作 ─────────────────────────────────────────────────── */
-
-/* 擦除指定 sector（4 KB 对齐）。阻塞至完成或超时。 */
-bool cjtag_flash_erase_sector(uint32_t addr);
-
-/* 写入一个 32-bit word 到 flash。阻塞至完成。 */
-bool cjtag_flash_write_word(uint32_t addr, uint32_t val);
-
-/* 校验一块 flash（逐 word 比对）。 */
-bool cjtag_flash_verify(uint32_t addr, const uint8_t *data, size_t len);
-
-/* 完整烧录流程：擦除 → 写入 → 校验 → 打印进度。
- * 返回 true = 全部成功。 */
-bool cjtag_flash_program(uint32_t addr, const uint8_t *data, size_t len);
+/* ⚠ flash 编程接口已删除（cjtag_ahb_read32/write32、cjtag_flash_*）。
+ * 那套寄存器直写来自 Stellaris/CC2538、对 CC13x2 从未核实，且依赖的 DAP TAP
+ * 挂链步骤也不存在；加上本模块的链路实测没打通，它从未被执行过。理由详见
+ * cjtag.c 里「Flash 编程：已删除」一节。正式烧录通道是 cc13_bsl.c。 */
 
 /* ── CDC 命令接口（adsb1090.c 调用）───────────────────────────── */
 
-/* 处理 CDC 字符 'F'（进入代刷模式）。返回 true = 进入成功。 */
-bool cjtag_cdc_enter(void);
+/*
+ * ⚠ 本模块**不提供烧录**，只有探测与诊断。原来的流式烧录接口
+ * （cjtag_cdc_enter/data/quit）已随 flash 寄存器直写一并删除——理由见 cjtag.c
+ * 「Flash 编程：已删除」。正式烧录通道是 cc13_bsl.c（CDC 'U'）。
+ */
 
-/* cjtag_cdc_enter() 本次读到的 IDCODE（成功或失败都保留，供打印）。
- * 不要为了打印再调一次 cjtag_read_idcode()——那会打断已建立的会话。 */
-uint32_t cjtag_cdc_idcode(void);
+/* 'F'：走一遍完整上电流程并读 IDCODE。返回 true = 读到的值与 ICEPick JRC
+ * 相符（屏蔽版本号）。*idcode_out 无论成败都写入，便于打印原值。 */
+bool cjtag_probe(uint32_t *idcode_out);
 
-/* 处理代刷模式中的数据（镜像流）。返回 true = 继续接收。 */
-bool cjtag_cdc_data(uint8_t byte);
-
-/* 处理 CDC 字符 'Q'（退出代刷模式）。 */
-void cjtag_cdc_quit(void);
-
-/* 查询：是否处于代刷模式。 */
-bool cjtag_cdc_active(void);
+/* 'Z' 之后为 true：三根线已交给外部仿真器，core0 必须一直跳过 spim_poll
+ * （spim 在 RECOVERY 里会拉低 GPIO18 复位 CC1312R，正好打断仿真器会话）。 */
+bool cjtag_bus_released(void);

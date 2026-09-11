@@ -125,10 +125,94 @@ v3/v4 扩展板上的 RP2040 负责 1090 MHz Mode-S 解码，跑自己的固件
 SWD 测试点，BOOTSEL 是该板上现实的恢复路径；调试器需飞线到芯片的
 SWCLK/SWDIO 引脚。
 
-### CC1312R 首烧（978 MHz 前端）
+### CC1312R 固件（978 MHz 前端）
 
-v4 板上的 CC1312R 需要经板上 cJTAG 完成首次烧录；该路径未实测，待台架
-验证。
+**有两条不同的路径**，走哪条取决于这颗芯片有没有被烧录过。搞混会浪费很多时间，
+先看清区别：
+
+| 情况 | 路径 | 要外部硬件吗 |
+|---|---|---|
+| 出厂空片（从没烧过） | cJTAG 仿真器 | **要** —— 仅此一次 |
+| 之后的任何一次升级 | RP2040 经 ROM 串行 bootloader 代刷 | 不要 |
+
+#### 为什么空片必须上仿真器
+
+CC13x2 的 ROM 里有串行 bootloader，但它被 CCFG 管着：`BOOTLOADER_ENABLE`
+**只有**读到 `0xC5` 才算使能（TRM SWCU185G 表 11-15）。出厂空片的 CCFG 是擦除态
+全 `0xFF`，所以 bootloader 是**关**的。它是**现场升级**机制，不是**首次烧录**
+机制 —— 这也是每块 TI LaunchPad 都焊着 XDS110 的原因。
+
+`firmware/rp2040/cjtag.c` 里有一套位脉冲 cJTAG 引擎，正是为这种情况写的，但
+**实测没有打通**（见内部交接文档）。不要围绕它安排计划。
+
+#### 路径 A —— 首次烧录，用 cJTAG 仿真器
+
+只要支持 **cJTAG（2 线 IEEE 1149.7）** 的仿真器都行。普通 SWD/JTAG 仿真器
+**不行**：CC13x2 没有 SWD，所以 DAPLink / ST-Link / 普通 CMSIS-DAP 无论多贵都用不了。
+
+已知可用：TI XDS110（独立款，或任何一块 TI LaunchPad 板载的那颗）、支持 cJTAG
+的 SEGGER J-Link（`-if cJTAG`）。
+
+本板这三根网络上**既没有调试座、也没有测试点**，只能直接焊引脚
+（下表已按 PCB 焊盘/网络数据核对）：
+
+| 信号 | 焊点 | 备选 |
+|---|---|---|
+| TMSC | U10 第 24 脚（CC1312R） | U8 第 27 脚（RP2040） |
+| TCKC | U10 第 25 脚 | U8 第 28 脚 |
+| RESET_N | R47 靠芯片那一侧焊盘（0402，比 QFN 脚好焊太多） | U10 第 35 脚 |
+| GND / VTref | 任意接地 / 3V3 | |
+
+接仿真器**之前**先在 RP2040 控制台按 `Z`：它把 GPIO16/17/18 全部置高阻并暂停
+SPI master。不做这一步，RP2040 会和仿真器对顶，而且它的恢复逻辑会周期性拉低
+RESET_N、正好打断仿真器的会话。恢复靠复位 RP2040。
+
+然后用仿真器自带的工具链（OpenOCD / UniFlash / J-Link）把
+`firmware/cc1312r/build/adsb978_cc13.bin` 烧到地址 `0x0`。
+
+#### 路径 B —— 之后的所有升级，经 RP2040
+
+```sh
+python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
+```
+
+它走 CC1312R 的 ROM 串行 bootloader（SSI0），经 backdoor 引脚进入
+（DIO13 = `SUBG_SYNC`，由 RP2040 的 GPIO15 驱动）。传输期间 1090 解码暂停，
+完成后自动恢复。
+
+工具会**拒绝**那些会把 bootloader 或 backdoor 关掉的镜像，见下面「防砖闸门」。
+确实要烧用 `--force`。
+
+串口终端里的等价操作：按 `U`，然后送 4 字节小端长度 + 镜像本体。成功打印
+`BSL-DONE`，失败打印 `BSL-FAIL: <原因>` 并点名卡在哪一步。
+
+#### 防砖闸门
+
+`tools/cc13_flash.py` 在**动手擦除之前**先解析镜像自带的 CCFG，如果结果不可恢复
+就拒绝烧录：
+
+- `BOOTLOADER_ENABLE` 不是 `0xC5` —— 升级通道会永久消失
+- `BL_ENABLE` 不是 `0xC5` —— backdoor 没了，以后烧进一个起不来的固件就换不掉
+- `BL_PIN_NUMBER` 不是 13，或 `BL_LEVEL` 不是高有效 —— backdoor 挂错脚，
+  或者每次上电都会触发
+- 镜像**短到根本不含 CCFG** —— 烧录会整片擦除，CCFG 区随之变成 `0xFF`，
+  后果与显式关掉一模一样
+
+以上任何一种，恢复手段都是退回路径 A：拆机、焊 QFN 引脚。所以闸门默认拒绝。
+
+本仓库编出来的镜像满足闸门要求，并且有构建期检查
+（`firmware/cc1312r/check_ccfg.py`）盯着，防止它静默退回 SDK 默认值 ——
+SDK 默认是**禁用** bootloader 的。
+
+#### 排错
+
+| 现象 | 可能原因 |
+|---|---|
+| `BSL-FAIL: 无应答` | 芯片从没被烧录过（bootloader 是关的），或当前镜像的 CCFG 把 bootloader 关掉了 → 走路径 A |
+| `BSL-FAIL: CRC32 不匹配` | 数据全写完了但校验和对不上。TRM 没写 CRC32 用的多项式，我们按标准 IEEE 802.3 实现 —— **先怀疑这个假设**，别急着怀疑 flash |
+| `BSL-FAIL: 擦除被拒` | CCFG 里 `BANK_ERASE_DIS` 被置上了 |
+| 工具还没碰串口就拒绝了 | 防砖闸门 —— 读它的提示，它会点名具体是哪个字段 |
+| 没有串口 | 先刷 RP2040：按住 BOOTSEL 插 USB，把 UF2 拖进去 |
 
 ## 限制
 

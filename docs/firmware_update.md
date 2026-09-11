@@ -136,57 +136,103 @@ validation pending.) Note that the v4 board removed the RP2040 SWD test
 points, so BOOTSEL is the practical recovery path there; a debugger would
 require flying wires to the chip's SWCLK/SWDIO pins.
 
-### CC1312R firmware (978 MHz front-end) — RP2040 proxy flash
+### CC1312R firmware (978 MHz front-end)
 
-The CC1312R on the v4 expansion board is flashed **through the RP2040** via
-cJTAG bit-bang — no external JTAG debugger, no flying wires. The RP2040's
-USB-C port (J4) is all you need.
+There are **two different paths**, and which one you need depends on whether the
+chip has ever been programmed. Getting this wrong wastes a lot of time, so read
+the distinction first.
 
-**Hardware path**: PC USB → RP2040 USB-C (J4) → cJTAG bit-bang
-(GPIO16=TMSC / GPIO17=TCKC / GPIO18=RESET) → CC1312R ICEPICK → Flash.
+| Situation | Path | Needs external hardware? |
+|---|---|---|
+| Factory-blank chip (never programmed) | cJTAG probe | **Yes** — one time only |
+| Any later firmware update | RP2040 proxy over the ROM serial bootloader | No |
 
-#### Prerequisites
+#### Why a blank chip needs a probe
 
-- RP2040 firmware with the cJTAG flash module (look for "FLASH-MODE" support
-  in the console — type `F` in a serial terminal to check)
-- The expansion board's USB-C port (J4) connected to your computer
-- Python 3 with pyserial (`pip3 install pyserial`)
+The CC13x2 ROM contains a serial bootloader, but it is gated by CCFG:
+`BOOTLOADER_ENABLE` is **only** enabled when it reads `0xC5` (TRM SWCU185G
+Table 11-15). A factory-blank chip has erased CCFG — all `0xFF` — so the
+bootloader is **disabled**. It is a *field-update* mechanism, not a
+*first-programming* mechanism. This is why every TI LaunchPad ships with an
+XDS110 on board.
 
-#### Flash procedure
+An RP2040 bit-bang cJTAG engine exists in `firmware/rp2040/cjtag.c` and was
+written for exactly this case, but it has **not** been made to work on real
+hardware (see the internal handover doc). Do not plan around it.
+
+#### Path A — first flash, with a cJTAG probe
+
+Any probe that speaks **cJTAG (2-wire IEEE 1149.7)** works. Plain SWD/JTAG
+probes do **not**: the CC13x2 has no SWD, so DAPLink / ST-Link / generic
+CMSIS-DAP are unusable regardless of price.
+
+Known-good options: TI XDS110 (standalone or on any TI LaunchPad), SEGGER
+J-Link with cJTAG support (`-if cJTAG`).
+
+The board has **no debug header and no test points** on these nets, so solder
+directly to the pins (verified against the PCB pad/net data):
+
+| Signal | Solder point | Alternative |
+|---|---|---|
+| TMSC | U10 pin 24 (CC1312R) | U8 pin 27 (RP2040) |
+| TCKC | U10 pin 25 | U8 pin 28 |
+| RESET_N | R47, the pad nearer the chip (0402 — much easier than a QFN pin) | U10 pin 35 |
+| GND / VTref | any ground / 3V3 | |
+
+Before connecting the probe, type `Z` in the RP2040 console. That parks
+GPIO16/17/18 in high-impedance and suspends the SPI master — otherwise the
+RP2040 drives against the probe, and its recovery logic periodically pulls
+RESET_N low and kills the probe's session. Reset the RP2040 to restore.
+
+Then flash `firmware/cc1312r/build/adsb978_cc13.bin` to address `0x0` with
+your probe's usual tooling (OpenOCD, UniFlash, or J-Link).
+
+#### Path B — all later updates, through the RP2040
 
 ```sh
 python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
 ```
 
-The tool will:
-1. Send `F` to put the RP2040 into flash-proxy mode (1090 decode pauses)
-2. Verify cJTAG communication by reading the CC1312R IDCODE
-3. Stream the firmware image to the RP2040
-4. Erase, program, and verify the CC1312R flash
-5. Reset the CC1312R and restore the RP2040 to normal SPI-master mode
+This uses the CC1312R's ROM serial bootloader over SSI0, entered through the
+backdoor pin (DIO13 = `SUBG_SYNC`, driven by RP2040 GPIO15). 1090 decode pauses
+during the transfer and resumes afterwards.
 
-#### Interactive fallback (serial terminal)
+The tool refuses images that would disable the bootloader or its backdoor —
+see "Anti-brick gate" below. `--force` overrides it.
 
-If you prefer a serial terminal (e.g. `screen /dev/ttyACM0 115200`):
+Interactive equivalent in a serial terminal: type `U`, then send 4 bytes of
+little-endian length followed by the image. The device prints `BSL-DONE` on
+success, or `BSL-FAIL: <reason>` naming the failing step.
 
-1. Type `F` → should print `FLASH-MODE READY (CC1312R IDCODE=0x...)`
-2. Send 4 bytes little-endian length (image size in bytes), then the image bytes
-3. Once the full length is received it auto-erases/programs/verifies → prints `FLASH-DONE`
+#### Anti-brick gate
+
+`tools/cc13_flash.py` parses the CCFG carried in the image **before it erases
+anything** and refuses to flash if the result would be unrecoverable:
+
+- `BOOTLOADER_ENABLE` not `0xC5` — the update channel would be gone for good
+- `BL_ENABLE` not `0xC5` — the backdoor would be gone, so a non-booting image
+  could no longer be replaced
+- `BL_PIN_NUMBER` not 13, or `BL_LEVEL` not active-high — the backdoor would be
+  on the wrong pin or would trigger on every power-up
+- an image too short to contain CCFG at all — flashing erases the whole bank,
+  so the CCFG area becomes `0xFF`, which has the same effect as disabling it
+
+Recovering from any of these means going back to Path A: dismantling the unit
+and soldering to QFN pins. That is why the gate refuses by default.
+
+The image built from this repository satisfies the gate; a build-time check
+(`firmware/cc1312r/check_ccfg.py`) enforces it so the setting cannot silently
+regress to the SDK default, which disables the bootloader.
 
 #### Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| `FLASH-MODE FAIL` | CC1312R not powered or clock not running; check VDDS and X48M crystal |
-| Garbage IDCODE | Signal integrity on TMSC/TCKC; try lower TCKC speed in cjtag.c |
-| Verify mismatch | Flash sector not fully erased; re-run with fresh erase |
-| No serial port | RP2040 BOOTSEL mode needed first; hold BOOTSEL, plug USB, flash RP2040 firmware |
-
-#### Bench validation status
-
-The cJTAG bit-bang engine, TAP state machine, and flash programming sequence
-are structurally complete. **First-board verification is the next step** —
-the IDCODE read serves as the communication proof.
+| `BSL-FAIL: no response` | Chip has never been programmed (bootloader disabled), or it is running an image whose CCFG disabled the bootloader → Path A |
+| `BSL-FAIL: CRC mismatch` | Data all written but checksum differs. The TRM does not state the CRC32 polynomial; we use standard IEEE 802.3. Suspect that assumption before suspecting the flash |
+| `BSL-FAIL: erase refused` | `BANK_ERASE_DIS` set in CCFG |
+| Tool refuses before touching the port | Anti-brick gate — read its message; it names the exact field |
+| No serial port | Flash the RP2040 first: hold BOOTSEL, plug USB, drop in the UF2 |
 
 ## Limits
 

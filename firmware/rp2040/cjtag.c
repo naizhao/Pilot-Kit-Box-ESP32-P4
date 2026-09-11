@@ -979,235 +979,51 @@ void cjtag_ahb_write32(uint32_t addr, uint32_t val)
     jtag_ap_write(0, AP_DRW, val);
 }
 
-/* ── Flash 操作 ─────────────────────────────────────────────────── */
-
-/* ⚠ 未决（读通 IDCODE 之后的下一个阻塞点，不要当成已验证的路径）：
- * 1) 上面的 DPACC/APACC 直接发 4 位 DAP IR，但 CC13x2 的 Cortex-M DAP TAP
- *    **默认不在扫描链上**（TRM §6.3「None of the secondary TAPs are selected
- *    or visible in the master scan path」；OpenOCD cc26x0.cfg 也把 cpu TAP
- *    标成 -disable）。必须先经 ICEPick 的 CONNECT(IR=0x07, DR8=0x89) +
- *    ROUTER(IR=0x02, DR32) 把它挂上来，见 tcl/target/ti/icepick.cfg。
- * 2) 下面这套 FLASH_FMC/FADDR/FSTAT 寄存器直写是 Stellaris/CC2538 的 flash
- *    控制器模型。OpenOCD 给 CC13x2 用的是 `flash bank ... cc26xx`，走的是
- *    装进 SRAM 的 flash loader（contrib/loaders/flash/cc26xx），不是寄存器
- *    直写。两条都要在通 IDCODE 之后重做，现状仅保留骨架。 */
-
-/* 等待 flash controller 空闲。位脉冲下每次 AHB 读要几十个 TCKC，用「读次数」
- * 当时间上界（≈ timeout_ms）。BUSY 恒不清（目标被复位/链路坏）时返回 false，
- * 不让 core0 永久自旋——项目未启用看门狗，死循环只能断电恢复。 */
-static bool flash_wait_ready(int timeout_ms)
-{
-    if (timeout_ms < 1) timeout_ms = 1;
-    int budget = timeout_ms * 8 + 16;
-    uint32_t stat;
-    do {
-        stat = cjtag_ahb_read32(FLASH_FSTAT);
-        if (!(stat & FSTAT_BUSY)) return true;
-    } while (--budget > 0);
-    return false;
-}
-
-bool cjtag_flash_erase_sector(uint32_t addr)
-{
-    cjtag_ahb_write32(FLASH_FADDR, addr);
-    cjtag_ahb_write32(FLASH_FMC, FMC_ERASE_SECTOR);
-    return flash_wait_ready(2000);
-}
-
-bool cjtag_flash_write_word(uint32_t addr, uint32_t val)
-{
-    cjtag_ahb_write32(FLASH_FADDR, addr);
-    cjtag_ahb_write32(FLASH_FDATA0, val);
-    cjtag_ahb_write32(FLASH_FMC, FMC_WRD);
-    return flash_wait_ready(100);
-}
-
-bool cjtag_flash_verify(uint32_t addr, const uint8_t *data, size_t len)
-{
-    for (size_t i = 0; i < len; i += 4) {
-        uint32_t expect = 0xFFFFFFFFu;   /* 未写的高字节 = flash 擦除态 */
-        memcpy(&expect, data + i, (len - i >= 4) ? 4 : (len - i));
-        uint32_t got = cjtag_ahb_read32(addr + i);
-        if (got != expect) return false;
-    }
-    return true;
-}
-
-bool cjtag_flash_program(uint32_t addr, const uint8_t *data, size_t len)
-{
-    /* 先解锁 flash（CC13x2 默认锁定） */
-    /* 写 FCFG1 的 FLASH_UNLOCK（地址 0x5000130C 写 0xC35A01E2） */
-    cjtag_ahb_write32(0x5000130C, 0xC35A01E2);
-
-    /* 使能 DAP 电源 */
-    jtag_dp_write(DP_CTRLSTAT, DP_CTRL_CSYSPWRUP | DP_CTRL_CDBGPWRUP);
-
-    /* 擦除涉及的 sectors */
-    uint32_t end = addr + len;
-    for (uint32_t s = addr & ~(uint32_t)(CC13_SECTOR_SIZE - 1);
-         s < end; s += CC13_SECTOR_SIZE) {
-        if (!cjtag_flash_erase_sector(s)) return false;
-    }
-
-    /* 逐 word 写入 */
-    for (size_t i = 0; i < len; i += 4) {
-        uint32_t word;
-        memcpy(&word, data + i, (len - i >= 4) ? 4 : (len - i));
-        if (!cjtag_flash_write_word(addr + i, word)) return false;
-    }
-
-    /* 校验 */
-    if (!cjtag_flash_verify(addr, data, len)) return false;
-
-    /* 锁回 flash */
-    cjtag_ahb_write32(0x5000130C, 0xC35A01E3);
-
-    return true;
-}
+/* ── Flash 编程：已删除 ─────────────────────────────────────────────
+ *
+ * 这里原本有一套 AHB-AP + flash 控制器寄存器直写（FLASH_FMC/FADDR/FSTAT，
+ * 基址 0x40030000）。**整段删掉了**，理由有两条，都不是"暂时用不上"：
+ *
+ * 1. 那套寄存器模型来自 Stellaris/CC2538，**从未对 CC13x2 核实过**。
+ *    OpenOCD 给 CC13x2 用的是 `flash bank ... cc26xx`——装进 SRAM 的
+ *    flash loader（contrib/loaders/flash/cc26xx），不是寄存器直写。
+ * 2. 它依赖的前置条件也不成立：Cortex-M DAP TAP 在 CC13x2 上**默认不在扫描
+ *    链上**（TRM §6.3；OpenOCD cc26x0.cfg 把 cpu TAP 标成 -disable），必须
+ *    先经 ICEPick 的 CONNECT + ROUTER 写挂上来，而那一步也没写。
+ *
+ * 而本模块的 cJTAG 链路本身实测就没打通（40 个变体全灭），所以这段代码从来
+ * 没有、也不可能被执行过。留着的唯一后果是让下一个人以为它能用——本仓库已经
+ * 因为"留着看起来能用的死代码"栽过（U13/U14 双检波位那次，注释与决策正好相反，
+ * 照着贴板子就是错的）。
+ *
+ * 真正的烧录通道是 cc13_bsl.c（ROM 串行 bootloader）。首刷用外部仿真器。
+ * 需要考古的话：git log -- firmware/rp2040/cjtag.c
+ */
 
 /* ── CDC 接口 ────────────────────────────────────────────────────── */
 
-static bool     s_active = false;
-static uint8_t  s_buf[CC13_SECTOR_SIZE];
-static size_t   s_buf_len = 0;
-static uint32_t s_flash_addr = 0;   /* 当前 sector 的 flash 地址（镜像从 0 起） */
-static uint32_t s_total = 0;        /* 镜像总长（4 字节小端头） */
-static uint32_t s_received = 0;     /* 已接收的数据字节数 */
-static uint8_t  s_hdr[4];
-static uint8_t  s_hdr_len = 0;
-static bool     s_hdr_done = false;
-static bool     s_failed = false;   /* 某 sector 失败后进入「吞字节」态 */
-static uint32_t s_idcode = 0;       /* cjtag_cdc_enter 读到的 IDCODE（供打印） */
-
-/* 解锁 flash + 使能 DAP 电源（整个烧录期间保持；见 cjtag_flash_program）。 */
-static void flash_unlock(void)
-{
-    /* 顺序：先给调试域上电，再配 MEM-AP CSW（Size=32bit, AddrInc=single），
-     * 最后才发 AHB 事务——反了首次访问会 fault/尺寸错。 */
-    jtag_dp_write(DP_CTRLSTAT, DP_CTRL_CSYSPWRUP | DP_CTRL_CDBGPWRUP);
-    jtag_ap_write(0, AP_CSW, 0x23000052u);   /* Size=0b010, AddrInc=0b01 */
-    cjtag_ahb_write32(0x5000130C, 0xC35A01E2);
-}
-static void flash_lock(void)
-{
-    cjtag_ahb_write32(0x5000130C, 0xC35A01E3);
-}
-
-uint32_t cjtag_cdc_idcode(void)
-{
-    return s_idcode;
-}
-
-bool cjtag_cdc_enter(void)
-{
-    if (s_active) return true;
-    cjtag_enter();
-
-    /* Proof of life：读 IDCODE。只认版本号以外的 28 位（不同批次版本号会变，
-     * OpenOCD 对这个 TAP 也是 -ignore-version）。 */
-    s_idcode = cjtag_read_idcode();
-    if ((s_idcode & CC13_IDCODE_MASK) != (CC13_JRC_IDCODE & CC13_IDCODE_MASK)) {
-        cjtag_exit();
-        return false;
-    }
-
-    flash_unlock();
-    s_active = true;
-    s_buf_len = 0; s_flash_addr = 0; s_total = 0; s_received = 0;
-    s_hdr_len = 0; s_hdr_done = false; s_failed = false;
-    return true;
-}
-
-/* 把当前 4KB 缓冲擦→写→校验进 s_flash_addr，然后前进一个 sector。 */
-static bool flash_sector_flush(void)
-{
-    if (s_buf_len == 0) return true;
-    if (!cjtag_flash_erase_sector(s_flash_addr)) return false;
-    for (size_t i = 0; i < s_buf_len; i += 4) {
-        uint32_t word = 0xFFFFFFFFu;
-        size_t n = (s_buf_len - i >= 4) ? 4 : (s_buf_len - i);
-        memcpy(&word, s_buf + i, n);
-        if (!cjtag_flash_write_word(s_flash_addr + i, word)) return false;
-    }
-    if (!cjtag_flash_verify(s_flash_addr, s_buf, s_buf_len)) return false;
-    s_flash_addr += CC13_SECTOR_SIZE;
-    s_buf_len = 0;
-    return true;
-}
-
-/* 中止：锁 flash、复位 CC1312、退出。 */
-void cjtag_cdc_quit(void)
-{
-    if (!s_active) return;
-    flash_lock();
-    cjtag_exit();
-    s_active = false;
-    printf("FLASH-ABORT\n");
-}
-
 /*
- * 方案 A 流式接收：先 4 字节小端长度（镜像字节数），再是镜像本体。
- * 边收边按 4KB 擦写校验；收满 s_total 即完成（无需终止符，避免镜像里
- * 的 'Q'(0x51) 被当结束符截断）。任一 sector 失败即中止。
+ * 本模块**不再提供烧录**，只提供链路探测与诊断。
+ *
+ * 原来这里有一整套流式烧录（'F' 收长度头 + 镜像 → 擦写校验）。它建立在上面
+ * 已删除的 flash 寄存器直写之上，而那套模型对 CC13x2 从未核实、依赖的 DAP TAP
+ * 挂链也没写，加上 cJTAG 链路本身实测没打通——从来没有、也不可能跑通过。
+ * 留着一个"看起来能烧"的入口，只会让人把首刷计划押在它上面。
+ *
+ * 正式烧录通道见 cc13_bsl.c（CDC 'U'）；空片首刷用外部 cJTAG 仿真器
+ * （CDC 'Z' 让路），见 docs/firmware_update.md。
  */
-bool cjtag_cdc_data(uint8_t byte)
+
+bool cjtag_probe(uint32_t *idcode_out)
 {
-    if (!s_active) return false;
-
-    if (!s_hdr_done) {
-        s_hdr[s_hdr_len++] = byte;
-        if (s_hdr_len < 4) return true;
-        s_total = (uint32_t)s_hdr[0] | ((uint32_t)s_hdr[1] << 8) |
-                  ((uint32_t)s_hdr[2] << 16) | ((uint32_t)s_hdr[3] << 24);
-        s_hdr_done = true;
-        if (s_total == 0 || s_total > CC13_FLASH_SIZE) {
-            printf("FLASH-FAIL: bad length %lu (max %u)\n",
-                   (unsigned long)s_total, (unsigned)CC13_FLASH_SIZE);
-            cjtag_cdc_quit();
-            return false;
-        }
-        printf("FLASH-RECV %lu bytes...\n", (unsigned long)s_total);
-        return true;
-    }
-
-    s_received++;
-    if (s_failed) {
-        /* 已失败：继续吞掉剩余字节直到收满长度，避免它们被调用方当命令
-         * 解析（镜像含 'B' 会让 RP2040 进 BOOTSEL）。 */
-        if (s_received >= s_total) cjtag_cdc_quit();
-        return false;
-    }
-
-    s_buf[s_buf_len++] = byte;
-
-    if (s_buf_len == sizeof(s_buf)) {
-        if (!flash_sector_flush()) {
-            printf("FLASH-FAIL: sector @0x%05lX\n", (unsigned long)s_flash_addr);
-            s_failed = true;
-            s_buf_len = 0;                 /* 丢弃，继续吞剩余字节 */
-        }
-    }
-
-    if (s_received >= s_total) {
-        if (!s_failed && !flash_sector_flush()) {
-            printf("FLASH-FAIL: final sector @0x%05lX\n",
-                   (unsigned long)s_flash_addr);
-            s_failed = true;
-        }
-        if (s_failed) {
-            cjtag_cdc_quit();
-            return false;
-        }
-        flash_lock();
-        cjtag_exit();                 /* 复位 CC1312，跑新镜像 */
-        s_active = false;
-        printf("FLASH-DONE %lu bytes\n", (unsigned long)s_total);
-    }
-    return true;
+    cjtag_enter();
+    const uint32_t id = cjtag_read_idcode();
+    cjtag_exit();
+    if (idcode_out) *idcode_out = id;
+    return (id & CC13_IDCODE_MASK) == (CC13_JRC_IDCODE & CC13_IDCODE_MASK);
 }
 
-bool cjtag_cdc_active(void)
+bool cjtag_bus_released(void)
 {
-    /* 总线释放后也算"占用中"，让 core0 一直跳过 spim_poll。 */
-    return s_active || s_bus_released;
+    return s_bus_released;
 }

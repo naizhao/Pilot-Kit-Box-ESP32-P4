@@ -173,7 +173,7 @@ static void core0_poll_spim(void *user)
      * SPI master：否则 spim 收不到 HELLO 会周期进 RECOVERY 并拉低 GPIO18
      * 复位 CC1312R，打断 cJTAG 会话/把 flash 留在半编程态（见 cjtag.h 的
      * 互斥合同）。 */
-    if (cjtag_cdc_active() || cc13_bsl_active()) return;
+    if (cjtag_bus_released() || cc13_bsl_active()) return;
     spim_poll(&s_spim, time_us_32());
 }
 
@@ -197,15 +197,6 @@ static void core0_poll_control(void *user)
                                          s_tl_deadline) < 0) {
             tl_commit();                /* 300ms 无输入结束 */
         }
-        return;
-    }
-
-    /* CC1312R 代刷模式（方案 A：先 4 字节小端长度，再是镜像）：进入后
-     * 所有字节都是镜像数据，交给 cjtag 引擎流式接收，不再按命令解析
-     * （镜像里的 'T'/'A'/'Q' 等字节不能当命令）。 */
-    if (cjtag_cdc_active()) {
-        if (c != PICO_ERROR_TIMEOUT)
-            cjtag_cdc_data((uint8_t)c);
         return;
     }
 
@@ -265,40 +256,18 @@ static void core0_poll_control(void *user)
         for (int i = 0; i < 8; i++) printf(" %u", (unsigned)b[i]);
         printf("\n");
     } else if (c == 'F') {
-        /* CC1312R 代刷模式（cJTAG 位脉冲）：暂停 1090 解码、独占
-         * SUBG_TMSC/TCKC/RESET → 读 IDCODE → 流式收镜像 → 擦/写/校验
-         * → RESET → 恢复 SPI master。
-         * 完整操作流见 docs/firmware_update.md CC1312R 段。 */
-        if (cjtag_cdc_enter()) {
-            /* 打印 cjtag_cdc_enter() 本次读到的值，不要再调一次
-             * cjtag_read_idcode()——那会把已经建好的会话打回 TLR。 */
-            printf("FLASH-MODE READY (ICEPick IDCODE=0x%08lX)\n",
-                   (unsigned long)cjtag_cdc_idcode());
-            printf("Send 4-byte LE length, then the image.\n");
-        } else {
-            printf("FLASH-MODE FAIL (IDCODE=0x%08lX, 期望 0x_BB4102F) "
-                   "—— 跑 'J' 看激活参数矩阵\n",
-                   (unsigned long)cjtag_cdc_idcode());
-        }
-    } else if (c == 'U') {
-        /* 经 ROM 串行 bootloader 代刷 CC1312R —— 这是正式升级通道。
-         * 前提是目标已有一版镜像且 CCFG 开了 bootloader+backdoor
-         * （firmware/cc1312r/ccfg.c，构建时由 check_ccfg.py 卡死）。 */
-        cc13_bsl_cdc_start();
-    } else if (c == 'Z') {
-        /* 释放 cJTAG 三根线，给外接仿真器让路（见 cjtag_release_bus）。 */
-        cjtag_release_bus();
-    } else if (c == 'L') {
-        /* CC1312R 的 ROM 串行 bootloader 探测（SSI0，不走 cJTAG）。
-         * 只读不写 flash，见 cc13_bsl.h 讲为什么这条路存在。 */
-        cc13_bsl_diag();
+        /* cJTAG 链路探测（**不是**烧录）：走一遍 ICEMelter 唤醒 + 命令窗 +
+         * STFMT→OScan1，然后读 ICEPick 的 IDCODE 作为链路是否通的判据。
+         * 烧录走 'U'（cc13_bsl.c）；空片首刷用外部仿真器，先按 'Z' 让路。 */
+        uint32_t id = 0;
+        bool ok = cjtag_probe(&id);
+        printf("cJTAG 探测: IDCODE=0x%08lX %s\n", (unsigned long)id,
+               ok ? "← 对上 ICEPick JRC，链路通" :
+                    "← 期望 0x_BB4102F。链路未通（实测一直如此，见 'J' 诊断）");
     } else if (c == 'J') {
         /* cJTAG 链路诊断：跑一遍激活参数矩阵，打印每个变体读回的原始 DR。
          * 只读，不碰 flash。 */
         cjtag_diag();
-    } else if (c == 'Q' && cjtag_cdc_active()) {
-        cjtag_cdc_quit();
-        printf("FLASH-DONE\n");
     } else if (c == 'A' || c == 'a' || c == 'N' || c == 'n') {
         /* 天线选择的真值表只在 rf_safety.c 一处（P4 的 CONFIG_REQ 走的也是
          * 同一对函数）。这里曾各自 gpio_put 一遍，两处抄同一张表，改一处
