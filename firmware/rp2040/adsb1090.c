@@ -19,8 +19,8 @@
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 #include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
 #include "rp_core0_scheduler.h"
-#include "cjtag.h"
-#include "cc13_bsl.h"   /* CC13 ROM 串行 bootloader（CDC 'L'） */           /* CC13 代刷：cJTAG 位脉冲（CDC 'F' 命令） */
+#include "cjtag.h"          /* CC13 首刷：cJTAG 位脉冲（'F' 烧录 / 'J' 诊断 / 'Z' 让路） */
+#include "cc13_bsl.h"       /* CC13 升级：ROM 串行 bootloader（'U' 烧录 / 'L' 诊断） */
 
 #define FRAME_RING_LEN 64u
 
@@ -170,7 +170,7 @@ static void core0_poll_spim(void *user)
      * SPI master：否则 spim 收不到 HELLO 会周期进 RECOVERY 并拉低 GPIO18
      * 复位 CC1312R，打断 cJTAG 会话/把 flash 留在半编程态（见 cjtag.h 的
      * 互斥合同）。 */
-    if (cjtag_cdc_active()) return;
+    if (cjtag_cdc_active() || cc13_bsl_active()) return;
     spim_poll(&s_spim, time_us_32());
 }
 
@@ -203,6 +203,13 @@ static void core0_poll_control(void *user)
     if (cjtag_cdc_active()) {
         if (c != PICO_ERROR_TIMEOUT)
             cjtag_cdc_data((uint8_t)c);
+        return;
+    }
+
+    /* BSL 代刷模式：同样进入后所有字节都是镜像数据，不再按命令解析。 */
+    if (cc13_bsl_cdc_busy()) {
+        if (c != PICO_ERROR_TIMEOUT)
+            cc13_bsl_cdc_byte((uint8_t)c);
         return;
     }
 
@@ -270,6 +277,11 @@ static void core0_poll_control(void *user)
                    "—— 跑 'J' 看激活参数矩阵\n",
                    (unsigned long)cjtag_cdc_idcode());
         }
+    } else if (c == 'U') {
+        /* 经 ROM 串行 bootloader 代刷 CC1312R —— 这是正式升级通道。
+         * 前提是目标已有一版镜像且 CCFG 开了 bootloader+backdoor
+         * （firmware/cc1312r/ccfg.c，构建时由 check_ccfg.py 卡死）。 */
+        cc13_bsl_cdc_start();
     } else if (c == 'Z') {
         /* 释放 cJTAG 三根线，给外接仿真器让路（见 cjtag_release_bus）。 */
         cjtag_release_bus();

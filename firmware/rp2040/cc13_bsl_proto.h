@@ -48,6 +48,9 @@
 #define CC13_BSL_MAX_PACKET     255u
 #define CC13_BSL_MAX_DATA       (CC13_BSL_MAX_PACKET - 3u)
 
+/* CC1312R1F3 的 flash 容量。烧录长度上界，也用来挡住明显离谱的长度头。 */
+#define CC13_FLASH_BYTES        (352u * 1024u)
+
 /* ── 纯函数 ─────────────────────────────────────────────────────── */
 
 /* 组一个协议包到 out。返回整包长度；cap 不足或参数过长返回 0 且不写输出
