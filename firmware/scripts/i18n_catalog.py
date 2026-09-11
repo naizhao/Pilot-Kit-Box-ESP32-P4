@@ -579,22 +579,6 @@ STRINGS = [
         },
     ),
     (
-        "SETTINGS_ANT_1090_ONBOARD",
-        {
-            "en": "Onboard",
-            "zh": "板载",
-        },
-    ),
-    (
-        "SETTINGS_ANT_1090_EXT",
-        {
-            # 带上接口丝印 J6：盒子侧面有不止一个 SMA，只说「外接」用户不知道
-            # 该插哪个。
-            "en": "External J6",
-            "zh": "外接 J6",
-        },
-    ),
-    (
         "SETTINGS_ANT_GNSS",
         {
             "en": "GNSS antenna",
@@ -602,17 +586,21 @@ STRINGS = [
         },
     ),
     (
-        "SETTINGS_ANT_GNSS_EXT",
+        "SETTINGS_ANT_ONBOARD",
         {
-            "en": "External J2",
-            "zh": "外接 J2",
+            # 1090 与 GNSS 两行共用同一对选项词条。去掉接口丝印之后两行文案
+            # 完全一样，留两份重复字符串只会让翻译各改各的、慢慢漂开。
+            "en": "Onboard",
+            "zh": "板载",
         },
     ),
     (
-        "SETTINGS_ANT_GNSS_ONBOARD",
+        "SETTINGS_ANT_EXTERNAL",
         {
-            "en": "Onboard",
-            "zh": "板载",
+            # 不写 J6/J2 这类丝印代号：屏上只回答"用哪根"，插哪个口是机身上
+            # 就近能看见的事（产品决定，2026-09-11）。
+            "en": "External",
+            "zh": "外置",
         },
     ),
     (

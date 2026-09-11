@@ -459,8 +459,8 @@ void pk_settings_page_render(uint16_t *fb)
      *
      * 值存在 P4 的 NVS，真正的开关在 RP2040 上（U16/U17），经 CONFIG_REQ
      * 下发——见 config_antenna.h 讲"谁是真源"那段。 */
-    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_1090_ONBOARD),
-                          pk_i18n_text(PK_TR_SETTINGS_ANT_1090_EXT) };
+    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_ONBOARD),
+                          pk_i18n_text(PK_TR_SETTINGS_ANT_EXTERNAL) };
       ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_ANT_1090));
       const int _x = draw_seg(fb, ROW_Y(row), o, 2,
                               pk_ant_1090_get() == PK_ANT_1090_EXTERNAL ? 1 : 0,
@@ -472,8 +472,8 @@ void pk_settings_page_render(uint16_t *fb)
      * 偏置馈电门控且配对是反的——选中哪一路就给另一路供电，有源天线拿不到
      * 电。固件改不了这件事，开关旁边就得让人看见代价，否则用户切过去发现没
      * 星，只会以为天线坏了。配色与演示模式那句警告同一档。 */
-    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_EXT),
-                          pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_ONBOARD) };
+    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_EXTERNAL),
+                          pk_i18n_text(PK_TR_SETTINGS_ANT_ONBOARD) };
       const char *label = pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS);
       ROW_LABEL(row, label);
       const int _x = draw_seg(fb, ROW_Y(row), o, 2,
