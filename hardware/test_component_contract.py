@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import collections
 import csv
 import json
 import math
@@ -815,17 +816,35 @@ class ComponentContractTest(unittest.TestCase):
             placements = pcb_placements(board)
             dnp = {ref for ref, (_x, _y, is_dnp) in placements.items() if is_dnp}
             files = sorted(smt.glob("CPL-*.csv"))
+            # 文件名形如 CPL-V4.6-full.csv（历史文件可能没有版本段）。
+            # 按版本分组判断，别写死文件名——加一版板子就要改一次测试的话，
+            # 迟早会有人为了让它绿而把新版本删掉。
+            by_rev = collections.defaultdict(set)
+            for path in files:
+                m = re.match(r"CPL-(?:(V[\d.]+)-)?(\w+)\.csv$", path.name)
+                self.assertIsNotNone(m, f"CPL 文件名不合规范：{path.name}")
+                by_rev[m.group(1) or "(无版本)"].add(m.group(2))
             with self.subTest(board=board, check="CPL 文件齐全"):
-                self.assertEqual(
-                    [path.name for path in files],
-                    ["CPL-full.csv", "CPL-minimal.csv", "CPL-passives.csv"],
-                    "三个方案的 CPL 要么都在，要么就是有人漏跑了 gen_jlc_smt.py",
-                )
+                self.assertTrue(by_rev, "一个 CPL 都没有，是不是漏跑了 gen_jlc_smt.py")
+                for rev, plans in sorted(by_rev.items()):
+                    self.assertEqual(
+                        sorted(plans), ["full", "minimal", "passives"],
+                        f"{rev} 的三个方案没齐（缺 gen_jlc_smt.py 的某一档）",
+                    )
+            # 坐标只对**当前版本**那套校验。带旧版本号的是归档（留着给已打样的
+            # 板子做贴片参考），它们本来就对不上当前板——拿当前板去要求它们，
+            # 只会逼着人把归档删掉。当前版本取自板上的版本丝印。
+            pcb_text = (ROOT / "hardware" / board / "kicad"
+                        / f"{board}.kicad_pcb").read_text(encoding="utf-8")
+            m = re.search(r'\(gr_text "(V[\d.]+) \(', pcb_text)
+            cur_rev = m.group(1) if m else None
             for path in files:
                 with path.open(encoding="utf-8-sig") as fh:
                     rows = list(csv.DictReader(fh))
                 with self.subTest(cpl=path.name, check="非空"):
                     self.assertTrue(rows, f"{path.name} 是空的")
+                if cur_rev and f"-{cur_rev}-" not in path.name:
+                    continue        # 归档版本，只查非空与文件名规范
                 for row in rows:
                     ref = row["Designator"].strip()
                     with self.subTest(cpl=path.name, ref=ref):

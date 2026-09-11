@@ -226,6 +226,32 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 |---|---|---|---|---|---|
 | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm_Ver | (92.6, 106.3) | 90° | ★ Routine |
 
+## Stage G: Airband (19 parts)
+
+BK4819 airband receive + 26MHz TCXO + PCM1808 capture (new in V4.6, independent of the 1090/978 chains).
+
+| Designator | Value / Model | Footprint | Board position | Rotation | Manual difficulty |
+|---|---|---|---|---|---|
+| **J10** | U.FL_VHF (pigtail to SMA) | U.FL_Hirose_U.FL-R-SMT-1_V | (125.8, 89.2) | 90° | ★ Routine |
+| **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_2.5x | (132.5, 99.0) | 180° | ★ Routine |
+| **U21** | BK4819QN32SC | QFN-32-1EP_4x4mm_P0.4mm_EP | (127.5, 97.6) | 180° | ★★★ Exposed pad; reflow/hot air required |
+| **U22** | PCM1808PWR | TSSOP-14_4.4x5mm_P0.65mm | (122.8, 105.3) | 0° | ★ Routine |
+| **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (129.4, 89.0) | 180° | ★★ 0402 — easily blown away by hot air; lower the airflow |
+| **C88** | 100pF | C_0603_1608Metric | (129.3, 91.1) | -90° | ★ Routine |
+| **C95** | 100nF | C_0603_1608Metric | (120.5, 101.5) | 0° | ★ Routine |
+| **C96** | 100nF | C_0603_1608Metric | (127.6, 102.2) | 90° | ★ Routine |
+| **L18** | 100nH | L_0402_1005Metric | (126.0, 93.9) | 0° | ★★ 0402 — easily blown away by hot air; lower the airflow |
+| **R59** | 10k | R_0603_1608Metric | (132.5, 105.6) | 0° | ★ Routine |
+| **C89** | 18pF | C_0603_1608Metric | (128.7, 93.9) | 180° | ★ Routine |
+| **C97** | 1uF | C_0603_1608Metric | (129.4, 102.2) | 90° | ★ Routine |
+| **C98** | 100nF | C_0603_1608Metric | (131.2, 102.2) | 90° | ★ Routine |
+| **C94** | 100nF | C_0603_1608Metric | (120.5, 109.4) | 0° | ★ Routine |
+| **C91** | 10uF | C_0805_2012Metric | (129.0, 108.2) | 0° | ★ Routine |
+| **C93** | 10uF | C_0805_2012Metric | (124.2, 109.4) | 0° | ★ Routine |
+| **C92** | 10uF | C_0805_2012Metric | (136.2, 108.2) | 0° | ★ Routine |
+| **R60** | 0R | R_0603_1608Metric | (124.0, 101.5) | 0° | ★ Routine |
+| **R58** | 10k | R_0603_1608Metric | (132.5, 108.2) | 0° | ★ Routine |
+
 ## Not placed (22 positions)
 
 | Designator | Reason |

@@ -12,8 +12,8 @@
 
 本板当前配置：**带电源版（powered）**。
 
-位号在板上的位置：[ASSEMBLY_MAP.pdf](ASSEMBLY_MAP.pdf)（公开版）、
-`internal/装配图-本轮打板-zh_CN.pdf`（多标本轮要自己补贴的件）。
+位号在板上的位置：[ASSEMBLY_MAP-V4.6.pdf](ASSEMBLY_MAP-V4.6.pdf)（公开版）、
+`internal/装配图-本轮打板-V4.6-zh_CN.pdf`（多标本轮要自己补贴的件）。
 两份都按本表的判据生成，与这张表同源。
 
 ---

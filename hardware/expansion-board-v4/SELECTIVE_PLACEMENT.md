@@ -12,8 +12,8 @@ Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
 This board's current configuration: **powered variant**.
 
-Designator locations on the board: [ASSEMBLY_MAP.pdf](ASSEMBLY_MAP.pdf) (public version),
-`internal/装配图-本轮打板-zh_CN.pdf` (parts each board of this batch must hand-place itself).
+Designator locations on the board: [ASSEMBLY_MAP-V4.6.pdf](ASSEMBLY_MAP-V4.6.pdf) (public version),
+`internal/装配图-本轮打板-V4.6-zh_CN.pdf` (parts each board of this batch must hand-place itself).
 Both are generated from the criteria in this table, so they cannot disagree with it.
 
 ---

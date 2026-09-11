@@ -1,0 +1,57 @@
+ERC report (2026-09-11T18:25:05, Encoding UTF8)
+Report includes: Errors, Warnings
+
+***** Sheet /
+[lib_symbol_mismatch]: 符号 'TPS7A20xxxDBV' 与来源库 'Regulator_Linear' 中的符号存在差异
+    ; warning
+    @(76.20 mm, 96.52 mm): 符号 U2 [TPS7A20xxxDBV]
+[lib_symbol_mismatch]: 符号 'TPS7A20xxxDBV' 与来源库 'Regulator_Linear' 中的符号存在差异
+    ; warning
+    @(76.20 mm, 129.54 mm): 符号 U3 [TPS7A20xxxDBV]
+[lib_symbol_mismatch]: 符号 'AO3401A' 与来源库 'Transistor_FET' 中的符号存在差异
+    ; warning
+    @(165.10 mm, 101.60 mm): 符号 Q2 [AO3401A]
+[lib_symbol_mismatch]: 符号 'W25Q128JVS' 与来源库 'Memory_Flash' 中的符号存在差异
+    ; warning
+    @(190.50 mm, 76.20 mm): 符号 U9 [W25Q128JVS]
+[lib_symbol_mismatch]: 符号 'AO3401A' 与来源库 'Transistor_FET' 中的符号存在差异
+    ; warning
+    @(279.40 mm, 88.90 mm): 符号 Q4 [AO3401A]
+[lib_symbol_mismatch]: 符号 'AO3401A' 与来源库 'Transistor_FET' 中的符号存在差异
+    ; warning
+    @(279.40 mm, 114.30 mm): 符号 Q5 [AO3401A]
+[endpoint_off_grid]: Symbol pin or wire end off connection grid
+    ; warning
+    @(52.09 mm, 50.80 mm): Symbol D2 引脚 1 [A1, 无源, 图线]
+[lib_symbol_mismatch]: 符号 'AO3401A' 与来源库 'Transistor_FET' 中的符号存在差异
+    ; warning
+    @(76.20 mm, 44.45 mm): 符号 Q3 [AO3401A]
+[lib_symbol_mismatch]: 符号 'BGA2817' 与来源库 'RF_Amplifier' 中的符号存在差异
+    ; warning
+    @(177.80 mm, 88.90 mm): 符号 U12 [BGA2817]
+
+***** Sheet /Power/
+
+***** Sheet /MCU_RP2040/
+
+***** Sheet /RF_1090/
+
+***** Sheet /SubGHz_978/
+
+***** Sheet /Sensors_GNSS/
+[pin_to_pin]: 类型为 双向 和 电源输出 的引脚已连接
+    ; warning
+    @(93.98 mm, 137.16 mm): Symbol U5 引脚 5 [SDO, 双向, 图线]
+    @(215.90 mm, 96.52 mm): Symbol #FLG02 引脚 1 [电源输出, 图线]
+
+***** Sheet /Interface_J3/
+
+***** Sheet /RF_VHF/
+
+ ** ERC messages: 10  Errors 0  Warnings 10
+
+ ** Ignored checks:
+    - Global label only appears once in the schematic
+    - Four connection points are joined together
+    - SPICE model issue
+    - Assigned footprint doesn't match footprint filters
