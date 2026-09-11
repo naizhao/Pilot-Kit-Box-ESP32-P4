@@ -87,7 +87,8 @@ static void pin_tmsc_pull(int mode)    { (void)mode; }
 /* 把等待也告诉模型：ICEMelter 的「8 个沿之后还要 ≥200 µs」是个时间条件，
  * 模型看不到时间就验不了这一条。 */
 void cjtag_model_delay_us(int us);
-static void pin_delay_half(void)       { cjtag_model_delay_us((CJTAG_TCK_DELAY_NS + 999) / 1000); }
+static unsigned s_tck_half_us = (CJTAG_TCK_DELAY_NS + 999) / 1000;
+static void pin_delay_half(void)       { cjtag_model_delay_us((int)s_tck_half_us); }
 static void pin_delay_us(int us)       { cjtag_model_delay_us(us); }
 static void pin_sleep_ms(int ms)       { cjtag_model_delay_us(ms * 1000); }
 #else
@@ -133,11 +134,11 @@ static void pin_tmsc_pull(int mode)
     else               gpio_disable_pulls(s_pin_tmsc);
 }
 
-static void pin_delay_half(void)
-{
-    /* pico 的 sleep_us 下限 1 µs；CJTAG_TCK_DELAY_NS 取 2000 → ~250 kHz。 */
-    sleep_us((CJTAG_TCK_DELAY_NS + 999) / 1000);
-}
+/* TCK 半周期（µs）。默认 2 → ~250 kHz；诊断里可以放慢，用来排除"沿太快
+ * 导致对端没采到"这一类假设。 */
+static unsigned s_tck_half_us = (CJTAG_TCK_DELAY_NS + 999) / 1000;
+
+static void pin_delay_half(void) { sleep_us(s_tck_half_us); }
 
 static void pin_delay_us(int us)  { sleep_us((uint32_t)us); }
 static void pin_sleep_ms(int ms)  { sleep_ms((uint32_t)ms); }
@@ -396,10 +397,13 @@ static void cjtag_dr_count(int n)
  * 「Opening the command window decouples the device TAP; the decoupling
  *   occurs when the second ZBS occurs.」
  */
-static void cjtag_open_command_window(void)
+static void cjtag_open_command_window(uint8_t inert_ir)
 {
-    /* 1. IR 扫惰性指令，停在 Pause-DR。2 线模式下移进去的一定是全 1 = BYPASS。 */
-    jtag_shift_ir(JTAG_IR_BYPASS, ICEPICK_IR_BITS);
+    /* 1. IR 扫惰性指令，停在 Pause-DR。TRM §6.2.1：BYPASS 或 IDCODE 都行，
+     * "Normally bypass is used, because its value (all ones) is dictated by
+     * the IEEE 1149.1 specification"——2 线模式下没有 TDI 线，移进去的必然
+     * 是全 1，所以这里传什么其实只在 OScan1 之后才有意义。 */
+    jtag_shift_ir(inert_ir, ICEPICK_IR_BITS);
     tap_goto(TAP_PAUSE_DR);      /* 经 Select-DR → Capture-DR → Exit1-DR */
 
     cjtag_dr_count(0);           /* 2. 第一次 ZBS → control level 1 */
@@ -432,14 +436,56 @@ static void cjtag_command(int cp0, int cp1)
     tap_clock_tms(1);       /* Exit2-DR → Update-DR：结算 CP1，命令生效 */
 }
 
+/*
+ * 关命令窗的三种办法（TRM §6.2.2.3：IR 扫描 / 进 TLR / ECL 命令）。
+ *
+ * 为什么要当成变量试：STFMT 之后链路已经是 OScan1，而我们必须先关掉命令窗
+ * 才能对器件 TAP 做扫描（开着的时候器件 TAP 是**解耦**的）。如果"进 TLR"
+ * 顺带把扫描格式也复位回 2 线，那 OScan1 在我们读之前就被撤销了，现象与
+ * "命令根本没生效"一模一样，光看读数分不开。
+ */
+typedef enum {
+    CLOSE_TLR = 0,    /* 5 拍 TMS=1 进 Test-Logic-Reset */
+    CLOSE_IR,         /* 直接扫一条 IR（顺带把 IDCODE 装进 IR），不碰 TLR */
+    CLOSE_ECL,        /* STMC 的 ECL 子命令（CP0=0, CP1=1），再进 TLR */
+} cjtag_close_t;
+
+typedef struct {
+    uint8_t       inert_ir;    /* 开窗第 1 步的惰性指令：TRM 说 BYPASS 或 IDCODE 都行 */
+    cjtag_close_t close;
+    uint8_t       fmt_delay;   /* 切格式前多走几个旧格式的位（0..2） */
+} cjtag_open_opt_t;
+
 /* 切到 OScan1：TRM Table 6-4，STFMT(opcode 3) + operand 9。 */
-static void cjtag_select_oscan1(void)
+static void cjtag_select_oscan1(const cjtag_open_opt_t *o)
 {
-    cjtag_open_command_window();
+    cjtag_open_command_window(o->inert_ir);
     cjtag_command(CJTAG_CMD_STFMT, CJTAG_FMT_CODE_OSCAN1);
-    s_fmt = FMT_OSCAN1;     /* 上一拍的 Update 之后链路已经是 3 周期/位 */
     s_tap = TAP_UPDATE_DR;
-    tap_reset();            /* 进 TLR：同时关掉命令窗（§6.2.2.3） */
+
+    /* 命令在 CP1 的 Update 那一拍生效。器件到底是在那个上升沿换格式，还是
+     * 要再走一拍，TRM 没写——多发几个旧格式的位当变体试。 */
+    for (uint8_t i = 0; i < o->fmt_delay; i++) tap_clock_tms(0);
+
+    s_fmt = FMT_OSCAN1;
+
+    switch (o->close) {
+    case CLOSE_IR:
+        /* OScan1 下已经有 TDI 通路了，这条 IR 扫描既关窗又把 IDCODE 装进 IR，
+         * 全程不碰 TLR——如果 TLR 会撤销格式，这条路就绕开了它。 */
+        jtag_shift_ir(JTAG_IR_IDCODE, ICEPICK_IR_BITS);
+        break;
+    case CLOSE_ECL:
+        /* §6.2.2.3：ECL = STMC(opcode 0) 的子命令，CP0=0 / CP1=1，起点 Pause-DR。 */
+        tap_goto(TAP_PAUSE_DR);
+        cjtag_command(CJTAG_CMD_STMC, 1);
+        s_tap = TAP_UPDATE_DR;
+        tap_reset();
+        break;
+    default:
+        tap_reset();
+        break;
+    }
 }
 
 /* ── 公共 API ────────────────────────────────────────────────────── */
@@ -454,7 +500,8 @@ void cjtag_enter(void)
 
     hw_wake_icemelter();    /* TRM §6.4：先把 JTAG 电源域唤醒 */
     tap_reset();
-    cjtag_select_oscan1();
+    const cjtag_open_opt_t def = { JTAG_IR_BYPASS, CLOSE_TLR, 0 };
+    cjtag_select_oscan1(&def);
 }
 
 void cjtag_exit(void)
@@ -640,45 +687,50 @@ void cjtag_diag(void)
     diag_probe_line("ICEMelter唤醒后");
 
     tap_reset();
-    cjtag_select_oscan1();
+    const cjtag_open_opt_t probe_opt = { JTAG_IR_BYPASS, CLOSE_TLR, 0 };
+    cjtag_select_oscan1(&probe_opt);
     diag_probe_line("切OScan1后");
 
     diag_listen();
     tap_reset();
     diag_tms_echo();
 
-    /* 命令窗的两处写法分歧（Update 后经不经 RTI / CP1 分不分段），再叠上
-     * 「数据线和时钟线是不是接反了」。一次上板跑完，不用来回烧。 */
-    for (int v = 0; v < 16; v++) {
-        s_zbs_via_rti = (v & 1) != 0;
-        s_chunk_cp1   = (v & 2) != 0;
-        int wake      = (v & 4) == 0;
-        int swap      = (v & 8) != 0;
+    /*
+     * 变体矩阵。每一维都对应一条"TRM 没写死、只能试"的分歧，不是瞎撞：
+     *   close  —— §6.2.2.3 给了三种关命令窗的办法。STFMT 之后必须先关窗才能
+     *             扫器件 TAP；要是"进 TLR"顺带把扫描格式也复位回 2 线，
+     *             OScan1 就在我们读之前被撤销了，现象和"命令没生效"一样。
+     *   delay  —— 命令在 CP1 的 Update 那一拍生效，器件是当拍换格式还是再走
+     *             一拍，手册没写。
+     *   inert  —— §6.2.1 说惰性指令 BYPASS 或 IDCODE 都行。
+     *   slow   —— 把 TCK 从 250 kHz 放慢到 25 kHz，排除沿太快没采到。
+     */
+    static const char *k_close_name[] = { "TLR", "IR", "ECL" };
+    for (int v = 0; v < 24; v++) {
+        cjtag_open_opt_t o;
+        o.close     = (cjtag_close_t)(v % 3);
+        o.fmt_delay = (uint8_t)((v / 3) % 2);
+        o.inert_ir  = ((v / 6) % 2) ? JTAG_IR_IDCODE : JTAG_IR_BYPASS;
+        const int slow = (v / 12) % 2;
+        s_tck_half_us = slow ? 20u : 2u;
 
-#ifndef CJTAG_HOST_TEST
-        s_pin_tmsc = swap ? CJTAG_PIN_TCKC : CJTAG_PIN_TMSC;
-        s_pin_tckc = swap ? CJTAG_PIN_TMSC : CJTAG_PIN_TCKC;
-        pin_init();
-#endif
         hw_reset_pulse();
         s_fmt = FMT_JSCAN2;
         s_tap = TAP_TLR;
-        if (wake) hw_wake_icemelter();
+        hw_wake_icemelter();
         tap_reset();
-        cjtag_select_oscan1();
-        uint32_t id = cjtag_read_idcode();
-        printf("  变体 viaRTI=%d chunkCP1=%d wake=%d 换线=%d → IDCODE=0x%08lX %s\n",
-               s_zbs_via_rti, s_chunk_cp1, wake, swap, (unsigned long)id,
+        cjtag_select_oscan1(&o);
+        /* CLOSE_IR 那条已经把 IDCODE 装进 IR 了，再做 TLR 反而多此一举；
+         * 其余两条靠 cjtag_read_idcode() 自带的 TLR。 */
+        uint32_t id = (o.close == CLOSE_IR) ? jtag_shift_dr(0, 32)
+                                            : cjtag_read_idcode();
+        printf("  close=%-3s delay=%u inert=0x%02X %-6s → IDCODE=0x%08lX %s\n",
+               k_close_name[o.close], o.fmt_delay, o.inert_ir,
+               slow ? "25kHz" : "250kHz", (unsigned long)id,
                ((id & CC13_IDCODE_MASK) == (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
                    ? "← 对上 ICEPick JRC" : "");
     }
-    s_zbs_via_rti = true;
-    s_chunk_cp1 = false;
-#ifndef CJTAG_HOST_TEST
-    s_pin_tmsc = CJTAG_PIN_TMSC;
-    s_pin_tckc = CJTAG_PIN_TCKC;
-    pin_init();
-#endif
+    s_tck_half_us = 2u;
 
     hw_reset_pulse();
     s_fmt = FMT_JSCAN2;
