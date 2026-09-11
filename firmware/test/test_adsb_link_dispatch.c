@@ -9,7 +9,7 @@
  *      firmware/test/test_adsb_link_dispatch.c \
  *      firmware/main/mode_s.c firmware/main/modes_ingest.c \
  *      firmware/main/aircraft_state.c firmware/main/pk_callsign.c \
- *      firmware/main/adsb_link_task.c -lm \
+ *      firmware/main/adsb_link_task.c firmware/main/vbus_sense.c -lm \
  *   && /tmp/test_adsb_link_dispatch
  *
  * The ESP/FreeRTOS pieces are stubbed, but mode_s_decode(), the CRC gate,
@@ -20,6 +20,7 @@
  */
 #include "aircraft_state.h"
 #include "adsb_link_task.h"
+#include "vbus_sense.h"
 #include "cpr_decode.h"
 #include "gps.h"
 #include "mode_s.h"
@@ -137,6 +138,10 @@ bool pk_rec_ingest_stats(uint32_t *out_written, uint32_t *out_dropped)
     (void)out_written; (void)out_dropped;
     return false;
 }
+
+/* vbus_sense.c 要 pk_board_profile()。本测试不关心板型（HEALTH_STATS 只把
+ * 中点电压存下来，换算在别处测），给个固定桩即可。 */
+pk_board_profile_t pk_board_profile(void) { return PK_BOARD_PROFILE_V4; }
 
 static int g_fail;
 #define CHECK(cond, ...) do { if (!(cond)) { \

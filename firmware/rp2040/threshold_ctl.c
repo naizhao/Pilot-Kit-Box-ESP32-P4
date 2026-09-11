@@ -36,6 +36,7 @@ void threshold_ctl_init(void)
     adc_init();
     adc_gpio_init(PIN_ADC_LEVEL);
     adc_gpio_init(PIN_ADC_RSSI);
+    adc_gpio_init(PIN_ADC_VBUS);    /* USB_VBUS_SENSE 分压中点（F6）*/
 }
 
 void threshold_ctl_set_permille(int pml)
@@ -78,6 +79,8 @@ int  threshold_ctl_read_rssi_raw(void)
 {
     return (int)adc_read_settled(PIN_ADC_RSSI - ADC_BASE_PIN);
 }
+
+int threshold_ctl_read_vbus_node_mv(void) { return adc_mv(PIN_ADC_VBUS); }
 
 /*
  * 诊断：连读同一通道 n 次，把每次的原始码都给出来。

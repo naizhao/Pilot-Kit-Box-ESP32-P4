@@ -150,15 +150,15 @@ void p4_link_poll_rx(void)
     }
 }
 
-void p4_link_tick_health(const uint32_t counters10[10])
+void p4_link_tick_health(const uint32_t counters[11])
 {
     if (!s_linked) {
         uint8_t pl[17] = { 0 };
         memcpy(pl + 1, BUILD_TAG, sizeof BUILD_TAG);
         tx_frame(ADSB_LINK_MSG_HELLO, pl, sizeof pl);
     }
-    if (counters10)
-        tx_frame(ADSB_LINK_MSG_HEALTH_STATS, (const uint8_t *)counters10, 40);
+    if (counters)
+        tx_frame(ADSB_LINK_MSG_HEALTH_STATS, (const uint8_t *)counters, 44);
 }
 
 bool p4_link_linked(void)                  { return s_linked; }

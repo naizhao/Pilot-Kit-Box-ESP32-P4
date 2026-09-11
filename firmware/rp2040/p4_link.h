@@ -20,7 +20,9 @@ bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
                       uint32_t ts_us);
 void p4_link_send_error(uint8_t code);
 void p4_link_poll_rx(void);
-void p4_link_tick_health(const uint32_t counters10[10]);
+/* HEALTH_STATS：11 个 u32（协议 v1.3；v1.0 是 10 个，第 11 个是 VBUS 分压
+ * 中点 mV）。接收方只看前 40 字节也仍然正确——这是 minor 前向兼容的用法。 */
+void p4_link_tick_health(const uint32_t counters[11]);
 bool p4_link_linked(void);
 void p4_link_get_stats(uint32_t *tx, uint32_t *rx, uint32_t *gaps);
 

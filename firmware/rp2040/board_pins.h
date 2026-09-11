@@ -39,6 +39,14 @@
 #define PIN_TL_PWM        25  /* 门限 PWM → R34/C49（RC≈1ms，F5）→ LEVEL_BIAS */
 #define PIN_ADC_LEVEL     26  /* ADC0：门限直流回读 */
 #define PIN_ADC_RSSI      27  /* ADC1：AD8313 RSSI */
+/* ADC2：USB_VBUS_SENSE 分压中点（PCB 焊盘已核：U8 pad 40 → USB_VBUS_SENSE，
+ * pad 39 = RSSI = GPIO27，故 pad 40 = GPIO28）。
+ * ⚠ 分压比**随板型不同**：V4 = 30k/10k（4.0），V3 = 10k/10k（2.0）。
+ * RP2040 是两块板共用的**单一构建**、没有板型检测，所以本侧只上报**分压
+ * 中点的电压**，换算成 VBUS 由 P4 做——那边有 Kconfig 驱动的
+ * pk_board_profile()。把比例放这边就得先发明一套板型检测，猜错是静默的
+ * 2 倍误差（PLAN.md F6）。 */
+#define PIN_ADC_VBUS      28
 
 /* F2 默认 GNSS 天线选择：A=0/B=1 → J1-J2（外接）导通且其 bias 路径
  * 被选中（ECO 后选择线即馈电使能，PLAN.md §3.1 F2）。台架默认外接。 */

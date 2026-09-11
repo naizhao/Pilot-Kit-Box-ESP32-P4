@@ -28,7 +28,8 @@
 #include "pk_rec_ingest.h"
 #include "gps.h"
 #include "adsb_link_task.h"
-#include "config_antenna.h"   /* 天线选择：NVS 真源，经 CONFIG_REQ 下发 */
+#include "config_antenna.h"
+#include "vbus_sense.h"        /* F6：RP2040 上报的 VBUS 分压中点 */   /* 天线选择：NVS 真源，经 CONFIG_REQ 下发 */
 #include "freertos/semphr.h"
 
 static const char *TAG      = "dsp";     /* 沿用旧 TAG，日志检索连续 */
@@ -842,6 +843,11 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
     }
     case ADSB_LINK_MSG_HEALTH_STATS:
         if (m->payload_len < 40) break;
+        /* 字段 10（协议 v1.3）：USB_VBUS_SENSE 分压**中点** mV。用 >= 44 判而
+         * 不是 == 44：v1.0 的 RP2040 只发 40 字节，此时字段不存在，不能拿越界
+         * 内存当读数——那会是一个看着完全正常的假电压。 */
+        if (m->payload_len >= 44)
+            pk_vbus_sense_update((int)le32(m->payload + 40));
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
         ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u degraded=%u noise=%u "
                       "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",

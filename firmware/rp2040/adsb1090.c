@@ -119,7 +119,7 @@ static void core1_entry(void)
     }
 }
 
-static void health_fill(uint32_t c[10])
+static void health_fill(uint32_t c[11])
 {
     uint32_t tx = 0, rx = 0, gaps = 0;
     p4_link_get_stats(&tx, &rx, &gaps);
@@ -141,6 +141,9 @@ static void health_fill(uint32_t c[10])
     c[6] = tx;
     c[7] = atomic_load_explicit(&s_ring_drops, memory_order_relaxed);
     c[8] = rx;                                 c[9] = gaps;
+    /* 字段 10（协议 v1.3 新增）：USB_VBUS_SENSE **分压中点**的 mV，不是 VBUS。
+     * 换算成 VBUS 要乘板型分压比，而 RP2040 不分板型——见 board_pins.h。 */
+    c[10] = (uint32_t)threshold_ctl_read_vbus_node_mv();
 }
 
 static bool core0_send_one_modes(void *user)
@@ -235,7 +238,7 @@ static void core0_poll_control(void *user)
             printf("selftest: sent but NOT received within 500ms "
                    "-- check wire/decode\n");
     } else if (c == 'S') {
-        uint32_t h[10]; health_fill(h);
+        uint32_t h[11]; health_fill(h);
         printf("ant1090=%s antgnss=%s\n",
                p4_link_ant_1090() ? "EXT-J6" : "ONBOARD-IFA",
                p4_link_ant_gnss() ? "ONBOARD-PATCH" : "EXT-J2");
@@ -336,7 +339,7 @@ static void core0_poll_periodic(void *user)
     (void)user;
     if (absolute_time_diff_us(get_absolute_time(), s_next_hz) < 0) {
         s_next_hz = make_timeout_time_ms(1000);
-        uint32_t h[10];
+        uint32_t h[11];
         health_fill(h);
         p4_link_tick_health(h);
 

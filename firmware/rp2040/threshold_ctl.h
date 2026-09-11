@@ -37,3 +37,12 @@ int  threshold_ctl_read_rssi_raw(void);
 /* 诊断：连读同一通道 n 次。被驱动的节点应当立刻稳定，悬空的高阻节点会被
  * 采样电容反复充电而漂——用来区分"这一路没人驱动"和"读错了通道"。 */
 void threshold_ctl_adc_burst(unsigned int gpio, uint16_t *out, int n);
+
+/* USB_VBUS_SENSE 分压**中点**的电压（mV），不是 VBUS 本身。
+ *
+ * 换算成 VBUS 要乘板型分压比（V4=4.0 / V3=2.0），而 RP2040 是两块板共用的
+ * 单一构建、没有板型检测，所以这一步交给 P4（见 board_pins.h:PIN_ADC_VBUS）。
+ *
+ * 本函数放在 threshold_ctl 而不是新开一个模块：ADC 的初始化和"换通道要丢弃
+ * 一次转换"的纪律都在这里，另起炉灶会重复 adc_init、并且很容易漏掉那条纪律。 */
+int  threshold_ctl_read_vbus_node_mv(void);
