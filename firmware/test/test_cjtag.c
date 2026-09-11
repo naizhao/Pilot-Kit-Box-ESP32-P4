@@ -93,6 +93,12 @@ static int cw_lock_scan;    /* 锁定那次扫描的 Update 要丢弃，不算�
 static int cw_shift_clk;    /* 本次 DR 扫描在 Shift-DR 里的时钟数 */
 static int cw_cp0;          /* -1 = 还没收到 CP0 */
 
+/* 每次 DR 扫描在 Shift-DR 里待了几个时钟，按 Update 结算依次记下来。
+ * 这串数就是 cJTAG 命令的全部内容（TRM §6.2.1：命令的值 = 时钟数），
+ * 所以拿它跟参考实现对拍，比对 TMS 原始位更直指要害。 */
+static int g_scan_clk[32];
+static int g_scan_n;
+
 /* ── 链路层 ─────────────────────────────────────────────────────── */
 
 enum { FMT_JSCAN2 = 0, FMT_OSCAN1 };
@@ -194,6 +200,8 @@ static void tap_clock(int tms, int tdi)
         }
         break;
     case S_UPD_DR:
+        if (g_scan_n < (int)(sizeof g_scan_clk / sizeof g_scan_clk[0]))
+            g_scan_clk[g_scan_n++] = cw_shift_clk;   /* 对拍用：逐次扫描的计数 */
         if (!cw_locked) {
             if (cw_shift_clk == 0) cw_level++;   /* ZBS */
         } else if (!cw_cmd_ok) {
@@ -317,6 +325,7 @@ int  cjtag_model_tmsc_read(void) { return line(); }
 void     cjtag_test_shift_ir(uint32_t instr, int bits);
 uint32_t cjtag_test_shift_dr(uint32_t tdi, int bits);
 void     cjtag_test_goto_pause_dr(void);
+void     cjtag_test_open_and_cmd(uint8_t inert, int cp0, int cp1);
 int      cjtag_test_tap_state(void);
 
 /* ══ 用例 ═════════════════════════════════════════════════════════ */
@@ -407,8 +416,71 @@ static void test_exit_powers_down(void)
     CHECK(m_fmt == FMT_JSCAN2);
 }
 
+/*
+ * 与 OpenOCD 的 ti_cjtag_to_4pin_jtag 逐次扫描对拍。
+ *
+ * 那段 TCL 是**实测能用**的参考（社区拿它在真 CC26xx 上把器件切到 4 线
+ * JTAG）。把它的 pathmove 展开成 TMS 位再按 Update 结算，得到每次 DR 扫描
+ * 在 Shift-DR 里的时钟数是 [0, 0, 1, 2, 9]：两次 ZBS、锁 control level 的
+ * 1 位扫描、CP0=2(STC2)、CP1=9(APFC=01)。
+ *
+ * 这串数就是命令的全部内容（TRM §6.2.1：命令的值 = 时钟数）。本实现发同一
+ * 条命令时必须给出同一串数——不然就是我们的开窗/计数理解错了。
+ *
+ * 钉住它的价值：2 线模式下器件对命令窗不做任何应答，上板时没有任何办法
+ * 二分定位。这条用例是唯一能在不上板的情况下判定"序列本身对不对"的判据。
+ */
+static void test_matches_openocd_reference(void)
+{
+    cjtag_model_pin_init();
+    /* 唤醒 + 等够 200 µs，让命令窗那段跑在已上电的逻辑上 */
+    for (int i = 0; i < 16; i++) { cjtag_model_tckc(1); cjtag_model_tckc(0); }
+    cjtag_model_delay_us(1000);
+
+    g_scan_n = 0;
+    cjtag_test_open_and_cmd(JTAG_IR_BYPASS, 2, 9);   /* = OpenOCD 的 4 线切换 */
+
+    static const int WANT[] = { 0, 0, 1, 2, 9 };
+    const int n_want = (int)(sizeof WANT / sizeof WANT[0]);
+    CHECK(g_scan_n == n_want);
+    if (g_scan_n != n_want) {
+        fprintf(stderr, "      扫描次数 %d，期望 %d：", g_scan_n, n_want);
+        for (int i = 0; i < g_scan_n; i++) fprintf(stderr, " %d", g_scan_clk[i]);
+        fprintf(stderr, "\n");
+        return;
+    }
+    for (int i = 0; i < n_want; i++) {
+        CHECK(g_scan_clk[i] == WANT[i]);
+        if (g_scan_clk[i] != WANT[i])
+            fprintf(stderr, "      第 %d 次扫描 Shift-DR 时钟数 = %d，"
+                            "OpenOCD 参考是 %d\n", i, g_scan_clk[i], WANT[i]);
+    }
+}
+
+/* 同一条路径换成 STFMT：只有 CP0 从 2(STC2) 变成 3(STFMT)，其余一模一样。 */
+static void test_stfmt_differs_only_in_opcode(void)
+{
+    cjtag_model_pin_init();
+    for (int i = 0; i < 16; i++) { cjtag_model_tckc(1); cjtag_model_tckc(0); }
+    cjtag_model_delay_us(1000);
+
+    g_scan_n = 0;
+    cjtag_test_open_and_cmd(JTAG_IR_BYPASS, CJTAG_CMD_STFMT,
+                            CJTAG_FMT_CODE_OSCAN1);
+    static const int WANT[] = { 0, 0, 1, 3, 9 };
+    CHECK(g_scan_n == 5);
+    for (int i = 0; i < 5 && i < g_scan_n; i++) {
+        CHECK(g_scan_clk[i] == WANT[i]);
+        if (g_scan_clk[i] != WANT[i])
+            fprintf(stderr, "      第 %d 次扫描 = %d，期望 %d\n",
+                    i, g_scan_clk[i], WANT[i]);
+    }
+}
+
 int main(void)
 {
+    test_matches_openocd_reference();
+    test_stfmt_differs_only_in_opcode();
     test_icemelter_wakes_jtag_domain();
     test_reaches_oscan1();
     test_idcode_after_enter();

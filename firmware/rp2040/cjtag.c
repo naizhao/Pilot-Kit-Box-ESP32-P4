@@ -742,6 +742,16 @@ void cjtag_diag(void)
 void     cjtag_test_shift_ir(uint32_t instr, int bits) { jtag_shift_ir(instr, bits); }
 uint32_t cjtag_test_shift_dr(uint32_t tdi, int bits)   { return jtag_shift_dr(tdi, bits); }
 void     cjtag_test_goto_pause_dr(void)                { tap_goto(TAP_PAUSE_DR); }
+/* 只开窗 + 发一条命令，不切格式。用来把本实现发出的 TMS 序列与 OpenOCD
+ * 那段实测可用的 ti_cjtag_to_4pin_jtag 逐拍对拍（见 test_cjtag.c）。 */
+void     cjtag_test_open_and_cmd(uint8_t inert, int cp0, int cp1)
+{
+    s_fmt = FMT_JSCAN2;      /* 从上电默认态出发，与器件复位后一致 */
+    s_tap = TAP_TLR;
+    tap_reset();
+    cjtag_open_command_window(inert);
+    cjtag_command(cp0, cp1);
+}
 int      cjtag_test_tap_state(void)                    { return (int)s_tap; }
 #endif
 
