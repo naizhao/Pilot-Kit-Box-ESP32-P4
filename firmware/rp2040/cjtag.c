@@ -560,12 +560,52 @@ static void diag_probe_pin(const char *name, unsigned gpio)
                                      : "← 只有我们自己在拉，线上没有别的上拉源");
 }
 
+/*
+ * 推挽回读：把脚设成输出、推到某个电平，再从**同一个焊盘**读回实际线电平
+ * （RP2040 的输入缓冲在输出模式下照样使能，gpio_get 读的是线上真实电平，
+ * 不是输出寄存器）。
+ *
+ * 这是唯一一个不接仪器、也能回答「我们的翻转到底有没有出现在线上」的测法：
+ *   推 0 读回 0、推 1 读回 1 → 这根线归我们控制，波形确实在动
+ *   推 0 却读回 1           → 有比 RP2040 驱动更强的东西把线摁在高电平，
+ *                             时钟根本没翻转，后面所有协议都无从谈起
+ * TCKC 这一条尤其关键：整个 cJTAG 只有它是纯输出，此前无从证伪。
+ */
+static void diag_drive_readback(const char *name, unsigned gpio)
+{
+    gpio_disable_pulls(gpio);
+    gpio_put(gpio, 0); gpio_set_dir(gpio, GPIO_OUT);
+    sleep_us(50); int lo = (int)gpio_get(gpio);
+    gpio_put(gpio, 1);
+    sleep_us(50); int hi = (int)gpio_get(gpio);
+
+    /* 再快速翻 100 次，统计回读是否每次都跟得上 —— 排除「静态推得动、
+     * 250 kHz 下跟不上」这种容性/驱动能力问题。 */
+    int mismatch = 0;
+    for (int i = 0; i < 100; i++) {
+        int want = i & 1;
+        gpio_put(gpio, want);
+        sleep_us(2);
+        if ((int)gpio_get(gpio) != want) mismatch++;
+    }
+    gpio_put(gpio, (gpio == CJTAG_PIN_RESET) ? 1 : 0);
+
+    printf("  推挽回读 %-8s (GPIO%-2u) 推0读回=%d 推1读回=%d 翻转100次失配=%d  %s\n",
+           name, gpio, lo, hi, mismatch,
+           (lo == 0 && hi == 1 && mismatch == 0)
+               ? "← 线归我们控制，波形确实在动"
+               : (lo != 0) ? "← 推不下去：线被更强的源摁在高电平"
+                           : "← 跟不上翻转");
+}
+
 static void diag_probe_all_pins(const char *when)
 {
     printf("  [%s]\n", when);
     diag_probe_pin("TMSC", CJTAG_PIN_TMSC);
     diag_probe_pin("TCKC", CJTAG_PIN_TCKC);
     diag_probe_pin("RESET_N", CJTAG_PIN_RESET);
+    diag_drive_readback("TMSC", CJTAG_PIN_TMSC);
+    diag_drive_readback("TCKC", CJTAG_PIN_TCKC);
     /* 量完把方向恢复成本模块的常态 */
     gpio_set_dir(CJTAG_PIN_TCKC, GPIO_OUT);
     gpio_put(CJTAG_PIN_TCKC, 0);
