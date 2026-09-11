@@ -22,11 +22,18 @@ LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
            -T $(DEVP)/linker_files/cc13x2r1f3.lds \
            --specs=nosys.specs -Wl,--gc-sections
 
-SRCS_C := main.c spi_slave.c \
+# ccfg.c 用**本目录**这一份，不是 SDK 那份：SDK 自带的默认 BOOTLOADER_ENABLE=0x00
+# （禁用 ROM bootloader），照默认烧进去之后这颗片子就只能靠 cJTAG 仿真器更新，
+# RP2040 的 SSI0 代刷通道会彻底失效。本地这份把 bootloader + backdoor 打开。
+# 它内部再 #include SDK 的 ccfg.c，所以 SDK 那份不能再单独列进来（会重复定义）。
+#
+# ⚠ 注意 OBJS 用了 $(notdir)：同名 .c 到底编哪一个由 VPATH 顺序决定，而 `.`
+# 排在最前——也就是说**光把 SDK 那行从 SRCS_C 删掉并不能切换**，反过来光加也
+# 没用。真要切换得动文件本身。这个隐式行为已被 check_ccfg.py 的构建门禁兜住。
+SRCS_C := main.c spi_slave.c ccfg.c \
           ../components/rp_cc13xx_codec/rp_cc13xx_codec.c \
           ../components/adsb_link_codec/adsb_link_codec.c \
-          $(DEVP)/startup_files/startup_gcc.c \
-          $(DEVP)/startup_files/ccfg.c
+          $(DEVP)/startup_files/startup_gcc.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS_C)))
 VPATH := . ../components/rp_cc13xx_codec ../components/adsb_link_codec \
          $(DEVP)/startup_files
@@ -44,6 +51,7 @@ build/adsb978_cc13.elf: $(OBJS) $(DEVP)/driverlib/bin/gcc/driverlib.lib
 
 build/adsb978_cc13.bin: build/adsb978_cc13.elf
 	$(OBJCOPY) -O binary $< $@
+	@python3 check_ccfg.py $@
 	@shasum -a 256 $@ | cut -c1-16
 
 clean:
