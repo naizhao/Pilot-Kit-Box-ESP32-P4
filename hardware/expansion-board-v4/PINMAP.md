@@ -25,7 +25,25 @@ Only pins actually used by the expansion board are listed; the remaining pins ar
 | 35 | GPIO46 | ADSB_TXD (RP2040 → P4 RX) **new** | input | marked free on the carrier board〔F〕+〔D〕 |
 | 31 | GPIO32 | ADSB_RXD (P4 TX → RP2040, config/control) **new** | output | marked free on the carrier board〔F〕+〔D〕 |
 
-Firmware-side change volume: only one added UART driver (GPIO46/32); zero changes elsewhere.
+### V4.6 AIRBAND additions (BK4819 SPI + PCM1808 I2S on the second P4 I2S)
+
+| J3 pin | P4 GPIO | Net | Direction (from P4) | Basis |
+|---|---|---|---|---|
+| 20 | GPIO29 | VHF_SCN (3-wire SPI chip-select) | output | free J3 pin〔F〕+〔D〕 |
+| 22 | GPIO30 | VHF_SCK (3-wire SPI clock) | output | free J3 pin〔F〕+〔D〕 |
+| 37 | GPIO47 | VHF_SDATA (3-wire SPI data) | bidirectional | free J3 pin〔F〕+〔D〕 |
+| 11 | GPIO5 | VHF_MCLK (PCM1808 system clock) | output | free J3 pin〔F〕+〔D〕 |
+| 17 | GPIO22 | VHF_BCK (I2S bit clock) | output | free J3 pin〔F〕+〔D〕 |
+| 38 | GPIO52 | VHF_LRCK (I2S word clock) | output | free J3 pin〔F〕+〔D〕 |
+| 39 | GPIO48 | VHF_DOUT (PCM1808 → P4) | input | free J3 pin〔F〕+〔D〕 |
+
+The P4 drives the BK4819 3-wire SPI by bit-banging (SDATA is bidirectional; no hardware SPI pin is consumed).
+The PCM1808 uses a **second** P4 I2S controller (the carrier's ES8311/ES7210 use I2S0); its signals are
+routed through these J3 pins. Airband audio playback is over BLE to the app; the carrier's ES8311 +
+NS4150B + H4 speaker are optional (firmware only).
+
+Firmware-side change volume: one added UART driver (GPIO46/32) plus the VHF driver set (BK4819 SPI +
+second-I2S capture); zero changes elsewhere.
 
 ## 2. RP2040 pin assignment〔D, PIO grouping aligned with A's architecture〕
 
