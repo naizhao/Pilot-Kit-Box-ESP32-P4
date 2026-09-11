@@ -360,6 +360,21 @@ void cjtag_enter(void)
      * 激活包 EC=1000 → 适配器内部 TAP 落在 Run-Test/Idle。 */
     hw_activate();
     s_tap = TAP_RTI;
+
+    /* CC13xx 专属：cJTAG 模块接受命令前必须先把 control level 设到 2 并锁定
+     * （TRM SWCU117 §5.2.2.1「Opening Command Window」，序列同 OpenOCD
+     * scripts/target/ti-cjtag.cfg 的 ti_cjtag_to_4pin_jtag）：
+     *   IR=BYPASS → 两次 ZBS（经 Update DR 回 RTI）→ 1 位 DR 扫描 → 停在 PAUSE_DR。 */
+    jtag_shift_ir(JTAG_IR_BYPASS, ICEPICK_IR_BITS);
+    for (int k = 0; k < 2; k++) {
+        tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);
+        tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);
+    }
+    tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);
+    tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);   /* → SHIFT_DR */
+    (void)hw_scan_bit(0, 0);                                /* 1 位 DR */
+    tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);   /* → RTI */
+    tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);  /* → PAUSE_DR */
 }
 
 void cjtag_exit(void)
