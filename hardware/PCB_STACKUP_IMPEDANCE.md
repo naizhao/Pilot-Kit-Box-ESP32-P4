@@ -257,6 +257,33 @@ This project is open source and can be manufactured anywhere.
     6 layers, 1.6mm finished thickness, 1oz outer copper, 0.5oz inner copper
     Minimum trace/space 5/5 mil, minimum hole 0.30mm
     Layer order: F.Cu / In1(GND) / In2(signal) / In3(3V3) / In4(GND) / B.Cu
+    🔴 Resin-filled and plated-over vias (POFV / via-in-pad process)
+
+🔴 **POFV is mandatory, not optional — and the Gerber cannot express it.**
+
+**108 vias land inside pads** on this board; the thermal via-in-pads are the critical
+ones: `U10`×16, `U19`×9, `U8`×7, `U18`×4. Those pads **must have solder-mask openings**
+(they get soldered), so the "via tenting/plugging" step never touches them — only the
+via-in-pad process can fill and plate them flat. Skip it and reflow paste drains through
+the holes, leaving the exposed pads unsoldered.
+
+    Solder-mask state (tented or not)   set by the Gerber's mask layer   <- "per file" covers this
+    Hole fill (plugged or not)          set by the process you order     <- no Gerber layer exists
+
+Confirmed 2026-09-11 by two real boards from the same Gerber: the JLCPCB order had
+"via-in-pad: required" ticked and its exposed pads came back as continuous solderable
+gold; the JiePei order only had "via plugging (ink)" and its 16 holes came back bare and
+open. **Neither fab did anything wrong — we assumed the Gerber decided everything.**
+
+> **Visual check:** metallic and continuous = POFV, good; ink-coloured (green/black) =
+> tented only; barrel visible = nothing was done.
+
+**On laminate Tg:** this project sets no Tg requirement — each fab's default is fine.
+Measured defaults from the two orders: **JiePei Tg150 (KB) / JLCPCB Tg135**. Note that
+**a free-tier order does not necessarily mean low Tg**; go by the actual value on your
+order page rather than by someone else's experience. Tg governs heat resistance during
+manufacturing and rework (255℃ lead-free reflow, repeated rework), **not RF
+performance**; with an aspect ratio of only 5.33:1 here, Tg135 is well within range.
 
 **Optional — impedance control** (affects 1090MHz sensitivity, not whether the board works):
 
