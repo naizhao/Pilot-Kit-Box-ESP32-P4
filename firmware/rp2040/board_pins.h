@@ -21,6 +21,9 @@
 #define PIN_SUBG_CSN      13
 #define PIN_SUBG_IRQ      14
 #define PIN_SUBG_SYNC     15
+/* CC1312R 的 RESET_N（低有效，板上 R47 10k 上拉）。同一个脚此前在
+ * spi_master.c 与 cjtag.h 各有一份本地 #define——新代码一律用这个名字。 */
+#define PIN_SUBG_RESET    18
 #define PIN_PULSES        19  /* TLV3501 → PIO 上升沿捕获 */
 #define PIN_SELFTEST_OUT  24  /* 自检脉冲输出；跳线 24→19 前**先拆下 R57**
                                * （33Ω，TLV3501 输出→PULSES 的串阻：33Ω

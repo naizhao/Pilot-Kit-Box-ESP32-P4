@@ -19,7 +19,8 @@
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 #include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
 #include "rp_core0_scheduler.h"
-#include "cjtag.h"           /* CC13 代刷：cJTAG 位脉冲（CDC 'F' 命令） */
+#include "cjtag.h"
+#include "cc13_bsl.h"   /* CC13 ROM 串行 bootloader（CDC 'L'） */           /* CC13 代刷：cJTAG 位脉冲（CDC 'F' 命令） */
 
 #define FRAME_RING_LEN 64u
 
@@ -269,6 +270,10 @@ static void core0_poll_control(void *user)
                    "—— 跑 'J' 看激活参数矩阵\n",
                    (unsigned long)cjtag_cdc_idcode());
         }
+    } else if (c == 'L') {
+        /* CC1312R 的 ROM 串行 bootloader 探测（SSI0，不走 cJTAG）。
+         * 只读不写 flash，见 cc13_bsl.h 讲为什么这条路存在。 */
+        cc13_bsl_diag();
     } else if (c == 'J') {
         /* cJTAG 链路诊断：跑一遍激活参数矩阵，打印每个变体读回的原始 DR。
          * 只读，不碰 flash。 */

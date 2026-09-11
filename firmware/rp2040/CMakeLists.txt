@@ -86,6 +86,7 @@ add_executable(adsb1090
     p4_link.c
     spi_master.c
     cjtag.c
+    cc13_bsl.c
     ../components/adsb_link_codec/adsb_link_codec.c   # 共享 codec：与 P4 侧同一份源
     ../components/rp_cc13xx_codec/rp_cc13xx_codec.c   # CC1312R 链路共享 codec（协议 v1.0）；
                                                       # WP-P0b Task 3 仅无害编译进产物，
