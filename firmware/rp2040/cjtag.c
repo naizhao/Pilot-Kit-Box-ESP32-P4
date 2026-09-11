@@ -1,17 +1,53 @@
 /*
- * cjtag.c — cJTAG 位脉冲实现。
+ * cjtag.c — RP2040 位脉冲驱动 CC1312R 的 2 线 cJTAG。
  *
- * 架构分两层：
- *   纯逻辑层（TAP 状态机 + 操作序列）——host 可测（CJTAG_HOST_TEST）
- *   GPIO 胶水层（引脚驱动 + 延时）——目标端
+ * 分层：
+ *   引脚原语（pin_*）      —— 目标端 = GPIO；host 测试 = 器件模型（唯一的两边差异）
+ *   位/包时序（hw_*）      —— JScan 2 线 / OScan1 三周期包（共享）
+ *   TAP 状态机 + 命令序列  —— 共享
  *
- * cJTAG compact 格式（CC13x2 ICEPICK-D3 默认 2 线模式）：
- * 每个 TCKC 时钟周期 TMSC 携带一个位：
- *   非 Shift 态：TMSC = TMS（RP2040 驱动，CC1312R 在 TCKC↑ 采样）
- *   Shift 写入：TMSC = TDI（RP2040 驱动）
- *   Shift 读取：CC1312R 在 TCKC↓ 驱动 TMSC = TDO（RP2040 切输入采样）
+ * ⚠ 分层的关键约束：**除了 pin_* 那几个函数，所有时序都必须是共享代码**。
+ * 旧版把激活序列整个 stub 掉，于是致命的位级 bug 在 71/71 全绿的 host 测试
+ * 里完全看不见。器件模型见 firmware/test/test_cjtag.c。
  *
- * 烧录路径：cJTAG → ICEPICK-D3 路由 → ARM ADIv5 AHB-AP → Flash Controller
+ * ════════════════════════════════════════════════════════════════════
+ * 协议依据：CC13x2/CC26x2 TRM **SWCU185G** 第 6 章（本地 /tmp/swcu185.pdf）
+ * ════════════════════════════════════════════════════════════════════
+ *
+ * §6.2  「The 2-pin JTAG mode using only TCK and TMS is the default
+ *        configuration after power up.」
+ *        上电即 2 线：TMSC 就是 TMS，**没有 TDI/TDO 通路**。想读回任何东西，
+ *        必须先把扫描格式切到 OScan1。
+ *
+ * §6.2.1「cJTAG commands are conveyed through benign JTAG scan activity.」
+ *        TI 的 cJTAG 不用 IEEE 1149.7 的 TMSC escape 序列——**整本 TRM 里
+ *        "escape" 这个词一次都没出现**。命令是用「在 Shift-DR 里停留了几个
+ *        时钟」来编码的：CP0 = opcode，CP1 = operand，各 0~31。
+ *
+ * §6.2.2.1 开命令窗：IR 扫惰性指令(BYPASS) 停在 Pause-DR → 两次 ZBS
+ *        （经 Capture-DR 与 Update-DR 但一次都不进 Shift-DR，每次 control
+ *        level +1）→ 1 位 DR 扫描把 control level 锁在 2。
+ *
+ * §6.2.1 Table 6-4：STFMT（Store Scan Format）opcode = 0b00011 = 3，
+ *        operand 9 = OSCAN1。→ 发 CP0=3、CP1=9 即切到 OScan1。
+ *        （OpenOCD tcl/target/ti/cjtag.cfg 那段众所周知的"魔法序列"其实就是
+ *          CP0=2/CP1=9 = STC2/APFC，作用是切到 **4 线** JTAG。本板 TDI/TDO
+ *          没接到 RP2040，跑那段等于把唯一的链路切没——旧版照抄了它。）
+ *
+ * §6.2.2.3 IR 扫描 / 进 TLR / ECL 都会关掉命令窗，之后扫描重新回到器件 TAP。
+ *
+ * §6.4  ICEMelter：**JTAG 电源域默认是断电的**，ICEPick 和 cJTAG 模块都在
+ *        里面。要先在 TCK 上打够 8 个上升沿 + 8 个下降沿把它唤醒，且第 3 到
+ *        第 8 个上升沿之间不得超过 4 ms，之后还要**至少等 200 µs**让电源域
+ *        起来才能发命令。不做这一步，前面所有协议都是对着一块断电的逻辑说话。
+ *        副作用：唤醒会置 Halt-In-Boot 标志，只能靠 pin reset / POR / JTAG
+ *        清掉——cjtag_exit() 的 RESET_N 脉冲就是干这个的。
+ *
+ * §6.3  ICEPick 是片上唯一的一级 TAP，上电后二级 TAP（Cortex-M DAP）都不在
+ *        扫描链上，要用 CONNECT + ROUTER 写才能挂上来。
+ *
+ * 其他常量出处：ICEPick irlen=6 / JRC_TAPID=0x0BB4102F —— OpenOCD
+ * tcl/target/ti/cc26x0.cfg 与 cc13x2.cfg。
  */
 #include "cjtag.h"
 
@@ -30,7 +66,168 @@
 #include "pico/stdlib.h"
 #endif
 
-/* ── TAP 状态机转移表（纯逻辑，host 可测）────────────────────────── */
+/* ── 引脚原语 ────────────────────────────────────────────────────── */
+/* host 测试下由 test_cjtag.c 的器件模型实现这些符号。 */
+
+#ifdef CJTAG_HOST_TEST
+void cjtag_model_pin_init(void);
+void cjtag_model_reset(int level);
+void cjtag_model_tckc(int level);
+void cjtag_model_tmsc_drive(int level);
+void cjtag_model_tmsc_hiz(void);
+int  cjtag_model_tmsc_read(void);
+
+static void pin_init(void)             { cjtag_model_pin_init(); }
+static void pin_reset(int level)       { cjtag_model_reset(level); }
+static void pin_tckc(int level)        { cjtag_model_tckc(level); }
+static void pin_tmsc_drive(int level)  { cjtag_model_tmsc_drive(level); }
+static void pin_tmsc_hiz(void)         { cjtag_model_tmsc_hiz(); }
+static int  pin_tmsc_read(void)        { return cjtag_model_tmsc_read(); }
+static void pin_tmsc_pull(int mode)    { (void)mode; }
+/* 把等待也告诉模型：ICEMelter 的「8 个沿之后还要 ≥200 µs」是个时间条件，
+ * 模型看不到时间就验不了这一条。 */
+void cjtag_model_delay_us(int us);
+static void pin_delay_half(void)       { cjtag_model_delay_us((CJTAG_TCK_DELAY_NS + 999) / 1000); }
+static void pin_delay_us(int us)       { cjtag_model_delay_us(us); }
+static void pin_sleep_ms(int ms)       { cjtag_model_delay_us(ms * 1000); }
+#else
+/* 哪个 GPIO 是数据、哪个是时钟，运行期可换。
+ * 依据只到「原理图按引脚名连线」这一层（sheet_mcu.py / sheet_subghz.py 都是
+ * name-based），从没在实板上验证过——而本项目栽过一次封装引脚号写错、只有
+ * 下钻 PCB 焊盘归属才看得出来的账。诊断里把两种接法都跑一遍，比读图可靠。 */
+static unsigned s_pin_tmsc = CJTAG_PIN_TMSC;
+static unsigned s_pin_tckc = CJTAG_PIN_TCKC;
+
+static void pin_init(void)
+{
+    gpio_init(s_pin_tmsc);
+    gpio_init(s_pin_tckc);
+    gpio_init(CJTAG_PIN_RESET);
+    gpio_set_dir(s_pin_tckc, GPIO_OUT);
+    gpio_set_dir(CJTAG_PIN_RESET, GPIO_OUT);
+    gpio_put(s_pin_tckc, 0);             /* TCKC 空闲低 */
+    gpio_put(CJTAG_PIN_RESET, 1);        /* RESET 空闲高（低有效） */
+    gpio_pull_up(s_pin_tmsc);            /* TMSC 松手时靠上拉（cJTAG 规范） */
+    gpio_set_dir(s_pin_tmsc, GPIO_IN);
+}
+
+static void pin_reset(int level)  { gpio_put(CJTAG_PIN_RESET, level); }
+static void pin_tckc(int level)   { gpio_put(s_pin_tckc, level); }
+
+/* 先写数据再切输出方向：反过来会先把上一次的残留值推到线上。 */
+static void pin_tmsc_drive(int level)
+{
+    gpio_put(s_pin_tmsc, level);
+    gpio_set_dir(s_pin_tmsc, GPIO_OUT);
+}
+
+static void pin_tmsc_hiz(void)    { gpio_set_dir(s_pin_tmsc, GPIO_IN); }
+static int  pin_tmsc_read(void)   { return (int)gpio_get(s_pin_tmsc); }
+
+/* mode: +1 上拉 / -1 下拉 / 0 不拉。诊断用——用来判「线上读到 0」到底是
+ * 目标在驱动，还是没人管、只是残留电荷。 */
+static void pin_tmsc_pull(int mode)
+{
+    if (mode > 0)      gpio_pull_up(s_pin_tmsc);
+    else if (mode < 0) gpio_pull_down(s_pin_tmsc);
+    else               gpio_disable_pulls(s_pin_tmsc);
+}
+
+static void pin_delay_half(void)
+{
+    /* pico 的 sleep_us 下限 1 µs；CJTAG_TCK_DELAY_NS 取 2000 → ~250 kHz。 */
+    sleep_us((CJTAG_TCK_DELAY_NS + 999) / 1000);
+}
+
+static void pin_delay_us(int us)  { sleep_us((uint32_t)us); }
+static void pin_sleep_ms(int ms)  { sleep_ms((uint32_t)ms); }
+#endif
+
+static inline void tck_high(void) { pin_tckc(1); pin_delay_half(); }
+static inline void tck_low(void)  { pin_tckc(0); pin_delay_half(); }
+
+/* ── 扫描格式 ────────────────────────────────────────────────────── */
+
+typedef enum {
+    FMT_JSCAN2 = 0,   /* 上电默认：2 线，TMSC=TMS，1 个 TCKC 一位，无 TDI/TDO */
+    FMT_OSCAN1,       /* STFMT 切过去之后：1 个 JTAG 位 = 3 个 TCKC 周期 */
+} cjtag_fmt_t;
+
+static cjtag_fmt_t s_fmt = FMT_JSCAN2;
+
+/* 诊断用：采 TDO 前额外等待的微秒数。 */
+static int s_tdo_settle_us = 0;
+
+/*
+ * 发一个 JTAG 位。
+ *
+ * FMT_JSCAN2（TRM §6.2 上电默认）：TMSC 只承载 TMS，目标在 TCKC↑ 采样
+ *   （§6.1「TMS is sampled at the rising edge of TCK」）。**没有 TDI 线**——
+ *   移进 IR 的数据由器件内部当成全 1，所以 TRM 让你用 BYPASS（全 1）当惰性
+ *   指令。返回值无意义。
+ *
+ * FMT_OSCAN1（TRM Table 6-3）：nTDI / TMS / TDO 各占一个 TCKC 周期。
+ *   主机必须在周期2 的 TCKC↓ 之前松开 TMSC，目标从那个下降沿起驱动 TDO
+ *   （§6.1「TDO is valid on the falling edge of TCK」）。
+ */
+static uint8_t hw_scan_bit(uint8_t tms, uint8_t tdi)
+{
+    if (s_fmt == FMT_JSCAN2) {
+        (void)tdi;
+        pin_tmsc_drive((int)tms);
+        tck_high();
+        tck_low();
+        return 1;                        /* 2 线模式没有 TDO 通路 */
+    }
+
+    pin_tmsc_drive((int)(tdi ^ 1));      /* 周期1：nTDI */
+    tck_high();
+    tck_low();
+
+    pin_tmsc_drive((int)tms);            /* 周期2：TMS */
+    tck_high();
+    pin_tmsc_hiz();                      /* 交还总线，必须在 TCKC↓ 之前 */
+    tck_low();
+
+    tck_high();                          /* 周期3：目标驱动 TDO */
+    if (s_tdo_settle_us) pin_delay_us(s_tdo_settle_us);
+    uint8_t tdo = (uint8_t)pin_tmsc_read();
+    tck_low();
+    return tdo;
+}
+
+/* ── 复位 / ICEMelter 唤醒 ───────────────────────────────────────── */
+
+static void hw_reset_pulse(void)
+{
+    pin_tmsc_hiz();
+    pin_tckc(0);
+    pin_reset(0);
+    pin_sleep_ms(2);                      /* ≥1 ms */
+    pin_reset(1);
+    pin_sleep_ms(10);                     /* 启动等待 */
+}
+
+/*
+ * TRM §6.4：JTAG 电源域（含 ICEPick 与 cJTAG 模块）默认断电，靠 ICEMelter
+ * 监测 TCK 上的活动来唤醒——需要 8 个上升沿 + 8 个下降沿，且第 3 到第 8 个
+ * 上升沿之间不能超过 4 ms（我们 ~250 kHz，16 个周期约 64 µs，远够快），
+ * 之后还要给电源域**至少 200 µs**才能发命令。
+ *
+ * 少了这一步，后面所有协议都是对着一块没上电的逻辑在说话。
+ * 期间 TMSC 保持 1（=TMS 高），顺带把 TAP 打到 Test-Logic-Reset。
+ */
+static void hw_wake_icemelter(void)
+{
+    pin_tmsc_drive(1);
+    for (int i = 0; i < 16; i++) {        /* 8 个够，打 16 个留余量 */
+        tck_high();
+        tck_low();
+    }
+    pin_sleep_ms(1);                      /* ≥200 µs */
+}
+
+/* ── TAP 状态机 ──────────────────────────────────────────────────── */
 
 typedef enum {
     TAP_TLR = 0, TAP_RTI,
@@ -62,268 +259,419 @@ static const tap_state_t tap_next[16][2] = {
 
 static tap_state_t s_tap = TAP_TLR;
 
-/* ── 物理层：GPIO 位脉冲（目标端）/ 模拟（host）────────────────── */
-
-#ifdef CJTAG_HOST_TEST
-/* host 测试桩：记录位序列供断言（不驱动真实引脚） */
-#define MAYBE_UNUSED __attribute__((unused))
-
-static MAYBE_UNUSED uint8_t  h_log_tms[4096];
-static MAYBE_UNUSED uint8_t  h_log_tdi[4096];
-static MAYBE_UNUSED uint8_t  h_log_tdo[4096];
-static int      h_log_n;
-static uint32_t h_idcode_override = 0;
-
-static void hw_pin_init(void) { h_log_n = 0; }
-static void hw_reset_pulse(void) { /* 模拟 */ }
-static inline void hw_tck_low(void)  { }
-static inline void hw_tck_high(void) { }
-static inline void hw_drive_tms(uint8_t bit)
-{
-    if (h_log_n < 4096) { h_log_tms[h_log_n] = bit; h_log_tdi[h_log_n] = 0; h_log_n++; }
-}
-static inline void hw_drive_tdi(uint8_t bit)
-{
-    if (h_log_n < 4096) { h_log_tdi[h_log_n] = bit; h_log_n++; }
-}
-static inline uint8_t hw_sample_tdo(void)
-{
-    /* host 模式：返回预注入的 IDCODE 位（由 h_idcode_override 驱动） */
-    static int bit_idx = 0;
-    uint8_t bit = (h_idcode_override >> (bit_idx & 31)) & 1;
-    bit_idx++;
-    if (h_log_n < 4096) h_log_tdo[h_log_n] = bit;
-    return bit;
-}
-/* host：Oscan1 扫描位（记录 TMS/TDI，TDO 由 hw_sample_tdo 注入）。 */
-static uint8_t hw_scan_bit(uint8_t tms, uint8_t tdi)
-{
-    hw_drive_tms(tms);
-    hw_drive_tdi(tdi);
-    return hw_sample_tdo();
-}
-static void hw_activate(void) { /* host：模拟 */ }
-static MAYBE_UNUSED inline void hw_delay_ns(int ns) { (void)ns; }
-
-/* host 测试注入：设置模拟 IDCODE */
-void cjtag_test_set_idcode(uint32_t id) { h_idcode_override = id; }
-#else /* 目标端 */
-static void hw_pin_init(void)
-{
-    gpio_init(CJTAG_PIN_TMSC);
-    gpio_init(CJTAG_PIN_TCKC);
-    gpio_init(CJTAG_PIN_RESET);
-    gpio_set_dir(CJTAG_PIN_TCKC, GPIO_OUT);
-    gpio_set_dir(CJTAG_PIN_RESET, GPIO_OUT);
-    gpio_put(CJTAG_PIN_TCKC, 0);         /* TCKC 空闲低 */
-    gpio_put(CJTAG_PIN_RESET, 1);        /* RESET 空闲高（低有效） */
-    gpio_pull_up(CJTAG_PIN_TMSC);        /* TMSC 上拉（cJTAG 规范） */
-}
-
-static void hw_reset_pulse(void)
-{
-    gpio_put(CJTAG_PIN_RESET, 0);
-    sleep_ms(2);                          /* ≥1 ms（CC1312R 要求） */
-    gpio_put(CJTAG_PIN_RESET, 1);
-    sleep_ms(10);                         /* 启动等待 */
-}
-
-static inline void hw_delay_ns(int ns)
-{
-    /* pico 的 busy_wait 至少 1 µs；对 2 µs 的 delay 用 sleep_us(1)×2 */
-    sleep_us((ns + 999) / 1000);
-}
-
-static inline void hw_tck_low(void)
-{
-    gpio_put(CJTAG_PIN_TCKC, 0);
-    hw_delay_ns(CJTAG_TCK_DELAY_NS);
-}
-
-static inline void hw_tck_high(void)
-{
-    gpio_put(CJTAG_PIN_TCKC, 1);
-    hw_delay_ns(CJTAG_TCK_DELAY_NS);
-}
-
-static inline void hw_drive_tms(uint8_t bit)
-{
-    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_OUT);
-    gpio_put(CJTAG_PIN_TMSC, bit);
-}
-
-static inline void hw_drive_tdi(uint8_t bit)
-{
-    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_OUT);
-    gpio_put(CJTAG_PIN_TMSC, bit);
-}
-
-static inline uint8_t hw_sample_tdo(void)
-{
-    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_IN);
-    /* TCKC 低电平期间目标驱动 TMSC，在 TCKC↑ 之前采样 */
-    return (uint8_t)gpio_get(CJTAG_PIN_TMSC);
-}
-
-/* cJTAG Oscan1 扫描位（IEEE 1149.7 T4）：1 个 JTAG 位 = **3 个 TCKC 周期**
- *   周期1 nTDI(主机驱动, ~TDI) / 周期2 TMS(主机驱动) / 周期3 TDO(目标驱动,主机采样)
- * 主机在周期3 前必须释放 TMSC。（旧代码 1 个 TCKC 当 1 位，协议根本不对。） */
-static uint8_t hw_scan_bit(uint8_t tms, uint8_t tdi)
-{
-    hw_drive_tdi((uint8_t)(tdi ^ 1));       /* cycle 1: nTDI */
-    hw_tck_high(); hw_tck_low();
-    hw_drive_tms(tms);                      /* cycle 2: TMS */
-    hw_tck_high(); hw_tck_low();
-    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_IN);  /* cycle 3: TDO（目标驱动） */
-    hw_tck_high();
-    uint8_t tdo = (uint8_t)gpio_get(CJTAG_PIN_TMSC);
-    hw_tck_low();
-    return tdo;
-}
-
-/* 进入 cJTAG 在线态（OFFLINE→ONLINE）：
- * 1) escape：TCKC 拉高、TMSC 翻转 6 次（selection）；
- * 2) 激活包：12 位、每 TCKC 一位、LSB 先出。OAC=0xC, EC=0x8, CP=OAC^EC=0x4
- *    → 12 位值 = 0xC | (0x8<<4) | (0x4<<8) = 0x48C。 */
-static void hw_activate(void)
-{
-    gpio_set_dir(CJTAG_PIN_TMSC, GPIO_OUT);
-    gpio_put(CJTAG_PIN_TCKC, 1);
-    /* escape：TCKC 高、TMSC 恰好翻转 6 次（6-7=selection；≥8 会被当 reset）。 */
-    uint8_t v = 0;
-    gpio_put(CJTAG_PIN_TMSC, v);
-    hw_delay_ns(CJTAG_TCK_DELAY_NS);
-    for (int i = 0; i < 6; i++) {
-        v ^= 1;
-        gpio_put(CJTAG_PIN_TMSC, v);
-        hw_delay_ns(CJTAG_TCK_DELAY_NS);
-    }
-    uint16_t pkt = 0x48C;
-    for (int i = 0; i < 12; i++) {
-        gpio_put(CJTAG_PIN_TMSC, (pkt >> i) & 1);
-        hw_tck_high(); hw_tck_low();
-    }
-}
-#endif
-
-/* ── TAP 操作原语 ────────────────────────────────────────────────── */
-
-/* 发一个 JTAG 位（TMS=tms, TDI=0）并更新状态机。cJTAG 下这是一个
- * 3-TCKC 周期的 Oscan1 扫描包（见 hw_scan_bit）。 */
 static void tap_clock_tms(uint8_t tms)
 {
     (void)hw_scan_bit(tms, 0);
     s_tap = tap_next[s_tap][tms];
 }
 
-/* Shift 态写一位（TMS=0 留在 Shift），返回 TDO。 */
-static uint8_t tap_shift_write_read(uint8_t tdi)
+/* 5 拍 TMS=1 回 Test-Logic-Reset（任何状态出发都成立）。
+ * 顺带关掉 cJTAG 命令窗（TRM §6.2.2.3）。 */
+static void tap_reset(void)
 {
-    return hw_scan_bit(0, tdi);
+    for (int i = 0; i < 5; i++) tap_clock_tms(1);
+    s_tap = TAP_TLR;
 }
 
-/* 走到指定状态（驱动 TMS 序列） */
+/*
+ * 走到目标状态：在 16 态图上现算最短 TMS 序列。
+ *
+ * 旧版是手写分支，从 PAUSE_DR 出发会走飞：tap_goto(TAP_RTI) 只发一拍
+ * TMS=0，而 PAUSE_DR 的 TMS=0 是自环——软件以为回了 RTI，物理态还在
+ * PAUSE_DR，之后每一次 IR/DR 移位都打在错误的状态上。命令窗序列全程在
+ * Pause-DR 附近打转，这个坑必踩。
+ */
 static void tap_goto(tap_state_t target)
 {
-    int guard = 0;
-    while (s_tap != target && guard++ < 32) {
-        /* 简化导航：利用 TAP 树的层次结构 */
-        if (target == TAP_TLR) {
-            tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(1);
-            tap_clock_tms(1); tap_clock_tms(1);
-            s_tap = TAP_TLR;
-            return;
+    if (s_tap == target) return;
+
+    int8_t  from[16];
+    uint8_t bit[16];
+    uint8_t queue[16];
+    int qh = 0, qt = 0;
+
+    for (int i = 0; i < 16; i++) from[i] = -1;
+    queue[qt++] = (uint8_t)s_tap;
+    from[s_tap] = (int8_t)s_tap;
+
+    while (qh < qt && from[target] < 0) {
+        uint8_t cur = queue[qh++];
+        for (uint8_t t = 0; t < 2; t++) {
+            tap_state_t nxt = tap_next[cur][t];
+            if (from[nxt] >= 0) continue;
+            from[nxt]  = (int8_t)cur;
+            bit[nxt]   = t;
+            queue[qt++] = (uint8_t)nxt;
         }
-        if (target == TAP_SHIFT_IR || target == TAP_SHIFT_DR) {
-            /* 从当前态导航到 Shift：先回 RTI 再进 */
-            if (s_tap != TAP_RTI) { tap_goto(TAP_RTI); }
-            if (target == TAP_SHIFT_IR) {
-                tap_clock_tms(1);  /* SELECT_DR */
-                tap_clock_tms(1);  /* SELECT_IR */
-                tap_clock_tms(0);  /* CAPTURE_IR */
-                tap_clock_tms(0);  /* SHIFT_IR */
-            } else {
-                tap_clock_tms(1);  /* SELECT_DR */
-                tap_clock_tms(0);  /* CAPTURE_DR */
-                tap_clock_tms(0);  /* SHIFT_DR */
-            }
-            return;
-        }
-        if (target == TAP_UPDATE_DR || target == TAP_UPDATE_IR) {
-            /* 调用点：shift 后 s_tap=EXIT1_x → 一拍 TMS=1 到 UPDATE_x。
-             * （旧代码发两拍会多走到 SELECT_x。） */
-            tap_clock_tms(1);
-            return;
-        }
-        if (target == TAP_RTI) {
-            /* 调用点：s_tap=UPDATE_x → 一拍 TMS=0 回 RTI。
-             * （旧代码发 TMS=1,TMS=0 并强置 s_tap=RTI，物理态与软件分叉。） */
-            tap_clock_tms(0);
-            return;
-        }
-        /* 兜底：TMS=1 五次回 TLR */
-        tap_clock_tms(1);
     }
+    if (from[target] < 0) return;         /* 图强连通，不会发生 */
+
+    uint8_t path[16];
+    int n = 0;
+    for (tap_state_t s = target; s != s_tap; s = (tap_state_t)from[s])
+        path[n++] = bit[s];
+    while (n > 0) tap_clock_tms(path[--n]);
 }
 
-/* 移位 IR（LSB 先出）。TMSC 在 Shift 态承载 TDI，退出必须用**独立**的
- * TMS=1 时钟——不能和末位数据同拍（同拍会把末位数据覆盖成 1，实测把
- * IDCODE(0x2) 装成 DPACC(0xA)）。 */
+/* 移位 IR（LSB 先出）。末位与 TMS=1 同拍退出 Shift。
+ * ⚠ FMT_JSCAN2 下没有 TDI 线，instr 的值发不出去，器件按全 1 收——这正是
+ * TRM 让用 BYPASS(全 1) 当惰性指令的原因，别指望在 2 线模式选别的指令。 */
 static void jtag_shift_ir(uint32_t instr, int bits)
 {
     tap_goto(TAP_SHIFT_IR);
     for (int i = 0; i < bits; i++) {
-        uint8_t tms = (i == bits - 1) ? 1 : 0;   /* 末位 TMS=1 退 Shift */
-        (void)hw_scan_bit(tms, (instr >> i) & 1);
+        uint8_t tms = (i == bits - 1) ? 1 : 0;
+        (void)hw_scan_bit(tms, (uint8_t)((instr >> i) & 1));
     }
     s_tap = TAP_EXIT1_IR;
-    tap_goto(TAP_UPDATE_IR);
     tap_goto(TAP_RTI);
 }
 
-/* 移位 DR（LSB 先出，返回读到的值）。同样：数据位全部用 TDI 时钟，
- * 退出用独立的 TMS=1 时钟——避免「末位数据本身决定是否退出 SHIFT_DR」
- * 造成软件 s_tap 与目标物理态分叉。 */
+/* 移位 DR（LSB 先出，返回读到的值）。 */
 static uint32_t jtag_shift_dr(uint32_t tdi, int bits)
 {
     uint32_t tdo = 0;
     tap_goto(TAP_SHIFT_DR);
     for (int i = 0; i < bits; i++) {
-        uint8_t tms = (i == bits - 1) ? 1 : 0;   /* 末位 TMS=1 退 Shift */
-        uint8_t rbit = hw_scan_bit(tms, (tdi >> i) & 1);
+        uint8_t tms = (i == bits - 1) ? 1 : 0;
+        uint8_t rbit = hw_scan_bit(tms, (uint8_t)((tdi >> i) & 1));
         tdo |= (uint32_t)rbit << i;
     }
     s_tap = TAP_EXIT1_DR;
-    tap_goto(TAP_UPDATE_DR);
     tap_goto(TAP_RTI);
     return tdo;
 }
 
+/* ── cJTAG 命令层（TRM §6.2.1 / §6.2.2）─────────────────────────── */
+
+/*
+ * 一次 DR 扫描，起止都在 Pause-DR，在 Shift-DR 里恰好停 n 个时钟。
+ *
+ * TRM §6.2.1：「The number of clocks spent in the Shift DR state is counted
+ * for each scan (from 0 to 31 clocks).」—— 命令的值就是这个计数，**跟移进去
+ * 的数据无关**（2 线模式下本来也没有 TDI）。计数在 Update-DR 处结算。
+ *
+ * n == 0 即 ZBS（zero bit scan）：经 Capture-DR 和 Update-DR，但一次都不进
+ * Shift-DR。它同时承担两个角色——开窗阶段每次 ZBS 让 control level +1；
+ * 开窗之后它就是「Goto Scan (Through Update DR to Pause DR)」，用来结算
+ * 上一个命令部分。
+ */
+/*
+ * Update-DR 之后是走 Update→RTI→Select（经 Run-Test/Idle），还是走
+ * Update→Select 的「短路径」。
+ *
+ * OpenOCD 那段实测能用的 ti_cjtag_to_4pin_jtag **每一次 Update 之后都回
+ * RUN/IDLE**；而 IEEE 1149.7 第 9 章的说法是 RTI 标记命令边界、不经 RTI
+ * 的短路径留在同一条命令里。两种读法冲突，而我们只有一个可信参照——
+ * 默认照抄 OpenOCD，另一种留给 cjtag_diag() 一起试。
+ */
+static bool s_zbs_via_rti = true;
+
+static void cjtag_dr_count(int n)
+{
+    if (n <= 0) {
+        tap_clock_tms(1);   /* Pause-DR  → Exit2-DR  */
+        tap_clock_tms(1);   /* Exit2-DR  → Update-DR （结算上一次扫描）*/
+        if (s_zbs_via_rti) {
+            tap_clock_tms(0);   /* Update-DR → Run-Test/Idle */
+            tap_clock_tms(1);   /* RTI       → Select-DR     */
+        } else {
+            tap_clock_tms(1);   /* Update-DR → Select-DR（短路径）*/
+        }
+        tap_clock_tms(0);   /* Select-DR → Capture-DR（开始下一次扫描）*/
+        tap_clock_tms(1);   /* Capture-DR→ Exit1-DR  （全程没进 Shift-DR）*/
+        tap_clock_tms(0);   /* Exit1-DR  → Pause-DR  */
+        return;
+    }
+    tap_clock_tms(1);       /* Pause-DR  → Exit2-DR  */
+    tap_clock_tms(0);       /* Exit2-DR  → Shift-DR  */
+    for (int i = 1; i < n; i++)
+        tap_clock_tms(0);   /* 留在 Shift-DR：第 1..n-1 个时钟 */
+    tap_clock_tms(1);       /* Shift-DR  → Exit1-DR ：第 n 个时钟 */
+    tap_clock_tms(0);       /* Exit1-DR  → Pause-DR （还没结算）*/
+}
+
+/*
+ * 开命令窗（TRM §6.2.2.1）：control level 设到 2 并锁定。
+ * 「Opening the command window decouples the device TAP; the decoupling
+ *   occurs when the second ZBS occurs.」
+ */
+static void cjtag_open_command_window(void)
+{
+    /* 1. IR 扫惰性指令，停在 Pause-DR。2 线模式下移进去的一定是全 1 = BYPASS。 */
+    jtag_shift_ir(JTAG_IR_BYPASS, ICEPICK_IR_BITS);
+    tap_goto(TAP_PAUSE_DR);      /* 经 Select-DR → Capture-DR → Exit1-DR */
+
+    cjtag_dr_count(0);           /* 2. 第一次 ZBS → control level 1 */
+    cjtag_dr_count(0);           /* 3. 第二次 ZBS → control level 2，器件 TAP 解耦 */
+    cjtag_dr_count(1);           /* 4. 1 位 DR 扫描 → 锁定在 2 */
+    cjtag_dr_count(0);           /*    过 Update 结算这次扫描 */
+}
+
+/*
+ * 发一条 cJTAG 命令（TRM §6.2.1）：CP0 = opcode，CP1 = operand。
+ * 返回时停在 Update-DR —— **命令正是在这一拍生效的**。STFMT 会在这里把整条
+ * 链路的扫描格式换掉，所以最后半个扫描不能连着发，调用方要先改 s_fmt。
+ */
+/* CP1 是一段一段凑出来的（OpenOCD 的写法：2+2+2+2+1=9，中间只经 Pause-DR
+ * 不经 Update，计数照样累加）还是一口气移完。默认一口气——两种都试给 diag。*/
+static bool s_chunk_cp1 = false;
+
+static void cjtag_command(int cp0, int cp1)
+{
+    cjtag_dr_count(cp0);
+    cjtag_dr_count(0);      /* 过 Update 结算 CP0 */
+    if (s_chunk_cp1) {
+        int left = cp1;
+        while (left >= 2) { cjtag_dr_count(2); left -= 2; }
+        if (left) cjtag_dr_count(left);
+    } else {
+        cjtag_dr_count(cp1);
+    }
+    tap_clock_tms(1);       /* Pause-DR → Exit2-DR */
+    tap_clock_tms(1);       /* Exit2-DR → Update-DR：结算 CP1，命令生效 */
+}
+
+/* 切到 OScan1：TRM Table 6-4，STFMT(opcode 3) + operand 9。 */
+static void cjtag_select_oscan1(void)
+{
+    cjtag_open_command_window();
+    cjtag_command(CJTAG_CMD_STFMT, CJTAG_FMT_CODE_OSCAN1);
+    s_fmt = FMT_OSCAN1;     /* 上一拍的 Update 之后链路已经是 3 周期/位 */
+    s_tap = TAP_UPDATE_DR;
+    tap_reset();            /* 进 TLR：同时关掉命令窗（§6.2.2.3） */
+}
+
+/* ── 公共 API ────────────────────────────────────────────────────── */
+
+void cjtag_enter(void)
+{
+    pin_init();
+    hw_reset_pulse();
+
+    s_fmt = FMT_JSCAN2;     /* TRM §6.2：上电默认就是 2 线 JScan */
+    s_tap = TAP_TLR;
+
+    hw_wake_icemelter();    /* TRM §6.4：先把 JTAG 电源域唤醒 */
+    tap_reset();
+    cjtag_select_oscan1();
+}
+
+void cjtag_exit(void)
+{
+    tap_reset();
+    s_fmt = FMT_JSCAN2;
+    /* RESET_N 脉冲既让 CC1312R 重启，也清掉 ICEMelter 置上的 Halt-In-Boot
+     * 标志（TRM §6.4：只有 pin reset / POR / JTAG 能清）。 */
+    hw_reset_pulse();
+}
+
+uint32_t cjtag_read_idcode(void)
+{
+    /* Test-Logic-Reset 会把 IDCODE 自动装进 IR —— 读 IDCODE 不需要知道
+     * IR 宽度、也不需要知道 IDCODE 的指令码，是最短的存活证明。 */
+    tap_reset();
+    return jtag_shift_dr(0, 32);
+}
+
+/* ── 诊断 ────────────────────────────────────────────────────────── */
+
+/*
+ * 线探针：只读回 RP2040 自己这一侧的 TMSC，用来区分三种线状态——
+ *   驱低→松手后爬回 1        = 线上有上拉
+ *   上拉=1 而下拉=1          = 有人在驱动高（比 50k 内部拉强）
+ *   上拉=1 下拉=0            = 没有别的驱动源，我们说了算
+ *   两个方向松手都保持原值    = 纯浮空，读数只是残留电荷（此时「读到一串 0」
+ *                              看起来很像目标在回 TDO，其实不携带任何信息）
+ */
+static void diag_probe_line(const char *when)
+{
+    pin_tmsc_hiz();
+    pin_sleep_ms(1);
+    int idle = pin_tmsc_read();
+
+    pin_tmsc_drive(0); pin_delay_us(10); pin_tmsc_hiz();
+    pin_delay_us(2);   int lo_us = pin_tmsc_read();
+    pin_sleep_ms(1);   int lo_ms = pin_tmsc_read();
+
+    pin_tmsc_pull(+1); pin_sleep_ms(1); int up = pin_tmsc_read();
+    pin_tmsc_pull(-1); pin_sleep_ms(1); int dn = pin_tmsc_read();
+    pin_tmsc_pull(+1);
+
+    printf("  线探针 %-12s idle=%d 驱低→松:%d/%d 上拉=%d 下拉=%d\n",
+           when, idle, lo_us, lo_ms, up, dn);
+}
+
+/* 全程松开 TMSC 只发 TCKC：目标若真的在驱动这根线，就会出现 0。 */
+static void diag_listen(void)
+{
+    uint32_t hi = 0, lo = 0;
+    pin_tmsc_hiz();
+    for (int i = 0; i < 32; i++) {
+        pin_tckc(1); pin_delay_half();
+        if (pin_tmsc_read()) hi |= 1u << i;
+        pin_tckc(0); pin_delay_half();
+        if (pin_tmsc_read()) lo |= 1u << i;
+    }
+    printf("  只听不说   : TCKC高相=0x%08lX 低相=0x%08lX (全 1 = 没人驱动)\n",
+           (unsigned long)hi, (unsigned long)lo);
+}
+
+/*
+ * 拿交替的 TMS 跑 16 个 OScan1 包，比对「周期3 采到的」和「周期2 我们自己
+ * 驱动的 TMS」。两者相等 = 目标压根没接管总线，读到的只是残留电荷。
+ * 这一条是为了防止把「浮空线记住了上一次驱动值」误判成收到了 TDO。
+ */
+static void diag_tms_echo(void)
+{
+    uint32_t sent = 0, got = 0;
+    for (int i = 0; i < 16; i++) {
+        uint8_t tms = (uint8_t)(i & 1);
+        if (tms) sent |= 1u << i;
+        if (hw_scan_bit(tms, 0)) got |= 1u << i;
+    }
+    printf("  TMS回声    : 驱动=0x%04X 采回=0x%04X%s\n",
+           (unsigned)sent, (unsigned)got,
+           (sent == got) ? "  ← 相等：读到的是自己的残留电荷" : "");
+}
+
+#ifndef CJTAG_HOST_TEST
+/*
+ * 连通性探针：拿 RP2040 自己的上/下拉当欧姆表，量每根线上「有没有别人」。
+ *
+ * 判据来自 TRM 自己的说法——CC13x2 在 TCK 上有内部上拉（§6.4：「The TCK pin
+ * has an internal pullup designed to avoid unintentional traffic due to
+ * noise」），RESET_N 与 TMSC 同理。所以：
+ *   我们下拉时读到 1  = 线上有个强过 RP2040 内部 50k 的上拉 → 接到了东西
+ *   我们下拉时读到 0  = 线上只有我们自己 → 这根线上没有别的上拉源
+ * 这是量我们这一侧读到了什么，不是对硬件下结论。
+ */
+static void diag_probe_pin(const char *name, unsigned gpio)
+{
+    gpio_set_dir(gpio, GPIO_IN);
+    gpio_pull_up(gpio);   sleep_ms(1); int up = (int)gpio_get(gpio);
+    gpio_pull_down(gpio); sleep_ms(1); int dn = (int)gpio_get(gpio);
+    gpio_disable_pulls(gpio); sleep_ms(1); int no = (int)gpio_get(gpio);
+    gpio_pull_up(gpio);
+    printf("  引脚 %-10s (GPIO%-2u) 上拉=%d 下拉=%d 无拉=%d  %s\n",
+           name, gpio, up, dn, no,
+           (up && dn) ? "← 线上有外部上拉（接到了东西）"
+                      : (!up && !dn) ? "← 线被按在低电平"
+                                     : "← 只有我们自己在拉，线上没有别的上拉源");
+}
+
+static void diag_probe_all_pins(const char *when)
+{
+    printf("  [%s]\n", when);
+    diag_probe_pin("TMSC", CJTAG_PIN_TMSC);
+    diag_probe_pin("TCKC", CJTAG_PIN_TCKC);
+    diag_probe_pin("RESET_N", CJTAG_PIN_RESET);
+    /* 量完把方向恢复成本模块的常态 */
+    gpio_set_dir(CJTAG_PIN_TCKC, GPIO_OUT);
+    gpio_put(CJTAG_PIN_TCKC, 0);
+    gpio_set_dir(CJTAG_PIN_RESET, GPIO_OUT);
+    gpio_put(CJTAG_PIN_RESET, 1);
+}
+#else
+static void diag_probe_all_pins(const char *when) { (void)when; }
+#endif
+
+void cjtag_diag(void)
+{
+    pin_init();
+    s_tdo_settle_us = 0;
+
+    printf("cjtag-diag: TRM SWCU185G §6.2/§6.4 路径\n");
+    diag_probe_all_pins("三根线的连通性");
+    diag_probe_line("接管GPIO后");
+
+    /* 按住 RESET_N 时目标的引脚行为应当变化——这是「目标确实在听这根线」
+     * 的一个可观察量。 */
+    pin_reset(0); pin_sleep_ms(5);
+    diag_probe_line("RESET拉低中");
+    pin_reset(1); pin_sleep_ms(20);
+
+    hw_reset_pulse();
+    s_fmt = FMT_JSCAN2;
+    s_tap = TAP_TLR;
+    diag_probe_line("复位后");
+
+    hw_wake_icemelter();
+    diag_probe_line("ICEMelter唤醒后");
+
+    tap_reset();
+    cjtag_select_oscan1();
+    diag_probe_line("切OScan1后");
+
+    diag_listen();
+    tap_reset();
+    diag_tms_echo();
+
+    /* 命令窗的两处写法分歧（Update 后经不经 RTI / CP1 分不分段），再叠上
+     * 「数据线和时钟线是不是接反了」。一次上板跑完，不用来回烧。 */
+    for (int v = 0; v < 16; v++) {
+        s_zbs_via_rti = (v & 1) != 0;
+        s_chunk_cp1   = (v & 2) != 0;
+        int wake      = (v & 4) == 0;
+        int swap      = (v & 8) != 0;
+
+#ifndef CJTAG_HOST_TEST
+        s_pin_tmsc = swap ? CJTAG_PIN_TCKC : CJTAG_PIN_TMSC;
+        s_pin_tckc = swap ? CJTAG_PIN_TMSC : CJTAG_PIN_TCKC;
+        pin_init();
+#endif
+        hw_reset_pulse();
+        s_fmt = FMT_JSCAN2;
+        s_tap = TAP_TLR;
+        if (wake) hw_wake_icemelter();
+        tap_reset();
+        cjtag_select_oscan1();
+        uint32_t id = cjtag_read_idcode();
+        printf("  变体 viaRTI=%d chunkCP1=%d wake=%d 换线=%d → IDCODE=0x%08lX %s\n",
+               s_zbs_via_rti, s_chunk_cp1, wake, swap, (unsigned long)id,
+               ((id & CC13_IDCODE_MASK) == (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+                   ? "← 对上 ICEPick JRC" : "");
+    }
+    s_zbs_via_rti = true;
+    s_chunk_cp1 = false;
+#ifndef CJTAG_HOST_TEST
+    s_pin_tmsc = CJTAG_PIN_TMSC;
+    s_pin_tckc = CJTAG_PIN_TCKC;
+    pin_init();
+#endif
+
+    hw_reset_pulse();
+    s_fmt = FMT_JSCAN2;
+}
+
+#ifdef CJTAG_HOST_TEST
+/* 测试钩子（只在 host 构建存在）：让 test_cjtag.c 能直接驱动 IR/DR 移位和
+ * TAP 导航，从而对「IR 宽度」「从 PAUSE_DR 出发能不能走对」单独下断言。*/
+void     cjtag_test_shift_ir(uint32_t instr, int bits) { jtag_shift_ir(instr, bits); }
+uint32_t cjtag_test_shift_dr(uint32_t tdi, int bits)   { return jtag_shift_dr(tdi, bits); }
+void     cjtag_test_goto_pause_dr(void)                { tap_goto(TAP_PAUSE_DR); }
+int      cjtag_test_tap_state(void)                    { return (int)s_tap; }
+#endif
+
 /* ── ADIv5 AP/DP 操作 ────────────────────────────────────────────── */
 
-/* DPACC/APACC 的 3-bit AP-SEL + 2-bit 寄存器地址编码到 35-bit DR：
- * [34:3] = 数据 (32-bit)
- * [2:1]  = 寄存器地址 (DP: 0=CTRLSTAT/1=SELECT/2=RDBUFF / AP: 0=CSW...)
- * [0]    = RnW (0=写, 1=读)
- */
 /* ADIv5 DPACC/APACC 的 35-bit DR：[34:3]=数据，[2:1]=寄存器地址 A[3:2]，
  * [0]=RnW。A[3:2] 取**字节地址**的 bit[3:2]（OpenOCD adi_v5_jtag.c：
- * ((reg_addr>>1)&0x6)|rnw）。旧代码用 (reg&0x3)<<1，对 0x4/0x8/0xC 恒为 0，
- * 全部打到寄存器 0。 */
+ * ((reg_addr>>1)&0x6)|rnw）。 */
 static void jtag_dp_write(uint8_t reg, uint32_t data)
 {
     uint64_t dr = ((uint64_t)data << 3) | (uint64_t)(((reg >> 1) & 0x6) | 0);
-    jtag_shift_ir(JTAG_IR_DPACC, 4);
+    jtag_shift_ir(JTAG_IR_DPACC, DAP_IR_BITS);
     jtag_shift_dr((uint32_t)dr, 35);  /* 低 35 位 */
 }
 
 static MAYBE_UNUSED uint32_t jtag_dp_read(uint8_t reg)
 {
     uint64_t dr = ((uint64_t)0 << 3) | (uint64_t)(((reg >> 1) & 0x6) | 1);
-    jtag_shift_ir(JTAG_IR_DPACC, 4);
+    jtag_shift_ir(JTAG_IR_DPACC, DAP_IR_BITS);
     jtag_shift_dr((uint32_t)dr, 35);
     /* 读结果要读 DP_RDBUFF（RnW=1），不是 DR=0 */
-    jtag_shift_ir(JTAG_IR_DPACC, 4);
+    jtag_shift_ir(JTAG_IR_DPACC, DAP_IR_BITS);
     uint32_t result = jtag_shift_dr((uint32_t)(((DP_RDBUFF >> 1) & 0x6) | 1), 35);
     return result;  /* 高 32 位是数据 */
 }
@@ -334,7 +682,7 @@ static void jtag_ap_write(uint8_t ap, uint8_t reg, uint32_t data)
     jtag_dp_write(DP_SELECT, (uint32_t)(ap << 24) | (reg & 0xF0));
     /* 再写 AP 寄存器 */
     uint64_t dr = ((uint64_t)data << 3) | (uint64_t)(((reg >> 1) & 0x6) | 0);
-    jtag_shift_ir(JTAG_IR_APACC, 4);
+    jtag_shift_ir(JTAG_IR_APACC, DAP_IR_BITS);
     jtag_shift_dr((uint32_t)dr, 35);
 }
 
@@ -342,55 +690,12 @@ static uint32_t jtag_ap_read(uint8_t ap, uint8_t reg)
 {
     jtag_dp_write(DP_SELECT, (uint32_t)(ap << 24) | (reg & 0xF0));
     uint64_t dr = ((uint64_t)0 << 3) | (uint64_t)(((reg >> 1) & 0x6) | 1);
-    jtag_shift_ir(JTAG_IR_APACC, 4);
+    jtag_shift_ir(JTAG_IR_APACC, DAP_IR_BITS);
     jtag_shift_dr((uint32_t)dr, 35);
     /* 结果要读 DP_RDBUFF */
-    jtag_shift_ir(JTAG_IR_DPACC, 4);
+    jtag_shift_ir(JTAG_IR_DPACC, DAP_IR_BITS);
     uint32_t result = jtag_shift_dr((uint32_t)(((DP_RDBUFF >> 1) & 0x6) | 1), 35);
     return result;
-}
-
-/* ── 公共 API ────────────────────────────────────────────────────── */
-
-void cjtag_enter(void)
-{
-    hw_pin_init();
-    hw_reset_pulse();
-    /* cJTAG：设备复位后处于 OFFLINE，必须先发激活序列才响应任何 TAP 操作。
-     * 激活包 EC=1000 → 适配器内部 TAP 落在 Run-Test/Idle。 */
-    hw_activate();
-    s_tap = TAP_RTI;
-
-    /* CC13xx 专属：cJTAG 模块接受命令前必须先把 control level 设到 2 并锁定
-     * （TRM SWCU117 §5.2.2.1「Opening Command Window」，序列同 OpenOCD
-     * scripts/target/ti-cjtag.cfg 的 ti_cjtag_to_4pin_jtag）：
-     *   IR=BYPASS → 两次 ZBS（经 Update DR 回 RTI）→ 1 位 DR 扫描 → 停在 PAUSE_DR。 */
-    jtag_shift_ir(JTAG_IR_BYPASS, ICEPICK_IR_BITS);
-    for (int k = 0; k < 2; k++) {
-        tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);
-        tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);
-    }
-    tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);
-    tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);   /* → SHIFT_DR */
-    (void)hw_scan_bit(0, 0);                                /* 1 位 DR */
-    tap_clock_tms(1); tap_clock_tms(1); tap_clock_tms(0);   /* → RTI */
-    tap_clock_tms(1); tap_clock_tms(0); tap_clock_tms(1); tap_clock_tms(0);  /* → PAUSE_DR */
-}
-
-void cjtag_exit(void)
-{
-    /* 回 TLR */
-    for (int i = 0; i < 5; i++) tap_clock_tms(1);
-    s_tap = TAP_TLR;
-    /* RESET 脉冲让 CC1312R 重启 */
-    hw_reset_pulse();
-}
-
-uint32_t cjtag_read_idcode(void)
-{
-    jtag_shift_ir(JTAG_IR_IDCODE, ICEPICK_IR_BITS);
-    uint32_t id = jtag_shift_dr(0, 32);
-    return id;
 }
 
 /* AHB-AP（MEM-AP）读写 */
@@ -409,6 +714,17 @@ void cjtag_ahb_write32(uint32_t addr, uint32_t val)
 }
 
 /* ── Flash 操作 ─────────────────────────────────────────────────── */
+
+/* ⚠ 未决（读通 IDCODE 之后的下一个阻塞点，不要当成已验证的路径）：
+ * 1) 上面的 DPACC/APACC 直接发 4 位 DAP IR，但 CC13x2 的 Cortex-M DAP TAP
+ *    **默认不在扫描链上**（TRM §6.3「None of the secondary TAPs are selected
+ *    or visible in the master scan path」；OpenOCD cc26x0.cfg 也把 cpu TAP
+ *    标成 -disable）。必须先经 ICEPick 的 CONNECT(IR=0x07, DR8=0x89) +
+ *    ROUTER(IR=0x02, DR32) 把它挂上来，见 tcl/target/ti/icepick.cfg。
+ * 2) 下面这套 FLASH_FMC/FADDR/FSTAT 寄存器直写是 Stellaris/CC2538 的 flash
+ *    控制器模型。OpenOCD 给 CC13x2 用的是 `flash bank ... cc26xx`，走的是
+ *    装进 SRAM 的 flash loader（contrib/loaders/flash/cc26xx），不是寄存器
+ *    直写。两条都要在通 IDCODE 之后重做，现状仅保留骨架。 */
 
 /* 等待 flash controller 空闲。位脉冲下每次 AHB 读要几十个 TCKC，用「读次数」
  * 当时间上界（≈ timeout_ms）。BUSY 恒不清（目标被复位/链路坏）时返回 false，
@@ -495,6 +811,7 @@ static uint8_t  s_hdr[4];
 static uint8_t  s_hdr_len = 0;
 static bool     s_hdr_done = false;
 static bool     s_failed = false;   /* 某 sector 失败后进入「吞字节」态 */
+static uint32_t s_idcode = 0;       /* cjtag_cdc_enter 读到的 IDCODE（供打印） */
 
 /* 解锁 flash + 使能 DAP 电源（整个烧录期间保持；见 cjtag_flash_program）。 */
 static void flash_unlock(void)
@@ -510,14 +827,20 @@ static void flash_lock(void)
     cjtag_ahb_write32(0x5000130C, 0xC35A01E3);
 }
 
+uint32_t cjtag_cdc_idcode(void)
+{
+    return s_idcode;
+}
+
 bool cjtag_cdc_enter(void)
 {
     if (s_active) return true;
     cjtag_enter();
 
-    /* Proof of life：读 IDCODE */
-    uint32_t id = cjtag_read_idcode();
-    if (id == 0 || id == 0xFFFFFFFF) {
+    /* Proof of life：读 IDCODE。只认版本号以外的 28 位（不同批次版本号会变，
+     * OpenOCD 对这个 TAP 也是 -ignore-version）。 */
+    s_idcode = cjtag_read_idcode();
+    if ((s_idcode & CC13_IDCODE_MASK) != (CC13_JRC_IDCODE & CC13_IDCODE_MASK)) {
         cjtag_exit();
         return false;
     }

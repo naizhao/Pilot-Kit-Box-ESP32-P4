@@ -1,21 +1,19 @@
 /*
- * cjtag.h — RP2040 侧 CC1312R cJTAG 位脉冲烧录引擎。
+ * cjtag.h — RP2040 侧 CC1312R cJTAG（IEEE 1149.7 OScan1）烧录引擎。
  *
  * 硬件（pinmap_978.md，PCB 网表验证）：
  *   GPIO16 → SUBG_TMSC → CC1312R pin 24（JTAG_TMSC，双向）
  *   GPIO17 → SUBG_TCKC → CC1312R pin 25（JTAG_TCKC，本侧输出）
  *   GPIO18 → SUBG_RESET → CC1312R pin 35（RESET_N，低有效）
  *
- * 协议（IEEE 1149.7 cJTAG compact 格式，简化子集）：
- * CC13x2 的 ICEPICK-D3 默认处于 cJTAG 2 线模式。在本实现使用的
- * 非高级模式（non-advanced mode）下，每个 TCKC 时钟周期 TMSC 携带
- * 一个位：
- *   - 非 Shift 状态：TMSC = TMS（本侧驱动，目标在 TCKC↑采样）
- *   - Shift-IR/Shift-DR 写入：TMSC = TDI（本侧驱动）
- *   - Shift-IR/Shift-DR 读取：目标在 TCKC↓驱动 TMSC = TDO（本侧
- *     切输入在 TCKC↓采样后在 TCKC↑读取）
+ * 只有 2 根线 → 只能走 cJTAG OScan1：TDI/TDO 在 CC13x2 上是复用到别的 DIO
+ * 的，本板没接。所以**绝对不能**跑 OpenOCD tcl/target/ti/cjtag.cfg 里的
+ * ti_cjtag_to_4pin_jtag——那段是把器件从 2 线切到 4 线 JTAG 的，跑完链路就没了。
  *
- * 烧录路径：cJTAG → ICEPICK-D3 → AHB-AP → Flash Controller
+ * 流程（依据 CC13x2 TRM SWCU185G §6.2/§6.4，逐条出处见 cjtag.c 文件头）：
+ *   RESET 脉冲 → ICEMelter 唤醒 JTAG 电源域（16 个 TCK + 等 ≥200µs）
+ *   → 上电默认的 2 线 JScan 下开 cJTAG 命令窗 → STFMT 命令切到 OScan1
+ *   → 此后每个 JTAG 位 = 3 个 TCKC 周期（nTDI / TMS / TDO），TDO 才有通路。
  *
  * 与 SPI master 互斥：代刷期间独占 GPIO16/17/18。调用者负责在
  * 进入/退出代刷模式时暂停/恢复 SPI master（adsb1090.c 的 CDC
@@ -35,20 +33,32 @@
 /* ── cJTAG 时序（保守值）────────────────────────────────────────── */
 #define CJTAG_TCK_DELAY_NS  2000   /* ~250 kHz TCKC；正确性优先 */
 
-/* ── TAP 指令寄存器（CC13x2 ICEPICK-D3）────────────────────────── */
-/* ── ICEPick Type C TAP 指令（TI SPRUH35 Table 2-1）─────────────────
- * IR 是 **6 位**，不是 4 位。指令值：
- *   ROUTER=000010b=0x02  IDCODE=000100b=0x04  ICEPICKCODE=000101b=0x05
- *   BYPASS=111111b=0x3F
- * ⚠ 旧代码把 IDCODE 写成 0x2 且只移 4 位：0x2 其实是 ROUTER，IR 宽度也不对，
- *   所以既没选中 IDCODE、也读不回来（恒 0）。 */
-#define ICEPICK_IR_BITS      6
-#define JTAG_IR_ROUTER       0x02
-#define JTAG_IR_IDCODE       0x04
-#define JTAG_IR_ICEPICKCODE  0x05
-#define JTAG_IR_BYPASS       0x3F
+/* ── cJTAG 命令（TRM SWCU185G Table 6-4）────────────────────────────
+ * 命令的「值」由 DR 扫描在 Shift-DR 里停留的时钟数承载（0..31），
+ * CP0 = opcode，CP1 = operand。TI 的 cJTAG **不用** IEEE 1149.7 的 TMSC
+ * escape 激活序列——整本 TRM 里 "escape" 一次都没出现。 */
+#define CJTAG_CMD_STMC        0   /* Store Miscellaneous Control */
+#define CJTAG_CMD_STC1        1   /* Store Conditional 1 bit（含 SEDGE 采样沿） */
+#define CJTAG_CMD_STC2        2   /* Store Conditional 2 bit（APFC → 切 4 线） */
+#define CJTAG_CMD_STFMT       3   /* Store Scan Format */
 
-/* 二级 TAP（Cortex-M DAP）的 4 位 IR —— 必须先用 ROUTER+SDTAP 路由后才可见。 */
+#define CJTAG_FMT_CODE_OSCAN1 9   /* STFMT operand：9 = OSCAN1（Table 6-4） */
+
+/* ── TAP 指令 ────────────────────────────────────────────────────── */
+/* ICEPick（JTAG Route Controller）——OpenOCD tcl/target/ti/cc26x0.cfg：
+ *   `jtag newtap $_CHIPNAME jrc -irlen 6 -ircapture 0x1 -irmask 0x3f`
+ * 指令码见 tcl/target/ti/icepick.cfg 与 cjtag.cfg。 */
+#define ICEPICK_IR_BITS      6
+#define JTAG_IR_ICEPICK_BYPASS  0x00
+#define JTAG_IR_ROUTER          0x02
+#define JTAG_IR_CONNECT         0x07
+#define JTAG_IR_IDCODE          0x04
+#define JTAG_IR_BYPASS          0x3F
+
+/* 二级 TAP（Cortex-M DAP）——cc26x0.cfg：`-irlen 4`。
+ * ⚠ 该 TAP 在 cc26x0.cfg 里是 `-disable` 的，必须先经 ICEPick
+ * CONNECT + router 写把它挂上链才可见。 */
+#define DAP_IR_BITS          4
 #define JTAG_IR_DPACC        0xA    /* Debug Port Access */
 #define JTAG_IR_APACC        0xB    /* Access Port Access */
 
@@ -64,7 +74,10 @@
 #define DP_CTRL_CSYSPWRUP  (1u << 30)
 #define DP_CTRL_CDBGPWRUP  (1u << 28)
 
-/* ── CC13x2 Flash Controller（基地址 0x40030000）────────────────── */
+/* ── CC13x2 Flash Controller（基地址 0x40030000）──────────────────
+ * ⚠ 这套寄存器直写模型来自 Stellaris/CC2538，尚未对 CC13x2 核实。
+ * OpenOCD 给 CC13x2 用的是 `flash bank ... cc26xx`（SRAM flash loader）。
+ * 见 cjtag.c 「Flash 操作」上方的未决说明。 */
 #define FLASH_BASE         0x40030000
 #define FLASH_FADDR        (FLASH_BASE + 0x04)
 #define FLASH_FMC          (FLASH_BASE + 0x08)
@@ -78,23 +91,34 @@
 
 /* CC1312R 参数 */
 #define CC13_FLASH_SIZE    (352 * 1024)  /* 352 KB flash */
-#define CC13_SECTOR_SIZE   4096            /* 4 KB per sector */
-#define CC13_IDCODE        0x4CC13E2F     /* Cortex-M4 + TI 制造商 */
+#define CC13_SECTOR_SIZE   4096          /* 4 KB per sector */
+
+/* TLR 之后从 DR 读到的是 **ICEPick JRC** 的 IDCODE，不是 Cortex-M 的。
+ * OpenOCD tcl/target/ti/cc13x2.cfg：`set JRC_TAPID 0x0BB4102F`。
+ * bit[31:28] 是版本号，不同批次会变 —— cc26x0.cfg 对这个 TAP 用了
+ * `-ignore-version`，所以比对必须屏蔽掉。 */
+#define CC13_JRC_IDCODE      0x0BB4102Fu
+#define CC13_IDCODE_MASK     0x0FFFFFFFu
+/* 路由到二级 TAP 之后才看得到（cc26x0.cfg：DAP_TAPID）。 */
+#define CC13_DAP_IDCODE      0x4BA00477u
 
 /* ── 初始化 / 退出 ───────────────────────────────────────────────── */
 
-/* 进入代刷模式：接管 GPIO16/17/18、发 RESET 脉冲让 CC1312R 进
- * cJTAG 模式（复位后 ICEPICK 默认 cJTAG）。返回前 TAP 处于
- * Test-Logic-Reset。调用者须先暂停 SPI master。 */
+/* 进入代刷模式：接管 GPIO16/17/18 → RESET 脉冲 → cJTAG 激活到 OScan1
+ * → TLR。调用者须先暂停 SPI master。 */
 void cjtag_enter(void);
 
-/* 退出代刷模式：释放 GPIO、发 RESET 脉冲让 CC1312R 重启。 */
+/* 退出代刷模式：回 TLR、发 RESET 脉冲让 CC1312R 重启。 */
 void cjtag_exit(void);
 
-/* ── JTAG 原语（host 可测的纯逻辑 + 目标胶水）─────────────────── */
+/* ── JTAG 原语 ──────────────────────────────────────────────────── */
 
-/* 读取 32-bit IDCODE（IR=0x2 → DR 返回）。用于通信证明。 */
+/* 读取 32-bit IDCODE：TLR 会自动把 IDCODE 装进 IR，所以这条路径不依赖
+ * IR 宽度/指令码，是最短的存活证明。期望 CC13_JRC_IDCODE（屏蔽版本号）。 */
 uint32_t cjtag_read_idcode(void);
+
+/* 诊断：一次上板跑完激活参数矩阵并打印每个变体读到的原始 DR 值。 */
+void cjtag_diag(void);
 
 /* AHB-AP 内存读写（经 ICEPICK → DAP → MEM-AP）。 */
 uint32_t cjtag_ahb_read32(uint32_t addr);
@@ -119,6 +143,10 @@ bool cjtag_flash_program(uint32_t addr, const uint8_t *data, size_t len);
 
 /* 处理 CDC 字符 'F'（进入代刷模式）。返回 true = 进入成功。 */
 bool cjtag_cdc_enter(void);
+
+/* cjtag_cdc_enter() 本次读到的 IDCODE（成功或失败都保留，供打印）。
+ * 不要为了打印再调一次 cjtag_read_idcode()——那会打断已建立的会话。 */
+uint32_t cjtag_cdc_idcode(void);
 
 /* 处理代刷模式中的数据（镜像流）。返回 true = 继续接收。 */
 bool cjtag_cdc_data(uint8_t byte);

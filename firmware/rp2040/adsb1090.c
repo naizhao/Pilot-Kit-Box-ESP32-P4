@@ -242,13 +242,20 @@ static void core0_poll_control(void *user)
          * → RESET → 恢复 SPI master。
          * 完整操作流见 docs/firmware_update.md CC1312R 段。 */
         if (cjtag_cdc_enter()) {
-            printf("FLASH-MODE READY (CC1312R IDCODE=0x%08X)\n",
-                   cjtag_read_idcode());
+            /* 打印 cjtag_cdc_enter() 本次读到的值，不要再调一次
+             * cjtag_read_idcode()——那会把已经建好的会话打回 TLR。 */
+            printf("FLASH-MODE READY (ICEPick IDCODE=0x%08lX)\n",
+                   (unsigned long)cjtag_cdc_idcode());
             printf("Send 4-byte LE length, then the image.\n");
         } else {
-            printf("FLASH-MODE FAIL (no JTAG response — check CC1312R "
-                   "power/clock)\n");
+            printf("FLASH-MODE FAIL (IDCODE=0x%08lX, 期望 0x_BB4102F) "
+                   "—— 跑 'J' 看激活参数矩阵\n",
+                   (unsigned long)cjtag_cdc_idcode());
         }
+    } else if (c == 'J') {
+        /* cJTAG 链路诊断：跑一遍激活参数矩阵，打印每个变体读回的原始 DR。
+         * 只读，不碰 flash。 */
+        cjtag_diag();
     } else if (c == 'Q' && cjtag_cdc_active()) {
         cjtag_cdc_quit();
         printf("FLASH-DONE\n");
