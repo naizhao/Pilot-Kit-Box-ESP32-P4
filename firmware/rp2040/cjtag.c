@@ -231,6 +231,69 @@ static void hw_wake_icemelter(void)
     pin_sleep_ms(1);                      /* ≥200 µs */
 }
 
+/* ── SEGGER 公布的 cJTAG 连接序列 ───────────────────────────────────
+ *
+ * 出处：kb.segger.com/J-Link_cJTAG_specifics 的 "Standard connect sequence"。
+ * J-Link 是实机能连 CC1312R 的（ADSBee 就用它：-if cJTAG），所以这段是目前
+ * 能拿到的、唯一一份**经实机验证的完整 TI cJTAG 上电流程**。
+ *
+ * ⚠ 更正我此前的一个错误推论：我曾以「整本 TRM 里 escape 出现 0 次」断定
+ * TI 不用 escape 序列。这个推断不成立——escape 属于 IEEE 1149.7 链路层，
+ * TI 没义务在自己的手册里重复它。SEGGER 的序列里 escape 和 TI TRM 的
+ * command window 是**同时存在**的：先用 escape 把 TAP.7 唤醒进 JScan0，
+ * 再用 TRM §6.2 那套 ZBS + CP0/CP1 发命令。
+ *
+ * 还有一条我漏掉的：STFMT 之前要先发 **STC1 operand=1**，即
+ * cbbbv = 0_000_1 → bbb=000 选中 SEDGE、c=0、v=1 → SEDGE=1
+ * =「用 TCKC 上升沿采样 TMSC」（TRM Table 6-4）。SEGGER 显式设它，说明
+ * 复位默认很可能是下降沿采样——那样我的 OScan1 每一位都会采在错的沿上。
+ */
+
+/* 原始 TMS 位：1 个 TCKC 一位，TMSC 就是 TMS。激活期间格式尚未确定，
+ * 不能走 hw_scan_bit（它会按 s_fmt 决定要不要发 3 周期包）。 */
+static void raw_tms(uint32_t bits, int n)
+{
+    for (int i = 0; i < n; i++) {
+        pin_tmsc_drive((int)((bits >> i) & 1));
+        tck_high();
+        tck_low();
+    }
+}
+
+/* escape：TCKC 拉高期间把 TMSC 翻转 n 次，再拉低结束。 */
+static void raw_escape(int toggles)
+{
+    pin_tmsc_drive(0);
+    pin_delay_half();
+    pin_tckc(1);
+    pin_delay_half();
+    int v = 0;
+    for (int i = 0; i < toggles; i++) {
+        v ^= 1;
+        pin_tmsc_drive(v);
+        pin_delay_half();
+    }
+    pin_tmsc_drive(0);
+    pin_delay_half();
+    pin_tckc(0);
+    pin_delay_half();
+}
+
+/* SEGGER "Standard connect sequence" 的前半段：把 TAP.7 唤醒到 JScan0。 */
+static void cjtag_segger_wake(void)
+{
+    raw_escape(10);                /* Reset escape：≥8 次翻转 → 回 JScan0 */
+    raw_tms(0xFFFFFFFFu, 24);      /* ≥22 拍 TMS=1 → Test-Logic-Reset */
+    raw_tms(0x00u, 1);             /* → Run-Test/Idle */
+    raw_escape(7);                 /* Selection escape */
+    raw_tms(0x00u, 4);             /* OAC = 0000（长式：唤醒全部 technologies）*/
+    raw_tms(0x00u, 4);             /* EC  = 0000（长式，后随 24 位全局寄存器）*/
+    raw_tms(0x00000000u, 24);      /* SCNFMT/DLYC/RDYC/TPST/TPPREV/TP_DELN */
+    raw_tms(0x00u, 4);             /* Check packet */
+    /* 调用方负责把 TAP 状态标记成 Run-Test/Idle（上面最后停在那里）——
+     * 这个函数在 TAP 状态机定义之前，够不着 s_tap。 */
+}
+
 /* ── TAP 状态机 ──────────────────────────────────────────────────── */
 
 typedef enum {
@@ -457,12 +520,26 @@ typedef struct {
     uint8_t       inert_ir;    /* 开窗第 1 步的惰性指令：TRM 说 BYPASS 或 IDCODE 都行 */
     cjtag_close_t close;
     uint8_t       fmt_delay;   /* 切格式前多走几个旧格式的位（0..2） */
+    bool          segger_wake; /* 先跑 SEGGER 的 escape + 长式激活 */
+    bool          set_sedge;   /* STFMT 之前先发 STC1 operand=1（SEDGE=1） */
 } cjtag_open_opt_t;
 
 /* 切到 OScan1：TRM Table 6-4，STFMT(opcode 3) + operand 9。 */
 static void cjtag_select_oscan1(const cjtag_open_opt_t *o)
 {
+    if (o->segger_wake) {
+        cjtag_segger_wake();
+        s_fmt = FMT_JSCAN2;
+        s_tap = TAP_RTI;           /* SEGGER 序列最后停在 Run-Test/Idle */
+    }
     cjtag_open_command_window(o->inert_ir);
+    if (o->set_sedge) {
+        /* STC1 operand 1 = SEDGE=1（上升沿采样 TMSC）。SEGGER 在 STFMT 之前
+         * 显式设它——默认很可能是下降沿，那样 OScan1 每一位都采在错的沿上。 */
+        cjtag_command(CJTAG_CMD_STC1, 1);
+        s_tap = TAP_UPDATE_DR;
+        tap_goto(TAP_PAUSE_DR);
+    }
     cjtag_command(CJTAG_CMD_STFMT, CJTAG_FMT_CODE_OSCAN1);
     s_tap = TAP_UPDATE_DR;
 
@@ -503,7 +580,7 @@ void cjtag_enter(void)
 
     hw_wake_icemelter();    /* TRM §6.4：先把 JTAG 电源域唤醒 */
     tap_reset();
-    const cjtag_open_opt_t def = { JTAG_IR_BYPASS, CLOSE_TLR, 0 };
+    const cjtag_open_opt_t def = { JTAG_IR_BYPASS, CLOSE_TLR, 0, true, true };
     cjtag_select_oscan1(&def);
 }
 
@@ -770,7 +847,7 @@ void cjtag_diag(void)
     diag_probe_line("ICEMelter唤醒后");
 
     tap_reset();
-    const cjtag_open_opt_t probe_opt = { JTAG_IR_BYPASS, CLOSE_TLR, 0 };
+    const cjtag_open_opt_t probe_opt = { JTAG_IR_BYPASS, CLOSE_TLR, 0, true, true };
     cjtag_select_oscan1(&probe_opt);
     diag_probe_line("切OScan1后");
 
@@ -791,11 +868,15 @@ void cjtag_diag(void)
     static const char *k_close_name[] = { "TLR", "IR", "ECL" };
     for (int v = 0; v < 24; v++) {
         cjtag_open_opt_t o;
-        o.close     = (cjtag_close_t)(v % 3);
-        o.fmt_delay = (uint8_t)((v / 3) % 2);
-        o.inert_ir  = ((v / 6) % 2) ? JTAG_IR_IDCODE : JTAG_IR_BYPASS;
+        o.segger_wake = (v & 1) != 0;      /* SEGGER escape + 长式激活 */
+        o.set_sedge   = (v & 2) != 0;      /* STC1 SEDGE=1 */
+        o.close       = (cjtag_close_t)((v / 4) % 3);
+        o.fmt_delay   = 0;
+        o.inert_ir    = JTAG_IR_BYPASS;
         const int slow = (v / 12) % 2;
-        s_tck_half_us = slow ? 20u : 2u;
+        /* SEGGER 说 cJTAG 低于 500 kHz 会被它强制提到 500 kHz（KEEPER 逻辑
+         * 缺陷的绕法依赖高速）。所以"更慢更保险"在 cJTAG 上不成立。 */
+        s_tck_half_us = slow ? 5u : 1u;    /* ~100 kHz / ~500 kHz */
 
         hw_reset_pulse();
         s_fmt = FMT_JSCAN2;
@@ -807,9 +888,9 @@ void cjtag_diag(void)
          * 其余两条靠 cjtag_read_idcode() 自带的 TLR。 */
         uint32_t id = (o.close == CLOSE_IR) ? jtag_shift_dr(0, 32)
                                             : cjtag_read_idcode();
-        printf("  close=%-3s delay=%u inert=0x%02X %-6s → IDCODE=0x%08lX %s\n",
-               k_close_name[o.close], o.fmt_delay, o.inert_ir,
-               slow ? "25kHz" : "250kHz", (unsigned long)id,
+        printf("  wake=%d sedge=%d close=%-3s %-7s → IDCODE=0x%08lX %s\n",
+               o.segger_wake, o.set_sedge, k_close_name[o.close],
+               slow ? "100kHz" : "500kHz", (unsigned long)id,
                ((id & CC13_IDCODE_MASK) == (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
                    ? "← 对上 ICEPick JRC" : "");
     }
