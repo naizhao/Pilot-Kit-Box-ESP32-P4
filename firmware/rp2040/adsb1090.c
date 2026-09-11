@@ -233,9 +233,23 @@ static void core0_poll_control(void *user)
                h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
                (int)p4_link_linked());
     } else if (c == 'H') {
-        printf("tl_level=%dmV rssi_raw=%d\n",
+        /* rssi_raw 标注为不可信：实测它读回的是门限那一路的电压，不是
+         * AD8313 的检波输出（机理见 threshold_ctl.h 文件头）。不加这个
+         * 标注，它就是一个看起来完全正常、实际会把人带偏的数字。 */
+        printf("tl_level=%dmV rssi_raw=%d(!不可信,见 threshold_ctl.h)\n",
                threshold_ctl_read_level_mv(),
                threshold_ctl_read_rssi_raw());
+        /* 连读判据：被驱动的节点连读立刻稳定；悬空的高阻节点会被采样电容
+         * 反复充电而漂。2026-09-11 发现 rssi_raw 全程跟着门限走，这一串是
+         * 用来区分"没人驱动"和"读错通道"的。 */
+        uint16_t b[8];
+        threshold_ctl_adc_burst(PIN_ADC_RSSI, b, 8);
+        printf("  rssi 连读:");
+        for (int i = 0; i < 8; i++) printf(" %u", (unsigned)b[i]);
+        threshold_ctl_adc_burst(PIN_ADC_LEVEL, b, 8);
+        printf("\n  level 连读:");
+        for (int i = 0; i < 8; i++) printf(" %u", (unsigned)b[i]);
+        printf("\n");
     } else if (c == 'F') {
         /* CC1312R 代刷模式（cJTAG 位脉冲）：暂停 1090 解码、独占
          * SUBG_TMSC/TCKC/RESET → 读 IDCODE → 流式收镜像 → 擦/写/校验

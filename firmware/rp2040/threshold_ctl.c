@@ -47,15 +47,48 @@ void threshold_ctl_set_permille(int pml)
                        (uint16_t)((uint32_t)pml * (TL_PWM_WRAP + 1) / 1000));
 }
 
+/*
+ * 切通道后丢弃一次转换再读。
+ *
+ * RP2040 的 ADC 是单个采样保持电容 + 模拟多路开关：切到新通道后，第一次
+ * 转换的采样期要把电容从上一通道的电压拉过来，源阻抗稍高就拉不到位。丢一
+ * 次转换等于多给电容一个采样期，是 RP2040 多通道采样的常规做法。
+ *
+ * ⚠ 诚实记录：加这一条**并没有**解决 2026-09-11 观察到的 rssi_raw 跟着门限
+ * 走的问题——加之前加之后实测一模一样。原因见 threshold_ctl.h 顶部的
+ * 「rssi_raw 不可信」一节：那是板级的直流通路问题，不是采样电容没充到位。
+ * 留着它是因为它本身是对的、且有 test_threshold_ctl.c 的用例兜着，不是因为
+ * 它修好了那个现象。
+ */
+static uint16_t adc_read_settled(uint chan)
+{
+    adc_select_input(chan);
+    (void)adc_read();        /* 丢弃：让采样电容从上一通道充到本通道 */
+    return adc_read();
+}
+
 static int adc_mv(uint gpio)
 {
-    adc_select_input(gpio - ADC_BASE_PIN);   /* RP2040: GPIO26→0, 27→1 */
-    return (int)(((uint32_t)adc_read() * 3300u) >> 12);
+    /* RP2040: GPIO26→通道 0, 27→通道 1 */
+    return (int)(((uint32_t)adc_read_settled(gpio - ADC_BASE_PIN) * 3300u) >> 12);
 }
 
 int  threshold_ctl_read_level_mv(void) { return adc_mv(PIN_ADC_LEVEL); }
 int  threshold_ctl_read_rssi_raw(void)
 {
-    adc_select_input(PIN_ADC_RSSI - ADC_BASE_PIN);
-    return (int)adc_read();
+    return (int)adc_read_settled(PIN_ADC_RSSI - ADC_BASE_PIN);
+}
+
+/*
+ * 诊断：连读同一通道 n 次，把每次的原始码都给出来。
+ *
+ * 判据——被真正驱动的节点，连读的值应当立刻稳定在真值上；而**悬空**的
+ * 高阻节点会被 ADC 的采样电容反复充电，读数从"上一通道的电压"开始往别处
+ * 漂。所以「连读会不会漂」能把"这一路没人驱动"和"驱动了但读错通道"分开，
+ * 这是不接仪器时唯一能做的区分。
+ */
+void threshold_ctl_adc_burst(uint gpio, uint16_t *out, int n)
+{
+    adc_select_input(gpio - ADC_BASE_PIN);
+    for (int i = 0; i < n; i++) out[i] = adc_read();
 }
