@@ -23,6 +23,7 @@
 #include "config_storage.h"
 #include "config_traffic.h"
 #include "config_ac_category.h"
+#include "config_antenna.h"
 #include "display.h"
 #include "i18n.h"
 #include "pfd_aa_font.h"
@@ -53,7 +54,7 @@
 #define SET_PAD        PK_UI_PAD_L
 #define SET_CTL_R      (PK_DISPLAY_W - 16 - 56 - 12)   /* 避开 FAB，同列表页 */
 
-#define SET_ROWS      14
+#define SET_ROWS      PK_SETTINGS_ROW_COUNT
 #define SET_VIEW_H    (PK_DISPLAY_H - PFD_BAR_BOT)
 #define SET_MAX_SCROLL  (SET_ROWS * SET_ROW_H > SET_VIEW_H \
                          ? SET_ROWS * SET_ROW_H - SET_VIEW_H : 0)
@@ -450,7 +451,45 @@ void pk_settings_page_render(uint16_t *fb)
       hit_set(row, 3, x0, w, 0, y_mid);
       row++; }
 
-    /* 13 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 13 / 14 天线选择 ——
+     *
+     * 放在这里（校准之后、格式化 SD 之前）而不是页面上半：它不是每次飞行都
+     * 要动的项，但也不危险，不该挤在语言/QNH 那些每次都看的行里，更不该排
+     * 在危险按钮之后。
+     *
+     * 值存在 P4 的 NVS，真正的开关在 RP2040 上（U16/U17），经 CONFIG_REQ
+     * 下发——见 config_antenna.h 讲"谁是真源"那段。 */
+    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_1090_ONBOARD),
+                          pk_i18n_text(PK_TR_SETTINGS_ANT_1090_EXT) };
+      ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_ANT_1090));
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
+                              pk_ant_1090_get() == PK_ANT_1090_EXTERNAL ? 1 : 0,
+                              false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
+      row++; }
+
+    /* GNSS 那一行必须带警告小字：v3/v4 未打 ECO 的板子上，这两根选择线兼做
+     * 偏置馈电门控且配对是反的——选中哪一路就给另一路供电，有源天线拿不到
+     * 电。固件改不了这件事，开关旁边就得让人看见代价，否则用户切过去发现没
+     * 星，只会以为天线坏了。配色与演示模式那句警告同一档。 */
+    { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_EXT),
+                          pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_ONBOARD) };
+      const char *label = pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS);
+      ROW_LABEL(row, label);
+      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
+                              pk_ant_gnss_get() == PK_ANT_GNSS_ONBOARD ? 1 : 0,
+                              false);
+      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
+      { const int _y = ROW_Y(row);
+        if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
+            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                       SET_PAD + pk_aa_text_width(label, PK_UI_ITEM_SIZE) + 16,
+                       _y - PK_AA_XS_H / 2,
+                       pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_HINT),
+                       pk_rgb565(255, 90, 80), PK_AA_XS); }
+      row++; }
+
+    /* 15 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;

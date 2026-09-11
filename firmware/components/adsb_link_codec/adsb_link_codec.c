@@ -155,3 +155,39 @@ void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *bytes, size_t n)
     }
     dec_drain(d);
 }
+
+/* ── CONFIG_REQ payload（v1.2，规范 §7）─────────────────────────────── */
+
+size_t adsb_link_config_encode(uint8_t *out, size_t cap,
+                               const adsb_link_cfg_item_t *items, uint8_t n)
+{
+    if (!out || (!items && n)) return 0;
+    if (n > ADSB_LINK_CFG_MAX_ITEMS) return 0;
+    const size_t need = 1u + (size_t)n * 2u;
+    if (cap < need) return 0;                 /* 失败不写输出 */
+    out[0] = n;
+    for (uint8_t i = 0; i < n; i++) {
+        out[1 + i * 2] = items[i].key;
+        out[2 + i * 2] = items[i].val;
+    }
+    return need;
+}
+
+bool adsb_link_config_decode(const uint8_t *payload, size_t len,
+                             adsb_link_cfg_item_t *out, uint8_t cap,
+                             uint8_t *n)
+{
+    if (!payload || len < 1) return false;
+    const uint8_t cnt = payload[0];
+    if (cnt > ADSB_LINK_CFG_MAX_ITEMS || cnt > cap) return false;
+    /* 声明条数与实际长度必须严格相符——多出来的尾巴不是"宽容"，而是
+     * 我们不知道对面到底想说什么，照单全收会把垃圾当配置应用到 RF 通路上。 */
+    if (len != 1u + (size_t)cnt * 2u) return false;
+    if (!out && cnt) return false;
+    for (uint8_t i = 0; i < cnt; i++) {
+        out[i].key = payload[1 + i * 2];
+        out[i].val = payload[2 + i * 2];
+    }
+    if (n) *n = cnt;
+    return true;
+}

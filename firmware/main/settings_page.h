@@ -6,6 +6,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/*
+ * 设置页行数——**两边共用这一个定义**。
+ *
+ * settings_draw.c 拥有版面（画的顺序就是行号），settings_page.c 按同一个
+ * 行号分派写操作。这两个数此前是各自 #define 的，drift 过一次：4.3″ 上早已
+ * 9 行而 settings_page.c 还写着 6，光标转到第 6 行就绕回去，后面几项按键根本
+ * 选不到（那段历史见 settings_page.c 的注释）。
+ *
+ * drift 的代价随着行数增长只会更糟：行号错位意味着点 A 行执行 B 行的动作，
+ * 而这一页的最后一行是**格式化 SD**。
+ */
+#define PK_SETTINGS_ROW_COUNT  16
+
 void pk_settings_page_render(uint16_t *fb);
 
 /* 多行光标控制 (Language / QNH / MAP朝向 / RANGE量程 / LOG存储 / FORMAT SD) */

@@ -1,7 +1,7 @@
-# P4 ↔ RP2040 ADS-B 链路协议（UART），v1.1
+# P4 ↔ RP2040 ADS-B 链路协议（UART），v1.2
 
-状态：v1.0 冻结（2026-09-05）；v1.1（2026-09-08）为向前兼容新增，见 §6
-变更清单。修改协议必须递增 minor（向前兼容新增）或 major（不兼容），
+状态：v1.0 冻结（2026-09-05）；v1.1（2026-09-08）与 v1.2（2026-09-11）均为
+向前兼容新增，见 §6 / §7 变更清单。修改协议必须递增 minor（向前兼容新增）或 major（不兼容），
 并同步更新 `firmware/components/adsb_link_codec/` 与两侧实现及测试。
 
 物理层：UART 8N1，波特率 **921600（台架候选值）**。P4 侧 UART2：RX=GPIO46（RP2040 TXD）、
@@ -13,7 +13,7 @@ TX=GPIO32（RP2040 RXD）。RP2040 侧 UART0：TX=GPIO0、RX=GPIO1。
 |---|---|---|
 | 0 | 2 | magic：`0x50 0x4B`（"PK"） |
 | 2 | 1 | ver_major（本版 = 1） |
-| 3 | 1 | ver_minor（本版 = 1；v1.0 为 0。接收方只校验 major，§3.2） |
+| 3 | 1 | ver_minor（本版 = 2；v1.1 为 1、v1.0 为 0。接收方只校验 major，§3.2） |
 | 4 | 1 | msg_type |
 | 5 | 1 | seq（每发送方独立 u8 回绕递增） |
 | 6 | 2 | payload_len（LE，≤ 576；v1.0 为 464，v1.1 扩容见 §6） |
@@ -33,8 +33,8 @@ CRC 已知答案向量：`crc16("123456789") = 0x29B1`。
 | 0x03 | HEALTH_STATS | RP→P4，1 Hz | 见 §4 |
 | 0x10 | MODES_RAW | RP→P4 | `{u8 flags; u8 rssi; u32le rp_ts_us; u8 frame[7 或 14]}`；flags bit0=112-bit 帧；rssi 单位 0.5 dB、0xFF=无值；rp_ts_us 为模 2^32 单调 µs（帧 preamble 首沿；约 71.6 分钟回绕，见下方勘误）；RP2040 MVP 始终提供有效值，0 是合法回绕值 |
 | 0x11 | UAT_UPLINK | RP→P4 | v1.1 新增，固定 557 B，见 §6 |
-| 0x20 | CONFIG_REQ | P4→RP | 预留（v1 不实现） |
-| 0x21 | CONFIG_ACK | RP→P4 | 预留（v1 不实现） |
+| 0x20 | CONFIG_REQ | P4→RP | `{u8 n; {u8 key; u8 val;} item[n]}`（v1.2，§7） |
+| 0x21 | CONFIG_ACK | RP→P4 | `{u8 applied; u8 rejected;}`（v1.2，§7） |
 | 0x7F | ERROR | RP→P4 | `{u8 code; u8 len; u8 msg[len]}` |
 
 > 勘误（2026-09-05，re-audit P2）：`rp_ts_us` 为**模 2^32 单调** µs（约
@@ -124,13 +124,59 @@ v1.1 只做向前兼容新增，不改变任何 v1.0 消息的字节行为：
 test_uat_decode.c 同一 552 B），元数据 rssi=0x37、rp_ts_us=0x11223344：
 
 ```
-50 4B 01 01 11 00 2D 02          ; magic ver=1.1 type=0x11 seq=0 plen=0x022D
+50 4B 01 02 11 00 2D 02          ; magic ver=1.2 type=0x11 seq=0 plen=0x022D
 37 44 33 22 11                   ; rssi=0x37, rp_ts_us=0x11223344 (LE)
 35 F0 FC 07 30 00 … C1 F7 00 00  ; 552 B 交织帧（UP-CLEAN 全文见
                                   ;   test_uat_decode.c VEC_UP_CLEAN_552）
-AD 5F                            ; crc16 = 0x5FAD（LE）
+A4 21                            ; crc16 = 0x21A4（LE）
 ```
 
 帧总长 567 B。CRC 由独立 Python 实现（CCITT-FALSE，KAT "123456789"→
-0x29B1 对拍）计算；codec 测试再以第三实现钉死（test_adsb_link_codec.c
+0x29B1 对拍）计算。**注意 ver_minor 在帧头里、也进 CRC**：每次递增 minor
+这个向量的末两字节都会变（v1.1 时是 `AD 5F`），这属于预期，不是回归；
+codec 测试再以第三实现钉死（test_adsb_link_codec.c
 case 19-21 / test_uat_ingest.c 向量节）。
+
+---
+
+## 7. v1.2 新增：CONFIG_REQ / CONFIG_ACK（2026-09-11）
+
+v1.0/v1.1 把 0x20/0x21 列为"预留不实现"，RP2040 收到一律回 ERROR code=1。
+v1.2 给出定义，用于把**天线选择**这类持久配置从 P4 推到 RP2040。
+
+### 7.1 payload
+
+```
+CONFIG_REQ (P4→RP):  u8 n;  然后 n 组 { u8 key; u8 val; }        长度 = 1 + 2n
+CONFIG_ACK (RP→P4):  u8 applied;  u8 rejected;                    长度 = 2
+```
+
+`n ≤ 16`（`ADSB_LINK_CFG_MAX_ITEMS`）。**声明条数与 payload 长度必须严格
+相符**，多一字节少一字节都整包拒收并回 ERROR code=2——这不是"宽容"问题，
+照单全收等于把来路不明的字节应用到 RF 通路上。
+
+| key | 含义 | val |
+|---|---|---|
+| 0x01 | 1090 天线 | 0 = 板载 IFA（默认）/ 1 = 外接 J6 |
+| 0x02 | GNSS 天线 | 0 = 外接 J2（默认）/ 1 = 板载 patch J8 |
+
+未知 key 计入 `rejected` 但不影响其它项——与 §3.5「未知 msg_type 必须递交」
+同一条前向兼容原则：对面比我们新的时候，该忽略的是不认识的那一项，不是整包。
+
+### 7.2 状态归属与重推时机
+
+**NVS 里 P4 那一份是真源**，RP2040 上的是它的投影。RP2040 自己不持久化，
+上电一律回到 `rf_safety` 的上电安全向量。
+
+key 的取值刻意让 **val=0 等于上电默认**。这样"配置还没送到"和"用户选的就是
+默认值"落在同一个 RF 状态上，不会出现半套配置——RF 通路上一半新一半旧最难
+查：屏上一切正常，实际接的是另一根天线。
+
+P4 在两个时机下发：用户在设置页改值；以及**每次收到 RP2040 的 HELLO**。
+挂在 HELLO 上而不是 linked 边沿，是因为 RP 侧未 linked 时就是 1 Hz 发
+HELLO，边沿判定漏一次，用户的选择要等到下次开机才生效。
+
+### 7.3 与 CDC 调试键的关系
+
+RP2040 的 CDC `A/a/N/n` 仍可切天线，但那是**易失**的台架入口：P4 下一次
+下发就会覆盖回设置页里存的值。串口提示里已标注。

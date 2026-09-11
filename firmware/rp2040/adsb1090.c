@@ -228,6 +228,9 @@ static void core0_poll_control(void *user)
                    "-- check wire/decode\n");
     } else if (c == 'S') {
         uint32_t h[10]; health_fill(h);
+        printf("ant1090=%s antgnss=%s\n",
+               p4_link_ant_1090() ? "EXT-J6" : "ONBOARD-IFA",
+               p4_link_ant_gnss() ? "ONBOARD-PATCH" : "EXT-J2");
         printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "
                "ringdrop=%u tx=%u rx=%u linked=%d\n",
                h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
@@ -273,26 +276,24 @@ static void core0_poll_control(void *user)
     } else if (c == 'Q' && cjtag_cdc_active()) {
         cjtag_cdc_quit();
         printf("FLASH-DONE\n");
-    } else if (c == 'A') {
-        /* 1090 天线切外接 J6（U16 SPDT：A=0/B=1） */
-        gpio_put(PIN_ANT_SEL_1090_A, 0);
-        gpio_put(PIN_ANT_SEL_1090_B, 1);
-        printf("1090 ant -> EXTERNAL (J6)\n");
-    } else if (c == 'a') {
-        /* 1090 天线切板载 IFA（U16：A=1/B=0，boot 默认） */
-        gpio_put(PIN_ANT_SEL_1090_A, 1);
-        gpio_put(PIN_ANT_SEL_1090_B, 0);
-        printf("1090 ant -> ONBOARD IFA\n");
-    } else if (c == 'N') {
-        /* GNSS 天线切 J2（U17：A=0/B=1，boot 默认） */
-        gpio_put(PIN_GNSS_SEL_A, 0);
-        gpio_put(PIN_GNSS_SEL_B, 1);
-        printf("GNSS ant -> J2\n");
-    } else if (c == 'n') {
-        /* GNSS 天线切 J8 内置 patch 位（U17：A=1/B=0） */
-        gpio_put(PIN_GNSS_SEL_A, 1);
-        gpio_put(PIN_GNSS_SEL_B, 0);
-        printf("GNSS ant -> J8\n");
+    } else if (c == 'A' || c == 'a' || c == 'N' || c == 'n') {
+        /* 天线选择的真值表只在 rf_safety.c 一处（P4 的 CONFIG_REQ 走的也是
+         * 同一对函数）。这里曾各自 gpio_put 一遍，两处抄同一张表，改一处
+         * 漏一处只是时间问题。
+         *
+         * ⚠ 这几个键是**台架调试入口**，改的是易失状态：P4 下一次下发
+         * CONFIG_REQ（用户改设置、或 RP 重启后握手）会把它覆盖回设置页里
+         * 存的值。要永久改，改设置页。 */
+        switch (c) {
+        case 'A': rf_safety_set_ant_1090(RF_ANT_1090_EXTERNAL);
+                  printf("1090 ant -> EXTERNAL (J6)  [临时，P4 下发会覆盖]\n"); break;
+        case 'a': rf_safety_set_ant_1090(RF_ANT_1090_ONBOARD);
+                  printf("1090 ant -> ONBOARD IFA    [临时，P4 下发会覆盖]\n"); break;
+        case 'N': rf_safety_set_ant_gnss(RF_ANT_GNSS_EXTERNAL);
+                  printf("GNSS ant -> J2 外接        [临时，P4 下发会覆盖]\n"); break;
+        default:  rf_safety_set_ant_gnss(RF_ANT_GNSS_ONBOARD);
+                  printf("GNSS ant -> J8 板载 patch  [临时，P4 下发会覆盖]\n"); break;
+        }
     } else if (c == 'P') {
         /* 运行期设门限：'P' 后跟 1–4 位十进制 permille（0..1000），
          * 非数字字符或 300ms 无输入结束。闭环/协议下发是后续项

@@ -400,8 +400,12 @@ int main(void)
                                     9, pl, ADSB_LINK_UAT_PAYLOAD_LEN);
         CHECK(n == ADSB_LINK_HDR_LEN + ADSB_LINK_UAT_PAYLOAD_LEN + 2,
               "wire len got=%zu\n", n);
-        static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x01, 0x11, 0x09,
-                                        0x2D, 0x02 };
+        /* ver_minor 跟着 ADSB_LINK_VER_MINOR 走（v1.2 起 = 2）。这里不写死
+         * 字面量：协议每加一次向前兼容的新增都会碰它，写死只会让这条断言变成
+         * "改完记得来改我"的提醒，而不是判据。magic/type/seq/plen 仍是字面量，
+         * 那些才是这条用例要钉的东西。 */
+        const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, ADSB_LINK_VER_MINOR,
+                                 0x11, 0x09, 0x2D, 0x02 };
         CHECK(memcmp(wire, HDR, 8) == 0, "header bytes\n");
         uint16_t c = ref_crc16(wire, n - 2);
         CHECK(wire[n - 2] == (uint8_t)c && wire[n - 1] == (uint8_t)(c >> 8),
@@ -440,6 +444,70 @@ int main(void)
         adsb_link_dec_feed(&d, buf, k + n2);
         CHECK(g_msgs == 1, "msgs=%d\n", g_msgs);
         CHECK(d.len_errors == 1, "len_errors=%u\n", d.len_errors);
+    }
+
+    /* ── 22: CONFIG_REQ payload 往返（v1.2 规范 §7）── */
+    {
+        const adsb_link_cfg_item_t in[2] = {
+            { ADSB_LINK_CFG_ANT_1090, 1 },
+            { ADSB_LINK_CFG_ANT_GNSS, 0 },
+        };
+        uint8_t pl[64];
+        size_t n = adsb_link_config_encode(pl, sizeof pl, in, 2);
+        CHECK(n == 5, "config_encode 长度 %zu\n", n);
+        CHECK(pl[0] == 2 && pl[1] == ADSB_LINK_CFG_ANT_1090 && pl[2] == 1 &&
+              pl[3] == ADSB_LINK_CFG_ANT_GNSS && pl[4] == 0, "config 字节布局\n");
+
+        adsb_link_cfg_item_t out[4]; uint8_t cnt = 0;
+        CHECK(adsb_link_config_decode(pl, n, out, 4, &cnt), "config_decode 失败\n");
+        CHECK(cnt == 2, "cnt=%u\n", cnt);
+        CHECK(out[0].key == in[0].key && out[0].val == in[0].val &&
+              out[1].key == in[1].key && out[1].val == in[1].val, "往返不一致\n");
+    }
+
+    /* ── 23: 空配置是合法的（n=0），且长度必须恰好是 1 ── */
+    {
+        uint8_t pl[8];
+        size_t n = adsb_link_config_encode(pl, sizeof pl, NULL, 0);
+        CHECK(n == 1 && pl[0] == 0, "空配置编码 n=%zu\n", n);
+        uint8_t cnt = 0xFF;
+        CHECK(adsb_link_config_decode(pl, 1, NULL, 0, &cnt), "空配置解码失败\n");
+        CHECK(cnt == 0, "空配置 cnt=%u\n", cnt);
+    }
+
+    /* ── 24: 声明条数与实际长度对不上必须拒收 ──
+     * 这条是安全项：多出来的尾巴不是"宽容"，照单全收等于把来路不明的字节
+     * 当配置应用到 RF 通路上。失败时不得改写输出。 */
+    {
+        uint8_t pl[8] = { 2, ADSB_LINK_CFG_ANT_1090, 1, ADSB_LINK_CFG_ANT_GNSS, 0, 0xEE };
+        adsb_link_cfg_item_t out[4];
+        out[0].key = 0xAA; out[0].val = 0xBB;
+        uint8_t cnt = 0x77;
+        CHECK(!adsb_link_config_decode(pl, 6, out, 4, &cnt), "多一字节仍被接受\n");
+        CHECK(out[0].key == 0xAA && out[0].val == 0xBB && cnt == 0x77,
+              "解码失败时改写了输出\n");
+        CHECK(!adsb_link_config_decode(pl, 4, out, 4, &cnt), "少一字节仍被接受\n");
+        CHECK(!adsb_link_config_decode(pl, 0, out, 4, &cnt), "空 payload 仍被接受\n");
+    }
+
+    /* ── 25: 条数越界 / 目标数组装不下都要拒收，不能截断 ── */
+    {
+        uint8_t pl[2 + ADSB_LINK_CFG_MAX_ITEMS * 2];
+        pl[0] = ADSB_LINK_CFG_MAX_ITEMS + 1;
+        adsb_link_cfg_item_t out[ADSB_LINK_CFG_MAX_ITEMS];
+        CHECK(!adsb_link_config_decode(pl, 1u + (size_t)pl[0] * 2u, out,
+                                       ADSB_LINK_CFG_MAX_ITEMS, NULL),
+              "超上限的条数仍被接受\n");
+        pl[0] = 3;
+        CHECK(!adsb_link_config_decode(pl, 7, out, 2, NULL),
+              "cap 不足仍被接受（会溢出）\n");
+
+        adsb_link_cfg_item_t big[ADSB_LINK_CFG_MAX_ITEMS + 1] = { { 0, 0 } };
+        CHECK(adsb_link_config_encode(pl, sizeof pl, big,
+                                      ADSB_LINK_CFG_MAX_ITEMS + 1) == 0,
+              "编码超上限条数应返回 0\n");
+        CHECK(adsb_link_config_encode(pl, 2, big, 4) == 0,
+              "cap 不足应返回 0\n");
     }
 
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);

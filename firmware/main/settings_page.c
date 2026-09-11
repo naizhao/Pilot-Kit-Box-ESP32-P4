@@ -31,6 +31,7 @@
 #include "config_storage.h"
 #include "config_traffic.h"
 #include "config_ac_category.h"
+#include "config_antenna.h"
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
@@ -44,7 +45,7 @@
  * 回去了，后面几项按键根本选不到。触摸上线后这条路径没人走，问题才一直
  * 没被发现。
  */
-#define SETTINGS_ROW_COUNT       14
+#define SETTINGS_ROW_COUNT       PK_SETTINGS_ROW_COUNT
 
 /* 键盘编辑器会把 max_len **静默**夹到自己的缓冲上限（keyboard_page.c 的
  * pk_keyboard_page_open）。两个上限一旦反过来，症状是「屏上敲得满、确定之后
@@ -266,7 +267,17 @@ void pk_settings_apply(int row, int v)
         pk_ui_cal_wizard_enter();
         break;
 
-    case 13:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 13:  /* 1090 天线。立即生效：set 里落 NVS 之后马上经 CONFIG_REQ
+               * 推给 RP2040（config_antenna.c），不等重启。 */
+        pk_ant_1090_set(v == 1 ? PK_ANT_1090_EXTERNAL : PK_ANT_1090_ONBOARD);
+        break;
+
+    case 14:  /* GNSS 天线。同上。行尾那句红色小字解释未改板时馈电是反的，
+               * 那是硬件事实，固件只负责说清楚。 */
+        pk_ant_gnss_set(v == 1 ? PK_ANT_GNSS_ONBOARD : PK_ANT_GNSS_EXTERNAL);
+        break;
+
+    case 15:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

@@ -335,6 +335,13 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_SETTINGS_QNH_SOURCE] = "QNH SOURCE",
         [PK_TR_QNH_MODE_AUTO] = "AUTO",
         [PK_TR_QNH_MODE_MANUAL] = "MANUAL",
+        [PK_TR_SETTINGS_ANT_1090] = "1090 antenna",
+        [PK_TR_SETTINGS_ANT_1090_ONBOARD] = "Onboard",
+        [PK_TR_SETTINGS_ANT_1090_EXT] = "External J6",
+        [PK_TR_SETTINGS_ANT_GNSS] = "GNSS antenna",
+        [PK_TR_SETTINGS_ANT_GNSS_EXT] = "External J2",
+        [PK_TR_SETTINGS_ANT_GNSS_ONBOARD] = "Onboard",
+        [PK_TR_SETTINGS_ANT_GNSS_HINT] = "(un-ECO'd boards: feed is inverted)",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -666,6 +673,13 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_SETTINGS_QNH_SOURCE] = "QNH 来源",
         [PK_TR_QNH_MODE_AUTO] = "自动",
         [PK_TR_QNH_MODE_MANUAL] = "手动",
+        [PK_TR_SETTINGS_ANT_1090] = "1090 天线",
+        [PK_TR_SETTINGS_ANT_1090_ONBOARD] = "板载",
+        [PK_TR_SETTINGS_ANT_1090_EXT] = "外接 J6",
+        [PK_TR_SETTINGS_ANT_GNSS] = "GNSS 天线",
+        [PK_TR_SETTINGS_ANT_GNSS_EXT] = "外接 J2",
+        [PK_TR_SETTINGS_ANT_GNSS_ONBOARD] = "板载",
+        [PK_TR_SETTINGS_ANT_GNSS_HINT] = "(未改板：馈电反接)",
     },
 };
 

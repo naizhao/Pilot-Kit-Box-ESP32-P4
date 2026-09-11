@@ -28,6 +28,8 @@
 #include "pk_rec_ingest.h"
 #include "gps.h"
 #include "adsb_link_task.h"
+#include "config_antenna.h"   /* 天线选择：NVS 真源，经 CONFIG_REQ 下发 */
+#include "freertos/semphr.h"
 
 static const char *TAG      = "dsp";     /* 沿用旧 TAG，日志检索连续 */
 static const char *TAG_ADSB = "adsb";
@@ -739,6 +741,38 @@ static uint32_t le32(const uint8_t *p)
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/*
+ * P4→RP 的统一发送口：共用一个 seq 计数器 + 一把互斥锁。
+ *
+ * 协议 §2 的 seq 是「按发送方递增」。此前 HELLO 回应用的是自己的静态计数
+ * 器，再多一个调用点就会出现两条独立序列，RP 侧的 seq_gaps 会持续虚增而
+ * 且没人能解释。锁是因为 HELLO 回应跑在链路任务、配置下发跑在 UI 任务：
+ * IDF 的 uart_write_bytes 自身有 tx_mux，单次调用写整帧不会字节级交错，
+ * 但 seq 的读改写没有它保护。
+ *
+ * out 用 static 而不是栈：ADSB_LINK_MAX_FRAME 是 586 B，UI 任务的栈不该
+ * 为一次配置下发抖这么一下。它在锁内使用，是安全的。
+ */
+static SemaphoreHandle_t s_tx_mux;
+static uint8_t s_tx_seq;
+
+static void link_tx(uint8_t type, const uint8_t *pl, size_t len)
+{
+    if (!s_tx_mux) return;               /* 链路任务还没起来，等 HELLO 那次 */
+    static uint8_t out[ADSB_LINK_MAX_FRAME];
+    xSemaphoreTake(s_tx_mux, portMAX_DELAY);
+    size_t n = adsb_link_encode(out, sizeof out, type, s_tx_seq++, pl, len);
+    if (n) uart_write_bytes(ADSB_UART, out, n);
+    xSemaphoreGive(s_tx_mux);
+}
+
+void pk_adsb_link_push_config(void)
+{
+    uint8_t pl[1 + ADSB_LINK_CFG_MAX_ITEMS * 2];
+    size_t n = pk_antenna_build_config_payload(pl, sizeof pl);
+    if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
+}
+
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
@@ -789,14 +823,13 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * 风险。日志只首条 LOGI，之后降 DEBUG。seq 用本侧单调计数（协议
          * §2 seq 是按发送方递增的）：恒 0 会让 RP 侧 seq_gaps 持续虚增。 */
         static bool s_hello_logged;
-        static uint8_t s_hello_seq;
         uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
         memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
-        uint8_t out[ADSB_LINK_MAX_FRAME];
-        size_t n = adsb_link_encode(out, sizeof out,
-                                    ADSB_LINK_MSG_HELLO, s_hello_seq++,
-                                    pl, sizeof pl);
-        if (n) uart_write_bytes(ADSB_UART, out, n);
+        link_tx(ADSB_LINK_MSG_HELLO, pl, sizeof pl);
+        /* RP2040 不持久化配置，上电只回到 rf_safety 的安全默认。它每重启
+         * 一次就重新发 HELLO，所以把"推配置"挂在这里而不是 linked 边沿：
+         * 边沿判定漏一次，用户的天线选择就要等到下次开机才生效。 */
+        pk_adsb_link_push_config();
         if (s_hello_logged)
             ESP_LOGD(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
                      ? "HELLO" : "CAPABILITIES", m->seq);
@@ -924,6 +957,10 @@ void pk_dsp_get_stats(pk_dsp_stats_t *out)
 
 void pk_adsb_link_start(void)
 {
+    /* 先建锁再起任务：任务一跑起来就可能收到 HELLO 并回帧，link_tx 在锁
+     * 还是 NULL 时会静默跳过，那一帧就白丢了。 */
+    s_tx_mux = xSemaphoreCreateMutex();
+    assert(s_tx_mux != NULL);
     BaseType_t ok = xTaskCreatePinnedToCore(adsb_link_task, "adsb_lnk",
                                             8192, NULL, 5, NULL, 1);
     assert(ok == pdTRUE);

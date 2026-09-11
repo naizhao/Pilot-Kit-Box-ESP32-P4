@@ -38,3 +38,65 @@ void rf_safety_apply_boot_state(void)
     }
 #endif
 }
+
+/* ── 运行期天线选择（真值表唯一出处，见 rf_safety.h）───────────────── */
+
+/*
+ * 1090（U16）：A=1/B=0 → 板载 IFA；A=0/B=1 → 外接 J6。
+ * 与 board_pins.h 的 PIN_ANT_SEL_1090_A 注释同源（netlist U8.6/U8.7）。
+ */
+void rf_safety_ant_1090_levels(rf_ant_1090_t sel, bool *a, bool *b)
+{
+    const bool ext = (sel == RF_ANT_1090_EXTERNAL);
+    if (a) *a = !ext;
+    if (b) *b = ext;
+}
+
+/*
+ * GNSS（U17）：A=0/B=1 → 外接 J2；A=1/B=0 → 板载 patch。
+ *
+ * ⚠ 这两根线在 v3/v4 上**兼做偏置馈电门控**（board_pins.h: "U17 V1 / Q4
+ * gate（ECO 后配对）"）。未打 ECO 的板子上配对是反的——选中哪一路就给
+ * 另一路供电，有源天线拿不到电、收不到星。固件改不了这件事，UI 上必须
+ * 标注，见 P4 侧设置页那一行的提示。
+ */
+void rf_safety_ant_gnss_levels(rf_ant_gnss_t sel, bool *a, bool *b)
+{
+    const bool onboard = (sel == RF_ANT_GNSS_ONBOARD);
+    if (a) *a = onboard;
+    if (b) *b = !onboard;
+}
+
+#ifndef RF_SAFETY_HOST_TEST
+/* 先写将要变低的那根，再写将要变高的那根：SPDT 的两根选择线中间态宁可
+ * 短暂"都低"（两路都断开）也不要"都高"（两路同时导通 = 天线并联）。 */
+static void apply_pair(int gpio_a, int gpio_b, bool a, bool b)
+{
+    if (!a) gpio_put(gpio_a, 0);
+    if (!b) gpio_put(gpio_b, 0);
+    if (a)  gpio_put(gpio_a, 1);
+    if (b)  gpio_put(gpio_b, 1);
+}
+#endif
+
+void rf_safety_set_ant_1090(rf_ant_1090_t sel)
+{
+    bool a, b;
+    rf_safety_ant_1090_levels(sel, &a, &b);
+#ifndef RF_SAFETY_HOST_TEST
+    apply_pair(PIN_ANT_SEL_1090_A, PIN_ANT_SEL_1090_B, a, b);
+#else
+    (void)a; (void)b;
+#endif
+}
+
+void rf_safety_set_ant_gnss(rf_ant_gnss_t sel)
+{
+    bool a, b;
+    rf_safety_ant_gnss_levels(sel, &a, &b);
+#ifndef RF_SAFETY_HOST_TEST
+    apply_pair(PIN_GNSS_SEL_A, PIN_GNSS_SEL_B, a, b);
+#else
+    (void)a; (void)b;
+#endif
+}

@@ -23,3 +23,8 @@ void p4_link_poll_rx(void);
 void p4_link_tick_health(const uint32_t counters10[10]);
 bool p4_link_linked(void);
 void p4_link_get_stats(uint32_t *tx, uint32_t *rx, uint32_t *gaps);
+
+/* P4 经 CONFIG_REQ 下发的当前天线选择（0 = 上电默认，见 rf_safety.h）。
+ * 只用于诊断打印，真值表与实际电平归 rf_safety.c。 */
+uint8_t p4_link_ant_1090(void);
+uint8_t p4_link_ant_gnss(void);

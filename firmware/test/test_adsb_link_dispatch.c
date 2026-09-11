@@ -50,6 +50,16 @@ bool pk_gps_get(pk_gps_state_t *out)
 
 bool pk_demo_enabled(void) { return false; }
 
+/* Antenna config lives in NVS on the P4 and is pushed to the RP2040 over
+ * CONFIG_REQ.  This test exercises the message dispatcher, not the config
+ * store, so the payload builder is stubbed out to "nothing to send" — which
+ * also keeps link_tx() off the UART path entirely. */
+size_t pk_antenna_build_config_payload(uint8_t *out, size_t cap)
+{
+    (void)out; (void)cap;
+    return 0;
+}
+
 void pk_rec_ingest_init(void) {}
 void pk_rec_ingest_position(uint32_t icao24, int64_t ts_ms, double lat,
                             double lon, bool have_alt, int alt_ft,

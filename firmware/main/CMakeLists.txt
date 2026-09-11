@@ -134,6 +134,7 @@ idf_component_register(
         "nav_icon_font.c"
         "config_ble.c"
         "config_demo.c"
+        "config_antenna.c"
         "demo_data.c"
         # 演示模式的真实飞行轨迹回放 + 生成的常量表
         # （firmware/scripts/gen_demo_track.py，见 demo_track.h 文件头）。

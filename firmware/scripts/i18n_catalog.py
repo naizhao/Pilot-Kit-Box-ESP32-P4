@@ -570,6 +570,63 @@ STRINGS = [
         },
     ),
     (
+        "SETTINGS_ANT_1090",
+        {
+            # 设置页行标签。写「1090 天线」而不是「ADS-B 天线」：盒子上还有
+            # 一路 978 UAT 也属于 ADS-B，叫 ADS-B 天线会让人以为两路都切。
+            "en": "1090 antenna",
+            "zh": "1090 天线",
+        },
+    ),
+    (
+        "SETTINGS_ANT_1090_ONBOARD",
+        {
+            "en": "Onboard",
+            "zh": "板载",
+        },
+    ),
+    (
+        "SETTINGS_ANT_1090_EXT",
+        {
+            # 带上接口丝印 J6：盒子侧面有不止一个 SMA，只说「外接」用户不知道
+            # 该插哪个。
+            "en": "External J6",
+            "zh": "外接 J6",
+        },
+    ),
+    (
+        "SETTINGS_ANT_GNSS",
+        {
+            "en": "GNSS antenna",
+            "zh": "GNSS 天线",
+        },
+    ),
+    (
+        "SETTINGS_ANT_GNSS_EXT",
+        {
+            "en": "External J2",
+            "zh": "外接 J2",
+        },
+    ),
+    (
+        "SETTINGS_ANT_GNSS_ONBOARD",
+        {
+            "en": "Onboard",
+            "zh": "板载",
+        },
+    ),
+    (
+        "SETTINGS_ANT_GNSS_HINT",
+        {
+            # 跟在 GNSS 天线行后面的小字，红色。v3/v4 未打 ECO 的板子上，
+            # 这两根选择线兼做偏置馈电门控且配对是反的——选中哪一路就给另一
+            # 路供电，有源天线拿不到电、收不到星。固件改不了，只能在开关旁边
+            # 把代价说清楚，否则用户切过去发现没星，只会以为是天线坏了。
+            "en": "(un-ECO'd boards: feed is inverted)",
+            "zh": "(未改板：馈电反接)",
+        },
+    ),
+    (
         "SETTINGS_DEMO_HINT",
         {
             # 跟在行标签后面的小字。必须写「模拟」两个字而不是「测试」——

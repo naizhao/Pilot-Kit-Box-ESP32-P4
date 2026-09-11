@@ -35,6 +35,18 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
  * （调用点保持在 app_main 末尾，即旧 sdr/dsp 的位置）。 */
 void pk_adsb_link_start(void);
 
+/*
+ * 把当前天线配置下发给 RP2040（CONFIG_REQ，协议 v1.2 §7）。
+ *
+ * 两个调用时机：用户在设置页改了值；以及**每次收到 RP2040 的 HELLO**——
+ * RP2040 不持久化配置，上电只回到 rf_safety 的安全默认，所以它每重启一次
+ * 都要重新推一次。挂在 HELLO 上而不是"只在 linked 边沿推一次"，是因为
+ * RP 侧未 linked 时就是 1 Hz 发 HELLO，边沿判定漏一次就要等到下次开机。
+ *
+ * 线程安全：内部自己加锁，可从 UI 任务直接调。
+ */
+void pk_adsb_link_push_config(void);
+
 #ifdef PK_HOST_TEST
 /* Host dispatch proof: the task loop cannot run under FreeRTOS stubs, but the
  * production modes_ingest sink must still be exercised without copying it. */

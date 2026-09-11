@@ -7,6 +7,7 @@
  * 合法帧即置 linked。HEALTH_STATS payload 直接取 counters10 的内存字节：
  * RP2040（Cortex-M0+）为小端，与协议 §4 的 u32le 布局一致。
  */
+#include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
@@ -14,6 +15,7 @@
 #include "board_pins.h"
 #include "edge_cap.h"          /* EDGE_CAP_TICK_HZ：tick→µs */
 #include "p4_link.h"
+#include "rf_safety.h"   /* 天线真值表唯一出处（CONFIG_REQ 应用） */
 
 #define P4_UART uart0           /* SDK 2.1.1 实例名（旧名 UART_ID_UART0 已不存在）*/
 #define P4_BAUD 921600
@@ -35,14 +37,59 @@ static void tx_frame(uint8_t type, const uint8_t *pl, size_t n)
     s_tx++;
 }
 
+/* P4 下发的当前天线选择，供 CDC 'S' 打印——排障时"屏上选的"和"板上实际
+ * 生效的"必须能对上，否则又是一轮猜。0 都等于上电默认（见 rf_safety.h）。 */
+static uint8_t s_ant_1090, s_ant_gnss;
+
+uint8_t p4_link_ant_1090(void) { return s_ant_1090; }
+uint8_t p4_link_ant_gnss(void) { return s_ant_gnss; }
+
 static void on_rx_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
     s_linked = true;
     s_rx++;
     if (m->type == ADSB_LINK_MSG_CONFIG_REQ) {
-        uint8_t pl[2] = { 1, 0 };             /* ERROR code=1: v1 不支持配置 */
-        tx_frame(ADSB_LINK_MSG_ERROR, pl, sizeof pl);
+        /* v1.2 规范 §7：一组 key/value，逐条应用，未知 key 只计 rejected
+         * 不影响其它项（与 §3.5「未知 msg_type 必须递交」同一条前向兼容
+         * 原则——对面比我们新的时候，我们该忽略的是不认识的那一项，不是
+         * 整包）。天线真值表只在 rf_safety.c 一处，这里不另抄一份。 */
+        adsb_link_cfg_item_t it[ADSB_LINK_CFG_MAX_ITEMS];
+        uint8_t n = 0;
+        if (!adsb_link_config_decode(m->payload, m->payload_len,
+                                     it, ADSB_LINK_CFG_MAX_ITEMS, &n)) {
+            uint8_t pl[2] = { 2, 0 };         /* ERROR code=2: payload 不合法 */
+            tx_frame(ADSB_LINK_MSG_ERROR, pl, sizeof pl);
+            return;
+        }
+        uint8_t applied = 0, rejected = 0;
+        for (uint8_t i = 0; i < n; i++) {
+            switch (it[i].key) {
+            case ADSB_LINK_CFG_ANT_1090:
+                rf_safety_set_ant_1090(it[i].val ? RF_ANT_1090_EXTERNAL
+                                                 : RF_ANT_1090_ONBOARD);
+                s_ant_1090 = it[i].val ? 1 : 0;
+                applied++;
+                break;
+            case ADSB_LINK_CFG_ANT_GNSS:
+                rf_safety_set_ant_gnss(it[i].val ? RF_ANT_GNSS_ONBOARD
+                                                 : RF_ANT_GNSS_EXTERNAL);
+                s_ant_gnss = it[i].val ? 1 : 0;
+                applied++;
+                break;
+            default:
+                rejected++;
+                break;
+            }
+        }
+        uint8_t ack[2] = { applied, rejected };
+        tx_frame(ADSB_LINK_MSG_CONFIG_ACK, ack, sizeof ack);
+        /* 打出来：排障时「屏上选的」和「板上生效的」必须能对上，而这条链路
+         * 中间隔着 NVS、UART、两次重启，没有痕迹就只能猜。 */
+        printf("CONFIG applied=%u rejected=%u -> ant1090=%s antgnss=%s\n",
+               applied, rejected,
+               s_ant_1090 ? "EXT-J6" : "ONBOARD-IFA",
+               s_ant_gnss ? "ONBOARD-PATCH" : "EXT-J2");
     }
 }
 

@@ -54,6 +54,7 @@
 #include "power_service.h"
 #include "config_ble.h"
 #include "config_demo.h"
+#include "config_antenna.h"
 #include "config_devname.h"
 #include "i18n.h"
 #include "pfd.h"
@@ -306,6 +307,9 @@ void app_main(void)
 #endif
 
     pk_config_demo_load();
+    /* 天线选择：NVS 是真源，RP2040 上电只回到安全默认，等链路握手后推下去
+     * （见 config_antenna.h）。必须在 pk_adsb_link_start() 之前读出来。 */
+    pk_config_antenna_load();
 
     esp_err_t lcd_err = pk_display_init();
     int64_t splash_shown_us = 0;
