@@ -645,6 +645,56 @@ static void diag_drive_readback(const char *name, unsigned gpio)
                            : "← 跟不上翻转");
 }
 
+/*
+ * 交叉驱动：把两根线推成**相反**电平，再各自回读。
+ *
+ * 为什么非做不可：CC1312R 的 JTAG_TMSC 是 pin 24、JTAG_TCKC 是 pin 25，
+ * 在 0.5 mm 间距的 QFN-48 上**紧挨着**。这两脚之间一个锡桥，会造成：
+ *   · 两根网络上都量得到片内上拉（连通性测试照常通过）
+ *   · 复位时上拉一起消失（芯片"响应复位"的判据照常通过）
+ *   · 推挽回读单根测也照常通过（一根一根测时另一根跟着走，看不出来）
+ *   · 而器件看到的 TMS/TCK 是同一个信号 → TAP 永远走不对，什么都不应答
+ * 也就是说我之前所有的"线是好的"判据，**对这一种故障全部免疫**。
+ * 只有同时把两根推成相反电平才暴露得出来。
+ */
+static void diag_cross_drive(void)
+{
+    const unsigned a = CJTAG_PIN_TMSC, b = CJTAG_PIN_TCKC;
+    int bad = 0;
+
+    for (int phase = 0; phase < 2; phase++) {
+        const int va = phase ? 0 : 1, vb = phase ? 1 : 0;
+        gpio_disable_pulls(a); gpio_disable_pulls(b);
+        gpio_put(a, va); gpio_set_dir(a, GPIO_OUT);
+        gpio_put(b, vb); gpio_set_dir(b, GPIO_OUT);
+        sleep_us(200);
+        const int ra = (int)gpio_get(a), rb = (int)gpio_get(b);
+        printf("  交叉驱动: TMSC推%d读%d  TCKC推%d读%d%s\n",
+               va, ra, vb, rb,
+               (ra != va || rb != vb) ? "   ← 推不动，两脚疑似短接" : "");
+        if (ra != va || rb != vb) bad++;
+    }
+
+    /* 再来一次更狠的：只推一根，另一根松手接收。没短接的话，松手那根
+     * 应当停在自己的上拉（1），而不是跟着被推的那根走。 */
+    for (int phase = 0; phase < 2; phase++) {
+        const int drv = phase ? 1 : 0;
+        gpio_put(a, drv); gpio_set_dir(a, GPIO_OUT); gpio_disable_pulls(a);
+        gpio_set_dir(b, GPIO_IN); gpio_pull_up(b);
+        sleep_us(500);
+        const int rb = (int)gpio_get(b);
+        printf("  只推 TMSC=%d，TCKC 松手上拉 → 读到 %d%s\n", drv, rb,
+               (drv == 0 && rb == 0) ? "   ← 被 TMSC 拽下去了，两脚短接" : "");
+        if (drv == 0 && rb == 0) bad++;
+    }
+
+    gpio_set_dir(a, GPIO_IN);  gpio_pull_up(a);
+    gpio_set_dir(b, GPIO_OUT); gpio_put(b, 0);
+    printf("  交叉驱动结论: %s\n",
+           bad ? "两脚之间存在低阻通路（锡桥/短路）"
+               : "两脚彼此独立，可以各推各的");
+}
+
 static void diag_probe_all_pins(const char *when)
 {
     printf("  [%s]\n", when);
@@ -653,6 +703,7 @@ static void diag_probe_all_pins(const char *when)
     diag_probe_pin("RESET_N", CJTAG_PIN_RESET);
     diag_drive_readback("TMSC", CJTAG_PIN_TMSC);
     diag_drive_readback("TCKC", CJTAG_PIN_TCKC);
+    diag_cross_drive();
     /* 量完把方向恢复成本模块的常态 */
     gpio_set_dir(CJTAG_PIN_TCKC, GPIO_OUT);
     gpio_put(CJTAG_PIN_TCKC, 0);
