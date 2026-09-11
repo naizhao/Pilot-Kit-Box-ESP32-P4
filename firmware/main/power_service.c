@@ -201,8 +201,25 @@ void power_service_init(void)
 static void power_poll_task(void *arg)
 {
     (void)arg;
+    /* 每 10 拍打一行状态。
+     *
+     * 这不是调试残留：在此之前**串口上没有任何途径能看到电源状态**——
+     * SY6970 的 bring-up 日志只在启动时打一次，之后电池电压/电量/充电与否
+     * 全都只活在诊断页的像素里。对一个电池供电的航空设备，"电量显示准不准"
+     * 是要能在台架上核对的，而核对的前提是它得能被读出来。
+     * 10 s 一行：电池是慢变量，够用且不淹没 1090 的帧流。 */
+    unsigned tick = 0;
     for (;;) {
         power_service_poll_tick(esp_timer_get_time());
+        if ((tick++ % 10) == 0) {
+            const power_snapshot_t s = power_service_snapshot();
+            ESP_LOGI(TAG,
+                     "src=%d backend=%d chg=%d vbus=%d batt=%umV pct=%u%s%s",
+                     (int)s.source, (int)s.backend, s.charging, s.vbus_present,
+                     (unsigned)s.batt_mv, (unsigned)s.pct_est,
+                     s.pct_valid ? "" : " (pct 不可信)",
+                     s.stale ? " STALE" : "");
+        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
