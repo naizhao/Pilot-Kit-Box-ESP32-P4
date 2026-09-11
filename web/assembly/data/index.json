@@ -1,15 +1,29 @@
 [
   {
-    "id": "v4-pwr",
-    "title": "V4.4 带电源版",
-    "subtitle": "贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+    "id": "v4.6-pwr",
+    "title": "V4.6 带电源版",
+    "subtitle": "含 AIRBAND 接收（U21/U22/Y4/J10）；贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+    "total": 204,
+    "groups": 81
+  },
+  {
+    "id": "v4.6-nopwr",
+    "title": "V4.6 不带电源版",
+    "subtitle": "含 AIRBAND 接收（U21/U22/Y4/J10）；电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+    "total": 178,
+    "groups": 67
+  },
+  {
+    "id": "v4.5-pwr",
+    "title": "V4.5 带电源版（V4.4 通用）",
+    "subtitle": "无 AIRBAND；贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
     "total": 185,
     "groups": 78
   },
   {
-    "id": "v4-nopwr",
-    "title": "V4.4 不带电源版",
-    "subtitle": "电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+    "id": "v4.5-nopwr",
+    "title": "V4.5 不带电源版（V4.4 通用）",
+    "subtitle": "无 AIRBAND；电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
     "total": 159,
     "groups": 64
   },

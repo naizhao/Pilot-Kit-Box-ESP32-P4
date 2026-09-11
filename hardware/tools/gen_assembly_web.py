@@ -89,7 +89,7 @@ class Variant:
     """一个可贴装版本：板子 + 选贴规则 + BOM 富化源。"""
 
     def __init__(self, vid, title, board_dir, pcb_name, subtitle="",
-                 force_place=(), force_skip=(), bom=None):
+                 force_place=(), force_skip=(), bom=None, archived=False):
         self.id = vid
         self.title = title
         self.subtitle = subtitle
@@ -99,21 +99,45 @@ class Variant:
         self.force_place = set(force_place)
         self.force_skip = set(force_skip)
         self.bom = bom
+        # archived：该版本的 PCB 已被后续版本覆盖，几何**重算不出来了**，
+        # 只能沿用上次生成的 json。跑的时候不 build，只刷新标题并列进索引。
+        # 一块板的 kicad_pcb 在仓库里只有一份，历史版本只存在于 release/ 的 zip 里。
+        self.archived = archived
 
 
 VARIANTS = [
+    # ── V4.6（当前板，含 AIRBAND）────────────────────────────────────
     Variant(
-        "v4-pwr", "V4.4 带电源版", "expansion-board-v4", "expansion-board-v4",
-        subtitle="贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        "v4.6-pwr", "V4.6 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；贴满电源区，"
+                 "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
         force_skip=CC_PULLDOWN,
         bom=("csv", "internal/BOM_MASTER.csv"),
     ),
     Variant(
-        "v4-nopwr", "V4.4 不带电源版", "expansion-board-v4", "expansion-board-v4",
-        subtitle="电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        "v4.6-nopwr", "V4.6 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；电源区一个不贴，"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
         force_skip=POWER_SECTION,
         force_place=CC_PULLDOWN,
         bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.5（存档；V4.4 与 V4.5 贴片无差别，只改过一条 GNSS 走线，
+    #        所以这份数据贴 V4.4 的板同样适用）────────────────────────
+    Variant(
+        "v4.5-pwr", "V4.5 带电源版（V4.4 通用）", "expansion-board-v4", "expansion-board-v4",
+        subtitle="无 AIRBAND；贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+        archived=True,
+    ),
+    Variant(
+        "v4.5-nopwr", "V4.5 不带电源版（V4.4 通用）", "expansion-board-v4", "expansion-board-v4",
+        subtitle="无 AIRBAND；电源区一个不贴，R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+        archived=True,
     ),
     Variant(
         "v3", "V3.10", "expansion-board-v3", "expansion-board-v3",
@@ -441,8 +465,14 @@ def load_batches():
     # 文件名会变成 "(2)"、"(3)"……取最新的那个，别写死
     path = files[-1]
     z = zipfile.ZipFile(path)
-    shared = ["".join(t.text or "" for t in si.iter(XL_NS + "t"))
-              for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(XL_NS + "si")]
+    # xlsx 存字符串有两种方式：共享字符串表，或单元格内联(t="inlineStr")。
+    # 全内联的文件**根本没有 sharedStrings.xml**——脚本生成的 xlsx 常是这种
+    # （BOM_采购清单_V4.6_AIRBAND.xlsx 就是），直接 z.read 会 KeyError。
+    try:
+        shared = ["".join(t.text or "" for t in si.iter(XL_NS + "t"))
+                  for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(XL_NS + "si")]
+    except KeyError:
+        shared = []
     names = [s.get("name") for s in ET.fromstring(z.read("xl/workbook.xml")).iter(XL_NS + "sheet")]
 
     by_ref, by_lcsc, by_spec = {}, {}, {}
@@ -456,6 +486,13 @@ def load_batches():
             cells = {}
             for c in row.iter(XL_NS + "c"):
                 col = re.match(r"([A-Z]+)", c.get("r")).group(1)
+                # 内联字符串的值在 <is><t> 里，没有 <v>。不认它的话整列文本
+                # 全被 continue 跳过，表面上「读到了 0 行」而不报错。
+                if c.get("t") == "inlineStr":
+                    is_node = c.find(XL_NS + "is")
+                    if is_node is not None:
+                        cells[col] = "".join(t.text or "" for t in is_node.iter(XL_NS + "t"))
+                    continue
                 v = c.find(XL_NS + "v")
                 if v is None:
                     continue
@@ -800,12 +837,25 @@ def main():
     index, batches_out = [], {}
     for variant in VARIANTS:
         print(f"→ {variant.id}  {variant.title}")
-        doc = build(variant)
         path = OUT_DIR / f"{variant.id}.json"
+        if variant.archived:
+            # 存档版本：PCB 已被后续版本覆盖，几何重算不出来，沿用上次的数据。
+            # 文件不在就**直接失败**——静默跳过会让网页上少一个版本而没人发现。
+            if not path.exists():
+                raise SystemExit(
+                    f"存档版本 {variant.id} 的数据文件不存在：{path}\n"
+                    f"它无法重新生成（当前 PCB 已是新版本）。"
+                    f"只能从 release/ 里对应版本的 KiCad zip 解出 PCB 后重建。")
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            # 标题/副标题仍以脚本为准，这样改了措辞能同步进数据文件
+            doc["title"], doc["subtitle"] = variant.title, variant.subtitle
+        else:
+            doc = build(variant)
         path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")),
                         encoding="utf-8")
         size_kb = path.stat().st_size / 1024
-        print(f"   {doc['total']} 个位号 / {len(doc['groups'])} 种料 → "
+        print(f"   {'[存档沿用] ' if variant.archived else ''}"
+              f"{doc['total']} 个位号 / {len(doc['groups'])} 种料 → "
               f"{path.relative_to(ROOT)}  {size_kb:.0f} KB")
         index.append({"id": variant.id, "title": variant.title,
                       "subtitle": variant.subtitle, "total": doc["total"],

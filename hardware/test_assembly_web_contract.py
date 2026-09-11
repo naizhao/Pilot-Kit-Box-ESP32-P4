@@ -37,10 +37,18 @@ DATA = ROOT / "web" / "assembly" / "data"
 # 数量写下限而不是精确值：改板加件是常态，加了件不该让这份测试红，
 # 但整批消失（解析挂了、过滤写反）一定要红。
 VARIANTS = {
-    "v4-pwr": "expansion-board-v4",
-    "v4-nopwr": "expansion-board-v4",
+    "v4.6-pwr": "expansion-board-v4",
+    "v4.6-nopwr": "expansion-board-v4",
+    # V4.5 是存档数据（PCB 已被 V4.6 覆盖，重算不出来），但一样要过全部契约——
+    # 它还在被用来贴 V4.4/V4.5 的实板，坏了同样会贴错。
+    "v4.5-pwr": "expansion-board-v4",
+    "v4.5-nopwr": "expansion-board-v4",
     "v3": "expansion-board-v3",
 }
+
+# 带电源/不带电源成对出现的版本。加新版本时往这里加一对，
+# 别再往下面的用例里塞字面量。
+PWR_PAIRS = [("v4.6-pwr", "v4.6-nopwr"), ("v4.5-pwr", "v4.5-nopwr")]
 
 # SELECTIVE_PLACEMENT-zh_CN.md ①：电源部分 28 个位号，两个版本逻辑相反。
 POWER_REFS = (
@@ -105,35 +113,39 @@ class AssemblyWebDataContract(unittest.TestCase):
 
     def test_power_variant_logic_is_inverted(self):
         """带电源版贴电源区不贴 R7/R8；不带电源版正好相反。贴反会烧板。"""
-        pwr = refs_of(load("v4-pwr"))
-        nopwr = refs_of(load("v4-nopwr"))
+        for pwr_id, nopwr_id in PWR_PAIRS:
+            with self.subTest(pair=pwr_id):
+                pwr = refs_of(load(pwr_id))
+                nopwr = refs_of(load(nopwr_id))
 
-        self.assertTrue(
-            POWER_REFS <= pwr,
-            f"带电源版缺电源区位号：{sorted(POWER_REFS - pwr)}",
-        )
-        self.assertEqual(
-            POWER_REFS & nopwr, set(),
-            f"不带电源版混进了电源区位号：{sorted(POWER_REFS & nopwr)}",
-        )
-        self.assertEqual(
-            CC_PULLDOWN_REFS & pwr, set(),
-            f"带电源版混进了 CC 下拉 {sorted(CC_PULLDOWN_REFS & pwr)}——与 CH224K 并存会烧板",
-        )
-        self.assertTrue(
-            CC_PULLDOWN_REFS <= nopwr,
-            f"不带电源版缺 CC 下拉：{sorted(CC_PULLDOWN_REFS - nopwr)}——插电脑不认，刷不进固件",
-        )
+                self.assertTrue(
+                    POWER_REFS <= pwr,
+                    f"{pwr_id} 缺电源区位号：{sorted(POWER_REFS - pwr)}",
+                )
+                self.assertEqual(
+                    POWER_REFS & nopwr, set(),
+                    f"{nopwr_id} 混进了电源区位号：{sorted(POWER_REFS & nopwr)}",
+                )
+                self.assertEqual(
+                    CC_PULLDOWN_REFS & pwr, set(),
+                    f"{pwr_id} 混进了 CC 下拉 {sorted(CC_PULLDOWN_REFS & pwr)}"
+                    f"——与 CH224K 并存会烧板",
+                )
+                self.assertTrue(
+                    CC_PULLDOWN_REFS <= nopwr,
+                    f"{nopwr_id} 缺 CC 下拉：{sorted(CC_PULLDOWN_REFS - nopwr)}"
+                    f"——插电脑不认，刷不进固件",
+                )
 
     def test_dnp_never_listed(self):
-        for variant in ("v4-pwr", "v4-nopwr", "v3"):
+        for variant in VARIANTS:
             with self.subTest(variant=variant):
                 got = refs_of(load(variant)) & ALWAYS_DNP_REFS
                 self.assertEqual(got, set(), f"{variant} 列出了设计上不贴的件：{sorted(got)}")
 
     def test_no_placeholder_refs(self):
         """ANT1 是 PCB 铜箔、SW2 是焊盘跳线、H*/FID*/TP* 没有器件，不该出现在贴片流程里。"""
-        for variant in ("v4-pwr", "v4-nopwr", "v3"):
+        for variant in VARIANTS:
             with self.subTest(variant=variant):
                 refs = refs_of(load(variant))
                 bad = {r for r in refs
