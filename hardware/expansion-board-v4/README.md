@@ -158,9 +158,19 @@ exact stackup:
 
 The longest RF run is 11.7 mm ≈ λ/13 at 1090 MHz, so mismatch never builds a
 standing wave — every case above costs less than the 0.51 dB that an SWR of 2.0
-would. **The on-board IFA antenna is cleared on all six copper layers and is
-unaffected by the stackup entirely.** Full numbers, per-vendor stackup tables and
-the mismatch-loss derivation: [`PCB_STACKUP_IMPEDANCE.md`](../PCB_STACKUP_IMPEDANCE.md).
+would.
+
+> 🔴 **The on-board IFA antenna, however, does need retuning for your laminate.**
+> The 50.0 mm copper length is tied to JLCPCB's 3313 material. Measured on
+> 2026-09-11: the same Gerber built by JiePei on `JP06161H-7628A1` resonated at
+> **1062.5 MHz instead of 1085 MHz**, with SWR rising from 1.06 to 1.72 — the
+> laminate's εr sets antenna resonance, and clearing all six copper layers removes
+> the *copper*, not the 1.6 mm of FR-4 underneath. Trim 0.1–0.2 mm at a time using
+> 11.5 MHz/mm as the slope, and judge in the enclosure. Irrelevant if you only use
+> the external U.FL/SMA antenna.
+
+Full numbers, per-vendor stackup tables and the mismatch-loss derivation:
+[`PCB_STACKUP_IMPEDANCE.md`](../PCB_STACKUP_IMPEDANCE.md).
 
 ---
 

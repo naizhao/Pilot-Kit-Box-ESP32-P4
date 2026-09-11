@@ -212,13 +212,38 @@ Not transmission-line loss, but the **two devices that are sensitive to terminat
 But both are matched by their **surrounding matching components** (`C40`–`C44`, `L9`–`L15`),
 not by the characteristic impedance of the trace. The trace only carries the signal from A to B.
 
-### 5.2 The on-board IFA antenna is unaffected by the stackup
+### 5.2 🔴 The on-board IFA antenna **is** affected by the laminate — retune when changing fabs
 
-The antenna area is **cleared on all 6 copper layers**, so there is no dielectric reference
-plane beneath it. Its resonant frequency is set purely by the **top-layer copper geometry** —
-which lives in the Gerber and has nothing to do with the stackup.
+> **This section previously claimed "the IFA antenna is unaffected by the stackup". That was
+> wrong, and was disproven by measurement on 2026-09-11.** The old reasoning was "the antenna
+> area is cleared on all 6 copper layers, so there is no reference plane and resonance depends
+> only on top-layer geometry." **The error: "cleared" meant cleared of *copper*, not of
+> *dielectric*.** There is still 1.6mm of FR-4 under the antenna trace, and **the laminate's
+> εr sets the resonant frequency directly.**
 
-This was a side benefit of the full-depth clearance; it was not a design intent at the time.
+**Same Gerber, two fabs, measured side by side** (V4.4, only ZS1+J7+J6 populated, probed at J7):
+
+| Fab / stackup | SWR minimum | SWR at minimum | Impedance at board (de-embedded) |
+|---|---|---|---|
+| JLCPCB `JLC06161H-3313` | **1085.0 MHz** | **1.055** | 51.47 + j2.28 Ω |
+| JiePei `JP06161H-7628A1` | **1062.5 MHz** | **1.717** | 39.28 + j21.75 Ω |
+
+**22.5MHz lower (2.07%), and the match degraded too.** Back-solving gives an εeff **4.28%
+higher**, consistent with 7628 carrying more glass than 3313 (glass εr≈6.1 vs resin εr≈3.2 —
+more glass means higher composite εr).
+
+**In trace length: using the 11.5 MHz/mm slope measured during the trim experiments in
+`board_meta.py`, that is equivalent to the antenna being ~2.0mm too long.** Pulling it back
+to 1085MHz on the JiePei board would require trimming roughly 2mm more.
+
+> 🔴 **For open-source users: `ARM_OUT = 50.000mm` is tied to JLCPCB's 3313 laminate. It is
+> not a universal constant.** Fabbing elsewhere will most likely require retuning the IFA.
+> Procedure is in `expansion-board-v4/BOM_IFA_TUNING-zh_CN.md`: trim 0.1–0.2mm at a time,
+> use 11.5 MHz/mm to estimate how much, and **judge by VNA measurement in the enclosure**.
+>
+> Note this is **independent of** the transmission-line mismatch discussed in §5: that
+> mismatch costs only ~0.1dB, whereas a 22.5MHz antenna detune takes SWR from 1.06 to 1.72
+> (0.55dB mismatch loss) and moves off 1090MHz, which is not a negotiable frequency.
 
 ---
 
@@ -244,7 +269,11 @@ This project is open source and can be manufactured anywhere.
     · Your fab only offers a thicker dielectric (e.g. single-ply 7628 ~= 0.19mm)
       -> Still manufacturable. RF traces land around 70Ω, mismatch loss ~0.12dB,
          1090 sensitivity drops slightly, everything else is unaffected
-    · The on-board IFA antenna is cleared on all 6 layers and is unaffected (see §5.2)
+    · 🔴 **The on-board IFA antenna must be retuned for your laminate** (see §5.2).
+      The 50.0mm copper length is tied to JLCPCB's 3313 laminate, not a universal constant.
+      Measured: the same Gerber on JiePei's 7628A1 resonated 22.5MHz lower, SWR 1.06 -> 1.72.
+      Procedure: trim 0.1-0.2mm at a time, estimate with 11.5MHz/mm, judge by VNA
+      measurement in the enclosure. Ignore this if you only use the external U.FL/SMA antenna.
 
 **Quick guide for users outside China** (details in §8): **no overseas fab's default stackup
 lands inside the window**, and that turns out not to matter — **PCBWay (0.1195 / 55Ω / 0.011dB)
