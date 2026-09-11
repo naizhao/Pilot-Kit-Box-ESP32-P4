@@ -207,7 +207,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **Y1** | 12MHz CL=10pF ABM8-272-T3 | Crystal_SMD_3225-4Pin_ | (85.1, 69.1) | B MCU + Flash | Passive crystal; 180-degree rotation is electrically equivalent |
 | ☐ | **Y2** | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_ | (108.3, 98.3) | D 978 Transceiver | Passive crystal; 180-degree rotation is electrically equivalent |
 | ☐ | **Y3** | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_ | (111.6, 87.0) | D 978 Transceiver |  |
-| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (132.5, 99.0) | G Airband | ACTIVE device (TCXO/OSC): the four pins have distinct functions (VDD/GND/OUT/NC). Observe the pin 1 marking — rotating it 180 degrees ties VDD to GND and destroys the part on power-up |
+| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (132.5, 99.0) | G Airband | ACTIVE TCXO: pin2=GND / pin4=Vcc — rotating it 180 degrees shorts them and destroys the part on power-up. There is NO marking on the top face; the 0.2mm chamfer is on the BOTTOM at corner #1 (datasheet C0.2) — check it before placing, or use one unit to establish the bottom-chamfer / top-marking relationship first. The filled silkscreen dot on the board points at pin 1 |
 | ☐ | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm | (92.6, 106.3) | F External Interface |  |
 | ☐ | **J2** | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (54.0, 75.9) | C Sensors + GNSS |  |
 | ☐ | **J4** | USB-C_16P | USB_C_Receptacle_HRO_T | (145.8, 73.0) | B MCU + Flash |  |

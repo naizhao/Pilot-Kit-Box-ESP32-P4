@@ -43738,25 +43738,16 @@
 		)
 		(embedded_fonts no)
 	)
-	(gr_line
-		(start 102.5144 72.243)
-		(end 102.5144 72.943)
+	(gr_circle
+		(center 134.05 96.595)
+		(end 134.3 96.595)
 		(stroke
-			(width 0.2)
+			(width 0.1)
 			(type default)
 		)
+		(fill yes)
 		(layer "F.SilkS")
-		(uuid "87cb0103-826d-4c46-84f0-6cc8e68321ab")
-	)
-	(gr_line
-		(start 117.15 88.4936)
-		(end 117.85 88.4936)
-		(stroke
-			(width 0.2)
-			(type default)
-		)
-		(layer "F.SilkS")
-		(uuid "93c37887-a469-49ec-b0ca-6ab171e03dce")
+		(uuid "1fac204b-1ac9-459b-89f4-50ac66dd42b6")
 	)
 	(gr_line
 		(start 142.362 62.801)

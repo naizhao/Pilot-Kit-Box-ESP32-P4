@@ -239,7 +239,7 @@
 | ☐ | **Y1** | 12MHz CL=10pF ABM8-272-T3 | Crystal_SMD_3225-4Pin_ | (85.1, 69.1) | B MCU + Flash | 无源晶体，转 180° 等价，长边对长边即可 |
 | ☐ | **Y2** | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_ | (108.3, 98.3) | D 978 收发 | 无源晶体，转 180° 等价，长边对长边即可 |
 | ☐ | **Y3** | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_ | (111.6, 87.0) | D 978 收发 |  |
-| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (132.5, 99.0) | G 航空波段 AIRBAND | ⚠️ 有源器件(TCXO/OSC)，四脚功能各异（VDD/GND/OUT/NC），认 pin1 标记；转 180° 会把 VDD 接到 GND 上，上电即烧 |
+| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (132.5, 99.0) | G 航空波段 AIRBAND | ⚠️ 有源 TCXO：pin2=GND / pin4=Vcc，转 180° 直接短路、上电即烧。顶面无标记，倒角在**底面** #1 角（手册 C0.2）——贴前翻过来认，或先用一颗定出「底面倒角↔顶面打标」的对应关系再批量贴；板上丝印的实心圆点指向 pin1 |
 | ☐ | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm | (92.6, 106.3) | F 对外接口 |  |
 | ☐ | **J2** | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (54.0, 75.9) | C 传感器 + GNSS |  |
 | ☐ | **J4** | USB-C_16P | USB_C_Receptacle_HRO_T | (145.8, 73.0) | B MCU + Flash |  |
