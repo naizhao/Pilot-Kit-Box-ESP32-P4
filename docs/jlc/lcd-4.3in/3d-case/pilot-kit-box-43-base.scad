@@ -76,7 +76,16 @@ glass_bot  = -glass_ov_y;      // 玻璃下(40PIN)边缘 y
 
 /* ---------- 扩展板 ---------- */
 exp_t = 1.6;
+exp_l = 100;  exp_w = 62;              // 板框（Y 向比屏板各多 1mm，见 §2a）
 hole_dx = 92;  hole_dy = 50;           // 安装孔距（两板一致）
+// PCB 坐标 → 本文件坐标的换算。两板孔距相同，所以 X 只差板宽之半：
+exp_x_off = (scr_pcb_l - exp_l) / 2;   // = 1.25
+// Y 要翻：KiCad 的 y 轴向下、本文件向上，且两板孔位 5↔55 互换。
+// 判据（都验过）：J1 排针 y_pcb 56.3 → 3.7 落在 Y−(40PIN 边)；
+// J8 内置 GNSS y_pcb 19.2 → 40.8 对上 sma_y[1]=41；
+// J4 扩展板 USB-C y_pcb 23.0 → 37.0 与微雪 H1 孔 37.85 几乎同高（两个 C 口本就上下对齐）。
+function exp_y(y_pcb) = scr_pcb_w - y_pcb;
+function exp_x(x_pcb) = x_pcb + exp_x_off;
 
 /* ---------- 高度链（自内底面起）---------- */
 floor_t = 2.4;        // 底板厚（含沉孔）
@@ -120,7 +129,10 @@ rec_depth = 0.5;               // SD 外沉深度（1.8 壁余厚 1.3）
 /* ---------- 按键（Y+ 壁）：只开 POWER ---------- */
 // 实测：中心=玻璃左+31(POWER) / +39(BOOT) / +47(RESET)
 btn_power_x = glass_left + 31;     // 22.8，离 SD 最远
-btns        = [btn_power_x];       // 需要 RESET 时加 glass_left+47
+// ⚠️ V4.7 起 Y+ 壁这个孔**堵掉**：微雪 Key3 只能关载板自己，而整机 5V 是扩展板
+// 升压产的，那颗键够不着总电门。主电源键改为扩展板上的 SW3（见下方 X+ 壁一节）。
+// 留着空列表而不是删掉参数：要临时开回 RESET/BOOT 时填 glass_left+47 即可。
+btns        = [];
 btn_d       = 4.1;                 // 导孔（配打印按压销）
 btn_glass_d = 8.85;                // 量尺 z=20.30
 btn_rec_d   = 8.0;                 // 外侧圆形浅凹（深 rec_depth）
@@ -136,11 +148,59 @@ btn_boss_d  = 9.0;                 // 导向套外径（沉腔 6.6 外留 1.2 �
 btn_guide   = 2.3;                 // 导向套自内壁面伸入长度（末端离键帽 1.1）
 btn_bore_in = 0.95;                // 其中做导向孔的前段（其余为法兰沉腔）
 btn_pkt_d   = 6.6;                 // 法兰沉腔直径（法兰 6.2，留 0.4 活动量）
+// ⚠️ 以上三个数是 Y+ 壁**两次卡尺标定**出来的（见 btn_key_depth 的注释），
+// 跨距 3.3mm 专用。X+ 壁的 SW3 跨 4.318mm，**另起一套 sw3_* 参数**，
+// 不要为了迁就 SW3 去改这里 —— 改了会让 btn_gap_wc 变负（销子常压按键）。
+
+/* ---------- 按压销通用部分（Y+ 壁与 X+ 壁共用杆径/法兰）---------- */
 pl_shaft_d  = 3.7;                 // 按压销杆径
 pl_flange_d = 6.2;  pl_flange_t = 1.0;
-pl_nose     = 1.0;                 // 顶鼻：够长才不会按到底时法兰撞屏板边缘
-pl_proud    = 1.2;                 // 静止时销尾高出外壁量（原 2.0 太凸）
+pl_nose     = 1.0;                 // Y+ 壁顶鼻：够长才不会按到底时法兰撞屏板边缘
+pl_proud    = 1.2;                 // Y+ 壁静止时销尾高出外壁量（原 2.0 太凸）
 n_plungers  = 4;                   // 一体打印的按键销数量（1 用 2 备）
+
+/* ---------- SW3 主电源键（X+ 壁，扩展板上的 TS24CA 侧按键）----------
+ *
+ * 整机唯一的机械总电门：接 SY6970 的 /QON，按住 1.25~2.25s 开机、12~18s 硬复位，
+ * 不依赖任何固件（微雪 Key3 只关得掉载板自己，整机 5V 是扩展板升压产的）。
+ * 摆位由 PCB 决定，这里只做坐标换算，**不得另设一套数字**。
+ *
+ * 与 Y+ 壁的两个本质差别：
+ *
+ * ① 跨距更大。销子要跨的距离 = 内壁面到按钮尖端：
+ *      Y+ 壁 = cav_y1 − btn_key_y = 63.5 − 60.2 = 3.300
+ *      X+ 壁 = cav_x1 − sw3_key_x = 106.3 − 101.982 = 4.318   （多 1.018）
+ *    多出来的 1mm 分给导向孔和顶鼻，**优先给导向孔**——导向越长销子越不容易歪，
+ *    顶鼻越长越细弱。所以 sw3_bore_in 比 btn_bore_in 多 0.65、sw3_nose 只多 0.2。
+ *
+ * ② 不确定量的来源不同。Y+ 那颗键在微雪板上、微雪板由玻璃在口内定位，所以键帽
+ *    位置带 ±fit_glass 的游动；SW3 在扩展板上，扩展板是**螺丝锁死**的，位置不随
+ *    玻璃动，不确定量改为螺丝孔间隙（φ2.9 孔套 M2.5，单边约 0.2mm）。
+ *
+ * ⚠️ 静止间隙宁大勿小：常压会把 /QON 长期拉低，整机反复重启（TS24CA 行程只有
+ *    0.15±0.05，压一点就触发）。所以 gap 取到 0.5 附近，靠 sw3_proud 给够行程，
+ *    而不是靠缩小 gap 去省行程。
+ */
+sw3_pcb = [97.882, 39.103];        // SW3 在扩展板 PCB 上的位置（KiCad 坐标）
+sw3_btn_proud = 2.85;              // 按钮尖端相对元件原点的 X（封装 F.Fab 同值）
+sw3_btn_ctr_z = 0.95;              // 按钮中心离板面的高度（TS24CA 图纸 1.9/2）
+sw3_seat_x    = 1.60;              // 座子前表面相对元件原点的 X（封装同值），
+                                   // 用来校验顶鼻不会压到座子外壳/固定脚牛角
+sw3_travel    = 0.20;              // 按键行程上限（图纸 0.15±0.05）
+sw3_fit       = 0.2;               // 扩展板装配游动（螺丝孔间隙单边）
+sw3_y     = exp_y(sw3_pcb[1]);                   // = 20.897
+sw3_key_x = exp_x(sw3_pcb[0]) + sw3_btn_proud;   // 键帽面 = 101.982
+// sw3_z（孔中心高）依赖 z_exp_top，挪到下面「派生尺寸」段定义，
+// 不在这里写 —— 顶层变量先用后定义会静默拿到 undef，孔就悄悄没了。
+
+sw3_d       = btn_d;               // 导孔 φ4.1，与 Y+ 壁同销径
+sw3_rec_d   = btn_rec_d;           // 外侧圆凹 φ8.0（深 rec_depth）
+sw3_boss_d  = btn_boss_d;          // 导向套外径 φ9.0
+sw3_guide   = 4.0;                 // 导向套自内壁面伸入长度（须容下沉腔+法兰+行程）
+sw3_bore_in = 1.6;                 // 其中做导向孔的前段 → 导向总长 wall_t+1.6 = 3.4
+sw3_nose    = 1.2;                 // 顶鼻
+sw3_proud   = 1.6;                 // 静止时销尾高出外壁量（= 可用行程）
+sw3_lbl_z   = 8.6;                 // 标注基线：压在外凹槽（下缘 11.95）下方
 
 /* ---------- SD 卡槽（Y+ 壁）---------- */
 sd_cx    = glass_left + 59;    // 50.8。实测：卡座中心=玻璃左+59
@@ -235,11 +295,45 @@ btn_travel = (btn_tip_y - btn_key_bc) + 0.25;
 echo(str("按键: 导向长 ", wall_t + btn_bore_in, "  静止间隙 ", btn_gap,
          "（最坏 ", btn_gap_wc, "）  需行程 ", btn_travel, " / 可用 ", pl_proud,
          "  销总长 ", pl_nose + pl_flange_t + wall_t + btn_bore_in + pl_proud));
-assert(btn_gap_wc > 0.1, "玻璃偏向按键壁时销子会预压按键：减小 pl_nose");
-assert(btn_travel < pl_proud, "行程不够：加大 pl_proud");
-assert(cav_y1 - btn_bore_in - pl_flange_t - btn_travel > scr_pcb_w + 0.3,
+// V4.7 起 btns 默认为空（Y+ 壁不开孔），这组校验只在真的开孔时才有意义；
+// 条件化而不是删掉，是为了把 RESET/BOOT 填回 btns 时护栏立刻回来。
+btn_on = len(btns) > 0;
+assert(!btn_on || btn_gap_wc > 0.1, "玻璃偏向按键壁时销子会预压按键：减小 pl_nose");
+assert(!btn_on || btn_travel < pl_proud, "行程不够：加大 pl_proud");
+assert(!btn_on || cav_y1 - btn_bore_in - pl_flange_t - btn_travel > scr_pcb_w + 0.3,
        "按到底时法兰会撞屏板边缘：加大 pl_nose");
-assert(cav_y1 - btn_guide > btn_key_y + 1.0, "导向套会顶到键帽：缩短 btn_guide");
+assert(!btn_on || cav_y1 - btn_guide > btn_key_y + 1.0, "导向套会顶到键帽：缩短 btn_guide");
+
+/* ---------- SW3 主电源键几何自检（X+ 壁）----------
+   不确定量来自扩展板螺丝孔间隙 ±sw3_fit（不是玻璃游动），两端都要校验。
+   ⚠️ 判死的一条是 sw3_gap_wc：它一旦 ≤0，销子就常压 /QON，整机反复重启。 */
+sw3_z      = z_exp_top + sw3_btn_ctr_z;                            // 15.95
+sw3_span   = cav_x1 - sw3_key_x;                                   // 跨距 4.318
+sw3_tip_x  = cav_x1 - sw3_bore_in - pl_flange_t - sw3_nose;        // 顶鼻静止位
+sw3_gap    = sw3_tip_x - sw3_key_x;
+sw3_gap_wc = sw3_tip_x - (sw3_key_x + sw3_fit);   // 板偏向壁：最易预压
+sw3_gap_bc = sw3_tip_x - (sw3_key_x - sw3_fit);   // 板偏离壁：最费行程
+sw3_need   = sw3_gap_bc + sw3_travel + 0.15;      // 走完空隙 + 压到底 + 余量
+sw3_exp_x1 = exp_x(exp_l);                        // 扩展板 X+ 板边 = 101.25
+sw3_seat_face = exp_x(sw3_pcb[0]) + sw3_seat_x;   // 座子前表面 = 100.732
+echo(str("SW3: 孔中心 y=", sw3_y, " z=", sw3_z, "  跨距 ", sw3_span,
+         "  导向长 ", wall_t + sw3_bore_in, "  静止间隙 ", sw3_gap,
+         "（最坏 ", sw3_gap_wc, "）  需行程 ", sw3_need, " / 可用 ", sw3_proud,
+         "  销总长 ", sw3_nose + pl_flange_t + wall_t + sw3_bore_in + sw3_proud));
+assert(sw3_gap_wc > 0.1,
+       "扩展板偏向 USB 壁时销子会常压 SW3（/QON 拉低→反复重启）：减小 sw3_nose");
+assert(sw3_need < sw3_proud, "SW3 行程不够：加大 sw3_proud");
+assert(sw3_guide - sw3_bore_in >= pl_flange_t + sw3_need,
+       "套内沉腔容不下法兰+行程：加大 sw3_guide");
+assert(cav_x1 - sw3_bore_in - pl_flange_t - sw3_need > sw3_exp_x1 + 0.3,
+       "按到底时法兰会撞扩展板边缘：加大 sw3_nose");
+assert(sw3_key_x - sw3_travel > sw3_seat_face + 0.3,
+       "顶鼻会压到 TS24CA 座子外壳/固定脚牛角而不是按钮");
+assert(cav_x1 - sw3_guide > sw3_exp_x1 + 0.3, "导向套会撞扩展板边缘：缩短 sw3_guide");
+assert(sw3_z + sw3_boss_d / 2 < z_scr_bot - 0.3, "导向套顶会撞屏板底面：SW3 太高");
+assert(abs(sw3_y - h1_y) > (sw3_rec_d + usb_rec[0]) / 2 + 0.5,
+       "SW3 外凹与 H1 USB 沉槽在 X+ 壁上重叠");
+// 「PWR 凹字不压进 SW3 外凹槽」那条断言依赖 emb_sz，放在它定义之后（见 labels 段前）。
 
 /* ---------- 基础形 ---------- */
 module rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w]); }
@@ -329,6 +423,14 @@ module wall_cutouts() {
             cylinder(d = btn_rec_d, h = rec_depth + 0.01);
     }
 
+    /* --- SW3 主电源键（X+）：长导向孔 + 套内法兰沉腔 + 外侧圆凹 ---
+       与上面 POWER 一节同构，只是切割方向从 +Y 换成 +X、参数换成 sw3_*。 */
+    slot_cut_x(sw3_y, sw3_z, sw3_d, sw3_d, cav_x1 - sw3_bore_in, cut_len);
+    translate([cav_x1 - sw3_guide - 0.5, sw3_y, sw3_z]) rotate([0, 90, 0])
+        cylinder(d = btn_pkt_d, h = sw3_guide - sw3_bore_in + 0.5);
+    translate([box_x1 - rec_depth, sw3_y, sw3_z]) rotate([0, 90, 0])
+        cylinder(d = sw3_rec_d, h = rec_depth + 0.01);
+
     /* --- SD 卡槽（Y+）：穿墙槽 + 外侧圆角浅沉槽 + 圆角指甲槽 --- */
     z_sd = z_scr_bot + sd_zoff;
     slot_cut_y(sd_cx, z_sd, sd_w, sd_h, cav_y1 - 1, cut_len);
@@ -374,6 +476,10 @@ emb_sz   = 4.0;       // 字号（笔画宽=0.2×size=0.8mm，达标）
 emb_cut  = 0.1;       // 起挖面外移量（保证挖穿，配合 difference）
 emb_font = "Liberation Sans:style=Bold";
 lbl_z    = 13.0;      // 统一基线高度（字缩小后上移贴近开孔；下缘留 0.6+）
+// X+ 壁的 PWR 字不能用 lbl_z：SW3 外凹槽（中心 15.95、φ8）下缘 11.95，
+// 13.0 的字会挖进槽里。所以 SW3 单独用 sw3_lbl_z，并在这里护住。
+assert(sw3_lbl_z + emb_sz / 2 < sw3_z - sw3_rec_d / 2 - 0.3,
+       "PWR 凹字会压进 SW3 外凹槽：下调 sw3_lbl_z");
 module wall_text(txt, u, z, face) {
     // 凹字：作为 difference 切割体。挤出沿墙面外法线（凸字同向，已验证），
     // 起点退到墙内 emb_h+emb_cut 处，挤出 emb_h+2*emb_cut 穿出外墙面，
@@ -397,9 +503,10 @@ module wall_text(txt, u, z, face) {
                      halign = "center", valign = "center");
 }
 module labels() {
-    wall_text(lbl_pwr, btn_power_x, lbl_z, 0);
+    if (len(btns) > 0) wall_text(lbl_pwr, btn_power_x, lbl_z, 0);
     wall_text(lbl_sd,  sd_cx,       lbl_z, 0);
     wall_text(lbl_usb, h1_y,        lbl_z, 1);
+    wall_text(lbl_pwr, sw3_y,       sw3_lbl_z, 1);   // SW3 在 X+ 壁，字在凹槽下方
     wall_text(lbl_sma[0], sma_y[0], lbl_z, 2);
     wall_text(lbl_sma[1], sma_y[1], lbl_z, 2);
 }
@@ -410,13 +517,21 @@ module btn_guides() {
     for (bx = btns)
         translate([bx, cav_y1 - btn_guide, z_btn]) rotate([-90, 0, 0])
             cylinder(d = btn_boss_d, h = btn_guide + 0.01);
+    // SW3（X+ 壁）：套内端 x=102.3，扩展板板边 101.25，留 1.05 不撞（有断言护着）
+    translate([cav_x1 - sw3_guide, sw3_y, sw3_z]) rotate([0, 90, 0])
+        cylinder(d = sw3_boss_d, h = sw3_guide + 0.01);
 }
 
-/* ---------- 按键按压销（法兰止位于导向套内沉腔）---------- */
-module plunger() {  // 自下而上：顶鼻(按压面) → 法兰 → 导向杆
-    out_len = wall_t + btn_bore_in + pl_proud;
-    cylinder(d = pl_shaft_d, h = pl_nose + pl_flange_t + out_len);
-    translate([0, 0, pl_nose]) cylinder(d = pl_flange_d, h = pl_flange_t);
+/* ---------- 按键按压销（法兰止位于导向套内沉腔）----------
+   参数化：两面壁的跨距不同（Y+ 3.300 / X+ 4.318），销子长度也不同，
+   不能共用一个。默认出 SW3 那款——V4.7 只有 X+ 壁开孔。
+   ⚠️ 把 RESET/BOOT 填回 btns 时，必须另排一批 plunger(pl_nose, btn_bore_in,
+   pl_proud) 的销子，直接拿 SW3 销去装会预压按键。 */
+module plunger(nose = sw3_nose, bore_in = sw3_bore_in, proud = sw3_proud) {
+    // 自下而上：顶鼻(按压面) → 法兰 → 导向杆
+    out_len = wall_t + bore_in + proud;
+    cylinder(d = pl_shaft_d, h = nose + pl_flange_t + out_len);
+    translate([0, 0, nose]) cylinder(d = pl_flange_d, h = pl_flange_t);
 }
 
 /* ---------- 总装 ---------- */
@@ -505,9 +620,11 @@ echo(str("玻璃边: 左x=", AX(gx0), " 右x=", AX(gx1),
 echo(str("层高 z: 盒外底0 / 盒内底", AZ(floor_t), " / 扩展板底", AZ(z_exp_bot),
          " / 屏板底", AZ(z_scr_bot), " / 玻璃底", AZ(z_glass_b),
          " / 口沿=玻璃面", AZ(box_h)));
-echo(str("POWER 孔  x=", AX(btn_power_x), "  z=", AZ(z_scr_bot + btn_zoff),
-         " (距玻璃面 ", btn_glass_d, ")  φ", btn_d,
-         "  外凹φ", btn_rec_d, "深", rec_depth, "  在 y=", AY(box_y1), " 壁"));
+echo(str("PWR/SW3 孔 y=", AY(sw3_y), "  z=", AZ(sw3_z),
+         " (距玻璃面 ", box_h - sw3_z, ")  φ", sw3_d,
+         "  外凹φ", sw3_rec_d, "深", rec_depth, "  在 x=", AX(box_x1),
+         " 壁（USB 侧）  销凸出 ", sw3_proud));
+echo(str("Y+ 壁按键孔: ", btn_on ? str("开 ", btns) : "不开（V4.7 堵掉，见 btns 注释）"));
 echo(str("SD 槽     x=", AX(sd_cx), "  z=", AZ(z_scr_bot + sd_zoff),
          " (距玻璃面 ", sd_glass_d, ")  ", sd_w, "x", sd_h,
          "  外框", sd_rec[0], "x", sd_rec[1], " 深", rec_depth));
