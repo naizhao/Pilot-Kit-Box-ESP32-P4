@@ -259,7 +259,7 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "pk_i2c0_bus.h"
-#include "power_eta6098.h"
+#include "pk_batt_model.h"
 #include "power_service.h"
 
 static const char *TAG = "sy6970";
@@ -540,12 +540,20 @@ bool power_sy6970_shutdown(void)
     return false;   /* 没真关掉，就不能报成功 */
 }
 
-/* 快照组装（成功拍）。pct：SY6970 与 ETA6098 一样只有电压没有库仑计，
- * 复用同一张电芯放电曲线（power_eta6098_mv_to_pct，合同见其头文件）；
- * 插电维持电压的虚高偏差在这里**未补偿**——ETA 的 CC/HOLD 压降补偿是
+/* 快照组装（成功拍）。pct：SY6970 没有库仑计，只有电压，走公共电芯模型
+ * pk_batt_mv_to_pct()（合同见 pk_batt_model.h）。2026-09-12 之前这里调的是
+ * power_eta6098_mv_to_pct——曲线长在一颗**本板上根本不存在**的充电芯片的
+ * 文件里（微雪载板的 ETA6098 自 2026-09-10 起已不再注册，见 main.c），
+ * 现已搬到独立模块，两边都调它。
+ *
+ * 插电维持电压的虚高偏差在这里**仍未补偿**——ETA 的 CC/HOLD 压降补偿是
  * 2026-08-04 按那颗芯片实测标定的，直接套用到 SY6970 属于编造，标定
- * 数据到手前如实带着偏差（ichg_ma/charging 已在诊断快照里，标定有据
- * 可依）。量程闸与 ETA6098 backend 同口径。 */
+ * 数据到手前如实带着偏差。实测量级：9V PD 充电中 BATT=4084mV 报 94%，
+ * 若套 ETA 的 CC 常数（150mV）应在 82% 附近，系统性虚高约 12 个百分点。
+ * SY6970 比 ETA 多一个条件——REG12 ICHGR 给出实测充电电流，可以做
+ * 压降=ICHG×R_internal 的连续补偿，而不是 ETA 那样分档硬切；R 需要一轮
+ * CC 段（约 40~70% 电量、电流顶在上限）的拔插实测才能定。
+ * 量程闸与 ETA6098 backend 同口径。 */
 static power_snapshot_t build_snapshot(const sy6970_status_t *st,
                                        int64_t now_us)
 {
@@ -554,7 +562,7 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
                                             : POWER_SRC_BATTERY;
     out.backend          = POWER_BACKEND_SY6970;
     out.batt_mv          = st->batt_mv;
-    out.pct_est          = (uint8_t)power_eta6098_mv_to_pct(st->batt_mv);
+    out.pct_est          = (uint8_t)pk_batt_mv_to_pct(st->batt_mv);
     out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
     out.charging         = st->charging;
     /* F6 范围裁定（controller 2026-09-07）：计划里的 VBUS 分压网络
@@ -822,8 +830,11 @@ void power_sy6970_init(void)
     }
 
     /* ACK 即注册（bring-up 失败由 poll 的 1 Hz 自愈重试兜住，见下）。
-     * 注册次序=优先级：本函数在 main.c 里先于 power_eta6098_init() 调用，
-     * SY6970 占第一槽 = 权威源；ETA6098 随后注册自然回落为兜底。 */
+     * 注册次序=优先级，SY6970 占第一槽 = 权威源。
+     * 注：原注释说"先于 power_eta6098_init() 调用、ETA6098 随后注册为
+     * 兜底"，这在 2026-09-10 之后已不成立——电池挂在扩展板，微雪载板的
+     * ETA6098 不再读也**不再注册**（见 main.c 电源链注释），本 backend
+     * 是电源服务里唯一的注册者。 */
     power_service_register(&s_backend);
     ESP_LOGI(TAG, "0x%02X ACK——SY6970 注册为电源权威源", SY6970_I2C_ADDR);
 }

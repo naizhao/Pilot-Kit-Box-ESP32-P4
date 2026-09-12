@@ -175,6 +175,11 @@ idf_component_register(
         "pk_ui_nav_host.c"
         "touch_gt911.c"
         "pk_touch_arbiter.c"
+        # 电芯 SoC 模型（电压→电量）。2026-09-12 自 power_eta6098.c 搬出：
+        # 曲线是电芯的化学属性，跟哪颗充电芯片在采样无关，而 v4 板上
+        # 那颗 ETA6098 根本不存在。纯函数、无 IDF 依赖，host 单测直编
+        # （test_pk_batt_model.c）。
+        "pk_batt_model.c"
         # 旧 battery API 的兼容壳（WP-D Task 2）：pk_batt_init/pk_batt_get
         # 两个转发，diag_page/pfd_statusbar 的调用点零改动。
         "battery.c"

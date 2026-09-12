@@ -12,6 +12,7 @@
  * 的标定入口不变。
  */
 #include "power_eta6098.h"
+#include "pk_batt_model.h"
 
 #include "power_service.h"
 
@@ -53,26 +54,6 @@ static bool    s_vbus;        /* USB/电源在位。比 charging 更宽：充满
                                * charging=false 但 vbus 仍为 true，这一档的
                                * 端电压补偿只看它（见 supply_drop_mv）。 */
 
-/*
- * 锂电放电曲线 → 百分比。
- *
- * 不用线性映射：锂电在 3.7~4.0 V 之间平得像条直线，线性算法会让"还剩一半"
- * 停留很久然后突然掉到 0。下面这张分段表贴合典型 18650/软包放电曲线，
- * 拐点取在 3.85 / 3.70 / 3.50 V。
- *
- * 公开为 power_eta6098_mv_to_pct()：电芯模型是化学属性而非充电芯片属性，
- * SY6970 backend（power_sy6970.c）同样只有电压没有库仑计，复用这一张表；
- * 两处各养一份 SoC 曲线必然漂移（合同见 power_eta6098.h）。
- */
-int power_eta6098_mv_to_pct(int mv)
-{
-    if (mv >= 4150) return 100;
-    if (mv >= 3850) return 75 + (mv - 3850) * 25 / 300;
-    if (mv >= 3700) return 50 + (mv - 3700) * 25 / 150;
-    if (mv >= 3500) return 20 + (mv - 3500) * 30 / 200;
-    if (mv >= 3300) return      (mv - 3300) * 20 / 200;
-    return 0;
-}
 
 /*
  * 插着电时的端电压补偿。
@@ -259,7 +240,7 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
                      ema, CONFIG_PK_BATT_DIVIDER_X100 / 100.0,
                      batt_mv_dbg, (int)s_vbus, (int)s_charging, drop_dbg,
                      batt_mv_dbg - drop_dbg,
-                     power_eta6098_mv_to_pct(batt_mv_dbg - drop_dbg));
+                     pk_batt_mv_to_pct(batt_mv_dbg - drop_dbg));
         }
     }
 
@@ -278,7 +259,7 @@ static power_snapshot_t eta6098_poll(int64_t now_us)
     out.backend      = POWER_BACKEND_ETA6098;
     out.batt_mv      = (uint16_t)(ema * CONFIG_PK_BATT_DIVIDER_X100 / 100);
     const int drop   = supply_drop_mv(out.batt_mv, s_vbus, s_charging);
-    out.pct_est      = (uint8_t)power_eta6098_mv_to_pct(out.batt_mv - drop);
+    out.pct_est      = (uint8_t)pk_batt_mv_to_pct(out.batt_mv - drop);
     /* 满电仍如实报充电状态：阶跃检测能证明线插着，不必再靠"电压还在涨"
      * 来推断，上一版那条 <4150 的抑制反而会把已知事实盖掉。 */
     out.charging     = s_charging;
