@@ -20,6 +20,13 @@ on:
           - both
           - v3
           - v4
+      # 手动重建某个已发布版本时用它指向那一版固件的原始提交（SHA / tag /
+      # 分支任意 ref）。留空则编当前触发 ref 本身。tag 推送忽略此输入。
+      # 这样 tag 和 commit 都不用动，也能用 main 上修好的 workflow 重编旧版本。
+      commit_id:
+        description: "Commit SHA / ref to build; empty = the dispatched ref. Set this to re-cut an existing release from its original commit."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -50,6 +57,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # tag 推送时 inputs.commit_id 为空，回落 github.ref；手动 dispatch
+          # 可显式指定要重编的旧提交。
+          ref: ${{ inputs.commit_id || github.ref }}
 
       - name: Build ESP-IDF project and package release assets
         uses: espressif/esp-idf-ci-action@v1
@@ -173,9 +183,28 @@ jobs:
           path: dist/site
           if-no-files-found: error
 
+      # 发布前卡一道：产物必须来自 RELEASE_VERSION 这个 tag 指向的提交。
+      # 手动 dispatch 传 commit_id 重编旧版本时，若它与已有 tag 不一致，
+      # 就会发出「名字是 vX、内容是另一份」的包——这里直接失败。
+      - name: Verify release tag matches built commit
+        if: startsWith(github.ref, 'refs/tags/') || inputs.commit_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          built=$(git rev-parse HEAD)
+          if ! tag_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_VERSION}" --jq '.sha' 2>/dev/null); then
+            echo "::error::tag ${RELEASE_VERSION} 不存在，拒绝发布名字对不上的包"
+            exit 1
+          fi
+          if [ "${built}" != "${tag_commit}" ]; then
+            echo "::error::编出的提交 ${built} 与 tag ${RELEASE_VERSION}（${tag_commit}）不一致"
+            exit 1
+          fi
+
       # 同理：半套资产不进 Release。单板型构建只留 workflow artifact 供下载。
       - name: Publish GitHub Release assets
-        if: startsWith(github.ref, 'refs/tags/') && env.BUILD_IS_COMPLETE == 'true'
+        if: (startsWith(github.ref, 'refs/tags/') || inputs.commit_id != '') && env.BUILD_IS_COMPLETE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
