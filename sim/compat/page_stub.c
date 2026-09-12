@@ -20,6 +20,11 @@
 #include "esp_timer.h"         /* 单调时钟冻结 + GPS 时间戳按 now 反推 */
 #include "mock_runtime.h"      /* pk_sim_flag：PK_SIM_EMPTY 总开关 */
 #include "pk_rec_store.h"      /* pk_rec_store_health_t / pk_rec_degrade_t —— pk_rec_store_get_health 桩 */
+#include "power_sy6970.h"      /* sy6970_diag_t —— sy6970_diag_get 桩 */
+#include "adsb_link_task.h"    /* pk_adsb_link_state_get 桩 */
+#include "config_antenna.h"    /* pk_ant_1090_get / pk_ant_gnss_get 桩 */
+#include "power_service.h"     /* power_snapshot_t —— power_service_snapshot 桩 */
+#include "record_sink.h"       /* record_sink_uart_stats 桩 */
 
 /* 环境变量取整数，缺省回落。全文件的 PK_SIM_* 旋钮都走它。 */
 static int sim_env(const char *k, int dflt)
@@ -607,6 +612,137 @@ void pk_rec_store_get_health(pk_rec_store_health_t *out)
 /* PK_SIM_DIAG_DETAIL=<卡片序号> 直接打开该子系统的详情页，用来截图核对
  * 版面——详情是点击才进的第二层，没有这个开关就只能截到总览。 */
 void pk_diag_sim_open_detail(void);
+
+/*
+ * SY6970 充电芯片诊断快照。
+ *
+ * power_sy6970.c 是 I²C 胶水 + portMUX 临界区，跟 pk_rec_store*.c 一样不进
+ * sim 链接（sim/CMakeLists.txt 没列它），于是 diag_page.c 自 3ddf63f 起引用
+ * sy6970_diag_get() 就让整个 sim 链接不过——**编译全过、只有链接挂**，很容易
+ * 被当成自己刚改的那几个文件的锅。桩在这里，与本文件其余"真机专属子系统"同源。
+ *
+ * 默认返回 **false**（= 探测 NACK / 从未报数），这是 v3 与未上电 v4 上的
+ * 预期路径，也正是诊断页那条降级版面——先摆最糟情况。
+ * PK_SIM_SY6970=1 切到"在读数"的正常快照，用来截另一半版面；数值按
+ * power_sy6970.h 的换算公式反推，不是随手编的：
+ *   batt_mv 3900 → BATV code (3900-2304)/20 = 79.8 ≈ 80
+ *   vbus_mv 5100 → BUSV code (5100-2600)/100 = 25
+ *   ntc 30.0%    → 30000（区间 21000..80055）
+ */
+bool sy6970_diag_get(sy6970_diag_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    if (!pk_sim_flag("PK_SIM_SY6970")) return false;   /* 哨兵：从未报数 */
+
+    out->st.bus_stat      = 1;        /* USB host (SDP)            */
+    out->st.charging      = true;     /* CHRG_STAT=10 快充         */
+    out->st.power_good    = true;
+    out->st.vbus_present  = true;
+    out->st.batt_mv       = 3900;
+    out->st.vbus_mv       = 5100;
+    out->st.ichg_ma       = 750;      /* ICHGR code 15 × 50 mA     */
+    out->st.ntc_pct_x1000 = 30000;
+    out->reg00            = 0x1B;     /* EN_HIZ=0 / EN_ILIM=1，F1 落定 */
+    /* 原始窗口 REG0B..REG12：只供详情页原样十六进制展示，与上面解码值同拍。 */
+    out->regs[0] = 0x24; out->regs[1] = 0x00; out->regs[2] = 0x50;
+    out->regs[3] = 0x19; out->regs[4] = 0x00; out->regs[5] = 0x0F;
+    out->regs[6] = 0x00; out->regs[7] = 0x00;
+    out->ready      = true;
+    out->updated_us = esp_timer_get_time();
+    return true;
+}
+
+/*
+ * ── sim 链接缺口补齐（2026-09-12）──────────────────────────────────
+ *
+ * 下面这几个和上面的 sy6970 是同一类：真机实现都在不进 sim 链接的模块里
+ * （I²C / FreeRTOS 任务 / NVS / UART），而诊断页与设置页陆续引用了它们，
+ * 于是 sim 从某次提交起就**编译全过、只有链接挂**——很容易被当成自己刚改的
+ * 那几个文件的锅（本次就先怀疑错了一轮）。
+ *
+ * 默认值一律按**最糟/降级**那一档给，理由同本文件开头：理想数据下踩不到坑。
+ */
+
+/* ADS-B 链路：默认 NO_LINK（没插扩展板），PK_SIM_ADSB_LINK=1 切到 LINKED。 */
+pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
+{
+    const bool up = pk_sim_flag("PK_SIM_ADSB_LINK");
+    if (stats != NULL) {
+        memset(stats, 0, sizeof(*stats));
+        if (up) {
+            /* 带一点 CRC 错与序号缺口：全零会让"错误计数"那几列永远是 0，
+             * 那几个字段的版面就从来没被看过。 */
+            stats->rx_frames     = 128734;
+            stats->rx_crc_errors = 91;
+            stats->rx_seq_gaps   = 3;
+            stats->rx_resyncs    = 1;
+            stats->modes_fed     = 128640;
+        }
+    }
+    return up ? PK_ADSB_LINK_LINKED : PK_ADSB_LINK_NO_LINK;
+}
+
+/* 天线选择：真源在 NVS（config_antenna.c 不进 sim 链接）。默认取两个枚举的
+ * 0 值——它们被刻意对齐成"上电默认"，见 config_antenna.h 的说明。 */
+pk_ant_1090_t pk_ant_1090_get(void)
+{
+    return pk_sim_flag("PK_SIM_ANT_1090_EXT") ? PK_ANT_1090_EXTERNAL
+                                              : PK_ANT_1090_ONBOARD;
+}
+
+pk_ant_gnss_t pk_ant_gnss_get(void)
+{
+    return pk_sim_flag("PK_SIM_ANT_GNSS_ONBOARD") ? PK_ANT_GNSS_ONBOARD
+                                                  : PK_ANT_GNSS_EXTERNAL;
+}
+
+/* QNH 模式：出厂默认 AUTO（config_qnh.h）。PK_SIM_QNH_MANUAL=1 看另一档版面。 */
+pk_qnh_mode_t pk_qnh_mode_get(void)
+{
+    return pk_sim_flag("PK_SIM_QNH_MANUAL") ? PK_QNH_MODE_MANUAL
+                                            : PK_QNH_MODE_AUTO;
+}
+
+/*
+ * 电源快照。默认给"外部供电 + 在充电"这一档，但**故意让 pct 不可信**
+ * （pct_valid=false）：那是电量条的降级版面，比满格好看的那版更该被看到。
+ * PK_SIM_BATT_OK=1 切到电量可信。
+ */
+power_snapshot_t power_service_snapshot(void)
+{
+    power_snapshot_t s;
+    memset(&s, 0, sizeof(s));
+    s.source       = POWER_SRC_SY6970_VBUS;
+    s.backend      = POWER_BACKEND_SY6970;
+    s.charging     = true;
+    s.vbus_present = true;
+    s.batt_mv      = 3900;
+    s.pct_est      = 62;
+    s.pct_valid    = pk_sim_flag("PK_SIM_BATT_OK");
+    s.time_degraded_na = !s.pct_valid;
+    s.updated_us   = esp_timer_get_time();
+    s.stale        = false;
+    return s;
+}
+
+/*
+ * record_sink 的 UART 统计。默认返回 **false** = 这一路压根没起来——
+ * record_sink.h 明确警告不得把三个 0 当成"活着且一条没丢"，默认走 false
+ * 正好让诊断页那条判别被真正走到。PK_SIM_REC_UART=1 给一组带丢弃的数。
+ *
+ * 恒等式 written + dropped + pending == dispatch 次数（record_sink.h）在下面
+ * 这组数上成立：120000 + 37 + 5 —— 桩数据也不该破坏被文档化的不变量。
+ */
+bool record_sink_uart_stats(uint32_t *out_written, uint32_t *out_dropped,
+                            uint32_t *out_pending)
+{
+    if (!pk_sim_flag("PK_SIM_REC_UART")) return false;
+    if (out_written) *out_written = 120000;
+    if (out_dropped) *out_dropped = 37;
+    if (out_pending) *out_pending = 5;
+    return true;
+}
 
 /* ── display.c 的两个入口 ────────────────────────────────────────
  *
