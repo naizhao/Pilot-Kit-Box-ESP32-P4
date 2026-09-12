@@ -244,4 +244,3 @@ CONFIG_LV_FONT_MONTSERRAT_22=y
 # implicit declaration。
 #
 # 本项目的 BLE GDL90 输出依赖它，必开。
-CONFIG_PK_BATT_DIVIDER_X100=296

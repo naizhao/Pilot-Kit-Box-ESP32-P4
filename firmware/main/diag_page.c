@@ -152,7 +152,6 @@ static void fmt_clock(char *buf, size_t bufsz)
 #include "pfd_layout.h"
 #include "pk_ui_nav.h"
 #include "pfd_draw.h"
-#include "battery.h"
 #include "power_service.h"   /* power_service_snapshot — 电源聚合快照（WP-D） */
 #include "power_sy6970.h"    /* sy6970_diag_get — v4 powered 充电芯片取证（WP-D） */
 #include "soc_temp.h"
@@ -744,25 +743,14 @@ void pk_diag_page_render(uint16_t *fb)
                           : (same_src && s.pct_valid && s.pct_est < 20) ? ST_WARN : ST_OK);
             }
         } else {
-            /* v3 / 未上电的 v4：ETA6098 分压采样，呈现原样保留。 */
-            pk_batt_t b;
-            pk_batt_get(&b);
-            if (b.valid) {
-                /* 同时给百分比、电压和 raw：raw 是标定分压比的唯一依据，
-                 * 拿万用表量到的电池电压除以它就是比值（见 CONFIG_PK_BATT_
-                 * DIVIDER_X100）。标定完这一项就没用了，但留着不碍事，
-                 * 换板子时还得再标一次。 */
-                snprintf(buf, sizeof(buf), "%d%% %.2fV%s raw %dmV",
-                         b.pct, b.batt_mv / 1000.0, b.charging ? " CHG" : "",
-                         b.raw_mv);
-                draw_card(fb, 0, 5, card_title(10), buf,
-                          b.charging ? ST_OK : b.pct >= 20 ? ST_OK : ST_WARN);
-            } else {
-                /* 没接电池时引脚浮空，读数乱跳——不显示百分比，只说没接。 */
-                snprintf(buf, sizeof(buf), "%s (raw %dmV)",
-                         pk_i18n_text(PK_TR_DIAG_V_NO_BATTERY), b.raw_mv);
-                draw_card(fb, 0, 5, card_title(10), buf, ST_BAD);
-            }
+            /* SY6970 不是快照赢家 = 这块板上没有可用的电源数据源。
+             *
+             * 2026-09-12 之前这里画的是 ETA6098 分压采样（v3 载板 / 未上电
+             * 的 v4）。v3 支持已取消、ETA6098 整体退役，于是这条分支的含义
+             * 收敛成单一情况：**SY6970 探测 NACK 或掉线超过 5 s**。
+             * 不再编造任何读数——没有源就如实说没有。 */
+            draw_card(fb, 0, 5, card_title(10),
+                      pk_i18n_text(PK_TR_DIAG_V_NOT_DETECTED), ST_BAD);
         }
     }
 
@@ -1498,31 +1486,10 @@ static void draw_detail(uint16_t *fb, int which)
             snprintf(buf, sizeof(buf), "0x%02X", d.regs[1]);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_REG0C, buf, COL_OFFLINE);
         } else {
-            /* v3 / 未上电的 v4：ETA6098 分压采样，呈现原样保留。 */
-            pk_batt_t b;
-            pk_batt_get(&b);
-            if (b.valid) {
-                snprintf(buf, sizeof(buf), "%d %%", b.pct);
-                det_kv_tr(fb, line++, PK_TR_DIAG_K_CHARGE, buf,
-                          b.pct >= 20 ? COL_ONLINE : COL_WARN);
-                snprintf(buf, sizeof(buf), "%.3f V", b.batt_mv / 1000.0);
-                det_kv_tr(fb, line++, PK_TR_DIAG_K_VOLTAGE, buf, COL_VAL);
-                snprintf(buf, sizeof(buf), "%d mV", b.raw_mv);
-                det_kv_tr(fb, line++, PK_TR_DIAG_K_ADC_RAW, buf, COL_OFFLINE);
-                det_kv_tr2(fb, line++, PK_TR_DIAG_K_CHARGING,
-                           b.charging ? PK_TR_DIAG_V_YES : PK_TR_DIAG_V_NO,
-                           b.charging ? COL_ONLINE : COL_VAL);
-                /* 这块板的电池只接充电通路、没有 power path：拔掉 USB 是彻底
-                 * 断电再上电（实测复位原因为 power-on，不是 brownout）。这一行
-                 * 是给排查者的，不是给飞行员的——但它能省掉一轮"为什么会重启"。
-                 * 只在 ETA6098 分支出现：SY6970 自带 power path，这句对它不成立，
-                 * 而 v4 上的实测行为还没验证过，不替它编一句相反的话。 */
-                det_kv_tr2(fb, line++, PK_TR_DIAG_K_ON_UNPLUG,
-                           PK_TR_DIAG_V_ON_UNPLUG, COL_WARN);
-            } else {
-                det_kv_tr2(fb, line++, PK_TR_DIAG_CARD_BATT,
-                           PK_TR_DIAG_V_NOT_DETECTED, COL_ALERT);
-            }
+            /* 同上：ETA6098 退役后这条分支只剩"没有可用电源源"一种含义。
+             * SY6970 探测 NACK / 掉线 >5 s 都落到这里。 */
+            det_kv_tr2(fb, line++, PK_TR_DIAG_CARD_BATT,
+                       PK_TR_DIAG_V_NOT_DETECTED, COL_ALERT);
         }
         break;
     }

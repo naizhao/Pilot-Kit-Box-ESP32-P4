@@ -176,19 +176,13 @@ idf_component_register(
         "touch_gt911.c"
         "pk_touch_arbiter.c"
         # 电芯 SoC 模型（电压→电量）。2026-09-12 自 power_eta6098.c 搬出：
-        # 曲线是电芯的化学属性，跟哪颗充电芯片在采样无关，而 v4 板上
-        # 那颗 ETA6098 根本不存在。纯函数、无 IDF 依赖，host 单测直编
+        # 曲线是电芯的化学属性，跟哪颗充电芯片在采样无关。纯函数、
+        # 无 IDF 依赖，host 单测直编
         # （test_pk_batt_model.c）。
         "pk_batt_model.c"
-        # 旧 battery API 的兼容壳（WP-D Task 2）：pk_batt_init/pk_batt_get
-        # 两个转发，diag_page/pfd_statusbar 的调用点零改动。
-        "battery.c"
-        # ETA6098 载板电源 backend（WP-D Task 2，自 battery.c 迁入）：
-        # GPIO20 BAT_ADC + GPIO21 STAT 的采集与判据都在这里，
-        # init 成功后注册成 power_service 的兜底源。
-        "power_eta6098.c"
-        # 公共电源状态模型 + backend 注册表（WP-D Task 1）：ETA6098
-        # （power_eta6098.c）与 SY6970（Task 4 新增）都注册到这里。
+        # 公共电源状态模型 + backend 注册表（WP-D Task 1）。曾有两个
+        # backend；ETA6098 与 battery.c 兼容壳随 v3 支持一起退役
+        # （2026-09-12），现在 SY6970 是唯一注册者。
         # 纯模型 host 单测 test_power_service.c 直编（POWER_SERVICE_HOST_TEST
         # 隔离，模式同 qmc5883p.c）；目标端只有 1 Hz 轮询任务胶水。
         "power_service.c"
@@ -233,7 +227,6 @@ idf_component_register(
         esp_driver_i2c           # BNO085 SH-2/SHTP over I²C0
         esp_driver_gpio          # BNO085 RST pin
         esp_driver_tsens         # 片内结温 → 顶栏过热告警（soc_temp.c）
-        esp_adc                  # GPIO20 BAT_ADC → 电池电压（battery.c）
         nvs_flash                # software-tare persistence (imu_task.c)
         esp_mm                   # heap_caps_aligned_alloc → PSRAM framebuffer
         esp_app_format           # esp_app_get_description() for boot splash + about

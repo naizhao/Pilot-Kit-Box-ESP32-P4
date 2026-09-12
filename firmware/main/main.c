@@ -50,7 +50,6 @@
 #include "baro.h"
 #include "qmc5883p.h"
 #include "power_sy6970.h"
-#include "power_eta6098.h"
 #include "power_service.h"
 #include "config_ble.h"
 #include "config_demo.h"

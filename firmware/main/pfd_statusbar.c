@@ -25,7 +25,7 @@
 
 /* pk_ui_topbar_status_collect 汇总的数据源——与 pfd.c PFD 分支同一批取法，
  * 见 pfd_statusbar.h 里该函数的头注。 */
-#include "battery.h"
+#include "power_service.h"
 #include "ble_gatt.h"
 #include "gps.h"
 #include "pk_sdcard.h"
@@ -147,11 +147,15 @@ void pk_ui_topbar_status_collect(pk_pfd_status_t *st)
      * 与 PFD 分支同一个真值——PFD 也走本函数，没有第二份取法。 */
     st->cal_hint = pk_ui_cal_hint_active();
 
-    pk_batt_t b;
-    pk_batt_get(&b);
-    st->batt_valid    = b.valid;
-    st->batt_pct      = (uint8_t)b.pct;
-    st->batt_charging = b.charging;
+    /* 电量直接取公共快照。2026-09-12 之前这里走 pk_batt_get()（battery.c
+     * 的兼容壳），那层壳的唯一额外动作是向 ETA6098 要 raw_mv——而 ETA6098
+     * 随 v3 支持一起退役了，壳也就没有存在理由。stale 的处理保持原壳语义：
+     * 数据不新鲜时电量整体判为不可用，charging 也一并清掉，不让状态栏挂着
+     * 一个"正在充电"的陈旧图标。 */
+    const power_snapshot_t ps = power_service_snapshot();
+    st->batt_valid    = !ps.stale && ps.pct_valid;
+    st->batt_pct      = ps.stale ? 0 : ps.pct_est;
+    st->batt_charging = !ps.stale && ps.charging;
 }
 
 void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)

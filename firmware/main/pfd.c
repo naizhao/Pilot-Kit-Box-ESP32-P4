@@ -23,7 +23,6 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
-#include "battery.h"
 #include "about_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
