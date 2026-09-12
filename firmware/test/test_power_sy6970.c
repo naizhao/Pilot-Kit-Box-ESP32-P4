@@ -25,12 +25,19 @@
  *   5. ADC 换算（整数、无浮点）：BATV/SYSV=2304mV+code×20mV，
  *      BUSV=2600mV+code×100mV，ICHGR=code×50mA，NTCPCT=21%+code×0.465%
  *      （×1000 整数化）；
- *   6. init 序列表：5 步（写前 REG00 校验 → REG07 关看门狗 → REG03
- *      喂狗 → 写后 REG07 回读验证 → 写后 REG00 回读验证），地址/掩码/
- *      期望值与取证表一致，每步 why 非空。写后两行分别钉死「关狗已
- *      落定」（REG07[5:4]==0，DS p.19）与计划约束「写入后必须回读
- *      REG00」（DS p.15）——审计 F2：只回读 REG00 证明不了看门狗位
- *      真的落进寄存器。
+ *   6. init 序列表：9 步（写前 REG00 校验 → REG07 关看门狗 → REG03
+ *      喂狗 → REG02 关自动 DP/DM 检测 → REG00 写 IINLIM → 写后逐项
+ *      回读验证 ×4），地址/掩码/期望值与取证表一致，每步 why 非空。
+ *      写后四行分别钉死「关狗已落定」（REG07[5:4]==0，DS p.19）、
+ *      「自动 DP/DM 已关」（REG02[0]==0，DS p.17）、计划约束「写入后
+ *      必须回读 REG00」（DS p.15）与「IINLIM 已落定」——审计 F2：
+ *      只回读 REG00 证明不了看门狗位真的落进寄存器。
+ *   7. IINLIM 输入限流（2026-09-12 实板证据）：REG00 回读 0x48 =
+ *      IINLIM[5:0]=001000=500mA，正是 POR 值，固件从未配过。板上
+ *      U19 的 DP/DM 悬空（V4.4 PCB 焊盘核对），AUTO_DPDM_EN POR=1
+ *      的 BC1.2 检测判不出 CDP/DCP，只会把 IINLIM 按 SDP 钉死在
+ *      500mA（DS p.15 原文）。因此必须先关 AUTO_DPDM_EN 再写
+ *      IINLIM，否则每次插拔都被芯片打回 500mA。
  */
 
 #include <stdio.h>
@@ -251,7 +258,7 @@ static void test_init_seq_matches_evidence(void)
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_init_seq(&n);
     CHECK(seq != NULL);
-    CHECK(n == 5);
+    CHECK(n == 9);
 
     /* 步骤 0（写前）：REG00 回读校验——EN_HIZ=0|EN_ILIM=1（POR 位值，
      * DS p.15），在位证据 */
@@ -270,22 +277,97 @@ static void test_init_seq_matches_evidence(void)
     CHECK(seq[2].reg == 0x03);
     CHECK(seq[2].mask == 0x40);
 
-    /* 步骤 3（写后）：回读 REG07 验证关狗已落定——WATCHDOG[5:4]=00
+    /* 步骤 3：REG02 清 AUTO_DPDM_EN(bit0)（DS p.17）。必须排在写
+     * IINLIM **之前**：DP/DM 检测一跑完就会按适配器类型改写 IINLIM
+     * （DS p.15 原文），而板上 DP/DM 悬空只能判成 SDP=500mA，不关掉
+     * 它下一步写的值会被芯片自己覆盖回去 */
+    CHECK(seq[3].op == SY6970_SEQ_RMW_CLEAR);
+    CHECK(seq[3].reg == 0x02);
+    CHECK(seq[3].mask == 0x01);
+
+    /* 步骤 4：REG00 写 IINLIM[5:0]=100110=38 → 100+50×38=2000mA
+     * （DS p.15）。位域写用 RMW_FIELD（保 EN_HIZ/EN_ILIM 不动），
+     * 不能用 RMW_SET——置位只能把码往大了拼，拼不出确定值 */
+    CHECK(seq[4].op == SY6970_SEQ_RMW_FIELD);
+    CHECK(seq[4].reg == 0x00);
+    CHECK(seq[4].mask == 0x3F);
+    CHECK(seq[4].val == 38);
+
+    /* 步骤 5（写后）：回读 REG07 验证关狗已落定——WATCHDOG[5:4]=00
      * （掩码 0x30 期望 0；DS p.19）。审计 F2：REG0C 的 WATCHDOG_FAULT
      * 只能靠这行把「关狗写被默认模式吃掉」的配置丢失在当轮拦下 */
-    CHECK(seq[3].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[3].reg == 0x07);
-    CHECK(seq[3].mask == 0x30);
-    CHECK(seq[3].val == 0x00);
+    CHECK(seq[5].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[5].reg == 0x07);
+    CHECK(seq[5].mask == 0x30);
+    CHECK(seq[5].val == 0x00);
 
-    /* 步骤 4（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
+    /* 步骤 6（写后）：回读 REG02 验证 AUTO_DPDM_EN 已关（DS p.17）*/
+    CHECK(seq[6].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[6].reg == 0x02);
+    CHECK(seq[6].mask == 0x01);
+    CHECK(seq[6].val == 0x00);
+
+    /* 步骤 7（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
      * 必须回读 REG00 验证」，掩码/期望值与写前一行同源（DS p.15）*/
-    CHECK(seq[4].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[4].reg == 0x00);
-    CHECK(seq[4].mask == 0xC0);
-    CHECK(seq[4].val == 0x40);
+    CHECK(seq[7].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[7].reg == 0x00);
+    CHECK(seq[7].mask == 0xC0);
+    CHECK(seq[7].val == 0x40);
+
+    /* 步骤 8（写后）：IINLIM 单独回读——与上一行拆开是为了让失败日志
+     * 能指明是「器件配置位」还是「限流码」没落定，两者的排查方向完全
+     * 不同（DS p.15）*/
+    CHECK(seq[8].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[8].reg == 0x00);
+    CHECK(seq[8].mask == 0x3F);
+    CHECK(seq[8].val == 38);
 
     for (size_t i = 0; i < n; i++) {
+        CHECK(seq[i].why != NULL && seq[i].why[0] != '\0');
+    }
+}
+
+/* ── 10 IINLIM 码与手册公式一致，且不退回 POR 的 500mA ─────────────
+ * 突变哨兵：把 SY6970_IINLIM_CODE 改回 POR 的 8（=500mA），这条必红。
+ * 实板 2026-09-12 抓到 REG00=0x48 就是 code 8 的样子。 */
+static void test_iinlim_code_is_2a_not_por_default(void)
+{
+    /* DS p.15：IINLIM = 100mA + 50mA×code */
+    CHECK(100u + 50u * SY6970_IINLIM_CODE == SY6970_IINLIM_MA);
+    CHECK(SY6970_IINLIM_MA == 2000u);
+    /* POR 是 001000=8=500mA（实测 REG00=0x48）——必须被改掉 */
+    CHECK(SY6970_IINLIM_CODE != 8u);
+    /* 码必须装得进 IINLIM[5:0] */
+    CHECK(SY6970_IINLIM_CODE <= 0x3Fu);
+    /* 硬件 ILIM 脚 R38=180R 给的是 K_ILIM/R = 375/180 ≈ 2.08A（DS p.10）；
+     * 实际限流取 I²C 与 ILIM 脚的较小值（DS p.15），所以 I²C 侧不该
+     * 设得比硬件上限还高——那只会让硬件成为唯一约束、失去软件兜底 */
+    CHECK(SY6970_IINLIM_MA <= 2080u);
+}
+
+/* ── 11 关机序列：REG09 BATFET_DIS 置位 ────────────────────────────
+ * V4.4 板上 /QON(U19 pad 12) 悬空、J1 没有任何电源控制线，电池在位时
+ * SYS 恒供电、RP2040 永远 POR 不了——BATFET_DIS 是唯一的软件断电途径
+ * （DS p.20 REG09[5]、p.30 BATFET Disable Mode）。
+ * 突变哨兵：掩码改成别的位（如 0x10）或改成 RMW_CLEAR，这条必红。 */
+static void test_shutdown_seq_sets_batfet_dis(void)
+{
+    size_t n = 0;
+    const sy6970_init_step_t *seq = sy6970_shutdown_seq(&n);
+    CHECK(seq != NULL);
+    CHECK(n == 1);
+
+    /* REG09 bit5 BATFET_DIS：1=Turn off Q4（DS p.20）。用 RMW_SET 而
+     * 不是整字节覆盖——REG09 其余位（JEITA_VSET/BATFET_RST_EN/TMR2X_EN）
+     * 保持芯片当前值，关机不该顺手改掉别的配置 */
+    CHECK(seq[0].op == SY6970_SEQ_RMW_SET);
+    CHECK(seq[0].reg == 0x09);
+    CHECK(seq[0].mask == 0x20);
+
+    /* 写完芯片就断电了，读不回来——所以这张表里没有、也不可能有
+     * 写后回读验证步；这是刻意的，不是漏了 */
+    for (size_t i = 0; i < n; i++) {
+        CHECK(seq[i].op != SY6970_SEQ_VERIFY);
         CHECK(seq[i].why != NULL && seq[i].why[0] != '\0');
     }
 }
@@ -301,6 +383,8 @@ int main(void)
     test_decode_rejects_bad_args();
     test_decode_adc_boundaries();
     test_init_seq_matches_evidence();
+    test_iinlim_code_is_2a_not_por_default();
+    test_shutdown_seq_sets_batfet_dis();
 
     if (g_fail == 0) {
         printf("test_power_sy6970: all OK\n");

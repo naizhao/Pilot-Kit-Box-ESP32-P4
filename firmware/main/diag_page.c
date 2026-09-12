@@ -1431,7 +1431,12 @@ static void draw_detail(uint16_t *fb, int which)
              * 用天线自检那条「OK/正常」。 */
             {
                 char fbuf[96];
-                char ntc[8];
+                /* "NTC 2 (43.2%)"：原码后面带上 NTCPCT（REG10）实测
+                 * 百分比。只报原码时没法区分"NTC 真的热了"和"分压网络
+                 * /贴装不对"——前者百分比会随温度走，后者钉死不动。
+                 * 板上 R39=5.62k/R40=31.6k/RT1=10k 下 25°C≈57.5%，
+                 * Warm 门限 V_T3=44.75%、Hot 门限 V_T4=34.35%（DS p.10-11）。 */
+                char ntc[24];
                 bool first = true, any = false;
                 int q = 0;
                 fbuf[0] = '\0';
@@ -1467,8 +1472,13 @@ static void draw_detail(uint16_t *fb, int which)
                 }
                 if (st->ntc_fault != 0) {
                     any = true;
-                    snprintf(ntc, sizeof(ntc), "NTC %u",
-                             (unsigned)st->ntc_fault);
+                    /* ntc_pct_x1000 是 0.001% 整数单位（21000~80055），
+                     * 无浮点拆成 xx.x%——整数部分 /1000，一位小数取
+                     * 余数的百位（power_sy6970.h 的字段口径）。 */
+                    snprintf(ntc, sizeof(ntc), "NTC %u (%lu.%lu%%)",
+                             (unsigned)st->ntc_fault,
+                             (unsigned long)(st->ntc_pct_x1000 / 1000u),
+                             (unsigned long)(st->ntc_pct_x1000 % 1000u / 100u));
                     q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first, ntc);
                 }
                 if (any)

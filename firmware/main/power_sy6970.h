@@ -86,7 +86,29 @@ typedef enum {
     SY6970_SEQ_VERIFY = 0,   /* 回读 reg，要求 (reg & mask) == val      */
     SY6970_SEQ_RMW_CLEAR,    /* reg = reg & ~mask（保其余位，清指定位） */
     SY6970_SEQ_RMW_SET,      /* reg = reg |  mask（保其余位，置指定位） */
+    SY6970_SEQ_RMW_FIELD,    /* reg = (reg & ~mask) | val（写位域）     */
 } sy6970_seq_op_t;
+
+/* ── IINLIM 输入限流（2026-09-12 实板定值）────────────────────────────
+ *
+ * 实测 REG00 回读 0x48：IINLIM[5:0]=001000=8=500mA，就是 POR 值——
+ * 在此之前固件从未配过这个寄存器，CH224K 谈下来的功率被芯片自己卡在
+ * 500mA。板上 U19 的 DP/DM 悬空（V4.4 PCB 焊盘已核对），AUTO_DPDM_EN
+ * 的 BC1.2 检测只能判成 SDP，所以这个 500mA 不会自己变好（DS p.15：
+ * "IINLIM will be changed according to the adapter type after input
+ * DP/DM detection is done. USB Host SDP=500mA"）。
+ *
+ * 取 2000mA 的依据：硬件 ILIM 脚 R38=180R 给出 I_INMAX=K_ILIM/R_ILIM
+ * =375/180≈2.08A（DS p.10 K_ILIM typ 375），而实际限流是 I²C 与 ILIM
+ * 脚**两者的较小值**（DS p.15）。设成 2.0A 略低于硬件上限，两道闸都
+ * 在起作用；再高就等于把限流全交给硬件，软件侧失去兜底。
+ *
+ * 电源带不动 2A 不是问题：AICL_EN（REG02[4]）与 VINDPM 都是 POR 使能
+ * 的，输入塌陷时芯片自己往回退（DS p.28 Dynamic Power Management）。
+ * IINLIM 是上限，不是强制取用值——5V/500mA 的电脑口照样安全。
+ */
+#define SY6970_IINLIM_CODE 38u    /* IINLIM[5:0]=100110               */
+#define SY6970_IINLIM_MA   2000u  /* = 100mA + 50mA×38（DS p.15）     */
 
 typedef struct {
     sy6970_seq_op_t op;
@@ -103,6 +125,30 @@ typedef struct {
  * power_sy6970.c 的表定义处。
  */
 const sy6970_init_step_t *sy6970_init_seq(size_t *n);
+
+/* ── 关机序列（BATFET_DIS / shipping mode）────────────────────────────
+ *
+ * 为什么需要它：V4.4 板上 /QON（U19 pad 12）**完全悬空**，J1 的 40 根
+ * 脚里也没有任何电源控制线（PCB 焊盘归属已逐脚核对）。电池一旦在位，
+ * SY6970 的 power path 就恒供 SYS_4V → SY7069 → VCC_5V → ME6211 →
+ * 3V3_DIG，RP2040(U8) 永远掉不了电、POR 不了；而 RP2040 的 RUN 脚只接
+ * 了 R5 上拉和 SW1 焊锡跳线（B 面 (51.85,77.45)），装进壳里够不着。
+ * 置 BATFET_DIS 关断 Q4 是这块板上**唯一**的软件断电途径
+ * （[DS] p.20 REG09[5]=1 Force BATFET Off、p.30 BATFET Disable Mode）。
+ *
+ * ── 调用方必须知道的两件事 ──────────────────────────────────────────
+ * 1. **VBUS 在位时它不会关机**。BATFET 是电池↔SYS 之间的开关；插着
+ *    USB 时 SYS 由 VBUS 供电，断开电池不影响系统供电。真正要断电必须
+ *    先拔 USB。执行器会在 VBUS 在位时照写不误但打 WARN——这是调用方
+ *    的语义，不是本层该替它决定的。
+ * 2. **唤醒只能靠插 USB**。手册给的两条恢复路径是"插适配器"或"/QON
+ *    引脚一次高→低跳变"（[DS] p.30），而 /QON 在本板悬空，只剩前者。
+ *    没有电池以外供电时，关机后按什么都醒不过来。
+ *
+ * 表里只有一步、且**没有写后回读**：写下去芯片就断电了，读不回来。
+ * 这是刻意的，不是漏了验证步。
+ */
+const sy6970_init_step_t *sy6970_shutdown_seq(size_t *n);
 
 /* ── 目标端（I²C 胶水 + backend，host 单测不编译不链接）───────────────
  *
@@ -124,6 +170,14 @@ const sy6970_init_step_t *sy6970_init_seq(size_t *n);
  * （pk_board.h:30-32 合同，禁止按板型门控注册）。幂等；失败不致命。
  */
 void power_sy6970_init(void);
+
+/*
+ * 执行关机（sy6970_shutdown_seq）。语义与两条硬约束——「VBUS 在位时
+ * 不会真断电」「唤醒只能靠插 USB」——见上面 sy6970_shutdown_seq 的注释，
+ * 调用前务必读一遍。未探测到器件（v3 / 未上电 v4）返回 false。
+ * 成功时函数**可能不返回**：电池供电下 BATFET 一断，MCU 随即掉电。
+ */
+bool power_sy6970_shutdown(void);
 
 /*
  * F7 诊断快照：最近一次**成功**轮询拍的解码状态 + REG00 回读值（F1 写入

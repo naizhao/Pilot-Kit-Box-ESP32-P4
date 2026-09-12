@@ -87,8 +87,13 @@
 /* ── 寄存器与器件常量（取证页码见文件头表）───────────────────────────── */
 
 #define SY6970_REG00 0x00  /* EN_HIZ/EN_ILIM/IINLIM，POR=0x60（[DS] p.15）*/
+#define SY6970_REG02 0x02  /* CONV_START/CONV_RATE/AUTO_DPDM_EN（p.16-17）*/
 #define SY6970_REG03 0x03  /* WD_RST=bit6（[DS] p.17）                    */
 #define SY6970_REG07 0x07  /* WATCHDOG[5:4]（[DS] p.19）                  */
+#define SY6970_REG09 0x09  /* BATFET_DIS=bit5（[DS] p.20）                */
+
+/* 关机：REG09 BATFET_DIS bit5=1 → Force BATFET Off（[DS] p.20）。 */
+#define SY6970_BATFET_DIS_MASK 0x20
 
 /* REG00 的 POR 位值口径（[DS] p.15）：EN_HIZ=0 | EN_ILIM=1 = 0x40。
  * IINLIM 会随适配器检测变，不进校验掩码。 */
@@ -98,6 +103,13 @@
 /* 看门狗管理的位掩码（[DS] p.19 / p.17）。 */
 #define SY6970_WATCHDOG_MASK 0x30  /* REG07 WATCHDOG[5:4] */
 #define SY6970_WDRST_MASK    0x40  /* REG03 WD_RST bit6（写 1 自清） */
+
+/* IINLIM 与自动 DP/DM 检测（取值依据见 power_sy6970.h 的 IINLIM 注释）。
+ * AUTO_DPDM_EN 必须在写 IINLIM 之前清掉：DP/DM 检测跑完会按适配器类型
+ * 改写 IINLIM（[DS] p.15），而板上 DP/DM 悬空只判得出 SDP=500mA——不关
+ * 它，写进去的码每次插拔都被芯片自己覆盖回去。 */
+#define SY6970_IINLIM_MASK       0x3F  /* REG00 IINLIM[5:0]（[DS] p.15）*/
+#define SY6970_AUTO_DPDM_MASK    0x01  /* REG02 AUTO_DPDM_EN bit0（p.17）*/
 
 /* ── F1 初始化序列（数据表，host 可测）────────────────────────────────
  * 顺序：写前先回读校验 REG00（器件在应答且不在 HIZ 的在位证据，读、
@@ -120,20 +132,55 @@ static const sy6970_init_step_t s_init_seq[] = {
     { SY6970_SEQ_RMW_SET, SY6970_REG03,
       SY6970_WDRST_MASK, 0,
       "WD_RST=1 喂狗，写 1 自清 (DS p.17 / ALT p.14 / AN p.17)" },
+    { SY6970_SEQ_RMW_CLEAR, SY6970_REG02,
+      SY6970_AUTO_DPDM_MASK, 0,
+      "AUTO_DPDM_EN=0 关自动 DP/DM 检测 (DS p.17)：板上 DP/DM 悬空，"
+      "BC1.2 只判得出 SDP，会把下一步的 IINLIM 覆盖回 500mA (DS p.15)" },
+    { SY6970_SEQ_RMW_FIELD, SY6970_REG00,
+      SY6970_IINLIM_MASK, SY6970_IINLIM_CODE,
+      "IINLIM[5:0]=100110 → 100mA+50mA×38=2000mA (DS p.15)：此前从未配过，"
+      "实测停在 POR 的 500mA(REG00=0x48)；硬件 ILIM 脚(R38=180R)≈2.08A "
+      "与 AICL/VINDPM 仍在外侧兜底 (DS p.10 / p.28)" },
     { SY6970_SEQ_VERIFY, SY6970_REG07,
       SY6970_WATCHDOG_MASK, 0,
       "写后回读：REG07 WATCHDOG[5:4]==00 证明关狗已落定 "
       "(DS p.19 / ALT p.16 / AN p.19)" },
+    { SY6970_SEQ_VERIFY, SY6970_REG02,
+      SY6970_AUTO_DPDM_MASK, 0,
+      "写后回读：REG02 AUTO_DPDM_EN==0 证明自动检测已关 (DS p.17)" },
     { SY6970_SEQ_VERIFY, SY6970_REG00,
       SY6970_REG00_VERIFY_MASK, SY6970_REG00_VERIFY_VAL,
       "写后回读验证写入已落定（计划约束：写入后必须回读 REG00；"
       "POR 位值 DS p.15 / ALT p.12 / AN p.15）" },
+    { SY6970_SEQ_VERIFY, SY6970_REG00,
+      SY6970_IINLIM_MASK, SY6970_IINLIM_CODE,
+      "写后回读：IINLIM 已落定。与上一行拆开，是为了让失败日志能分清"
+      "「器件配置位」还是「限流码」没写进去——两者排查方向不同 (DS p.15)" },
 };
 
 const sy6970_init_step_t *sy6970_init_seq(size_t *n)
 {
     if (n != NULL) *n = sizeof(s_init_seq) / sizeof(s_init_seq[0]);
     return s_init_seq;
+}
+
+/* ── 关机序列（语义、板级理由与调用方约束见 power_sy6970.h）──────────
+ * 只有一步，且没有写后回读——写下去芯片就断电了，读不回来。
+ * 用 RMW_SET 而不是整字节覆盖：REG09 其余位（JEITA_VSET bit4、
+ * BATFET_RST_EN bit2、TMR2X_EN bit6）保持芯片当前值，关机不该顺手改
+ * 掉别的配置。BATFET_DLY(bit3) POR=0 = 立即关断，正是我们要的，不动。 */
+static const sy6970_init_step_t s_shutdown_seq[] = {
+    { SY6970_SEQ_RMW_SET, SY6970_REG09,
+      SY6970_BATFET_DIS_MASK, 0,
+      "BATFET_DIS=1 关断 Q4 进 shipping mode (DS p.20 REG09[5] / p.30)："
+      "/QON 悬空 + J1 无电源控制线，这是本板唯一的软件断电途径；"
+      "唤醒只能靠插 USB (DS p.30)" },
+};
+
+const sy6970_init_step_t *sy6970_shutdown_seq(size_t *n)
+{
+    if (n != NULL) *n = sizeof(s_shutdown_seq) / sizeof(s_shutdown_seq[0]);
+    return s_shutdown_seq;
 }
 
 /* ── 纯解码（host 可测）─────────────────────────────────────────────── */
@@ -221,8 +268,6 @@ static const char *TAG = "sy6970";
 #define SY6970_I2C_ADDR       0x6A
 #define SY6970_I2C_TIMEOUT_MS 100  /* 与 qmc/baro 的单笔超时口径一致   */
 
-#define SY6970_REG02 0x02
-
 /* REG02 CONV_START[7] / CONV_RATE[6] [DS] p.16 / [ALT] p.13 / [AN] p.16：
  * CONV_RATE=1 → "Start 1s continuous Conversion"，且转换自动开始；
  * CONV_RATE=1 时 CONV_START 变只读（转换期间保持 1）。ADC 不开则
@@ -242,6 +287,16 @@ static const char *TAG = "sy6970";
 /* 开机 60 s 后复检充电电流（F1 配套）：CH224K 诱骗 + SY6970 配置都该
  * 已稳定；若期间看门狗把寄存器打回过默认模式，这一拍的数据能看出来。 */
 #define SY6970_ICHG_RECHECK_US (60LL * 1000 * 1000)
+
+/* 周期详情日志的节拍（成功拍计数，1 Hz 轮询 → 30 s 一行）。
+ *
+ * 为什么要单独一条而不是并进 power_service 那行：公共快照里只有
+ * batt_mv/pct/charging，**没有** ICHG、VBUS、NTCPCT 和寄存器原值——
+ * 而这几个恰恰是充电排障的全部证据。2026-09-12 查 "NTC 2" 时，屏上
+ * 只有原码、串口上一个字都没有，只能靠复位重抓开机日志才看到
+ * REG00=0x48（IINLIM 停在 POR 500mA）；那次的代价就是这条日志的理由。
+ * 30 s 而不是 10 s：这些也是慢变量，不跟 1090 帧流抢串口。 */
+#define SY6970_DETAIL_LOG_TICKS 30
 
 /* 5V/9V 判档中点：CH224K 诱骗档位只到 9V，7V 中点区分两档。仅作
  * 诊断参考口径——权威 VBUS 值来自 BUSV ADC，见 sy6970_poll 的 F6 注。 */
@@ -270,6 +325,7 @@ static int             s_gen_streak;    /* 代数失配重放连击（日志节�
 static int             s_wd_streak;     /* WATCHDOG_FAULT 重放连击（节流） */
 static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
 static bool            s_ichg_recheck_done;
+static uint32_t        s_detail_tick;   /* 周期详情日志的成功拍计数         */
 
 /* 诊断单快照（s_diag_mux 保护，见上）。 */
 static portMUX_TYPE s_diag_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -291,6 +347,75 @@ static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     uint8_t b[2] = { reg, val };
     return pk_i2c0_bus_transmit(s_dev, b, 2, SY6970_I2C_TIMEOUT_MS);
+}
+
+/*
+ * 逐字执行一张步骤表（bring-up 的 F1 与关机序列共用）。
+ *
+ * label 只进日志，用来分清是哪张表在跑——两张表的失败含义完全不同：
+ * F1 失败要走自愈重放，关机失败是"没关掉"，得让用户知道。
+ * 任一步失败即中止并返回 false，失败行带上该步的 why（页码引用）。
+ */
+static bool run_seq(const sy6970_init_step_t *seq, size_t n, const char *label)
+{
+    for (size_t i = 0; i < n; i++) {
+        const sy6970_init_step_t *st = &seq[i];
+        switch (st->op) {
+        case SY6970_SEQ_VERIFY: {
+            uint8_t val = 0;
+            const esp_err_t rd = reg_read(st->reg, &val, 1);
+            if (rd != ESP_OK) {
+                ESP_LOGW(TAG, "%s 第 %u 步校验失败：REG%02X 读失败（%s）— %s",
+                         label, (unsigned)i, st->reg, esp_err_to_name(rd),
+                         st->why);
+                return false;
+            }
+            if ((val & st->mask) != st->val) {
+                ESP_LOGW(TAG, "%s 第 %u 步校验失败：REG%02X=0x%02X（掩码 0x%02X "
+                              "期望 0x%02X）— %s",
+                         label, (unsigned)i, st->reg, val, st->mask, st->val,
+                         st->why);
+                return false;
+            }
+            /* s_reg00 存**完整**回读字节（不是 masked 值）：详情日志要从
+             * 它的低 6 位还原 IINLIM，掩码过的值还原不出来。 */
+            if (st->reg == SY6970_REG00) s_reg00 = val;
+            ESP_LOGI(TAG, "%s %s：REG%02X=0x%02X（掩码 0x%02X==0x%02X）",
+                     label, i == 0 ? "写前在位校验" : "写后回读验证",
+                     st->reg, val, st->mask, st->val);
+            break;
+        }
+        case SY6970_SEQ_RMW_CLEAR:
+        case SY6970_SEQ_RMW_SET:
+        case SY6970_SEQ_RMW_FIELD: {
+            uint8_t old = 0;
+            if (reg_read(st->reg, &old, 1) != ESP_OK) {
+                ESP_LOGW(TAG, "%s 第 %u 步 RMW 回读失败：REG%02X — %s",
+                         label, (unsigned)i, st->reg, st->why);
+                return false;
+            }
+            /* FIELD 是「清掩码位再填 val」——置位/清位都拼不出确定的
+             * 位域值（IINLIM 这种码必须整体写定，见 h 里的取值注释）。 */
+            uint8_t newv;
+            if (st->op == SY6970_SEQ_RMW_SET) {
+                newv = (uint8_t)(old | st->mask);
+            } else if (st->op == SY6970_SEQ_RMW_CLEAR) {
+                newv = (uint8_t)(old & ~st->mask);
+            } else {
+                newv = (uint8_t)((old & ~st->mask) | (st->val & st->mask));
+            }
+            if (reg_write(st->reg, newv) != ESP_OK) {
+                ESP_LOGW(TAG, "%s 第 %u 步 RMW 写入失败：REG%02X — %s",
+                         label, (unsigned)i, st->reg, st->why);
+                return false;
+            }
+            ESP_LOGI(TAG, "%s RMW：REG%02X 0x%02X→0x%02X",
+                     label, st->reg, old, newv);
+            break;
+        }
+        }
+    }
+    return true;
 }
 
 /*
@@ -343,51 +468,76 @@ static bool bring_up(void)
 
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_init_seq(&n);
-    for (size_t i = 0; i < n; i++) {
-        const sy6970_init_step_t *st = &seq[i];
-        switch (st->op) {
-        case SY6970_SEQ_VERIFY: {
-            uint8_t val = 0;
-            const esp_err_t rd = reg_read(st->reg, &val, 1);
-            if (rd != ESP_OK) {
-                ESP_LOGW(TAG, "F1 第 %u 步校验失败：REG%02X 读失败（%s）— %s",
-                         (unsigned)i, st->reg, esp_err_to_name(rd), st->why);
-                return false;
-            }
-            if ((val & st->mask) != st->val) {
-                ESP_LOGW(TAG, "F1 第 %u 步校验失败：REG%02X=0x%02X（掩码 0x%02X "
-                              "期望 0x%02X）— %s",
-                         (unsigned)i, st->reg, val, st->mask, st->val, st->why);
-                return false;
-            }
-            if (st->reg == SY6970_REG00) s_reg00 = val;
-            ESP_LOGI(TAG, "F1 %s：REG%02X=0x%02X（掩码 0x%02X==0x%02X）",
-                     i == 0 ? "写前在位校验" : "写后回读验证",
-                     st->reg, val, st->mask, st->val);
-            break;
-        }
-        case SY6970_SEQ_RMW_CLEAR:
-        case SY6970_SEQ_RMW_SET: {
-            uint8_t old = 0;
-            if (reg_read(st->reg, &old, 1) != ESP_OK) {
-                ESP_LOGW(TAG, "F1 第 %u 步 RMW 回读失败：REG%02X — %s",
-                         (unsigned)i, st->reg, st->why);
-                return false;
-            }
-            const uint8_t newv = (st->op == SY6970_SEQ_RMW_SET)
-                                     ? (uint8_t)(old | st->mask)
-                                     : (uint8_t)(old & ~st->mask);
-            if (reg_write(st->reg, newv) != ESP_OK) {
-                ESP_LOGW(TAG, "F1 第 %u 步 RMW 写入失败：REG%02X — %s",
-                         (unsigned)i, st->reg, st->why);
-                return false;
-            }
-            ESP_LOGI(TAG, "F1 RMW：REG%02X 0x%02X→0x%02X", st->reg, old, newv);
-            break;
-        }
-        }
+    return run_seq(seq, n, "F1");
+}
+
+/*
+ * 按需关机：执行 sy6970_shutdown_seq()（BATFET_DIS=1 → shipping mode）。
+ * 语义、板级理由与调用方约束全部写在 power_sy6970.h 的序列注释里。
+ *
+ * VBUS 在位时照写不误但打 WARN：BATFET 只是电池↔SYS 的开关，插着 USB
+ * 时 SYS 由 VBUS 供电，写下去不会真断电（[DS] p.30）。要不要先拦住
+ * 用户、要不要提示"请先拔 USB"，是 UI 层的决定，不是本层替它拿主意；
+ * 本层的职责是把这个事实以日志说清楚，别让调用方以为关机成功了。
+ *
+ * 未探测到器件（v3 / 未上电的 v4）直接返回 false——那种板子上根本没有
+ * 这颗芯片，谈不上关机。
+ *
+ * ── 为什么必须等 s_ready 而不是只看 s_dev ───────────────────────────
+ * s_dev != NULL 只说明 0x6A 探测 ACK、handle 建起来了，**不说明 bring_up
+ * 成功**——而「关看门狗」正是 bring_up 里的一步（REG07 WATCHDOG[5:4]=00）。
+ * 看门狗没关成时它还是 POR 的 40 s，而 ship mode 一进 MCU 就掉电、再没人
+ * 喂狗：超时后器件整体打回 POR 默认值（[DS] p.29），BATFET_DIS 跟着被清，
+ * 设备在关机约 40 s 后**自己活过来**。用户看到的是"点了关机，黑屏一会儿
+ * 又开机了"，而串口那时已经断了，极难查。
+ * 所以 bring_up 没落定就不许关机：宁可关不掉（显性失败、日志说得清），
+ * 也不要关一半又自己复活。
+ */
+bool power_sy6970_shutdown(void)
+{
+    if (s_dev == NULL) {
+        ESP_LOGW(TAG, "关机请求被忽略：未探测到 SY6970（v3 / 未上电 v4）");
+        return false;
     }
-    return true;
+    if (!s_ready) {
+        ESP_LOGW(TAG, "关机请求被拒：bring-up 未落定，看门狗可能仍在跑"
+                      "（POR 40 s）——ship mode 后无人喂狗，超时会把 "
+                      "BATFET_DIS 一起打回默认值，设备约 40 s 后自行复活"
+                      "（[DS] p.29）。先让 bring-up 成功再关机。");
+        return false;
+    }
+    if (s_last_good.vbus_present) {
+        ESP_LOGW(TAG, "关机时 VBUS 仍在位：BATFET 只断电池，SYS 仍由 VBUS "
+                      "供电，系统不会真的断电——要整板断电须先拔 USB "
+                      "（[DS] p.30）");
+    }
+    size_t n = 0;
+    const sy6970_init_step_t *seq = sy6970_shutdown_seq(&n);
+    ESP_LOGW(TAG, "执行关机：置 BATFET_DIS，唤醒只能靠插 USB（/QON 悬空）");
+    if (!run_seq(seq, n, "关机")) return false;
+
+    /*
+     * 走到这里说明**系统还活着**——电池供电下 BATFET 一断 MCU 就该掉电，
+     * 能执行到下一条指令本身就是"没真关掉"的证据。最常见的原因是 VBUS 在位
+     * （SYS 由 VBUS 供电，[DS] p.30），但也可能是写根本没落到寄存器里。
+     * 这两种情况的排查方向完全不同，回读 REG09 把它们分开：
+     *   bit5=1 → 写成功了，是外部供电撑着，拔 USB 即可；
+     *   bit5=0 → 写没落定（总线问题 / 被看门狗打回），是固件侧的事。
+     * 关机序列表里刻意没有 VERIFY 步（"写完就断电，读不回来"），那条在
+     * 电池供电路径上成立；这里是它不成立的那条路径，所以补在执行器里。
+     */
+    uint8_t r09 = 0;
+    if (reg_read(SY6970_REG09, &r09, 1) != ESP_OK) {
+        ESP_LOGW(TAG, "关机后仍在运行，且 REG09 回读失败——无法判断 "
+                      "BATFET_DIS 是否落定");
+        return false;
+    }
+    ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=%d。%s",
+             r09, (r09 & SY6970_BATFET_DIS_MASK) ? 1 : 0,
+             (r09 & SY6970_BATFET_DIS_MASK)
+                 ? "位已置上 → 是 VBUS 在供电撑着，拔掉 USB 才会真断电"
+                 : "位没置上 → 写未落定，查 I²C 或看门狗");
+    return false;   /* 没真关掉，就不能报成功 */
 }
 
 /* 快照组装（成功拍）。pct：SY6970 与 ETA6098 一样只有电压没有库仑计，
@@ -546,6 +696,32 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
     if (s_up_us == 0) s_up_us = now_us;    /* 60 s 复检的锚：首拍成功时刻 */
     s_last_good   = build_snapshot(&st, now_us);
     diag_commit(&st, win, now_us);
+
+    /* 周期详情日志（理由见 SY6970_DETAIL_LOG_TICKS 处注释）。首拍就打
+     * 一行——排障时最想要的是"现在什么样"，不是等 30 s。
+     * NTCPCT 是 0.001% 整数单位，拆成 xx.x% 无浮点。
+     *
+     * REG00 **当场重读**而不是用 s_reg00：后者只在 bring-up 时更新，
+     * 拿它算出来的 IINLIM 永远等于"我们写进去的值"，证明不了芯片有没有
+     * 在运行期把它改回去——而 IINLIM 恰恰是会被 DP/DM 检测改写的寄存器
+     * （[DS] p.15），关掉 AUTO_DPDM_EN 到底有没有用，只有实时值能回答。
+     * 读失败不算故障（主窗口那两遍才是数据来源），退回 bring-up 值并
+     * 在行里标 stale，绝不把陈值冒充实时。 */
+    if ((s_detail_tick++ % SY6970_DETAIL_LOG_TICKS) == 0) {
+        uint8_t r00_now = 0;
+        const bool r00_live = (reg_read(SY6970_REG00, &r00_now, 1) == ESP_OK);
+        const uint8_t r00 = r00_live ? r00_now : s_reg00;
+        const unsigned iinlim_ma = 100u + 50u * (unsigned)(r00 & 0x3F);
+        ESP_LOGI(TAG,
+                 "ICHG=%umA VBUS=%umV BATT=%umV NTC=%u(%lu.%lu%%) "
+                 "IINLIM=%umA REG00=0x%02X%s REG0C=0x%02X chg=%d therm=%d",
+                 (unsigned)st.ichg_ma, (unsigned)st.vbus_mv,
+                 (unsigned)st.batt_mv, (unsigned)st.ntc_fault,
+                 (unsigned long)(st.ntc_pct_x1000 / 1000u),
+                 (unsigned long)(st.ntc_pct_x1000 % 1000u / 100u),
+                 iinlim_ma, r00, r00_live ? "" : "(stale)", win[1],
+                 (int)st.charging, (int)st.therm_reg);
+    }
 
     /* 开机 60 s 复检充电电流（一次性）：CH224K 诱骗与配置此时都该稳定。
      * ICHGR 在窗口帧的 REG12（win[7]；注意 REG11 是 BUSV 不是 ICHG）。
