@@ -37,6 +37,7 @@
 #include "apt_detail_page.h"
 #include "nav_grid_page.h"
 #include "search_page.h"
+#include "power_log.h"
 #include "pk_sdcard.h"
 #include "pk_i2c0_bus.h"   /* 板级 I²C0 总线：先于一切 I²C 器件 init 创建 */
 #include "demo_track_sd.h"
@@ -150,6 +151,11 @@ void app_main(void)
      * 状态机是 3b 的事）。pre-unmount 静默复用 record_sink_file.c 的
      * sd_close_log_cb 转调，不额外占 pk_sdcard 的回调槽位。 */
     pk_rec_store_init();
+    /* 电池状态长期记录（60 s/行 → /sdcard/power.csv）。须晚于
+     * pk_sdcard_init()；无卡时任务照起、每拍重试，不阻塞启动。
+     * 存在的理由见 power_log.h：插着 H1 调试时电池根本不放电，
+     * 放电标定只能让设备自己把数据记到卡上。 */
+    power_log_init();
     /* traffic.trk 生产端的非阻塞入队 + 独立写任务，须晚于 pk_rec_store_init()
      * （写任务要调 pk_rec_store_append_traffic_record()）、早于 ADS-B 链路
      * 任务起跑（下面链路任务创建之前）——链路任务的 Mode-S 解码热路径调
