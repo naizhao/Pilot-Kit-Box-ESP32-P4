@@ -33,6 +33,39 @@
 #define POP_PY0       (POP_BOTTOM - POP_PANEL_H)
 #define POP_Y0        (POP_PY0 + POP_PAD)      /* 按钮顶：离面板顶正好一个 pad */
 
+/*
+ * 电源 pop 的几何（同样是**命中判定与渲染共用这一组数**，理由见上）。
+ *
+ * 与亮度 pop 的区别只有两点：两个按钮而不是三个，以及按钮上方多一行提示。
+ * 面板整体居中，不复用 POP_X0（那是按三个按钮算的）。
+ *
+ * 宽度 240 是**按英文量出来的，不是估的**，而且是两个约束里更狠的那个：
+ *   按钮：最长标签 "Power Off" 9 字符 × PK_AA_L_W(21) = 189 px；
+ *   提示行：最长 41 字符 × PK_AA_S_W(11) = 451 px —— 它才是决定宽度的那条。
+ * 面板内宽 PWR_W = 240×2+10 = 490 → 按钮余 51、提示行余 39，都够。
+ * 面板总宽 510，居中后 x∈[145,655]，屏内有余。
+ *
+ * 两次踩坑都记在这儿：初版 170（照着中文「关机」2×32=64 想当然）英文
+ * "Off" 直接压出按钮右缘；改 210 之后按钮好了，**提示行仍溢出 21 px**，
+ * 而这一次截图上看不出来——它居中，两侧各超 10 px 正好压在圆角边框上。
+ * 结论：按钮宽度靠英文截图验，提示行只能靠算。改文案或改宽度时两样都做，
+ * 下面那两条 _Static_assert 会在编译期兜住。
+ *
+ * 提示行（PWR_HINT_H）写的是"关机后需插 USB 唤醒；重启只重启主控"——
+ * /QON 悬空导致关机后只能插 USB 唤醒（SY6970 DS p.30），不写这句用户会
+ * 以为设备坏了。它只是文字，不参与命中。
+ */
+#define PWR_BW        240
+#define PWR_BH        64
+#define PWR_PAD       10
+#define PWR_HINT_H    28
+#define PWR_W         (PWR_BW * 2 + PWR_PAD)
+#define PWR_X0        (800 / 2 - PWR_W / 2)
+#define PWR_BOTTOM    (PK_NAV_ACT_TOP - 12)
+#define PWR_PANEL_H   (PWR_HINT_H + PWR_BH + PWR_PAD * 2)
+#define PWR_PY0       (PWR_BOTTOM - PWR_PANEL_H)
+#define PWR_Y0        (PWR_PY0 + PWR_PAD + PWR_HINT_H)  /* 按钮顶在提示行下 */
+
 /* ═══════════════════════════════════════════════════════════════════
  * 纯函数区（无 OS / 无全局状态）——host 单测直接把本文件拉进翻译单元。
  * ═══════════════════════════════════════════════════════════════════ */
@@ -61,11 +94,11 @@ bool pk_nav_item_enabled(int index)
     }
 }
 
-pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
+pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, pk_nav_pop_t pop)
 {
     pk_nav_hit_t r = { PK_NAV_HIT_NONE, -1 };
 
-    if (pop_open) {
+    if (pop == PK_NAV_POP_BRIGHT) {
         /* 面板几何取自上面那组 POP_* 宏，与 draw_bright_pop() 同源。 */
         for (int i = 0; i < 3; ++i) {
             const int bx = POP_X0 + i * (POP_BW + POP_PAD);
@@ -77,6 +110,23 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open)
             }
         }
         return r;   /* 点别处 = 收起 pop，由调用方处理 */
+    }
+
+    if (pop == PK_NAV_POP_POWER) {
+        /* 几何取自 PWR_* 宏，与 draw_power_pop() 同源。左关机、右重启，
+         * 顺序与渲染一致；别处一律 NONE（点面板外 = 收起，调用方处理）。 */
+        if (y >= PWR_Y0 && y < PWR_Y0 + PWR_BH) {
+            if (x >= PWR_X0 && x < PWR_X0 + PWR_BW) {
+                r.kind = PK_NAV_HIT_POWER_OFF;
+                return r;
+            }
+            const int bx = PWR_X0 + PWR_BW + PWR_PAD;
+            if (x >= bx && x < bx + PWR_BW) {
+                r.kind = PK_NAV_HIT_POWER_RESTART;
+                return r;
+            }
+        }
+        return r;
     }
 
     /* x 越界（<0 或 >=800）在网格与动作条两段都要挡：C 的整数除法向零
@@ -136,9 +186,12 @@ int pk_nav_swipe_dir(int dx, int dy)
  * 平台区：打开/关闭 + 渲染 + 触摸状态机。
  * ═══════════════════════════════════════════════════════════════════ */
 
+#include "esp_system.h"   /* esp_restart —— 电源 pop 的「重启」 */
 #include "esp_timer.h"
 
 #include "display.h"
+#include "power_service.h" /* power_service_snapshot —— 关机前查 VBUS 在不在 */
+#include "power_sy6970.h" /* power_sy6970_shutdown —— 电源 pop 的「关机」 */
 #include "i18n.h"
 #include "nav_icon_font.h"
 #include "pfd_aa_font.h"
@@ -170,6 +223,26 @@ _Static_assert(PK_DISPLAY_W == 800,
                "头文件里的字面量 800 与 display.h 的 PK_DISPLAY_W 不一致");
 _Static_assert(PK_DISPLAY_H == 480,
                "头文件里的字面量 480 与 display.h 的 PK_DISPLAY_H 不一致");
+/*
+ * 电源 pop 的按钮要装得下最长标签。9 = "Power Off" 的字符数（英文比中文
+ * 宽得多，中文「关机」只要 2×PK_AA_L_CJK_W）。初版 PWR_BW=170 时英文在
+ * 截图上直接溢出按钮右缘，而中文那张完全看不出问题——所以这条断言钉的是
+ * **英文**下限。以后若把文案改得更长，这里会在编译期炸，而不是等谁去翻
+ * 英文截图才发现。
+ */
+_Static_assert(PWR_BW >= 9 * PK_AA_L_W,
+               "电源 pop 按钮装不下英文 \"Power Off\"（9 × PK_AA_L_W）");
+/*
+ * 提示行比按钮更容易溢出，而且溢出**在截图上看不出来**（居中，两侧各超一点
+ * 正好压在圆角边框上）——PWR_BW=210 那一版就是这么混过目视检查的。
+ * 41 = "Power off: USB to wake. Restart: P4 only." 的字符数。
+ */
+_Static_assert(PWR_W >= 41 * PK_AA_S_W,
+               "电源 pop 面板装不下英文提示行（41 × PK_AA_S_W）");
+/* 面板别撑出屏外。 */
+_Static_assert(PWR_X0 - PWR_PAD >= 0 &&
+                   PWR_X0 + PWR_W + PWR_PAD <= PK_DISPLAY_W,
+               "电源 pop 面板超出屏宽");
 
 /* ── 调色板：逐值照抄 spec 视觉稿（docs/ux/box-4.3-ux-spec.html 的 --sel /
  * --bar / --dim / --txt / --line / --warn），与 pk_ui_nav.c 的 FAB、返回栏
@@ -254,6 +327,9 @@ static const nav_item_t ITEMS[] = {
     { PK_NAVICON_DIAG,   PK_TR_NAV_DIAG,     PK_UI_MODE_DIAG      },
     { PK_NAVICON_SET,    PK_TR_NAV_SETTINGS, PK_UI_MODE_SETTINGS  },
     { PK_NAVICON_ABOUT,  PK_TR_NAV_ABOUT,    PK_UI_MODE_ABOUT     },
+    /* 电源：不是一站 mode，点它弹出「关机 / 重启」二选一（activate_item
+     * 里按词条 id 认，同搜索那条的理由）。 */
+    { PK_NAVICON_POWER,  PK_TR_NAV_POWER,    MODE_NONE            },
 };
 /* 表长与 PK_NAV_ITEM_CNT 分开写迟早走偏：proto.c 里就出过一次——项数常量
  * 硬编码成 11，后来数组少了一项，items[10] 取到数组外的垃圾当 icon id 去算
@@ -283,7 +359,7 @@ _Static_assert(sizeof(ITEMS) / sizeof(ITEMS[0]) == PK_NAV_ITEM_CNT,
  * 这三个变量决定 render 画出什么，触摸状态机（下面那一节）是改它们的唯一入口。 */
 static bool s_active;
 static int  s_page;
-static bool s_pop_open;
+static pk_nav_pop_t s_pop;
 
 /* ── 触摸的按压态 ─────────────────────────────────────────────────
  *
@@ -437,6 +513,54 @@ static void draw_bright_pop(uint16_t *fb)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                    bx + (POP_BW - tw) / 2, POP_Y0 + (POP_BH - lh) / 2,
                    t, on ? COL_WHITE : COL_DIM, PK_AA_L);
+    }
+}
+
+/*
+ * 电源 pop：点第 2 页的「电源」格弹出，横向两档 —— 关机 / 重启。
+ *
+ * 版面与亮度 pop 同构（同一套圆角双描边、同样的 PK_AA_L 文字），只多一行
+ * 提示。两个键都不做"选中态"高亮：它们不是档位，是一次性动作，高亮其中
+ * 一个会让人以为当前处于那个状态。
+ *
+ * 关机键用警示橙（COL_ACT）而不是主操作蓝：整板断电（含 RP2040）在这块板
+ * 上不可撤销——/QON 悬空，醒过来只能靠插 USB（power_sy6970.h）。重启只影响
+ * P4，用常规蓝。颜色本身就是这个区别的第一道提示，提示行是第二道。
+ */
+static void draw_power_pop(uint16_t *fb)
+{
+    const int lh = pk_aa_cell_h(PK_AA_L);
+
+    pk_pfd_fill_round_rect(fb, PWR_X0 - PWR_PAD, PWR_PY0,
+                           PWR_X0 + PWR_W + PWR_PAD, PWR_BOTTOM, 14, COL_LINE);
+    pk_pfd_fill_round_rect(fb, PWR_X0 - PWR_PAD + 2, PWR_PY0 + 2,
+                           PWR_X0 + PWR_W + PWR_PAD - 2, PWR_BOTTOM - 2,
+                           12, COL_BG);
+
+    /* 提示行：关机后怎么开回来 + 重启只重启主控。用 S 档塞得下一行。 */
+    {
+        const char *h  = pk_i18n_text(PK_TR_POWER_HINT);
+        const int   hw = pk_aa_text_width(h, PK_AA_S);
+        const int   hh = pk_aa_cell_h(PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   PWR_X0 + (PWR_W - hw) / 2,
+                   PWR_PY0 + PWR_PAD + (PWR_HINT_H - hh) / 2,
+                   h, COL_DIM, PK_AA_S);
+    }
+
+    static const uint16_t KEYS[2] = { PK_TR_POWER_OFF, PK_TR_POWER_RESTART };
+    for (int i = 0; i < 2; ++i) {
+        const int bx = PWR_X0 + i * (PWR_BW + PWR_PAD);
+        pk_pfd_fill_round_rect(fb, bx, PWR_Y0, bx + PWR_BW, PWR_Y0 + PWR_BH,
+                               10, i == 0 ? COL_ACT : COL_FAB);
+
+        const char *t  = pk_i18n_text((pk_tr_id_t)KEYS[i]);
+        const int   tw = pk_aa_text_width(t, PK_AA_L);
+        /* 橙底上用近黑，蓝底上用白——各自对比度最高的那一档，同动作条
+         * 绿闪那处的理由（见 render 里 COL_BG 那条注释）。 */
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   bx + (PWR_BW - tw) / 2, PWR_Y0 + (PWR_BH - lh) / 2,
+                   t, i == 0 ? COL_BG : COL_WHITE, PK_AA_L);
     }
 }
 
@@ -597,7 +721,7 @@ void pk_nav_grid_page_render(uint16_t *fb)
             /* 调平是唯一会改变飞机状态显示的动作，用警示橙与另两个分开。
              * 亮度被点开时它自己也高亮，否则 pop 弹出来会像凭空冒出的一块。 */
             uint16_t c = (i == 0) ? COL_ACT : COL_DIM;
-            if (i == 1 && s_pop_open) c = COL_ON;
+            if (i == 1 && s_pop == PK_NAV_POP_BRIGHT) c = COL_ON;
             /* 绿底上再摆橙字读不出来（对比 1.6:1）。换成动作条底色那档近黑，
              * 对绿是 7:1——绿闪于是整体读成"这一格反白了"，比只换字色更强的
              * 完成信号，而且用的还是同一张调色板，不必再多定义一个前景色。 */
@@ -610,14 +734,15 @@ void pk_nav_grid_page_render(uint16_t *fb)
         }
     }
 
-    if (s_pop_open) {
+    if (s_pop != PK_NAV_POP_NONE) {
         /* pop 弹出时把网格再压一档：不压的话两层内容一样亮，看不出焦点在哪
          * 一层，而这时候唯一能点的只有 pop 里那三个档（pk_nav_hit_test 的
          * pop_open 分支已经把网格整层吞掉了）。动作条不压——「亮度」那一格
          * 正高亮着，压暗它等于把"是我弹出来的"这条线索抹掉。 */
         pk_pfd_darken_rect(fb, 0, PK_NAV_BAR_BOT, PK_DISPLAY_W,
                            PK_NAV_ACT_TOP, 120);
-        draw_bright_pop(fb);
+        if (s_pop == PK_NAV_POP_BRIGHT) draw_bright_pop(fb);
+        else                            draw_power_pop(fb);
     }
 }
 
@@ -640,7 +765,7 @@ void pk_nav_grid_page_init(void)
 {
     s_active   = false;
     s_page     = 0;
-    s_pop_open = false;
+    s_pop = PK_NAV_POP_NONE;
     press_reset();
     flash_reset();
 }
@@ -654,7 +779,7 @@ void pk_nav_grid_page_open(void)
     /* 每次都从第 1 页、pop 收起开始：菜单是个瞬时动作，上次翻到第 2 页不代表
      * 这次还想看第 2 页，而"打开就在熟悉的那一屏"比"记住上次"更省认知。 */
     s_page     = 0;
-    s_pop_open = false;
+    s_pop = PK_NAV_POP_NONE;
     s_active   = true;
     press_reset();
     flash_reset();
@@ -702,7 +827,8 @@ static void sim_setup(void)
         if (p >= PK_NAV_PAGES) p = PK_NAV_PAGES - 1;
         s_page = p;
     }
-    if (getenv("PK_SIM_MENU_BRIGHT") != NULL) s_pop_open = true;
+    if (getenv("PK_SIM_MENU_BRIGHT") != NULL) s_pop = PK_NAV_POP_BRIGHT;
+    if (getenv("PK_SIM_MENU_POWER")  != NULL) s_pop = PK_NAV_POP_POWER;
 
     /* 调平的 ③ 进度填充 / ④ 绿闪都只在按住的那 1 s 与随后的 200 ms 里出现，
      * 靠环境变量开个页面是截不到的，只能把状态直接摆到那一刻。 */
@@ -733,7 +859,7 @@ bool pk_nav_grid_page_active(void) { return s_active; }
 void pk_nav_grid_page_close(void)
 {
     s_active   = false;
-    s_pop_open = false;
+    s_pop = PK_NAV_POP_NONE;
     press_reset();
     flash_reset();
     /*
@@ -808,6 +934,13 @@ static void activate_item(int index)
          * goto_item()。
          */
         pk_search_page_open();
+    } else if (ITEMS[index].label == PK_TR_NAV_POWER) {
+        /* 电源同样不是 pk_ui_mode_t 的一站：弹出「关机 / 重启」二选一，
+         * **网格不关**——关掉的话 pop 就没有底了，而且点错想退出时连
+         * "点面板外收起"这条退路都没有。与搜索那条的区别：搜索是另开一个
+         * 模态层，这里是本页面自己的弹层，所以直接改 s_pop 就够。 */
+        s_pop = PK_NAV_POP_POWER;
+        return;
     } else {
         return;   /* 记录 / 工具：页面还没写，enabled 已挡，走不到这儿 */
     }
@@ -823,7 +956,7 @@ bool pk_nav_grid_page_touch(int x, int y)
      * 清成 false。 */
     const bool pending_close = s_close_after_flash;
 
-    s_press_hit    = pk_nav_hit_test(x, y, s_page, s_pop_open);
+    s_press_hit    = pk_nav_hit_test(x, y, s_page, s_pop);
     s_press_x      = x;
     s_press_y      = y;
     s_press_page   = s_page;
@@ -880,7 +1013,7 @@ bool pk_nav_grid_page_drag(int x, int y)
      * （只在两种终局分支置位），两件事分开存正是为了不让上面这条边界情况
      * 无解——都塞进同一个标志位，翻到有效页后要么没法继续判，要么终局分支
      * 判完还能被继续判。 */
-    if (!s_swipe_locked && !s_pop_open) {
+    if (!s_swipe_locked && s_pop == PK_NAV_POP_NONE) {
         const int dir = pk_nav_swipe_dir(x - s_press_x, y - s_press_y);
         if (dir != 0) {
             s_swiped = true;   /* 不管落进哪个分支，这一下都不再算点击 */
@@ -908,7 +1041,7 @@ bool pk_nav_grid_page_drag(int x, int y)
 
     /* ② 调平长按。翻过页的这一下不再算按钮操作。 */
     if (!s_swiped && s_press_hit.kind == PK_NAV_HIT_LEVEL) {
-        if (pk_nav_hit_test(x, y, s_press_page, s_pop_open).kind
+        if (pk_nav_hit_test(x, y, s_press_page, s_pop).kind
                 != PK_NAV_HIT_LEVEL) {
             /* 滑出按钮 = 放弃，等同 LVGL 的 PRESS_LOST。 */
             s_press_valid = false;
@@ -971,7 +1104,7 @@ void pk_nav_grid_page_touch_up(void)
         break;
 
     case PK_NAV_HIT_BRIGHT:
-        s_pop_open = true;
+        s_pop = PK_NAV_POP_BRIGHT;
         break;
 
     case PK_NAV_HIT_CLOSE:
@@ -983,14 +1116,56 @@ void pk_nav_grid_page_touch_up(void)
         /* index 与 display.h 的 PK_BL_STEP_LOW/MID/HIGH 同序（见 nav_grid_page.h
          * 那条枚举的注释）。档位真值只有 pk_backlight_* 一处，不与设置页分家。 */
         pk_backlight_step_set((uint8_t)hit.index);
-        s_pop_open = false;
+        s_pop = PK_NAV_POP_NONE;
+        break;
+
+    case PK_NAV_HIT_POWER_OFF: {
+        /*
+         * 整板断电（含 RP2040）。**VBUS 在位时先拦下来**：BATFET 只是
+         * 电池↔SYS 的开关，插着 USB 时 SYS 由 VBUS 供电，写 BATFET_DIS
+         * 根本关不掉机（[DS] p.30）。
+         *
+         * 初版这里不拦、只让驱动层打一条串口 WARN，理由写的是"拔不拔 USB
+         * 是用户的事"。2026-09-12 真机打脸：罩哥点关机"关不掉"，屏上零反馈
+         * ——串口 WARN 用户根本看不见，而弹层提示说的是"关机**后**需插 USB
+         * 唤醒"，没有一个字告诉他"关机**前**得先拔"。
+         * 按不动还能解释成"设备坏了"，这里必须给出可见的原因。
+         * 菜单**不关**：让提示和那两个键留在同一屏，拔完线直接再点。
+         */
+        const power_snapshot_t ps = power_service_snapshot();
+        if (ps.vbus_present) {
+            pk_ui_toast_show(PK_TR_POWER_NEED_UNPLUG, true);
+            break;
+        }
+        s_pop = PK_NAV_POP_NONE;
+        pk_nav_grid_page_close();
+        pk_display_panel_off();
+        power_sy6970_shutdown();
+        break;
+    }
+
+    case PK_NAV_HIT_POWER_RESTART:
+        /*
+         * 只重启 P4。RP2040 挂 3V3_DIG，软复位不会让它掉电——要复位它
+         * 只能走上面的关机（nav_grid_page.h 的 HIT 枚举注释）。
+         *
+         * 先 pk_display_panel_off() 再重启：P4 一复位，MIPI-DSI 控制器
+         * 随之停掉，而 ST7701 面板还在扫描——**面板对"没有信号"的默认
+         * 表现是蓝屏**，2026-09-12 真机上罩哥看到的就是它。那不是固件
+         * 画出来的（本项目清屏一律 memset 0 = 黑），是面板自己的无信号态。
+         * 显式发一条 display-off 命令，让它在失去信号前先黑掉。
+         */
+        s_pop = PK_NAV_POP_NONE;
+        pk_nav_grid_page_close();
+        pk_display_panel_off();
+        esp_restart();
         break;
 
     case PK_NAV_HIT_NONE:
     default:
-        /* pop 开着时命中判定只测那三个档位，点别处一律 NONE = 收起 pop
+        /* pop 开着时命中判定只测该弹层自己的按钮，点别处一律 NONE = 收起 pop
          * （不关网格）。pop 没开时点空处什么都不做。 */
-        s_pop_open = false;
+        s_pop = PK_NAV_POP_NONE;
         break;
     }
 }

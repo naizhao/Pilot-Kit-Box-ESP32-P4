@@ -79,9 +79,23 @@ extern "C" {
 /* 第 1 页实放 7 项（PFD/交通/地图/列表/搜索/记录/工具），第 8 格留作余量。
  * 切分点是常用度，不是塞满页面——见文件头。 */
 #define PK_NAV_PAGE1_CNT   7
-/* 项目总数：第 1 页 7 项 + 第 2 页 3 项（诊断/设置/关于）。 */
-#define PK_NAV_ITEM_CNT    10
+/* 项目总数：第 1 页 7 项 + 第 2 页 4 项（诊断/设置/关于/电源）。 */
+#define PK_NAV_ITEM_CNT    11
 #define PK_NAV_PAGES       2
+
+/*
+ * 当前弹层。原本是个 bool（"亮度 pop 开着没"），加电源 pop 之后两个弹层
+ * 的命中区不同，bool 表达不了"开着的是哪一个"。
+ *
+ * 枚举值刻意让 NONE=0 / BRIGHT=1：旧调用点传的 false/true 隐式转过来语义
+ * 不变，不必为了这次扩展去翻动每一处调用和既有测试。新代码一律写枚举名。
+ * 互斥由状态机保证——同一时刻只可能开一个，所以是枚举不是位掩码。
+ */
+typedef enum {
+    PK_NAV_POP_NONE   = 0,
+    PK_NAV_POP_BRIGHT = 1,
+    PK_NAV_POP_POWER  = 2,
+} pk_nav_pop_t;
 
 /* 命中判定的结果种类。BRIGHT_STEP 的 index 对应 display.h 的
  * PK_BL_STEP_LOW/MID/HIGH（0/1/2）——本头文件不 include display.h（同上，
@@ -93,6 +107,11 @@ typedef enum {
     PK_NAV_HIT_BRIGHT,
     PK_NAV_HIT_CLOSE,
     PK_NAV_HIT_BRIGHT_STEP, /* index = 0..2，对应 display.h 的 PK_BL_STEP_* */
+    /* 电源 pop 的两个按钮。关机 = SY6970 置 BATFET_DIS 整板断电（含
+     * RP2040）；重启 = esp_restart()，**只重启 P4**，RP2040 挂在 3V3_DIG
+     * 上不会掉电。两者不是一回事，见 power_sy6970.h 的关机序列注释。 */
+    PK_NAV_HIT_POWER_OFF,
+    PK_NAV_HIT_POWER_RESTART,
 } pk_nav_hit_kind_t;
 
 typedef struct {
@@ -157,12 +176,14 @@ bool pk_nav_item_enabled(int index);
 /*
  * 命中判定：屏幕坐标 (x, y) 落在哪个可点区域。
  *
- * pop_open=true 时网格整层视为不可点——亮度快调面板已经把网格压暗，
- * "看得见的不是点得中的"会破坏触摸的基本约定，所以 pop 打开期间只测三个
- * 快调按钮，其余一律 PK_NAV_HIT_NONE（点击面板外 = 收起 pop，由调用方
+ * pop 非 NONE 时网格整层视为不可点——弹层已经把网格压暗，
+ * "看得见的不是点得中的"会破坏触摸的基本约定，所以弹层打开期间只测该弹层
+ * 自己的按钮，其余一律 PK_NAV_HIT_NONE（点击面板外 = 收起 pop，由调用方
  * 结合 PK_NAV_HIT_NONE 这个返回值自己处理，本函数不关心"收起"这个动作）。
+ *
+ * 两个弹层的按钮互不串台：开着电源 pop 时点亮度档位的坐标只会得到 NONE。
  */
-pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, bool pop_open);
+pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, pk_nav_pop_t pop);
 
 /*
  * 一次按压从起点到落点的位移算不算「翻页」。

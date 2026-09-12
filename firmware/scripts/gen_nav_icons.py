@@ -52,6 +52,11 @@ ICONS = [
     ("SET",    "settings",             0xE8B8, 0),
     ("ABOUT",  "info",                 0xE88E, 0),
     ("LEVEL",  "straighten",           0xE41C, 0),
+    # 电源（关机 / 重启选择）。加在**表尾**而不是插到 ABOUT 后面：枚举值
+    # 就是位图表的行号，往中间插会把 LEVEL 的 id 顶掉一位，而 id 是
+    # nav_grid_page.c 的 ITEMS 表和动作条按索引取的——那种错位不会报错，
+    # 只会画错图标。屏上顺序由 ITEMS 表决定，与这里的行号无关。
+    ("POWER",  "power_settings_new",   0xE8AC, 0),
 ]
 
 # 实测 pointsize=N 时墨迹为 (N+1)×(N+1)（见 gen_pfd_icons.py 文件头）。

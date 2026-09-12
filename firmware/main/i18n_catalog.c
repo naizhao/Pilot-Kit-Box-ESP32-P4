@@ -348,6 +348,11 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DISCLAIMER_L2] = "Never use as primary or backup navigation. Data may be delayed or wrong.",
         [PK_TR_DISCLAIMER_L3] = "Rely on certified avionics and ATC. Use entirely at your own risk.",
         [PK_TR_DISCLAIMER_SPLASH] = "AUXILIARY USE ONLY - NOT FOR NAVIGATION",
+        [PK_TR_NAV_POWER] = "Power",
+        [PK_TR_POWER_OFF] = "Power Off",
+        [PK_TR_POWER_RESTART] = "Restart",
+        [PK_TR_POWER_HINT] = "Power off: USB to wake. Restart: P4 only.",
+        [PK_TR_POWER_NEED_UNPLUG] = "Unplug USB first to power off",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -692,6 +697,11 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_DISCLAIMER_L2] = "不得用作主用或备用导航；数据可能延迟、错误或缺失。",
         [PK_TR_DISCLAIMER_L3] = "飞行决策以认证机载设备与管制指令为准，使用者自担全部风险。",
         [PK_TR_DISCLAIMER_SPLASH] = "仅供辅助参考，不得用于导航",
+        [PK_TR_NAV_POWER] = "电源",
+        [PK_TR_POWER_OFF] = "关机",
+        [PK_TR_POWER_RESTART] = "重启",
+        [PK_TR_POWER_HINT] = "关机后需插 USB 唤醒；重启只重启主控",
+        [PK_TR_POWER_NEED_UNPLUG] = "请先拔掉 USB 再关机",
     },
 };
 

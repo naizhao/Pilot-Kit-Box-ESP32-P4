@@ -365,6 +365,55 @@ STRINGS = [
         },
     ),
     (
+        # 导航网格第 2 页、「关于」之后的一格：点进去选关机或重启。
+        "NAV_POWER",
+        {
+            "en": "Power",
+            "zh": "电源",
+        },
+    ),
+    (
+        # 关机 = SY6970 置 BATFET_DIS 进 shipping mode（power_sy6970.h）。
+        # 这块板 /QON 悬空、J1 无电源控制线，电池一在位 SYS 就恒供电，
+        # 这是唯一能让整板（含 RP2040）真正断电的途径。
+        "POWER_OFF",
+        {
+            "en": "Power Off",
+            "zh": "关机",
+        },
+    ),
+    (
+        # 重启 = esp_restart()，**只重启 P4**。RP2040 挂在 3V3_DIG 上，
+        # P4 软复位不会让它掉电——要复位 RP2040 只能走关机。文案不点破
+        # 这个区别，说明写在确认弹层的副标题里。
+        "POWER_RESTART",
+        {
+            "en": "Restart",
+            "zh": "重启",
+        },
+    ),
+    (
+        # 弹层副标题：关机后怎么开回来。/QON 悬空 → 只剩插 USB 一条路
+        # （SY6970 DS p.30）。不写这句，用户关完机会以为设备坏了。
+        "POWER_HINT",
+        {
+            "en": "Power off: USB to wake. Restart: P4 only.",
+            "zh": "关机后需插 USB 唤醒；重启只重启主控",
+        },
+    ),
+    (
+        # 插着 USB 点关机时的 toast。BATFET 只是电池↔SYS 的开关，VBUS 在位
+        # 时 SYS 由 VBUS 供电，写 BATFET_DIS 关不掉机（SY6970 DS p.30）。
+        # 2026-09-12 实测：罩哥点关机"关不掉"，根因就是这个——而当时 UI
+        # 只在**关机后**的提示里说了"插 USB 唤醒"，没说"关机前要拔 USB"，
+        # 点下去毫无反馈。这条 toast 就是补那个反馈。
+        "POWER_NEED_UNPLUG",
+        {
+            "en": "Unplug USB first to power off",
+            "zh": "请先拔掉 USB 再关机",
+        },
+    ),
+    (
         # 全屏导航网格新增的一格。dock 时代放不下第 8 个页签（8×94+100 > 800，
         # 见 search_page.h 文件头），网格没有这个限制。
         "NAV_TOOLS",

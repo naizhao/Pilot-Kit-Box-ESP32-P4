@@ -42,7 +42,8 @@ static void test_paging(void)
     chk_int("第 1 页起点", pk_nav_page_first(0), 0);
     chk_int("第 1 页项数", pk_nav_page_count(0), 7);
     chk_int("第 2 页起点", pk_nav_page_first(1), 7);
-    chk_int("第 2 页项数", pk_nav_page_count(1), 3);
+    /* 2026-09-12 加了「电源」（关机/重启），第 2 页 3 → 4 项。 */
+    chk_int("第 2 页项数", pk_nav_page_count(1), 4);
 }
 
 /* ── 2) 格子位置在两页之间必须完全对齐 ───────────────────────────
@@ -60,13 +61,54 @@ static void test_cell_position_stable(void)
     chk_int("第 2 页首格 index", b.index, 7);
 }
 
-/* ── 3) 第 2 页只有 3 项，第 4 格是空的 ──────────────────────────
- * 点空格必须什么都不发生，不能落到 index 10（越界）。 */
+/* ── 3) 第 2 页 4 项，第 5 格起是空的 ────────────────────────────
+ * 点空格必须什么都不发生，不能落到 index 11（越界）。
+ * 第 4 格（电源）自 2026-09-12 起有内容且可点——顺带钉住它，防止哪天
+ * 第 2 页项数变了又把「空格」判据错位到有内容的格上。 */
 static void test_empty_cell(void)
 {
-    const int x = 3 * PK_NAV_CELL_W + 10, y = PK_NAV_BAR_BOT + 40;
-    chk_int("第 2 页第 4 格是空的",
-            pk_nav_hit_test(x, y, 1, false).kind, PK_NAV_HIT_NONE);
+    const int x4 = 3 * PK_NAV_CELL_W + 10, y = PK_NAV_BAR_BOT + 40;
+    pk_nav_hit_t h4 = pk_nav_hit_test(x4, y, 1, PK_NAV_POP_NONE);
+    chk_int("第 2 页第 4 格是电源，可点", h4.kind, PK_NAV_HIT_CELL);
+    chk_int("第 2 页第 4 格 index", h4.index, 10);
+
+    /* 第 5 格 = 第 2 行第 1 列（slot 4），第 2 页只有 4 项 → 空。 */
+    const int y2 = PK_NAV_BAR_BOT + PK_NAV_CELL_H + 10;
+    chk_int("第 2 页第 5 格是空的",
+            pk_nav_hit_test(10, y2, 1, PK_NAV_POP_NONE).kind, PK_NAV_HIT_NONE);
+}
+
+/* ── 3b) 电源 pop：两个按钮各自命中，点别处收起 ──────────────────
+ * 与亮度 pop 同一条铁律——"看得见的必须是点得中的"，几何宏两边共用。
+ * 突变哨兵：把 PWR_BW 改掉而不改渲染，这里会红。 */
+static void test_power_pop(void)
+{
+    const int cy = PWR_Y0 + PWR_BH / 2;
+    pk_nav_hit_t off = pk_nav_hit_test(PWR_X0 + PWR_BW / 2, cy, 1,
+                                       PK_NAV_POP_POWER);
+    chk_int("点「关机」", off.kind, PK_NAV_HIT_POWER_OFF);
+
+    pk_nav_hit_t rst = pk_nav_hit_test(PWR_X0 + PWR_BW + PWR_PAD + PWR_BW / 2,
+                                       cy, 1, PK_NAV_POP_POWER);
+    chk_int("点「重启」", rst.kind, PK_NAV_HIT_POWER_RESTART);
+
+    /* 电源 pop 开着时，底下的网格整层不可点（同亮度 pop）。 */
+    chk_int("pop 开着时网格被吞掉",
+            pk_nav_hit_test(100, PK_NAV_BAR_BOT + 40, 1,
+                            PK_NAV_POP_POWER).kind, PK_NAV_HIT_NONE);
+
+    /* 两个面板都在屏幕居中，按钮区必然**重叠**——所以"同一坐标在两个 pop
+     * 下命中不同按钮"是正确行为，不是 bug。要钉死的是不串**语义**：电源
+     * pop 开着时，无论点哪儿都不可能得到亮度档位那个 kind，否则一次误判
+     * 就会把"关机"执行成"调亮度"（或反过来，那更糟）。 */
+    chk_true("电源 pop 下绝不返回亮度档位 kind",
+             pk_nav_hit_test(270, 340, 1, PK_NAV_POP_POWER).kind
+                 != PK_NAV_HIT_BRIGHT_STEP);
+    chk_true("亮度 pop 下绝不返回关机/重启 kind",
+             pk_nav_hit_test(270, 340, 1, PK_NAV_POP_BRIGHT).kind
+                     != PK_NAV_HIT_POWER_OFF &&
+             pk_nav_hit_test(270, 340, 1, PK_NAV_POP_BRIGHT).kind
+                     != PK_NAV_HIT_POWER_RESTART);
 }
 
 /* ── 4) 动作条三分 ────────────────────────────────────────────── */
@@ -177,6 +219,7 @@ int main(void)
     test_paging();
     test_cell_position_stable();
     test_empty_cell();
+    test_power_pop();
     test_action_bar();
     test_pop_swallows_grid();
     test_x_out_of_bounds();
