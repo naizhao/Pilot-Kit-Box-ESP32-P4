@@ -597,8 +597,23 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
         const int32_t mv_x256 = (int32_t)st->batt_mv * 256;
         if (s_pct_ema_mv_x256 == 0) s_pct_ema_mv_x256 = mv_x256;  /* 首拍 */
         else s_pct_ema_mv_x256 += (mv_x256 - s_pct_ema_mv_x256) / 8;
-        out.pct_est = (uint8_t)pk_batt_mv_to_pct(
-            (int)(s_pct_ema_mv_x256 / 256));
+        int pct = pk_batt_mv_to_pct((int)(s_pct_ema_mv_x256 / 256));
+
+        /* 充电中封顶 99%：100% 留给芯片自己说了算。
+         *
+         * 曲线的 mv>=4150 → 100% 是按**开路电压**标定的，而充电中端电压
+         * 被 I×R 抬高。2026-09-12 实测：batt=4244mV 已报 100%，芯片却仍
+         * 在充、ICHG=700~900mA——SY6970 的终止判据是 ICHG<ITERM（默认
+         * 256mA，[DS] p.28），离终止还远。屏上"100% 且正在充电"自相矛盾，
+         * 用户第一反应是电量算错了。
+         *
+         * 真正的解法是 CC 段压降补偿（压降=ICHG×R_internal），但 R 要一轮
+         * 实测才能定；在那之前先用这条不依赖标定的规则：**只有 term_done
+         * （CHRG_STAT=11 充电终止完成）才允许 100%**。charging 为真时哪怕
+         * 曲线算出 100 也压到 99，等芯片自己终止再跳满。
+         * 代价是满电维持阶段会在 99% 多停留一会儿——比"100% 还在充"诚实。 */
+        if (st->charging && pct >= 100) pct = 99;
+        out.pct_est = (uint8_t)pct;
     }
     out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
     out.charging         = st->charging;
@@ -876,24 +891,32 @@ void power_sy6970_init(void)
         return;
     }
 
-    /* 地址探活。
+    /* 地址探活——**NACK 不再放弃，照样注册**。
      *
-     * 这条日志原写"NACK 是预期路径（v3 载板 / 未上电的 v4），电源回落
-     * ETA6098"——两处都已不成立：v3 支持于 2026-09-12 取消，ETA6098
-     * backend 连同文件一起退役，服务里再没有兜底源。现在 NACK 意味着
-     * **这块板上本该在的充电芯片没应答**，是异常不是常态，所以升到 WARN
-     * 并说清后果。
+     * 老逻辑是"NACK = 预期路径（v3 载板 / 未上电的 v4），不注册，电源回落
+     * ETA6098"。三个前提今天全没了：v3 支持已取消、ETA6098 连文件一起
+     * 退役（服务里再没有兜底源）、这块板上 SY6970 必然在位。于是 NACK 从
+     * "常态"变成"异常"。
      *
-     * 已知会误伤的瞬态：2026-09-12 实测过一次开机恰逢插拔电源线导致
-     * NACK，下一次复位即 ACK。而本函数只在 app_main 跑一次、NACK 之后
-     * 不再重试，于是整个开机周期都没有电量显示。重试机制待定（poll 侧
-     * 已有每 10 拍补试 bring-up 的自愈逻辑，缺的是"未注册也要轮询"这一
-     * 层），在那之前这条 WARN 至少让人知道该复位一次。 */
-    if (pk_i2c0_bus_probe(SY6970_I2C_ADDR, SY6970_I2C_TIMEOUT_MS) != ESP_OK) {
-        ESP_LOGW(TAG, "0x%02X 探测 NACK——充电芯片无应答，本次开机将没有任何"
-                      "电源数据（v3 与 ETA6098 兜底均已退役）。复位可重试。",
-                 SY6970_I2C_ADDR);
-        return;
+     * 而老逻辑对异常的处理恰恰最糟：本函数只在 app_main 跑一次，NACK 之后
+     * 永不重试——2026-09-12 实测撞到过一次开机恰逢插拔电源线，整个开机
+     * 周期都没有电量显示，非得人工复位一次。一次瞬态换一次重启，不合理。
+     *
+     * 现在照常 add_device + 注册，把恢复交给 poll 侧已有的自愈逻辑：
+     * sy6970_poll() 开头的 !s_ready 分支每 SY6970_FAIL_STREAK_MAX 拍补试
+     * 一次 bring_up()，首拍立试立报、之后节流，成功后只打一条恢复行。
+     * 探测本身失败不影响 add_device——那一步只建 handle、不上总线。
+     *
+     * 代价：真的没有芯片时（比如未上电的 powered 变体）会一直重试并按
+     * 节流打 WARN。这是**有意的**——v3 退役后没芯片就是硬件问题，持续
+     * 告警正是应该发生的事，而不是静默降级成"没有电量显示"。 */
+    const bool acked =
+        (pk_i2c0_bus_probe(SY6970_I2C_ADDR, SY6970_I2C_TIMEOUT_MS) == ESP_OK);
+    if (!acked) {
+        ESP_LOGW(TAG, "0x%02X 探测 NACK——充电芯片无应答。仍注册并由 1 Hz "
+                      "轮询持续重试（每 %d 拍一次）；若是插拔瞬态会自行恢复，"
+                      "持续报警则是硬件问题。",
+                 SY6970_I2C_ADDR, SY6970_FAIL_STREAK_MAX);
     }
 
     /* add_device 只许 init 期单线程调用（pk_i2c0_bus.h 合同）——此刻在
@@ -909,14 +932,17 @@ void power_sy6970_init(void)
         return;
     }
 
-    /* ACK 即注册（bring-up 失败由 poll 的 1 Hz 自愈重试兜住，见下）。
+    /* 注册（探测 NACK 与 bring-up 失败都由 poll 的 1 Hz 自愈重试兜住）。
      * 注册次序=优先级，SY6970 占第一槽 = 权威源。
      * 注：原注释说"先于 power_eta6098_init() 调用、ETA6098 随后注册为
      * 兜底"，这在 2026-09-10 之后已不成立——电池挂在扩展板，微雪载板的
      * ETA6098 不再读也**不再注册**（见 main.c 电源链注释），本 backend
      * 是电源服务里唯一的注册者。 */
     power_service_register(&s_backend);
-    ESP_LOGI(TAG, "0x%02X ACK——SY6970 注册为电源权威源", SY6970_I2C_ADDR);
+    if (acked)
+        ESP_LOGI(TAG, "0x%02X ACK——SY6970 注册为电源权威源", SY6970_I2C_ADDR);
+    else
+        ESP_LOGW(TAG, "0x%02X 未应答但已注册——等待轮询自愈", SY6970_I2C_ADDR);
 }
 
 #endif /* SY6970_HOST_TEST */

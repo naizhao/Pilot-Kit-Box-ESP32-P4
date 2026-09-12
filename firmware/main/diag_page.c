@@ -1476,9 +1476,24 @@ static void draw_detail(uint16_t *fb, int which)
                              (unsigned long)(st->ntc_pct_x1000 % 1000u / 100u));
                     q = diag_fault_cat(fbuf, sizeof(fbuf), q, &first, ntc);
                 }
+                /* 颜色按**后果**分级，不是"非零就红"。
+                 *
+                 * NTC 的四档里只有 Cold(101)/Hot(110) 会**停充**；
+                 * Warm(010) 自 JEITA_VSET=1 之后连降压都不做了，对充电
+                 * 毫无影响，Cool(011) 只降流到 20%（[DS] p.32）。
+                 * 2026-09-12 用户实测就撞上这点：电池在 42°C 正常充电、
+                 * 一切正常，屏上却挂着红色"NTC 2"——广东室温本来就 40°C+，
+                 * 这个红字会天天出现而没有任何可操作的含义，久了就没人看
+                 * 故障行了。
+                 * 所以：真正阻断充电的才红，降档/提示性的走黄。文字照旧
+                 * 全列，信息一条不少。 */
+                const bool blocking =
+                    st->wd_fault || st->boost_fault || st->bat_ovp_fault ||
+                    st->chrg_fault != 0 ||
+                    st->ntc_fault == 5 || st->ntc_fault == 6;
                 if (any)
                     det_kv_tr(fb, line++, PK_TR_DIAG_K_PWR_FAULT, fbuf,
-                              COL_ALERT);
+                              blocking ? COL_ALERT : COL_WARN);
                 else
                     det_kv_tr2(fb, line++, PK_TR_DIAG_K_PWR_FAULT,
                                PK_TR_DIAG_V_ANT_OK, COL_ONLINE);
