@@ -141,7 +141,8 @@ jobs:
       # RP2040。必须放在 ESP-IDF 容器 step 之外——容器里只有 ESP-IDF 工具
       # 链，RP2040 构建要的是宿主 arm-none-eabi-gcc + cmake + python3
       # （ubuntu-latest 自带后两者，工具链走 apt，含 newlib 的
-      # libnewlib-arm-none-eabi；pico-sdk/tinyusb/picotool 由工程
+      # libnewlib-arm-none-eabi 与含 C++ 头的 libstdc++-arm-none-eabi-newlib；
+      # pico-sdk/tinyusb/picotool 由工程
       # CMakeLists.txt 的 FetchContent tarball pin 自取，无需预装 SDK，
       # 也不读 PICO_SDK_PATH）。
       #
@@ -157,7 +158,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
+            gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
           arm-none-eabi-gcc --version
           ./firmware/rp2040/build.sh
           mkdir -p dist/site/firmware/rp2040/latest

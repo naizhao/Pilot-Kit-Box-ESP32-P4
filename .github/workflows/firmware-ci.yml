@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
+            gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
           arm-none-eabi-gcc --version
           ./firmware/rp2040/build.sh
           # build.sh 末尾已断言产物存在；这里再摆一道，让"没有 UF2"失败在

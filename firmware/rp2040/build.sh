@@ -9,9 +9,11 @@
 # ----
 # - cmake >= 3.16、宿主 C/C++ 编译器（编译 picotool、pioasm 等宿主工具）；
 # - arm-none-eabi-gcc 在 PATH，**必须含 newlib**（pico-sdk 硬编码
-#   --specs=nosys.specs，缺 newlib 必编不过）：
+#   --specs=nosys.specs，缺 newlib 必编不过）；工程含 C++ 源
+#   （pico-sdk 的 new_delete.cpp），**必须含 libstdc++**：
 #   - macOS：brew install --cask gcc-arm-embedded（formula 版无 newlib，不可用）；
-#   - Ubuntu：apt-get install gcc-arm-none-eabi libnewlib-arm-none-eabi。
+#   - Ubuntu：apt-get install gcc-arm-none-eabi libnewlib-arm-none-eabi
+#     libstdc++-arm-none-eabi-newlib。
 # - 首次构建需联网：pico-sdk / tinyusb / picotool 全部按 CMakeLists.txt 里
 #   带 URL_HASH 的 tarball pin 经 FetchContent 取回并缓存在 build/ 下。
 #

@@ -18,7 +18,8 @@
   - 本机（macOS）：`brew install --cask gcc-arm-embedded`
     （实测 15.3.Rel1；brew formula 版不含 newlib，必编不过）；
   - CI（ubuntu-latest）：`apt-get install gcc-arm-none-eabi
-    libnewlib-arm-none-eabi`（runner 镜像自带 cmake/python3）。
+    libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`
+    （runner 镜像自带 cmake/python3）。
     注意版本偏移：apt 装的是 13.x，本机实测构建用的是 15.3.Rel1——
     首个 tag 构建后核对一次 CI 日志（UF2 大小/sha256 与本地产物对拍）。
 - 首次构建需联网（tarball 均带 URL_HASH 完整性校验，取回后缓存在
