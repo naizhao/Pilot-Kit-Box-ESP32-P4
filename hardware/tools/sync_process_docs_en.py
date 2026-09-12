@@ -14,6 +14,7 @@ STAGES = {
     "D": "978 Transceiver",
     "E": "1090 Receive Chain",
     "F": "External Interface",
+    "G": "Airband",          # V4.6 新增：BK4819 + 26MHz TCXO + PCM1808
 }
 
 SKIP_REASONS = {
@@ -30,10 +31,28 @@ def fields(line):
     return [part.strip() for part in line.strip().strip("|").split("|")]
 
 
+def unknown_stage(code, context):
+    """未登记的阶段必须炸，不能静默。
+
+    2026-09-12 实证：V4.6 在中文表里加了「阶段 G 航空波段」，而这里只认 A–F。
+    后果不是"漏掉"，是**错配**——`sync_assembly` 的 `stage` 变量保持上一轮的 "F" 不变，
+    19 个 airband 件被整段并进 "Stage F: External Interface"（1 件 → 20 件）；
+    `sync_checklist` 这边则把 "G 航空波段 AIRBAND" 原样抄进英文表。
+    两边都不报错，产物看着完整。加阶段的人当时是手改英文产物绕过去的，
+    于是横幅写着"Do not hand-edit"的文件反而成了唯一正确的那份。
+    """
+    raise RuntimeError(
+        f"{context} 出现未登记的阶段 {code!r}。新增阶段必须先加进本文件的 STAGES，"
+        f"否则英文版会漏译或把整段件错配到上一个阶段。"
+    )
+
+
 def translate_stage(stage):
-    match = re.match(r"([A-F])\s", stage)
+    match = re.match(r"([A-Z])\s", stage)
     if match:
         code = match.group(1)
+        if code not in STAGES:
+            unknown_stage(code, "CHECKLIST-zh_CN.md")
         return f"{code} {STAGES[code]}"
     if "不贴" in stage:
         reason = re.search(r"（(.+)）", stage)
@@ -58,6 +77,17 @@ def checklist_note(ref, note):
         return f"Board silkscreen reads {printed.group(1) if printed else 'the wrong reference'}; use coordinates"
     if "DNP" in note:
         return "DNP by default; see the Chinese companion for tuning details"
+    # 有源 TCXO 装反会短路烧件——这条必须整句译出来，不能落到下面那条泛泛的
+    # "Observe pin 1"。按中文原文的特征词匹配而不是按位号，位号改了也还能命中。
+    # （它之前是人肉写进 CHECKLIST.md 的，重跑同步器会被抹掉，2026-09-12 实证。）
+    if "上电即烧" in note:
+        return (
+            "ACTIVE TCXO: pin2=GND / pin4=Vcc — rotating it 180 degrees shorts them and "
+            "destroys the part on power-up. There is NO marking on the top face; the 0.2mm "
+            "chamfer is on the BOTTOM at corner #1 (datasheet C0.2) — check it before placing, "
+            "or use one unit to establish the bottom-chamfer / top-marking relationship first. "
+            "The filled silkscreen dot on the board points at pin 1"
+        )
     if "pin1" in note.lower() or "1脚" in note or "方向" in note:
         return "Observe pin 1 / signal direction"
     return "See the Chinese companion for the detailed engineering note"
@@ -115,9 +145,11 @@ def sync_assembly(board_root, revision, board):
     stage = None
     in_skip = False
     for line in source:
-        heading = re.match(r"## 阶段 ([A-F])", line)
+        heading = re.match(r"## 阶段 ([A-Z])", line)
         if heading:
             stage = heading.group(1)
+            if stage not in STAGES:
+                unknown_stage(stage, "ASSEMBLY-zh_CN.md")
             in_skip = False
             continue
         if line.startswith("## 不贴的"):
@@ -153,6 +185,11 @@ def sync_assembly(board_root, revision, board):
         ])
     for code, name in STAGES.items():
         rows = grouped[code]
+        # 本板没有的阶段就不出小节。v3 没有航空波段，否则会多出一个空的
+        # "Stage G: Airband (0 parts)"。注意这**不能**用来掩盖漏配：
+        # 未登记的阶段在上面已经抛错了，走不到这里。
+        if not rows:
+            continue
         out.extend([
             f"## Stage {code}: {name} ({len(rows)} parts)",
             "",

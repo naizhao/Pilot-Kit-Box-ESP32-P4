@@ -1,4 +1,4 @@
-# V4.5 Selective Placement / Mutually Exclusive Parts Reference
+# V4.7 Selective Placement / Mutually Exclusive Parts Reference
 
 Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
@@ -12,8 +12,12 @@ Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
 This board's current configuration: **powered variant**.
 
-Designator locations on the board: [ASSEMBLY_MAP-V4.6.pdf](ASSEMBLY_MAP-V4.6.pdf) (public version),
-`internal/装配图-本轮打板-V4.6-zh_CN.pdf` (parts each board of this batch must hand-place itself).
+The airband group (stage G — 21 designators: `U21` `U22` `Y4` `J10` `D6` `L18` `R58`–`R61` `C88` `C89` `C91`–`C99`; `C99`/`R61` are the V4.7 reference-clock DC-block and load)
+is **not** in any selective or mutex group: it is placed unconditionally, on both variants. It is listed here
+only so that its absence from the tables below is not read as an omission.
+
+Designator locations on the board: [ASSEMBLY_MAP-V4.7.pdf](ASSEMBLY_MAP-V4.7.pdf) (public version),
+`internal/装配图-本轮打板-V4.7-zh_CN.pdf` (parts each board of this batch must hand-place itself).
 Both are generated from the criteria in this table, so they cannot disagree with it.
 
 ---
@@ -22,12 +26,13 @@ Both are generated from the criteria in this table, so they cannot disagree with
 
 The same PCB is built in two versions, and **this is the only group in the whole table where a wrong placement burns the board**:
 
-| | Power section (28 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
+| | Power section (29 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
 |---|---|---|
 | **Powered variant** (this board) | ✅ place all | ❌ **must never be placed** |
 | Unpowered variant | ❌ place none | ✅ must be placed |
 
-**Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` `C70`~`C80` `R37`~`R46`
+**Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` **`SW3`** `C70`~`C80` `R37`~`R46`
+(`SW3` is the V4.7 power button on SY6970's `/QON`; without `U19` it connects to nothing.)
 
 **Why it burns**: for USB-C to be recognized by the host, the CC pin must have Rd. In the powered variant this is provided internally by CH224K(`U18`);
 if an external 5.1k is then added in parallel on top of that, **the CC resistance is pulled down → PD negotiation misjudges → it may request

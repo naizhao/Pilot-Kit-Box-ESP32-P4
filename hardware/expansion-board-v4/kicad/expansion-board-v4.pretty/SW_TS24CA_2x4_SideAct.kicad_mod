@@ -1,0 +1,85 @@
+(footprint "SW_TS24CA_2x4_SideAct"
+	(version 20231120)
+	(generator "hand")
+	(layer "F.Cu")
+	(descr "TS24CA 2x4 侧按贴片轻触开关（深圳首韩规格书，2026-09-12）。按钮沿 +X 水平伸出（F.Fab 画出凸出段），本体 2.25(X)x4.7(Y)x1.9(Z)，长边沿 Y 竖排。**X 基准：座子前表面对齐上排焊盘外缘 +1.60**，往后 2.25 到后表面 -0.65，按钮再凸出 1.25 到 +2.85，总长 3.50 与图纸吻合——座子不是关于焊盘中心对称的，摆成对称就凑不出 3.5。底面另有 2 根 φ0.5 塑料定位桩、长 0.4（图 2 的 1.9 是不含桩高、2.3 是含桩高，差值即桩长），插进下面那两个 NPTH 孔。固定脚（爆炸图零件 5 盖板的牛角）**只向 ±Y 折出、前部与座子平齐**，不凸到座子前面——建成向 +X 凸出会把座子连同按钮一起顶向板内，导致按钮对不齐板边。pad1/2 = 电气端子 1.2(X)x0.6(Y)、中心距 3.4，在远离按钮一侧；pad MP = 机械固定脚 1.3(X)x1.05(Y)、外缘跨度 5.3/内缘 3.2，在按钮侧；中间 2 个 NPTH 定位孔、中心距 1.7，**X 位于 +0.70**（图纸原值：按钮尖端到柱心 2.15，减按钮凸出 1.25 得座子前表面到柱心 0.90）。⚠️ 不要按「上下排焊盘之间空档的中心」去推，那样会得到 −0.05、错 0.75mm，实物柱子插不进孔。判定依据：下排外缘 4.0 − 中心距 3.4 = 0.6 正是图上标注的焊盘宽，且 3.4 与主视图端子间距 3.35 吻合，故下排为电气端子。焊盘尺寸全部照图纸原值；唯一偏离是定位孔取 φ0.55 而非柱径 φ0.5，留 0.05 配合间隙（同 J4 定位柱做法）；NPTH 的 layers 必须写 「*.Cu」（**所有**铜层），写成 「F&B.Cu」 只让顶底层覆铜避让，6 层板的内层覆铜照样压上来——实测每个孔报 5 条 hole_clearance、实际间距 0.0000。官方 MountingHole 封装用的就是 「*.Cu」。孔到铜最小 0.285（走对角：X 向 0.075 + Y 向 0.275），满足板规 min_hole_clearance=0.2——注意别只按单轴算，单看 X 会误判成违例。固定脚图纸上是 L 形台阶（'4' 那道），此处按包络取矩形，焊盘只会比实际脚大不会短路。电气 50mA/12VDC；行程仅 0.15±0.05mm——外壳按压销的静止间隙必须宁大勿小，常压会把 /QON 长期拉低导致整机反复重启；驱动力 160±50gf。")
+	(tags "switch tactile side-actuated TS24CA 2x4 power-key")
+	(attr smd)
+	(fp_text reference "REF**"
+		(at 0 -3.6 0)
+		(layer "F.SilkS")
+		(effects (font (size 0.8 0.8) (thickness 0.15)))
+	)
+	(fp_text value "TS24CA"
+		(at 0 3.6 0)
+		(layer "F.Fab")
+		(effects (font (size 1 1) (thickness 0.15)))
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 90)
+		(layer "F.Fab")
+		(effects (font (size 0.6 0.6) (thickness 0.1)))
+	)
+
+	(fp_line (start -0.65 -2.35) (end 1.6 -2.35) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 1.6 -2.35) (end 1.6 -1.0) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 1.6 1.0) (end 1.6 2.35) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 1.6 2.35) (end -0.65 2.35) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start -0.65 2.35) (end -0.65 -2.35) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 1.6 -1.0) (end 2.85 -1.0) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 2.85 -1.0) (end 2.85 1.0) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+	(fp_line (start 2.85 1.0) (end 1.6 1.0) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+
+	(fp_line (start -0.7 -2.8) (end 1.65 -2.8) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+	(fp_line (start -0.7 2.8) (end 1.65 2.8) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+
+	(fp_line (start -1.85 -2.9) (end 3.1 -2.9) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start 3.1 -2.9) (end 3.1 2.9) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start 3.1 2.9) (end -1.85 2.9) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+	(fp_line (start -1.85 2.9) (end -1.85 -2.9) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+
+	(pad "1" smd roundrect
+		(at -1.0 -1.7)
+		(size 1.2 0.6)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+	(pad "2" smd roundrect
+		(at -1.0 1.7)
+		(size 1.2 0.6)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+
+	(pad "MP" smd roundrect
+		(at 0.95 -2.125)
+		(size 1.3 1.05)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+	(pad "MP" smd roundrect
+		(at 0.95 2.125)
+		(size 1.3 1.05)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(roundrect_rratio 0.15)
+	)
+
+	(pad "" np_thru_hole circle
+		(at 0.7 -0.85)
+		(size 0.55 0.55)
+		(drill 0.55)
+		(layers "*.Cu" "*.Mask")
+	)
+	(pad "" np_thru_hole circle
+		(at 0.7 0.85)
+		(size 0.55 0.55)
+		(drill 0.55)
+		(layers "*.Cu" "*.Mask")
+	)
+
+	(model "${KIPRJMOD}/expansion-board-v4.3dshapes/SW_TS24CA_2x4_SideAct.wrl"
+		(offset (xyz 0 0 0))
+		(scale (xyz 1 1 1))
+		(rotate (xyz 0 0 0))
+	)
+)

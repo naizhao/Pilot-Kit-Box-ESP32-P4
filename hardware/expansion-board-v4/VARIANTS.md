@@ -1,4 +1,4 @@
-# V4.5 Two Variants: Powered / Unpowered
+# V4.7 Two Variants: Powered / Unpowered
 
 Chinese version: [`VARIANTS-zh_CN.md`](VARIANTS-zh_CN.md)
 
@@ -17,6 +17,11 @@ Not "leave out a few parts", but **two complete, self-contained power systems**:
 The unpowered variant **doesn't even fit the battery holder** — power and battery-level info all go through the Waveshare mainboard (`VCC_5V` enters from J1 pin1/pin3,
 feeding the three LDOs U1/U2/U3). The `VCC_5V` net is bidirectional: on the powered variant SY7069 outputs and back-feeds J1;
 on the unpowered variant it is an input from J1. Same trace, two directions — no jumper or board change needed.
+
+> **V4.6 airband and the variants**: the airband group (stage G — `U21` `U22` `Y4` `J10` and passives) is
+> placed on **both** variants; it is not part of the variant split. Its analog 5 V (`VHF_AVCC`, via `R60`)
+> comes from `VCC_5V`, so on the unpowered variant airband depends on the carrier feeding 5 V into J1 pin1/pin3.
+> Everything else in the group runs off `3V3_RF`.
 
 ## 2. Why split: the cost is in SMT side count, not component fees
 

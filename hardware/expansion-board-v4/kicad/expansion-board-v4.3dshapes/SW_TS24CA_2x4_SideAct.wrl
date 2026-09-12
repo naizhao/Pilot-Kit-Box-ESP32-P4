@@ -1,0 +1,125 @@
+#VRML V2.0 utf8
+# SW_TS24CA_2x4_SideAct —— TS24CA 侧按轻触开关（首韩规格书 2026-09-12）
+# 本体 2.25x4.7x1.9，按钮 2.0x0.9 自 +X 面凸出 1.25，
+# 按钮中心高 0.95（推断值，见 gen_3d_ts24ca.py 文件头）
+# ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面的数值已经除过 2.54。
+Transform {
+  translation 0.187008 0.000000 0.374016
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.88 0.87 0.83
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.885827 1.850394 0.748031 }
+    }
+  ]
+}
+Transform {
+  translation 0.875984 0.000000 0.374016
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.18 0.18 0.20
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.492126 0.787402 0.354331 }
+    }
+  ]
+}
+Transform {
+  translation -0.442913 -0.659449 0.059055
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.78
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.374016 0.137795 0.118110 }
+    }
+  ]
+}
+Transform {
+  translation -0.442913 0.659449 0.059055
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.78
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.374016 0.137795 0.118110 }
+    }
+  ]
+}
+Transform {
+  translation 0.374016 -0.836614 0.049213
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.72 0.66 0.40
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.511811 0.413386 0.098425 }
+    }
+  ]
+}
+Transform {
+  translation 0.374016 0.836614 0.049213
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.72 0.66 0.40
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.511811 0.413386 0.098425 }
+    }
+  ]
+}
+Transform {
+  translation 0.275591 -0.334646 -0.078740
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.88 0.87 0.83
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.196850 0.196850 0.157480 }
+    }
+  ]
+}
+Transform {
+  translation 0.275591 0.334646 -0.078740
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.88 0.87 0.83
+          specularColor 0.12 0.12 0.12
+          shininess 0.25
+        }
+      }
+      geometry Box { size 0.196850 0.196850 0.157480 }
+    }
+  ]
+}

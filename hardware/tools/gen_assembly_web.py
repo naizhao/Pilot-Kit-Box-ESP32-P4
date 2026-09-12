@@ -61,11 +61,13 @@ NM = 1e6  # KiCad 内部单位是纳米
 # 手抄 BOM 漏掉 R30 那次没有任何东西报错，照着表贴会让 3V3_RF 与 3V3_DIG
 # 经它直流相连——「没报错」正是这类错误的特征。
 POWER_SECTION = (
-    ["U18", "U19", "U20", "L16", "L17", "J9", "RT1"]
+    ["U18", "U19", "U20", "L16", "L17", "J9", "RT1", "SW3"]
     + [f"C{n}" for n in range(70, 81)]      # C70~C80
     + [f"R{n}" for n in range(37, 47)]      # R37~R46
 )
-POWER_SECTION_COUNT = 28                    # 文档原文写死的数量，对不上就是抄错了
+POWER_SECTION_COUNT = 29                    # 文档原文写死的数量，对不上就是抄错了
+# 29 = 原 28 + V4.7 新增的 SW3。SW3 接 SY6970 的 /QON，而 U19(SY6970) 就在电源区——
+# 不带电源版没有 U19，这颗键按设计就不该贴。
 CC_PULLDOWN = ["R7", "R8"]                  # 5.1k CC 下拉，与电源区逻辑相反
 
 assert len(POWER_SECTION) == POWER_SECTION_COUNT, (
@@ -106,21 +108,41 @@ class Variant:
 
 
 VARIANTS = [
-    # ── V4.6（当前板，含 AIRBAND）────────────────────────────────────
+    # ── V4.7（当前板：V4.6 + SW3 主电源键 + TCXO 隔直）────────────────
     Variant(
-        "v4.6-pwr", "V4.6 带电源版", "expansion-board-v4", "expansion-board-v4",
-        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；贴满电源区，"
+        "v4.7-pwr", "V4.7 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND；新增 SW3 主电源键（接 SY6970 /QON，整机唯一总电门）"
+                 "与 TCXO 隔直 C99/R61；贴满电源区，"
                  "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
         force_skip=CC_PULLDOWN,
         bom=("csv", "internal/BOM_MASTER.csv"),
     ),
     Variant(
-        "v4.6-nopwr", "V4.6 不带电源版", "expansion-board-v4", "expansion-board-v4",
-        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；电源区一个不贴，"
+        "v4.7-nopwr", "V4.7 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 与 TCXO 隔直 C99/R61；电源区一个不贴"
+                 "（SW3 主电源键在内——它接 SY6970 的 /QON，没有 U19 就没有对象），"
                  "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
         force_skip=POWER_SECTION,
         force_place=CC_PULLDOWN,
         bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.6（存档：PCB 已迭代到 V4.7，这份几何重算不出来了）──────────
+    Variant(
+        "v4.6-pwr", "V4.6 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；无 SW3 电源键；贴满电源区，"
+                 "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+        archived=True,
+    ),
+    Variant(
+        "v4.6-nopwr", "V4.6 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 接收（U21/U22/Y4/J10）；无 SW3 电源键；电源区一个不贴，"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+        archived=True,
     ),
     # ── V4.5（存档；V4.4 与 V4.5 贴片无差别，只改过一条 GNSS 走线，
     #        所以这份数据贴 V4.4 的板同样适用）────────────────────────

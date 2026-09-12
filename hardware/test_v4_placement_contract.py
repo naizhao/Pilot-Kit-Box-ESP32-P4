@@ -8,6 +8,7 @@ PCB（例如发布前的候选板），取绝对路径或相对仓库根的路�
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 import re
 import unittest
@@ -23,6 +24,9 @@ if not PCB.is_absolute():
 REQUIRED_TEXTS = {
     "+", "-", "1090 EXT", "1090 IFA", "1090MHz IFA ANT",
     "978 UAT", "BATT", "GNSS EXT", "GNSS INT", "NO-PWR VER", "USB",
+    # V4.7：SW3 主电源键。这颗键是整机唯一的机械总电门（SY6970 /QON），
+    # 盒子装好后按哪里全靠这条丝印指路，属功能性标注、必须在。
+    "PWR BTN",
 }
 REQUIRED_ZONES = {
     "ANT1090_open_end_keepout", "ANT1090_short_end_keepout",
@@ -34,7 +38,12 @@ FINALIZED_GRAPHICS_COUNT = 26
 # 用户 2026-09-01 定稿时删掉了 RST / BOOT 两条标签（SW1/SW2 的位号本身已能识别），
 # 只保留 TP1-TP7 七条。这是用户对自己排版的决定，合同跟随实际板面。
 DEBUG_LABELS = ("TP1", "TP2", "TP3", "TP4", "TP5", "TP6", "TP7")
-BOARD_GRAPHICS_COUNT = FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
+# V4.7 新增：用户 2026-09-12 摆 SW3 时加的 F.SilkS 标注。
+# 跟 DEBUG_LABELS 一样单列，而不是把 FINALIZED_GRAPHICS_COUNT 改大——
+# 基线数字一旦被"顺手 +1"，这条合同就退化成事后追认，再也拦不住误增误删。
+V47_LABELS = ("PWR BTN",)
+BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
+                        + len(V47_LABELS))
 # B 面左边缘同一竖列：SW1、SW2 相邻成组排在 TP 之前，SW1 在 SW2 上方。
 # 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠）。
 #
@@ -117,6 +126,74 @@ class V4PlacementContractTest(unittest.TestCase):
     def test_functional_silkscreen_texts_are_preserved(self):
         actual = set(re.findall(r'\(gr_text "([^"]*)"', self.text))
         self.assertLessEqual(REQUIRED_TEXTS, actual, sorted(REQUIRED_TEXTS - actual))
+
+    def test_zone_fill_params_are_frozen(self):
+        """ZONES.json 必须给每个非规则区覆铜存齐填充参数。
+
+        拦的是一类 **DRC 查不出来** 的回归：板上 clearance 是 0.15，而 gen_pcb.py
+        若不从 ZONES.json 读回就吃 KiCad 默认 0.5，覆铜多退 0.35mm，靠覆铜连通的
+        焊盘/过孔当场断开——2026-09-12 首次完整重放同口径比对实测到 缺线 2 /
+        孤立断头 4 / 焊盘未接覆铜 4 / via_dangling 1，而 kicad-cli drc 全程 0 违例
+        （默认值更宽松，不违反任何规则）。
+
+        这条只校验**固化数据本身**。"板上实际值 == 固化值" 由 gen_pcb.py 里的
+        断言把关（它用 pcbnew API，重建时必然执行，比在这里解析 PCB 文本可靠——
+        KiCad 10 的 zone 块里既无 net_name、顶部也无 (net N "name") 声明，
+        按文本解析口径极易写成恒真的空断言）。
+        """
+        zjson = ROOT / "hardware" / "expansion-board-v4" / "internal" / "tools" / "ZONES.json"
+        self.assertTrue(zjson.is_file(), "缺 ZONES.json")
+        data = json.loads(zjson.read_text())
+        need = ("clearance", "min_thickness", "pad_connection",
+                "thermal_gap", "thermal_spoke", "island_removal")
+        n = 0
+        for z in data["zones"]:
+            if z["rule_area"]:
+                self.assertNotIn("fill", z, f"规则区 {z['name']} 不该有 fill")
+                continue
+            who = f"{z['net']}@{z['layer']}"
+            self.assertIn("fill", z, f"{who} 缺 fill 参数，跑 export_zones.py 重新固化")
+            for k in need:
+                self.assertIn(k, z["fill"], f"{who} 的 fill 缺字段 {k}")
+            # 0.5 是 KiCad 的默认 clearance。固化值等于默认值时，"漏读固化数据"
+            # 这个 bug 就不再有可观测后果，这条门禁也就失去意义——真要改成 0.5，
+            # 请连这条断言一起改，并说明为什么不再需要它。
+            self.assertNotAlmostEqual(
+                z["fill"]["clearance"], 0.5, places=3,
+                msg=f"{who} 的固化 clearance 等于 KiCad 默认 0.5，"
+                    f"这条门禁将无法再发现'漏读固化参数'的退化")
+            n += 1
+        self.assertGreaterEqual(n, 10, f"只校验到 {n} 个覆铜，ZONES.json 可能不完整")
+
+    def test_board_rev_silk_matches_single_source(self):
+        """板面版本丝印必须等于 board_meta.BOARD_REV。
+
+        board_meta.py 的文件头写着"改版本号只改这一个文件"，并列了历史上三处
+        写死副本的教训。但品牌丝印是个例外：它的位置被手工调过、已固化进
+        SILK.json，而 gen_brand_silk.py 是**按 y 坐标**清旧的——那条被挪到
+        y=102.46 的版本文字不在它的槽位里，重跑只会叠加出第二条
+        （2026-09-12 实测：板上同时出现 'V4.6 (2026-09)' 和 'V4.7   2026-09'）。
+
+        所以版本丝印的实际内容存在 SILK.json 里，改版本号要改两处。这条门禁
+        就是补上那个"记得同步"——让漏改当场变红，而不是流到 Gerber 里。
+        """
+        import importlib.util
+        bm_path = (ROOT / "hardware" / "expansion-board-v4" / "internal"
+                   / "tools" / "board_meta.py")
+        spec = importlib.util.spec_from_file_location("board_meta", bm_path)
+        bm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bm)
+
+        # ⚠️ 不校验 SILK.json 里的版本文字：silk_texts.py:142 在 import 时会用
+        # REVISION 正则把它替换成 board_meta.BOARD_REV，所以固化数据里存的是
+        # 哪一版都无所谓、也不该手动维护。真源始终只有 board_meta.py 一处。
+        # （我一度以为要手改 SILK.json 并为此加了断言，那条约束是错的。）
+        # 这里只查板子：版本必须一致，且必须恰好一条。
+        on_board = re.findall(r'\(gr_text "(V\d+\.\d+[^"]*)"', self.text)
+        self.assertEqual(len(on_board), 1,
+                         f"PCB 上版本丝印应恰好 1 条，实际 {on_board}")
+        self.assertTrue(on_board[0].startswith(bm.BOARD_REV),
+                        f"PCB 上是 {on_board[0]!r}，BOARD_REV 是 {bm.BOARD_REV!r}")
 
     def test_named_rf_zones_are_preserved(self):
         actual = set(re.findall(r'\(name "([^"]+)"\)', self.text))

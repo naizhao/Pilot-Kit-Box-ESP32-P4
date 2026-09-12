@@ -37,6 +37,9 @@ DATA = ROOT / "web" / "assembly" / "data"
 # 数量写下限而不是精确值：改板加件是常态，加了件不该让这份测试红，
 # 但整批消失（解析挂了、过滤写反）一定要红。
 VARIANTS = {
+    "v4.7-pwr": "expansion-board-v4",
+    "v4.7-nopwr": "expansion-board-v4",
+    # V4.6 起同样是存档：V4.7 的 PCB 已覆盖它，但 V4.6 的图还可能被人拿去贴板
     "v4.6-pwr": "expansion-board-v4",
     "v4.6-nopwr": "expansion-board-v4",
     # V4.5 是存档数据（PCB 已被 V4.6 覆盖，重算不出来），但一样要过全部契约——
@@ -48,14 +51,38 @@ VARIANTS = {
 
 # 带电源/不带电源成对出现的版本。加新版本时往这里加一对，
 # 别再往下面的用例里塞字面量。
-PWR_PAIRS = [("v4.6-pwr", "v4.6-nopwr"), ("v4.5-pwr", "v4.5-nopwr")]
+PWR_PAIRS = [("v4.7-pwr", "v4.7-nopwr"), ("v4.6-pwr", "v4.6-nopwr"),
+             ("v4.5-pwr", "v4.5-nopwr")]
 
-# SELECTIVE_PLACEMENT-zh_CN.md ①：电源部分 28 个位号，两个版本逻辑相反。
-POWER_REFS = (
+# SELECTIVE_PLACEMENT-zh_CN.md ①：电源部分，两个版本逻辑相反。
+#
+# ⚠️ 电源区的成员**随版本变**，不能只留一个全局集合：`SW3`（SY6970 的 /QON
+# 电源键）是 V4.7 才加的，V4.5/V4.6 的板上没有这个位号。2026-09-13 把 SW3
+# 加进电源区后，这份测试对 v4.5/v4.6 两套存档数据报「缺电源区位号 SW3」——
+# 那不是数据坏了，是判据把新版的成员套到了旧版头上。
+# 加新版本时：往 VARIANTS / PWR_PAIRS 各加一对，若引入新的电源区位号，
+# 在 POWER_REFS_EXTRA 里按版本前缀登记，**不要**直接改 POWER_REFS_BASE。
+POWER_REFS_BASE = (
     {"U18", "U19", "U20", "L16", "L17", "J9", "RT1"}
     | {f"C{n}" for n in range(70, 81)}
     | {f"R{n}" for n in range(37, 47)}
 )
+POWER_REFS_EXTRA = {"v4.7": {"SW3"}}
+
+# 电源区里**允许**出现在不带电源版上的位号。
+#
+# 2026-09-13 一度为 {"SW3"}：当时 `v4.7-nopwr.json` 的说明写着"贴上无害，
+# 装壳时按了没反应属正常"，而 `gen_jlc_smt.py` / `SELECTIVE_PLACEMENT.md`
+# 把它算电源件 —— 两个事实源打架。重出装配站点数据后（生成器用的就是含 SW3
+# 的 VARIANT_PWR）nopwr 已不含 SW3，分歧消解，**豁免随即撤掉，断言恢复严格**。
+# 留这个空集合是给将来用的：只有"贴反会烧板"级别的位号才该走硬断言，
+# 纯粹"按了没反应"的件若要放行，往这里加，别去放宽上面的集合。
+POWER_REFS_OPTIONAL_ON_NOPWR: set[str] = set()
+
+
+def power_refs(variant_id):
+    rev = variant_id.rsplit("-", 1)[0]
+    return POWER_REFS_BASE | POWER_REFS_EXTRA.get(rev, set())
 # 5.1k CC 下拉，跟电源区反向：带电源版绝不能贴，不带电源版必须贴。
 CC_PULLDOWN_REFS = {"R7", "R8"}
 # 两个版本都不贴：天线通路旁路 + IFA 并联匹配 + AD8313 输出上拉。
@@ -117,14 +144,16 @@ class AssemblyWebDataContract(unittest.TestCase):
             with self.subTest(pair=pwr_id):
                 pwr = refs_of(load(pwr_id))
                 nopwr = refs_of(load(nopwr_id))
+                expect = power_refs(pwr_id)
 
                 self.assertTrue(
-                    POWER_REFS <= pwr,
-                    f"{pwr_id} 缺电源区位号：{sorted(POWER_REFS - pwr)}",
+                    expect <= pwr,
+                    f"{pwr_id} 缺电源区位号：{sorted(expect - pwr)}",
                 )
+                forbidden = expect - POWER_REFS_OPTIONAL_ON_NOPWR
                 self.assertEqual(
-                    POWER_REFS & nopwr, set(),
-                    f"{nopwr_id} 混进了电源区位号：{sorted(POWER_REFS & nopwr)}",
+                    forbidden & nopwr, set(),
+                    f"{nopwr_id} 混进了电源区位号：{sorted(forbidden & nopwr)}",
                 )
                 self.assertEqual(
                     CC_PULLDOWN_REFS & pwr, set(),
