@@ -367,6 +367,11 @@ uint8_t pk_backlight_step_get(void) { return (uint8_t)sim_env("PK_SIM_SET_BL", 1
  * 「选中的是哪一档」用 PK_SIM_SET_BL 摆，与上面那个 getter 同一个旋钮。 */
 void pk_backlight_step_set(uint8_t step) { (void)step; }
 
+/* 导航网格的电源 pop 在关机/重启前会发 ST7701 display-off，避免 P4 复位后
+ * MIPI-DSI 停信号、面板自己显示蓝屏（真机实见，nav_grid_page.c 有注释）。
+ * PC 上没有面板可关，桩成空实现——截图走的是 framebuffer，与它无关。 */
+void pk_display_panel_off(void) { }
+
 /* 默认 false：无卡时格式化按钮置灰、存储那行也置灰，这是出厂开机的样子，
  * 也是最容易被漏掉的一种版面。 */
 bool pk_sdcard_is_mounted(void) { return sim_env("PK_SIM_SET_SD", 0) != 0; }
@@ -414,7 +419,6 @@ void pk_settings_apply(int row, int v) { (void)row; (void)v; }
  * SD 没卡、BLE 只在广播、日志一条没写。PK_SIM_DIAG_OK=1 可整体切成正常态。
  */
 #include "baro.h"
-#include "battery.h"
 #include "modes_ingest.h"   /* pk_dsp_stats_t；dsp_task.h 已随 SDR 退役删除 */
 #include "gps.h"
 #include "pilot_kit.h"
@@ -429,14 +433,9 @@ static int diag_ok(void) { return sim_env("PK_SIM_DIAG_OK", 0); }
 bool ble_gatt_is_connected(void)   { return diag_ok(); }
 bool ble_gatt_is_advertising(void) { return !diag_ok(); }
 
-bool pk_batt_get(pk_batt_t *out)
-{
-    if (out) {
-        out->valid = true;  out->raw_mv = 1387;  out->batt_mv = 4106;
-        out->pct = 96;      out->charging = diag_ok();
-    }
-    return true;
-}
+/* pk_batt_get() 的桩随 battery.c 一起退役（2026-09-12，v3 支持取消）。
+ * 状态栏与诊断页的电量现在直接走 power_service_snapshot()，那条路本文件
+ * 下面已有桩（power_service_snapshot），模拟器不需要再伪造一层。 */
 
 bool pk_clock_is_synced(void) { return diag_ok(); }
 const char *pk_clock_source(void) { return diag_ok() ? "gps" : "none"; }
