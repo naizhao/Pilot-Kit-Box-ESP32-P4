@@ -53,6 +53,10 @@ typedef struct {
     /* ADC 换算结果（REG0E/REG10/REG11/REG12，公式见取证表）           */
     bool     therm_reg;      /* REG0E bit7：正在热调节（降流）         */
     uint16_t batt_mv;        /* BATV：2304 mV + code×20 mV（2.304~4.844）*/
+    uint16_t sys_mv;         /* SYSV：同公式（REG0F）。与 batt_mv 一比即知
+                              * 系统在吃电池还是吃外部电——两者接近说明
+                              * BATFET 导通、电池在供系统；SYSV 明显更高
+                              * 说明另有电源顶着 SYS（[DS] p.24）       */
     uint32_t ntc_pct_x1000;  /* NTCPCT：(21% + code×0.465%)×1000，
                               * 21000~80055（0.465×1000=465/code，
                               * 整数无浮点；uint16 装不下 80055）      */

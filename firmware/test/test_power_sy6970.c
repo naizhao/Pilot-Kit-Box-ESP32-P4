@@ -252,6 +252,39 @@ static void test_decode_adc_boundaries(void)
     CHECK(out.ichg_ma == 6350);         /* 127×50（DS p.24-25 量程）    */
 }
 
+/* ── 8b SYSV（REG0F）解码：判"系统在吃电池还是吃外部电" ─────────────
+ * 2026-09-13 加：放电标定时电压 20 分钟纹丝不动，怀疑微雪载板的 USB 在
+ * 经 J1 的 VCC_5V 顶着系统，电池根本没放电。SYSV 与 BATV 一比就知道——
+ * 两者接近 = BATFET 导通、系统吃电池；SYSV 明显更高 = 另有电源在供 SYS。
+ * 公式与 BATV 同源（2.304V + code×20mV，[DS] p.24）。 */
+static void test_decode_sysv(void)
+{
+    frame_t f = healthy_no_input();
+    f.e = 70;                   /* BATV code 70 → 3704 mV */
+    f.f = 70;                   /* SYSV code 70 → 3704 mV（同电位）*/
+    size_t n = 0;
+    const uint8_t *regs = frame_bytes(&f, &n);
+    sy6970_status_t out;
+    CHECK(sy6970_decode_status(regs, n, &out) == true);
+    CHECK(out.sys_mv == 3704);
+    CHECK(out.sys_mv == out.batt_mv);   /* 系统吃电池的典型形态 */
+
+    /* 外部供电顶着 SYS：SYSV 高出一截而 BATV 不动 */
+    f.f = 85;                   /* SYSV code 85 → 4004 mV */
+    regs = frame_bytes(&f, &n);
+    CHECK(sy6970_decode_status(regs, n, &out) == true);
+    CHECK(out.sys_mv == 4004);
+    CHECK(out.sys_mv > out.batt_mv);
+
+    /* 量程两端（与 BATV 同公式）*/
+    f.f = 0x00; regs = frame_bytes(&f, &n);
+    CHECK(sy6970_decode_status(regs, n, &out) == true);
+    CHECK(out.sys_mv == 2304);
+    f.f = 0x7F; regs = frame_bytes(&f, &n);
+    CHECK(sy6970_decode_status(regs, n, &out) == true);
+    CHECK(out.sys_mv == 4844);
+}
+
 /* ── 9 init 序列表与取证一致（地址/操作/掩码/期望值 + why 非空）────── */
 static void test_init_seq_matches_evidence(void)
 {
@@ -397,6 +430,7 @@ int main(void)
     test_decode_all_ff_is_unavailable();
     test_decode_rejects_bad_args();
     test_decode_adc_boundaries();
+    test_decode_sysv();
     test_init_seq_matches_evidence();
     test_iinlim_code_is_2a_not_por_default();
     test_shutdown_seq_sets_batfet_dis();

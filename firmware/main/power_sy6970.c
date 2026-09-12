@@ -223,6 +223,7 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
     const uint8_t r0b = regs[0];
     const uint8_t r0c = regs[1];
     const uint8_t r0e = regs[3];
+    const uint8_t r0f = regs[4];
     const uint8_t r10 = regs[5];
     const uint8_t r11 = regs[6];
     const uint8_t r12 = regs[7];
@@ -244,6 +245,11 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
     /* REG0E（[DS] p.23）：THERM_STAT[7] + BATV[6:0] = 2304mV + code×20。 */
     out->therm_reg = (r0e & 0x80) != 0;
     out->batt_mv   = (uint16_t)(2304 + (r0e & 0x7F) * 20);
+
+    /* REG0F（[DS] p.24）：SYSV[6:0]，与 BATV 同公式。此前只在窗口里占位、
+     * 不解码；2026-09-13 放电标定时需要它判断"系统在吃电池还是吃外部电"
+     * ——电压长时间不降，有可能是电池根本没放电，而不是放电慢。 */
+    out->sys_mv    = (uint16_t)(2304 + (r0f & 0x7F) * 20);
 
     /* REG10（[DS] p.24）：NTCPCT[6:0] = 21% + code×0.465%，×1000 整数化。 */
     out->ntc_pct_x1000 = 21000u + (uint32_t)(r10 & 0x7F) * 465u;
@@ -814,10 +820,11 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
             snprintf(ichg_s, sizeof ichg_s, "%umA(stale)",
                      (unsigned)st.ichg_ma);
         ESP_LOGI(TAG,
-                 "ICHG=%s VBUS=%umV BATT=%umV NTC=%u(%lu.%lu%%) "
+                 "ICHG=%s VBUS=%umV BATT=%umV SYS=%umV NTC=%u(%lu.%lu%%) "
                  "IINLIM=%umA REG00=0x%02X%s REG0C=0x%02X chg=%d therm=%d",
                  ichg_s, (unsigned)st.vbus_mv,
-                 (unsigned)st.batt_mv, (unsigned)st.ntc_fault,
+                 (unsigned)st.batt_mv, (unsigned)st.sys_mv,
+                 (unsigned)st.ntc_fault,
                  (unsigned long)(st.ntc_pct_x1000 / 1000u),
                  (unsigned long)(st.ntc_pct_x1000 % 1000u / 100u),
                  iinlim_ma, r00, r00_live ? "" : "(stale)", win[1],
