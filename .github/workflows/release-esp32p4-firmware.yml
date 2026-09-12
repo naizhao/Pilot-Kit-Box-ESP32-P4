@@ -111,6 +111,12 @@ jobs:
             want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d " ")
             test "$(ls -1 ../dist/release/*-factory.bin | wc -l)" -eq "${want}"
 
+      # ESP-IDF 构建在容器内以 root 运行，prepare 脚本把 dist/ 建成 root
+      # 属主；后面 CC1312R / RP2040 的 staging 是宿主机 runner 用户，直接往
+      # dist 下写会 Permission denied。这里把属主交还给 runner。
+      - name: Take ownership of release dist
+        run: sudo chown -R "$(id -u):$(id -g)" dist
+
       # ── CC1312R 镜像（978 UAT 前端）─────────────────────────────────
       # **不在 CI 构建**：它要 TI SimpleLink SDK（体积大、需接受许可）。已构建
       # 产物提交在 firmware/cc1312r/release/，这里原样带走并核对校验和——
