@@ -91,9 +91,15 @@
 #define SY6970_REG03 0x03  /* WD_RST=bit6（[DS] p.17）                    */
 #define SY6970_REG07 0x07  /* WATCHDOG[5:4]（[DS] p.19）                  */
 #define SY6970_REG09 0x09  /* BATFET_DIS=bit5（[DS] p.20）                */
+#define SY6970_REG0C 0x0C  /* 故障寄存器，连读两遍取实况（[DS] p.29）     */
 
 /* 关机：REG09 BATFET_DIS bit5=1 → Force BATFET Off（[DS] p.20）。 */
 #define SY6970_BATFET_DIS_MASK 0x20
+
+/* JEITA 高温段充电电压：REG09[4] JEITA_VSET（[DS] p.20）。
+ * 0（POR）= Warm(T3~T4) 段把 VREG 降 150mV；1 = 维持 VREG 不降。
+ * 取值理由见 power_sy6970.h 的 JEITA 注释。 */
+#define SY6970_JEITA_VSET_MASK 0x10
 
 /* REG00 的 POR 位值口径（[DS] p.15）：EN_HIZ=0 | EN_ILIM=1 = 0x40。
  * IINLIM 会随适配器检测变，不进校验掩码。 */
@@ -141,6 +147,11 @@ static const sy6970_init_step_t s_init_seq[] = {
       "IINLIM[5:0]=100110 → 100mA+50mA×38=2000mA (DS p.15)：此前从未配过，"
       "实测停在 POR 的 500mA(REG00=0x48)；硬件 ILIM 脚(R38=180R)≈2.08A "
       "与 AICL/VINDPM 仍在外侧兜底 (DS p.10 / p.28)" },
+    { SY6970_SEQ_RMW_SET, SY6970_REG09,
+      SY6970_JEITA_VSET_MASK, 0,
+      "JEITA_VSET=1：Warm(T3~T4) 段不降充电电压 (DS p.20)。POR=0 会降 "
+      "150mV → 4.058V，实测停充在 4024mV、电池永远差最后一成；而本板 NTC "
+      "贴着电池测的是环境温度，广东室温即达 40°C+ (用户 2026-09-12)" },
     { SY6970_SEQ_VERIFY, SY6970_REG07,
       SY6970_WATCHDOG_MASK, 0,
       "写后回读：REG07 WATCHDOG[5:4]==00 证明关狗已落定 "
@@ -156,6 +167,10 @@ static const sy6970_init_step_t s_init_seq[] = {
       SY6970_IINLIM_MASK, SY6970_IINLIM_CODE,
       "写后回读：IINLIM 已落定。与上一行拆开，是为了让失败日志能分清"
       "「器件配置位」还是「限流码」没写进去——两者排查方向不同 (DS p.15)" },
+    { SY6970_SEQ_VERIFY, SY6970_REG09,
+      SY6970_JEITA_VSET_MASK, SY6970_JEITA_VSET_MASK,
+      "写后回读：JEITA_VSET 已落定。这条落不定的后果是「电池永远差最后"
+      "一成」——不报错、不掉线，只会让人觉得电池不行 (DS p.20)" },
 };
 
 const sy6970_init_step_t *sy6970_init_seq(size_t *n)
@@ -554,6 +569,22 @@ bool power_sy6970_shutdown(void)
  * 压降=ICHG×R_internal 的连续补偿，而不是 ETA 那样分档硬切；R 需要一轮
  * CC 段（约 40~70% 电量、电流顶在上限）的拔插实测才能定。
  * 量程闸与 ETA6098 backend 同口径。 */
+/* 电量用的电压 EMA（定点 ×256）。只有 poll 任务写，单写者。
+ *
+ * 为什么必须平滑：BATV 的 LSB 是 20 mV，而 SoC 曲线在 3850~4150 段是
+ * 25 点 / 300 mV——**一个 ADC 码的抖动就换算成 1.67 个百分点**，整数截断
+ * 之后表现为 87 ↔ 89 来回跳 2 点（2026-09-12 实测 4004/4024 mV 相邻码）。
+ * 用户看到的是电量自己在跳，而电池根本没动。
+ *
+ * α=1/8，1 Hz 轮询 → 时间常数约 8 s。电池是慢变量，这个档位既压得住单码
+ * 抖动，也不会让拔电后的真实下降迟迟不显示。定点是为了避开整数除法的
+ * 静差：直接用 int 做 (x-ema)/8，差值小于 8 时增量恒为 0，EMA 会卡住。
+ *
+ * 只平滑 **pct**，不动快照里的 batt_mv：后者是寄存器直读值，诊断页与详情
+ * 日志都按"原始读数"在用它，平滑过的电压会让人对不上寄存器。这处不对称
+ * 是刻意的。 */
+static int32_t s_pct_ema_mv_x256;
+
 static power_snapshot_t build_snapshot(const sy6970_status_t *st,
                                        int64_t now_us)
 {
@@ -562,7 +593,13 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
                                             : POWER_SRC_BATTERY;
     out.backend          = POWER_BACKEND_SY6970;
     out.batt_mv          = st->batt_mv;
-    out.pct_est          = (uint8_t)pk_batt_mv_to_pct(st->batt_mv);
+    {
+        const int32_t mv_x256 = (int32_t)st->batt_mv * 256;
+        if (s_pct_ema_mv_x256 == 0) s_pct_ema_mv_x256 = mv_x256;  /* 首拍 */
+        else s_pct_ema_mv_x256 += (mv_x256 - s_pct_ema_mv_x256) / 8;
+        out.pct_est = (uint8_t)pk_batt_mv_to_pct(
+            (int)(s_pct_ema_mv_x256 / 256));
+    }
     out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
     out.charging         = st->charging;
     /* F6 范围裁定（controller 2026-09-07）：计划里的 VBUS 分压网络
@@ -720,15 +757,46 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
         const bool r00_live = (reg_read(SY6970_REG00, &r00_now, 1) == ESP_OK);
         const uint8_t r00 = r00_live ? r00_now : s_reg00;
         const unsigned iinlim_ma = 100u + 50u * (unsigned)(r00 & 0x3F);
+        /* ICHGR 在**不充电时不刷新**，保持上一次的有效值（2026-09-12
+         * 实测：拔掉输入后 ICHG 仍恒报 250 mA）。照原样打出来会让人以为
+         * 还在充——不充电时显式标成 stale，不拿陈值冒充读数，也不编造
+         * 一个 0（那同样是我们没有的信息）。 */
+        char ichg_s[16];
+        if (st.charging)
+            snprintf(ichg_s, sizeof ichg_s, "%umA", (unsigned)st.ichg_ma);
+        else
+            snprintf(ichg_s, sizeof ichg_s, "%umA(stale)",
+                     (unsigned)st.ichg_ma);
         ESP_LOGI(TAG,
-                 "ICHG=%umA VBUS=%umV BATT=%umV NTC=%u(%lu.%lu%%) "
+                 "ICHG=%s VBUS=%umV BATT=%umV NTC=%u(%lu.%lu%%) "
                  "IINLIM=%umA REG00=0x%02X%s REG0C=0x%02X chg=%d therm=%d",
-                 (unsigned)st.ichg_ma, (unsigned)st.vbus_mv,
+                 ichg_s, (unsigned)st.vbus_mv,
                  (unsigned)st.batt_mv, (unsigned)st.ntc_fault,
                  (unsigned long)(st.ntc_pct_x1000 / 1000u),
                  (unsigned long)(st.ntc_pct_x1000 % 1000u / 100u),
                  iinlim_ma, r00, r00_live ? "" : "(stale)", win[1],
                  (int)st.charging, (int)st.therm_reg);
+        /* 只在真有故障位时才连读取证，平时不占日志。
+         *
+         * 2026-09-12 查过一轮 CHRG_FAULT=01("输入故障")：它在 9V 正常供电、
+         * 900mA 正常充电时也一直报，一度以为是伪报。实测结论是**真实瞬态被
+         * 锁存**——拔电源线那一刻 VBUS 跌破 3.8V，正好命中 [DS] p.22 的
+         * 01 判据，此后锁存不放；插回并复位若干次后自行清除（复现：REG0C
+         * 由 0x12 变回 0x02）。
+         * 所以看到 CHRG_FAULT 非 0 时，先问"刚才插拔过电源吗"，别急着查
+         * 供电质量。连读四次是为了分辨"锁存清不掉"与"每拍都有新故障"：
+         * 四个值一样 = 当前状态就是它；逐次变化 = 锁存正在被读掉。
+         * NTC_FAULT 不锁存（[DS] p.29），不受这段影响。 */
+        if (st.chrg_fault != 0 || st.wd_fault || st.boost_fault ||
+            st.bat_ovp_fault) {
+            uint8_t p0c[4] = { 0 };
+            for (int i = 0; i < 4; ++i)
+                (void)reg_read(SY6970_REG0C, &p0c[i], 1);
+            ESP_LOGW(TAG, "REG0C 故障连读：%02X %02X %02X %02X"
+                          "（主路径 win[1]=%02X；四值相同=当前态，"
+                          "递变=锁存正被读掉）",
+                     p0c[0], p0c[1], p0c[2], p0c[3], win[1]);
+        }
     }
 
     /* 开机 60 s 复检充电电流（一次性）：CH224K 诱骗与配置此时都该稳定。
@@ -808,11 +876,23 @@ void power_sy6970_init(void)
         return;
     }
 
-    /* 地址探活：NACK 是预期路径（v3 载板 / 未上电的 v4），INFO 不是 WARN
-     * ——它表达的是 powered variant，不是故障（pk_board.h:30-32）。 */
+    /* 地址探活。
+     *
+     * 这条日志原写"NACK 是预期路径（v3 载板 / 未上电的 v4），电源回落
+     * ETA6098"——两处都已不成立：v3 支持于 2026-09-12 取消，ETA6098
+     * backend 连同文件一起退役，服务里再没有兜底源。现在 NACK 意味着
+     * **这块板上本该在的充电芯片没应答**，是异常不是常态，所以升到 WARN
+     * 并说清后果。
+     *
+     * 已知会误伤的瞬态：2026-09-12 实测过一次开机恰逢插拔电源线导致
+     * NACK，下一次复位即 ACK。而本函数只在 app_main 跑一次、NACK 之后
+     * 不再重试，于是整个开机周期都没有电量显示。重试机制待定（poll 侧
+     * 已有每 10 拍补试 bring-up 的自愈逻辑，缺的是"未注册也要轮询"这一
+     * 层），在那之前这条 WARN 至少让人知道该复位一次。 */
     if (pk_i2c0_bus_probe(SY6970_I2C_ADDR, SY6970_I2C_TIMEOUT_MS) != ESP_OK) {
-        ESP_LOGI(TAG, "0x%02X 探测 NACK——无 SY6970（v3 / 未上电 v4 预期），"
-                      "不注册，电源回落 ETA6098", SY6970_I2C_ADDR);
+        ESP_LOGW(TAG, "0x%02X 探测 NACK——充电芯片无应答，本次开机将没有任何"
+                      "电源数据（v3 与 ETA6098 兜底均已退役）。复位可重试。",
+                 SY6970_I2C_ADDR);
         return;
     }
 

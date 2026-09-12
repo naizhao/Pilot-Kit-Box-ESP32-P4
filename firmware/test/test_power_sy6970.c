@@ -258,7 +258,7 @@ static void test_init_seq_matches_evidence(void)
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_init_seq(&n);
     CHECK(seq != NULL);
-    CHECK(n == 9);
+    CHECK(n == 11);
 
     /* 步骤 0（写前）：REG00 回读校验——EN_HIZ=0|EN_ILIM=1（POR 位值，
      * DS p.15），在位证据 */
@@ -293,34 +293,49 @@ static void test_init_seq_matches_evidence(void)
     CHECK(seq[4].mask == 0x3F);
     CHECK(seq[4].val == 38);
 
-    /* 步骤 5（写后）：回读 REG07 验证关狗已落定——WATCHDOG[5:4]=00
+    /* 步骤 5：REG09 置 JEITA_VSET(bit4)=1 → Warm(T3~T4) 段不再把充电
+     * 截止电压降 150mV（DS p.20）。POR=0 时实测停充在 4024mV，电池永远
+     * 充不满；置 1 后按 REG06 的 VREG=4.208V 走完（DS p.19 POR 010111）*/
+    CHECK(seq[5].op == SY6970_SEQ_RMW_SET);
+    CHECK(seq[5].reg == 0x09);
+    CHECK(seq[5].mask == 0x10);
+
+    /* 步骤 6（写后）：回读 REG07 验证关狗已落定——WATCHDOG[5:4]=00
      * （掩码 0x30 期望 0；DS p.19）。审计 F2：REG0C 的 WATCHDOG_FAULT
      * 只能靠这行把「关狗写被默认模式吃掉」的配置丢失在当轮拦下 */
-    CHECK(seq[5].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[5].reg == 0x07);
-    CHECK(seq[5].mask == 0x30);
-    CHECK(seq[5].val == 0x00);
-
-    /* 步骤 6（写后）：回读 REG02 验证 AUTO_DPDM_EN 已关（DS p.17）*/
     CHECK(seq[6].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[6].reg == 0x02);
-    CHECK(seq[6].mask == 0x01);
+    CHECK(seq[6].reg == 0x07);
+    CHECK(seq[6].mask == 0x30);
     CHECK(seq[6].val == 0x00);
 
-    /* 步骤 7（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
-     * 必须回读 REG00 验证」，掩码/期望值与写前一行同源（DS p.15）*/
+    /* 步骤 7（写后）：回读 REG02 验证 AUTO_DPDM_EN 已关（DS p.17）*/
     CHECK(seq[7].op == SY6970_SEQ_VERIFY);
-    CHECK(seq[7].reg == 0x00);
-    CHECK(seq[7].mask == 0xC0);
-    CHECK(seq[7].val == 0x40);
+    CHECK(seq[7].reg == 0x02);
+    CHECK(seq[7].mask == 0x01);
+    CHECK(seq[7].val == 0x00);
 
-    /* 步骤 8（写后）：IINLIM 单独回读——与上一行拆开是为了让失败日志
-     * 能指明是「器件配置位」还是「限流码」没落定，两者的排查方向完全
-     * 不同（DS p.15）*/
+    /* 步骤 8（写后）：再回读 REG00 验证写入已落定——计划约束「写入后
+     * 必须回读 REG00 验证」，掩码/期望值与写前一行同源（DS p.15）*/
     CHECK(seq[8].op == SY6970_SEQ_VERIFY);
     CHECK(seq[8].reg == 0x00);
-    CHECK(seq[8].mask == 0x3F);
-    CHECK(seq[8].val == 38);
+    CHECK(seq[8].mask == 0xC0);
+    CHECK(seq[8].val == 0x40);
+
+    /* 步骤 9（写后）：IINLIM 单独回读——与上一行拆开是为了让失败日志
+     * 能指明是「器件配置位」还是「限流码」没落定，两者的排查方向完全
+     * 不同（DS p.15）*/
+    CHECK(seq[9].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[9].reg == 0x00);
+    CHECK(seq[9].mask == 0x3F);
+    CHECK(seq[9].val == 38);
+
+    /* 步骤 10（写后）：JEITA_VSET 回读。这条落不定的后果是"电池永远差
+     * 最后 10%"——不会报错、不会掉线，只会让用户觉得电池不行，必须有
+     * 显式验证（DS p.20）*/
+    CHECK(seq[10].op == SY6970_SEQ_VERIFY);
+    CHECK(seq[10].reg == 0x09);
+    CHECK(seq[10].mask == 0x10);
+    CHECK(seq[10].val == 0x10);
 
     for (size_t i = 0; i < n; i++) {
         CHECK(seq[i].why != NULL && seq[i].why[0] != '\0');

@@ -1411,8 +1411,15 @@ static void draw_detail(uint16_t *fb, int which)
             snprintf(buf, sizeof(buf), "%.1f V", (double)st->vbus_mv / 1000.0);
             det_kv_tr(fb, line++, PK_TR_DIAG_K_VBUS, buf,
                       st->vbus_present ? COL_ONLINE : COL_OFFLINE);
-            snprintf(buf, sizeof(buf), "%u mA", (unsigned)st->ichg_ma);
-            det_kv_tr(fb, line++, PK_TR_DIAG_K_ICHG, buf, COL_VAL);
+            /* ICHGR 在**不充电时不刷新**，保持上一次的有效值（2026-09-12
+             * 实测：拔掉输入后仍恒报 250 mA）。原样画出来会让人以为还在充，
+             * 而这一行恰恰是排查"到底有没有在充"时最先看的。不充电时灰掉
+             * 并标 stale——不拿陈值冒充读数，也不改写成 0（那同样是我们
+             * 没有的信息）。 */
+            snprintf(buf, sizeof(buf), "%u mA%s", (unsigned)st->ichg_ma,
+                     st->charging ? "" : " (stale)");
+            det_kv_tr(fb, line++, PK_TR_DIAG_K_ICHG, buf,
+                      st->charging ? COL_VAL : COL_OFFLINE);
             /* FAULTS：REG0C 各位译码，多处同时故障全部列出（读者正对着手
              * 册查 bit）；NTC 只拼寄存器原码——Warm/Cool/Cold/Hot 对应
              * 010/011/101/110，报原码才好对照（[DS] p.22-23）。全零时复
