@@ -344,6 +344,10 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_SETTINGS_ANT_GNSS_HINT] = "(un-ECO'd boards: feed is inverted)",
         [PK_TR_SETTINGS_ANT_ONBOARD] = "Onboard",
         [PK_TR_SETTINGS_ANT_EXTERNAL] = "External",
+        [PK_TR_DISCLAIMER_L1] = "Auxiliary information tool only - not airworthiness certified.",
+        [PK_TR_DISCLAIMER_L2] = "Never use as primary or backup navigation. Data may be delayed or wrong.",
+        [PK_TR_DISCLAIMER_L3] = "Rely on certified avionics and ATC. Use entirely at your own risk.",
+        [PK_TR_DISCLAIMER_SPLASH] = "AUXILIARY USE ONLY - NOT FOR NAVIGATION",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -684,6 +688,10 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_SETTINGS_ANT_GNSS_HINT] = "(未改板：馈电反接)",
         [PK_TR_SETTINGS_ANT_ONBOARD] = "板载",
         [PK_TR_SETTINGS_ANT_EXTERNAL] = "外置",
+        [PK_TR_DISCLAIMER_L1] = "本设备为辅助信息工具，未取得适航认证。",
+        [PK_TR_DISCLAIMER_L2] = "不得用作主用或备用导航；数据可能延迟、错误或缺失。",
+        [PK_TR_DISCLAIMER_L3] = "飞行决策以认证机载设备与管制指令为准，使用者自担全部风险。",
+        [PK_TR_DISCLAIMER_SPLASH] = "仅供辅助参考，不得用于导航",
     },
 };
 

@@ -70,12 +70,34 @@
 
 #define AB_RIGHT_X      304               /* 右栏标签起点 */
 #define AB_VALUE_X      452               /* 数值起点：容得下最长的标签 */
-#define AB_ROW0_Y        64
-#define AB_ROW_H         40               /* M 档 26 px + 14 行距，九行铺满 */
+/* 行距从 40 收到 36（M 档 26 px + 10 行距）、起点从 64 收到 60：加了 73 px 的
+ * 免责页脚之后，原来那组值会让最后一行（接收机）刚好被页脚切掉一半。
+ * 这一页的性质是**一屏看全**——为一行常年不看的信息去滚，不如把行距收紧 4 px。
+ * 收完余量：内容 352 vs 可视 359，还剩 7 px。再加一行就会出滚动条，那是设计好的
+ * 降级（见 s_scroll_y 上方），不是故障。 */
+#define AB_ROW0_Y        60
+#define AB_ROW_H         36
 #define AB_ROWS           9               /* 右栏行数，见 pk_about_page_render */
 
 /* 网址跟在产品名之下，同属左栏的身份区。 */
 #define AB_URL_Y        (AB_NAME_Y + 44)
+
+/* ── 免责声明页脚 ───────────────────────────────────────────────
+ *
+ * **固定在底部，不跟着滚。** 它和分栏线一样属于版面骨架而不是内容——一条
+ * 要滚到才看得见的免责声明等于没有。代价是可视区少 73 px；右栏靠收紧行距
+ * （AB_ROW_H 40→36）把这 73 px 让了出来，仍然一屏看全，见那里的说明。
+ *
+ * 三行是**预先切好的**（DISCLAIMER_L1..L3），不是自动折行：渲染器没有折行器，
+ * 而换行点本来就该按语言各自定——中文任意字间可断，英文必须断在词间。
+ * 理由与行宽约束写在 i18n_catalog.py 的词条旁边。
+ *
+ * 字号用 XS。不是为了把它藏起来——颜色仍取 COL_KEY（和右栏标签同色，清楚可读），
+ * 只是这一段属于"需要时看得到"而不是"每次都要读"的层级。 */
+#define AB_FOOT_LINE_GAP  3
+#define AB_FOOT_PAD_Y     8
+#define AB_FOOT_H        (AB_FOOT_PAD_Y * 2 + 3 * PK_AA_XS_H + 2 * AB_FOOT_LINE_GAP)
+#define AB_FOOT_TOP      (PK_DISPLAY_H - AB_FOOT_H)
 
 /* 混排的垂直对齐归渲染器管（pfd_aa_text.c 的 pk_aa_puts：中西文来自同一份
  * AA 字体，按 cell 顶端对齐），这里不要再叠加一次偏移。
@@ -137,16 +159,34 @@ static pk_aa_size_t fit_size(const char *s, int avail)
  * 位移超过 AB_DRAG_SLOP 才算拖动，松手时没拖过才算点击。四页手感必须一致——
  * 同一台设备上"要按多久才算拖"如果各页不同，手指是学不会的。
  *
- * 这一页当前 9 行、内容高约 362 px，装得进 432 px 的视口，所以平时 max=0、
- * 一动不动。滚动是为**内容长起来之后**准备的：版本号在正式产物里是
+ * 这一页当前 9 行、内容高 352 px，装得进 359 px 的视口（可视区已扣掉免责
+ * 页脚），所以平时 max=0、一动不动；余量只剩 7 px，由 AB_VIEW_H 下方的
+ * _Static_assert 守着。滚动是为**内容长起来之后**准备的：版本号在正式产物里是
  * "0.9.3-4.3in-127-g1a2b3c4d-dirty" 这种 git describe 串，右栏再加两行
  * （许可证、序列号…）就会超屏。真到那天再补交互，就又是一次「点不到最后一行」
  * 的现场事故。 */
 static int s_scroll_y;      /* 滚动偏移(px)，0 = 顶 */
 static int s_content_h;     /* 上一帧实际画出的内容高（含顶栏以下全部） */
 
-#define AB_VIEW_H     (PK_DISPLAY_H - AB_HEADER_H)
+/* 可视区要**扣掉页脚**。忘了扣的话滚动范围会比实际能看见的多出 77 px，
+ * 症状是"滚到底了，最后一行还压在免责声明底下看不全"——和文件里另外两处
+ * 提醒过的「最后一行永远够不到」是同一类 bug。 */
+#define AB_VIEW_H     (PK_DISPLAY_H - AB_HEADER_H - AB_FOOT_H)
 #define AB_DRAG_SLOP  12
+
+/*
+ * 「一屏看全」是这一页的性质，不是巧合——用编译期断言钉住。
+ *
+ * 加页脚时就踩过一次：右栏最后一行（接收机）刚好被切掉一半，而版面里没有
+ * 任何东西会报错，出图目视才发现。以后任何一方长出来——右栏加一行、页脚加
+ * 一行、字号档位换了——都在**链接之前**报出来，而不是等到有人截图。
+ *
+ * 左栏（logo + 产品名 + 网址，底边 AB_URL_Y + PK_AA_M_H）比右栏矮得多，
+ * 所以只断言右栏；真要把 logo 加大到超过右栏，这条断言管不住它——那时该
+ * 把左栏也算进来，而不是把这条删掉。
+ */
+_Static_assert(AB_ROW0_Y + AB_ROWS * AB_ROW_H - AB_HEADER_H + 16 <= AB_VIEW_H,
+               "about 页右栏装不下了：要么收行距，要么接受滚动并把这条改成注释");
 
 /* 滚到底的最大偏移。内容装得下时恒为 0。 */
 static int ab_max_scroll(void)
@@ -160,7 +200,7 @@ static void draw_row(uint16_t *fb, int row, pk_tr_id_t key_id, const char *val)
     const int y = AB_ROW0_Y + row * AB_ROW_H - s_scroll_y;
     /* 滚出视口的行直接不画：省一趟 blit，也免得字压到顶栏上（顶栏虽然最后补画
      * 会盖住，但那是靠巧合，不该依赖）。 */
-    if (y + pk_aa_cell_h(PK_UI_ITEM_SIZE) < AB_HEADER_H || y >= PK_DISPLAY_H) return;
+    if (y + pk_aa_cell_h(PK_UI_ITEM_SIZE) < AB_HEADER_H || y >= AB_FOOT_TOP) return;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
                AB_RIGHT_X, y, pk_i18n_text(key_id), COL_KEY, PK_UI_ITEM_SIZE);
 
@@ -231,6 +271,35 @@ static void draw_logo(uint16_t *fb, int x, int y, int size)
     }
 }
 
+/*
+ * 免责声明页脚。先用背景色把这一带整个刷掉再画字——它画在滚动内容之后，
+ * 而内容可能刚好有一行停在这个高度上（draw_row 已经按 AB_FOOT_TOP 裁过，
+ * 但页脚自己刷底是**不依赖那个裁剪仍然正确**的写法，两道其中任何一道单独
+ * 生效都不会花屏）。
+ *
+ * 三行居中。居中而不是左对齐：这一带没有别的元素定左边界，左对齐会让它看起来
+ * 像是右栏漏下来的一行。
+ */
+static void draw_disclaimer(uint16_t *fb)
+{
+    fill_rect(fb, 0, AB_FOOT_TOP, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
+    fill_rect(fb, 0, AB_FOOT_TOP, PK_DISPLAY_W, AB_FOOT_TOP + 1, COL_DIVIDER);
+
+    static const pk_tr_id_t kLines[] = {
+        PK_TR_DISCLAIMER_L1, PK_TR_DISCLAIMER_L2, PK_TR_DISCLAIMER_L3,
+    };
+    int y = AB_FOOT_TOP + AB_FOOT_PAD_Y;
+    for (size_t i = 0; i < sizeof(kLines) / sizeof(kLines[0]); ++i) {
+        const char *s = pk_i18n_text(kLines[i]);
+        /* 宽度走 pk_aa_text_width：中文按字节数算会整体左偏三分之一——
+         * 开机画面那条演示横幅正是栽在这上面。 */
+        const int w = pk_aa_text_width(s, PK_AA_XS);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+                   (PK_DISPLAY_W - w) / 2, y, s, COL_KEY, PK_AA_XS);
+        y += PK_AA_XS_H + AB_FOOT_LINE_GAP;
+    }
+}
+
 void pk_about_page_render(uint16_t *fb)
 {
     fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, COL_BG);
@@ -268,9 +337,9 @@ void pk_about_page_render(uint16_t *fb)
     }
 
     /* 分栏线：**不跟着滚**。它是版面的骨架而不是内容，跟着走反而会让人以为
-     * 整页在平移。上下端各留一点收口。 */
+     * 整页在平移。上下端各留一点收口——下端现在收在页脚上沿，不是屏底。 */
     fill_rect(fb, AB_RIGHT_X - 32, AB_HEADER_H + 16,
-              AB_RIGHT_X - 31, PK_DISPLAY_H - 24, COL_DIVIDER);
+              AB_RIGHT_X - 31, AB_FOOT_TOP - 8, COL_DIVIDER);
 
     /* ── 右栏：事实 ─────────────────────────────────────────── */
     const esp_app_desc_t *app = esp_app_get_description();
@@ -338,16 +407,20 @@ void pk_about_page_render(uint16_t *fb)
      * 忘了改常量，症状是"最后一行永远滚不到"，而现场根本看不出是常量的锅。 */
     if (row != AB_ROWS) s_content_h += (row - AB_ROWS) * AB_ROW_H;
 
-    /* 滚动条：贴右缘，只在内容超出一屏时出现。样式照 diag_page.c。 */
+    /* 滚动条：贴右缘，只在内容超出一屏时出现。样式照 diag_page.c。
+     * 槽的下端收在页脚上沿——画到屏底的话，滚动条会穿过免责声明那一带，
+     * 看上去像是那段文字也能滚。 */
     if (s_content_h > AB_VIEW_H) {
         const int tx = PK_DISPLAY_W - 6;
         const int bar_h = AB_VIEW_H * AB_VIEW_H / s_content_h;
         const int bar_y = AB_HEADER_H + s_scroll_y * AB_VIEW_H / s_content_h;
-        fill_rect(fb, tx, AB_HEADER_H, tx + 3, PK_DISPLAY_H,
+        fill_rect(fb, tx, AB_HEADER_H, tx + 3, AB_FOOT_TOP,
                   pk_rgb565(30, 38, 50));
         fill_rect(fb, tx, bar_y, tx + 3, bar_y + bar_h,
                   pk_rgb565(120, 135, 155));
     }
+
+    draw_disclaimer(fb);
 
     /* ── 顶栏最后画：内容从它底下滑过去，而不是压在它上面 ───────── */
     fill_rect(fb, 0, 0, PK_DISPLAY_W, AB_HEADER_H - 2, COL_BG);
@@ -376,7 +449,8 @@ bool pk_about_page_touch(int x, int y)
 {
     /* 右侧 FAB 那条竖带必须放行，否则关于页就切不走了——列表页正是栽在这里
      * （整个数据区都当命中区，dock 页签的坐标先被页面吃掉）。 */
-    s_press_valid = (y >= AB_HEADER_H && x < PK_DISPLAY_W - 80);
+    /* 页脚同样排除在外：它不跟着滚，在它身上拖动却让内容动，是自相矛盾的手感。 */
+    s_press_valid = (y >= AB_HEADER_H && y < AB_FOOT_TOP && x < PK_DISPLAY_W - 80);
     if (!s_press_valid) return false;
     s_press_x      = x;
     s_press_y      = y;

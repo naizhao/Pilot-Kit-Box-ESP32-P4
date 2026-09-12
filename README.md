@@ -6,6 +6,21 @@
   网页刷机 / Web flasher: <a href="https://updater.pilotkit.app">updater.pilotkit.app</a>
 </p>
 
+> ## ⚠️ 免责声明 / Disclaimer
+>
+> 本设备及其固件为**辅助信息工具**，未取得任何适航认证，**不得用作主用或备用
+> 导航设备**，也不得用于正式的飞行活动。所显示的位置、高度、航向、交通、
+> 导航台和气象等信息可能延迟、错误或缺失，且随时可能中断。一切飞行决策必须
+> 以认证机载设备、官方航图与空管指令为准。使用者自行承担全部风险。
+>
+> This device and its firmware are an **auxiliary information tool only**.
+> They are not airworthiness certified and **must not be used as a primary or
+> backup navigation source**, nor in any operational flight activity. Position,
+> altitude, heading, traffic, navaid and weather information may be delayed,
+> incorrect, or missing, and may stop without warning. All flight decisions
+> must be based on certified avionics, official charts, and ATC instructions.
+> Use entirely at your own risk.
+
 > **分支 `v4`。** 主机是 **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** 一体板：
 > ST7701 480×800 MIPI-DSI 面板以 PPA 旋转成 800×480 横屏，GT911 触摸，
 > P4NRW32 + ESP32-C6。硬件目标是

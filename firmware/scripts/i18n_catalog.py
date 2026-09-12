@@ -178,6 +178,44 @@ STRINGS = [
             "zh": "MODE 切换    UP/DOWN 滚动",
         },
     ),
+    # ── 免责声明 ──────────────────────────────────────────────────
+    #
+    # 为什么拆成三条而不是一整段：渲染器没有自动换行，而**换行点本来就该按语言
+    # 各自定**——中文在任意字之间断行，英文必须断在词间。做成三条词条，等于把
+    # 排版交给译者，既不用写一个 UTF-8 感知的折行器（那是一堆边界情况），
+    # 也不会出现「英文断在单词中间」这种只有英文环境才看得见的事故。
+    #
+    # 行宽约束：about 页页脚用 XS 档（拉丁 cell 10 px、CJK 15 px），可用宽度
+    # 约 768 px → 英文每行 ≤ 76 字符、中文每行 ≤ 50 字。加长要重新量。
+    (
+        "DISCLAIMER_L1",
+        {
+            "en": "Auxiliary information tool only - not airworthiness certified.",
+            "zh": "本设备为辅助信息工具，未取得适航认证。",
+        },
+    ),
+    (
+        "DISCLAIMER_L2",
+        {
+            "en": "Never use as primary or backup navigation. Data may be delayed or wrong.",
+            "zh": "不得用作主用或备用导航；数据可能延迟、错误或缺失。",
+        },
+    ),
+    (
+        "DISCLAIMER_L3",
+        {
+            "en": "Rely on certified avionics and ATC. Use entirely at your own risk.",
+            "zh": "飞行决策以认证机载设备与管制指令为准，使用者自担全部风险。",
+        },
+    ),
+    # 开机画面那一行。短到能一行放下，且**不拦截**——开机流程一秒都不会为它停。
+    (
+        "DISCLAIMER_SPLASH",
+        {
+            "en": "AUXILIARY USE ONLY - NOT FOR NAVIGATION",
+            "zh": "仅供辅助参考，不得用于导航",
+        },
+    ),
     (
         "CAL_TITLE",
         {
