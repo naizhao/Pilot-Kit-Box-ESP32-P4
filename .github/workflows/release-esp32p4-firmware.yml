@@ -85,7 +85,7 @@ jobs:
                 -DSDKCONFIG="build_${profile}/sdkconfig" \
                 -DPROJECT_VER="$RELEASE_VERSION" build
               # 产物必须真的带上选定的板型，而不是悄悄回落到 Kconfig 默认。
-              upper=$(echo "$profile" | tr '[:lower:]' '[:upper:]')
+              upper=$(echo "$profile" | tr "[:lower:]" "[:upper:]")
               grep -q "#define CONFIG_PK_BOARD_PROFILE_${upper} 1" \
                 "build_${profile}/config/sdkconfig.h"
               python ../tools/firmware_release/prepare_esp32p4_release.py \
@@ -98,7 +98,7 @@ jobs:
             done
             # 两套产物同名会互相静默覆盖，数一遍 factory bin 兜底：数量必须
             # 恰好等于本次要编的板型数量。
-            want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d ' ')
+            want=$(echo "${BOARD_PROFILES}" | wc -w | tr -d " ")
             test "$(ls -1 ../dist/release/*-factory.bin | wc -l)" -eq "${want}"
 
       # ── CC1312R 镜像（978 UAT 前端）─────────────────────────────────
