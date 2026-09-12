@@ -643,7 +643,11 @@ bool sy6970_diag_get(sy6970_diag_t *out)
     out->st.vbus_mv       = 5100;
     out->st.ichg_ma       = 750;      /* ICHGR code 15 × 50 mA     */
     out->st.ntc_pct_x1000 = 30000;
-    out->reg00            = 0x1B;     /* EN_HIZ=0 / EN_ILIM=1，F1 落定 */
+    /* 0x66 = EN_HIZ=0(bit7) | EN_ILIM=1(bit6) | IINLIM[5:0]=100110=38
+     * → 100+50×38 = 2000 mA，与 F1 序列写进去的值一致（SY6970_IINLIM_CODE）。
+     * 旧值 0x1B 的 bit6 是 0，与它自己"EN_ILIM=1"的注释就对不上，而诊断页
+     * 正是按这个字节显示配置回读的——桩不自洽，屏上验出来的就是假的。 */
+    out->reg00            = 0x66;
     /* 原始窗口 REG0B..REG12：只供详情页原样十六进制展示，与上面解码值同拍。 */
     out->regs[0] = 0x24; out->regs[1] = 0x00; out->regs[2] = 0x50;
     out->regs[3] = 0x19; out->regs[4] = 0x00; out->regs[5] = 0x0F;
@@ -651,6 +655,22 @@ bool sy6970_diag_get(sy6970_diag_t *out)
     out->ready      = true;
     out->updated_us = esp_timer_get_time();
     return true;
+}
+
+/*
+ * 关机（BATFET_DIS）。真身在 power_sy6970.c 里，同样不进 sim 链接；
+ * 导航网格的电源 pop 自 2026-09-12 起引用它。
+ *
+ * 返回 **false**（= "没有这颗芯片，关不了"）而不是退出进程：这正是 v3 与
+ * 未上电 v4 上的真实返回值，桩照着最常见的真实路径走。模拟器里真让它 exit
+ * 反而会把"截图脚本跑到一半自己没了"变成一种可能的失败模式。
+ * 与 esp_restart() 的桩（sim/compat/esp_system.h 里 exit(0)）取向不同，是
+ * 因为那条在真机上必然发生且不可失败，这条可以失败、而且经常失败。
+ */
+bool power_sy6970_shutdown(void)
+{
+    fprintf(stderr, "[sim] power_sy6970_shutdown(): 模拟器无 SY6970，不动作\n");
+    return false;
 }
 
 /*

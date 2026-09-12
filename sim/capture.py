@@ -52,8 +52,16 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     # PK_SIM_UI_MODE=6 = PK_UI_MODE_DIAG：让第 2 页也带一个选中框，
     # 否则选中态只在第 1 页验得到。
     ("ui-4.3-menu-page2",   {"PK_SIM_MENU_PAGE": "1",
-                             "PK_SIM_UI_MODE": "6"},              "主菜单第 2 页：3 项从左上角起排，不居中"),
+                             "PK_SIM_UI_MODE": "6"},              "主菜单第 2 页：4 项从左上角起排，不居中"),
     ("ui-4.3-menu-bright",  {"PK_SIM_MENU_BRIGHT": "1"},          "主菜单 + 亮度快调 pop：网格再压一档"),
+    # 电源 pop（2026-09-12 新增）。必须带 PK_SIM_MENU_PAGE=1：弹层是从第 2
+    # 页的「电源」格点出来的，画在第 1 页上会是一张现实中不存在的图。
+    # 两个键一橙一蓝 + 上方提示行，验的是最长那条提示（中文）不被面板裁掉。
+    ("ui-4.3-menu-power",   {"PK_SIM_MENU_POWER": "1",
+                             "PK_SIM_MENU_PAGE": "1"},            "主菜单 + 电源 pop：关机（橙）/ 重启（蓝）"),
+    ("ui-4.3-menu-power-en",{"PK_SIM_MENU_POWER": "1",
+                             "PK_SIM_MENU_PAGE": "1",
+                             "PK_SIM_LANG": "en"},                "电源 pop（英文，提示行最宽的一版）"),
     # 调平长按的 ③④ 两态（spec §6）。它们只在手指按住的那 1 s 与随后的
     # 200 ms 里存在，真机上根本没法在截图里定格——这两张就是唯一的验收物：
     # 填充确实从左向右长、且没把橙色标签吃掉；绿闪把那一格整块反白。
