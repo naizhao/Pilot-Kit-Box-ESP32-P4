@@ -41,6 +41,9 @@
 | QMC5883P（QST）| U6 | `QMC5883P.pdf` | LGA-16，Table 5：1=SCK, 2=VDD, 3–8=NC, 9=GND, 10=C1(储能电容), 11=GND, 12–15=NC, 16=SDA。I²C 上拉建议：总线 <10cm 用 2.7k、<5cm 用 4.7k |
 | TA0970A（TAI-SAW）| FL1, FL2 | `TA0970A.pdf` | 1090MHz SAW 滤波器，六脚：**B=输入, E=输出, A/C/D/F=地**（见手册测量电路）。50Ω 系统**无需匹配网络**；插损 typ 2.3dB；最大输入 20dBm、**DC 电压 0V**（前级必须隔直）|
 | TPESD8L3.3CT5G | D2, D3 | `TPESD8L3.3.pdf` | **双向 TVS（Bi-directional），无极性要求**，两个方向装都对。0402 二脚，结电容 typ 0.3pF，工作电压 3.3V |
+| BK4819（Beken）| U21 | `BK4819_Datasheet_V1.0.pdf`（22 页正式 DS）<br>`BK4819_AppNote_v1.0.pdf`（寄存器/驱动 + §23 硬件设计参考原理图）| QFN-32 引脚（AppNote §23 参考原理图 + DS Table 引脚表）：1=GPIO5, 2=GPIO6, **3=VCC**, **4=XO(输出)**, **5=XI(输入)**, 6/7=NC, **8=EARO(模拟音频输出)**, 9/10=NC, **11=VCC**, 12=NC, 13=MICN, 14=MICP, **15=LNAIN**, 16=NC, 17=PAOUT, 18=VRAMP, 19–24=NC, 25=SCK, 26=SCN, 27=SDATA, 28–32=GPIO0–4, EP(33)=GND。<br>**§1.2.3：默认晶体 26MHz，「frequency tolerance of the crystal should be within 2.5ppm」**；§2.2 注再次强调「**within ±2.5ppm during all operating conditions**」（即含温漂，不是只算 25°C 初始容差）。<br>§1.2.4 输入匹配：C1 隔直推荐 4.7pF，**PIN15 在 RX 模式直流约 0V**，L1 推荐 NC（该值针对 UHF；120MHz 需另配）。<br>§1.2.5 晶振口是**并联谐振晶体**设计（C1/C2 对地 + Cvar，Cpar≈1pF），**手册未给用 TCXO 外部注入 XI 的电路** —— 用 TCXO 打 XI 属超出手册范围的常见用法，必须交流耦合。<br>Table 2 VDD **2.6–3.6V**；Table 3 **IRX typ 42mA** / ITX 34mA / 休眠 200µA |
+| PCM1808（TI）| U22 | `PCM1808.pdf`（SLES177B）| TSSOP-14 §5：1=VREF(**去耦用，=0.5×VCC，非电源脚**), 2=AGND, **3=VCC 模拟 5V**, **4=VDD 数字 3.3V**, 5=DGND, 6=SCKI, 7=LRCK, 8=BCK, 9=DOUT, 10=MD0, 11=MD1, 12=FMT, **13=VINL**, 14=VINR。<br>**VCC 推荐 4.5/5/5.5V**（不是 3.3V 容忍）；VDD 2.7/3.3/3.6V。SCKI 须 256/384/512 fS。<br>脚注：**pins 10–12 内部自带 50kΩ 下拉**，MD0/MD1/FMT 全接地 = Slave + I²S 24-bit；SCKI/MD0/MD1/FMT 均 5V 容忍。停 SCKI/BCK/LRCK 即掉电复位 |
+| TCXO 26MHz（Seiko Epson）| Y4 | `TG-5006CJ_CG_CE_brief_en.pdf`（系列 brief sheet）<br>`TG2520SMN_TG2016SMN_brief_en.pdf`（候选替换件）<br>`Epson_TCXO_product-search_tcxo_{a,b}.json`（**Epson 官方选型库，单品级参数的唯一来源**）| 实贴料 **TG-5006CG-12H 26.000MHz，订货号 X1G004211000300 / 立创 C1998253**。<br>**⚠️ 型号里的 ③Spec segment 在 brief sheet 上写的是「Please contact us」，单品参数手册上查不到**，只能查选型库（抓法见下面第 5 条）。库里该行（`pn=X1G0042110003`）：**`function=TCXO`（不是 VC-TCXO）、`fcfYN=N`（无压控）** → **pin1 = N.C.，悬空正确**；**`supplyVoltage 2.85 / 3.0 / 3.15 V`**；`frequencyTol25C=±2ppm`、`frequencyTolOpTemp=±0.5ppm`(-30~+85°C)；`Icc≤1.5mA`；2.5×2.0×0.8mm。<br>❌ **DigiKey 把这颗标成「VCTCXO」是错的**，立创标成「Standard Oscillator」也不准；两家都写 Vcc「1.7–3.3V」（那是系列总范围，不是本档额定）。**分销商参数栏不作为判据**。<br>brief sheet 通用判据：Pin map **1=N.C.(TCXO)/Vc(VC-TCXO), 2=GND, 3=OUT, 4=Vcc**，N.C. 只能悬空或接地、不能当地用；**Output load = Load_R 10kΩ // Load_C 10pF，条件栏写死 `DC cut capacitor = 0.01 µF`**（Symmetry 的测试条件也是 `GND level (DC cut)`）→ **输出必须交流耦合**；Vcc 需 0.01–0.1µF 旁路且尽量靠近；输出削峰正弦 Vpp≥0.8V；系列供电总范围 1.7–3.465V（**不是 4.0V**）。<br>✅ **频差判定：这颗料合格，不要换。** BK4819 要求晶振 ≤±2.5ppm，本料 ±2.0ppm@25°C + ±0.5ppm 温漂，两项头条指标都在线内。曾有一版审计把两项线性相加再外推一个超压项判它"超线"并建议换 `TG2520SMN` —— **该结论已撤回**：①那个超压外推超出 `f0-Vcc` 规格自己写的 `Vcc±5%` 窗口，无手册依据；②把"25°C 容差+温漂+首年老化≤2.5ppm"拿去筛全库 19 款 26MHz 削峰正弦 TCXO，**只有 5×3.2mm 的 TG5032 系列能过，所有 2520/2016 封装全挂，包括那个被推荐的替换件本身**——判据否掉自己推荐的解，说明判据错了；③BK4819 自带 AFC（AppNote `REG_73<4>`，默认 Enable），初始容差本可吸收。<br>⚠️ **`X1G0054210304 TG2520SMN` 不能拿来当替换件**：同一份选型库里它 **`fcfYN='Y'`（有频率控制功能）**，按本行上面立的判据就意味着 pin1 是 Vc 而非 N.C.，而本电路 `Y4.1` 悬空 —— 换了正好制造出"压控脚浮空"这个故障。**选替换件必须把 `fcfYN` 再查一遍，别只比频差和封装。**<br>📌 未决的是**供电**不是选型：`Y4.4` 接 3.3V 而本档额定 2.85/3.0/3.15V。不损坏（系列范围 1.7–3.465V），影响按 `f0-Vcc` 量级是 sub-ppm，**打板后台架实测频偏即可**。库内 26MHz 的 TG-5006 共 6 个订货号，**全部是 3.0V 档，没有 3.3V 档** |
 
 ## 待补手册的器件
 
@@ -62,7 +65,25 @@
    `a[download]` 触发浏览器下载即可落盘。注意 `/products/d/{id}` 是另一套资源 ID，猜错会下到别的产品的 Gerber 包。
 3. **已停产料（如 BGA2817，NXP 官网 404）**：`datasheet4u.com` 的详情页带逐页 PNG
    （`/pdfhtml/{dir}/{id}/page-00000N.png`），直接抓图看比找 PDF 快。
+   ⚠️ **它只放前 3 页做预览**，第 4 页起一律 404（315 字节的 HTML，不是图）。BK4819 的
+   §1.2.3 正好在第 4 页 —— 别据此以为"手册里没这一节"。
 4. 通用：`pdftotext -layout` 转文本后 grep，比读图快也不会看错方向。
+   **`pdftotext` 输出 0 行 = 扫描件**（立创转制的 Epson 那份就是），改用
+   `pdftoppm -r 200 -png x.pdf out` 转图再读，别以为是文件坏了。
+5. **Epson（单品级参数，手册上查不到的那种）**：Epson 只发**系列 brief sheet**，型号里的
+   spec segment 写着 "Please contact us"。但官网选型工具的数据是**静态 JSON**，可以直接取：
+   ```bash
+   # 路径写在 https://www.epsondevice.com/crystal/assets/js/ps_common.js 的 jsonpath 变量里
+   curl -o tcxo_a.json https://download.epsondevice.com/td/ps/tcxo_a.json   # TCXO，另有 tcxo_b.json
+   # 同目录还有 vcxo_*.json / spxo_*.json / ss_osc.json 等，文件名列在 ps_xo.js 里
+   ```
+   按订货号（`pn` 字段，注意库里是 13 位 `X1G0042110003`，而卖家写的是 15 位
+   `X1G004211000300`，**要用子串匹配**）查 `function` / `fcfYN` / `supplyVoltage*` /
+   `frequencyTol*`。**这是判定「是 TCXO 还是 VC-TCXO」「额定 Vcc 是哪档」的唯一权威来源**，
+   分销商参数栏两家能给出互相矛盾的答案（见上表 Y4 行）。
+6. **国产 RF 芯片官网要注册才给下载（如 Beken）**：先看社区镜像。BK4819 的正式 DS 在
+   `github.com/amnemonic/Quansheng_UV-K5_Firmware`（`hardware/` 目录），把 `/blob/` 换成
+   `/raw/` 直接 curl 即可；alldatasheet 挂 Cloudflare challenge，别浪费时间。
 
 ## 用法
 

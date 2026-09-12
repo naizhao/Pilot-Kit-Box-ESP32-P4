@@ -173,6 +173,9 @@ hardware/datasheets/*.PDF
 # pdftotext 的中间产物（a.txt/b.txt…）与分页图，只是提取判据时的临时文件
 hardware/datasheets/*.txt
 hardware/datasheets/*-pages/
+# 厂商选型数据库导出（Epson 的 tcxo_*.json 之类）。和 PDF 同理：本体不进 git，
+# 从里面查到的那一行判据写进 INDEX.md
+hardware/datasheets/*.json
 
 # v4 的工具链在 v4 分支已转内部；v3 分支上它们只是本地残留文件，
 # 不跟踪——否则一次 git add -A 就会把整套构建过程扫进公开树
