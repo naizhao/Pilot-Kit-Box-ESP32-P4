@@ -36,7 +36,7 @@ Before first use of GitHub Pages, confirm these repository settings:
 
 ## Version Source
 
-- The default product version lives in `firmware/version.txt`; the current value is `v0.8.0`.
+- The default product version lives in `firmware/version.txt`; the current value is `v0.9.0`.
 - Normal local builds use `firmware/version.txt` as the base and append the current git short hash for traceability.
 - CI passes `-DPROJECT_VER="$RELEASE_VERSION"` so the embedded firmware version, manifest version, and asset names match.
 - If a board-prefixed tag is used, for example `esp32p4-v0.8.0`, the release script normalises it to product version `v0.8.0` so asset names do not repeat `esp32p4`.

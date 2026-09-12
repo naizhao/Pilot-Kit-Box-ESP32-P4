@@ -35,7 +35,7 @@
 
 ## 版本号来源
 
-- 默认产品版本写在 `firmware/version.txt`，当前为 `v0.8.0`。
+- 默认产品版本写在 `firmware/version.txt`，当前为 `v0.9.0`。
 - 普通本地构建以 `firmware/version.txt` 为基础并追加当前 git 短哈希，方便定位具体构建。
 - CI 打包时会显式传入 `-DPROJECT_VER="$RELEASE_VERSION"`，让固件内嵌版本、manifest 版本和产物文件名保持一致。
 - 如果使用板型前缀 tag（例如 `esp32p4-v0.8.0`），发布脚本会把它归一为产品版本 `v0.8.0`，避免产物名里重复出现 `esp32p4`。
