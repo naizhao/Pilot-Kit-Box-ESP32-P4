@@ -84,6 +84,48 @@ static void write_row(FILE *fp)
             has_sy ? d.regs[1] : 0);
 }
 
+/*
+ * 开机时把已有的 CSV 打到串口一次。
+ *
+ * 存在的理由：这块板做放电标定必须拔掉 H1（见头文件的载板供电陷阱），
+ * 拔了就没串口，数据只能落卡。等设备放空关机、插电回来之后，总得有个
+ * 办法把卡上的东西拿出来——拆卡读是一条路，但那要读卡器、要拆壳，而
+ * 排障现场往往只有一根 USB 线。
+ *
+ * 只在开机 dump 一次，之后本次运行不再重复。文件过大时只报大小不打内容
+ * ——115200 下每 KB 约 0.09 s，一个通宵的记录（1440 行 ≈ 90 KB）就要刷
+ * 8 秒串口，把开机日志淹掉得不偿失；真到那个量级该拆卡读。
+ */
+#define PWRLOG_DUMP_MAX_BYTES 65536      /* 约 1000 行，≈6 s 串口时间 */
+
+static void dump_existing(void)
+{
+    FILE *fp = fopen(PWRLOG_PATH, "r");
+    if (fp == NULL) return;                 /* 首次运行，没有历史，正常 */
+
+    fseek(fp, 0, SEEK_END);
+    const long sz = ftell(fp);
+    if (sz <= 0) { fclose(fp); return; }
+    if (sz > PWRLOG_DUMP_MAX_BYTES) {
+        ESP_LOGW(TAG, "%s 已有 %ld 字节，超过 dump 上限，不打印内容"
+                      "（请拆卡读取）", PWRLOG_PATH, sz);
+        fclose(fp);
+        return;
+    }
+    rewind(fp);
+
+    ESP_LOGI(TAG, "===== %s 开始（%ld 字节）=====", PWRLOG_PATH, sz);
+    char line[192];
+    int n = 0;
+    while (fgets(line, sizeof line, fp) != NULL) {
+        line[strcspn(line, "\r\n")] = '\0';
+        ESP_LOGI(TAG, "CSV %s", line);
+        n++;
+    }
+    fclose(fp);
+    ESP_LOGI(TAG, "===== %s 结束（%d 行）=====", PWRLOG_PATH, n);
+}
+
 static void power_log_task(void *arg)
 {
     (void)arg;
@@ -119,6 +161,7 @@ static void power_log_task(void *arg)
         }
 
         if (!boot_marked) {
+            dump_existing();      /* 先把历史吐出来，再往后追加 */
             /* 每次开机/换卡插一行注释：uptime 会归零，没有这条就分不清
              * "设备重启了"和"时间倒流了"。CSV 读取方按 '#' 跳过即可。 */
             fprintf(fp, "# boot reset=%d\n", (int)esp_reset_reason());
