@@ -12,6 +12,7 @@
 
 #include "rf_safety.h"
 #include "edge_cap.h"
+#include "edge_consume.h"
 #include "modes_edge.h"
 #include "p4_link.h"
 #include "selftest_gen.h"
@@ -86,6 +87,21 @@ static void on_frame(const modes_edge_frame_t *f, void *user)
     atomic_store_explicit(&s_ring_head, next, memory_order_release);
 }
 
+/* ── 原始边沿间隔抓取（诊断 'D'）────────────────────────────────────
+ * core1 在把一块喂给解码器之前顺手抄走一小段原始 delta。
+ *
+ * 为什么要看原始值而不是统计量：preamble_hits / dropped_noise 只告诉你
+ * 「没解出来」，分不出**没有信号**和**有信号但形状不对**。Mode-S 的
+ * preamble 是 0.5µs 脉冲 @ 0/1.0/3.5/4.5µs，落到相邻间隔上就是 500 /
+ * 500 / 2000 / 500 ns 这种量级；宽带白噪声是各种尺度都有的杂乱值；
+ * 周期性数字干扰则会反复堆在同一个间隔上。三者一眼可分。
+ *
+ * 1 tick = 16ns 精确（EDGE_CAP_TICK_HZ 62.5MHz，edge_cap.h 有
+ * _Static_assert 钉住），所以直接按 ns 打印，不引入换算误差。 */
+#define DCAP_N 96
+static uint32_t s_dcap[DCAP_N];
+static atomic_int s_dcap_n = -1;       /* <0 = 空闲；0..DCAP_N = 已采集数 */
+
 static void core1_entry(void)
 {
     static uint32_t buf[256];
@@ -102,16 +118,28 @@ static void core1_entry(void)
             size_t n = edge_cap_drain(buf, 256, &disc);
             if (!n)
                 break;
-            /* 丢沿如实上报（re-audit round-2 Fix 1）：RXSTALL 单沿丢失不
-             * 打 disc、时间基无自愈——disc（结构性断点）或 edge_cap_overruns()
-             * 增加（RXSTALL 计入其中）都是丢沿实据，sticky 置退化标志供
-             * 1 Hz 诊断读取，不假装恢复。 */
+            /* 丢沿如实上报 + **重新锚定奇偶**（2026-09-13）：disc（结构性
+             * 断点）和 edge_cap_overruns() 增加（RXSTALL 单沿丢失）都是丢沿
+             * 实据，两者都必须 reset —— 丢奇数个沿会让后续边沿极性整体反相，
+             * 不 reset 就要一直错到下一次 >5µs 长隔。判据与理由集中在
+             * edge_consume.h，行为由 test_edge_consume.c 锁定（含「没丢沿时
+             * 不许 reset」的反向约束，否则跨块帧会被砍掉）。 */
             uint32_t ovr = edge_cap_overruns();
-            if (disc || ovr != last_overruns)
+            const edge_consume_act_t act =
+                edge_consume_decide(disc, ovr, last_overruns);
+            if (act.degrade)
                 modes_edge_mark_degraded(&s_edge);
             last_overruns = ovr;
-            if (disc)
+            if (act.reset)
                 modes_edge_reset(&s_edge);
+            /* 诊断抓取：只在 'D' 触发后的一小段窗口里做，平时是一次
+             * relaxed load 的代价。 */
+            int dn = atomic_load_explicit(&s_dcap_n, memory_order_relaxed);
+            if (dn >= 0 && dn < DCAP_N) {
+                for (size_t i = 0; i < n && dn < DCAP_N; i++)
+                    s_dcap[dn++] = buf[i];
+                atomic_store_explicit(&s_dcap_n, dn, memory_order_release);
+            }
             modes_edge_feed(&s_edge, buf, n);
         }
         atomic_fetch_add_explicit(&s_core1_beat, 1, memory_order_release);
@@ -230,9 +258,14 @@ static void core0_poll_control(void *user)
                    "-- check wire/decode\n");
     } else if (c == 'S') {
         uint32_t h[11]; health_fill(h);
-        printf("ant1090=%s antgnss=%s\n",
-               p4_link_ant_1090() ? "EXT-J6" : "ONBOARD-IFA",
-               p4_link_ant_gnss() ? "ONBOARD-PATCH" : "EXT-J2");
+        /* 两个来源分开报：live = 板上实际驱动到 U16/U17 的选择，p4 = 设置页
+         * 最后下发的值。CDC 的 'a'/'A' 只动前者，两者不一致是正常的（临时
+         * 台架切换），但必须看得见——只报 p4 那份会在排障时直接说谎。 */
+        printf("ant1090 live=%s p4=%s | antgnss live=%s p4=%s\n",
+               rf_safety_get_ant_1090() ? "EXT-J6" : "ONBOARD-IFA",
+               p4_link_ant_1090()       ? "EXT-J6" : "ONBOARD-IFA",
+               rf_safety_get_ant_gnss() ? "ONBOARD-PATCH" : "EXT-J2",
+               p4_link_ant_gnss()       ? "ONBOARD-PATCH" : "EXT-J2");
         printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "
                "ringdrop=%u tx=%u rx=%u linked=%d\n",
                h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
@@ -255,6 +288,44 @@ static void core0_poll_control(void *user)
         printf("\n  level 连读:");
         for (int i = 0; i < 8; i++) printf(" %u", (unsigned)b[i]);
         printf("\n");
+    } else if (c == 'G') {
+        /* 天线选择线 + bias 的**电平回读**。gpio_get 读的是 pad 输入缓冲，
+         * 反映引脚上的真实电平，不是我们写进去的值——引脚悬空、被外部拉住、
+         * 或被别的外设抢走 function，这三种情况下"写进去的值"都不会体现在
+         * 这里。不接示波器时，这是唯一能证明"线上确实是这个电平"的手段。 */
+        bool ea, eb;
+        rf_safety_ant_1090_levels(rf_safety_get_ant_1090(), &ea, &eb);
+        int a = gpio_get(PIN_ANT_SEL_1090_A), b = gpio_get(PIN_ANT_SEL_1090_B);
+        printf("ANT_SEL_1090 A(gpio%d)=%d B(gpio%d)=%d | 期望 A=%d B=%d %s\n",
+               PIN_ANT_SEL_1090_A, a, PIN_ANT_SEL_1090_B, b,
+               (int)ea, (int)eb,
+               (a == (int)ea && b == (int)eb) ? "OK" : "← 不符！");
+        rf_safety_ant_gnss_levels(rf_safety_get_ant_gnss(), &ea, &eb);
+        a = gpio_get(PIN_GNSS_SEL_A); b = gpio_get(PIN_GNSS_SEL_B);
+        printf("GNSS_SEL     A(gpio%d)=%d B(gpio%d)=%d | 期望 A=%d B=%d %s\n",
+               PIN_GNSS_SEL_A, a, PIN_GNSS_SEL_B, b, (int)ea, (int)eb,
+               (a == (int)ea && b == (int)eb) ? "OK" : "← 不符！");
+        printf("BIAS_EN      1090(gpio%d)=%d 978(gpio%d)=%d  (1=关断，PMOS "
+               "低有效)\n", PIN_BIAS_EN_1090, gpio_get(PIN_BIAS_EN_1090),
+               PIN_BIAS_EN_978, gpio_get(PIN_BIAS_EN_978));
+    } else if (c == 'D') {
+        /* 抓一小段原始边沿间隔。判读见 s_dcap 处的注释：Mode-S preamble
+         * 在相邻间隔上是 500/500/2000/500ns 量级。 */
+        atomic_store_explicit(&s_dcap_n, 0, memory_order_release);
+        for (int i = 0; i < 100; i++) {          /* 至多等 500ms 采满 */
+            sleep_ms(5);
+            if (atomic_load_explicit(&s_dcap_n, memory_order_acquire) >= DCAP_N)
+                break;
+        }
+        int dn = atomic_load_explicit(&s_dcap_n, memory_order_acquire);
+        if (dn > DCAP_N) dn = DCAP_N;
+        atomic_store_explicit(&s_dcap_n, -1, memory_order_release);
+        printf("edge deltas (ns, 1tick=16ns), n=%d:\n", dn);
+        for (int i = 0; i < dn; i++)
+            printf("%lu%s", (unsigned long)s_dcap[i] * 16u,
+                   ((i % 12) == 11 || i == dn - 1) ? "\n" : " ");
+        if (!dn)
+            printf("  （一个边沿都没有——比较器完全没在翻转）\n");
     } else if (c == 'F') {
         /* cJTAG 链路探测（**不是**烧录）：走一遍 ICEMelter 唤醒 + 命令窗 +
          * STFMT→OScan1，然后读 ICEPick 的 IDCODE 作为链路是否通的判据。

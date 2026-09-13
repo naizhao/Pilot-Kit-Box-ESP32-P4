@@ -38,3 +38,12 @@ void rf_safety_ant_gnss_levels(rf_ant_gnss_t sel, bool *a, bool *b);
 /* 上板应用。非法枚举值按默认处理（不留"两线同电平"的非法中间态）。 */
 void rf_safety_set_ant_1090(rf_ant_1090_t sel);
 void rf_safety_set_ant_gnss(rf_ant_gnss_t sel);
+
+/* **板上实际生效**的选择（不是 P4 下发的值）。初值 = 上电向量。
+ *
+ * 与 p4_link_ant_1090() 的区别是本次排障踩出来的：CDC 的 'a'/'A' 直接调
+ * set_ant_*，不经过 CONFIG_REQ，于是 p4_link 那份缓存不会更新——'S' 打印
+ * 出「切到 IFA」但状态行仍报 EXT-J6，恰恰违背了它自己「屏上选的和板上生效
+ * 的必须能对上」的初衷。两个值分别来自两条路径，就得分别报。 */
+rf_ant_1090_t rf_safety_get_ant_1090(void);
+rf_ant_gnss_t rf_safety_get_ant_gnss(void);

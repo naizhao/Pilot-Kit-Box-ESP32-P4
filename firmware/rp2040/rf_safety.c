@@ -79,10 +79,23 @@ static void apply_pair(int gpio_a, int gpio_b, bool a, bool b)
 }
 #endif
 
+/* 板上实际生效的选择。初值必须与 boot 向量一致（s_boot：1090 = A1/B0 =
+ * 板载 IFA；GNSS = RF_SAFETY_DEFAULT_GNSS_*），否则 apply_boot_state 之后
+ * 这两个变量就先撒了个谎。枚举取值刻意让 0 = 上电默认，见头文件。 */
+static rf_ant_1090_t s_cur_1090 = RF_ANT_1090_ONBOARD;
+static rf_ant_gnss_t s_cur_gnss = RF_ANT_GNSS_EXTERNAL;
+
+rf_ant_1090_t rf_safety_get_ant_1090(void) { return s_cur_1090; }
+rf_ant_gnss_t rf_safety_get_ant_gnss(void) { return s_cur_gnss; }
+
 void rf_safety_set_ant_1090(rf_ant_1090_t sel)
 {
     bool a, b;
     rf_safety_ant_1090_levels(sel, &a, &b);
+    /* levels() 把非法枚举归到默认分支，这里跟着它走而不是记原始入参——
+     * 否则报出来的会是"请求值"，不是真正驱动到引脚上的那个。 */
+    s_cur_1090 = (sel == RF_ANT_1090_EXTERNAL) ? RF_ANT_1090_EXTERNAL
+                                               : RF_ANT_1090_ONBOARD;
 #ifndef RF_SAFETY_HOST_TEST
     apply_pair(PIN_ANT_SEL_1090_A, PIN_ANT_SEL_1090_B, a, b);
 #else
@@ -94,6 +107,8 @@ void rf_safety_set_ant_gnss(rf_ant_gnss_t sel)
 {
     bool a, b;
     rf_safety_ant_gnss_levels(sel, &a, &b);
+    s_cur_gnss = (sel == RF_ANT_GNSS_ONBOARD) ? RF_ANT_GNSS_ONBOARD
+                                              : RF_ANT_GNSS_EXTERNAL;
 #ifndef RF_SAFETY_HOST_TEST
     apply_pair(PIN_GNSS_SEL_A, PIN_GNSS_SEL_B, a, b);
 #else
