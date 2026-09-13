@@ -19,6 +19,31 @@
  */
 #define PK_SETTINGS_ROW_COUNT  17
 
+/* ── 天线两行的段序约定（1090 与 GNSS 共用）──────────────────────────
+ * 段 0 = 板载，段 1 = 外置。
+ *
+ * 这两行原来各自跟着自己的枚举值排：1090 是 [板载][外置]、GNSS 是
+ * [外置][板载]。根源是两个枚举的 0 恰好是各自不同的上电默认（1090 默认板载、
+ * GNSS 默认外接），跟着实现走就跟人的认知拧了。两行紧挨着、同一位置含义相反，
+ * 手指按肌肉记忆落下去就会选反 —— 2026-09-13 实机上就误切过一次 GNSS。
+ *
+ * 做成共用函数而不是"两边记得写一致"：段序在 settings_draw.c 决定怎么显示、
+ * 在 settings_page.c 决定怎么写入，分头各写一份迟早再次漂开。而 GNSS 这一行
+ * 选反的代价是有源天线拿不到电（见 SETTINGS_ANT_GNSS_HINT），直接没星。
+ */
+#define PK_ANT_SEG_ONBOARD   0
+#define PK_ANT_SEG_EXTERNAL  1
+
+static inline int pk_ant_seg_of(bool onboard)
+{
+    return onboard ? PK_ANT_SEG_ONBOARD : PK_ANT_SEG_EXTERNAL;
+}
+
+static inline bool pk_ant_seg_is_onboard(int seg)
+{
+    return seg == PK_ANT_SEG_ONBOARD;
+}
+
 void pk_settings_page_render(uint16_t *fb);
 
 /* 多行光标控制 (Language / QNH / MAP朝向 / RANGE量程 / LOG存储 / FORMAT SD) */
