@@ -17,6 +17,7 @@
 #include "p4_link.h"
 #include "selftest_gen.h"
 #include "threshold_ctl.h"
+#include "threshold_sweep.h"
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 #include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
 #include "rp_core0_scheduler.h"
@@ -205,6 +206,12 @@ static void core0_poll_spim(void *user)
     spim_poll(&s_spim, time_us_32());
 }
 
+/* 门限扫描状态机定义在下方，挨着推进它的 core0_poll_periodic；这里只前向
+ * 声明，免得把一整块状态机塞进命令解析中间。 */
+static void sweep_start(void);
+static void sweep_finish(bool aborted);
+static bool sweep_active(void);
+
 static void core0_poll_control(void *user)
 {
     (void)user;
@@ -288,6 +295,13 @@ static void core0_poll_control(void *user)
         printf("\n  level 连读:");
         for (int i = 0; i < 8; i++) printf(" %u", (unsigned)b[i]);
         printf("\n");
+    } else if (c == 'W') {
+        /* 扫描期间再按 'W' = 中止。手动改门限（'P'）会被下一个扫描点覆盖，
+         * 所以扫描中不拦 'P'，但结果以扫描为准。 */
+        if (sweep_active())
+            sweep_finish(true);
+        else
+            sweep_start();
     } else if (c == 'G') {
         /* 天线选择线 + bias 的**电平回读**。gpio_get 读的是 pad 输入缓冲，
          * 反映引脚上的真实电平，不是我们写进去的值——引脚悬空、被外部拉住、
@@ -374,9 +388,117 @@ static void core0_poll_control(void *user)
     }
 }
 
+/* ── 内置门限扫描（'W'）────────────────────────────────────────────
+ * 把外场找工作点这件事从 host 脚本搬进固件。
+ *
+ * 为什么必须内置：门限最优点不是常数。2026-09-13 一天之内就漂了两次
+ * （600 → 700，同一块板同一根天线），环境、供电、天线一换就得重找。留在
+ * host 脚本里等于"只有接着电脑才调得了"，而需要调的场合恰恰在外面。
+ *
+ * 非阻塞：整轮是分钟级，绝不能占住 core0——p4_link / CDC / spim /
+ * edge_cap_service 都在同一个协作式调度轮次里（rp_core0_scheduler.h）。
+ * 所以做成状态机，由 core0_poll_periodic 每轮推进一次，只在 deadline
+ * 到点时做一次快照差分。
+ *
+ * 逐点即时输出而不是攒到最后一起打：一轮 90s，中途看不到东西没法判断
+ * 是在跑还是卡了，也不方便提前中止。
+ *
+ * 统计口径：health_fill 给的都是 boot-lifetime 累计值，进点时存快照、
+ * 出点时相减；uint32 自然回绕，差分照样成立。 */
+#define SWEEP_MAX_PTS   12
+#define SWEEP_DWELL_MS  10000u          /* 每点 10s：pre 的计数率足够 */
+
+static struct {
+    bool     active;
+    uint8_t  n, idx;
+    uint16_t restore;                   /* 扫完恢复的门限 */
+    absolute_time_t deadline;
+    uint16_t pts[SWEEP_MAX_PTS];
+    uint32_t frames[SWEEP_MAX_PTS], pre[SWEEP_MAX_PTS];
+    uint32_t noise[SWEEP_MAX_PTS], ovr[SWEEP_MAX_PTS];
+    uint32_t snap[11];
+} s_sw;
+
+static bool sweep_active(void) { return s_sw.active; }
+
+static void sweep_enter_point(void)
+{
+    threshold_ctl_set_permille(s_sw.pts[s_sw.idx]);
+    health_fill(s_sw.snap);
+    s_sw.deadline = make_timeout_time_ms((int32_t)SWEEP_DWELL_MS);
+}
+
+static void sweep_start(void)
+{
+    s_sw.n = 0;
+    for (uint16_t p = 200; p <= 1000; p += 100)
+        s_sw.pts[s_sw.n++] = p;
+    s_sw.idx = 0;
+    s_sw.restore = (uint16_t)threshold_ctl_get_permille();
+    s_sw.active = true;
+    printf("sweep: %u 点 × %us，天线 %s，扫完恢复 %u‰。再按 'W' 中止\n",
+           s_sw.n, SWEEP_DWELL_MS / 1000u,
+           rf_safety_get_ant_1090() ? "EXT-J6" : "ONBOARD-IFA",
+           s_sw.restore);
+    printf("  ‰   mV     帧   f56  f112   pre     noise      ovr\n");
+    sweep_enter_point();
+}
+
+static void sweep_finish(bool aborted)
+{
+    threshold_ctl_set_permille(s_sw.restore);
+    s_sw.active = false;
+    if (aborted) {
+        printf("sweep: 已中止，门限恢复 %u‰\n", s_sw.restore);
+        return;
+    }
+    const int b = threshold_sweep_pick(s_sw.frames, s_sw.pre, s_sw.idx);
+    if (b < 0) {
+        printf("sweep: 全程无信号（帧和 pre 都是 0）——先确认天线和"
+               "现场，别据此改默认值。门限恢复 %u‰\n", s_sw.restore);
+        return;
+    }
+    printf("sweep: 建议 %u‰（帧=%lu pre=%lu）%s。门限已恢复 %u‰，"
+           "要用请 'P%u'\n",
+           s_sw.pts[b], (unsigned long)s_sw.frames[b],
+           (unsigned long)s_sw.pre[b],
+           s_sw.frames[b] ? "" : "← 帧全 0，这是按 pre 选的，仅供参考",
+           s_sw.restore, s_sw.pts[b]);
+}
+
+static void sweep_poll(void)
+{
+    if (!s_sw.active)
+        return;
+    if (absolute_time_diff_us(get_absolute_time(), s_sw.deadline) > 0)
+        return;                          /* 本点还没到时间 */
+
+    uint32_t h[11];
+    health_fill(h);
+    const uint8_t i = s_sw.idx;
+    s_sw.frames[i] = (h[1] - s_sw.snap[1]) + (h[2] - s_sw.snap[2]);
+    s_sw.pre[i]    = h[0] - s_sw.snap[0];
+    s_sw.noise[i]  = h[4] - s_sw.snap[4];
+    s_sw.ovr[i]    = h[5] - s_sw.snap[5];
+    printf("%4u %5d %6lu %5lu %5lu %6lu %9lu %8lu\n",
+           s_sw.pts[i], threshold_ctl_read_level_mv(),
+           (unsigned long)s_sw.frames[i],
+           (unsigned long)(h[1] - s_sw.snap[1]),
+           (unsigned long)(h[2] - s_sw.snap[2]),
+           (unsigned long)s_sw.pre[i], (unsigned long)s_sw.noise[i],
+           (unsigned long)s_sw.ovr[i]);
+
+    s_sw.idx++;
+    if (s_sw.idx >= s_sw.n)
+        sweep_finish(false);
+    else
+        sweep_enter_point();
+}
+
 static void core0_poll_periodic(void *user)
 {
     (void)user;
+    sweep_poll();
     if (absolute_time_diff_us(get_absolute_time(), s_next_hz) < 0) {
         s_next_hz = make_timeout_time_ms(1000);
         uint32_t h[11];

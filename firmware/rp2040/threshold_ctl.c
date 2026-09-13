@@ -39,10 +39,17 @@ void threshold_ctl_init(void)
     adc_gpio_init(PIN_ADC_VBUS);    /* USB_VBUS_SENSE 分压中点（F6）*/
 }
 
+/* 当前生效值。扫描要能扫完恢复原状，而 PWM 的 chan level 读回来还得反算，
+ * 不如就地记一份（clamp 之后的值，报出去的才是真正驱动出去的那个）。 */
+static int s_permille = THRESHOLD_CTL_DEFAULT_PERMILLE;
+
+int threshold_ctl_get_permille(void) { return s_permille; }
+
 void threshold_ctl_set_permille(int pml)
 {
     if (pml < 0) pml = 0;
     if (pml > 1000) pml = 1000;
+    s_permille = pml;
     pwm_set_chan_level(pwm_gpio_to_slice_num(PIN_TL_PWM),
                        pwm_gpio_to_channel(PIN_TL_PWM),
                        (uint16_t)((uint32_t)pml * (TL_PWM_WRAP + 1) / 1000));

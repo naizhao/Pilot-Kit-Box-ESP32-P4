@@ -42,7 +42,8 @@
 #define THRESHOLD_CTL_DEFAULT_PERMILLE 600
 
 void threshold_ctl_init(void);
-void threshold_ctl_set_permille(int pml);   /* 0..1000 */
+void threshold_ctl_set_permille(int pml);   /* 0..1000，越界按 clamp 处理 */
+int  threshold_ctl_get_permille(void);      /* clamp 后的当前生效值 */
 int  threshold_ctl_read_level_mv(void);     /* ADC0，门限直流回读 */
 /* ⚠ ADC1。**当前实测不可信**：读回来的是门限那一路的电压，不是 AD8313 的
  * 检波输出。见文件头「rssi_raw 不可信」。任何基于它的判断都不成立。 */
