@@ -510,6 +510,86 @@ int main(void)
               "cap 不足应返回 0\n");
     }
 
+    /* ── 26: CFG_THRESHOLD 的 8 位编码（v1.3）──
+     *
+     * 最要紧的一条是 val=0 的语义：它必须是"用固件默认"，而不是 0‰。
+     * 协议 §7 的不变量是"全 0 payload = 上电默认"，而 0‰ 恰好是个灾难性
+     * 取值（判决电平贴地、比较器被噪声淹没、一帧都解不出）——"配置没送到"
+     * 和"配置是 0‰"绝不能落到同一个字节上。 */
+    {
+        CHECK(adsb_link_threshold_from_val(0) == 0,
+              "val=0 必须表示『用固件默认』\n");
+        CHECK(adsb_link_threshold_from_val(1) == 10, "val=1 应为 10‰\n");
+        CHECK(adsb_link_threshold_from_val(60) == 600, "val=60 应为 600‰\n");
+        CHECK(adsb_link_threshold_from_val(100) == 1000, "val=100 应为 1000‰\n");
+        /* 越界必须可区分地报错，不能悄悄当成默认值用 —— 拿一个对面没要求
+         * 的门限跑下去，症状就是"收不到任何包"，最难查。 */
+        CHECK(adsb_link_threshold_from_val(101) == -1, "val=101 应判无效\n");
+        CHECK(adsb_link_threshold_from_val(255) == -1, "val=255 应判无效\n");
+
+        CHECK(adsb_link_threshold_to_val(600) == 60, "600‰ 应编码成 60\n");
+        CHECK(adsb_link_threshold_to_val(1000) == 100, "1000‰ 应编码成 100\n");
+        CHECK(adsb_link_threshold_to_val(10) == 1, "10‰ 应编码成 1\n");
+        /* 低于一档的值夹到 10‰ 而不是落成 0：想设 5‰ 和想用默认是两件事 */
+        CHECK(adsb_link_threshold_to_val(5) == 1, "5‰ 应夹到 val=1 而非 0\n");
+        CHECK(adsb_link_threshold_to_val(0) == 1, "0‰ 应夹到 val=1 而非 0\n");
+        CHECK(adsb_link_threshold_to_val(-50) == 1, "负值应夹到 val=1\n");
+        CHECK(adsb_link_threshold_to_val(5000) == 100, "超限应夹到 val=100\n");
+        /* 四舍五入到最近档 */
+        CHECK(adsb_link_threshold_to_val(604) == 60, "604‰ 应舍入到 60\n");
+        CHECK(adsb_link_threshold_to_val(605) == 61, "605‰ 应舍入到 61\n");
+
+        /* 往返：扫描用到的整百点必须无损 */
+        for (int p = 100; p <= 1000; p += 100)
+            CHECK(adsb_link_threshold_from_val(
+                      adsb_link_threshold_to_val(p)) == p,
+                  "%d‰ 往返不等\n", p);
+    }
+
+    /* ── 27: SWEEP_ROW 往返（v1.3）── */
+    {
+        uint8_t pl[ADSB_LINK_SWEEP_ROW_LEN + 4];
+        size_t n = adsb_link_sweep_row_encode(pl, sizeof pl, 3, 9, 70, 2199,
+                                              28, 347, 6806798, 50221);
+        CHECK(n == ADSB_LINK_SWEEP_ROW_LEN, "sweep_row 长度 %zu\n", n);
+
+        uint8_t idx = 0, tot = 0, pv = 0;
+        uint16_t mv = 0;
+        uint32_t fr = 0, pre = 0, noise = 0, ovr = 0;
+        CHECK(adsb_link_sweep_row_decode(pl, n, &idx, &tot, &pv, &mv,
+                                         &fr, &pre, &noise, &ovr),
+              "sweep_row 解码失败\n");
+        CHECK(idx == 3 && tot == 9 && pv == 70 && mv == 2199,
+              "头部字段错: idx=%u tot=%u pv=%u mv=%u\n", idx, tot, pv, mv);
+        CHECK(fr == 28 && pre == 347 && noise == 6806798 && ovr == 50221,
+              "计数字段错: fr=%lu pre=%lu noise=%lu ovr=%lu\n",
+              (unsigned long)fr, (unsigned long)pre,
+              (unsigned long)noise, (unsigned long)ovr);
+
+        /* 32 位字段要能扛住接近满量程的计数——noise 实测跑到过 4.6 亿，
+         * ovr 到过 5.6 亿，截断了会让诊断读数凭空变小。 */
+        n = adsb_link_sweep_row_encode(pl, sizeof pl, 0, 1, 100, 65535,
+                                       0xFFFFFFFFu, 0xFFFFFFFFu,
+                                       0xFFFFFFFFu, 0xFFFFFFFFu);
+        CHECK(adsb_link_sweep_row_decode(pl, n, NULL, NULL, NULL, &mv,
+                                         &fr, &pre, &noise, &ovr),
+              "满量程解码失败\n");
+        CHECK(mv == 65535 && fr == 0xFFFFFFFFu && ovr == 0xFFFFFFFFu,
+              "满量程被截断: mv=%u fr=%lu ovr=%lu\n", mv,
+              (unsigned long)fr, (unsigned long)ovr);
+
+        /* 长度不符整帧拒绝，且不写输出 */
+        CHECK(!adsb_link_sweep_row_decode(pl, n - 1, &idx, NULL, NULL, NULL,
+                                          NULL, NULL, NULL, NULL),
+              "短一字节仍被接受\n");
+        CHECK(!adsb_link_sweep_row_decode(pl, n + 1, &idx, NULL, NULL, NULL,
+                                          NULL, NULL, NULL, NULL),
+              "长一字节仍被接受\n");
+        CHECK(adsb_link_sweep_row_encode(pl, ADSB_LINK_SWEEP_ROW_LEN - 1,
+                                         0, 1, 60, 0, 0, 0, 0, 0) == 0,
+              "cap 不足应返回 0\n");
+    }
+
     printf(g_fail ? "FAIL (%d)\n" : "OK\n", g_fail);
     return g_fail ? 1 : 0;
 }

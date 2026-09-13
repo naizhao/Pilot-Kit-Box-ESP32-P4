@@ -27,6 +27,7 @@
 #define ADSB_LINK_MSG_HEALTH_STATS  0x03
 #define ADSB_LINK_MSG_MODES_RAW     0x10
 #define ADSB_LINK_MSG_UAT_UPLINK    0x11   /* v1.1，规范 §6 */
+#define ADSB_LINK_MSG_SWEEP_ROW     0x12   /* v1.3：门限扫描逐点结果，见下 */
 #define ADSB_LINK_MSG_CONFIG_REQ    0x20   /* v1.2 起有定义，见下 */
 #define ADSB_LINK_MSG_CONFIG_ACK    0x21
 #define ADSB_LINK_MSG_ERROR         0x7F
@@ -46,8 +47,64 @@
 #define ADSB_LINK_CFG_MAX_ITEMS   16
 #define ADSB_LINK_CFG_ANT_1090    0x01   /* 0=板载 IFA（默认）/ 1=外接 J6 */
 #define ADSB_LINK_CFG_ANT_GNSS    0x02   /* 0=外接 J2（默认）/ 1=板载 patch */
+#define ADSB_LINK_CFG_THRESHOLD   0x03   /* 0=用固件默认 / 1..100 = 10..1000‰ */
+#define ADSB_LINK_CFG_SWEEP       0x04   /* 0=停止（默认）/ 1=启动门限扫描 */
 
 typedef struct { uint8_t key, val; } adsb_link_cfg_item_t;
+
+/* ── 门限的 8 位编码（CFG_THRESHOLD）────────────────────────────────
+ * 门限是 0..1000 permille，而 cfg 的 val 只有 8 位。编码成「每 10‰ 一档」：
+ *   val = 0        → **用固件默认**（不是 0‰！）
+ *   val = 1..100   → 10..1000‰
+ *   val > 100      → 无效
+ *
+ * val=0 之所以必须是"用默认"而不是"0‰"，是为了守住本节开头那条不变量：
+ * 全 0 的 payload 等于上电默认。否则"配置没送到"和"配置是 0‰"会落到同一
+ * 个字节上——而 0‰ 恰好是个灾难性取值（判决电平贴地，比较器被噪声淹没、
+ * 一帧都解不出），这两件事绝不能长得一样。
+ *
+ * 10‰ 的档距够用：扫描步进是 100‰，手动微调也只到 10‰ 量级。 */
+static inline uint8_t adsb_link_threshold_to_val(int permille)
+{
+    /* <10 夹到 10 而不是落成 0：想设 5‰ 和想用默认是两件事。 */
+    if (permille < 10) permille = 10;
+    if (permille > 1000) permille = 1000;
+    return (uint8_t)((permille + 5) / 10);      /* 四舍五入到最近档 */
+}
+
+/* 返回 permille；0 = "用固件默认"（由调用方决定那是多少），-1 = 无效。
+ * 三态刻意不合并：把无效值悄悄当成默认，等于让对面用一个它没要求的门限
+ * 跑下去，而门限错了的表现就是"收不到任何包"，最难查。 */
+static inline int adsb_link_threshold_from_val(uint8_t val)
+{
+    if (val == 0)   return 0;
+    if (val > 100)  return -1;
+    return (int)val * 10;
+}
+
+/* ── SWEEP_ROW（v1.3，RP→P4）─────────────────────────────────────────
+ * 扫描逐点上报，不等整轮结束——一轮 90s，攒到最后才发的话 P4 既画不了
+ * 进度，也没法中途让人叫停。
+ *
+ * payload（小端，与 MODES_RAW 的 rp_ts_us 同序）：
+ *   u8 idx; u8 total; u8 permille_val; u16 level_mv;
+ *   u32 frames; u32 pre; u32 noise; u32 ovr;
+ * permille_val 用与 CFG_THRESHOLD 相同的编码，两边不各存一套标度。 */
+#define ADSB_LINK_SWEEP_ROW_LEN   21
+
+size_t adsb_link_sweep_row_encode(uint8_t *out, size_t cap,
+                                  uint8_t idx, uint8_t total,
+                                  uint8_t permille_val, uint16_t level_mv,
+                                  uint32_t frames, uint32_t pre,
+                                  uint32_t noise, uint32_t ovr);
+
+/* 长度不符一律整帧拒绝并且**不写任何输出**（与 uat_uplink_decode 同款
+ * 单元契约）。任一 out 指针可为 NULL 表示不关心该字段。 */
+bool adsb_link_sweep_row_decode(const uint8_t *payload, size_t len,
+                                uint8_t *idx, uint8_t *total,
+                                uint8_t *permille_val, uint16_t *level_mv,
+                                uint32_t *frames, uint32_t *pre,
+                                uint32_t *noise, uint32_t *ovr);
 
 /* 组 CONFIG_REQ payload。返回 payload 长度；cap 不足或 n 超限返回 0
  * （与 adsb_link_encode 同款约定：失败返回 0 且不写输出）。 */

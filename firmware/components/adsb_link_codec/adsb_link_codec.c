@@ -63,6 +63,61 @@ bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
     return true;
 }
 
+/* ── SWEEP_ROW（v1.3）──────────────────────────────────────────────
+ * 小端，与本文件其它多字节字段（rp_ts_us）同序。定长消息，长度即完整性
+ * 判据。 */
+static void put_u32le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+    p[2] = (uint8_t)((v >> 16) & 0xFF);
+    p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+static uint32_t get_u32le(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+size_t adsb_link_sweep_row_encode(uint8_t *out, size_t cap,
+                                  uint8_t idx, uint8_t total,
+                                  uint8_t permille_val, uint16_t level_mv,
+                                  uint32_t frames, uint32_t pre,
+                                  uint32_t noise, uint32_t ovr)
+{
+    if (!out || cap < ADSB_LINK_SWEEP_ROW_LEN) return 0;
+    out[0] = idx;
+    out[1] = total;
+    out[2] = permille_val;
+    out[3] = (uint8_t)(level_mv & 0xFF);
+    out[4] = (uint8_t)((level_mv >> 8) & 0xFF);
+    put_u32le(out + 5,  frames);
+    put_u32le(out + 9,  pre);
+    put_u32le(out + 13, noise);
+    put_u32le(out + 17, ovr);
+    return ADSB_LINK_SWEEP_ROW_LEN;
+}
+
+bool adsb_link_sweep_row_decode(const uint8_t *payload, size_t len,
+                                uint8_t *idx, uint8_t *total,
+                                uint8_t *permille_val, uint16_t *level_mv,
+                                uint32_t *frames, uint32_t *pre,
+                                uint32_t *noise, uint32_t *ovr)
+{
+    if (!payload || len != ADSB_LINK_SWEEP_ROW_LEN) return false;
+    if (idx)          *idx = payload[0];
+    if (total)        *total = payload[1];
+    if (permille_val) *permille_val = payload[2];
+    if (level_mv)     *level_mv = (uint16_t)(payload[3] |
+                                             ((uint16_t)payload[4] << 8));
+    if (frames)       *frames = get_u32le(payload + 5);
+    if (pre)          *pre    = get_u32le(payload + 9);
+    if (noise)        *noise  = get_u32le(payload + 13);
+    if (ovr)          *ovr    = get_u32le(payload + 17);
+    return true;
+}
+
 static void dec_shift1(adsb_link_dec_t *d)
 {
     d->fill--;
