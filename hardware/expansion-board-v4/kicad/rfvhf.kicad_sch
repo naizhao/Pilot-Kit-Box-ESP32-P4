@@ -5,9 +5,9 @@
 	(uuid "20000000-0000-4000-8000-000000000007")
 	(paper "A3")
 	(title_block
-		(title "Expansion Board V4.6 - VHF airband: BK4819 RX + PCM1808 capture")
+		(title "Expansion Board V4.7 - VHF airband: BK4819 RX + PCM1808 capture")
 		(date "2026-08-01")
-		(rev "V1")
+		(rev "V4.7")
 		(company "Pilot Kit")
 	)
 	(lib_symbols
@@ -2007,7 +2007,7 @@
 			(at 152.4 86.36 0)
 			(effects (font (size 1.27 1.27)))
 		)
-		(property "Value" "100pF C0G"
+		(property "Value" "100nF"
 			(at 152.4 91.44 0)
 			(effects (font (size 1.27 1.27)))
 		)

@@ -21,29 +21,31 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 
 ## ⚠️ Status / 当前状态
 
-> **V4.0 has been fabricated; V4.7 is the current manufacturing revision.**
-> V4.7 adds a hardware power button (`SW3` on the SY6970 `/QON` pin — V4.6 and
-> earlier had no way to switch the box off or hard-reset it) and the airband
+> **V4.4 has been fabricated and operated; V4.7 is the current design under review.**
+> V4.7 adds a hardware power button (`SW3` on the SY6970 `/QON` pin;
+> BATFET reset requires battery-only operation) and the airband
 > reference-clock DC-block (`C99` + `R61`). V4.6 added the 118–137 MHz airband
 > receive chain (BK4819 + 26 MHz TCXO + PCM1808 I²S capture, stage G of the
 > assembly list). V4.5 carried forward the
 > V4.3 electrical corrections and the V4.0 measured 50.0mm IFA geometry, and
 > fixed GNSS active-antenna detection: the module's `VCC_RF` (U7.14) now feeds
 > the two bias-tee PMOS sources instead of being left unconnected, so `$GPTXT`
-> can report `ANTENNA OK/OPEN/SHORT`. V4.7 passes every automated check below
-> (ERC 0 violations, DRC 0 violations / 0 unconnected, zone fills current), but
-> no revision after V4.0 has been fabricated — the airband chain and the power
-> button have never been powered up. Owners of V4.0 boards must follow the
+> can report `ANTENNA OK/OPEN/SHORT`. V4.7 has DRC 0 violations / 0 unconnected, current zone fills,
+> and ERC 0 errors / 10 warnings. Two C84 sub-assertions in the existing component
+> tests fail; C84 is outside this review's agreed change scope and was not modified.
+> The user confirmed a working V4.4 board; V4.7 airband and power-button behavior
+> still need hardware validation. Y4 supply and U22 VREF review items remain open. Owners of V4.0 boards must follow the
 > internal rework record before powering the 1090 MHz chain.
 >
-> **V4.0 已经打样；V4.7 是当前制造版本。** V4.7 = V4.6 + 硬件电源键
-> （`SW3` 接 SY6970 的 `/QON` —— V4.6 及以前整机关不掉、也不能硬复位）
+> **V4.4 已回板并运行；V4.7 是当前待审定的设计版本。** V4.7 = V4.6 + 硬件电源键
+> （`SW3` 接 SY6970 的 `/QON`；BATFET 复位有仅电池供电的条件）
 > + 航空波段参考时钟的隔直（`C99` + `R61`）。V4.6 = V4.5 + 118–137MHz 航空波段接收
 > （BK4819 + 26MHz TCXO + PCM1808 I²S 采集，对应贴片清单阶段 G）。V4.5 继承 V4.3 的
 > 电气修正和 V4.0 逐刀实测定型的 50.0mm IFA 几何，并修复 GNSS 有源天线检测：模块
 > `VCC_RF`(U7.14) 不再悬空，改为两路偏置 Tee PMOS 的源极电源，模块据此才能输出
-> `ANTENNA OK/OPEN/SHORT`。V4.7 通过了下列全部自动检查（ERC 0 违规、DRC 0 违例 / 0 未连通、
-> 覆铜填充为最新），但 V4.0 之后各版均未打样 —— 航空波段和电源键都还没上过电。
+> `ANTENNA OK/OPEN/SHORT`。V4.7 当前 DRC 0 违例 / 0 未连通，覆铜为最新；ERC 0 error / 10 warning。
+> 既有元件测试的 C84 两条子断言失败，按用户范围未修改 C84 或测试。用户已确认 V4.4 实板运行良好，
+> V4.7 航空波段与电源键仍待实板验证；Y4 供电及 U22 VREF 审查项尚未闭环。
 > V4.0 实物在开启 1090 MHz 链路前必须先按内部返修记录处理。
 
 | | Status / 状态 |
@@ -89,7 +91,7 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 207 placements (229 designators, 22 not placed), 475 vias (all 0.30 mm drill / 0.45 mm pad), 1784 track segments |
+| **Scale** | 207 placements (229 designators, 22 not placed), 474 vias (all 0.30 mm drill / 0.45 mm pad), 1795 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
@@ -125,12 +127,12 @@ authored in. Tables, part numbers, and net names are identical in both.
 
 Pre-built packages live in [`release/`](release/):
 
-**The working PCB has changed since the V4.7 archive below. Finalize and verify the design, then regenerate the manufacturing package before ordering. The existing V4.7 archive does not represent the current working PCB.**
+**Regenerated on 2026-09-13 from the revised PCB, with C99 = 100 nF. Files are synchronized; the Y4 supply specification remains open and U22 VREF still lacks the recommended 100 nF. Resolve these review items before placing the order.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | Latest archived V4.7 export — includes `SW3` and `C99`/`R61`, RS-274-X, 15 files. **Working PCB has changed; regenerate before ordering** |
-| `expansion-board-v4-kicad-V4.7-20260913.zip` | Source matching the archived export, **not the current working PCB**. Not accepted by the fab |
+| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | Current revised V4.7 export — C99 = 100 nF, RS-274-X, 15 files; see the open electrical items below before ordering |
+| `expansion-board-v4-kicad-V4.7-20260913.zip` | Source matching the current revised PCB byte for byte; supplied for review, not uploaded to the fab |
 | `expansion-board-v4-gerber-JLC-V4.6-20260911.zip` | ⚠️ Superseded by V4.7 — no power button (the box cannot be switched off or hard-reset) and the TCXO output is DC-coupled straight into BK4819 `XI`. Do not order |
 | `expansion-board-v4-kicad-V4.6-20260911.zip` | ⚠️ Matching superseded V4.6 source archive |
 | `expansion-board-v4-gerber-JLC-V4.5-20260911.zip` | ⚠️ Superseded — same board without the airband chain. Do not order |
@@ -146,28 +148,21 @@ Pre-built packages live in [`release/`](release/):
 | `expansion-board-v4-gerber-JLC-20260828.zip` | ⚠️ Superseded baseline — do not use for a new order. The GNSS antenna/bias topology itself was later verified correct and was not rewired |
 | `expansion-board-v4-gerber-20260828.zip` | ⚠️ Older export in Gerber **X2** format — do not use |
 
-### Airband reference clock — fixed in V4.7, read this before you bench it
+### Airband reference clock — V4.7 recheck
 
-`Y4` (26 MHz TCXO) feeds the `XI` pin of `U21` (BK4819) through `C99` (100 pF
-DC-block) with `R61` (10 kΩ) as the load; the net is split into `VHF_TCXO_OUT`
-on the oscillator side and `VHF_TCXO` on the `XI` side. **In V4.6 and earlier
-the two pads were connected directly** — the TCXO datasheet specifies its output
-only under a 10 kΩ // 10 pF load *through a DC-block capacitor*, and BK4819's
-`XI` is a parallel-resonant crystal-oscillator input that self-biases, so
-DC-coupling them was outside both parts' specified conditions and could have
-left the 26 MHz reference dead. That is why V4.6 is marked superseded above.
+`Y4` feeds `U21` (BK4819) `XI` through `C99` (**100 nF X7R, 0402**),
+with `R61` (10 kΩ) on the XI side. C99 reuses the C37/C52 BOM item
+(Samsung CL05B104KB54PNC, C307331, 50 V ±10%). The former 100 pF value
+did not meet the exact Epson part's external DC-block requirement of Cc ≥ 10 nF.
 
-One thing to measure on the first article: `Y4`'s rated supply is
-**2.85 / 3.0 / 3.15 V** while the board feeds it 3.3 V from `3V3_RF`. The part is
-fine on frequency — ±2.0 ppm at 25 °C plus ±0.5 ppm over temperature, both inside
-the ±2.5 ppm BK4819 asks for — and 3.3 V sits inside the family's 1.7–3.465 V
-range, so nothing is damaged. What 3.3 V costs is only that the frequency figures
-are no longer *guaranteed* (`f0-Vcc` is ±0.2 ppm per ±5 % of Vcc, so the expected
-error is well under 1 ppm). Worth one frequency-offset measurement; not a reason
-to change the part. The datasheet-value equivalent `TG2520SMN` is **not** a valid
-substitute — Epson's own parametric data flags it as having a frequency-control
-pin, which would make `Y4.1` a control input rather than the N.C. this circuit
-leaves floating.
+The revised layout moves Y4 away from the crossing 5 V trace and brings C92
+close to U22 VREF. Two electrical items remain open before fabrication:
+Y4 still receives 3.3 V, outside X1G0042110003's recommended 2.85–3.15 V
+operating range (4.0 V is an absolute maximum, not a performance guarantee);
+U22 VREF still has only 10 µF, without the parallel 100 nF recommended by TI.
+The XI amplitude, bias, total load and receiver lock also require bench verification.
+See the [Epson part specification](https://download.epsondevice.com/td/pdf/td_tcxo_mhz/TG-5006CG_X1G0042110003_en.pdf)
+and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink/pcm1808.pdf).
 
 ### ⚠️ Three things that will ruin the board if set wrong
 
@@ -177,8 +172,8 @@ leaves floating.
 2. **Via solder-mask state comes from the file, not the order form.** JLCPCB,
    HQPCB and JiePei all state the same thing: *"if the file is Gerber, we
    process strictly per the file; this option has no effect"* — Gerber cannot
-   tell a via from a component hole. This board ships 475 vias: 396 tented,
-   79 exposed (all 79 inside pad mask openings, 33 of them thermal via-in-pad).
+   tell a via from a component hole. This board ships 474 vias: 398 tented,
+   76 exposed (all 76 inside pad mask openings, 33 of them thermal via-in-pad).
    `internal/tools/gerber.sh` recomputes this split on every release — never
    copy the numbers from an older revision.
 3. **`J4`'s four `SH` holes must NOT be resin-plugged.** They are ⌀0.60 mm

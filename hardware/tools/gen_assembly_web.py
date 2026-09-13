@@ -111,7 +111,7 @@ VARIANTS = [
     # ── V4.7（当前板：V4.6 + SW3 主电源键 + TCXO 隔直）────────────────
     Variant(
         "v4.7-pwr", "V4.7 带电源版", "expansion-board-v4", "expansion-board-v4",
-        subtitle="含 AIRBAND；新增 SW3 主电源键（接 SY6970 /QON，整机唯一总电门）"
+        subtitle="含 AIRBAND；新增 SW3 电源键（接 SY6970 /QON；电池供电时可长按复位，接 USB 时不保证整机断电）"
                  "与 TCXO 隔直 C99/R61；贴满电源区，"
                  "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
         force_skip=CC_PULLDOWN,

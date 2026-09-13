@@ -5,9 +5,9 @@
 	(uuid "20000000-0000-4000-8000-000000000001")
 	(paper "A3")
 	(title_block
-		(title "Expansion Board V1 - Power: 5V in, 3x LDO")
+		(title "Expansion Board V4.7 - Power: 5V in, 3x LDO")
 		(date "2026-08-01")
-		(rev "V1")
+		(rev "V4.7")
 		(company "Pilot Kit")
 	)
 	(lib_symbols

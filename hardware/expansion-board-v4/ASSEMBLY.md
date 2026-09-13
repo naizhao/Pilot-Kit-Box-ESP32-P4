@@ -26,7 +26,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **U1** | ME6211C33M5 | SOT-23-5 | (74.7, 97.8) | 90° | ★ Exposed leads; hand touch-up possible |
 | **U20** | SY7069 | TSOT-23-6 | (139.2, 95.0) | 0° | ★ Exposed leads; hand touch-up possible |
 | **C77** | 22uF 16V X5R | C_1206_3216Metric | (141.2, 99.7) | -90° | ★ Routine |
-| **C76** | 22uF | C_1206_3216Metric | (134.4, 96.3) | 180° | ★ Routine |
+| **C76** | 22uF | C_1206_3216Metric | (135.2, 96.8) | -90° | ★ Routine |
 | **C72** | 10uF | C_1206_3216Metric | (130.9, 79.2) | 90° | ★ Routine |
 | **C74** | 10uF | C_0805_2012Metric | (143.3, 84.9) | 90° | ★ Routine |
 | **C73** | 10uF | C_0805_2012Metric | (141.3, 88.1) | -90° | ★ Routine |
@@ -44,7 +44,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **C71** | 4.7uF(带电源版) | C_0603_1608Metric | (133.4, 79.0) | 90° | ★ Routine |
 | **R39** | 5.62k | R_0603_1608Metric | (136.2, 88.2) | 90° | ★ Routine |
 | **R40** | 31.6k | R_0603_1608Metric | (134.6, 88.2) | -90° | ★ Routine |
-| **C78** | 1uF | C_0603_1608Metric | (134.3, 93.5) | 180° | ★ Routine |
+| **C78** | 1uF | C_0603_1608Metric | (134.3, 93.8) | 180° | ★ Routine |
 | **C80** | 1uF 25V | C_0603_1608Metric | (136.3, 74.6) | 180° | ★ Routine |
 | **R45** | 10k | R_0603_1608Metric | (129.2, 84.0) | 180° | ★ Routine |
 | **R46** | 10k | R_0603_1608Metric | (129.2, 86.5) | 180° | ★ Routine |
@@ -76,6 +76,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **R10** | 27R | R_0603_1608Metric | (85.3, 83.3) | -90° | ★ Routine |
 | **C22** | 100nF | C_0603_1608Metric | (93.2, 75.8) | 0° | ★ Routine |
 | **C23** | 100nF | C_0603_1608Metric | (91.8, 81.5) | 0° | ★ Routine |
+| **C84** | 1uF | C_0603_1608Metric | (83.3, 85.6) | 180° | ★ Routine |
 | **C20** | 15pF C0G | C_0603_1608Metric | (79.8, 69.1) | 90° | ★ Routine |
 | **C82** | 100nF | C_0603_1608Metric | (91.4, 67.5) | 0° | ★ Routine |
 | **C27** | 100nF | C_0603_1608Metric | (77.9, 82.5) | 180° | ★ Routine |
@@ -86,7 +87,6 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **C83** | 100nF | C_0603_1608Metric | (91.4, 69.8) | 0° | ★ Routine |
 | **C28** | 1uF | C_0603_1608Metric | (83.1, 83.3) | -90° | ★ Routine |
 | **R4** | 1k | R_0603_1608Metric | (82.0, 69.1) | 90° | ★ Routine |
-| **C84** | 1uF | C_0603_1608Metric | (110.7, 80.5) | 0° | ★ Routine |
 | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 77.8) | 0° | ★★ 0402; use low airflow |
 | **D4** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 75.4) | 90° | ★★ 0402; use low airflow |
 
@@ -133,15 +133,14 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | Designator | Value / Model | Footprint | Board position | Rotation | Manual difficulty |
 |---|---|---|---|---|---|
 | **U10** | CC1312R1F3RGZR | QFN-48-1EP_7x7mm_P0.5mm_EP | (104.5, 92.0) | 180° | ★★★ Exposed pad; reflow/hot air required |
-| **J5** | U.FL_978 | U.FL_Hirose_U.FL-R-SMT-1_V | (118.5, 84.7) | 90° | ★ Routine |
+| **J5** | U.FL_978 | U.FL_Hirose_U.FL-R-SMT-1_V | (118.3, 82.9) | 90° | ★ Routine |
 | **Y2** | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_3.2x | (108.3, 98.3) | 90° | ★ Routine |
 | **Y3** | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_3.2x | (111.6, 87.0) | 0° | ★ Routine |
-| **Q2** | AO3401A | SOT-23 | (121.9, 95.8) | 90° | ★ Exposed leads; hand touch-up possible |
+| **Q2** | AO3401A | SOT-23 | (122.0, 93.9) | 90° | ★ Exposed leads; hand touch-up possible |
 | **C66** | 22uF | C_0805_2012Metric | (102.9, 97.2) | 180° | ★ Routine |
 | **C60** | 22uF | C_0805_2012Metric | (99.3, 98.0) | 90° | ★ Routine |
-| **F2** | 6V/200mA | Fuse_0805_2012Metric | (121.9, 92.5) | 180° | ★ Routine |
+| **F2** | 6V/200mA | Fuse_0805_2012Metric | (122.0, 91.0) | 180° | ★ Routine |
 | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | -90° | ★ Routine |
-| **R17** | 10k | R_0603_1608Metric | (121.8, 98.7) | 180° | ★ Routine |
 | **C69** | 18pF | C_0603_1608Metric | (110.1, 85.0) | 180° | ★ Routine |
 | **C68** | 18pF | C_0603_1608Metric | (113.2, 85.0) | 0° | ★ Routine |
 | **C61** | 100nF | C_0603_1608Metric | (102.7, 99.1) | 180° | ★ Routine |
@@ -152,6 +151,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **C64** | 100nF | C_0603_1608Metric | (100.2, 85.8) | 180° | ★ Routine |
 | **R56** | 10k | R_0603_1608Metric | (98.5, 90.0) | 0° | ★ Routine |
 | **C67** | 1uF | C_0603_1608Metric | (103.6, 85.8) | 0° | ★ Routine |
+| **R17** | 10k | R_0603_1608Metric | (122.0, 97.4) | 180° | ★ Routine |
 | **L10** | 27nH | L_0402_1005Metric | (110.9, 95.7) | 90° | ★★ 0402; use low airflow |
 | **C44** | 3.6pF | C_0402_1005Metric | (112.8, 96.5) | 0° | ★★ 0402; use low airflow |
 | **C41** | 2.7pF | C_0402_1005Metric | (115.9, 97.5) | 90° | ★★ 0402; use low airflow |
@@ -233,25 +233,25 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 |---|---|---|---|---|---|
 | **U22** | PCM1808PWR | TSSOP-14_4.4x5mm_P0.65mm | (122.8, 105.3) | 0° | ★ Routine |
 | **U21** | BK4819QN32SC | QFN-32-1EP_4x4mm_P0.4mm_EP | (127.5, 97.6) | 180° | ★★★ Exposed pad; reflow/hot air required |
-| **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_V | (125.8, 89.2) | 90° | ★ Routine |
-| **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_2.5x | (133.8, 99.9) | 180° | ★ Routine |
+| **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT-1_V | (124.4, 82.9) | 90° | ★ Routine |
+| **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_2.5x | (135.1, 102.5) | 90° | ★ Routine |
+| **C92** | 10uF | C_0805_2012Metric | (121.3, 100.8) | 90° | ★ Routine |
 | **C91** | 10uF | C_0805_2012Metric | (129.0, 108.2) | 0° | ★ Routine |
-| **C92** | 10uF | C_0805_2012Metric | (136.2, 108.2) | 0° | ★ Routine |
 | **C93** | 10uF | C_0805_2012Metric | (124.2, 109.4) | 0° | ★ Routine |
 | **R58** | 10k | R_0603_1608Metric | (132.5, 108.2) | 0° | ★ Routine |
 | **C94** | 100nF | C_0603_1608Metric | (120.5, 109.4) | 0° | ★ Routine |
-| **C98** | 100nF | C_0603_1608Metric | (131.8, 103.2) | 90° | ★ Routine |
+| **C98** | 100nF | C_0603_1608Metric | (131.6, 102.1) | 90° | ★ Routine |
 | **R59** | 10k | R_0603_1608Metric | (132.5, 105.6) | 0° | ★ Routine |
-| **C96** | 100nF | C_0603_1608Metric | (128.2, 103.2) | 90° | ★ Routine |
-| **C97** | 1uF | C_0603_1608Metric | (130.0, 103.2) | 90° | ★ Routine |
-| **C88** | 100pF | C_0603_1608Metric | (129.3, 91.1) | -90° | ★ Routine |
+| **C96** | 100nF | C_0603_1608Metric | (128.0, 102.1) | 90° | ★ Routine |
+| **C97** | 1uF | C_0603_1608Metric | (129.8, 102.1) | 90° | ★ Routine |
+| **C88** | 100pF | C_0603_1608Metric | (126.4, 90.7) | 180° | ★ Routine |
 | **C89** | 18pF | C_0603_1608Metric | (128.7, 93.9) | 180° | ★ Routine |
 | **R60** | 0R | R_0603_1608Metric | (124.0, 101.5) | 0° | ★ Routine |
-| **C99** | 100pF C0G | C_0402_1005Metric | (131.3, 100.1) | 90° | ★★ 0402; use low airflow |
-| **C95** | 100nF | C_0603_1608Metric | (120.5, 101.5) | 0° | ★ Routine |
-| **R61** | 10k | R_0402_1005Metric | (131.2, 97.9) | 0° | ★★ 0402; use low airflow |
+| **C95** | 100nF | C_0603_1608Metric | (119.4, 100.1) | 90° | ★ Routine |
+| **C99** | 100nF | C_0402_1005Metric | (133.6, 100.1) | 180° | ★★ 0402; use low airflow |
+| **R61** | 10k | R_0402_1005Metric | (131.1, 97.9) | 0° | ★★ 0402; use low airflow |
 | **L18** | 100nH | L_0402_1005Metric | (126.0, 93.9) | 0° | ★★ 0402; use low airflow |
-| **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (129.4, 89.0) | 180° | ★★ 0402; use low airflow |
+| **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (126.4, 89.3) | 180° | ★★ 0402; use low airflow |
 
 ## Not placed (22 positions)
 

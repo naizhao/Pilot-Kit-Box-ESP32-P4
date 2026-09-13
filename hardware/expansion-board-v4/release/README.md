@@ -1,7 +1,8 @@
 # V4.7 当前制造输出入口
 
-**下单用这两个包**，它们与 `kicad/expansion-board-v4.kicad_pcb`、`release/smt/`
-以及装配文档一致（由 `test_v4_release_package_is_revisioned_and_matches_source` 逐字节守住）：
+**当前审阅用制造包已刷新（C99=100nF，保留用户修订布局）。** 工程包与当前设计文件逐字节一致，BOM/CPL 和装配文档也已刷新。
+
+**下单前仍需闭环 Y4 供电超推荐范围及 U22 VREF 并联100nF建议，见[当前电气复查结论](../README.md#airband-reference-clock--v47-recheck)。文件同步通过不等于电气指标已保证。**
 
 - [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.7-20260913.zip)
 - [配套 KiCad 源包](expansion-board-v4-kicad-V4.7-20260913.zip)
@@ -49,4 +50,13 @@
 | 目录 | 是什么 |
 |---|---|
 | `smt/` | 当前正式 BOM / CPL，**无 R62** |
-| `*-V4.x-*.zip` | 历代正式包；下单只认本文件顶部那两个 V4.7 |
+| `*-V4.x-*.zip` | 历代正式包；当前快照为本文件顶部两个 V4.7；先处理上述待决项 |
+
+## 本次快照校验
+
+PCB SHA-256：`2e61961aac08d2289737d14d640c14d1f4c381ab087f9153b109cc709611bf98`。
+
+- `expansion-board-v4-gerber-JLC-V4.7-20260913.zip`：`acb70e7250b175e67f538115f207e7b9c33c0944d967f1b5c3ea713c2d4d6a30`
+- `expansion-board-v4-kicad-V4.7-20260913.zip`：`03fa3f31d8a03b763bc6ad39ce20ff88707352e36f4bb56e415be6e25d32c03b`
+
+较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。

@@ -5,9 +5,9 @@
 	(uuid "10000000-0000-4000-8000-000000000001")
 	(paper "A3")
 	(title_block
-		(title "Pilot Kit Expansion Board V1 - Root")
+		(title "Pilot Kit Expansion Board V4.7 - Root")
 		(date "2026-08-01")
-		(rev "V1")
+		(rev "V4.7")
 		(company "Pilot Kit")
 		(comment 1 "Dual-band ADS-B (1090ES/978UAT) + IMU + BARO + GNSS")
 		(comment 2 "Topology: independently transcribed, no third-party design files reused")

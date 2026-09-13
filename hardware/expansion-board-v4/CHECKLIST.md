@@ -80,29 +80,29 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C73** | 10uF | C_0805_2012Metric | (141.3, 88.1) | A Power |  |
 | ☐ | **C74** | 10uF | C_0805_2012Metric | (143.3, 84.9) | A Power |  |
 | ☐ | **C75** | 10uF | C_0805_2012Metric | (139.1, 88.1) | A Power |  |
-| ☐ | **C76** | 22uF | C_1206_3216Metric | (134.4, 96.3) | A Power |  |
+| ☐ | **C76** | 22uF | C_1206_3216Metric | (135.2, 96.8) | A Power |  |
 | ☐ | **C77** | 22uF 16V X5R | C_1206_3216Metric | (141.2, 99.7) | A Power |  |
-| ☐ | **C78** | 1uF | C_0603_1608Metric | (134.3, 93.5) | A Power |  |
+| ☐ | **C78** | 1uF | C_0603_1608Metric | (134.3, 93.8) | A Power |  |
 | ☐ | **C79** | 1uF | C_0603_1608Metric | (130.6, 65.0) | A Power |  |
 | ☐ | **C80** | 1uF 25V | C_0603_1608Metric | (136.3, 74.6) | A Power |  |
 | ☐ | **C81** | 470pF C0G | C_0402_1005Metric | (115.2, 64.5) | E 1090 Receive Chain |  |
 | ☐ | **C82** | 100nF | C_0603_1608Metric | (91.4, 67.5) | B MCU + Flash |  |
 | ☐ | **C83** | 100nF | C_0603_1608Metric | (91.4, 69.8) | B MCU + Flash |  |
-| ☐ | **C84** | 1uF | C_0603_1608Metric | (110.7, 80.5) | B MCU + Flash |  |
+| ☐ | **C84** | 1uF | C_0603_1608Metric | (83.3, 85.6) | B MCU + Flash |  |
 | ☐ | **C85** | 100nF | C_0603_1608Metric | (113.7, 80.5) | B MCU + Flash |  |
 | ☐ | **C86** | 100nF | C_0603_1608Metric | (121.4, 88.1) | B MCU + Flash |  |
 | ☐ | **C87** | 10nF C0G | C_0603_1608Metric | (83.5, 88.5) | B MCU + Flash |  |
-| ☐ | **C88** | 100pF | C_0603_1608Metric | (129.3, 91.1) | G Airband |  |
+| ☐ | **C88** | 100pF | C_0603_1608Metric | (126.4, 90.7) | G Airband |  |
 | ☐ | **C89** | 18pF | C_0603_1608Metric | (128.7, 93.9) | G Airband |  |
 | ☐ | **C91** | 10uF | C_0805_2012Metric | (129.0, 108.2) | G Airband |  |
-| ☐ | **C92** | 10uF | C_0805_2012Metric | (136.2, 108.2) | G Airband |  |
+| ☐ | **C92** | 10uF | C_0805_2012Metric | (121.3, 100.8) | G Airband |  |
 | ☐ | **C93** | 10uF | C_0805_2012Metric | (124.2, 109.4) | G Airband |  |
 | ☐ | **C94** | 100nF | C_0603_1608Metric | (120.5, 109.4) | G Airband |  |
-| ☐ | **C95** | 100nF | C_0603_1608Metric | (120.5, 101.5) | G Airband |  |
-| ☐ | **C96** | 100nF | C_0603_1608Metric | (128.2, 103.2) | G Airband |  |
-| ☐ | **C97** | 1uF | C_0603_1608Metric | (130.0, 103.2) | G Airband |  |
-| ☐ | **C98** | 100nF | C_0603_1608Metric | (131.8, 103.2) | G Airband |  |
-| ☐ | **C99** | 100pF C0G | C_0402_1005Metric | (131.3, 100.1) | G Airband |  |
+| ☐ | **C95** | 100nF | C_0603_1608Metric | (119.4, 100.1) | G Airband |  |
+| ☐ | **C96** | 100nF | C_0603_1608Metric | (128.0, 102.1) | G Airband |  |
+| ☐ | **C97** | 1uF | C_0603_1608Metric | (129.8, 102.1) | G Airband |  |
+| ☐ | **C98** | 100nF | C_0603_1608Metric | (131.6, 102.1) | G Airband |  |
+| ☐ | **C99** | 100nF | C_0402_1005Metric | (133.6, 100.1) | G Airband |  |
 | ☐ | **R1** | 10k | R_0603_1608Metric | (55.2, 84.5) | C Sensors + GNSS |  |
 | ☐ | **R2** | 4.7k | R_0603_1608Metric | (64.1, 97.8) | C Sensors + GNSS |  |
 | ☐ | **R3** | 4.7k | R_0603_1608Metric | (64.1, 95.2) | C Sensors + GNSS |  |
@@ -114,7 +114,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R9** | 27R | R_0603_1608Metric | (87.9, 83.3) | B MCU + Flash |  |
 | ☐ | **R10** | 27R | R_0603_1608Metric | (85.3, 83.3) | B MCU + Flash |  |
 | ☐ | **R11** | 3.32k | R_0402_1005Metric | (105.1, 59.7) | E 1090 Receive Chain |  |
-| ☐ | **R17** | 10k | R_0603_1608Metric | (121.8, 98.7) | D 978 Transceiver |  |
+| ☐ | **R17** | 10k | R_0603_1608Metric | (122.0, 97.4) | D 978 Transceiver |  |
 | ☐ | **R18** | 10k | R_0603_1608Metric | (91.4, 71.4) | E 1090 Receive Chain |  |
 | ☐ | **R19** | 52.3R | R_0402_1005Metric | (115.1, 73.4) | E 1090 Receive Chain |  |
 | ☐ | **R21** | 0R | R_0603_1608Metric | (105.0, 72.6) | E 1090 Receive Chain |  |
@@ -155,7 +155,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R58** | 10k | R_0603_1608Metric | (132.5, 108.2) | G Airband |  |
 | ☐ | **R59** | 10k | R_0603_1608Metric | (132.5, 105.6) | G Airband |  |
 | ☐ | **R60** | 0R | R_0603_1608Metric | (124.0, 101.5) | G Airband |  |
-| ☐ | **R61** | 10k | R_0402_1005Metric | (131.2, 97.9) | G Airband |  |
+| ☐ | **R61** | 10k | R_0402_1005Metric | (131.1, 97.9) | G Airband |  |
 | ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain |  |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
@@ -174,12 +174,12 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **D3** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (117.5, 89.9) | D 978 Transceiver | Polarized; follow the cathode marking |
 | ☐ | **D4** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 75.4) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
 | ☐ | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 77.8) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
-| ☐ | **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (129.4, 89.0) | G Airband | See the Chinese companion for the detailed engineering note |
-| ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (121.9, 92.5) | D 978 Transceiver |  |
+| ☐ | **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (126.4, 89.3) | G Airband | See the Chinese companion for the detailed engineering note |
+| ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (122.0, 91.0) | D 978 Transceiver |  |
 | ☐ | **F3** | 6V/200mA | Fuse_0805_2012Metric | (98.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **F4** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 75.9) | C Sensors + GNSS |  |
 | ☐ | **F5** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 69.2) | C Sensors + GNSS |  |
-| ☐ | **Q2** | AO3401A | SOT-23 | (121.9, 95.8) | D 978 Transceiver |  |
+| ☐ | **Q2** | AO3401A | SOT-23 | (122.0, 93.9) | D 978 Transceiver |  |
 | ☐ | **Q3** | AO3401A | SOT-23 | (95.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **Q4** | AO3401A | SOT-23 | (63.5, 75.9) | C Sensors + GNSS |  |
 | ☐ | **Q5** | AO3401A | SOT-23 | (63.5, 69.2) | C Sensors + GNSS |  |
@@ -209,16 +209,16 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **Y1** | 12MHz CL=10pF ABM8-272-T3 | Crystal_SMD_3225-4Pin_ | (85.1, 69.1) | B MCU + Flash | Passive crystal; 180-degree rotation is electrically equivalent |
 | ☐ | **Y2** | 48MHz ABM8W-7pF | Crystal_SMD_3225-4Pin_ | (108.3, 98.3) | D 978 Transceiver | Passive crystal; 180-degree rotation is electrically equivalent |
 | ☐ | **Y3** | 32.768kHz FC-135 | Crystal_SMD_3215-2Pin_ | (111.6, 87.0) | D 978 Transceiver |  |
-| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (133.8, 99.9) | G Airband | ACTIVE TCXO: pin2=GND / pin4=Vcc — rotating it 180 degrees shorts them and destroys the part on power-up. There is NO marking on the top face; the 0.2mm chamfer is on the BOTTOM at corner #1 (datasheet C0.2) — check it before placing, or use one unit to establish the bottom-chamfer / top-marking relationship first. The filled silkscreen dot on the board points at pin 1 |
+| ☐ | **Y4** | 26MHz TCXO <=2.5ppm | Crystal_SMD_2520-4Pin_ | (135.1, 102.5) | G Airband | ACTIVE TCXO: pin2=GND / pin4=Vcc — rotating it 180 degrees shorts them and destroys the part on power-up. There is NO marking on the top face; the 0.2mm chamfer is on the BOTTOM at corner #1 (datasheet C0.2) — check it before placing, or use one unit to establish the bottom-chamfer / top-marking relationship first. The filled silkscreen dot on the board points at pin 1 |
 | ☐ | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm | (92.6, 106.3) | F External Interface |  |
 | ☐ | **J2** | U.FL_GNSS_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (54.0, 75.9) | C Sensors + GNSS |  |
 | ☐ | **J4** | USB-C_16P | USB_C_Receptacle_HRO_T | (145.8, 73.0) | B MCU + Flash |  |
-| ☐ | **J5** | U.FL_978 | U.FL_Hirose_U.FL-R-SMT | (118.5, 84.7) | D 978 Transceiver |  |
+| ☐ | **J5** | U.FL_978 | U.FL_Hirose_U.FL-R-SMT | (118.3, 82.9) | D 978 Transceiver |  |
 | ☐ | **J6** | U.FL_1090_EXT(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (106.5, 67.3) | E 1090 Receive Chain |  |
 | ☐ | **J7** | U.FL_IFA_TEST(π后调试口) | U.FL_Hirose_U.FL-R-SMT | (90.0, 61.3) | E 1090 Receive Chain |  |
 | ☐ | **J8** | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT | (54.0, 69.2) | C Sensors + GNSS |  |
 | ☐ | **J9** | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P | (144.8, 99.0) | A Power |  |
-| ☐ | **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (125.8, 89.2) | G Airband |  |
+| ☐ | **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (124.4, 82.9) | G Airband |  |
 | — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (79.2, 57.8) | **Not placed** (on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span) | Per-cut measured 50.0mm outer envelope / 48.5mm centerline span |
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (79.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (84.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
