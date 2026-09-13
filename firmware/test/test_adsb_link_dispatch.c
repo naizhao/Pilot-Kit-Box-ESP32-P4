@@ -87,6 +87,11 @@ uint32_t pk_ui_get_own_icao(void) { return 0; }
 void adsb_link_dec_init(void) {}
 void adsb_link_encode(void) {}
 void adsb_link_uat_uplink_decode(void) {}
+/* 本测试驱动的是分发和扫描结果表，不验字节编码（那是 test_adsb_link_codec.c
+ * 的事）。config_encode 返回 0 让 link_tx 整条路径不被触发——UART 在 host
+ * 上并不存在。返回类型与真声明保持一致，其余同上面几个桩的惯例。 */
+size_t adsb_link_config_encode(void) { return 0; }
+bool adsb_link_sweep_row_decode(void) { return false; }
 void cpr_init(void) {}
 bool cpr_decode_position(uint32_t icao24, int fflag, bool is_surface,
                          int lat_cpr, int lon_cpr, int64_t now_us,
@@ -278,6 +283,62 @@ static void test_tc20_position_reaches_airborne_cpr(void)
     CHECK(a.have_position, "TC20 decoded position missing from fusion table\n");
 }
 
+/*
+ * 门限扫描结果表（v1.3）。这里测的是表本身的行为——下标推进、越界拒收、
+ * 清空语义；SWEEP_ROW 的字节解码另由 test_adsb_link_codec.c 覆盖。
+ */
+static void test_sweep_table(void)
+{
+    pk_sweep_row_t rows[PK_SWEEP_MAX_ROWS];
+    int total = -1;
+
+    pk_sweep_start();
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 0,
+          "start 应清空上一轮\n");
+    CHECK(total == 0, "start 后 total 应为 0，实际 %d\n", total);
+    CHECK(!pk_sweep_running(), "还没收到任何行时不该报『扫描中』\n");
+
+    pk_sweep_ingest_row(0, 9, 200, 724, 0, 0, 175027, 289423);
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 1,
+          "收到第一行后应有 1 行\n");
+    CHECK(total == 9, "total 应为 9，实际 %d\n", total);
+    CHECK(pk_sweep_running(), "1/9 时应报『扫描中』\n");
+    CHECK(rows[0].permille == 200 && rows[0].level_mv == 724 &&
+          rows[0].noise == 175027 && rows[0].ovr == 289423,
+          "第一行字段错\n");
+
+    /* 中间丢一行：跳着收 idx=3。已收行数必须按最大下标推进到 4，而不是
+     * 停在 2——用 ++ 计数的话进度会永远差一格，最后一行到了也判不出结束。 */
+    pk_sweep_ingest_row(3, 9, 500, 1636, 2, 9, 1234217, 240930);
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 4,
+          "跳号后应按最大下标推进到 4 行\n");
+    CHECK(rows[3].permille == 500 && rows[3].frames == 2, "第四行字段错\n");
+
+    /* 收到最后一行 → 不再是"扫描中" */
+    pk_sweep_ingest_row(8, 9, 1000, 3087, 0, 12, 27940, 2);
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 9,
+          "收到末行后应为 9 行\n");
+    CHECK(!pk_sweep_running(), "9/9 之后不该再报『扫描中』\n");
+
+    /* 越界行整条拒收，且不得污染 total —— 把 total 截断成我们能存下的数目，
+     * 会让对面还在扫的时候就判成已结束。 */
+    pk_sweep_ingest_row(PK_SWEEP_MAX_ROWS, 9, 600, 0, 0, 0, 0, 0);
+    pk_sweep_ingest_row(0, PK_SWEEP_MAX_ROWS + 1, 600, 0, 0, 0, 0, 0);
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 9 &&
+          total == 9, "越界行不该改变表状态（n=%d total=%d）\n",
+          pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, NULL), total);
+
+    /* cap 小于已收行数时只拷 cap 行，不越界写调用方缓冲 */
+    pk_sweep_row_t small[2];
+    CHECK(pk_sweep_snapshot(small, 2, NULL) == 2, "cap 限制应生效\n");
+
+    /* 重新开始必须把上一轮抹掉：两轮之间天线和环境都可能变了，残留的尾部
+     * 会被当成本轮结果读。 */
+    pk_sweep_start();
+    CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 0 && total == 0,
+          "重新 start 未清空\n");
+}
+
 int main(void)
 {
     /* adsb_link_task.c registers this production sink with modes_ingest_init()
@@ -287,6 +348,7 @@ int main(void)
     test_df18_identity_reaches_traffic_record();
     test_nonicao_df18_surface_does_not_create_target();
     test_tc20_position_reaches_airborne_cpr();
+    test_sweep_table();
 
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);

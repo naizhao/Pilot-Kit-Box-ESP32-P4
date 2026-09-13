@@ -31,6 +31,36 @@ typedef struct {
 /* 诊断页只读快照；stats 可传 NULL。 */
 pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
 
+/* ── 门限扫描结果（RP2040 经 SWEEP_ROW 逐点上报）─────────────────────
+ * UI 边收边画，不等整轮结束——一轮 90s。 */
+#define PK_SWEEP_MAX_ROWS 12
+
+typedef struct {
+    uint16_t permille;   /* 已解码成 permille，UI 不再碰协议标度 */
+    uint16_t level_mv;
+    uint32_t frames, pre, noise, ovr;
+} pk_sweep_row_t;
+
+/* 拷出已收到的行；返回行数。total 出参是本轮总点数（0 = 还没收到任何行）。
+ * 拷贝而不是回指内部数组：这张表由链路任务写、UI 任务读，回指等于把撕裂
+ * 风险交给调用方。 */
+int  pk_sweep_snapshot(pk_sweep_row_t *out, int cap, int *total);
+
+/* 本轮是否还在进行（收到的行数 < total）。UI 用它决定显示"扫描中"还是
+ * 结果，也用它在扫描期间禁掉天线切换——切了整张表就跨了两种条件。 */
+bool pk_sweep_running(void);
+
+/* 启动/中止扫描（经 CONFIG_REQ 的 SWEEP key 下发）。启动会清空上一轮结果。 */
+void pk_sweep_start(void);
+void pk_sweep_stop(void);
+
+/* 存一行结果。参数是**已解码**的值——生产路径由 SWEEP_ROW 的处理分支解出
+ * 后调用。拆成这个形状是为了让表本身的行为（下标推进、越界拒收、清空语义）
+ * 能被 host 直接驱动；payload 的解码另由 codec 单测覆盖，两边不重复。 */
+void pk_sweep_ingest_row(uint8_t idx, uint8_t total, uint16_t permille,
+                         uint16_t level_mv, uint32_t frames, uint32_t pre,
+                         uint32_t noise, uint32_t ovr);
+
 /* 创建链路任务。前置：record sinks 与 pk_rec_ingest_init() 已就绪
  * （调用点保持在 app_main 末尾，即旧 sdr/dsp 的位置）。 */
 void pk_adsb_link_start(void);

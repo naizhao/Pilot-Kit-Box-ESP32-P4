@@ -774,6 +774,90 @@ void pk_adsb_link_push_config(void)
     if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
 }
 
+/* ── 门限扫描结果表 ───────────────────────────────────────────────────
+ * 链路任务单写、UI 任务单读。用 portMUX 而不是原子量：一行有 6 个字段，
+ * UI 要的是**一致的一行**，逐字段原子读出来的可能是半新半旧的组合。
+ * 临界区里只做定长 memcpy，代价可忽略。 */
+static portMUX_TYPE      s_sweep_mux = portMUX_INITIALIZER_UNLOCKED;
+static pk_sweep_row_t    s_sweep[PK_SWEEP_MAX_ROWS];
+static int               s_sweep_n;       /* 已收到的行数 */
+static int               s_sweep_total;   /* 本轮总点数，0 = 尚未开始 */
+
+void pk_sweep_ingest_row(uint8_t idx, uint8_t total, uint16_t permille,
+                         uint16_t level_mv, uint32_t frames, uint32_t pre,
+                         uint32_t noise, uint32_t ovr)
+{
+    /* 对面比我们新、点数更多时忽略超出的行，而不是截断 total：把 total 记成
+     * 我们能存下的数目，会让 pk_sweep_running() 在对面还没扫完时就报"已结束"。 */
+    if (idx >= PK_SWEEP_MAX_ROWS || total > PK_SWEEP_MAX_ROWS)
+        return;
+
+    const pk_sweep_row_t row = {
+        .permille = permille, .level_mv = level_mv,
+        .frames = frames, .pre = pre, .noise = noise, .ovr = ovr,
+    };
+    portENTER_CRITICAL(&s_sweep_mux);
+    s_sweep[idx]  = row;
+    s_sweep_total = total;
+    /* 按最大下标推进而不是 ++：万一丢了一行，用 ++ 会让"已收行数"永远差
+     * 一格，UI 的进度就永远卡在倒数第二格、也永远判不出扫描已结束。 */
+    if ((int)idx + 1 > s_sweep_n) s_sweep_n = (int)idx + 1;
+    portEXIT_CRITICAL(&s_sweep_mux);
+}
+
+static void sweep_store_row(const adsb_link_msg_t *m)
+{
+    uint8_t idx = 0, total = 0, pv = 0;
+    uint16_t mv = 0;
+    uint32_t frames = 0, pre = 0, noise = 0, ovr = 0;
+    if (!adsb_link_sweep_row_decode(m->payload, m->payload_len, &idx, &total,
+                                    &pv, &mv, &frames, &pre, &noise, &ovr))
+        return;                            /* 长度不符：整帧丢弃 */
+    const int pml = adsb_link_threshold_from_val(pv);
+    pk_sweep_ingest_row(idx, total, (uint16_t)(pml > 0 ? pml : 0), mv,
+                        frames, pre, noise, ovr);
+}
+
+int pk_sweep_snapshot(pk_sweep_row_t *out, int cap, int *total)
+{
+    portENTER_CRITICAL(&s_sweep_mux);
+    const int n = s_sweep_n < cap ? s_sweep_n : cap;
+    if (out && n > 0) memcpy(out, s_sweep, (size_t)n * sizeof(*out));
+    if (total) *total = s_sweep_total;
+    portEXIT_CRITICAL(&s_sweep_mux);
+    return n;
+}
+
+bool pk_sweep_running(void)
+{
+    portENTER_CRITICAL(&s_sweep_mux);
+    const bool run = (s_sweep_total > 0 && s_sweep_n < s_sweep_total);
+    portEXIT_CRITICAL(&s_sweep_mux);
+    return run;
+}
+
+static void sweep_send_cfg(uint8_t on)
+{
+    const adsb_link_cfg_item_t it = { ADSB_LINK_CFG_SWEEP, on };
+    uint8_t pl[1 + 2];
+    const size_t n = adsb_link_config_encode(pl, sizeof pl, &it, 1);
+    if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
+}
+
+void pk_sweep_start(void)
+{
+    /* 清空上一轮：不清的话新一轮前几点还没回来时，UI 会把上一轮的尾部
+     * 当成本轮结果显示出来——两轮之间天线和环境都可能变了。 */
+    portENTER_CRITICAL(&s_sweep_mux);
+    memset(s_sweep, 0, sizeof s_sweep);
+    s_sweep_n = 0;
+    s_sweep_total = 0;
+    portEXIT_CRITICAL(&s_sweep_mux);
+    sweep_send_cfg(1);
+}
+
+void pk_sweep_stop(void) { sweep_send_cfg(0); }
+
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {
     (void)user;
@@ -816,6 +900,10 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         uat_ingest_feed(u_fr, &meta);
         break;
     }
+    case ADSB_LINK_MSG_SWEEP_ROW:
+        sweep_store_row(m);
+        break;
+
     case ADSB_LINK_MSG_HELLO:
     case ADSB_LINK_MSG_CAPABILITIES: {
         /* 协议 §5：P4 对**每个**合法 HELLO 都回一帧（audit round 3，ledger
