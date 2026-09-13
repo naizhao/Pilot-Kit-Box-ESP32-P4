@@ -17,7 +17,7 @@
  * drift 的代价随着行数增长只会更糟：行号错位意味着点 A 行执行 B 行的动作，
  * 而这一页的最后一行是**格式化 SD**。
  */
-#define PK_SETTINGS_ROW_COUNT  16
+#define PK_SETTINGS_ROW_COUNT  17
 
 void pk_settings_page_render(uint16_t *fb);
 

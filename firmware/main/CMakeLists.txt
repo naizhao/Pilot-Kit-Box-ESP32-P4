@@ -157,6 +157,7 @@ idf_component_register(
         "third_party/pk_lodepng.c"
         "map_page.c"
         "about_page.c"
+        "ant_adv_page.c"
         "diag_page.c"
         "cal_wizard.c"
         "boot_splash.c"

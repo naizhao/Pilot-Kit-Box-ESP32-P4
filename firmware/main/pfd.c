@@ -24,6 +24,7 @@
 #include "esp_timer.h"
 
 #include "about_page.h"
+#include "ant_adv_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "aircraft_state.h"
@@ -207,6 +208,10 @@ static void pfd_task(void *arg)
         } else switch (mode) {
         case PK_UI_MODE_CAL_WIZARD:
             pk_cal_wizard_render(fb);
+            break;
+
+        case PK_UI_MODE_ANT_ADV:
+            pk_ant_adv_page_render(fb);
             break;
 
         case PK_UI_MODE_ABOUT:

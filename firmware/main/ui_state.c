@@ -138,6 +138,7 @@ static const char *mode_name(pk_ui_mode_t m)
     case PK_UI_MODE_ABOUT:       return "ABOUT";
     case PK_UI_MODE_DIAG:        return "DIAG";
     case PK_UI_MODE_CAL_WIZARD:  return "CAL_WIZARD";
+    case PK_UI_MODE_ANT_ADV:     return "ANT_ADV";
     default:                     return "?";
     }
 }
@@ -169,6 +170,9 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;
                                   s_diag_scroll_y = 0;          break;
     case PK_UI_MODE_DIAG:        s_mode = PK_UI_MODE_PFD;       break;
+    /* 高级页退回**设置页**而不是 PFD：它是从设置页点进来的，MODE 键的去向
+     * 跟页内「返回」保持一致，才不会让人以为自己按错了键。 */
+    case PK_UI_MODE_ANT_ADV:     s_mode = PK_UI_MODE_SETTINGS;  break;
     case PK_UI_MODE_CAL_WIZARD:  s_mode = PK_UI_MODE_PFD;
                                  /* 手动离开校准页 = 用户明确表示"现在不想
                                   * 校准"，关掉自动重弹的闸门，理由见

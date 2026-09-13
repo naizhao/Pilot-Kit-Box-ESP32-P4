@@ -489,7 +489,40 @@ void pk_settings_page_render(uint16_t *fb)
                        pk_rgb565(255, 90, 80), PK_AA_XS); }
       row++; }
 
-    /* 15 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
+    /* 15 1090 高级 —— 动作行，跳到解调门限/扫频页。
+     *
+     * 写法照第 12 行罗盘校准（深色圆角值框 + hit_set kind=3 + apply 里切页），
+     * 不套格式化那套红底：它不危险，套危险配色会把它误标成"别乱点"。
+     *
+     * 位置在天线两行之后、格式化之前：它是这两行的"进一步"（同一路射频的
+     * 解调参数），挨着放才读得出从属关系；而危险按钮必须独占最后一行。
+     *
+     * 值框里显示当前门限而不是一个"打开"字样——和校准行显示当前精度同理，
+     * 一眼能判断该不该点进去。0 显示成「默认」，那是 RP2040 固件默认值。 */
+    { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_ANT_ADV));
+      const int y_mid = ROW_Y(row);
+      const int y0 = y_mid - SET_CTL_H / 2;
+      const int w  = 200;
+      const int x0 = SET_CTL_R - w;
+      pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H,
+                             SET_CTL_H / 2, pk_rgb565(28, 36, 48));
+      char v[40];
+      const int th = pk_thresh_1090_get();
+      if (th > 0)
+          snprintf(v, sizeof(v), "%s  %d",
+                   pk_i18n_text(PK_TR_ANT_ADV_THRESHOLD), th);
+      else
+          snprintf(v, sizeof(v), "%s  %s",
+                   pk_i18n_text(PK_TR_ANT_ADV_THRESHOLD),
+                   pk_i18n_text(PK_TR_ANT_ADV_AUTO));
+      const int tw = pk_aa_text_width(v, PK_AA_S);
+      pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x0 + (w - tw) / 2,
+                 y0 + (SET_CTL_H - PK_AA_S_H) / 2, v,
+                 pk_rgb565(235, 240, 248), PK_AA_S);
+      hit_set(row, 3, x0, w, 0, y_mid);
+      row++; }
+
+    /* 16 格式化 SD —— 危险按钮，红底。文案跟着两步确认状态机走。 */
     { ROW_LABEL(row, pk_i18n_text(PK_TR_SETTINGS_FORMAT_SD));
       const int y_mid = ROW_Y(row);
       const int y0 = y_mid - SET_CTL_H / 2;

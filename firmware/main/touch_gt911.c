@@ -48,6 +48,7 @@
 #include "pk_touch_arbiter.h"
 #include "traffic_page.h"
 #include "map_page.h"
+#include "ant_adv_page.h"
 #include "ui_state.h"
 
 static const char *TAG = "touch";
@@ -209,6 +210,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                      /* 校准页只有「稍后再说」一个命中区，其余落点放行给
                       * LVGL（FAB → 导航网格那条退路要照常可用）。这一页在
                       * 4.3″ 板上没有别的退路：MODE 键已经没有了。 */
+                     || (m == PK_UI_MODE_ANT_ADV    && pk_ant_adv_page_touch(lx, ly))
                      || (m == PK_UI_MODE_CAL_WIZARD && pk_cal_wizard_touch(lx, ly));
                 break;
             }

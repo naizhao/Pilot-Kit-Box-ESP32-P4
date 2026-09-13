@@ -32,6 +32,7 @@
 #include "config_traffic.h"
 #include "config_ac_category.h"
 #include "config_antenna.h"
+#include "adsb_link_task.h"  /* pk_sweep_running —— 扫描中锁住天线切换 */
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
 #include "record_sink.h"
@@ -269,6 +270,13 @@ void pk_settings_apply(int row, int v)
 
     case 13:  /* 1090 天线。立即生效：set 里落 NVS 之后马上经 CONFIG_REQ
                * 推给 RP2040（config_antenna.c），不等重启。 */
+        /* 扫描进行中不许换天线：一轮 90s，中途换了的话前后两段点是在两种
+         * 射频条件下测的，拼成一张表会得出彻底错误的最优点——而表面上它
+         * 看起来完全正常。宁可让这一次点击不生效。 */
+        if (pk_sweep_running()) {
+            pk_ui_toast_show(PK_TR_ANT_ADV_SWEEP_RUNNING, false);
+            break;
+        }
         pk_ant_1090_set(v == 1 ? PK_ANT_1090_EXTERNAL : PK_ANT_1090_ONBOARD);
         break;
 
@@ -277,7 +285,13 @@ void pk_settings_apply(int row, int v)
         pk_ant_gnss_set(v == 1 ? PK_ANT_GNSS_ONBOARD : PK_ANT_GNSS_EXTERNAL);
         break;
 
-    case 15:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
+    case 15:  /* 1090 高级 —— 与罗盘校准那行同类：不改值，跳到另一个界面。
+               * 门限和扫频都在那一页里，见 ant_adv_page.h 讲"为什么不把步进器
+               * 直接摊在设置页上"。 */
+        pk_ui_set_mode(PK_UI_MODE_ANT_ADV);
+        break;
+
+    case 16:  /* 格式化 SD —— 复用两步确认状态机，第一次 ARM、第二次才真格式化 */
         pk_settings_format_action();
         break;
 

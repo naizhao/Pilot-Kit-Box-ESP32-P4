@@ -691,6 +691,104 @@ STRINGS = [
         },
     ),
     (
+        "SETTINGS_ANT_ADV",
+        {
+            # 设置页行标签，点进去是 1090 解调的高级页（门限 + 扫频）。
+            # 跟罩哥确认过的定位：这页是**调试用**的，不是日常项，所以做成
+            # 跳转而不是把门限步进器直接摊在设置页上。
+            "en": "1090 advanced",
+            "zh": "1090 高级",
+        },
+    ),
+    (
+        "ANT_ADV_TITLE",
+        {
+            "en": "1090 DEMODULATION",
+            "zh": "1090 解调",
+        },
+    ),
+    (
+        "ANT_ADV_THRESHOLD",
+        {
+            # 比较器的判决电平。不叫「灵敏度」：调高调低都会让收帧变少
+            # （低了淹在噪声里、高了弱信号过不去），叫灵敏度会让人以为
+            # 单调。
+            "en": "Threshold",
+            "zh": "解调门限",
+        },
+    ),
+    (
+        "ANT_ADV_AUTO",
+        {
+            # 门限 = 0 时用 RP2040 的固件默认值。
+            "en": "Default",
+            "zh": "默认",
+        },
+    ),
+    (
+        "ANT_ADV_SWEEP",
+        {
+            "en": "Sweep",
+            "zh": "扫频",
+        },
+    ),
+    (
+        "ANT_ADV_SWEEP_RUNNING",
+        {
+            # 扫描进行中，带进度。整轮 90s，必须让人看出它在动。
+            "en": "Scanning",
+            "zh": "扫描中",
+        },
+    ),
+    (
+        "ANT_ADV_STOP",
+        {
+            "en": "Stop",
+            "zh": "停止",
+        },
+    ),
+    (
+        "ANT_ADV_BEST",
+        {
+            # 扫描结果里的建议点。
+            "en": "Best",
+            "zh": "建议",
+        },
+    ),
+    (
+        "ANT_ADV_APPLY",
+        {
+            "en": "Apply",
+            "zh": "采用",
+        },
+    ),
+    (
+        "ANT_ADV_NO_SIGNAL",
+        {
+            # 整张表 frames 和 pre 全是 0。此时任何"建议值"都是瞎猜，必须
+            # 说清楚而不是随便挑一个点报上去——2026-09-13 夜里实测就扫出过
+            # 整张 0 表。
+            "en": "No signal - check antenna/traffic",
+            "zh": "无信号，先查天线和空情",
+        },
+    ),
+    (
+        "ANT_ADV_HINT",
+        {
+            # 门限最优点不是常数：同一块板一天之内漂过两次。这句话是为了让
+            # 人知道"扫出来的值过几天可能就不对了"，而不是当成一次性标定。
+            "en": "Best point shifts with antenna/site - re-sweep when it changes",
+            "zh": "最优点随天线和环境变，换了就重扫",
+        },
+    ),
+    (
+        "ANT_ADV_BACK",
+        {
+            "en": "Back",
+            "zh": "返回",
+        },
+    ),
+    (
         "SETTINGS_ANT_GNSS_HINT",
         {
             # 跟在 GNSS 天线行后面的小字，红色。v3/v4 未打 ECO 的板子上，

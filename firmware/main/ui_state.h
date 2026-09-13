@@ -51,6 +51,10 @@ typedef enum {
     PK_UI_MODE_ABOUT,
     PK_UI_MODE_DIAG,        /* 硬件诊断:各子系统在线状态 + 实时数值 */
     PK_UI_MODE_CAL_WIZARD,
+    /* 1090 解调高级页（门限 + 扫频）。与 CAL_WIZARD 同类：**不进 toggle 循环**，
+     * 只能从设置页点进来、用页内「返回」退出。它是调试工具，不该出现在
+     * 日常轮播里被误入。 */
+    PK_UI_MODE_ANT_ADV,
 } pk_ui_mode_t;
 
 /* Initialise the UI state mutex. Must be called once before the
