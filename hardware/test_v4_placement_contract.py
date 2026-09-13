@@ -241,8 +241,7 @@ class V4PlacementContractTest(unittest.TestCase):
         if not netlist.is_file():
             self.skipTest("缺少 build/netlist.xml，先跑一次 gen_bom.py 刷新")
         # 只判存在性不判时间戳，等于拿旧数据去证明新板子是对的。
-        # 2026-09-13 实证：原理图 13:50 已清掉 R62，netlist 还是 13:14 那份
-        # 含 R62 的，下面几条「与原理图一致」的契约全部基于它做判断。
+        # 原理图比网表新时，下面几条「与原理图一致」的契约都会基于过期数据判断。
         # 陈旧就直接失败，不 skip —— skip 会被当成绿灯一路放行。
         sch_dir = ROOT / "hardware" / "expansion-board-v4" / "kicad"
         newest = max((p.stat().st_mtime for p in sch_dir.glob("*.kicad_sch")),
@@ -268,12 +267,8 @@ class V4PlacementContractTest(unittest.TestCase):
         封装，再拿原理图的值来比对」，而 `values.get(reference)` 取不到就
         `continue` —— 于是「原理图有、PCB 没有」这一整类问题从不被触发。
 
-        2026-09-13 实证：另一路 session 的 R62（/QON 经 100k 到 J1.8 的感知
-        电阻）被误并进 power.kicad_sch，PCB 里并没有它，而
-        test_every_pad_net_matches_the_schematic 与发布包契约同时是绿的 ——
-        前者只遍历 PCB 焊盘，后者只逐字节比对包内 PCB、不看原理图。
-        结果是原理图与 PCB 矛盾却无人报警，一旦有人据原理图重新布线，
-        R62 就会悄悄长回板上。
+        若缺少这条检查，原理图新增元件可能不触发现有正向契约，直到重新布板时
+        才悄悄进入 PCB。
         """
         _, values, _ = self._schematic_index()
         # 只看真实位号：#PWR/#FLG 这类电源与旗标符号本就不上板，

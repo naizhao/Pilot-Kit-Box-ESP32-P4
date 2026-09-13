@@ -128,6 +128,5 @@ class BoardRevisionContractTest(unittest.TestCase):
                 pcb.read_bytes(),
             )
 
-
 if __name__ == "__main__":
     unittest.main()
