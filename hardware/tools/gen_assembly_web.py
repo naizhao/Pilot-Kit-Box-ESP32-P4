@@ -62,12 +62,21 @@ NM = 1e6  # KiCad 内部单位是纳米
 # 经它直流相连——「没报错」正是这类错误的特征。
 POWER_SECTION = (
     ["U18", "U19", "U20", "L16", "L17", "J9", "RT1", "SW3"]
+    # V4.8 的 GNSS VBAT 常供电整组：它们全部吊在 BAT_P 上，而 BAT_P 由
+    # U19(SY6970) + J9(电池座) 提供 —— 两者都在本表里，不带电源版一个不贴。
+    # 漏登记的后果不是"多贴几颗"：U23 的输入会悬空，整组备份供电毫无意义，
+    # 而板子照样能通电工作，**不会有任何报错**。
+    + ["U23", "C101", "C102", "D7", "R63", "BT1"]
     + [f"C{n}" for n in range(70, 81)]      # C70~C80
     + [f"R{n}" for n in range(37, 47)]      # R37~R46
 )
-POWER_SECTION_COUNT = 29                    # 文档原文写死的数量，对不上就是抄错了
-# 29 = 原 28 + V4.7 新增的 SW3。SW3 接 SY6970 的 /QON，而 U19(SY6970) 就在电源区——
-# 不带电源版没有 U19，这颗键按设计就不该贴。
+POWER_SECTION_COUNT = 35                    # 文档原文写死的数量，对不上就是抄错了
+# 35 = 原 28 + V4.7 的 SW3 + V4.8 的 6 件（U23/C101/C102/D7/R63/BT1）。
+# SW3 接 SY6970 的 /QON，而 U19(SY6970) 就在电源区——不带电源版没有 U19，
+# 这颗键按设计就不该贴。
+# ⚠️ 这个数字是**写死**的，新增电源相关件必须同时改这里，否则断言会拦下。
+# 但断言只拦"数量抄错"，拦不住"新件忘了登记"——2026-09-13 加 V4.8 那 6 件时
+# 就漏了，表面上数量仍然自洽（29==29），不带电源版却会去贴它们。
 CC_PULLDOWN = ["R7", "R8"]                  # 5.1k CC 下拉，与电源区逻辑相反
 
 assert len(POWER_SECTION) == POWER_SECTION_COUNT, (
@@ -108,9 +117,36 @@ class Variant:
 
 
 VARIANTS = [
-    # ── V4.7（当前板：V4.6 + SW3 主电源键 + TCXO 隔直）────────────────
+    # ── V4.8（当前板：V4.7 + GNSS 模块 VBAT 常供电）──────────────────
+    #
+    # ⚠️ 版本号在本表里是**写死**的，升板必须在这里加一组新 Variant 并把上一版
+    # 转成 archived=True。2026-09-13 升 V4.8 时踩过：只改 board_meta.BOARD_REV、
+    # 没动这里，于是 V4.8 的几何被生成进了 v4.7-*.json —— 文件名、标题、索引
+    # 全写着 V4.7，内容却是 V4.8 的板子，而且**任何脚本都不报错**。
+    # 「一块板的 kicad_pcb 在仓库里只有一份」正是这个陷阱的成因：当前板一旦
+    # 迭代，上一版的几何就重算不出来了，只能靠 archived 沿用已生成的 json。
+    Variant(
+        "v4.8-pwr", "V4.8 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND 与 SW3 电源键；新增 GNSS 模块 VBAT 常供电"
+                 "（U23 LDO 取自 BAT_P → D7 → U7.pin6，经 R63 挂 BT1 可充电电池）——"
+                 "关机后模块保住 RTC 与星历，不再每次开机冷启动；"
+                 "BT1 手焊、不进 SMT；R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    Variant(
+        "v4.8-nopwr", "V4.8 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="电源区一个不贴（SW3 与 U23/BT1 备份供电都在内——它们都挂在 "
+                 "BAT_P/SY6970 上，没有电源区就没有对象）；"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.7（存档：PCB 已迭代到 V4.8，这份几何重算不出来了）──────────
     Variant(
         "v4.7-pwr", "V4.7 带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="含 AIRBAND；新增 SW3 电源键（接 SY6970 /QON；电池供电时可长按复位，接 USB 时不保证整机断电）"
                  "与 TCXO 隔直 C99/R61；贴满电源区，"
                  "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
@@ -119,6 +155,7 @@ VARIANTS = [
     ),
     Variant(
         "v4.7-nopwr", "V4.7 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="含 AIRBAND 与 TCXO 隔直 C99/R61；电源区一个不贴"
                  "（SW3 主电源键在内——它接 SY6970 的 /QON，没有 U19 就没有对象），"
                  "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
