@@ -1,4 +1,4 @@
-# V4.7 选择性贴装 / 互斥件总表
+# V4.8 选择性贴装 / 互斥件总表
 
 英文版：[`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md)
 

@@ -705,6 +705,10 @@
       },
       {
         "netclass": "POWER_LO",
+        "pattern": "3V3_BKP"
+      },
+      {
+        "netclass": "POWER_LO",
         "pattern": "3V3_DIG"
       },
       {

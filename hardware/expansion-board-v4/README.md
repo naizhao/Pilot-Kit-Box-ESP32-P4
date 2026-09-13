@@ -1,10 +1,10 @@
-# Pilot Kit Avionics Board V4.7
+# Pilot Kit Avionics Board V4.8
 
 **Integrated ADS-B / GNSS / IMU expansion board for the Pilot Kit Box**
 集成 ADS-B / GNSS / IMU 扩展板
 
 <p align="center">
-  <img src="render/top.png" alt="Expansion board V4.7 top side" width="900">
+  <img src="render/top.png" alt="Expansion board V4.8 top side" width="900">
 </p>
 
 A 6-layer, 100.1 × 62.1 mm HAT that stacks onto the Waveshare
@@ -21,8 +21,12 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 
 ## ⚠️ Status / 当前状态
 
-> **V4.4 has been fabricated and operated; V4.7 is the current design under review.**
-> V4.7 adds a hardware power button (`SW3` on the SY6970 `/QON` pin;
+> **V4.4 has been fabricated and operated; V4.8 is the current design under review.**
+> V4.8 adds a permanently-powered backup rail for the GNSS module's VBAT pin
+> (`U23` LDO off `BAT_P` -> `3V3_BKP` -> `D7` -> `GNSS_VBAT`, plus the `BT1`
+> MS621FE-FL11E rechargeable cell through `R63`), so the module keeps its RTC
+> and ephemeris across power-off instead of cold-starting on every boot.
+> V4.7 added a hardware power button (`SW3` on the SY6970 `/QON` pin;
 > BATFET reset requires battery-only operation) and the airband
 > reference-clock DC-block (`C99` + `R61`). V4.6 added the 118–137 MHz airband
 > receive chain (BK4819 + 26 MHz TCXO + PCM1808 I²S capture, stage G of the
@@ -37,7 +41,10 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > still need hardware validation. The existing 3.3 V supply to Y4 is accepted for this prototype; U22 VREF now has C100 (100 nF / 0603) in parallel with C92 (10 µF). Owners of V4.0 boards must follow the
 > internal rework record before powering the 1090 MHz chain.
 >
-> **V4.4 已回板并运行；V4.7 是当前待审定的设计版本。** V4.7 = V4.6 + 硬件电源键
+> **V4.4 已回板并运行；V4.8 是当前待审定的设计版本。** V4.8 = V4.7 + GNSS 模块 VBAT 常供电
+> （`U23` LDO 取自 `BAT_P` -> `3V3_BKP` -> `D7` -> `GNSS_VBAT`，并经 `R63` 挂 `BT1`
+> MS621FE-FL11E 可充电电池）：模块关机后保住 RTC 与星历，不再每次开机冷启动。
+> V4.7 = V4.6 + 硬件电源键
 > （`SW3` 接 SY6970 的 `/QON`；BATFET 复位有仅电池供电的条件）
 > + 航空波段参考时钟的隔直（`C99` + `R61`）。V4.6 = V4.5 + 118–137MHz 航空波段接收
 > （BK4819 + 26MHz TCXO + PCM1808 I²S 采集，对应贴片清单阶段 G）。V4.5 继承 V4.3 的
@@ -53,8 +60,8 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 | Schematic / 原理图 | ✅ Complete / 完成 |
 | Layout & routing / 布局布线 | ✅ Complete — 0 DRC violations, 0 unconnected nets / 零违例、未连通 0 |
 | Manufacturing files / 制造文件 | ✅ Gerber + drill export cleanly / 可正常导出 |
-| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.7 not yet fabricated / V4.0 已打样，V4.7 待打样 |
-| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.7 pending / V4.0 返修流程已就绪，V4.7 待验证 |
+| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.8 not yet fabricated / V4.0 已打样，V4.8 待打样 |
+| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.8 pending / V4.0 返修流程已就绪，V4.8 待验证 |
 | **Airband RX / 航空波段接收** | ⚠️ New in V4.6, never fabricated or bench-tested / V4.6 新增，未打样未台架验证 |
 | **Power button / 电源键** | ⚠️ New in V4.7 (`SW3` → SY6970 `/QON`), never tested / V4.7 新增（`SW3` 接 SY6970 `/QON`），未验证 |
 | **On-board IFA antenna / 板载 IFA 天线** | ✅ V4.0 per-cut measured 50.0mm geometry transferred / V4.0 逐刀实测 50.0mm 几何已回灌 |
@@ -98,7 +105,7 @@ See [`VARIANTS.md`](VARIANTS.md).
 两个装配变体（带/不带板载电源），选贴规则见该文档。
 
 <p align="center">
-  <img src="render/bottom.png" alt="Expansion board V4.7 bottom side" width="900">
+  <img src="render/bottom.png" alt="Expansion board V4.8 bottom side" width="900">
 </p>
 
 ---
@@ -114,9 +121,9 @@ authored in. Tables, part numbers, and net names are identical in both.
 | [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map — the single source of truth for the schematic | EN / 中文 |
 | [`VARIANTS.md`](VARIANTS.md) | Powered vs. unpowered assembly variants (inverted logic — read before ordering) | EN / 中文 |
 | [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list, generated from the board | EN / 中文 |
-| [`ASSEMBLY_MAP-V4.7.pdf`](ASSEMBLY_MAP-V4.7.pdf) / [`ASSEMBLY_MAP-V4.7-zh_CN.pdf`](ASSEMBLY_MAP-V4.7-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
+| [`ASSEMBLY_MAP-V4.8.pdf`](ASSEMBLY_MAP-V4.8.pdf) / [`ASSEMBLY_MAP-V4.8-zh_CN.pdf`](ASSEMBLY_MAP-V4.8-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
 | [`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md) | Selective-placement groups and **mutex rules** — which parts must never be populated together | EN / 中文 |
-| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST-V4.7.xlsx) / [.pdf](CHECKLIST-V4.7.pdf)) | EN / 中文 |
+| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST-V4.8.xlsx) / [.pdf](CHECKLIST-V4.8.pdf)) | EN / 中文 |
 | [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md) | Authoritative purchasing list, generated from the netlist | 中文 |
 | [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / 中文 |
@@ -127,14 +134,18 @@ authored in. Tables, part numbers, and net names are identical in both.
 
 Pre-built packages live in [`release/`](release/):
 
-> 本次发布以已完成 C100 布线的 PCB 为准。工作区 `power.kicad_sch` / `sensors.kicad_sch` 中的 GNSS 备用供电是后续修改，尚未进板；本次 BOM、图纸、安装助手及源包排除它们。发布源包使用与当前 PCB 逐引脚核对一致的原理图，工作区后续设计保留。
+> 本次发布为 V4.8：GNSS 模块 VBAT 常供电**已进板并布通**（`U23`/`C101`/`C102`/`D7`/`R63`/`BT1`，
+> 且 `U7.pin6` 由 `3V3_GNSS` 改接 `GNSS_VBAT`）。BOM、图纸、安装助手与源包均已包含。
+> 上一版 README 中「备用供电尚未进板、本次发布排除」的说法对应 V4.7，已不再适用。
 
 **Regenerated on 2026-09-13 from the revised PCB, with C99 = 100 nF and the finalized C100 VREF decoupling layout. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF now includes C100 = 100 nF in parallel with C92.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | Current revised V4.7 export — C99/C100 = 100 nF, RS-274-X, 15 files; see the open electrical items below before ordering |
-| `expansion-board-v4-kicad-V4.7-20260913.zip` | Source matching the current revised PCB byte for byte; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.8-20260913.zip` | **Current V4.8 export** — adds the GNSS VBAT backup rail; RS-274-X, 15 files; see the open electrical items below before ordering |
+| `expansion-board-v4-kicad-V4.8-20260913.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | ⚠️ Superseded by V4.8 — no GNSS VBAT backup, the module cold-starts on every power-up. Do not order |
+| `expansion-board-v4-kicad-V4.7-20260913.zip` | ⚠️ Matching superseded V4.7 source archive |
 | `expansion-board-v4-gerber-JLC-V4.6-20260911.zip` | ⚠️ Superseded by V4.7 — no power button (the box cannot be switched off or hard-reset) and the TCXO output is DC-coupled straight into BK4819 `XI`. Do not order |
 | `expansion-board-v4-kicad-V4.6-20260911.zip` | ⚠️ Matching superseded V4.6 source archive |
 | `expansion-board-v4-gerber-JLC-V4.5-20260911.zip` | ⚠️ Superseded — same board without the airband chain. Do not order |
@@ -230,20 +241,20 @@ modify the design; send `release/` straight to a board house.
 |---|---|
 | `kicad/` | Schematic + PCB source, openable and editable in KiCad 10 |
 | `release/` | Gerber, drill, BOM and CPL — ready to send to a fab |
-| `ASSEMBLY_MAP-V4.7.pdf` | Per-designator placement map with orientation and polarity |
+| `ASSEMBLY_MAP-V4.8.pdf` | Per-designator placement map with orientation and polarity |
 | `CHECKLIST.md` | Line-by-line check sheet for hand assembly |
 | `SELECTIVE_PLACEMENT.md` | Which designators must **not** simply be populated from the BOM |
 | `BOM_PURCHASE-zh_CN.md` | Parts list with values, packages and selection constraints |
 
 The release source package has been checked against the finalized PCB, including
 component values, footprints and pad nets. The working directory also contains
-later GNSS backup-power schematic changes that are excluded from this release.
+the GNSS backup-power design, which is now part of this release (V4.8).
 Internal scripts export placement, routing, zones and silkscreen from the manually
 finalized board. A known zone-restoration error still blocks a complete rebuild;
 lossless script replay is not claimed. These internal tools are not published.
 
 本次发布源包已按用户完成的 PCB 核对元件料值、封装及引脚网络。工作区还保留
-后续 GNSS 备用供电原理图，未纳入本次发布。内部脚本从手工定稿的板子导出
+GNSS 备用供电设计，已随 V4.8 纳入本次发布。内部脚本从手工定稿的板子导出
 布局、布线、覆铜与丝印；完整从零重建仍有已知覆铜恢复错误，尚不能保证脚本
 无损重放。内部工具不在公开范围内；恢复本次板子请使用发布源包。
 

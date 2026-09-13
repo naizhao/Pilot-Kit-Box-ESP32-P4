@@ -3,15 +3,15 @@
     "id": "v4.7-pwr",
     "title": "V4.7 带电源版",
     "subtitle": "含 AIRBAND；新增 SW3 电源键（接 SY6970 /QON；电池供电时可长按复位，接 USB 时不保证整机断电）与 TCXO 隔直 C99/R61；贴满电源区，R7/R8 绝不能贴（与 CH224K 并存会烧板）",
-    "total": 207,
-    "groups": 82
+    "total": 208,
+    "groups": 85
   },
   {
     "id": "v4.7-nopwr",
     "title": "V4.7 不带电源版",
     "subtitle": "含 AIRBAND 与 TCXO 隔直 C99/R61；电源区一个不贴（SW3 主电源键在内——它接 SY6970 的 /QON，没有 U19 就没有对象），R7/R8 必贴（不贴则电脑不认，刷不进固件）",
-    "total": 180,
-    "groups": 67
+    "total": 181,
+    "groups": 68
   },
   {
     "id": "v4.6-pwr",

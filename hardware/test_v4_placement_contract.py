@@ -357,8 +357,23 @@ class V4PlacementContractTest(unittest.TestCase):
         self.assertEqual(mismatched, [], "PCB 焊盘网络与原理图不一致")
 
     def test_back_side_carries_no_regular_components(self):
-        """V4 B 面普通装配件只允许电池相关的 J9、RT1；TP/SW 是裸铜调试焊盘。"""
-        allowed = {"J9", "RT1"} | set(DEBUG_Y)
+        """V4 B 面普通装配件只允许电池相关的 J9、RT1、BT1；TP/SW 是裸铜调试焊盘。
+
+        「不铺 B 面」是原则：26 件曾经整片在 B 面，后来全搬到 F 面，留在 B 面的
+        必须是**电池相关且手焊**的件——它们不进 SMT，不破坏"单面贴装"。
+
+        2026-09-13 加入 BT1（V4.8 的备份电池，Seiko MS621FE-FL11E 焊接式可充电）。
+        它满足同样三条：电池相关、手焊、不进 SMT（嘉立创无此料）；位置贴着 J9，
+        且 x>132.5 落在电池投影区之外——那片区域禁止裸露铜箔（铝外壳直接压在
+        板面上，见 LAYOUT_CONSTRAINTS.md §8.1），电池焊脚不能进去。
+
+        注：中途曾短暂设计成带线纽扣电池座（J11，先 PH2.0 后 SH1.0），后改为
+        焊接式。焊接式没有座子，"把 4.2V 主电池插进备份口"这条失效路径随之消失。
+
+        ⚠️ 这条白名单是**放宽**性质的改动，经用户明确授权后才加。
+        再往里加任何位号，都要先回答"它凭什么不搬去 F 面"。
+        """
+        allowed = {"J9", "RT1", "BT1"} | set(DEBUG_Y)
         on_back = {
             reference
             for reference, footprint in self.footprints.items()
