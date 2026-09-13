@@ -13,10 +13,24 @@
  * 线程安全：状态为简单标量，校时是低频事件；沿用本工程既有的无锁 volatile 风格。
  */
 
+/* 更可信的来源写入之后，多久之内压过较低可信度的来源。 */
+#define PK_CLOCK_PRIORITY_US  (5LL * 60 * 1000000)   /* 5 分钟 */
+
 /* 把一个 UTC Unix epoch(毫秒) 应用到系统时钟。
- * source 仅用于日志/诊断显示，必须是静态字面量（内部只存指针，不拷贝）。
- * 返回 true=已写入系统时钟；false=被拒（早于下限，或被 GPS 优先挡下）。*/
+ *
+ * source 仅用于日志/诊断显示**以及可信度定级**，必须是静态字面量
+ * （内部只存指针，不拷贝）。已定级的取值见 pk_clock.c 的 source_tier()：
+ *   "gps" > "ble-write"/"ios-cts" > "gps-coarse" > "nvs" > 其它(未知，最低)
+ * 新增来源时必须同时在那张表里登记，否则它会被当成未知来源压到最低档。
+ *
+ * 返回 true=已写入系统时钟；false=被拒（早于 2024 下限，或被更可信且仍新鲜
+ * 的来源挡下）。*/
 bool pk_clock_apply_epoch_ms(int64_t epoch_ms, const char *source);
+
+/* 把校时状态清回开机态（未校时、来源 none、回调清空）。
+ * 只给 host 测试用——生产上没有"忘掉时间"这个需求，加在这里是因为 pk_clock
+ * 的状态是文件级静态量，测试之间不隔离的话用例顺序就成了隐藏依赖。 */
+void pk_clock_reset_for_test(void);
 
 /* 系统时钟是否已被任何来源校准过。*/
 bool pk_clock_is_synced(void);

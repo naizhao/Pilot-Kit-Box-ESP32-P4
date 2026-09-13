@@ -24,6 +24,7 @@
 #include "aircraft_db.h"
 #include "aircraft_state.h"
 #include "gps.h"
+#include "pk_clock_persist.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
 #include "config_qnh.h"
@@ -110,6 +111,11 @@ void app_main(void)
 
     /* Initialise the per-aircraft fusion table before any sink can write
      * into it. */
+    /* 时间兜底要抢在所有授时来源之前：它的全部意义就是让开机最初那几秒
+     * 不停在 1970。晚于 GPS 启动也不会写错时间（pk_clock 的阶梯会挡住），
+     * 但兜底的价值恰好丢在被它填补的那几秒里。须晚于上面的 nvs_flash_init()。 */
+    pk_clock_persist_start();
+
     aircraft_state_init();
     pk_gps_start();   /* GT-U8 GPS on UART1 */
 

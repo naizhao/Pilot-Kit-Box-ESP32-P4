@@ -28,6 +28,7 @@ idf_component_register(
         "gps_nmea.c"
         "gps_task.c"
         "pk_clock.c"
+        "pk_clock_persist.c"
         "own_ship.c"
         "geo.c"
         "traffic_geom.c"
