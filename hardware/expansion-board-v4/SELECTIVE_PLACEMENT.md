@@ -26,12 +26,19 @@ Both are generated from the criteria in this table, so they cannot disagree with
 
 The same PCB is built in two versions, and **this is the only group in the whole table where a wrong placement burns the board**:
 
-| | Power section (29 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
+| | Power section (35 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
 |---|---|---|
 | **Powered variant** (this board) | ✅ place all | ❌ **must never be placed** |
 | Unpowered variant | ❌ place none | ✅ must be placed |
 
-**Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` **`SW3`** `C70`~`C80` `R37`~`R46`
+**Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` **`SW3`**
+**`U23` `C101` `C102` `D7` `R63` `BT1`** `C70`~`C80` `R37`~`R46`
+
+(`U23`/`C101`/`C102`/`D7`/`R63`/`BT1` are the V4.8 GNSS VBAT backup rail. They all
+hang off `BAT_P`, which is produced by `U19` + `J9` — the unpowered variant omits
+both, so this group is omitted with them. **Omitting them from this list is not a
+"few extra parts" problem**: `U23`'s input would float, the whole backup rail would
+be meaningless, and the board would still power up without any error.)
 (`SW3` is the V4.7 power button on SY6970's `/QON`; without `U19` it connects to nothing.)
 
 **Why it burns**: for USB-C to be recognized by the host, the CC pin must have Rd. In the powered variant this is provided internally by CH224K(`U18`);

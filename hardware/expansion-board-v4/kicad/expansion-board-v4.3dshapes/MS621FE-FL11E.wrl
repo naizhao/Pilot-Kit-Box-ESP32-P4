@@ -3,7 +3,7 @@
 #
 # 外形包络模型，用于机械干涉与外壳净空判断，不是精细外观件。
 # 尺寸取自 SII 官方样本 MicroBattery_E_20230330_rev05 第 14 页 DIMENSIONS：
-#   本体 φ6.8max × 2.05±0.10   焊脚 0.5 宽 × 0.15 厚，中心距 2.5，含脚总高 2.8max
+#   本体 φ6.8max × 2.05±0.10   焊脚 0.5 宽 × 0.15 厚，中心距 1.5，含脚总高 2.8max
 #
 # ⚠️ KiCad .wrl 单位 = 0.1 inch = 2.54mm，下面数值已除过 2.54
 #    （与本目录其它模型同一约定，见 D_0402_1005Metric.wrl）。
@@ -225,7 +225,7 @@ Shape {
 }
 
 Transform {
-  translation 1.653543 -0.492126 0.029528
+  translation 1.653543 -0.295276 0.029528
   children [
     Shape {
       appearance Appearance {
@@ -241,7 +241,7 @@ Transform {
 }
 
 Transform {
-  translation 1.653543 0.492126 0.029528
+  translation 1.653543 0.295276 0.029528
   children [
     Shape {
       appearance Appearance {

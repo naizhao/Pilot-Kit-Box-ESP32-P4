@@ -27,7 +27,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **U2** | TPS7A2033PDBVR | SOT-23-5 | (82.3, 97.8) | 90° | ★ Exposed leads; hand touch-up possible |
 | **U1** | ME6211C33M5 | SOT-23-5 | (74.7, 97.8) | 90° | ★ Exposed leads; hand touch-up possible |
 | **U23** | TPS7A2033PDBVR | SOT-23-5 | (81.9, 93.5) | -90° | ★ Exposed leads; hand touch-up possible |
-| **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.3) | 90° | ★ Exposed leads; hand touch-up possible |
+| **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.3) | -90° | ★ Exposed leads; hand touch-up possible |
 | **C77** | 22uF 16V X5R | C_1206_3216Metric | (141.2, 99.7) | -90° | ★ Routine |
 | **C76** | 22uF | C_1206_3216Metric | (135.2, 96.8) | -90° | ★ Routine |
 | **C72** | 10uF | C_1206_3216Metric | (130.9, 79.2) | 90° | ★ Routine |
