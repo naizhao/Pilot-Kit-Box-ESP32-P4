@@ -634,22 +634,23 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
         /* 先把端电压折算回曲线口径（"满负载放电"），再平滑、再查表。
          *
          * 折算式与常量见 pk_batt_model.h 的负载模型：
-         *     等效电压 = BATV − (ICHG + LOAD_NOM) × R
-         * 充电中 ICHG>0，两项相加，把充电电流抬高的那部分减掉；不充电时
-         * ICHG=0 退化成 BATV − LOAD_NOM×R，正是曲线自身的口径。
+         *     等效电压 = BATV − ICHG×R_CHG − LOAD_NOM×R_DIS
+         * **充放电用不同的 R**——实测两个方向的等效内阻差 36%（273 vs
+         * 201 mΩ，极化不对称）。初版套同一个 R，充电时补偿不足：报 70%，
+         * 一拔电就掉到 52%。
          *
-         * 2026-09-13 实测这一步的分量有多大：ICHG=2050mA、BATT=4044mV 时
-         * 补偿前查表报 **96%**，而拔掉电源设备根本开不起来——补偿后是
-         * **53%**。之前那版靠"charging 时封顶 99%"遮住顶部矛盾，中段
+         * 2026-09-13 实测这一步的分量有多大：ICHG=2050mA、BATT=4184mV 时
+         * 补偿前查表报 **100%**，而拔掉电源电压立刻掉到 3624mV——补偿后
+         * 两种状态都算出 52%，对得上。之前那版靠"charging 时封顶 99%"遮住顶部矛盾，中段
          * （60%~90%）的虚高一直在，没人看得见。现在按电流实算，封顶
          * 不再需要，已删。
          *
          * ichg_ma 只在充电时有效（不充电时 ICHGR 不刷新、保持陈值，见
          * 详情日志那里的 stale 标记），所以用 charging 做闸。 */
         int mv_eq = (int)st->batt_mv;
-        const int load_ma = (st->charging ? (int)st->ichg_ma : 0)
-                          + PK_BATT_LOAD_NOM_MA;
-        mv_eq -= load_ma * PK_BATT_R_MOHM / 1000;
+        if (st->charging)
+            mv_eq -= (int)st->ichg_ma * PK_BATT_R_CHG_MOHM / 1000;
+        mv_eq -= PK_BATT_LOAD_NOM_MA * PK_BATT_R_DIS_MOHM / 1000;
 
         const int32_t mv_x256 = (int32_t)mv_eq * 256;
         if (s_pct_ema_mv_x256 == 0) s_pct_ema_mv_x256 = mv_x256;  /* 首拍 */
