@@ -161,6 +161,14 @@ static void fmt_clock(char *buf, size_t bufsz)
 #define CARD_GAP    12
 #define CARD_W      ((PK_DISPLAY_W - CARD_PAD * 2 - CARD_GAP) / CARD_COLS)
 #define CARD_TOP    (PFD_BAR_BOT + 8)
+/* 详情页版面（排版意图见下方 draw_detail 之前那段注释）。放在这里而不是跟
+ * draw_detail 挨着，是因为触摸侧的 pk_diag_page_drag() 要用 DET_TOP/DET_LINE_H
+ * 算详情页的可滚范围，而那个函数在文件更上面。 */
+#define DET_KEY_X     PK_UI_PAD_L
+#define DET_TITLE_TOP (PK_UI_BACKBAR_BOT + 8)
+#define DET_TOP       (DET_TITLE_TOP + PK_AA_M_H + 10)
+#define DET_LINE_H    38
+#define DET_VAL_X     240
 #define CARD_H      ((PK_DISPLAY_H - CARD_TOP - CARD_PAD + CARD_GAP) \
                      / 4 - CARD_GAP)
 
@@ -220,6 +228,12 @@ static int s_scroll_y;                         /* 滚动偏移(px)，0 = 顶 */
  * 记的是**卡片序号**而不是指针：卡片是每帧重画的，序号是稳定的。
  */
 static int s_detail = -1;
+
+/* 详情页的滚动状态。与总览的 s_scroll_y/s_card_rows 一对一对应：内容比一屏多
+ * 就能滚，内容高度由上一帧实际画了几行现算（详情行数随状态伸缩，写死会对不
+ * 上）。进入/退出详情时归零，否则下一个子系统会莫名其妙停在半空。 */
+static int s_detail_scroll_y;
+static int s_detail_lines;
 
 /* 卡片序号 → 标题。顺序必须与 render 里的 draw_card 调用一致——两处各写
  * 一份序号迟早会错位，所以这张表是唯一的真值来源，render 也从它取标题。
@@ -355,6 +369,10 @@ void pk_diag_page_render(uint16_t *fb)
      * 「无卡」恰恰是空态最该核对的一格。用法与设置页的 PK_SIM_SET_SCROLL 一致。 */
     { const char *e = getenv("PK_SIM_DIAG_SCROLL");
       if (e) s_scroll_y = atoi(e); }
+    /* PK_SIM_DIAG_DETAIL_SCROLL=<px> 把**详情页**滚到指定位置。理由同上：
+     * 详情页底部被截掉的那几行，不给这个旋钮就永远截不到图。 */
+    { const char *e = getenv("PK_SIM_DIAG_DETAIL_SCROLL");
+      if (e) s_detail_scroll_y = atoi(e); }
 #endif
     if (s_detail >= 0) {
         draw_detail(fb, s_detail);
@@ -952,9 +970,35 @@ bool pk_diag_page_touch(int x, int y)
          * 三条退路里"顶栏按钮"与"FAB"都由导航层提供，本页只要不挡路。 */
         if (y < PFD_BAR_BOT) { s_press_valid = false; return false; }
 
-        /* 其余区域一律吃掉：底下是总览的卡片，穿透过去会直接换一页。 */
-        s_press_valid = false;
-        return (x < PK_DISPLAY_W - 80);
+        /* ⚠️ 内容不足一屏时必须**一个字节都不改**地走旧路径。
+         *
+         * 旧路径是 s_press_valid=false + 返回 true：这一下被吃掉（不穿透到
+         * 底下总览的卡片），但续帧 pk_diag_page_drag() 第一行就返回 false，
+         * 于是每一帧都漏给 LVGL——右滑返回（pk_ui_nav.c 的 backbar_gesture_cb）
+         * 全靠这条活着。2026-09-13 我给详情页加滚动时把 s_press_valid 改成了
+         * true，等于把这条退路掐了，实机上"返回坏了"。
+         *
+         * 所以接管触摸的前提是**真的有东西可滚**，而不是"进了详情页"。绝大多数
+         * 详情页都装得下一屏，它们的行为因此与改动前完全一致。 */
+        const int total_h = s_detail_lines * DET_LINE_H;
+        const int view_h  = PK_DISPLAY_H - DET_TOP;
+        /* 左缘那条带子同样走旧路径：右滑返回认的就是"从左缘起手"
+         * （pk_ui_nav.c:131）。在这里提前放行，滚动就永远不会跟它抢第一帧，
+         * 而不是等到 drag 里再靠 |dx|>|dy| 事后补救——那时第一帧已经被吃了。 */
+        if (total_h <= view_h || x < PK_UI_PAD_L * 2) {
+            s_press_valid = false;
+            return (x < PK_DISPLAY_W - 80);
+        }
+
+        /* 确实超屏：记下起点接管滚动。滚动量按"相对按下时的位移"算，归属在
+         * 按下这一刻定死、续帧不再重判（arbiter 的规矩，见 pk_touch_arbiter.h）。
+         * 即便如此，横向为主的拖动仍会在 drag 里让出去给右滑返回。 */
+        s_press_valid  = (x < PK_DISPLAY_W - 80);
+        s_press_x      = x;
+        s_press_y      = y;
+        s_press_scroll = s_detail_scroll_y;
+        s_moved        = false;
+        return s_press_valid;
     }
 
     s_press_valid = diag_in_cards(x, y);
@@ -969,6 +1013,36 @@ bool pk_diag_page_touch(int x, int y)
 bool pk_diag_page_drag(int x, int y)
 {
     if (!s_press_valid) return false;
+
+    /* ── 详情页：纵向滚内容，横向让路 ─────────────────────────────────
+     *
+     * 右滑返回是详情页三条退路之一，实现在 pk_ui_nav.c 的 backbar_gesture_cb
+     * （LVGL 手势，判据是"横向位移明显大于纵向"）。LVGL 只有在本函数返回
+     * false、这一帧没被吃掉时才收得到——所以横向为主的拖动必须原样让出去，
+     * 否则滚动一上线就把那条退路废了。两边的判据刻意互补。 */
+    if (s_detail >= 0) {
+        const int dx  = x - s_press_x;
+        const int dy2 = y - s_press_y;
+        const int adx = dx  < 0 ? -dx  : dx;
+        const int ady = dy2 < 0 ? -dy2 : dy2;
+        if (adx > ady) return false;             /* 横向为主 → 交给右滑返回 */
+
+        const int total_h = s_detail_lines * DET_LINE_H;
+        const int view_h  = PK_DISPLAY_H - DET_TOP;
+        const int max_y   = (total_h > view_h) ? (total_h - view_h) : 0;
+        /* 内容不足一屏，没什么可滚的：同样让出去，右滑返回更跟手。 */
+        if (max_y == 0) return false;
+
+        if (!s_moved && ady > DIAG_DRAG_SLOP) s_moved = true;
+        if (!s_moved) return true;
+
+        int sy = s_press_scroll - dy2;
+        if (sy < 0)     sy = 0;
+        if (sy > max_y) sy = max_y;
+        s_detail_scroll_y = sy;
+        return true;
+    }
+
     (void)x;
     const int dy = y - s_press_y;
     if (!s_moved && (dy > DIAG_DRAG_SLOP || dy < -DIAG_DRAG_SLOP)) s_moved = true;
@@ -1000,6 +1074,12 @@ void pk_diag_page_touch_up(void)
     const int idx = row * CARD_COLS + col;
     if (row >= 0 && idx >= 0 && idx < CARD_N) {
         s_detail = idx;
+        /* 每次下钻都从顶开始，别继承上一个子系统的位置。行数也一并清零：
+         * 它由 draw_detail() 在**渲染时**写，下钻后的第一次按下可能早于第一帧，
+         * 那时读到的是上一个子系统的行数——上一个超屏、这个不超，就会错误地
+         * 接管触摸并掐掉右滑返回。清零 = 第一帧不滚，宁可慢一帧。 */
+        s_detail_scroll_y = 0;
+        s_detail_lines    = 0;
         /* 走导航层的二级页机制，而不是自己画一个返回箭头就算完（上一版就是
          * 那么干的）。spec §4.2：进子页后 FAB 图标变 ←、dock 收起且不可展开，
          * **三条退路（顶栏按钮 / FAB / 右滑）同时可用**——无物理按键的设备
@@ -1035,18 +1115,33 @@ void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
 /* 详情页的键列 = 整页左边距。原来是自留的 24，为的是对齐 backbar 的文字
  * （那时胶囊内边距 14 把字推到了 22）；现在 backbar 反过来按 PK_UI_PAD_L 排
  * 版（见 pk_ui_nav.c），两边都不用再互相迁就。 */
-#define DET_KEY_X     PK_UI_PAD_L
-/* 子系统名的左缘与内容键列同一条线：三行左对齐，视线不用来回找起点。 */
-#define DET_TITLE_TOP (PK_UI_BACKBAR_BOT + 8)
-#define DET_TOP       (DET_TITLE_TOP + PK_AA_M_H + 10)
-#define DET_LINE_H  38
-#define DET_VAL_X   240
+/* ⚠️ DET_KEY_X / DET_TITLE_TOP / DET_TOP / DET_LINE_H / DET_VAL_X 的定义已经
+ * 前移到文件上部 CARD_* 宏旁边——详情页加滚动之后，触摸侧的
+ * pk_diag_page_drag() 也要用 DET_TOP/DET_LINE_H 算可滚范围，而它在本行之前。
+ * 上面那段版面说明留在原处，因为它解释的是这一块的排版意图。 */
+
+/* 详情页也要能滚——数据比一屏多的页面（GPS 五个星座全有星时）底部会被截掉，
+ * 而截掉的部分在截图上看不出来，只有算版面才发现。规则与总览页同一套：
+ * s_detail_scroll_y 是偏移，内容高度由上一帧实际画了几行推出来。
+ *
+ * 行的可见性判据是「与内容区有交集」而不是「整行装得下」：滚动过程中首尾两行
+ * 必然只露一半，按整行判会让它们整体闪现/消失。滑到 DET_TOP 之上的那半行由
+ * draw_detail_header() 的背景填充盖掉（它在 draw_detail 之后画）。 */
+static int det_line_y(int line)
+{
+    return DET_TOP + line * DET_LINE_H - s_detail_scroll_y;
+}
+
+static bool det_line_visible(int y)
+{
+    return (y + DET_LINE_H > DET_TOP) && (y < PK_DISPLAY_H);
+}
 
 static void det_kv(uint16_t *fb, int line, const char *k, const char *v,
                    uint16_t vcol)
 {
-    const int y = DET_TOP + line * DET_LINE_H;
-    if (y + DET_LINE_H > PK_DISPLAY_H) return;
+    const int y = det_line_y(line);
+    if (!det_line_visible(y)) return;
     /* 键名与值同档：键列宽 224 px（DET_VAL_X - DET_KEY_X），最长的
      * "CALIBRATION" / "SAMPLE RATE" 各 11 字符 × 15 px = 165 px，装得下。
      * 同档也就不再需要原来那半个字高的垂直补偿。 */
@@ -1129,6 +1224,33 @@ static void draw_detail(uint16_t *fb, int which)
         det_kv_tr(fb, line++, PK_TR_DIAG_K_POSITION, buf,
                   fresh ? COL_VAL : COL_OFFLINE);
 
+        /* 模块自身 RTC 的走时证据（键名刻意用 ASCII：新增中文要改 i18n
+         * catalog 并重跑字库生成，为一行诊断值不起那个动静）。
+         *
+         * 读法：右边的 A/V 是**那一条 RMC 自己**报的定位状态。
+         *   V + 时间在逐秒前进  → 模块内部 RTC 独立于定位在走时 ← 要的就是这个
+         *   V + 时间不动/为 ---  → 模块没有在走时
+         * age 跟着跳说明 RMC 还在持续进来，不是冻住的旧值。
+         *
+         * ⚠️ 版面：本页 DET_TOP=90、行高 38、屏高 480 → 最多 10 行。此行占掉
+         * 第 6 行后，只有「5 个星座同时有星」时最后一个星座的 SNR 行会被下面
+         * 循环的 break 挡掉（不会画出屏幕）。取这个舍是因为「模块钟在不在走」
+         * 比第 5 个星座的柱高更要紧。 */
+        if (g.rmc_epoch_ms == 0) {
+            snprintf(buf, sizeof(buf), "---");
+        } else {
+            time_t t = (time_t)(g.rmc_epoch_ms / 1000);
+            struct tm u;
+            gmtime_r(&t, &u);
+            long age_s = (long)((esp_timer_get_time() - g.rmc_epoch_us) / 1000000);
+            snprintf(buf, sizeof(buf), "%02d:%02d:%02dZ %c %lds",
+                     u.tm_hour, u.tm_min, u.tm_sec,
+                     g.rmc_epoch_from_fix ? 'A' : 'V', age_s);
+        }
+        det_kv(fb, line++, "RMC UTC", buf,
+               g.rmc_epoch_ms == 0 ? COL_OFFLINE
+               : g.rmc_epoch_from_fix ? COL_VAL : COL_ONLINE);
+
         /* 每星座一行 SNR 柱状图。分星座画而不是混在一起：某个星座整体偏弱
          * 指向天线频段或遮挡方向，混画就看不出这个模式了。 */
         /* 与 pk_gnss_t 同序、同长度——legacy 那份是
@@ -1141,8 +1263,10 @@ static void draw_detail(uint16_t *fb, int which)
             int cnt = 0;
             for (int i = 0; i < g.snr_count; ++i) if (g.snr_con[i] == gi) cnt++;
             if (cnt == 0) continue;
-            const int y = DET_TOP + line * DET_LINE_H;
-            if (y + DET_LINE_H > PK_DISPLAY_H) break;
+            const int y = det_line_y(line);
+            /* 这里不能像 det_kv 那样直接跳过就算了：line 必须照常自增，
+             * 否则滚上去的星座不占行号，下面的行会整体上移、滚动就错位了。 */
+            if (!det_line_visible(y)) { line++; continue; }
             /* 星座名是 det_kv 的键列的一员，字号必须跟 det_kv 走。 */
             pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, y,
                        kCon[gi], COL_KEY, PK_UI_ITEM_SIZE);
@@ -1532,6 +1656,26 @@ static void draw_detail(uint16_t *fb, int which)
                    COL_OFFLINE);
         break;
     }
+
+    /* 行数是本帧现算的：详情内容随状态伸缩（星座有几个有星、电池有没有故障
+     * 位），写死一个常数迟早对不上，而对不上的表现是"滚不到底"或"能滚出一片
+     * 空白"。拖动侧因此只读这个值，不自己推算。 */
+    s_detail_lines = line;
+
+    /* 滚动条：与总览页同一套画法，只在内容超出一屏时出现。 */
+    {
+        const int total_h = line * DET_LINE_H;
+        const int view_h  = PK_DISPLAY_H - DET_TOP;
+        if (total_h > view_h) {
+            const int tx = PK_DISPLAY_W - 6;
+            const int bar_h = view_h * view_h / total_h;
+            const int bar_y = DET_TOP + s_detail_scroll_y * view_h / total_h;
+            pk_pfd_fill_rect(fb, tx, DET_TOP, tx + 3, PK_DISPLAY_H,
+                             pk_rgb565(30, 38, 50));
+            pk_pfd_fill_rect(fb, tx, bar_y, tx + 3, bar_y + bar_h,
+                             pk_rgb565(120, 135, 155));
+        }
+    }
 }
 
 /*
@@ -1557,6 +1701,17 @@ static void draw_detail_header(uint16_t *fb, int which)
      * 都等于 PK_UI_PAD_L，与总览页卡片边距也在同一条线上——早先 DET_KEY_X=24
      * 而 CARD_PAD=16，下钻前后左边界会跳 8 px。
      */
+    /* 先把标题行那条擦干净，再画标题。
+     *
+     * 这一笔是详情页滚动的配套：滚上去的那半行会越过 DET_TOP 画进标题区，
+     * 靠这块背景盖掉（本函数在 draw_detail 之后调用，次序不能颠倒）。总览页
+     * 用的是同一招——那边是「顶栏最后画，卡片从它底下滑过去」。
+     *
+     * 上边界取 PK_UI_BACKBAR_BOT 而不是 0：backbar 是 LVGL 控件层、
+     * move_foreground 到最前，canvas 这一笔本来就盖不住它，但把范围划在它
+     * 下面，意图才是明确的——这块归详情页，那块归导航层，谁也别碰谁。 */
+    fill_rect(fb, 0, PK_UI_BACKBAR_BOT, PK_DISPLAY_W, DET_TOP, COL_BG);
+
     /* 与总览标题同字号同色：详情是总览的第二层，标题层级不该在下钻后变。 */
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, DET_KEY_X, DET_TITLE_TOP,
                card_title(which), PK_UI_TITLE_COL, PK_UI_TITLE_SIZE);
@@ -1572,6 +1727,8 @@ static void draw_detail_header(uint16_t *fb, int which)
 void pk_diag_page_leave_detail(void)
 {
     s_detail = -1;
+    s_detail_scroll_y = 0;
+    s_detail_lines    = 0;   /* 理由同下钻处：别把行数留给下一个子系统 */
     pk_ui_nav_set_subpage(false, NULL);
 }
 
