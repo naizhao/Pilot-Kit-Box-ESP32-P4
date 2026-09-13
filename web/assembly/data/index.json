@@ -4,14 +4,14 @@
     "title": "V4.8 带电源版",
     "subtitle": "含 AIRBAND 与 SW3 电源键；新增 GNSS 模块 VBAT 常供电（U23 LDO 取自 BAT_P → D7 → U7.pin6，经 R63 挂 BT1 可充电电池）——关机后模块保住 RTC 与星历，不再每次开机冷启动；BT1 手焊、不进 SMT；R7/R8 绝不能贴（与 CH224K 并存会烧板）",
     "total": 214,
-    "groups": 88
+    "groups": 85
   },
   {
     "id": "v4.8-nopwr",
     "title": "V4.8 不带电源版",
     "subtitle": "电源区一个不贴（SW3 与 U23/BT1 备份供电都在内——它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；R7/R8 必贴（不贴则电脑不认，刷不进固件）",
     "total": 181,
-    "groups": 68
+    "groups": 67
   },
   {
     "id": "v4.7-pwr",
@@ -57,8 +57,8 @@
   },
   {
     "id": "v3",
-    "title": "V3.10",
-    "subtitle": "单一版本，全部在 F 面，无电源变体",
+    "title": "V3.10（EOL）",
+    "subtitle": "单一版本，全部在 F 面，无电源变体。已停止维护（2026-09-13），不再修设计问题；数据保留供已有实板装配",
     "total": 158,
     "groups": 66
   }

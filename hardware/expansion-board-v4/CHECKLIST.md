@@ -179,7 +179,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **D4** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 75.4) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
 | ☐ | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 77.8) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
 | ☐ | **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (126.4, 89.3) | G Airband | See the Chinese companion for the detailed engineering note |
-| ☐ | **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.3) | A Power | See the Chinese companion for the detailed engineering note |
+| ☐ | **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.6) | A Power | See the Chinese companion for the detailed engineering note |
 | ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (122.0, 91.0) | D 978 Transceiver |  |
 | ☐ | **F3** | 6V/200mA | Fuse_0805_2012Metric | (98.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **F4** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 75.9) | C Sensors + GNSS |  |

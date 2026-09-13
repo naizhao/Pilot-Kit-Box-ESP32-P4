@@ -20,12 +20,32 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 ALL_BOARDS = ("expansion-board-v3", "expansion-board-v4")
+
+# 已停止维护的板子（2026-09-13 维护者决定 V3 EOL）。
+#
+# 这里剔除的是**默认**集合，不是删测试：V3 的全部断言原样保留，
+# `PK_TEST_BOARDS=expansion-board-v3` 仍可完整跑回来取证。
+#
+# ⚠️ 为什么要专门写这段注释：V3 在本文件里**有 4 项是红的**
+# （C82/C83 接不到 RP_1V1 平面、RP_1V1@B.Cu 碎成 3 块）。把一块正在报错的板
+# 移出默认集合，形式上跟"改测试让它变绿"无法区分，所以必须留下判据——
+#   · 这 4 项要修得**改板重新布线**，而 V3 不会再有新版本；
+#   · 它们是 V3 自己的设计问题，与 V4 无关，V4 的同类断言全绿；
+#   · 其余 v3 测试（产物一致性、IFA 生成、board profile 等）**本来就是绿的**，
+#     不在此剔除范围内，仍随全量跑。
+# 将来若 V3 复活，把它从这里删掉即可，不需要恢复任何断言。
+EOL_BOARDS = ("expansion-board-v3",)
+
+# AVAILABLE_BOARDS 的语义是「文件在、跑得起来」，**不含 EOL 过滤**——
+# setUpClass 拿它校验 PK_TEST_BOARDS，这里要是把 V3 摘掉，显式请求 V3 会被
+# 当成 missing 直接报错，EOL 就从"默认不跑"变成"想跑也跑不了"，取证能力没了。
 AVAILABLE_BOARDS = tuple(
     board for board in ALL_BOARDS
     if (ROOT / "hardware" / board / "kicad" / f"{board}.kicad_sch").is_file()
 )
+DEFAULT_BOARDS = tuple(b for b in AVAILABLE_BOARDS if b not in EOL_BOARDS)
 REQUESTED_BOARDS = tuple(filter(None, os.environ.get("PK_TEST_BOARDS", "").split(",")))
-BOARDS = REQUESTED_BOARDS or AVAILABLE_BOARDS
+BOARDS = REQUESTED_BOARDS or DEFAULT_BOARDS
 
 
 # RP2040 数据手册给的 ADC 输入阻抗最小值。只按理想分压算会高估读数：

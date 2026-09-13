@@ -20,11 +20,17 @@
 
 ## 本次快照校验
 
-PCB SHA-256：`ca864819fb793e71249baea4ce074de5ae6f6283081e03722331adbf11ebda04`。
+PCB SHA-256：`74655acd6895ffe5478f9481f2f7ea388d9967645e3c7e3e35af626efd1e087d`。
 
-- `expansion-board-v4-gerber-JLC-V4.8-20260913.zip`：`2a9ca693470ddd38e14ad1952f92de268374ae07dcba9a4b7f1e90b133a86987`
-- `expansion-board-v4-kicad-V4.8-20260913.zip`：`19e4797f91bd3f110b0148fc06016310a6a2c11988dd4700912cb4b38eb3bed8`
+- `expansion-board-v4-gerber-JLC-V4.8-20260913.zip`：`2fa4adeb1619cf09e6b71e7856c79a22b9a2cea30601af17522b6172d160974b`
+- `expansion-board-v4-kicad-V4.8-20260913.zip`：`ae63add9c87044e546e79944ca0d9608c0663526ae893f5474ae57a11d7130aa`
 
 较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。
 
-本次排除后续 GNSS 备用供电（C100/C101/D7/D8/J11/U23 及 U7.6 改网）。工作区两张后续原理图未覆盖；复核本次打板请使用上述 KiCad 源包。C100 添加前的同名两包已保存在 `archive/20260913-before-c102/`，不可用于新订单。
+**V4.8 已包含 GNSS 备份供电**：`U23` / `C101` / `C102` / `D7` / `R63` / `BT1`，且
+`U7.pin6` 已由 `3V3_GNSS` 改接 `GNSS_VBAT`。这是 V4.8 相对 V4.7 的唯一功能性差异
+——V4.7 刻意排除了这一组，两者不可混用。
+
+`BT1`（Seiko MS621FE-FL11E）在 **B 面**，经济型 SMT 只贴一面，它不在任何 CPL 里，
+**需手工焊接**。C100 添加前的同名两包已保存在 `archive/20260913-before-c102/`，
+不可用于新订单。

@@ -198,11 +198,17 @@ VARIANTS = [
         bom=("csv", "internal/BOM_MASTER.csv"),
         archived=True,
     ),
+    # ── V3（EOL：2026-09-13 停止维护，不会再有新版本）────────────────
+    # 刻意**不设** archived=True：那个标记的含义是"几何重算不出来、只能沿用旧
+    # json"，而 V3 的 kicad_pcb 还在仓库里、每次都能正常重算。这里是产品生命
+    # 周期结束，不是几何失效，两回事。数据继续生成——手上已有的 V3 实板还要
+    # 靠它贴片。配套改动见 test_component_contract.py 的 EOL_BOARDS。
     Variant(
-        "v3", "V3.10", "expansion-board-v3", "expansion-board-v3",
+        "v3", "V3.10（EOL）", "expansion-board-v3", "expansion-board-v3",
         # 别在这里写位号数量：卡片上显示的是**过滤掉 DNP 和无器件之后**的待贴数，
         # 跟 PCB 上的位号总数不是一回事，两个数并排放会让人以为漏了件。
-        subtitle="单一版本，全部在 F 面，无电源变体",
+        subtitle="单一版本，全部在 F 面，无电源变体。"
+                 "已停止维护（2026-09-13），不再修设计问题；数据保留供已有实板装配",
         bom=("md", "fab/BOM_PURCHASE.md"),
     ),
 ]
