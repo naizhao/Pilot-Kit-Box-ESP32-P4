@@ -365,6 +365,7 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_ANT_ADV_NO_SIGNAL] = "No signal - check antenna/traffic",
         [PK_TR_ANT_ADV_HINT] = "Best point shifts with antenna/site - re-sweep when it changes",
         [PK_TR_ANT_ADV_BACK] = "Back",
+        [PK_TR_ANT_ADV_USAGE] = "Sweep tries 9 thresholds (200-1000‰), 10s each, picks the best",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -726,6 +727,7 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_ANT_ADV_NO_SIGNAL] = "无信号，先查天线和空情",
         [PK_TR_ANT_ADV_HINT] = "最优点随天线和环境变，换了就重扫",
         [PK_TR_ANT_ADV_BACK] = "返回",
+        [PK_TR_ANT_ADV_USAGE] = "扫频依次试 9 档门限（200‰–1000‰），每档 10 秒，挑出收包最多的",
     },
 };
 

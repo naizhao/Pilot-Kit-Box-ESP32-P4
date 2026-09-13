@@ -375,6 +375,7 @@
     "ANT_ADV_APPLY": 355,
     "ANT_ADV_NO_SIGNAL": 356,
     "ANT_ADV_HINT": 357,
-    "ANT_ADV_BACK": 358
+    "ANT_ADV_BACK": 358,
+    "ANT_ADV_USAGE": 359
   }
 }

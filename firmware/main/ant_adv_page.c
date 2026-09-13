@@ -49,8 +49,10 @@
 #define COL_BEST      pk_rgb565(140, 210, 255)
 
 #define HDR_H         PFD_BAR_BOT
-#define ROW_H         26
-#define TBL_TOP       (HDR_H + 116)
+#define ROW_H         24
+/* 表格起点：门限行(34) + 用法说明(22) + 扫频行(42) + 建议行(28) 之后。
+ * 9 行 × 24 + 表头 20 = 236，到 FOOT_TOP 还有余量。 */
+#define TBL_TOP       (HDR_H + 148)
 #define FOOT_TOP      (PK_DISPLAY_H - 34)
 
 /* 命中区：render 时登记，touch 时反查。与 settings_draw.c 的 hit_set 同款
@@ -150,7 +152,7 @@ void pk_ant_adv_page_render(uint16_t *fb)
     x = button(fb, HIT_DEC100, x, y, 56, "-100", false, true) + 6;
     x = button(fb, HIT_DEC10,  x, y, 48, "-10",  false, true) + 10;
 
-    if (th > 0) snprintf(buf, sizeof buf, "%d", th);
+    if (th > 0) snprintf(buf, sizeof buf, "%d‰", th);
     else        snprintf(buf, sizeof buf, "%s", pk_i18n_text(PK_TR_ANT_ADV_AUTO));
     const int vw = pk_aa_text_width(buf, PK_AA_L);
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + (96 - vw) / 2, y + 2, buf,
@@ -162,40 +164,61 @@ void pk_ant_adv_page_render(uint16_t *fb)
     button(fb, HIT_DEFAULT, x, y, 82, pk_i18n_text(PK_TR_ANT_ADV_AUTO),
            th == 0, true);
 
+    /* ── 用法说明 ──
+     * 第一版没有这一句，用户原话是"完全没搞懂怎么用"：页面上只有一排按钮和
+     * 一张空表，没有任何地方说这是在干什么、要等多久。 */
+    y += 40;
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20, y,
+               pk_i18n_text(PK_TR_ANT_ADV_USAGE), COL_DIM, PK_AA_XS);
+
     /* ── 扫频行 ── */
-    y += 44;
+    y += 22;
     pk_sweep_row_t rows[PK_SWEEP_MAX_ROWS];
     int total = 0;
     const int n = pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total);
 
     if (running) {
-        snprintf(buf, sizeof buf, "%s %d/%d",
-                 pk_i18n_text(PK_TR_ANT_ADV_SWEEP_RUNNING), n, total);
         button(fb, HIT_SWEEP, 20, y, 150, pk_i18n_text(PK_TR_ANT_ADV_STOP),
                true, true);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 186, y + 9, buf,
+        /* 进度条 + n/total。整轮 90 秒，没有可见的进度就跟死机没区别；
+         * total 要等第一行回来才知道，在那之前按 9 档画满格底槽即可。 */
+        const int px0 = 186, pw = 300, ph = 10;
+        const int py = y + (34 - ph) / 2;
+        const int tot = total > 0 ? total : 9;
+        fill_rect(fb, px0, py, px0 + pw, py + ph, COL_BTN);
+        if (n > 0) {
+            int w = pw * n / tot;
+            if (w > pw) w = pw;
+            fill_rect(fb, px0, py, px0 + w, py + ph, COL_WARN);
+        }
+        snprintf(buf, sizeof buf, "%s %d/%d",
+                 pk_i18n_text(PK_TR_ANT_ADV_SWEEP_RUNNING), n, tot);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, px0 + pw + 12, y + 9, buf,
                    COL_WARN, PK_AA_S);
     } else {
         button(fb, HIT_SWEEP, 20, y, 150, pk_i18n_text(PK_TR_ANT_ADV_SWEEP),
                false, true);
     }
 
-    /* 建议值：扫描中也算，让人能提前看出趋势。 */
+    /* ── 建议值行 ──
+     * 独占一行而不是挤在扫频键右边：扫描中那里被进度条占着，两者叠在一起
+     * 谁都读不清。扫描中也算建议值，让人提前看出趋势、不必干等 90 秒。 */
+    y += 42;
     const int b = pick_best(rows, n);
     s_best_permille = 0;
     if (n > 0 && b < 0) {
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 186, y + 9,
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20, y + 6,
                    pk_i18n_text(PK_TR_ANT_ADV_NO_SIGNAL), COL_WARN, PK_AA_S);
     } else if (b >= 0) {
         s_best_permille = rows[b].permille;
-        snprintf(buf, sizeof buf, "%s %d (frm=%lu pre=%lu)",
+        snprintf(buf, sizeof buf, "%s %d‰  (frm=%lu pre=%lu)",
                  pk_i18n_text(PK_TR_ANT_ADV_BEST), rows[b].permille,
                  (unsigned long)rows[b].frames, (unsigned long)rows[b].pre);
-        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                   running ? 330 : 186, y + 9, buf, COL_BEST, PK_AA_S);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20, y + 6, buf,
+                   COL_BEST, PK_AA_S);
         /* 帧全 0 时建议值是按 pre 挑的，够用来定位但不足以拍板 —— 采用键
          * 照给，但上面那行已经用 frm=0 把出处摆明了。 */
-        button(fb, HIT_APPLY, PK_DISPLAY_W - 110, y, 90,
+        button(fb, HIT_APPLY, PK_DISPLAY_W - 110, y - 4, 90,
                pk_i18n_text(PK_TR_ANT_ADV_APPLY), false, true);
     }
 
@@ -203,7 +226,11 @@ void pk_ant_adv_page_render(uint16_t *fb)
     y = TBL_TOP;
     fill_rect(fb, 20, y - 6, PK_DISPLAY_W - 20, y - 5, COL_LINE);
     static const int COLX[] = { 40, 120, 220, 320, 470, 640 };
-    static const char *HEAD[] = { "%%", "mV", "FRM", "PRE", "NOISE", "OVR" };
+    /* 单位是**千分比**（0..1000），不是百分比——用 % 会差 10 倍。字面量
+     * 直接写 UTF-8 的 ‰：pk_aa_puts 按码点查表，而该码点已随 catalog
+     * 的 ANT_ADV_USAGE 收进字库。原来这里写的是 "%%"，那是 printf 的
+     * 转义写法，直接绘制时屏上老老实实画了两个百分号。 */
+    static const char *HEAD[] = { "‰", "mV", "FRM", "PRE", "NOISE", "OVR" };
     for (int i = 0; i < 6; i++)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COLX[i], y, HEAD[i],
                    COL_KEY, PK_AA_XS);

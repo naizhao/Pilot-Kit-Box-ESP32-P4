@@ -296,7 +296,10 @@ static void test_sweep_table(void)
     CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 0,
           "start 应清空上一轮\n");
     CHECK(total == 0, "start 后 total 应为 0，实际 %d\n", total);
-    CHECK(!pk_sweep_running(), "还没收到任何行时不该报『扫描中』\n");
+    /* 这里原来断言的是 !running —— 把缺陷行为写成了期望，于是 host 全绿而
+     * 实机上「点开始没反应」。running 的语义由 test_sweep_running_state()
+     * 专门锁，这一条只确认 start 不会把表留脏。 */
+    CHECK(pk_sweep_running(), "start 之后应立刻进入『扫描中』\n");
 
     pk_sweep_ingest_row(0, 9, 200, 724, 0, 0, 175027, 289423);
     CHECK(pk_sweep_snapshot(rows, PK_SWEEP_MAX_ROWS, &total) == 1,
@@ -339,6 +342,45 @@ static void test_sweep_table(void)
           "重新 start 未清空\n");
 }
 
+/*
+ * 「是否在扫」的状态机。两条都是实机上暴露出来的真实故障（2026-09-13）：
+ * 用户报「点开始没反应」「点停止又不会停」。
+ *
+ * 根因是把它写成了 (total > 0 && n < total) —— 一个靠对面回包推断的量：
+ *   · 刚启动时 total 还是 0，要等第一行回来（10 秒）按钮才翻，看起来就是死的；
+ *   · 中途停止只发报文不清本地量，n < total 依旧成立，按钮永久卡在「停止」。
+ * 按钮状态必须在点下去那一帧就翻过来，不能取决于对面什么时候回话。
+ */
+static void test_sweep_running_state(void)
+{
+    /* 启动的**那一刻**就必须为真——这正是"点了没反应"的那 10 秒 */
+    pk_sweep_start();
+    CHECK(pk_sweep_running(),
+          "start 之后立刻就该是『扫描中』，不能等第一行回来\n");
+
+    /* 收到中间几行，仍在扫 */
+    pk_sweep_ingest_row(0, 9, 200, 700, 0, 0, 0, 0);
+    CHECK(pk_sweep_running(), "收到第 1/9 行后仍应是『扫描中』\n");
+
+    /* 中途停止：本地状态必须立刻翻，不等对面确认 */
+    pk_sweep_stop();
+    CHECK(!pk_sweep_running(),
+          "stop 之后必须立刻退出『扫描中』，否则按钮永久卡住\n");
+
+    /* 停止后即便又飘回来一行（在途报文），也不该把状态又拉回『扫描中』 */
+    pk_sweep_ingest_row(1, 9, 300, 980, 0, 0, 0, 0);
+    CHECK(!pk_sweep_running(), "停止后在途报文不该让状态复活\n");
+
+    /* 跑满自然收尾：不用人再点一次停止 */
+    pk_sweep_start();
+    CHECK(pk_sweep_running(), "重新 start 应进入『扫描中』\n");
+    for (int i = 0; i < 9; i++)
+        pk_sweep_ingest_row((uint8_t)i, 9, (uint16_t)((i + 2) * 100),
+                            700, 0, 1, 0, 0);
+    CHECK(!pk_sweep_running(),
+          "收满 9/9 后应自动收尾，不该还显示『扫描中』\n");
+}
+
 int main(void)
 {
     /* adsb_link_task.c registers this production sink with modes_ingest_init()
@@ -349,6 +391,7 @@ int main(void)
     test_nonicao_df18_surface_does_not_create_target();
     test_tc20_position_reaches_airborne_cpr();
     test_sweep_table();
+    test_sweep_running_state();
 
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);

@@ -783,6 +783,25 @@ static pk_sweep_row_t    s_sweep[PK_SWEEP_MAX_ROWS];
 static int               s_sweep_n;       /* 已收到的行数 */
 static int               s_sweep_total;   /* 本轮总点数，0 = 尚未开始 */
 
+/*
+ * 「是否在扫」是**本地意图**，不是从回包推断出来的。
+ *
+ * 第一版把它写成 (total > 0 && n < total)，两头都错：
+ *   · 刚启动时 total 还是 0（要等第一行回来，10 秒），于是按钮一动不动
+ *     ——用户看到的就是"点了没反应"，然后再点一次、再等；
+ *   · 中途停止时只发了报文没清本地量，n < total 依旧成立，按钮就永久
+ *     卡在「停止」上，再点也没用。
+ * 按钮状态必须在点下去的那一帧就翻过来，这是交互的基本要求，不能取决于
+ * 对面什么时候回话。
+ *
+ * 兜底超时：万一对面没响应（链路断、RP 重启），不能让按钮永远锁在「停止」。
+ * 一轮 9×10s=90s，留到 150s 足够宽。
+ */
+static bool              s_sweep_want;
+static int64_t           s_sweep_deadline;
+
+#define SWEEP_TIMEOUT_US  (150 * 1000 * 1000)
+
 void pk_sweep_ingest_row(uint8_t idx, uint8_t total, uint16_t permille,
                          uint16_t level_mv, uint32_t frames, uint32_t pre,
                          uint32_t noise, uint32_t ovr)
@@ -802,6 +821,8 @@ void pk_sweep_ingest_row(uint8_t idx, uint8_t total, uint16_t permille,
     /* 按最大下标推进而不是 ++：万一丢了一行，用 ++ 会让"已收行数"永远差
      * 一格，UI 的进度就永远卡在倒数第二格、也永远判不出扫描已结束。 */
     if ((int)idx + 1 > s_sweep_n) s_sweep_n = (int)idx + 1;
+    /* 收满自然收尾：按钮自己变回「扫频」，不用人再点一次停止。 */
+    if (s_sweep_total > 0 && s_sweep_n >= s_sweep_total) s_sweep_want = false;
     portEXIT_CRITICAL(&s_sweep_mux);
 }
 
@@ -830,8 +851,11 @@ int pk_sweep_snapshot(pk_sweep_row_t *out, int cap, int *total)
 
 bool pk_sweep_running(void)
 {
+    const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_sweep_mux);
-    const bool run = (s_sweep_total > 0 && s_sweep_n < s_sweep_total);
+    if (s_sweep_want && now > s_sweep_deadline)
+        s_sweep_want = false;          /* 对面失联，别把按钮永久锁住 */
+    const bool run = s_sweep_want;
     portEXIT_CRITICAL(&s_sweep_mux);
     return run;
 }
@@ -848,15 +872,24 @@ void pk_sweep_start(void)
 {
     /* 清空上一轮：不清的话新一轮前几点还没回来时，UI 会把上一轮的尾部
      * 当成本轮结果显示出来——两轮之间天线和环境都可能变了。 */
+    const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_sweep_mux);
     memset(s_sweep, 0, sizeof s_sweep);
     s_sweep_n = 0;
     s_sweep_total = 0;
+    s_sweep_want = true;               /* 点下去这一帧按钮就得翻过来 */
+    s_sweep_deadline = now + SWEEP_TIMEOUT_US;
     portEXIT_CRITICAL(&s_sweep_mux);
     sweep_send_cfg(1);
 }
 
-void pk_sweep_stop(void) { sweep_send_cfg(0); }
+void pk_sweep_stop(void)
+{
+    portENTER_CRITICAL(&s_sweep_mux);
+    s_sweep_want = false;              /* 先清本地，别等对面回话 */
+    portEXIT_CRITICAL(&s_sweep_mux);
+    sweep_send_cfg(0);
+}
 
 static void on_link_msg(void *user, const adsb_link_msg_t *m)
 {

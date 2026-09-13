@@ -509,7 +509,7 @@ void pk_settings_page_render(uint16_t *fb)
       char v[40];
       const int th = pk_thresh_1090_get();
       if (th > 0)
-          snprintf(v, sizeof(v), "%s  %d",
+          snprintf(v, sizeof(v), "%s  %d‰",
                    pk_i18n_text(PK_TR_ANT_ADV_THRESHOLD), th);
       else
           snprintf(v, sizeof(v), "%s  %s",

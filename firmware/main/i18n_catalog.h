@@ -370,6 +370,7 @@ typedef enum {
     PK_TR_ANT_ADV_NO_SIGNAL = 356,
     PK_TR_ANT_ADV_HINT = 357,
     PK_TR_ANT_ADV_BACK = 358,
+    PK_TR_ANT_ADV_USAGE = 359,
     PK_TR_COUNT,
 } pk_tr_id_t;
 
