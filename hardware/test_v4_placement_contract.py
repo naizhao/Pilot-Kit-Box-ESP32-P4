@@ -240,6 +240,15 @@ class V4PlacementContractTest(unittest.TestCase):
         netlist = ROOT / "hardware" / "expansion-board-v4" / "build" / "netlist.xml"
         if not netlist.is_file():
             self.skipTest("缺少 build/netlist.xml，先跑一次 gen_bom.py 刷新")
+        # 只判存在性不判时间戳，等于拿旧数据去证明新板子是对的。
+        # 2026-09-13 实证：原理图 13:50 已清掉 R62，netlist 还是 13:14 那份
+        # 含 R62 的，下面几条「与原理图一致」的契约全部基于它做判断。
+        # 陈旧就直接失败，不 skip —— skip 会被当成绿灯一路放行。
+        sch_dir = ROOT / "hardware" / "expansion-board-v4" / "kicad"
+        newest = max((p.stat().st_mtime for p in sch_dir.glob("*.kicad_sch")),
+                     default=0.0)
+        if newest > netlist.stat().st_mtime:
+            self.fail("build/netlist.xml 比原理图旧，先重新导出网表再跑本测试")
         import xml.etree.ElementTree as ET
         root = ET.parse(netlist).getroot()
         nets, values, packages = {}, {}, {}
@@ -251,6 +260,27 @@ class V4PlacementContractTest(unittest.TestCase):
             values[ref] = (comp.findtext("value") or "").strip()
             packages[ref] = (comp.findtext("footprint") or "").strip().split(":")[-1]
         return nets, values, packages
+
+    def test_schematic_has_no_component_missing_from_the_pcb(self):
+        """原理图里的元件必须都落到 PCB 上。
+
+        这是反向检查。本类其余几条「与原理图一致」的契约都是「遍历 PCB 上的
+        封装，再拿原理图的值来比对」，而 `values.get(reference)` 取不到就
+        `continue` —— 于是「原理图有、PCB 没有」这一整类问题从不被触发。
+
+        2026-09-13 实证：另一路 session 的 R62（/QON 经 100k 到 J1.8 的感知
+        电阻）被误并进 power.kicad_sch，PCB 里并没有它，而
+        test_every_pad_net_matches_the_schematic 与发布包契约同时是绿的 ——
+        前者只遍历 PCB 焊盘，后者只逐字节比对包内 PCB、不看原理图。
+        结果是原理图与 PCB 矛盾却无人报警，一旦有人据原理图重新布线，
+        R62 就会悄悄长回板上。
+        """
+        _, values, _ = self._schematic_index()
+        # 只看真实位号：#PWR/#FLG 这类电源与旗标符号本就不上板，
+        # 而 H1–H4 是 PCB 独有的安装孔（反方向，不归本条管）。
+        want = {r for r in values if re.fullmatch(r"[A-Z]+\d+", r)}
+        missing = sorted(want - set(self.footprints))
+        self.assertEqual(missing, [], "原理图有这些元件，PCB 上却没有")
 
     def test_every_component_value_matches_the_schematic(self):
         _, values, _ = self._schematic_index()
