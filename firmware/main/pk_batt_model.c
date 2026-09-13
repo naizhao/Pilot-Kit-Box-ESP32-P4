@@ -9,13 +9,12 @@
 
 int pk_batt_mv_to_pct(int mv)
 {
-    if (mv >= 4164) return 100;
-    if (mv >= 3844) return 90 + (mv - 3844) * 10 / 320;
-    if (mv >= 3704) return 80 + (mv - 3704) * 10 / 140;
-    if (mv >= 3544) return 60 + (mv - 3544) * 20 / 160;
-    if (mv >= 3384) return 40 + (mv - 3384) * 20 / 160;
-    if (mv >= 3244) return 20 + (mv - 3244) * 20 / 140;
-    if (mv >= 3224) return  8 + (mv - 3224) * 12 /  20;
-    if (mv >= 2724) return      (mv - 2724) *  8 / 500;
+    if (mv >= 4026) return 100;
+    if (mv >= 3872) return 90 + (mv - 3872) * 10 / 154;
+    if (mv >= 3700) return 80 + (mv - 3700) * 10 / 172;
+    if (mv >= 3583) return 60 + (mv - 3583) * 20 / 117;
+    if (mv >= 3380) return 40 + (mv - 3380) * 20 / 203;
+    if (mv >= 3249) return 15 + (mv - 3249) * 25 / 131;
+    if (mv >= 2839) return      (mv - 2839) * 15 / 410;
     return 0;   /* 含负输入：落到这里返回 0，不许算出负数 */
 }

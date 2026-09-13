@@ -38,35 +38,30 @@ static void chk_true(const char *what, int cond)
     if (!cond) { printf("FAIL %s\n", what); g_fail++; }
 }
 
-/* ── 1) 七个拐点（2026-09-13 实测标定值）──────────────────────────
+/* ── 1) 七个拐点（2026-09-13 实测标定值，起点已剔除空载段）──────────────────────────
  * 这些数来自本机 8.37 小时放电实测（502 采样点，见 pk_batt_model.h），
  * 不是通用曲线。改动任何一个都意味着"重新标定过"，必须有新的实测数据
  * 支撑——所以钉死在这里。 */
 static void test_knees(void)
 {
-    chk_int("4164mV = 满",    pk_batt_mv_to_pct(4164), 100);
-    chk_int("3844mV = 90%",   pk_batt_mv_to_pct(3844), 90);
-    chk_int("3704mV = 80%",   pk_batt_mv_to_pct(3704), 80);
-    chk_int("3544mV = 60%",   pk_batt_mv_to_pct(3544), 60);
-    chk_int("3384mV = 40%",   pk_batt_mv_to_pct(3384), 40);
-    chk_int("3244mV = 20%",   pk_batt_mv_to_pct(3244), 20);
-    chk_int("3224mV = 8%",    pk_batt_mv_to_pct(3224), 8);
-    chk_int("2724mV = 0%",    pk_batt_mv_to_pct(2724), 0);
+    chk_int("4026mV = 满",    pk_batt_mv_to_pct(4026), 100);
+    chk_int("3872mV = 90%",   pk_batt_mv_to_pct(3872), 90);
+    chk_int("3700mV = 80%",   pk_batt_mv_to_pct(3700), 80);
+    chk_int("3583mV = 60%",   pk_batt_mv_to_pct(3583), 60);
+    chk_int("3380mV = 40%",   pk_batt_mv_to_pct(3380), 40);
+    chk_int("3249mV = 15%",   pk_batt_mv_to_pct(3249), 15);
+    chk_int("2839mV = 0%",    pk_batt_mv_to_pct(2839), 0);
 }
 
 /* ── 2) 段内线性插值 ─────────────────────────────────────────────── */
 static void test_interpolation(void)
 {
-    /* 3844..4164 段：90 + (mv-3844)*10/320 */
-    chk_int("4004mV 段中点", pk_batt_mv_to_pct(4004), 90 + 160 * 10 / 320);
-    /* 3704..3844 段：80 + (mv-3704)*10/140 */
-    chk_int("3774mV 段中点", pk_batt_mv_to_pct(3774), 80 + 70 * 10 / 140);
-    /* 3544..3704 段：60 + (mv-3544)*20/160 */
-    chk_int("3624mV 段中点", pk_batt_mv_to_pct(3624), 60 + 80 * 20 / 160);
-    /* 3244..3384 段：20 + (mv-3244)*20/140 */
-    chk_int("3314mV 段中点", pk_batt_mv_to_pct(3314), 20 + 70 * 20 / 140);
-    /* 3224..3244 段：末期陡降，20mV 跨 12 个点 */
-    chk_int("3234mV 段中点", pk_batt_mv_to_pct(3234), 8 + 10 * 12 / 20);
+    chk_int("3949mV 段中点", pk_batt_mv_to_pct(3949), 90 +  77 * 10 / 154);
+    chk_int("3786mV 段中点", pk_batt_mv_to_pct(3786), 80 +  86 * 10 / 172);
+    chk_int("3641mV 段中点", pk_batt_mv_to_pct(3641), 60 +  58 * 20 / 117);
+    chk_int("3481mV 段中点", pk_batt_mv_to_pct(3481), 40 + 101 * 20 / 203);
+    chk_int("3314mV 段中点", pk_batt_mv_to_pct(3314), 15 +  65 * 25 / 131);
+    chk_int("3044mV 段中点", pk_batt_mv_to_pct(3044),      205 * 15 / 410);
 }
 
 /* ── 3) 上下饱和 ─────────────────────────────────────────────────── */
@@ -74,7 +69,7 @@ static void test_saturation(void)
 {
     chk_int("4200mV 仍是 100", pk_batt_mv_to_pct(4200), 100);
     chk_int("5000mV 不越界",   pk_batt_mv_to_pct(5000), 100);
-    chk_int("2724mV 以下为 0", pk_batt_mv_to_pct(2700), 0);
+    chk_int("2839mV 以下为 0", pk_batt_mv_to_pct(2800), 0);
     chk_int("0mV 不为负",      pk_batt_mv_to_pct(0),    0);
     /* 负电压：ADC/解码出错时可能传进来，不许算出负数或大数 */
     chk_int("负电压不为负",    pk_batt_mv_to_pct(-100), 0);
@@ -125,11 +120,14 @@ static void test_range(void)
  * "平台段更陡"。换成带负载曲线后形态整个变了，不要拿旧结论套。 */
 static void test_curve_is_not_linear(void)
 {
-    /* 用"每 20mV 涨多少点"归一化后比较，避免段宽不同造成误判 */
-    const int low_per20   = (pk_batt_mv_to_pct(3244) - pk_batt_mv_to_pct(3224));
-    const int plat_per20  = (pk_batt_mv_to_pct(3844) - pk_batt_mv_to_pct(3704))
-                            * 20 / 140;
-    chk_true("末期每毫伏崩得比平台段快（曲线非线性）", low_per20 > plat_per20);
+    /* 归一到"每 100mV 涨多少点"再比，避免段宽不同造成误判。
+     * 实测：低压段 3249~3380（131mV / 25 点）≈19 点/100mV；
+     *       平台段 3700~3872（172mV / 10 点）≈ 6 点/100mV。 */
+    const int low_per100  = (pk_batt_mv_to_pct(3380) - pk_batt_mv_to_pct(3249))
+                            * 100 / 131;
+    const int plat_per100 = (pk_batt_mv_to_pct(3872) - pk_batt_mv_to_pct(3700))
+                            * 100 / 172;
+    chk_true("末期每毫伏崩得比平台段快（曲线非线性）", low_per100 > plat_per100);
 }
 
 int main(void)

@@ -631,25 +631,31 @@ static power_snapshot_t build_snapshot(const sy6970_status_t *st,
     out.backend          = POWER_BACKEND_SY6970;
     out.batt_mv          = st->batt_mv;
     {
-        const int32_t mv_x256 = (int32_t)st->batt_mv * 256;
+        /* 先把端电压折算回曲线口径（"满负载放电"），再平滑、再查表。
+         *
+         * 折算式与常量见 pk_batt_model.h 的负载模型：
+         *     等效电压 = BATV − (ICHG + LOAD_NOM) × R
+         * 充电中 ICHG>0，两项相加，把充电电流抬高的那部分减掉；不充电时
+         * ICHG=0 退化成 BATV − LOAD_NOM×R，正是曲线自身的口径。
+         *
+         * 2026-09-13 实测这一步的分量有多大：ICHG=2050mA、BATT=4044mV 时
+         * 补偿前查表报 **96%**，而拔掉电源设备根本开不起来——补偿后是
+         * **53%**。之前那版靠"charging 时封顶 99%"遮住顶部矛盾，中段
+         * （60%~90%）的虚高一直在，没人看得见。现在按电流实算，封顶
+         * 不再需要，已删。
+         *
+         * ichg_ma 只在充电时有效（不充电时 ICHGR 不刷新、保持陈值，见
+         * 详情日志那里的 stale 标记），所以用 charging 做闸。 */
+        int mv_eq = (int)st->batt_mv;
+        const int load_ma = (st->charging ? (int)st->ichg_ma : 0)
+                          + PK_BATT_LOAD_NOM_MA;
+        mv_eq -= load_ma * PK_BATT_R_MOHM / 1000;
+
+        const int32_t mv_x256 = (int32_t)mv_eq * 256;
         if (s_pct_ema_mv_x256 == 0) s_pct_ema_mv_x256 = mv_x256;  /* 首拍 */
         else s_pct_ema_mv_x256 += (mv_x256 - s_pct_ema_mv_x256) / 8;
         int pct = pk_batt_mv_to_pct((int)(s_pct_ema_mv_x256 / 256));
 
-        /* 充电中封顶 99%：100% 留给芯片自己说了算。
-         *
-         * 曲线的 mv>=4150 → 100% 是按**开路电压**标定的，而充电中端电压
-         * 被 I×R 抬高。2026-09-12 实测：batt=4244mV 已报 100%，芯片却仍
-         * 在充、ICHG=700~900mA——SY6970 的终止判据是 ICHG<ITERM（默认
-         * 256mA，[DS] p.28），离终止还远。屏上"100% 且正在充电"自相矛盾，
-         * 用户第一反应是电量算错了。
-         *
-         * 真正的解法是 CC 段压降补偿（压降=ICHG×R_internal），但 R 要一轮
-         * 实测才能定；在那之前先用这条不依赖标定的规则：**只有 term_done
-         * （CHRG_STAT=11 充电终止完成）才允许 100%**。charging 为真时哪怕
-         * 曲线算出 100 也压到 99，等芯片自己终止再跳满。
-         * 代价是满电维持阶段会在 99% 多停留一会儿——比"100% 还在充"诚实。 */
-        if (st->charging && pct >= 100) pct = 99;
         out.pct_est = (uint8_t)pct;
     }
     out.pct_valid        = (out.batt_mv > 2500 && out.batt_mv < 4500);
