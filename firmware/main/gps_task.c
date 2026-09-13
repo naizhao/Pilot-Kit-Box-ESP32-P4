@@ -2,6 +2,8 @@
 #include "gps_nmea.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>      /* snprintf（心跳里的 rmc= 字段）——IDF 侧有别的头间接
+                         * 带进来，host 测试没有，靠间接包含会只在 host 挂 */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -231,6 +233,16 @@ static void parse_rmc(const gps_nmea_msg_t *msg){
      * 合法坐标的句子，其时间字段同样不值得当卫星授时用。 */
     int64_t gps_ms;
     if(!rmc_epoch_ms(msg->f[1], msg->f[9], &gps_ms)) return;
+
+    /* 记下「模块自己报的时间」——无论这条 RMC 有没有定位。诊断页据此回答
+     * 「模块内部 RTC 在不在走」，那是 GNSS VBAT 常供电方案能否成立的判据：
+     * status='V' 时这个值仍在逐秒前进 = 模块 RTC 独立于定位在运行。 */
+    take();
+    s_gps.rmc_epoch_ms       = gps_ms;
+    s_gps.rmc_epoch_from_fix = valid;
+    s_gps.rmc_epoch_us       = esp_timer_get_time();
+    give();
+
     if(valid){
         /* 精校：fix 有效 = 卫星授时；仅当偏差 > 阈值才写，避免无谓跳变。 */
         struct timeval tv; gettimeofday(&tv, NULL);
@@ -430,13 +442,25 @@ static void gps_task(void *arg){
             gps_apply_freshness(&g, now);
             /* 1 Hz GPS 运行心跳：fix/可见星(G/B)/SNR/天线/HDOP 一目了然。
              * 原始 NMEA 已降 DEBUG;这条保留为常驻状态行(rx/lines 仍便于看 UART 活性)。 */
+            /* rmc= 是「模块自己的钟」：秒数 + 那条 RMC 的定位状态(A/V)。
+             * 与 fix/tl 分开看——fix=0 而 rmc 仍在逐秒前进，说明模块 RTC 独立于
+             * 定位在走时，这正是 GNSS VBAT 常供电方案成立的判据（见 gps.h）。
+             * rmc=-- 表示开机至今没从任何一条 RMC 里解出过合法时间。 */
+            char rmc[24];
+            if (g.rmc_epoch_ms == 0) {
+                snprintf(rmc, sizeof(rmc), "--");
+            } else {
+                snprintf(rmc, sizeof(rmc), "%lld%c",
+                         (long long)(g.rmc_epoch_ms / 1000),
+                         g.rmc_epoch_from_fix ? 'A' : 'V');
+            }
             ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
-                          "alt=%dft gs=%dkt trk=%d hdop=%.1f pps=%u tl=%d rx=%u lines=%u",
+                          "alt=%dft gs=%dkt trk=%d hdop=%.1f pps=%u tl=%d rmc=%s rx=%u lines=%u",
                      g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
                      g.sats_in_view_bds, g.snr_max, (int)g.ant_status,
                      g.lat, g.lon, g.altitude_ft, g.ground_speed_kt, g.track_deg,
                      (double)g.hdop, (unsigned)g.pps_count, (int)g.time_locked,
-                     (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
+                     rmc, (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);
         }
     }
 }

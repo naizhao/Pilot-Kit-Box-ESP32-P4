@@ -86,6 +86,22 @@ typedef struct {
     float        hdop;         /* GGA 水平精度因子；无星时模块报 25.5 */
     pk_gps_ant_t ant_status;   /* 天线自检 */
 
+    /* --- 模块自身 RTC 的走时证据（2026-09-13，为「GNSS VBAT 常供电」方案取证） ---
+     *
+     * ATGM336H 模块内部有 RTC（6N 手册 §2.4：pin6 VBAT = "RTC 及 SRAM 后备电源"）。
+     * 只要它在走时，**即使没有 fix**，RMC 的时间/日期字段照样有值——这正是
+     * gps_task.c 里 "gps-coarse" 粗校兜底成立的前提。
+     *
+     * 与 updated_us/have_fix 那一组刻意分开：那组问的是「位置有没有」，
+     * 这组问的是「模块的钟在不在走」。天线拔掉、进隧道时前者必须立刻作废，
+     * 而后者恰恰应该继续跳——两者同时为真才说明模块 RTC 独立于定位在运行。
+     * 因此 gps_apply_freshness() 不碰这三个字段。
+     *
+     * rmc_epoch_ms == 0 表示开机至今没有从任何一条 RMC 里解出过合法时间。 */
+    int64_t rmc_epoch_ms;      /* 最近一条 RMC 解出的 UTC epoch 毫秒，不论 status */
+    bool    rmc_epoch_from_fix;/* 那一条的 status 是否为有效定位('A'且坐标合法) */
+    int64_t rmc_epoch_us;      /* 收到该条 RMC 的 esp_timer 时刻 */
+
     /* 最后一次收到**任何** NMEA 行的时间；0 = 开机至今一行都没收到。
      *
      * 这是「模块在不在」的唯一依据，跟「有没有星」是两件事：模块没插时
