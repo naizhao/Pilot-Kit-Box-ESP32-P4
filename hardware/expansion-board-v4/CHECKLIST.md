@@ -5,7 +5,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-229 designators in total.
+230 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -98,11 +98,12 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **C92** | 10uF | C_0805_2012Metric | (121.3, 100.8) | G Airband |  |
 | ☐ | **C93** | 10uF | C_0805_2012Metric | (124.2, 109.4) | G Airband |  |
 | ☐ | **C94** | 100nF | C_0603_1608Metric | (120.5, 109.4) | G Airband |  |
-| ☐ | **C95** | 100nF | C_0603_1608Metric | (119.4, 100.1) | G Airband |  |
+| ☐ | **C95** | 100nF | C_0603_1608Metric | (117.2, 99.6) | G Airband |  |
 | ☐ | **C96** | 100nF | C_0603_1608Metric | (128.0, 102.1) | G Airband |  |
 | ☐ | **C97** | 1uF | C_0603_1608Metric | (129.8, 102.1) | G Airband |  |
 | ☐ | **C98** | 100nF | C_0603_1608Metric | (131.6, 102.1) | G Airband |  |
 | ☐ | **C99** | 100nF | C_0402_1005Metric | (133.6, 100.1) | G Airband |  |
+| ☐ | **C100** | 100nF | C_0603_1608Metric | (119.5, 100.7) | G Airband |  |
 | ☐ | **R1** | 10k | R_0603_1608Metric | (55.2, 84.5) | C Sensors + GNSS |  |
 | ☐ | **R2** | 4.7k | R_0603_1608Metric | (64.1, 97.8) | C Sensors + GNSS |  |
 | ☐ | **R3** | 4.7k | R_0603_1608Metric | (64.1, 95.2) | C Sensors + GNSS |  |

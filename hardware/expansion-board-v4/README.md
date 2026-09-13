@@ -34,7 +34,7 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > and ERC 0 errors / 10 warnings. Two C84 sub-assertions in the existing component
 > tests fail; C84 is outside this review's agreed change scope and was not modified.
 > The user confirmed a working V4.4 board; V4.7 airband and power-button behavior
-> still need hardware validation. Y4 supply and U22 VREF review items remain open. Owners of V4.0 boards must follow the
+> still need hardware validation. The existing 3.3 V supply to Y4 is accepted for this prototype; U22 VREF now has C100 (100 nF / 0603) in parallel with C92 (10 µF). Owners of V4.0 boards must follow the
 > internal rework record before powering the 1090 MHz chain.
 >
 > **V4.4 已回板并运行；V4.7 是当前待审定的设计版本。** V4.7 = V4.6 + 硬件电源键
@@ -45,7 +45,7 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > `VCC_RF`(U7.14) 不再悬空，改为两路偏置 Tee PMOS 的源极电源，模块据此才能输出
 > `ANTENNA OK/OPEN/SHORT`。V4.7 当前 DRC 0 违例 / 0 未连通，覆铜为最新；ERC 0 error / 10 warning。
 > 既有元件测试的 C84 两条子断言失败，按用户范围未修改 C84 或测试。用户已确认 V4.4 实板运行良好，
-> V4.7 航空波段与电源键仍待实板验证；Y4 供电及 U22 VREF 审查项尚未闭环。
+> V4.7 航空波段与电源键仍待实板验证；用户接受本轮样板保留 Y4 的3.3V供电，回板验证；U22 VREF 已增加 C100（100nF／0603），与 C92（10µF）并联。
 > V4.0 实物在开启 1090 MHz 链路前必须先按内部返修记录处理。
 
 | | Status / 状态 |
@@ -91,7 +91,7 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 207 placements (229 designators, 22 not placed), 474 vias (all 0.30 mm drill / 0.45 mm pad), 1795 track segments |
+| **Scale** | 208 placements (230 designators, 22 not placed), 475 vias (all 0.30 mm drill / 0.45 mm pad), 1798 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
@@ -127,11 +127,13 @@ authored in. Tables, part numbers, and net names are identical in both.
 
 Pre-built packages live in [`release/`](release/):
 
-**Regenerated on 2026-09-13 from the revised PCB, with C99 = 100 nF. Files are synchronized; the Y4 supply specification remains open and U22 VREF still lacks the recommended 100 nF. Resolve these review items before placing the order.**
+> 本次发布以已完成 C100 布线的 PCB 为准。工作区 `power.kicad_sch` / `sensors.kicad_sch` 中的 GNSS 备用供电是后续修改，尚未进板；本次 BOM、图纸、安装助手及源包排除它们。发布源包使用与当前 PCB 逐引脚核对一致的原理图，工作区后续设计保留。
+
+**Regenerated on 2026-09-13 from the revised PCB, with C99 = 100 nF and the finalized C100 VREF decoupling layout. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF now includes C100 = 100 nF in parallel with C92.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | Current revised V4.7 export — C99 = 100 nF, RS-274-X, 15 files; see the open electrical items below before ordering |
+| `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | Current revised V4.7 export — C99/C100 = 100 nF, RS-274-X, 15 files; see the open electrical items below before ordering |
 | `expansion-board-v4-kicad-V4.7-20260913.zip` | Source matching the current revised PCB byte for byte; supplied for review, not uploaded to the fab |
 | `expansion-board-v4-gerber-JLC-V4.6-20260911.zip` | ⚠️ Superseded by V4.7 — no power button (the box cannot be switched off or hard-reset) and the TCXO output is DC-coupled straight into BK4819 `XI`. Do not order |
 | `expansion-board-v4-kicad-V4.6-20260911.zip` | ⚠️ Matching superseded V4.6 source archive |
@@ -156,10 +158,13 @@ with `R61` (10 kΩ) on the XI side. C99 reuses the C37/C52 BOM item
 did not meet the exact Epson part's external DC-block requirement of Cc ≥ 10 nF.
 
 The revised layout moves Y4 away from the crossing 5 V trace and brings C92
-close to U22 VREF. Two electrical items remain open before fabrication:
-Y4 still receives 3.3 V, outside X1G0042110003's recommended 2.85–3.15 V
-operating range (4.0 V is an absolute maximum, not a performance guarantee);
-U22 VREF still has only 10 µF, without the parallel 100 nF recommended by TI.
+close to U22 VREF. Y4 receives 3.3 V, outside X1G0042110003's recommended
+2.85–3.15 V operating range. The user accepts this specification deviation for
+the prototype and retains the existing supply; it is no longer a required PCB
+change for this build. Startup, frequency and output amplitude remain bench checks.
+This decision does not extend the manufacturer's guaranteed operating range.
+U22 VREF now has C100 (100 nF / 0603) in parallel with C92 (10 µF);
+the user finalized its placement and routing before this release.
 The XI amplitude, bias, total load and receiver lock also require bench verification.
 See the [Epson part specification](https://download.epsondevice.com/td/pdf/td_tcxo_mhz/TG-5006CG_X1G0042110003_en.pdf)
 and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink/pcm1808.pdf).
@@ -172,7 +177,7 @@ and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink
 2. **Via solder-mask state comes from the file, not the order form.** JLCPCB,
    HQPCB and JiePei all state the same thing: *"if the file is Gerber, we
    process strictly per the file; this option has no effect"* — Gerber cannot
-   tell a via from a component hole. This board ships 474 vias: 398 tented,
+   tell a via from a component hole. This board ships 475 vias: 399 tented,
    76 exposed (all 76 inside pad mask openings, 33 of them thermal via-in-pad).
    `internal/tools/gerber.sh` recomputes this split on every release — never
    copy the numbers from an older revision.
@@ -230,14 +235,17 @@ modify the design; send `release/` straight to a board house.
 | `SELECTIVE_PLACEMENT.md` | Which designators must **not** simply be populated from the BOM |
 | `BOM_PURCHASE-zh_CN.md` | Parts list with values, packages and selection constraints |
 
-The board was generated and verified by an internal script chain rather than
-hand-maintained, which is why the schematic, placement, routing, zones and
-silkscreen are all internally consistent. Those generators are part of our
-build process, not part of what this board is — they are not published.
+The release source package has been checked against the finalized PCB, including
+component values, footprints and pad nets. The working directory also contains
+later GNSS backup-power schematic changes that are excluded from this release.
+Internal scripts export placement, routing, zones and silkscreen from the manually
+finalized board. A known zone-restoration error still blocks a complete rebuild;
+lossless script replay is not claimed. These internal tools are not published.
 
-板子由内部脚本链生成和校验，不是手工维护的，所以原理图、布局、布线、覆铜
-和丝印彼此严格一致。那套生成器属于我们的构建过程，不是这块板本身，
-因此不在公开范围内。
+本次发布源包已按用户完成的 PCB 核对元件料值、封装及引脚网络。工作区还保留
+后续 GNSS 备用供电原理图，未纳入本次发布。内部脚本从手工定稿的板子导出
+布局、布线、覆铜与丝印；完整从零重建仍有已知覆铜恢复错误，尚不能保证脚本
+无损重放。内部工具不在公开范围内；恢复本次板子请使用发布源包。
 
 Requires KiCad 10 to open the project (it uses KiCad 10 file formats).
 打开工程需要 KiCad 10（文件格式为 KiCad 10）。

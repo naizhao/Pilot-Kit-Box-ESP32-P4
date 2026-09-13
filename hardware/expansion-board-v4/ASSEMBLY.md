@@ -227,7 +227,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 |---|---|---|---|---|---|
 | **J1** | J3_HAT_2x20_SMD排针 | PinHeader_2x20_P2.54mm_Ver | (92.6, 106.3) | 90° | ★ Routine |
 
-## Stage G: Airband (21 parts)
+## Stage G: Airband (22 parts)
 
 | Designator | Value / Model | Footprint | Board position | Rotation | Manual difficulty |
 |---|---|---|---|---|---|
@@ -238,16 +238,17 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **C92** | 10uF | C_0805_2012Metric | (121.3, 100.8) | 90° | ★ Routine |
 | **C91** | 10uF | C_0805_2012Metric | (129.0, 108.2) | 0° | ★ Routine |
 | **C93** | 10uF | C_0805_2012Metric | (124.2, 109.4) | 0° | ★ Routine |
+| **C100** | 100nF | C_0603_1608Metric | (119.5, 100.7) | 90° | ★ Routine |
 | **R58** | 10k | R_0603_1608Metric | (132.5, 108.2) | 0° | ★ Routine |
 | **C94** | 100nF | C_0603_1608Metric | (120.5, 109.4) | 0° | ★ Routine |
 | **C98** | 100nF | C_0603_1608Metric | (131.6, 102.1) | 90° | ★ Routine |
 | **R59** | 10k | R_0603_1608Metric | (132.5, 105.6) | 0° | ★ Routine |
+| **C95** | 100nF | C_0603_1608Metric | (117.2, 99.6) | 180° | ★ Routine |
 | **C96** | 100nF | C_0603_1608Metric | (128.0, 102.1) | 90° | ★ Routine |
 | **C97** | 1uF | C_0603_1608Metric | (129.8, 102.1) | 90° | ★ Routine |
 | **C88** | 100pF | C_0603_1608Metric | (126.4, 90.7) | 180° | ★ Routine |
 | **C89** | 18pF | C_0603_1608Metric | (128.7, 93.9) | 180° | ★ Routine |
 | **R60** | 0R | R_0603_1608Metric | (124.0, 101.5) | 0° | ★ Routine |
-| **C95** | 100nF | C_0603_1608Metric | (119.4, 100.1) | 90° | ★ Routine |
 | **C99** | 100nF | C_0402_1005Metric | (133.6, 100.1) | 180° | ★★ 0402; use low airflow |
 | **R61** | 10k | R_0402_1005Metric | (131.1, 97.9) | 0° | ★★ 0402; use low airflow |
 | **L18** | 100nH | L_0402_1005Metric | (126.0, 93.9) | 0° | ★★ 0402; use low airflow |
