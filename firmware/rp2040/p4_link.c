@@ -15,7 +15,8 @@
 #include "board_pins.h"
 #include "edge_cap.h"          /* EDGE_CAP_TICK_HZ：tick→µs */
 #include "p4_link.h"
-#include "rf_safety.h"   /* 天线真值表唯一出处（CONFIG_REQ 应用） */
+#include "rf_safety.h"     /* 天线真值表唯一出处（CONFIG_REQ 应用） */
+#include "threshold_ctl.h" /* CONFIG_REQ 的门限 key 直接落到这里 */
 
 #define P4_UART uart0           /* SDK 2.1.1 实例名（旧名 UART_ID_UART0 已不存在）*/
 #define P4_BAUD 921600
@@ -75,6 +76,25 @@ static void on_rx_msg(void *user, const adsb_link_msg_t *m)
                 rf_safety_set_ant_gnss(it[i].val ? RF_ANT_GNSS_ONBOARD
                                                  : RF_ANT_GNSS_EXTERNAL);
                 s_ant_gnss = it[i].val ? 1 : 0;
+                applied++;
+                break;
+            case ADSB_LINK_CFG_THRESHOLD: {
+                /* 三态严格分开（adsb_link.h 的编码说明）：0=用固件默认、
+                 * 1..100=10..1000‰、其余无效。无效值计 rejected 而不是
+                 * 悄悄套个默认——对面以为设上了、实际跑在别的门限上，
+                 * 症状是"一个包都收不到"，最难查。 */
+                const int pml = adsb_link_threshold_from_val(it[i].val);
+                if (pml < 0) { rejected++; break; }
+                threshold_ctl_set_permille(
+                    pml ? pml : THRESHOLD_CTL_DEFAULT_PERMILLE);
+                applied++;
+                break;
+            }
+            case ADSB_LINK_CFG_SWEEP:
+                /* 与 CDC 的 'W' 共用同一个状态机（adsb1090.c），不各抄一份
+                 * 真值；扫描结果由那边经 SWEEP_ROW 逐点上报。 */
+                if (it[i].val) p4_link_sweep_start_hook();
+                else           p4_link_sweep_stop_hook();
                 applied++;
                 break;
             default:
@@ -167,6 +187,17 @@ void p4_link_send_error(uint8_t code)
 {
     uint8_t pl[2] = { code, 0 };
     tx_frame(ADSB_LINK_MSG_ERROR, pl, sizeof pl);
+}
+
+void p4_link_send_sweep_row(uint8_t idx, uint8_t total, uint8_t permille_val,
+                            uint16_t level_mv, uint32_t frames, uint32_t pre,
+                            uint32_t noise, uint32_t ovr)
+{
+    uint8_t pl[ADSB_LINK_SWEEP_ROW_LEN];
+    const size_t n = adsb_link_sweep_row_encode(pl, sizeof pl, idx, total,
+                                                permille_val, level_mv,
+                                                frames, pre, noise, ovr);
+    if (n) tx_frame(ADSB_LINK_MSG_SWEEP_ROW, pl, n);
 }
 
 void p4_link_get_stats(uint32_t *tx, uint32_t *rx, uint32_t *gaps)

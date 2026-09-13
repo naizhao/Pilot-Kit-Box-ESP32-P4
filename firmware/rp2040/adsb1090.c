@@ -10,6 +10,7 @@
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
 
+#include "adsb_link.h"       /* 门限的 8 位编码：SWEEP_ROW 与 CFG 共用一套标度 */
 #include "rf_safety.h"
 #include "edge_cap.h"
 #include "edge_consume.h"
@@ -488,11 +489,32 @@ static void sweep_poll(void)
            (unsigned long)s_sw.pre[i], (unsigned long)s_sw.noise[i],
            (unsigned long)s_sw.ovr[i]);
 
+    /* 同一份结果两条出口：CDC 给台架看，SWEEP_ROW 给 P4 画 UI。逐点发，
+     * P4 才能显示进度并中途叫停（整轮 90s）。 */
+    p4_link_send_sweep_row(i, s_sw.n,
+                           adsb_link_threshold_to_val(s_sw.pts[i]),
+                           (uint16_t)threshold_ctl_read_level_mv(),
+                           s_sw.frames[i], s_sw.pre[i],
+                           s_sw.noise[i], s_sw.ovr[i]);
+
     s_sw.idx++;
     if (s_sw.idx >= s_sw.n)
         sweep_finish(false);
     else
         sweep_enter_point();
+}
+
+/* CONFIG_REQ 的 SWEEP key 落点（p4_link.h 说明了为什么钩子在这边实现）。
+ * 幂等：重复启动不重置进行中的扫描，重复停止不打印中止信息——P4 侧重连
+ * 握手会重发一次配置，不该把正在跑的一轮打断或多吐一行。 */
+void p4_link_sweep_start_hook(void)
+{
+    if (!s_sw.active) sweep_start();
+}
+
+void p4_link_sweep_stop_hook(void)
+{
+    if (s_sw.active) sweep_finish(true);
 }
 
 static void core0_poll_periodic(void *user)

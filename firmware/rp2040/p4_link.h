@@ -26,6 +26,21 @@ void p4_link_tick_health(const uint32_t counters[11]);
 bool p4_link_linked(void);
 void p4_link_get_stats(uint32_t *tx, uint32_t *rx, uint32_t *gaps);
 
+/* 门限扫描逐点结果上报（SWEEP_ROW）。逐点发而不是整轮攒完再发：一轮
+ * 90s，P4 得能边收边画进度，也得有机会中途叫停。 */
+void p4_link_send_sweep_row(uint8_t idx, uint8_t total, uint8_t permille_val,
+                            uint16_t level_mv, uint32_t frames, uint32_t pre,
+                            uint32_t noise, uint32_t ovr);
+
+/* ── 由 adsb1090.c 实现的扫描钩子 ──────────────────────────────────
+ * CONFIG_REQ 的 SWEEP key 最终落到 adsb1090.c 那个状态机上。在这里只声明、
+ * 不让 p4_link 自己持有状态机，是因为扫描要读 health 统计、要驱动
+ * threshold_ctl，那些都长在 adsb1090.c 上；反过来把 CONFIG_REQ 解析搬过去
+ * 又会让协议逻辑散成两处。CDC 的 'W' 和这里走的是同一个状态机，不各抄
+ * 一份真值。 */
+void p4_link_sweep_start_hook(void);
+void p4_link_sweep_stop_hook(void);
+
 /* P4 经 CONFIG_REQ 下发的当前天线选择（0 = 上电默认，见 rf_safety.h）。
  * 只用于诊断打印，真值表与实际电平归 rf_safety.c。 */
 uint8_t p4_link_ant_1090(void);
