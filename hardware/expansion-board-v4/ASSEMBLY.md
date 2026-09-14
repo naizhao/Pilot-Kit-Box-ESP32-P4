@@ -11,7 +11,7 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 - Unpowered variant: omit the complete power section and populate both R7/R8.
 - Never combine CH224K with R7/R8. See [VARIANTS.md](VARIANTS.md).
 
-## Stage A: Power (46 parts)
+## Stage A: Power (50 parts)
 
 | Designator | Value / Model | Footprint | Board position | Rotation | Manual difficulty |
 |---|---|---|---|---|---|
@@ -31,8 +31,10 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.6) | -90° | ★ Exposed leads; hand touch-up possible |
 | **C76** | 22uF | C_1206_3216Metric | (135.2, 96.8) | -90° | ★ Routine |
 | **C72** | 10uF | C_1206_3216Metric | (130.9, 79.2) | 90° | ★ Routine |
-| **C74** | 10uF | C_0805_2012Metric | (143.3, 84.9) | 90° | ★ Routine |
 | **C73** | 10uF | C_0805_2012Metric | (141.3, 88.1) | -90° | ★ Routine |
+| **C74** | 10uF | C_0805_2012Metric | (143.3, 84.9) | 90° | ★ Routine |
+| **D8** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 80.3) | 90° | ★ Routine |
+| **D9** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 84.2) | 90° | ★ Routine |
 | **C1** | 10uF | C_0805_2012Metric | (70.8, 96.5) | 180° | ★ Routine |
 | **C75** | 10uF | C_0805_2012Metric | (139.1, 88.1) | -90° | ★ Routine |
 | **C102** | 1uF | C_0603_1608Metric | (85.4, 95.1) | 0° | ★ Routine |
@@ -59,6 +61,8 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **R48** | 0R | R_0603_1608Metric | (126.8, 67.0) | 180° | ★ Routine |
 | **R49** | 0R | R_0603_1608Metric | (126.8, 69.4) | 180° | ★ Routine |
 | **R63** | 2.2k | R_0603_1608Metric | (78.4, 97.8) | 180° | ★ Routine |
+| **R65** | 1k | R_0603_1608Metric | (145.8, 84.2) | 90° | ★ Routine |
+| **R64** | 1k | R_0603_1608Metric | (145.8, 80.3) | 90° | ★ Routine |
 | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (54.8, 100.9) | 90° | ★ Routine |
 | **C5** | 1uF | C_0402_1005Metric | (85.9, 96.7) | 0° | ★★ 0402; use low airflow |
 

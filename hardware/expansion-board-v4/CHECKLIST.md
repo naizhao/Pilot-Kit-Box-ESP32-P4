@@ -5,7 +5,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-236 designators in total.
+240 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -160,6 +160,8 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R60** | 0R | R_0603_1608Metric | (124.0, 101.5) | G Airband |  |
 | ☐ | **R61** | 10k | R_0402_1005Metric | (131.1, 97.9) | G Airband |  |
 | ☐ | **R63** | 2.2k | R_0603_1608Metric | (78.4, 97.8) | A Power |  |
+| ☐ | **R64** | 1k | R_0603_1608Metric | (145.8, 80.3) | A Power |  |
+| ☐ | **R65** | 1k | R_0603_1608Metric | (145.8, 84.2) | A Power |  |
 | ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain |  |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
@@ -180,6 +182,8 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **D5** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (139.3, 77.8) | B MCU + Flash | Bidirectional low-capacitance USB ESD protector; no polarity |
 | ☐ | **D6** | TPESD8L3.3 0.3pFtyp 0.5pFmax | D_0402_1005Metric | (126.4, 89.3) | G Airband | See the Chinese companion for the detailed engineering note |
 | ☐ | **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.6) | A Power | See the Chinese companion for the detailed engineering note |
+| ☐ | **D8** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 80.3) | A Power | See the Chinese companion for the detailed engineering note |
+| ☐ | **D9** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 84.2) | A Power | See the Chinese companion for the detailed engineering note |
 | ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (122.0, 91.0) | D 978 Transceiver |  |
 | ☐ | **F3** | 6V/200mA | Fuse_0805_2012Metric | (98.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **F4** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 75.9) | C Sensors + GNSS |  |

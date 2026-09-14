@@ -26,6 +26,12 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > (`U23` LDO off `BAT_P` -> `3V3_BKP` -> `D7` -> `GNSS_VBAT`, plus the `BT1`
 > MS621FE-FL11E rechargeable cell through `R63`), so the module keeps its RTC
 > and ephemeris across power-off instead of cold-starting on every boot.
+> V4.8 also adds the board's first two status LEDs — `D8` power (on 3V3_DIG,
+> extinguishes by itself at power-off) and `D9` charge, driven directly by the
+> SY6970 open-drain `STAT` pin (lit while charging, off when done, **blinking at
+> 1 Hz on any charge fault**). Neither consumes a GPIO; `R64`/`R65` limit both to
+> about 1 mA. They sit on the X+ wall between the USB-C receptacle and the power
+> button, so the enclosure needs a matching opening on that wall.
 > V4.7 added a hardware power button (`SW3` on the SY6970 `/QON` pin;
 > BATFET reset requires battery-only operation) and the airband
 > reference-clock DC-block (`C99` + `R61`). V4.6 added the 118–137 MHz airband
@@ -44,6 +50,10 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > **V4.4 已回板并运行；V4.8 是当前待审定的设计版本。** V4.8 = V4.7 + GNSS 模块 VBAT 常供电
 > （`U23` LDO 取自 `BAT_P` -> `3V3_BKP` -> `D7` -> `GNSS_VBAT`，并经 `R63` 挂 `BT1`
 > MS621FE-FL11E 可充电电池）：模块关机后保住 RTC 与星历，不再每次开机冷启动。
+> V4.8 另有全板第一次出现的两颗指示灯：`D8` 电源（接 3V3_DIG，关机自灭）、
+> `D9` 充电（直接由 SY6970 的开漏 `STAT` 脚驱动：充电中亮、充满灭、
+> **充电故障时 1Hz 闪**）。两颗都不占 GPIO，`R64`/`R65` 限流到约 1mA。
+> 位置在 X+ 壁的 USB-C 口与电源键之间，外壳需在该壁配套开孔。
 > V4.7 = V4.6 + 硬件电源键
 > （`SW3` 接 SY6970 的 `/QON`；BATFET 复位有仅电池供电的条件）
 > + 航空波段参考时钟的隔直（`C99` + `R61`）。V4.6 = V4.5 + 118–137MHz 航空波段接收
@@ -98,7 +108,7 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 208 placements (230 designators, 22 not placed), 475 vias (all 0.30 mm drill / 0.45 mm pad), 1798 track segments |
+| **Scale** | 232 placements (240 designators, 8 not placed), 495 vias (all 0.30 mm drill, 0.45/0.50 mm pad), 1867 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
@@ -134,16 +144,22 @@ authored in. Tables, part numbers, and net names are identical in both.
 
 Pre-built packages live in [`release/`](release/):
 
-> 本次发布为 V4.8：GNSS 模块 VBAT 常供电**已进板并布通**（`U23`/`C101`/`C102`/`D7`/`R63`/`BT1`，
-> 且 `U7.pin6` 由 `3V3_GNSS` 改接 `GNSS_VBAT`）。BOM、图纸、安装助手与源包均已包含。
+> 本次发布为 V4.8，两项相对 V4.7 的功能性差异都**已进板并布通**：
+> ① GNSS 模块 VBAT 常供电（`U23`/`C101`/`C102`/`D7`/`R63`/`BT1`，且 `U7.pin6`
+> 由 `3V3_GNSS` 改接 `GNSS_VBAT`）；② 指示灯 `D8` 电源 / `D9` 充电（`R64`/`R65` 限流）。
+> BOM、图纸、安装助手与源包均已包含。
 > 上一版 README 中「备用供电尚未进板、本次发布排除」的说法对应 V4.7，已不再适用。
+>
+> ⚠️ 需手焊、不在任何 CPL 里的三个件：`BT1`（B 面，经济型 SMT 只贴一面）、
+> `D8`/`D9`（自备 LED，无嘉立创料号，且只能用 Vf 2.0~2.2V 的红/黄/橙/普绿——
+> 蓝、翠绿、白是 3.0~3.1V，在 3.3V 轨上点不亮）。
 
-**Regenerated on 2026-09-13 from the revised PCB, with C99 = 100 nF and the finalized C100 VREF decoupling layout. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF now includes C100 = 100 nF in parallel with C92.**
+**Regenerated on 2026-09-14 from the revised PCB — adds the `D8`/`D9` status LEDs on top of the GNSS VBAT backup rail, with C99 = 100 nF and the finalized C100 VREF decoupling layout. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF now includes C100 = 100 nF in parallel with C92.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.8-20260913.zip` | **Current V4.8 export** — adds the GNSS VBAT backup rail; RS-274-X, 15 files; see the open electrical items below before ordering |
-| `expansion-board-v4-kicad-V4.8-20260913.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.8-20260914.zip` | **Current V4.8 export** — adds the GNSS VBAT backup rail and the two status LEDs; RS-274-X, 15 files; see the open electrical items below before ordering |
+| `expansion-board-v4-kicad-V4.8-20260914.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
 | `expansion-board-v4-gerber-JLC-V4.7-20260913.zip` | ⚠️ Superseded by V4.8 — no GNSS VBAT backup, the module cold-starts on every power-up. Do not order |
 | `expansion-board-v4-kicad-V4.7-20260913.zip` | ⚠️ Matching superseded V4.7 source archive |
 | `expansion-board-v4-gerber-JLC-V4.6-20260911.zip` | ⚠️ Superseded by V4.7 — no power button (the box cannot be switched off or hard-reset) and the TCXO output is DC-coupled straight into BK4819 `XI`. Do not order |
@@ -188,8 +204,8 @@ and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink
 2. **Via solder-mask state comes from the file, not the order form.** JLCPCB,
    HQPCB and JiePei all state the same thing: *"if the file is Gerber, we
    process strictly per the file; this option has no effect"* — Gerber cannot
-   tell a via from a component hole. This board ships 475 vias: 399 tented,
-   76 exposed (all 76 inside pad mask openings, 33 of them thermal via-in-pad).
+   tell a via from a component hole. This board ships 495 vias: 421 tented,
+   74 exposed (all 74 inside pad mask openings, 33 of them thermal via-in-pad).
    `internal/tools/gerber.sh` recomputes this split on every release — never
    copy the numbers from an older revision.
 3. **`J4`'s four `SH` holes must NOT be resin-plugged.** They are ⌀0.60 mm
@@ -219,8 +235,9 @@ would.
 > 2026-09-11: the same Gerber built by JiePei on `JP06161H-7628A1` resonated at
 > **1062.5 MHz instead of 1085 MHz**, with SWR rising from 1.06 to 1.72 — the
 > laminate's εr sets antenna resonance, and clearing all six copper layers removes
-> the *copper*, not the 1.6 mm of FR-4 underneath. Trim 0.1–0.2 mm at a time using
-> 11.5 MHz/mm as the slope, and judge in the enclosure. Irrelevant if you only use
+> the *copper*, not the 1.6 mm of FR-4 underneath. Trim 0.1–0.2 mm at a time —
+> 11.5 MHz/mm is a rough estimate (~2.0 mm); the same-state measured 24–25 MHz/mm gives
+> ~0.9 mm — and judge in the enclosure. Irrelevant if you only use
 > the external U.FL/SMA antenna.
 
 Full numbers, per-vendor stackup tables and the mismatch-loss derivation:

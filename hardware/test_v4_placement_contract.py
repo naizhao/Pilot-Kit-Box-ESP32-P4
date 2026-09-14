@@ -42,8 +42,13 @@ DEBUG_LABELS = ("TP1", "TP2", "TP3", "TP4", "TP5", "TP6", "TP7")
 # 跟 DEBUG_LABELS 一样单列，而不是把 FINALIZED_GRAPHICS_COUNT 改大——
 # 基线数字一旦被"顺手 +1"，这条合同就退化成事后追认，再也拦不住误增误删。
 V47_LABELS = ("PWR BTN",)
+# V4.8 新增：用户 2026-09-14 加 D8/D9 两颗指示灯时，同时在灯旁配的功能标注
+# （`PWR↓` @146.32,78.54 / `CHG↓` @146.35,82.40，F.SilkS 0.8mm）。
+# 箭头指向各自那颗灯——位号 D8/D9 只说"这是个二极管"，这两条才说明它是干什么的。
+# 同样单列，理由见上面 V47_LABELS。
+V48_LABELS = ("PWR↓", "CHG↓")
 BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
-                        + len(V47_LABELS))
+                        + len(V47_LABELS) + len(V48_LABELS))
 # B 面左边缘同一竖列：SW1、SW2 相邻成组排在 TP 之前，SW1 在 SW2 上方。
 # 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠）。
 #

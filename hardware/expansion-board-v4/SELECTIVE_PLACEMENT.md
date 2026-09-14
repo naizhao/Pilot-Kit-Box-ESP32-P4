@@ -12,12 +12,12 @@ Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
 This board's current configuration: **powered variant**.
 
-The airband group (stage G — 21 designators: `U21` `U22` `Y4` `J10` `D6` `L18` `R58`–`R61` `C88` `C89` `C91`–`C99`; `C99`/`R61` are the V4.7 reference-clock DC-block and load)
+The airband group (stage G — 22 designators: `U21` `U22` `Y4` `J10` `D6` `L18` `R58`–`R61` `C88` `C89` `C91`–`C100`; `C99`/`R61` are the V4.7 reference-clock DC-block and load, `C100` is the V4.8 VHF VREF decoupling)
 is **not** in any selective or mutex group: it is placed unconditionally, on both variants. It is listed here
 only so that its absence from the tables below is not read as an omission.
 
-Designator locations on the board: [ASSEMBLY_MAP-V4.7.pdf](ASSEMBLY_MAP-V4.7.pdf) (public version),
-`internal/装配图-本轮打板-V4.7-zh_CN.pdf` (parts each board of this batch must hand-place itself).
+Designator locations on the board: [ASSEMBLY_MAP-V4.8.pdf](ASSEMBLY_MAP-V4.8.pdf) (public version),
+`internal/装配图-本轮打板-V4.8-zh_CN.pdf` (parts each board of this batch must hand-place itself).
 Both are generated from the criteria in this table, so they cannot disagree with it.
 
 ---
@@ -26,19 +26,27 @@ Both are generated from the criteria in this table, so they cannot disagree with
 
 The same PCB is built in two versions, and **this is the only group in the whole table where a wrong placement burns the board**:
 
-| | Power section (35 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
+| | Power section (37 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
 |---|---|---|
 | **Powered variant** (this board) | ✅ place all | ❌ **must never be placed** |
 | Unpowered variant | ❌ place none | ✅ must be placed |
 
 **Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` **`SW3`**
-**`U23` `C101` `C102` `D7` `R63` `BT1`** `C70`~`C80` `R37`~`R46`
+**`U23` `C101` `C102` `D7` `R63` `BT1`** **`D9` `R65`** `C70`~`C80` `R37`~`R46`
 
 (`U23`/`C101`/`C102`/`D7`/`R63`/`BT1` are the V4.8 GNSS VBAT backup rail. They all
 hang off `BAT_P`, which is produced by `U19` + `J9` — the unpowered variant omits
 both, so this group is omitted with them. **Omitting them from this list is not a
 "few extra parts" problem**: `U23`'s input would float, the whole backup rail would
 be meaningless, and the board would still power up without any error.)
+
+(`D9`/`R65` are the V4.8 **charge indicator**. `D9`'s cathode lands on `CHG_STAT`
+through `R65`, and `CHG_STAT` is the `STAT` pin of `U19` (SY6970). The unpowered
+variant has no `U19` and therefore no charging at all, so this LED **can never
+light up** — populating it is pure waste.
+⚠️ **`D8`/`R64` (power indicator) are NOT in this list** and must be populated on
+both variants: they sit between `3V3_DIG` and `GND`, and `3V3_DIG` comes from `U1`
+stepping down `VCC_5V`, which the unpowered variant still has.)
 (`SW3` is the V4.7 power button on SY6970's `/QON`; without `U19` it connects to nothing.)
 
 **Why it burns**: for USB-C to be recognized by the host, the CC pin must have Rd. In the powered variant this is provided internally by CH224K(`U18`);
@@ -125,7 +133,7 @@ keep 3.6/3.9pF on hand — the final values are set by VNA after enclosure assem
 `C53` (100pF) sits in series between `IFA_MATCH` ↔ `SW1_J3`; it is the coupling capacitor from the onboard IFA to the RF switch.
 
 The requirement is that the path after `C53` be electrically open. On the measured V4.0 board `C53` was populated,
-but U17 and the other downstream parts were unpopulated, so it did not establish a load path and did not affect the reading.
+but U16 and the other downstream parts were unpopulated, so it did not establish a load path and did not affect the reading.
 Only boards with a populated downstream chain need `C53` removed or that path isolated by another method.
 
 ---

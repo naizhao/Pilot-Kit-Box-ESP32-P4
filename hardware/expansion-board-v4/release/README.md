@@ -4,8 +4,8 @@
 
 **用户已接受本轮样板保留 Y4 的3.3V供电，不再因此要求改板；回板验证启动、频率及输出幅度。U22 VREF 已通过 C100 并联100nF，见[当前电气复查结论](../README.md#airband-reference-clock--v47-recheck)。**
 
-- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.8-20260913.zip)
-- [配套 KiCad 源包](expansion-board-v4-kicad-V4.8-20260913.zip)
+- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.8-20260914.zip)
+- [配套 KiCad 源包](expansion-board-v4-kicad-V4.8-20260914.zip)
 
 板上的主电源键是 **SW3**（TS24CA 侧按，接 SY6970 `/QON`）。它是纯硬件的：
 按住 1.25–2.25s 退 ship mode 开机，BUS 未插时按住 12–18s 触发 BATFET 复位。
@@ -20,17 +20,37 @@
 
 ## 本次快照校验
 
-PCB SHA-256：`74655acd6895ffe5478f9481f2f7ea388d9967645e3c7e3e35af626efd1e087d`。
+PCB SHA-256：`4a56475a8c49839ec9021de841ba353087e7eb8d123b89cb787140eb7ebe0f91`。
 
-- `expansion-board-v4-gerber-JLC-V4.8-20260913.zip`：`2fa4adeb1619cf09e6b71e7856c79a22b9a2cea30601af17522b6172d160974b`
-- `expansion-board-v4-kicad-V4.8-20260913.zip`：`ae63add9c87044e546e79944ca0d9608c0663526ae893f5474ae57a11d7130aa`
+- `expansion-board-v4-gerber-JLC-V4.8-20260914.zip`：`100427e00f79d121418c60a13f38097025370f6658b9e0d8a3f3a44f57f976e8`
+- `expansion-board-v4-kicad-V4.8-20260914.zip`：`2f792159843363561f7446f196a5f598704dd4f3cde65c1e9b95095e9357e30c`
 
 较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。
+**0913 日期的那两个 V4.8 包已移出 `release/`**（在 `build/pre-led-release/`）：
+它们不含下面的指示灯，别拿来下单。
 
-**V4.8 已包含 GNSS 备份供电**：`U23` / `C101` / `C102` / `D7` / `R63` / `BT1`，且
-`U7.pin6` 已由 `3V3_GNSS` 改接 `GNSS_VBAT`。这是 V4.8 相对 V4.7 的唯一功能性差异
-——V4.7 刻意排除了这一组，两者不可混用。
+## V4.8 相对 V4.7 的功能性差异
 
-`BT1`（Seiko MS621FE-FL11E）在 **B 面**，经济型 SMT 只贴一面，它不在任何 CPL 里，
-**需手工焊接**。C100 添加前的同名两包已保存在 `archive/20260913-before-c102/`，
-不可用于新订单。
+两处，V4.7 都没有，**两版不可混用**。
+
+**① GNSS 备份供电** — `U23` / `C101` / `C102` / `D7` / `R63` / `BT1`，且 `U7.pin6`
+已由 `3V3_GNSS` 改接 `GNSS_VBAT`。关机后 GNSS 模块保住 RTC 与星历，不再冷启动。
+
+**② 指示灯** — `D8` 电源（3V3_DIG 常亮，关机自灭）、`D9` 充电（接 SY6970 的
+`STAT` 开漏脚：充电中亮、充满灭、**故障时 1Hz 闪**），各配 1k 限流（`R64`/`R65`）。
+不占任何 GPIO。两灯摆在 X+ 壁 USB-C 与电源键之间，外壳需在该壁配套开孔。
+
+## 需要手工焊接的件（不在任何 CPL 里）
+
+| 位号 | 件 | 为什么不进 SMT |
+|---|---|---|
+| `BT1` | Seiko MS621FE-FL11E | 在 **B 面**，经济型 SMT 只贴一面 |
+| `D8` `D9` | 0805 LED | **自备料**，无嘉立创料号 |
+
+⚠️ `D8`/`D9` 只能用 **Vf 2.0~2.2V** 的红 / 黄 / 橙 / 普绿。蓝、翠绿、白的 Vf 是
+3.0~3.1V，挂 3.3V 轨上点不亮——充电灯还要再扣 `STAT` 的 0.4V 饱和压降，只剩 0.2V。
+两颗的位号和全板其余 238 个一样印在 **F.Silkscreen、字高 0.8mm**，
+板面直接可读；封装自带的阴极标记线也在，极性照它焊。
+装配图 `ASSEMBLY_MAP-V4.8-zh_CN.pdf` 可作交叉核对。
+
+C100 添加前的同名两包已保存在 `archive/20260913-before-c102/`，不可用于新订单。
