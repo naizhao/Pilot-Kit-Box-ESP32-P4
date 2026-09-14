@@ -1,11 +1,11 @@
 /*
  * adsb_link.h — P4↔RP2040 链路 v1 的共享编解码器接口。
  *
- * 规范：firmware/PROTOCOL_P4_RP2040_UART.md（v1.1；v1.0 冻结于 2026-09-05，
- * v1.1 于 2026-09-08 向前兼容新增 UAT_UPLINK 与 payload 上限扩容，见规范
- * §6）。本文件被两侧固件编译同一份实现（P4: components/adsb_link_codec；
- * RP2040: rp2040/CMakeLists.txt 直接引用同一 .c），协议永不漂移。纯 C99，
- * 无平台依赖。
+ * 规范：firmware/PROTOCOL_P4_RP2040_UART.md（v1.3；v1.0 冻结于 2026-09-05，
+ * v1.1 加 UAT_UPLINK、v1.2 加 CONFIG_REQ/ACK、v1.3 加 SWEEP_ROW 与
+ * HEALTH_STATS 的实际生效门限/天线，均向前兼容，见规范变更清单）。本文件被
+ * 两侧固件编译同一份实现（P4: components/adsb_link_codec；RP2040:
+ * rp2040/CMakeLists.txt 直接引用同一 .c），协议永不漂移。纯 C99，无平台依赖。
  */
 #pragma once
 
@@ -16,7 +16,7 @@
 #define ADSB_LINK_MAGIC0       0x50   /* 'P' */
 #define ADSB_LINK_MAGIC1       0x4B   /* 'K' */
 #define ADSB_LINK_VER_MAJOR    1
-#define ADSB_LINK_VER_MINOR    2      /* v1.2（v1.1=1、v1.0=0；接收方只看 major）*/
+#define ADSB_LINK_VER_MINOR    3      /* v1.3（v1.2=2、v1.1=1、v1.0=0；接收方只看 major）*/
 #define ADSB_LINK_HDR_LEN      8
 #define ADSB_LINK_MAX_PAYLOAD  576    /* v1.0 为 464；v1.1 扩容，规范 §6 */
 #define ADSB_LINK_MAX_FRAME    (ADSB_LINK_HDR_LEN + ADSB_LINK_MAX_PAYLOAD + 2)
@@ -105,6 +105,21 @@ bool adsb_link_sweep_row_decode(const uint8_t *payload, size_t len,
                                 uint8_t *permille_val, uint16_t *level_mv,
                                 uint32_t *frames, uint32_t *pre,
                                 uint32_t *noise, uint32_t *ovr);
+
+/* ── HEALTH_STATS payload（u32le × N，RP→P4，1 Hz）────────────────────
+ * 字段下标与两侧实现共用，避免 P4 用字面量偏移、RP 用另一套。v1.3 起 N=13：
+ *   0 preamble_hits  1 frames_56  2 frames_112  3 time_degraded
+ *   4 dropped_noise  5 edge_overruns  6 tx_frames  7 tx_drops
+ *   8 rx_frames      9 rx_seq_gaps
+ *   10 vbus_mid_mV（v1.3 早期加入，见规范 §4）
+ *   11 门限**实际生效值**（permille，RP 侧 threshold_ctl_get_permille()）
+ *   12 1090 天线**实际生效值**（0=板载 IFA / 1=外接 J6，RP 侧 rf_safety）
+ * 11/12 记的是实际生效值而不是 P4 的下发值：扫描或 CDC 切换期间两者会不同，
+ * 而计数正是产生在那个条件下——落盘日志必须带上它（见 rf1090_log.h）。
+ * 接收方用 payload_len 判断字段是否存在，缺字段时回退到本地值。 */
+#define ADSB_LINK_HEALTH_FIELDS          13
+#define ADSB_LINK_HEALTH_IDX_THRESHOLD   11
+#define ADSB_LINK_HEALTH_IDX_ANT_1090    12
 
 /* 组 CONFIG_REQ payload。返回 payload 长度；cap 不足或 n 超限返回 0
  * （与 adsb_link_encode 同款约定：失败返回 0 且不写输出）。 */

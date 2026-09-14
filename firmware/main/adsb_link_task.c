@@ -774,17 +774,18 @@ void pk_adsb_link_push_config(void)
     if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
 }
 
-/* RP2040 最近一次 HEALTH_STATS 的原始计数（见 adsb_link_task.h）。
+/* RP2040 最近一次 HEALTH_STATS 的原始字段（见 adsb_link_task.h）。
  * 链路任务单写、记录任务单读；各字段独立、都是单调计数，读到跨字段撕裂的
  * 组合对 10 s 粒度的诊断记录无碍，不值得为它加锁。 */
-static uint32_t s_rp_health[11];
+static uint32_t s_rp_health[ADSB_LINK_HEALTH_FIELDS];
+static int      s_rp_health_n;          /* 有效字段数，0 = 尚未收到 */
 static bool     s_rp_health_valid;
 
-bool pk_adsb_rp_health(uint32_t out[11])
+int pk_adsb_rp_health(uint32_t *out)
 {
-    if (!s_rp_health_valid) return false;
-    for (int i = 0; i < 11; i++) out[i] = s_rp_health[i];
-    return true;
+    if (!s_rp_health_valid) return 0;
+    for (int i = 0; i < ADSB_LINK_HEALTH_FIELDS; i++) out[i] = s_rp_health[i];
+    return s_rp_health_n;
 }
 
 /* ── 门限扫描结果表 ───────────────────────────────────────────────────
@@ -983,10 +984,20 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         if (m->payload_len >= 44)
             pk_vbus_sense_update((int)le32(m->payload + 40));
         /* 存一份给 rf1090_log 落 SD：串口日志的存活取决于有没有插线，
-         * 而这些计数只产生在 RP2040 上，P4 是唯一的落盘出口。 */
-        for (int i = 0; i < 11; i++)
-            s_rp_health[i] = (m->payload_len >= (size_t)(i * 4 + 4))
-                             ? le32(m->payload + i * 4) : 0;
+         * 而这些计数只产生在 RP2040 上，P4 是唯一的落盘出口。
+         * 字段数按 payload_len 推导：旧 RP2040 只发 11 个（44 B），
+         * v1.3 起发 13 个（52 B）；缺的字段填 0 并记下有效数，调用方
+         * 据此回退到 P4 本地值。 */
+        int nf = 0;
+        for (int i = 0; i < ADSB_LINK_HEALTH_FIELDS; i++) {
+            if (m->payload_len >= (size_t)(i * 4 + 4)) {
+                s_rp_health[i] = le32(m->payload + i * 4);
+                nf = i + 1;
+            } else {
+                s_rp_health[i] = 0;
+            }
+        }
+        s_rp_health_n = nf;
         s_rp_health_valid = true;
 
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。
@@ -995,13 +1006,22 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * 只在用户改设置那一刻打一次、门限压根不打，于是事后看日志根本无法
          * 判断这段数据是哪一路天线、哪个门限下测的——2026-09-14 就因此把外置
          * 的数据当成板载分析了一整轮。分两行打也不行：日志会被 imu/gps/baro
-         * 冲散，拼不回去。 */
+         * 冲散，拼不回去。
+         *
+         * 天线/门限**优先取 RP 实报值**：扫描期间门限由 RP 的扫描状态机逐点
+         * 改、CDC 的 'a'/'A' 直接改天线，都不经过 P4，P4 本地值此时是错的。
+         * 对面是旧 RP2040（只发 11 个字段）时才回退到 P4 本地值。 */
+        const bool rp_rf = (nf >= ADSB_LINK_HEALTH_FIELDS);
+        const int  tl = rp_rf
+            ? (int)s_rp_health[ADSB_LINK_HEALTH_IDX_THRESHOLD]
+            : pk_thresh_1090_get();
+        const bool ant_ext = rp_rf
+            ? (s_rp_health[ADSB_LINK_HEALTH_IDX_ANT_1090] != 0)
+            : (pk_ant_1090_get() == PK_ANT_1090_EXTERNAL);
         ESP_LOGI(TAG, "RP health: ant=%s tl=%d%s | pre=%u f56=%u f112=%u "
                       "degraded=%u noise=%u ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
-                 pk_ant_1090_get() == PK_ANT_1090_EXTERNAL ? "EXT-J6"
-                                                           : "ONBOARD-IFA",
-                 pk_thresh_1090_get(),
-                 pk_thresh_1090_get() ? "" : "(fw-default)",
+                 ant_ext ? "EXT-J6" : "ONBOARD-IFA",
+                 tl, tl ? "" : "(fw-default)",
                  le32(m->payload + 0),  le32(m->payload + 4),
                  le32(m->payload + 8),  le32(m->payload + 12),
                  le32(m->payload + 16), le32(m->payload + 20),

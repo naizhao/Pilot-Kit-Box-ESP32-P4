@@ -31,14 +31,21 @@ typedef struct {
 /* 诊断页只读快照；stats 可传 NULL。 */
 pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
 
-/* RP2040 最近一次 HEALTH_STATS 的原始计数（协议 §4 的 11 个字段：
+/* RP2040 最近一次 HEALTH_STATS 的原始字段（协议 §4；字段数与下标见
+ * adsb_link.h 的 ADSB_LINK_HEALTH_FIELDS，out 必须能放下这么多个 u32）：
  * 0=pre 1=f56 2=f112 3=degraded 4=noise 5=ovr 6=tx 7=txdrop 8=rx 9=gap
- * 10=vbus_mid_mV）。还没收到过任何一帧时返回 false。
+ * 10=vbus_mid_mV 11=**实际生效**门限(permille) 12=**实际生效** 1090 天线
+ * (0=板载 IFA/1=外接 J6)。返回**有效字段数**，0 = 还没收到过任何一帧。
+ *
+ * 下标 11/12 是扫描/CDC 切换时唯一能反映板上真实配置的来源：P4 本地存的是
+ * 用户设定值，扫描期间 RP 的门限由扫描状态机逐点改，两者会不同。对面是
+ * v1.2 及更早的 RP2040 时只发 11 个字段，返回 11、下标 11/12 填 0，调用方
+ * 据此回退到 P4 本地值（见 rf1090_log.c）。
  *
  * 为什么要暴露：这些数产生在 RP2040 上，而 P4 是唯一能把它们落到 SD 的地方。
  * 不落盘的话，它们的存活就取决于当时有没有插着 USB 线——而射频调试全程在
  * 拔线焊板，这个前提根本不成立（见 rf1090_log.h）。 */
-bool pk_adsb_rp_health(uint32_t out[11]);
+int pk_adsb_rp_health(uint32_t *out);
 
 /* ── 门限扫描结果（RP2040 经 SWEEP_ROW 逐点上报）─────────────────────
  * UI 边收边画，不等整轮结束——一轮 90s。 */

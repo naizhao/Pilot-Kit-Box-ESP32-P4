@@ -50,10 +50,13 @@
 #define COL_BEST      pk_rgb565(140, 210, 255)
 
 #define HDR_H         PFD_BAR_BOT
-#define ROW_H         24
-/* 表格起点：门限行(34) + 用法说明(22) + 扫频行(42) + 建议行(28) 之后。
- * 9 行 × 24 + 表头 20 = 236，到 FOOT_TOP 还有余量。 */
-#define TBL_TOP       (HDR_H + 148)
+/* 行高 21：PK_AA_S 字高 20 + 1 行距。原先写 24 时只算到 FOOT_TOP，漏了
+ * 后加的诊断记录行（FOOT_TOP-42 起、高 34）——它正好压在原来的第 9 行位置，
+ * 于是 900/1000‰ 两行被截掉。收窄行高并把表起点上移 8，9 行才落在它之上。 */
+#define ROW_H         21
+/* 表格起点：门限行(34) + 用法说明(22) + 扫频行(32) + 建议行(28) 之后。
+ * 9 行 × 21 + 表头 20 = 209，终点在诊断记录行（FOOT_TOP-42=404）之上。 */
+#define TBL_TOP       (HDR_H + 140)
 #define FOOT_TOP      (PK_DISPLAY_H - 34)
 
 /* 命中区：render 时登记，touch 时反查。与 settings_draw.c 的 hit_set 同款
@@ -150,8 +153,12 @@ void pk_ant_adv_page_render(uint16_t *fb)
                pk_i18n_text(PK_TR_ANT_ADV_THRESHOLD), COL_KEY, PK_AA_M);
 
     int x = 190;
-    x = button(fb, HIT_DEC100, x, y, 56, "-100", false, true) + 6;
-    x = button(fb, HIT_DEC10,  x, y, 48, "-10",  false, true) + 10;
+    /* 扫描进行中一律禁用门限键：中途改门限会让当前点剩余驻留期在另一种
+     * 条件下测量，而 SWEEP_ROW 的 permille 标签仍是进点时的值；扫描结束
+     * 又会把 RP 门限恢复成启动前的旧值，造成屏上值≠板上生效值。与设置页
+     * 天线行「扫描中不许改射频配置」是同一条既定设计。 */
+    x = button(fb, HIT_DEC100, x, y, 56, "-100", false, !running) + 6;
+    x = button(fb, HIT_DEC10,  x, y, 48, "-10",  false, !running) + 10;
 
     if (th > 0) snprintf(buf, sizeof buf, "%d‰", th);
     else        snprintf(buf, sizeof buf, "%s", pk_i18n_text(PK_TR_ANT_ADV_AUTO));
@@ -160,10 +167,10 @@ void pk_ant_adv_page_render(uint16_t *fb)
                COL_VAL, PK_AA_L);
     x += 96 + 10;
 
-    x = button(fb, HIT_INC10,  x, y, 48, "+10",  false, true) + 6;
-    x = button(fb, HIT_INC100, x, y, 56, "+100", false, true) + 16;
+    x = button(fb, HIT_INC10,  x, y, 48, "+10",  false, !running) + 6;
+    x = button(fb, HIT_INC100, x, y, 56, "+100", false, !running) + 16;
     button(fb, HIT_DEFAULT, x, y, 82, pk_i18n_text(PK_TR_ANT_ADV_AUTO),
-           th == 0, true);
+           th == 0, !running);
 
     /* ── 用法说明 ──
      * 第一版没有这一句，用户原话是"完全没搞懂怎么用"：页面上只有一排按钮和
@@ -204,7 +211,7 @@ void pk_ant_adv_page_render(uint16_t *fb)
     /* ── 建议值行 ──
      * 独占一行而不是挤在扫频键右边：扫描中那里被进度条占着，两者叠在一起
      * 谁都读不清。扫描中也算建议值，让人提前看出趋势、不必干等 90 秒。 */
-    y += 42;
+    y += 32;
     const int b = pick_best(rows, n);
     s_best_permille = 0;
     if (n > 0 && b < 0) {
@@ -218,9 +225,10 @@ void pk_ant_adv_page_render(uint16_t *fb)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20, y + 6, buf,
                    COL_BEST, PK_AA_S);
         /* 帧全 0 时建议值是按 pre 挑的，够用来定位但不足以拍板 —— 采用键
-         * 照给，但上面那行已经用 frm=0 把出处摆明了。 */
+         * 照给，但上面那行已经用 frm=0 把出处摆明了。扫描中不给采用：
+         * 和门限键同一条理由，中途改门限会让本轮数据作废。 */
         button(fb, HIT_APPLY, PK_DISPLAY_W - 110, y - 4, 90,
-               pk_i18n_text(PK_TR_ANT_ADV_APPLY), false, true);
+               pk_i18n_text(PK_TR_ANT_ADV_APPLY), false, !running);
     }
 
     /* ── 结果表 ── */
@@ -237,7 +245,8 @@ void pk_ant_adv_page_render(uint16_t *fb)
                    COL_KEY, PK_AA_XS);
     y += 20;
 
-    /* 下界留出诊断记录那一行（FOOT_TOP-42）的高度，否则表格会画到开关上。 */
+    /* 下界留出诊断记录那一行（FOOT_TOP-42 起、高 34）的高度，否则表格会画到
+     * 开关上。ROW_H=21、表头 20：9 行终点 397 < 400，900/1000‰ 两行也在屏内。 */
     for (int i = 0; i < n && y + ROW_H < FOOT_TOP - 46; i++, y += ROW_H) {
         const uint16_t c = (i == b) ? COL_BEST
                          : rows[i].frames ? COL_OK : COL_DIM;
@@ -305,6 +314,14 @@ bool pk_ant_adv_page_touch(int x, int y)
         if (s_hit[id].x1 <= s_hit[id].x0) continue;      /* 未登记/禁用 */
         if (x < s_hit[id].x0 || x >= s_hit[id].x1 ||
             y < s_hit[id].y0 || y >= s_hit[id].y1) continue;
+
+        /* 扫描中禁止改门限/采用建议：渲染已把这些键画成禁用态（不登记命中
+         * 区），这里再守一道——将来改版面时漏掉禁用态，也不会让射频配置在
+         * 扫描中途被改掉。中途改门限的后果见 render 里的注释。 */
+        if (pk_sweep_running() &&
+            (id == HIT_DEC100 || id == HIT_DEC10 || id == HIT_INC10 ||
+             id == HIT_INC100 || id == HIT_DEFAULT || id == HIT_APPLY))
+            return true;
 
         switch ((hit_id_t)id) {
         case HIT_BACK:    pk_ui_set_mode(PK_UI_MODE_SETTINGS); break;

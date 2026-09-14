@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "adsb_link.h"        /* ADSB_LINK_HEALTH_FIELDS 与字段下标 */
 #include "adsb_link_task.h"
 #include "config_antenna.h"
 #include "config_diaglog.h"
@@ -40,7 +41,7 @@ static const char *TAG = "rf1090log";
 /* 上一拍的累计值，用来出增量。first=true 时本拍只记锚点不写增量行——
  * 开机第一拍的"增量"其实是从 RP2040 上电到现在的总量，写出去会是一个
  * 突兀的大数，看图的人会以为那一刻爆发了一堆帧。 */
-static uint32_t s_prev[11];
+static uint32_t s_prev[ADSB_LINK_HEALTH_FIELDS];
 static bool     s_have_prev;
 
 static FILE *open_log(void)
@@ -66,12 +67,23 @@ static uint32_t delta(uint32_t now, uint32_t prev)
     return (d > 0x80000000u) ? 0 : d;
 }
 
-static void write_row(FILE *fp, const uint32_t h[11])
+static void write_row(FILE *fp, const uint32_t h[ADSB_LINK_HEALTH_FIELDS],
+                      bool have_rf)
 {
     pk_gps_state_t g;
     const bool have_gps = pk_gps_get(&g);
 
-    const int tl = pk_thresh_1090_get();
+    /* 天线/门限优先取 RP 实报的**实际生效值**：扫描期间 RP 逐点改门限、
+     * CDC 'a'/'A' 直接改天线，都不经过 P4，P4 本地存的是用户设定值——而
+     * 这行计数正是在 RP 当前配置下产生的。对面是旧 RP2040（只发 11 个字段）
+     * 时才回退到 P4 本地值。理由见 rf1090_log.h「计数与配置同一行」。 */
+    const int tl = have_rf
+        ? (int)h[ADSB_LINK_HEALTH_IDX_THRESHOLD]
+        : pk_thresh_1090_get();
+    const char *ant = (have_rf
+        ? (h[ADSB_LINK_HEALTH_IDX_ANT_1090] != 0)
+        : (pk_ant_1090_get() == PK_ANT_1090_EXTERNAL))
+        ? "EXT-J6" : "ONBOARD-IFA";
     /* 墙钟只在已校时后才有意义，否则写 0 —— 写一个未校时的 1970 时间戳，
      * 事后会被当成真实时刻去和别的记录对齐。uptime 始终可信，两个都留。 */
     time_t wall = 0;
@@ -80,7 +92,7 @@ static void write_row(FILE *fp, const uint32_t h[11])
     fprintf(fp, "%lld,%lld,%s,%d,%lu,%lu,%lu,%lu,%lu,%lu,",
             (long long)wall,
             (long long)(esp_timer_get_time() / 1000000),
-            pk_ant_1090_get() == PK_ANT_1090_EXTERNAL ? "EXT-J6" : "ONBOARD-IFA",
+            ant,
             tl,
             (unsigned long)delta(h[0], s_prev[0]),
             (unsigned long)delta(h[1], s_prev[1]),
@@ -127,8 +139,9 @@ static void rf1090_log_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(RFLOG_PERIOD_MS));
 
-        uint32_t h[11];
-        if (!pk_adsb_rp_health(h)) {
+        uint32_t h[ADSB_LINK_HEALTH_FIELDS];
+        const int nf = pk_adsb_rp_health(h);
+        if (nf <= 0) {
             /* RP2040 还没上报过——链路没起来或对面没在跑。不写行，也不把
              * s_have_prev 清掉：链路恢复后接着原来的锚点算增量即可。 */
             continue;
@@ -188,7 +201,7 @@ static void rf1090_log_task(void *arg)
         }
 
         if (s_have_prev)
-            write_row(fp, h);
+            write_row(fp, h, nf >= ADSB_LINK_HEALTH_FIELDS);
         memcpy(s_prev, h, sizeof s_prev);
         s_have_prev = true;
 

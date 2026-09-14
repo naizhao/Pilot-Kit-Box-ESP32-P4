@@ -4,7 +4,7 @@
  * 发送：uart_write_blocking —— 仅在 core0 sender 语境（p4_link_send_modes
  * 由 Task 14 的 sender 循环独占调用；tick_health/poll_rx 亦在核轮询语境，
  * 不会在解码 ISR 中直发）。接收：poll_rx 逐字节喂共享 codec，收到任何
- * 合法帧即置 linked。HEALTH_STATS payload 直接取 counters10 的内存字节：
+ * 合法帧即置 linked。HEALTH_STATS payload 直接取 counters 数组的内存字节：
  * RP2040（Cortex-M0+）为小端，与协议 §4 的 u32le 布局一致。
  */
 #include <stdio.h>
@@ -170,7 +170,7 @@ void p4_link_poll_rx(void)
     }
 }
 
-void p4_link_tick_health(const uint32_t counters[11])
+void p4_link_tick_health(const uint32_t counters[ADSB_LINK_HEALTH_FIELDS])
 {
     if (!s_linked) {
         uint8_t pl[17] = { 0 };
@@ -178,7 +178,8 @@ void p4_link_tick_health(const uint32_t counters[11])
         tx_frame(ADSB_LINK_MSG_HELLO, pl, sizeof pl);
     }
     if (counters)
-        tx_frame(ADSB_LINK_MSG_HEALTH_STATS, (const uint8_t *)counters, 44);
+        tx_frame(ADSB_LINK_MSG_HEALTH_STATS, (const uint8_t *)counters,
+                 ADSB_LINK_HEALTH_FIELDS * 4u);
 }
 
 bool p4_link_linked(void)                  { return s_linked; }

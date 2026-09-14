@@ -208,7 +208,8 @@ static void link_sink(void *user, const adsb_link_msg_t *m)
     g_last_link_msg = *m;
 }
 
-/* ── 6. v1.1 golden vector 整线走查（协议 §6.2，CRC=0x5FAD）─────── */
+/* ── 6. v1.1 golden vector 整线走查（协议 §6.2；ver_minor 随版本递增，
+ *      当前 v1.3 → CRC=0xFBBC）──────────────────────────────────── */
 
 static void test_v11_golden_vector_wire(void)
 {
@@ -228,13 +229,14 @@ static void test_v11_golden_vector_wire(void)
     size_t n = adsb_link_encode(wire, sizeof wire, ADSB_LINK_MSG_UAT_UPLINK,
                                 0, pl, ADSB_LINK_UAT_PAYLOAD_LEN);
     CHECK(n == 567);                             /* 8 + 557 + 2          */
-    /* ver_minor = 2（v1.2）。协议每加一次向前兼容的新增都会碰这一字节，
+    /* ver_minor = 3（v1.3）。协议每加一次向前兼容的新增都会碰这一字节，
      * 连带整帧 CRC 也变——两者都由规范 §6.2 的 golden vector 钉死，CRC 由
-     * 独立 Python 实现算出（KAT "123456789"→0x29B1 对拍），不经被测代码。 */
-    static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x02, 0x11, 0x00,
+     * 独立 Python 实现算出（KAT "123456789"→0x29B1 对拍），不经被测代码。
+     * v1.1 时 CRC=0x5FAD、v1.2 时 0x21A4、v1.3 时 0xFBBC。 */
+    static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x03, 0x11, 0x00,
                                     0x2D, 0x02 };
     CHECK(memcmp(wire, HDR, 8) == 0);
-    CHECK(wire[n - 2] == 0xA4 && wire[n - 1] == 0x21);   /* crc16=0x21A4 LE */
+    CHECK(wire[n - 2] == 0xBC && wire[n - 1] == 0xFB);   /* crc16=0xFBBC LE */
 
     /* 6c. codec 解码（分块 256 B，模拟 P4 UART 读长）→ payload 助手 →
      *     前门（与 adsb_link_task.c 的 UAT_UPLINK 分发同一条链）。 */

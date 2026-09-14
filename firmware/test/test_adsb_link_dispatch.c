@@ -20,6 +20,7 @@
  */
 #include "aircraft_state.h"
 #include "adsb_link_task.h"
+#include "config_antenna.h"
 #include "vbus_sense.h"
 #include "cpr_decode.h"
 #include "gps.h"
@@ -60,6 +61,13 @@ size_t pk_antenna_build_config_payload(uint8_t *out, size_t cap)
     (void)out; (void)cap;
     return 0;
 }
+
+/* adsb_link_task.c 的 RP health 日志在 v1.3 里会读 P4 本地值做回退
+ * （对面是旧 RP2040、只发 11 个字段时），这两个 getter 因此成为真实引用。
+ * 旧版把它们写在 ESP_LOGI 的参数里，host 的 `if(0)` 日志桩会优化掉调用，
+ * 所以此前不需要桩。本测试不验配置存储，给固定值即可。 */
+pk_ant_1090_t pk_ant_1090_get(void) { return PK_ANT_1090_ONBOARD; }
+int pk_thresh_1090_get(void) { return 0; }
 
 void pk_rec_ingest_init(void) {}
 void pk_rec_ingest_position(uint32_t icao24, int64_t ts_ms, double lat,

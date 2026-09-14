@@ -149,7 +149,7 @@ static void core1_entry(void)
     }
 }
 
-static void health_fill(uint32_t c[11])
+static void health_fill(uint32_t c[ADSB_LINK_HEALTH_FIELDS])
 {
     uint32_t tx = 0, rx = 0, gaps = 0;
     p4_link_get_stats(&tx, &rx, &gaps);
@@ -174,6 +174,14 @@ static void health_fill(uint32_t c[11])
     /* 字段 10（协议 v1.3 新增）：USB_VBUS_SENSE **分压中点**的 mV，不是 VBUS。
      * 换算成 VBUS 要乘板型分压比，而 RP2040 不分板型——见 board_pins.h。 */
     c[10] = (uint32_t)threshold_ctl_read_vbus_node_mv();
+    /* 字段 11/12（协议 v1.3）：**实际生效**的门限与 1090 天线，不是 P4 的下发
+     * 值。扫描期间门限由扫描状态机逐点改、CDC 的 'a'/'A' 直接改天线，这些
+     * 都不经过 P4，只有 RP 知道当前值。P4 落盘日志带上它，才能判断每行计数
+     * 是在哪个配置下测的（见 rf1090_log.h）。 */
+    c[ADSB_LINK_HEALTH_IDX_THRESHOLD] =
+        (uint32_t)threshold_ctl_get_permille();
+    c[ADSB_LINK_HEALTH_IDX_ANT_1090] =
+        rf_safety_get_ant_1090() ? 1u : 0u;
 }
 
 static bool core0_send_one_modes(void *user)
@@ -265,7 +273,7 @@ static void core0_poll_control(void *user)
             printf("selftest: sent but NOT received within 500ms "
                    "-- check wire/decode\n");
     } else if (c == 'S') {
-        uint32_t h[11]; health_fill(h);
+        uint32_t h[ADSB_LINK_HEALTH_FIELDS]; health_fill(h);
         /* 两个来源分开报：live = 板上实际驱动到 U16/U17 的选择，p4 = 设置页
          * 最后下发的值。CDC 的 'a'/'A' 只动前者，两者不一致是正常的（临时
          * 台架切换），但必须看得见——只报 p4 那份会在排障时直接说谎。 */
@@ -417,7 +425,7 @@ static struct {
     uint16_t pts[SWEEP_MAX_PTS];
     uint32_t frames[SWEEP_MAX_PTS], pre[SWEEP_MAX_PTS];
     uint32_t noise[SWEEP_MAX_PTS], ovr[SWEEP_MAX_PTS];
-    uint32_t snap[11];
+    uint32_t snap[ADSB_LINK_HEALTH_FIELDS];
 } s_sw;
 
 static bool sweep_active(void) { return s_sw.active; }
@@ -474,7 +482,7 @@ static void sweep_poll(void)
     if (absolute_time_diff_us(get_absolute_time(), s_sw.deadline) > 0)
         return;                          /* 本点还没到时间 */
 
-    uint32_t h[11];
+    uint32_t h[ADSB_LINK_HEALTH_FIELDS];
     health_fill(h);
     const uint8_t i = s_sw.idx;
     s_sw.frames[i] = (h[1] - s_sw.snap[1]) + (h[2] - s_sw.snap[2]);
@@ -523,7 +531,7 @@ static void core0_poll_periodic(void *user)
     sweep_poll();
     if (absolute_time_diff_us(get_absolute_time(), s_next_hz) < 0) {
         s_next_hz = make_timeout_time_ms(1000);
-        uint32_t h[11];
+        uint32_t h[ADSB_LINK_HEALTH_FIELDS];
         health_fill(h);
         p4_link_tick_health(h);
 
