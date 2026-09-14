@@ -121,7 +121,7 @@ Test points: V1 removed the MM8930 production-test socket and the RF-section W.F
 All LC values are〔A〕starting points; V1 leaves an 0402 tunable slot at every reference designator. After the SAW swap (TFS1090F→TA0970A) the matching values must be tuned on the real board.
 
 The onboard IFA's J7 hangs after the π network and before C53. A VNA measurement at J7 is isolated whenever the downstream receive path is open.
-On the measured V4.0 board C53 was populated, but U17 and the other downstream parts were not, so C53 did not create a load path and did not affect
+On the measured V4.0 board C53 was populated, but U16 and the other downstream parts were not, so C53 did not create a load path and did not affect
 the result. If the downstream path is populated on another board, isolate it before measuring.
 The current π network defaults to ZS1=0R, ZP1/ZP2=DNP, i.e. straight-through. The V4.0 antenna was physically trimmed to a **50.0mm copper outer
 envelope / 48.5mm radiating-arm centerline span**, reached by cutting from 53.5mm and

@@ -232,14 +232,17 @@ not by the characteristic impedance of the trace. The trace only carries the sig
 higher**, consistent with 7628 carrying more glass than 3313 (glass εr≈6.1 vs resin εr≈3.2 —
 more glass means higher composite εr).
 
-**In trace length: using the 11.5 MHz/mm slope measured during the trim experiments in
-`board_meta.py`, that is equivalent to the antenna being ~2.0mm too long.** Pulling it back
-to 1085MHz on the JiePei board would require trimming roughly 2mm more.
+**In trace length: the rough 11.5 MHz/mm figure makes that equivalent to the antenna being
+~2.0mm too long, while the same-state measured 24–25 MHz/mm (51.5→51.0mm; see
+`expansion-board-v4/BOM_IFA_TUNING.md`) gives ~0.9mm.** The slope choice dominates the
+answer, so pulling it back to 1085MHz on the JiePei board means trimming 0.1–0.2mm at a
+time and judging by the in-enclosure VNA.
 
 > 🔴 **For open-source users: `ARM_OUT = 50.000mm` is tied to JLCPCB's 3313 laminate. It is
 > not a universal constant.** Fabbing elsewhere will most likely require retuning the IFA.
 > Procedure is in `expansion-board-v4/BOM_IFA_TUNING-zh_CN.md`: trim 0.1–0.2mm at a time,
-> use 11.5 MHz/mm to estimate how much, and **judge by VNA measurement in the enclosure**.
+> estimate with 11.5 MHz/mm (rough) or the same-state 24–25 MHz/mm, and **judge by VNA
+> measurement in the enclosure**.
 >
 > Note this is **independent of** the transmission-line mismatch discussed in §5: that
 > mismatch costs only ~0.1dB, whereas a 22.5MHz antenna detune takes SWR from 1.06 to 1.72
@@ -299,8 +302,9 @@ performance**; with an aspect ratio of only 5.33:1 here, Tg135 is well within ra
     · 🔴 **The on-board IFA antenna must be retuned for your laminate** (see §5.2).
       The 50.0mm copper length is tied to JLCPCB's 3313 laminate, not a universal constant.
       Measured: the same Gerber on JiePei's 7628A1 resonated 22.5MHz lower, SWR 1.06 -> 1.72.
-      Procedure: trim 0.1-0.2mm at a time, estimate with 11.5MHz/mm, judge by VNA
-      measurement in the enclosure. Ignore this if you only use the external U.FL/SMA antenna.
+      Procedure: trim 0.1-0.2mm at a time, estimate with 11.5MHz/mm (rough) or the
+      same-state 24-25MHz/mm, judge by VNA measurement in the enclosure.
+      Ignore this if you only use the external U.FL/SMA antenna.
 
 **Quick guide for users outside China** (details in §8): **no overseas fab's default stackup
 lands inside the window**, and that turns out not to matter — **PCBWay (0.1195 / 55Ω / 0.011dB)
