@@ -93,6 +93,12 @@ int pk_demo_own_alt_ft(int64_t now_us) { (void)now_us; return 0; }
 uint32_t pk_ui_get_own_icao(void) { return 0; }
 
 void adsb_link_dec_init(void) {}
+/* adsb_link_task.c 的常驻任务循环（`while(1)` + uart_read_bytes）会调
+ * adsb_link_dec_feed；本测试不编入 codec.c（否则与上面这些桩重复定义），
+ * 所以必须给桩。**缺了它在 -O2 下也能链上**——那个任务函数无人引用，会被
+ * 优化掉、连调用一起消失——但 -O0 或将来测试开始引用它就会暴露，属于靠
+ * 优化级别维持的假通过。 */
+void adsb_link_dec_feed(void) {}
 void adsb_link_encode(void) {}
 void adsb_link_uat_uplink_decode(void) {}
 /* 本测试驱动的是分发和扫描结果表，不验字节编码（那是 test_adsb_link_codec.c
