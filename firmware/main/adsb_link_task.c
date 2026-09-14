@@ -774,6 +774,19 @@ void pk_adsb_link_push_config(void)
     if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
 }
 
+/* RP2040 最近一次 HEALTH_STATS 的原始计数（见 adsb_link_task.h）。
+ * 链路任务单写、记录任务单读；各字段独立、都是单调计数，读到跨字段撕裂的
+ * 组合对 10 s 粒度的诊断记录无碍，不值得为它加锁。 */
+static uint32_t s_rp_health[11];
+static bool     s_rp_health_valid;
+
+bool pk_adsb_rp_health(uint32_t out[11])
+{
+    if (!s_rp_health_valid) return false;
+    for (int i = 0; i < 11; i++) out[i] = s_rp_health[i];
+    return true;
+}
+
 /* ── 门限扫描结果表 ───────────────────────────────────────────────────
  * 链路任务单写、UI 任务单读。用 portMUX 而不是原子量：一行有 6 个字段，
  * UI 要的是**一致的一行**，逐字段原子读出来的可能是半新半旧的组合。
@@ -969,9 +982,26 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * 内存当读数——那会是一个看着完全正常的假电压。 */
         if (m->payload_len >= 44)
             pk_vbus_sense_update((int)le32(m->payload + 40));
-        /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。 */
-        ESP_LOGI(TAG, "RP health: pre=%u f56=%u f112=%u degraded=%u noise=%u "
-                      "ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
+        /* 存一份给 rf1090_log 落 SD：串口日志的存活取决于有没有插线，
+         * 而这些计数只产生在 RP2040 上，P4 是唯一的落盘出口。 */
+        for (int i = 0; i < 11; i++)
+            s_rp_health[i] = (m->payload_len >= (size_t)(i * 4 + 4))
+                             ? le32(m->payload + i * 4) : 0;
+        s_rp_health_valid = true;
+
+        /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。
+         *
+         * **计数必须和产生它的配置打在同一行。** 之前这行只有计数，天线选择
+         * 只在用户改设置那一刻打一次、门限压根不打，于是事后看日志根本无法
+         * 判断这段数据是哪一路天线、哪个门限下测的——2026-09-14 就因此把外置
+         * 的数据当成板载分析了一整轮。分两行打也不行：日志会被 imu/gps/baro
+         * 冲散，拼不回去。 */
+        ESP_LOGI(TAG, "RP health: ant=%s tl=%d%s | pre=%u f56=%u f112=%u "
+                      "degraded=%u noise=%u ovr=%u tx=%u txdrop=%u rx=%u gap=%u",
+                 pk_ant_1090_get() == PK_ANT_1090_EXTERNAL ? "EXT-J6"
+                                                           : "ONBOARD-IFA",
+                 pk_thresh_1090_get(),
+                 pk_thresh_1090_get() ? "" : "(fw-default)",
                  le32(m->payload + 0),  le32(m->payload + 4),
                  le32(m->payload + 8),  le32(m->payload + 12),
                  le32(m->payload + 16), le32(m->payload + 20),

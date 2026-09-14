@@ -27,6 +27,7 @@
 
 #include "adsb_link_task.h"
 #include "config_antenna.h"
+#include "config_diaglog.h"
 #include "display.h"
 #include "i18n.h"
 #include "i18n_catalog.h"
@@ -59,7 +60,7 @@
  * ——版面只在一处定义（画的地方），命中判定跟着它走，不各写一份坐标。 */
 typedef enum {
     HIT_NONE = 0, HIT_BACK, HIT_DEC100, HIT_DEC10, HIT_INC10, HIT_INC100,
-    HIT_DEFAULT, HIT_SWEEP, HIT_APPLY, HIT_N
+    HIT_DEFAULT, HIT_SWEEP, HIT_APPLY, HIT_DIAGLOG, HIT_N
 } hit_id_t;
 
 static struct { int16_t x0, y0, x1, y1; } s_hit[HIT_N];
@@ -236,7 +237,8 @@ void pk_ant_adv_page_render(uint16_t *fb)
                    COL_KEY, PK_AA_XS);
     y += 20;
 
-    for (int i = 0; i < n && y + ROW_H < FOOT_TOP; i++, y += ROW_H) {
+    /* 下界留出诊断记录那一行（FOOT_TOP-42）的高度，否则表格会画到开关上。 */
+    for (int i = 0; i < n && y + ROW_H < FOOT_TOP - 46; i++, y += ROW_H) {
         const uint16_t c = (i == b) ? COL_BEST
                          : rows[i].frames ? COL_OK : COL_DIM;
         snprintf(buf, sizeof buf, "%d", rows[i].permille);
@@ -251,6 +253,31 @@ void pk_ant_adv_page_render(uint16_t *fb)
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COLX[4], y, buf, c, PK_AA_S);
         snprintf(buf, sizeof buf, "%lu", (unsigned long)rows[i].ovr);
         pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, COLX[5], y, buf, c, PK_AA_S);
+    }
+
+    /* ── 诊断记录开关 ──
+     * 放在这一页而不是主设置页：它是调试功能。但**必须在界面上看得见**——
+     * 一个开机就默默往用户自己的卡上写、内容还带位置坐标的记录器，用户既
+     * 不知情也关不掉的话，性质上就是背后收集数据。默认关闭。 */
+    {
+        const bool on = pk_diaglog_enabled();
+        const int dy = FOOT_TOP - 42;
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 20, dy + 9,
+                   pk_i18n_text(PK_TR_ANT_ADV_DIAGLOG), COL_KEY, PK_AA_S);
+        button(fb, HIT_DIAGLOG, 150, dy, 70,
+               on ? "ON" : "OFF", on, true);
+        /* 开着就把占用报出来：光说"会写卡"太抽象，一个具体的 KB 数才让人
+         * 判断得了要不要关。 */
+        if (on) {
+            const long kb = pk_diaglog_size_bytes() / 1024;
+            snprintf(buf, sizeof buf, "%s  (%ld KB)",
+                     pk_i18n_text(PK_TR_ANT_ADV_DIAGLOG_HINT), kb);
+        } else {
+            snprintf(buf, sizeof buf, "%s",
+                     pk_i18n_text(PK_TR_ANT_ADV_DIAGLOG_HINT));
+        }
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 230, dy + 11, buf,
+                   COL_DIM, PK_AA_XS);
     }
 
     /* ── 底部提示 ── */
@@ -294,6 +321,11 @@ bool pk_ant_adv_page_touch(int x, int y)
             break;
         case HIT_APPLY:
             if (s_best_permille > 0) pk_thresh_1090_set(s_best_permille);
+            break;
+        case HIT_DIAGLOG:
+            /* 关闭时 pk_diaglog_set 会顺手删掉已记录的文件——留着"开关是关的、
+             * 数据还在卡上"这种状态，比不给开关更糟。 */
+            pk_diaglog_set(!pk_diaglog_enabled());
             break;
         default: break;
         }

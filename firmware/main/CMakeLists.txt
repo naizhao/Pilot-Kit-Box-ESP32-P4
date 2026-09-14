@@ -186,6 +186,9 @@ idf_component_register(
         # 插着 H1 调试时 VCC_5V 被电脑顶着，电池根本不放电，放电标定只能
         # 让设备自己记卡（见 power_log.h）。
         "power_log.c"
+        "rf1090_log.c"
+        "config_diaglog.c"
+        "pk_syslog.c"
         # 公共电源状态模型 + backend 注册表（WP-D Task 1）。曾有两个
         # backend；ETA6098 与 battery.c 兼容壳随 v3 支持一起退役
         # （2026-09-12），现在 SY6970 是唯一注册者。

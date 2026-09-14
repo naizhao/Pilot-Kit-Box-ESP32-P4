@@ -31,6 +31,15 @@ typedef struct {
 /* 诊断页只读快照；stats 可传 NULL。 */
 pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
 
+/* RP2040 最近一次 HEALTH_STATS 的原始计数（协议 §4 的 11 个字段：
+ * 0=pre 1=f56 2=f112 3=degraded 4=noise 5=ovr 6=tx 7=txdrop 8=rx 9=gap
+ * 10=vbus_mid_mV）。还没收到过任何一帧时返回 false。
+ *
+ * 为什么要暴露：这些数产生在 RP2040 上，而 P4 是唯一能把它们落到 SD 的地方。
+ * 不落盘的话，它们的存活就取决于当时有没有插着 USB 线——而射频调试全程在
+ * 拔线焊板，这个前提根本不成立（见 rf1090_log.h）。 */
+bool pk_adsb_rp_health(uint32_t out[11]);
+
 /* ── 门限扫描结果（RP2040 经 SWEEP_ROW 逐点上报）─────────────────────
  * UI 边收边画，不等整轮结束——一轮 90s。 */
 #define PK_SWEEP_MAX_ROWS 12

@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 
 #include "pk_clock.h"
+#include "config_diaglog.h"
 #include "pk_sdcard.h"
 #include "power_service.h"
 #include "power_sy6970.h"
@@ -134,6 +135,14 @@ static void power_log_task(void *arg)
     bool     warned      = false;
 
     for (;;) {
+        /* 与 rf1090_log / pk_syslog 共用同一个总开关（默认关）：用户只该有
+         * 一个地方能关掉全部诊断记录，而不是每个模块各有各的开关。 */
+        if (!pk_diaglog_enabled()) {
+            boot_marked = false;
+            vTaskDelay(pdMS_TO_TICKS(PWRLOG_PERIOD_MS));
+            continue;
+        }
+
         if (!pk_sdcard_is_mounted()) {
             /* 无卡是常态（排障时常先开机后插卡），只在状态翻转时说一次，
              * 不以 1 min 的节奏刷日志。 */

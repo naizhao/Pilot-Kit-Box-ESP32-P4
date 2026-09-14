@@ -366,6 +366,8 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_ANT_ADV_HINT] = "Best point shifts with antenna/site - re-sweep when it changes",
         [PK_TR_ANT_ADV_BACK] = "Back",
         [PK_TR_ANT_ADV_USAGE] = "Sweep tries 9 thresholds (200-1000‰), 10s each, picks the best",
+        [PK_TR_ANT_ADV_DIAGLOG] = "Diagnostic log",
+        [PK_TR_ANT_ADV_DIAGLOG_HINT] = "Writes to SD (incl. location). Off deletes the files.",
     },
     [PK_LANG_ZH] = {
         [PK_TR_SETTINGS_TITLE] = "设置",
@@ -728,6 +730,8 @@ static const char *const s_text[PK_LANG_COUNT][PK_TR_COUNT] = {
         [PK_TR_ANT_ADV_HINT] = "最优点随天线和环境变，换了就重扫",
         [PK_TR_ANT_ADV_BACK] = "返回",
         [PK_TR_ANT_ADV_USAGE] = "扫频依次试 9 档门限（200‰–1000‰），每档 10 秒，挑出收包最多的",
+        [PK_TR_ANT_ADV_DIAGLOG] = "诊断记录",
+        [PK_TR_ANT_ADV_DIAGLOG_HINT] = "写入 SD 卡（含位置）。关闭即删除已记录的文件。",
     },
 };
 
