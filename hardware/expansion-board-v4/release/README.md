@@ -11,8 +11,8 @@
 
 **用户已接受本轮样板保留 Y4 的3.3V供电，不再因此要求改板；回板验证启动、频率及输出幅度。U22 VREF 已通过 C100 并联100nF，见[当前电气复查结论](../README.md#airband-reference-clock--v47-recheck)。**
 
-- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.10-20260921.zip)
-- [配套 KiCad 源包](expansion-board-v4-kicad-V4.10-20260921.zip)
+- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.10-20260922.zip)
+- [配套 KiCad 源包](expansion-board-v4-kicad-V4.10-20260922.zip)
 
 板上的主电源键是 **SW3**（TS24CA 侧按，接 SY6970 `/QON`）。它是纯硬件的：
 按住 1.25–2.25s 退 ship mode 开机，BUS 未插时按住 12–18s 触发 BATFET 复位。
@@ -27,10 +27,10 @@
 
 ## 本次快照校验
 
-PCB SHA-256：`bc3e1180a364057fba9ef216c09c5e0b8b2bd9a7993ead6c83ad0ebee788cbcd`。
+PCB SHA-256：`dfb0bed9b0308324303de13ad1c0756d5c350cf046c3f095776393b711757e27`。
 
-- `expansion-board-v4-gerber-JLC-V4.10-20260921.zip`：`89f234999982e2d6480da6f0adf9d65daa84b2b8ee3c9ad11881c0ad76216997`
-- `expansion-board-v4-kicad-V4.10-20260921.zip`：`367c1a63915fe875dcfba5afb6cc6de06036354bba2372698dbe9f5794334752`
+- `expansion-board-v4-gerber-JLC-V4.10-20260922.zip`：`a3e1f1c8aeb04ead8556939dbe84eea5f32ad27d6585c0c423fd01135b3fd2e3`
+- `expansion-board-v4-kicad-V4.10-20260922.zip`：`7af1efb5ef469061b069862aef819f2f4d20b4999bda9ffc4bb115cce6cc0cc2`
 
 较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。
 **V4.8 的两个包已移出 `release/`**（在 `build/v48-superseded/`）：它们没有下面的

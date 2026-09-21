@@ -76,9 +76,18 @@ V48_LABELS = ("PWR↓", "CHG↓")
 #
 # 同样单列而不是把 FINALIZED_GRAPHICS_COUNT 改大，理由见上面 V47_LABELS。
 V410_ROW_MARKERS = tuple(str(2 * i + 2) for i in range(10))
+# V4.10 新增：D7 / D8 / D9 的阴极极性带（gen_polarity_marks.py 画的 PCB_SHAPE）。
+#
+# 起因是维护者 2026-09-21 贴片时发现「新做的一批 D 完全分不清极向」：官方封装
+# 给的「⊏」两条边线和阴极横线一样粗（0.12mm），拿元件上的带/点根本对不上。
+# 现在阴极端那条细横线被删掉、在外侧重画成 0.25~0.30mm 的粗带，一眼可辨。
+#
+# D2~D6 **不在其列且不该在**：它们是 TPESD8L3.3 双向 TVS，两脚都是阳极
+# （网表引脚名 A1/A2），本来就没有安装极性，画阴极带反而误导。
+V410_POLARITY_MARKS = 3
 BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
                         + len(V47_LABELS) + len(V48_LABELS)
-                        + len(V410_ROW_MARKERS))
+                        + len(V410_ROW_MARKERS) + V410_POLARITY_MARKS)
 # B 面左边缘同一竖列：SW1、SW2 相邻成组排在 TP 之前，SW1 在 SW2 上方。
 # 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠）。
 #

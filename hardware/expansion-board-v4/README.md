@@ -201,12 +201,12 @@ Pre-built packages live in [`release/`](release/):
 > `D8`/`D9`（自备 LED，无嘉立创料号，且只能用 Vf 2.0~2.2V 的红/黄/橙/普绿——
 > 蓝、翠绿、白是 3.0~3.1V，在 3.3V 轨上点不亮）。
 
-**Regenerated on 2026-09-21 from the revised PCB — `J11` becomes a 2x10 bare-pad array for a test clip (pin numbers shift by four, no jumper caps), the four airband debug nets join it, and `R66` (0 R, not fitted) isolates the 26 MHz probe point from the TCXO. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF includes C100 = 100 nF in parallel with C92.**
+**Regenerated on 2026-09-22 from the revised PCB — `J11` becomes a 2x10 bare-pad array for a test clip (pin numbers shift by four, no jumper caps), the four airband debug nets join it, and `R66` (0 R, not fitted) isolates the 26 MHz probe point from the TCXO. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF includes C100 = 100 nF in parallel with C92.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.10-20260921.zip` | **Current V4.10 export** — `J11` is now a 2x10 bare-pad array carrying 20 debug signals including airband, with the pin numbers silkscreened alongside the pads; RS-274-X, 15 files; see the open electrical items below before ordering |
-| `expansion-board-v4-kicad-V4.10-20260921.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.10-20260922.zip` | **Current V4.10 export** — `J11` is now a 2x10 bare-pad array carrying 20 debug signals including airband, with the pin numbers silkscreened alongside the pads; RS-274-X, 15 files; see the open electrical items below before ordering |
+| `expansion-board-v4-kicad-V4.10-20260922.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
 | `expansion-board-v4-gerber-JLC-V4.9-20260915.zip` | ⚠️ Superseded by V4.10 — `J11` is a 2x8 header there, so a 2x10 test clip will not seat and every pin number is shifted by four. Do not order |
 | `expansion-board-v4-kicad-V4.9-20260915.zip` | ⚠️ Matching superseded V4.9 source archive |
 | `expansion-board-v4-gerber-JLC-V4.8-20260914.zip` | ⚠️ Superseded by V4.9 — no `J11`, so the CC1312R cJTAG pins have no landing point on the board. Moved out of `release/` (kept in `build/v48-superseded/`). Do not order |
