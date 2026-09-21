@@ -46,22 +46,23 @@ PCB SHA-256：`bc3e1180a364057fba9ef216c09c5e0b8b2bd9a7993ead6c83ad0ebee788cbcd`
 J11 把这三根引出来，并顺带取代了原来的 `TP1`~`TP7` 与 `SW1`/`SW2`（那 9 个已删除）。
 
 ```
- 1 GND            2 RP_RUN         ← 跳线帽跨 1-2 = 复位
- 3 GND            4 QSPI_SS        ← 跳线帽跨 3-4 = BOOTSEL
- 5 SUBG_TMSC      6 SWCLK
- 7 SUBG_TCKC      8 SWDIO
- 9 SUBG_RESET    10 DEMOD0
-11 GND           12 DEMOD1
-13 DEMOD3        14 DEMOD2
-15 RECOVERED_CLK 16 PULSES        ← 跳线帽跨 15-16 = 自检回环
+ 1 VHF_TCXO_TP     2 VHF_AUDIO    ← pin1 经 R66（0Ω，默认不贴）才接 26MHz 参考
+ 3 VHF_SCK         4 VHF_SDATA
+ 5 GND             6 RP_RUN       ← 短接 5-6 = RP2040 复位
+ 7 GND             8 QSPI_SS      ← 短接 7-8 = BOOTSEL（UF2 刷机）
+ 9 SUBG_TMSC      10 SWCLK
+11 SUBG_TCKC      12 SWDIO
+13 SUBG_RESET     14 DEMOD0
+15 GND            16 DEMOD1
+17 DEMOD3         18 DEMOD2
+19 RECOVERED_CLK  20 PULSES      ← 短接 19-20 = 自检回环
 ```
 
-跳线帽是 2.54mm 标准件，不在 BOM 里，自备。15-16 那对做自检回环时**必须先拆 `R57`**，
-否则 TLV3501 的推挽输出与 GPIO 对驱（见固件 `selftest_gen.h`）。
-B 面丝印：V4.9 是 16 格对照表紧挨 `J11` 位号；**V4.10 是 20 格表 + 一条竖排行号**。
-表放不进 J11 跟前（2 列×10 行全板最近只能到 9.1mm，行距改 2.54 与焊盘行对齐的版本
-根本放不下），所以把**脚号**单独印到座子紧邻处：偶数号 2~20 贴着偶数脚那一列、
-与焊盘行逐行对齐。数脚看行号，查名字看那张表，表下另有 `J11` 标题锁定归属。
+裸焊盘**没有跳线帽可插**，三对短接用镊子或锡桥。19-20 那对做自检回环时
+**必须先拆 `R57`**，否则 TLV3501 的推挽输出与 GPIO 对驱（见固件 `selftest_gen.h`）。
+B 面丝印：**20 格对照表**（每格 = 脚号 + 缩写，如 `5 GND`、`8 BOOT`）直接印在
+`J11` 正上方、离座子顶端 2.4mm；`J11` 位号夹在表和焊盘之间锁定归属
+（没有单独的 "J11" 标题文字，归属由「图例必须紧挨 J11」的合同断言守住）。
 **丝印用的是缩写**（`RUN`/`BOOT`/`TMS`/`TCK`/`RST`/`RCLK`/`PLS`…），
 缩写 ↔ 完整网络 ↔ 原 TP/SW 位号的完整对照表在 [`PINMAP-zh_CN.md`](../PINMAP-zh_CN.md) 的「J11 调试焊盘阵列」一节。
 其中最容易搞混的两个：**`RUN` = 原 SW1（复位）**、**`BOOT` = 原 SW2（BOOTSEL）**。
@@ -88,6 +89,6 @@ B 面丝印：V4.9 是 16 格对照表紧挨 `J11` 位号；**V4.10 是 20 格�
 3.0~3.1V，挂 3.3V 轨上点不亮——充电灯还要再扣 `STAT` 的 0.4V 饱和压降，只剩 0.2V。
 两颗的位号和全板其余 238 个一样印在 **F.Silkscreen、字高 0.8mm**，
 板面直接可读；封装自带的阴极标记线也在，极性照它焊。
-装配图 `ASSEMBLY_MAP-V4.8-zh_CN.pdf` 可作交叉核对。
+装配图 `ASSEMBLY_MAP-V4.10-zh_CN.pdf` 可作交叉核对。
 
 C100 添加前的同名两包已保存在 `archive/20260913-before-c102/`，不可用于新订单。

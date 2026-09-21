@@ -55,8 +55,8 @@ second-I2S capture); zero changes elsewhere.
 | GPIO14 / 15 | SUBG_IRQ / SUBG_SYNC | CC1312R interrupt + sync/bootloader trigger〔A〕 |
 | GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG for reflashing CC1312R firmware〔A〕— **proxy-flash implemented** (RP2040 bit-bang, `cjtag.c`; see `docs/firmware_update.md` CC1312R section) |
 | GPIO19 | PULSES | comparator output → PIO0 preamble detection〔A〕 |
-| GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. From V4.9 these land on **J11 pins 10/12/14/13** (see below) |
-| GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. TP7/RECOVERED_CLK **存在于正式 PCB**（kicad_pcb:38901），可作 RP2040 GPIO24 自检/调试落点（硬件文档勘误 2026-09-05，与 PCB 源核对；自检跳线步骤以 `firmware/rp2040/selftest_gen.h` 为准） |
+| GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. On J11 since V4.9 (V4.9: pins 10/12/14/13; **V4.10 shifted every pin up by 4 — now 14/16/18/17**, see below) |
+| GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. On J11 since V4.9 (V4.9: pin 15, **V4.10: pin 19** — pin 15 is GND now); the firmware borrows it as the self-test pulse output |
 | GPIO25 | TL_PWM | comparator threshold PWM (RC-filtered into LEVEL_BIAS)〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | DC readback of the threshold〔A〕 |
 | GPIO27 / ADC1 | RSSI | AD8313 VOUT readback (adaptive sensitivity)〔A〕 |
@@ -64,8 +64,8 @@ second-I2S capture); zero changes elsewhere.
 | QSPI dedicated pins | W25Q128JVSIQ | 16MB firmware+config |
 | XIN | 12MHz crystal (C9002) | |
 | USB_DP/DM | USB-C receptacle | UF2 drag-and-drop flashing + CDC debug〔D〕 |
-| RUN + BOOTSEL | tactile switches ×2 | dev-board essentials〔D〕 |
-| SWD (SWCLK/SWDIO) | **J11 pins 6 / 8** | broken out with the J11 debug header from V4.9 (formerly TP1/TP2) |
+| RUN + BOOTSEL | J11 bridge pairs 5-6 / 7-8 (bare pads, tweezers/solder) | dedicated pads SW1/SW2 removed in V4.9, folded into J11 (V4.10: 2x10 bare-pad array)〔D〕 |
+| SWD (SWCLK/SWDIO) | **J11 pins 10 / 12** | broken out with J11 since V4.9 (formerly TP1/TP2; V4.9 pins 6/8, shifted up by 4 in V4.10) |
 
 ### USB path for the RP2040 (verified 2026-08-23)
 

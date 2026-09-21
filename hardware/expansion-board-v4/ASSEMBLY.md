@@ -66,11 +66,10 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **R40** | 31.6k | R_0603_1608Metric | (134.6, 88.2) | -90° | ★ Routine |
 | **C5** | 1uF | C_0402_1005Metric | (85.9, 96.7) | 0° | ★★ 0402; use low airflow |
 
-## Stage B: MCU + Flash (30 parts)
+## Stage B: MCU + Flash (29 parts)
 
 | Designator | Value / Model | Footprint | Board position | Rotation | Manual difficulty |
 |---|---|---|---|---|---|
-| **J11** | 调试焊盘阵列 2x10 | TestPad_2x10_P2.54mm | (55.0, 85.9) | 180° | ★ Routine |
 | **J4** | USB-C_16P | USB_C_Receptacle_HRO_TYPE- | (145.8, 73.0) | 90° | ★ Routine |
 | **U8** | RP2040 | QFN-56-1EP_7x7mm_P0.4mm_EP | (86.4, 76.9) | 180° | ★★★ Exposed pad; reflow/hot air required |
 | **U9** | W25Q128JVSIQ | SOIC-8_5.3x5.3mm_P1.27mm | (93.7, 85.9) | 0° | ★ Exposed leads; hand touch-up possible |
@@ -265,15 +264,16 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | **L18** | 100nH | L_0402_1005Metric | (126.0, 93.9) | 0° | ★★ 0402; use low airflow |
 | **C99** | 100nF | C_0402_1005Metric | (133.6, 100.1) | 180° | ★★ 0402; use low airflow |
 
-## Not placed (14 positions)
+## Not placed (15 positions)
 
 | Designator | Reason |
 |---|---|
 | **ANT1** | 板载天线，PCB铜箔本身，无器件。50.0mm外包络/48.5mm中心线；V4.0装盒实测1082.5MHz、SWR 1.09 |
-| **H1** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H2** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H3** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H4** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
+| **H1** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H2** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H3** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H4** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **J11** | debug pad array (2x10 bare pads, mates with a 2x10p test clip); fit nothing. Bridge 5-6=reset, 7-8=BOOTSEL, 19-20=self-test |
 | **R7** | DNP，设计上默认不贴（5.1k DNP(带电源版)） |
 | **R8** | DNP，设计上默认不贴（5.1k DNP(带电源版)） |
 | **R24** | DNP，设计上默认不贴（0R DNP(旁路外接)） |

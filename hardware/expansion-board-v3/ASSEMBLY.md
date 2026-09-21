@@ -198,10 +198,10 @@ Chinese companion: [`ASSEMBLY-zh_CN.md`](ASSEMBLY-zh_CN.md)
 | Designator | Reason |
 |---|---|
 | **ANT1** | 板载天线，PCB铜箔本身，无器件；V3.10已回灌50.0mm外包络/48.5mm中心线 |
-| **H1** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H2** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H3** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
-| **H4** | M2.5 安装孔（⌀2.7mm NPTH），不是元件 |
+| **H1** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H2** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H3** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
+| **H4** | M2.5 mounting hole (⌀2.7mm NPTH), not a component |
 | **R24** | DNP，设计上默认不贴（0R DNP(旁路外接)） |
 | **R25** | DNP，设计上默认不贴（0R DNP(旁路板载)） |
 | **R30** | DNP，设计上默认不贴（1k DNP） |

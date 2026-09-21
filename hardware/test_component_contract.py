@@ -1209,6 +1209,18 @@ class ComponentContractTest(unittest.TestCase):
                 row = next(line for line in checklist.splitlines() if f"**{ref}**" in line)
                 self.assertNotIn("有极性", row, f"{board}:{ref}")
 
+    @staticmethod
+    def _checklist_stage(text, ref):
+        """取 CHECKLIST 里某位号行的「阶段」列。中文权威版的列序是
+        ✓/位号/值/封装/位置/阶段/备注，阶段列以「不贴」或阶段字母开头。"""
+        for line in text.splitlines():
+            if not line.startswith("|") or f"**{ref}**" not in line:
+                continue
+            parts = [p.strip() for p in line.strip().strip("|").split("|")]
+            if len(parts) >= 6 and re.fullmatch(r"\*\*[A-Z]+\d+\*\*", parts[1]):
+                return parts[5]
+        return None
+
     def test_public_english_process_docs_cover_current_board(self):
         for board in BOARDS:
             root = ROOT / "hardware" / board
@@ -1217,6 +1229,22 @@ class ComponentContractTest(unittest.TestCase):
                 english = (root / f"{stem}.md").read_text(encoding="utf-8")
                 refs = lambda text: set(re.findall(r"\*\*([A-Z]+\d+)\*\*", text))
                 self.assertEqual(refs(english), refs(chinese), f"{board}/{stem}")
+            # 位号集合相等挡不住**状态**漂移：J11 从排针改成裸焊盘阵列后，
+            # 中文权威版进了「不贴」，英文版还整行留在 Stage B 当要贴的件
+            # （2026-09-21 实际发生）。每一行的阶段/不贴状态必须逐位号一致。
+            chinese = (root / "CHECKLIST-zh_CN.md").read_text(encoding="utf-8")
+            english = (root / "CHECKLIST.md").read_text(encoding="utf-8")
+            for ref in sorted(set(re.findall(r"\*\*([A-Z]+\d+)\*\*", chinese))):
+                zh_stage = self._checklist_stage(chinese, ref)
+                en_stage = self._checklist_stage(english, ref)
+                self.assertIsNotNone(zh_stage, f"{board}/CHECKLIST:{ref} 中文缺阶段列")
+                self.assertIsNotNone(en_stage, f"{board}/CHECKLIST:{ref} 英文缺阶段列")
+                # 两边都可能带粗体标记（**不贴** / **Not placed**），先剥掉再比
+                self.assertEqual(
+                    zh_stage.replace("*", "").startswith("不贴"),
+                    en_stage.replace("*", "").startswith("Not placed"),
+                    f"{board}/CHECKLIST:{ref} 的不贴状态中英不一致"
+                    f"（zh={zh_stage!r} en={en_stage!r}）")
             checklist = (root / "CHECKLIST.md").read_text(encoding="utf-8")
             r36 = next(line for line in checklist.splitlines() if "**R36**" in line)
             self.assertIn("DNP", r36, board)

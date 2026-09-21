@@ -230,7 +230,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **J8** | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT | (54.0, 69.2) | C Sensors + GNSS |  |
 | ☐ | **J9** | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P | (144.8, 99.0) | A Power |  |
 | ☐ | **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (124.4, 82.9) | G Airband |  |
-| ☐ | **J11** | 调试焊盘阵列 2x10 | TestPad_2x10_P2.54mm | (55.0, 85.9) | B MCU + Flash |  |
+| — | **J11** | 调试焊盘阵列 2x10 | TestPad_2x10_P2.54mm | (55.0, 85.9) | **Not placed** (debug pad array; fit nothing) |  |
 | — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (79.2, 57.8) | **Not placed** (on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span) | Per-cut measured 50.0mm outer envelope / 48.5mm centerline span |
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (79.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (84.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |

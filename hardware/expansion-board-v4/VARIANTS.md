@@ -58,12 +58,12 @@ The criterion is **whether that side has parts that need machine placement**, no
 
 | | Occupies a side | Note |
 |---|---|---|
-| SW2 (SolderJumper solder-pad jumper) | **No** | Nothing placed, no process step, no stencil, no oven run |
+| Pad-only items: the J11 debug pads (V4.10 2x10 bare pads; they replaced the SW2 solder jumper, removed in V4.9) | **No** | Nothing placed, no process step, no stencil, no oven run |
 | Through-hole parts (if J9 switches to bent-pin) | **No** | Counted in the "through-hole" column (hand-soldering fee ¥2 + hand-assembly engineering fee ¥20, fixed) |
 | J4 (USB-C, 16 SMD contacts) | **Yes** | As long as it sits on the B side, that side is a placement side |
 | The 28 power SMDs | Yes | The powered variant is necessarily double-sided |
 
-So leaving SW2 on the B side has zero cost impact; no adjustment needs to be made for it.
+So leaving pad-only items (formerly SW2, now the J11 debug pads) on the B side has zero cost impact; no adjustment needs to be made for them.
 
 ## 4. 【Implemented 2026-08-23】How single-sided usability was achieved
 
@@ -77,7 +77,7 @@ Three things were done:
 | **Added R7/R8 (5.1k CC pull-downs) → F side**, 2.2mm right next to J4 | The unpowered variant has no CH224K; with CC floating, the host simply won't recognize the device (the USB-C spec requires Rd on the device side). **Either-or with CH224K**: not placed on the powered variant |
 | R37 moved from (138.80,69.84) to (137.75,70.75) | J4's through-hole mounting legs poke through to the B side and landed inside R37's courtyard. This also shrank its distance to the CFG1 pin from 2.97mm to 2.56mm |
 
-**Acceptance criterion: the unpowered variant's B-side placed parts = 0** (only the SW2 solder-pad jumper and non-side-counting TP items remain).
+**Acceptance criterion: the unpowered variant's B-side placed parts = 0** (only pad-only items that count no side remain — since V4.9 the SW2 jumper and TP1–7 are gone, folded into the J11 debug pads).
 
 The proxy-flashing scheme (former §4 Option A) was rejected; reasons in §5 — GPIO24/25 are USB Serial/JTAG and cannot do host,
 and switching requires burning an irreversible eFuse. No gamble taken; J4 stays.

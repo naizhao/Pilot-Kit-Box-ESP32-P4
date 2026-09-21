@@ -16,8 +16,8 @@ The airband group (stage G — 22 designators: `U21` `U22` `Y4` `J10` `D6` `L18`
 is **not** in any selective or mutex group: it is placed unconditionally, on both variants. It is listed here
 only so that its absence from the tables below is not read as an omission.
 
-Designator locations on the board: [ASSEMBLY_MAP-V4.8.pdf](ASSEMBLY_MAP-V4.8.pdf) (public version),
-`internal/装配图-本轮打板-V4.8-zh_CN.pdf` (parts each board of this batch must hand-place itself).
+Designator locations on the board: [ASSEMBLY_MAP-V4.10.pdf](ASSEMBLY_MAP-V4.10.pdf) (public version),
+`internal/装配图-本轮打板-V4.10-zh_CN.pdf` (parts each board of this batch must hand-place itself).
 Both are generated from the criteria in this table, so they cannot disagree with it.
 
 ---
@@ -155,7 +155,6 @@ These three are **placed as 0R by default**; they are not DNP and not mutually e
 | Designator | Notes |
 |---|---|
 | `ANT1` | Onboard IFA — it is just the PCB copper itself |
-| `SW2` | BOOTSEL pad jumper, shorted with tweezers, **takes no placement side** |
 | `H1`~`H4` | M2.5 mounting holes (⌀2.7mm NPTH) |
 | `FID1`~`FID3` | Optical fiducials (a simplified placement process does not use them; kept for lines that do) |
 

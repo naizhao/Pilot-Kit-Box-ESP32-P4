@@ -54,8 +54,8 @@ BK4819 的三线 SPI 由 P4 软件模拟（SDATA 双向，不占用硬件 SPI �
 | GPIO14 / 15 | SUBG_IRQ / SUBG_SYNC | CC1312R 中断 + 同步/bootloader 触发〔A〕 |
 | GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG 代刷 CC1312R 固件〔A〕 |
 | GPIO19 | PULSES | 比较器输出 → PIO0 前导检测〔A〕 |
-| GPIO20–23 | DEMOD0–3 | PIO 解调状态机联络/调试〔A〕。V4.9 起落到 **J11 的 10/12/14/13 脚**（见下节） |
-| GPIO24 | RECOVERED_CLK | 调试用恢复时钟〔A〕。V4.9 起落到 **J11 的 15 脚**；固件把它借作自检脉冲输出 |
+| GPIO20–23 | DEMOD0–3 | PIO 解调状态机联络/调试〔A〕。V4.9 起落到 J11（V4.9 是 10/12/14/13 脚；**V4.10 脚号整体后移 4 位，现为 14/16/18/17**，见下节） |
+| GPIO24 | RECOVERED_CLK | 调试用恢复时钟〔A〕。V4.9 起落到 J11（V4.9 是 15 脚，**V4.10 为 19 脚**，15 现在是 GND）；固件把它借作自检脉冲输出 |
 | GPIO25 | TL_PWM | 比较器阈值 PWM（RC 滤波成 LEVEL_BIAS）〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | 阈值直流回读〔A〕 |
 | GPIO27 / ADC1 | RSSI | AD8313 VOUT 回读（自适应灵敏度）〔A〕 |
@@ -63,8 +63,8 @@ BK4819 的三线 SPI 由 P4 软件模拟（SDATA 双向，不占用硬件 SPI �
 | QSPI 专用脚 | W25Q128JVSIQ | 16MB 固件+配置 |
 | XIN | 12MHz 晶振（C9002） | |
 | USB_DP/DM | USB-C 座 | UF2 拖拽刷机 + CDC 调试〔D〕 |
-| RUN + BOOTSEL | 轻触开关 ×2 | 开发板必备〔D〕 |
-| SWD（SWCLK/SWDIO） | **J11 的 6 / 8 脚** | V4.9 起随 J11 调试排针一并引出（原 TP1/TP2） |
+| RUN + BOOTSEL | J11 短接对 5-6 / 7-8（裸焊盘，镊子/锡桥） | V4.9 起取消独立焊盘 SW1/SW2，并入 J11（V4.10 为 2x10 裸焊盘阵列）〔D〕 |
+| SWD（SWCLK/SWDIO） | **J11 的 10 / 12 脚** | V4.9 起随 J11 一并引出（原 TP1/TP2；V4.9 时是 6/8 脚，V4.10 后移 4 位） |
 
 ### RP2040 的 USB 路径（2026-08-23 查证）
 
@@ -244,7 +244,7 @@ taper与5.103mm馈电路径保持不变。
 
 | 器件 | 建库依据的 datasheet 版本 | 采购 SKU | 到货核对点 |
 |---|---|---|---|
-| BNO085 | CEVA 1000-3927 **v1.16**（BNO080/085/086 引脚相同） | 淘宝 ¥56 档散新 | 丝印 "BNO085"（警惕 "BN0085" 仿标）；LGA-28 3.8×5.2mm 实measure |
+| BNO085 | CEVA 1000-3927 **v1.16**（BNO080/085/086 引脚相同） | 淘宝 ¥56 档散新 | 丝印 "BNO085"（警惕 "BN0085" 仿标）；LGA-28 3.8×5.2mm 实测 |
 | ~~AD8319~~ | — | — | **2026-08-26 弃用**：改 AD8313 单一方案（动态范围 70dB vs 40dB，且实购更便宜） |
 | AD8313 | ADI Rev.F | 立创 C578690（仅此渠道） | 丝印 "J1A"；MSOP-8 |
 | BMP388 | Bosch DS001-07 Rev 1.7 | 立创 C779278 原厂 | LGA-10 2×2mm；到货抽测 CHIP_ID=0x50 |

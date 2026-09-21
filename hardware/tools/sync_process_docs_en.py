@@ -24,6 +24,14 @@ SKIP_REASONS = {
     "短接焊盘": "solder-bridge pad",
     "板载天线": "on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span",
     "备用检波位（默认贴 U13）": "alternate detector footprint (U13 is default)",
+    # V4.10：J11 从 2x8 排针改成 TestPad 裸焊盘阵列、不再是要贴的件。
+    # CHECKLIST（短文案）与 ASSEMBLY（长文案）两处产物各有一段，缺一条
+    # 就会把中文原样抄进英文版——J11 曾经因此整行留在英文 Stage B 里。
+    "调试焊盘阵列，不贴件": "debug pad array; fit nothing",
+    "调试焊盘阵列（2x10 裸焊盘，配 2x10p 测试夹压接），不贴任何件。短接 5-6=复位、7-8=BOOTSEL、19-20=自检":
+        "debug pad array (2x10 bare pads, mates with a 2x10p test clip); fit nothing. "
+        "Bridge 5-6=reset, 7-8=BOOTSEL, 19-20=self-test",
+    "M2.5 安装孔（⌀2.7mm NPTH），不是元件": "M2.5 mounting hole (⌀2.7mm NPTH), not a component",
 }
 
 
