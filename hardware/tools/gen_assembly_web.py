@@ -123,16 +123,63 @@ class Variant:
 
 
 VARIANTS = [
-    # ── V4.8（当前板：V4.7 + GNSS 模块 VBAT 常供电）──────────────────
+    # ── V4.10（当前板：V4.9 的 J11 从 2x8 排针改成 2x10 裸焊盘阵列）──────
     #
     # ⚠️ 版本号在本表里是**写死**的，升板必须在这里加一组新 Variant 并把上一版
     # 转成 archived=True。2026-09-13 升 V4.8 时踩过：只改 board_meta.BOARD_REV、
     # 没动这里，于是 V4.8 的几何被生成进了 v4.7-*.json —— 文件名、标题、索引
     # 全写着 V4.7，内容却是 V4.8 的板子，而且**任何脚本都不报错**。
+    # 2026-09-15 升 V4.9 时**又踩了一次**（Gerber 已经是 V4.9，装配助手还在往
+    # v4.8-*.json 里写 219 个位号的新几何），这才补上本组。
     # 「一块板的 kicad_pcb 在仓库里只有一份」正是这个陷阱的成因：当前板一旦
     # 迭代，上一版的几何就重算不出来了，只能靠 archived 沿用已生成的 json。
     Variant(
+        "v4.10-pwr", "V4.10 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；"
+                 "J11 由 V4.9 的 2x8 排针改成 2x10 裸焊盘阵列——**不贴任何件**，"
+                 "配 2x10p 测试夹；脚号整体后移 4 位，短接改用镊子/锡桥："
+                 "5-6 复位、7-8 BOOTSEL、19-20 自检回环；BT1/D8/D9 手焊不进 SMT；"
+                 "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    Variant(
+        "v4.10-nopwr", "V4.10 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="电源区一个不贴（SW3、U23/BT1 备份供电、D9 充电灯都在内——"
+                 "它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；"
+                 "J11 是裸焊盘、本来就不用贴，D8 电源灯照贴（吃 3V3_DIG）；"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.9（存档：PCB 已迭代到 V4.10，这份几何重算不出来了）──────────
+    Variant(
+        "v4.9-pwr", "V4.9 带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
+        subtitle="含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；"
+                 "新增 J11 调试排针（2x8 贴片）——CC1312R 的 cJTAG 三根首次引出，"
+                 "并取代原 TP1~7 与 SW1/SW2，跳线帽跨 1-2 复位、3-4 BOOTSEL、"
+                 "15-16 自检回环；BT1/D8/D9 手焊不进 SMT；"
+                 "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    Variant(
+        "v4.9-nopwr", "V4.9 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
+        subtitle="电源区一个不贴（SW3、U23/BT1 备份供电、D9 充电灯都在内——"
+                 "它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；"
+                 "J11 调试排针照贴，D8 电源灯也照贴（吃 3V3_DIG）；"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.8（存档）──────────────────────────────────────────────
+    Variant(
         "v4.8-pwr", "V4.8 带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="含 AIRBAND 与 SW3 电源键；新增 GNSS 模块 VBAT 常供电"
                  "（U23 LDO 取自 BAT_P → D7 → U7.pin6，经 R63 挂 BT1 可充电电池）——"
                  "关机后模块保住 RTC 与星历，不再每次开机冷启动；"
@@ -142,6 +189,7 @@ VARIANTS = [
     ),
     Variant(
         "v4.8-nopwr", "V4.8 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="电源区一个不贴（SW3 与 U23/BT1 备份供电都在内——它们都挂在 "
                  "BAT_P/SY6970 上，没有电源区就没有对象）；"
                  "R7/R8 必贴（不贴则电脑不认，刷不进固件）",

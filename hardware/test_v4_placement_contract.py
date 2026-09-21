@@ -37,7 +37,26 @@ REQUIRED_ZONES = {
 FINALIZED_GRAPHICS_COUNT = 26
 # 用户 2026-09-01 定稿时删掉了 RST / BOOT 两条标签（SW1/SW2 的位号本身已能识别），
 # 只保留 TP1-TP7 七条。这是用户对自己排版的决定，合同跟随实际板面。
-DEBUG_LABELS = ("TP1", "TP2", "TP3", "TP4", "TP5", "TP6", "TP7")
+# B 面丝印上那张 20 格对照表（J11 每个脚印一格，外加一条 "J11" 标题）。
+# 缩写规则见 internal/tools/gen_j11_silk.py —— 板面 0.8mm 字高放不下
+# RECOVERED_CLK 这种全名。
+# 只含 20 格图例本身，**不含单独的 "J11" 板级文字**。
+#
+# 这一项反复过两次，结论仍是"不含"：脚本一度把图例推到离 J11 九毫米外（成因是
+# 障碍模型把 F 面贴片焊盘也算上了，见 gen_j11_silk.py），那时加了条 "J11" 标题
+# 锁定归属；2026-09-21 维护者手工把整块表挪回 **J11 正上方**（y 59.89~70.69，
+# 离座子顶端 2.4mm），J11 的**位号**(55.00, 72.50) 正好夹在表和座子中间同时指代
+# 两者，那条独立标题就成了重复，维护者删掉了。归属这一维由下面
+# test_debug_column_pads_are_labelled 的"图例必须紧挨 J11"断言守住。
+# ⚠️ V4.10 脚号整体后移 4 位：V4.9 的 pin1~16 现在是 pin5~20，新 pin1~4 给
+# airband。照 V4.9 的图例读板会每一格都错位。
+DEBUG_LABELS = tuple(
+    f"{n} {t}" for n, t in (
+        ("1", "TCXO"), ("2", "AUD"), ("3", "VSCK"), ("4", "VSDA"),
+        ("5", "GND"), ("6", "RUN"), ("7", "GND"), ("8", "BOOT"),
+        ("9", "TMS"), ("10", "SWCLK"), ("11", "TCK"), ("12", "SWDIO"),
+        ("13", "RST"), ("14", "D0"), ("15", "GND"), ("16", "D1"),
+        ("17", "D3"), ("18", "D2"), ("19", "RCLK"), ("20", "PLS")))
 # V4.7 新增：用户 2026-09-12 摆 SW3 时加的 F.SilkS 标注。
 # 跟 DEBUG_LABELS 一样单列，而不是把 FINALIZED_GRAPHICS_COUNT 改大——
 # 基线数字一旦被"顺手 +1"，这条合同就退化成事后追认，再也拦不住误增误删。
@@ -47,8 +66,19 @@ V47_LABELS = ("PWR BTN",)
 # 箭头指向各自那颗灯——位号 D8/D9 只说"这是个二极管"，这两条才说明它是干什么的。
 # 同样单列，理由见上面 V47_LABELS。
 V48_LABELS = ("PWR↓", "CHG↓")
+# V4.10 新增：J11 旁边那条竖排行号（偶数脚 2,4,…,20，与焊盘行逐行对齐）。
+#
+# 为什么表格之外还要这十个数字：整块图例离 J11 有 9.1mm，而这**已经是它这个
+# 形态的全板最优**——实测 2 列×10 行最近 9.11mm，行距改成 2.54（与焊盘行对齐、
+# 能横着读）全板放不下，单列 20 行也放不下。9mm 外数 20 个焊盘极易串行，
+# 所以把脚号单独拉到座子边上（板坐标 x 51.40，离本体轮廓 0.10mm），名字仍查表。
+# 印偶数号是因为可行的那条窄带在板坐标 x 小的一侧，紧挨的正是偶数脚那一列。
+#
+# 同样单列而不是把 FINALIZED_GRAPHICS_COUNT 改大，理由见上面 V47_LABELS。
+V410_ROW_MARKERS = tuple(str(2 * i + 2) for i in range(10))
 BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
-                        + len(V47_LABELS) + len(V48_LABELS))
+                        + len(V47_LABELS) + len(V48_LABELS)
+                        + len(V410_ROW_MARKERS))
 # B 面左边缘同一竖列：SW1、SW2 相邻成组排在 TP 之前，SW1 在 SW2 上方。
 # 两个 SW 之间用 3.60mm（SolderJumper courtyard 跨 3.39mm，2.50mm 会重叠）。
 #
@@ -57,13 +87,37 @@ BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
 # 这一列往下腾出的空间给了挪过来的 RT1（54.813, 100.940）。
 # 收紧后 `kicad-cli pcb drc` 仍是 0 违例（courtyard 没有重叠），
 # 本合同按既定口径**跟随实际板面**，不反过来约束用户的排版决定。
-DEBUG_X = 51.85
-DEBUG_Y = {
-    "SW1": 77.450, "SW2": 81.050, "TP1": 86.050, "TP2": 88.083,
-    "TP3": 90.116, "TP4": 92.149, "TP5": 94.181, "TP6": 96.214,
-    "TP7": 98.247,
+# V4.9 起，B 面这一列调试点由 **J11** 取代：原先的 TP1~TP7 七个裸铜焊盘 +
+# SW1/SW2 两个 SolderJumper 共九件已删除，功能全部并进 J11。
+#
+# V4.10 改了 J11 的**形态和脚数**，两处都会让照旧版读板的人读错：
+#   · 2x8 贴片排针 → **2x10 裸焊盘阵列**（自制封装 TestPad_2x10_P2.54mm）。
+#     维护者的调试工具是 2x10p PCB 测试夹，探针压焊盘，插不了排针。
+#     **跳线帽随之消失**，三对短接退回镊子/锡桥（5-6 复位 / 7-8 BOOTSEL /
+#     19-20 自检回环）。
+#   · 脚号整体后移 4 位，新 pin1~4 给 airband。
+#   · 中心 y 从 88.44 上移 2.54 到 **85.90**：2x10 的 pad5 相对中心是 -6.35、
+#     2x8 的 pad1 是 -8.89，上移正好让新 pin5~20 落在原 pin1~16 的物理位置，
+#     16 根已布走线一根不动。往下扩会撞 B 面 RT1(y99.41~102.46) 和 H3。
+#
+# 合同守的维度不减：位置、面、旋转角照旧，另加两条——
+#   · 20 个脚的网络映射（一错就是一片）
+#   · 必须待在电池投影区之外（测试焊盘是裸露开窗铜，**没有阻焊覆盖**，铝外壳
+#     压上去会短路；这条约束从 SW2 继承过来，改成裸焊盘后只会更严，
+#     见 LAYOUT_CONSTRAINTS.md §8.1，DRC 查不出来）
+DEBUG_HEADER = "J11"
+DEBUG_X, DEBUG_Y_CENTER = 55.00, 85.90
+DEBUG_ROTATION = 180.0
+BATTERY_ZONE_X = (67.5, 132.5)
+DEBUG_PINS = {
+    # ⚠️ pin1 是 VHF_TCXO_**TP**，中间隔着 R66（0R，默认不贴）。直连会给
+    # TG-5006CG 加约 17pF，而它的负载预算只有 10pF ±10%（手册 Output load 行）。
+    "1": "VHF_TCXO_TP", "2": "VHF_AUDIO", "3": "VHF_SCK", "4": "VHF_SDATA",
+    "5": "GND", "6": "RP_RUN", "7": "GND", "8": "QSPI_SS",
+    "9": "SUBG_TMSC", "10": "SWCLK", "11": "SUBG_TCKC", "12": "SWDIO",
+    "13": "SUBG_RESET", "14": "DEMOD0", "15": "GND", "16": "DEMOD1",
+    "17": "DEMOD3", "18": "DEMOD2", "19": "RECOVERED_CLK", "20": "PULSES",
 }
-DEBUG_ROTATION = {"SW2": 90.0, "SW1": 90.0}
 POSITION_TOLERANCE = 0.05
 
 
@@ -210,18 +264,72 @@ class V4PlacementContractTest(unittest.TestCase):
     def test_debug_column_pads_are_labelled(self):
         actual = set(re.findall(r'\(gr_text "([^"]*)"', self.text))
         self.assertLessEqual(set(DEBUG_LABELS), actual, sorted(set(DEBUG_LABELS) - actual))
+        # 行号列：光看文字存在不够，**必须验它确实贴着 J11 且与焊盘行对齐**——
+        # 否则这十个数字漂到别处，照着数脚会错得比没有还离谱。
+        markers = []
+        for match in re.finditer(
+                r'\(gr_text "(\d{1,2})"\s*\(at ([\d.]+) ([\d.]+)[^)]*\)', self.text):
+            markers.append((match.group(1), float(match.group(2)), float(match.group(3))))
+        markers = [m for m in markers if m[0] in V410_ROW_MARKERS and m[1] < 53.0]
+        self.assertEqual(sorted(m[0] for m in markers), sorted(V410_ROW_MARKERS),
+                         f"J11 旁的行号列不全：{sorted(m[0] for m in markers)}")
+        xs = {round(m[1], 2) for m in markers}
+        self.assertEqual(len(xs), 1, f"行号列不在同一条竖线上：{sorted(xs)}")
+        self.assertLess(DEBUG_X - 2.6 - max(xs), 1.2,
+                        f"行号列离 J11 本体太远（x={max(xs)}），失去贴着读的意义")
+        # 图例表也必须紧挨 J11。它一度被脚本推到九毫米外（障碍模型把 F 面贴片
+        # 焊盘当成了 B 面丝印的障碍），维护者手工挪回座子正上方。九毫米外数 20
+        # 个焊盘极易串行，这条断言就是别让它再飘回去。
+        cells = [(float(m.group(1)), float(m.group(2))) for m in re.finditer(
+            r'\(gr_text "\d{1,2} [A-Z0-9_]{1,16}"\s*\(at ([\d.]+) ([\d.]+)', self.text)]
+        self.assertEqual(len(cells), len(DEBUG_LABELS), f"图例格数不对：{len(cells)}")
+        gap_y = DEBUG_Y_CENTER - 12.85 - max(y for _, y in cells)   # J11 本体上沿
+        self.assertLess(gap_y, 4.0,
+                        f"图例表离 J11 上沿 {gap_y:.1f}mm，太远了；应贴着座子摆")
+        by_pin = {int(m[0]): m[2] for m in markers}
+        for pin in range(4, 21, 2):
+            self.assertAlmostEqual(by_pin[pin] - by_pin[pin - 2], 2.54, delta=0.02,
+                                   msg=f"行号 {pin} 与 {pin-2} 的间距不等于焊盘行距")
 
-    def test_debug_column_is_a_single_back_side_row(self):
-        for reference, expected_y in DEBUG_Y.items():
-            with self.subTest(reference=reference):
-                footprint = self.footprints.get(reference)
-                self.assertIsNotNone(footprint, f"{reference} 不在 PCB 上")
-                x, y, rotation, layer = footprint_placement(footprint)
-                self.assertEqual(layer, "B", f"{reference} 必须在 B 面")
-                self.assertAlmostEqual(x, DEBUG_X, delta=POSITION_TOLERANCE)
-                self.assertAlmostEqual(y, expected_y, delta=POSITION_TOLERANCE)
-                if reference in DEBUG_ROTATION:
-                    self.assertAlmostEqual(rotation % 360, DEBUG_ROTATION[reference], delta=0.01)
+    def test_debug_header_placement_and_pinout(self):
+        """J11 的位置、朝向、20 脚网络，以及"不许进电池投影区"。"""
+        footprint = self.footprints.get(DEBUG_HEADER)
+        self.assertIsNotNone(footprint, f"{DEBUG_HEADER} 不在 PCB 上")
+        x, y, rotation, layer = footprint_placement(footprint)
+        self.assertEqual(layer, "B", "J11 必须在 B 面")
+        self.assertAlmostEqual(x, DEBUG_X, delta=POSITION_TOLERANCE)
+        self.assertAlmostEqual(y, DEBUG_Y_CENTER, delta=POSITION_TOLERANCE)
+        self.assertAlmostEqual(rotation % 360, DEBUG_ROTATION, delta=0.01)
+
+        # 位号必须印在丝印层且可见：板面那张 16 格图例不带标题，全靠这个位号
+        # 说明"这张表是谁的"。它要是被隐藏或搬去 F.Fab，图例就成了无主孤表。
+        reference = re.search(
+            r'\(property "Reference" "J11"[\s\S]{0,400}?\(layer "([^"]*)"\)', footprint)
+        self.assertIsNotNone(reference, "J11 位号找不到")
+        # ⚠️ 层名有**两种写法**：kicad_pcb 文件里是 "B.SilkS"，而 pcbnew 的
+        # GetLayerName() 返回 "B.Silkscreen"。本测试读的是文件文本，用前者；
+        # 拿后者去 grep 文件会静默返回空（我在排查时栽过一次）。
+        self.assertEqual(reference.group(1), "B.SilkS",
+                         "J11 位号必须留在 B 面丝印层")
+        self.assertNotIn("(hide yes)", footprint[:reference.end() + 200],
+                         "J11 位号不能隐藏")
+
+        # 排针焊盘是裸露开窗铜箔，落进电池投影区会被软包锂电的铝外壳搭上。
+        # DRC 查不出来（它不知道板子上方压着一块金属），所以在这里守。
+        half_width = 11.83 / 2
+        self.assertTrue(
+            x + half_width < BATTERY_ZONE_X[0] or x - half_width > BATTERY_ZONE_X[1],
+            f"J11 落进电池投影区 {BATTERY_ZONE_X}：裸铜会被电池铝壳短路")
+
+        for number, net in DEBUG_PINS.items():
+            with self.subTest(pin=number):
+                # ⚠️ 本仓库的 kicad_pcb 里 pad 网络写作 `(net "NAME")`——**没有
+                # netcode 数字**（全板 3228 个 pad 都是这个格式）。按常见的
+                # `(net 5 "NAME")` 写正则会一条都匹配不上，而且是静默匹配不上。
+                match = re.search(
+                    r'\(pad "%s"[\s\S]{0,400}?\(net "([^"]*)"\)' % number, footprint)
+                self.assertIsNotNone(match, f"J11.{number} 没有网络")
+                self.assertEqual(match.group(1), net, f"J11.{number}")
 
     # ── PCB 与原理图的整体一致性审查 ──────────────────────────────────
     #
@@ -362,7 +470,7 @@ class V4PlacementContractTest(unittest.TestCase):
         self.assertEqual(mismatched, [], "PCB 焊盘网络与原理图不一致")
 
     def test_back_side_carries_no_regular_components(self):
-        """V4 B 面普通装配件只允许电池相关的 J9、RT1、BT1；TP/SW 是裸铜调试焊盘。
+        """V4 B 面普通装配件只允许电池相关的 J9、RT1、BT1，外加调试排针 J11。
 
         「不铺 B 面」是原则：26 件曾经整片在 B 面，后来全搬到 F 面，留在 B 面的
         必须是**电池相关且手焊**的件——它们不进 SMT，不破坏"单面贴装"。
@@ -372,13 +480,21 @@ class V4PlacementContractTest(unittest.TestCase):
         且 x>132.5 落在电池投影区之外——那片区域禁止裸露铜箔（铝外壳直接压在
         板面上，见 LAYOUT_CONSTRAINTS.md §8.1），电池焊脚不能进去。
 
-        注：中途曾短暂设计成带线纽扣电池座（J11，先 PH2.0 后 SH1.0），后改为
-        焊接式。焊接式没有座子，"把 4.2V 主电池插进备份口"这条失效路径随之消失。
+        注：中途曾短暂设计成带线纽扣电池座（当时也占用 J11 这个位号，先 PH2.0
+        后 SH1.0），后改为焊接式。焊接式没有座子，"把 4.2V 主电池插进备份口"
+        这条失效路径随之消失。J11 这个位号后来在 V4.9 分配给了调试排针。
+
+        2026-09-15 加入 J11（V4.9 的 2x8 贴片调试排针；V4.10 改为 2x10 裸焊盘
+        阵列，仍在 B 面）。它不是电池相关件，
+        破例的理由是**功能上必须在 B 面**：板子以 HAT 方式扣在载板上，F 面被
+        屏板盖住，调试口只有从背面才够得着。同时它满足"不进 SMT、手焊"这条
+        （B 面不参与贴装），所以"单面贴装"没有被破坏。它取代的 TP1~7 + SW1/SW2
+        本来也全在 B 面，B 面件总数反而从 12 降到 4。
 
         ⚠️ 这条白名单是**放宽**性质的改动，经用户明确授权后才加。
         再往里加任何位号，都要先回答"它凭什么不搬去 F 面"。
         """
-        allowed = {"J9", "RT1", "BT1"} | set(DEBUG_Y)
+        allowed = {"J9", "RT1", "BT1", DEBUG_HEADER}
         on_back = {
             reference
             for reference, footprint in self.footprints.items()

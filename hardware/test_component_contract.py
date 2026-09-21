@@ -522,9 +522,13 @@ class ComponentContractTest(unittest.TestCase):
                 # 两边各自"合规"却装不上螺丝（初版摆位实测重叠 2.39mm，DRC 0 违例）。
                 # ⚠️ 放宽性质的改动，经用户明确授权。注意本仓库有**两处**
                 # B 面白名单（另一处在 test_v4_placement_contract.py），加件要同时改。
-                {"J9", "RT1", "BT1", "SW1", "SW2",
-                 "TP1", "TP2", "TP3", "TP4", "TP5", "TP6", "TP7"},
-                "V4 B 面只允许电池件，以及不进 BOM 的测试/短接焊盘",
+                # V4.9：TP1~TP7 + SW1/SW2 九件全部删除，由 J11（V4.9 是 2x8 贴片
+                # 排针，V4.10 改 2x10 裸焊盘阵列）取代——B 面件反而从 12 降到 4。
+                # J11 破例留在 B 面的理由
+                # 是**功能上必须**：板子以 HAT 扣在载板上，F 面被屏板盖死，
+                # 调试口只有从背面才够得着；且它手焊、不进 SMT，没破坏单面贴装。
+                {"J9", "RT1", "BT1", "J11"},
+                "V4 B 面只允许电池件与必须从背面操作的调试排针",
             )
 
     def test_secondary_audit_rf_and_reset_corrections(self):
@@ -976,14 +980,26 @@ class ComponentContractTest(unittest.TestCase):
             ("R37", "1"): "PD_CFG1", ("R37", "2"): "GND",
             ("R48", "1"): "PD_CFG2", ("R48", "2"): "GND",
             ("R49", "1"): "PD_CFG3", ("R49", "2"): "GND",
-            ("SW1", "1"): "RP_RUN", ("SW1", "2"): "GND",
         }
+        # V4.9：复位/BOOTSEL 短接与全部测试点并入 J11，SW1/SW2/TP1~TP7 九件已删除。
+        # V4.10：J11 从 2x8 贴片排针改成 **2x10 裸焊盘阵列**（配 2x10p 测试夹），
+        # 脚号整体后移 4 位，新 pin1~4 给 airband 的 BK4819 调试信号。
+        # 逐脚核对这 20 个网络比原来九个裸焊盘各查一条**覆盖面更大**，而且顺带
+        # 守住了 CC1312R 的 cJTAG 三根（板上首次引出，接错就等于白加）。
+        #
+        # 短接跨的是同一行的左右两个焊盘：5-6 复位、7-8 BOOTSEL、19-20 自检回环。
+        # 所以 5/7/19 必须是 GND 或配对信号，顺序错了就短错东西。
+        # ⚠️ 焊盘阵列没有跳线帽可插，这三对要用镊子或锡桥短接（回到 V4.8 的做法）。
         debug_nets = {
-            "TP1": "SWCLK", "TP2": "SWDIO", "TP3": "DEMOD0",
-            "TP4": "DEMOD1", "TP5": "DEMOD2", "TP6": "DEMOD3",
-            "TP7": "RECOVERED_CLK",
+            # ⚠️ pin1 走 VHF_TCXO_TP，经 R66（0R，默认不贴）才到 VHF_TCXO。
+            # 这条隔离是硬约束：直连 = TCXO 负载 10pF → 28pF，BK4819 可能不起振。
+            "1": "VHF_TCXO_TP", "2": "VHF_AUDIO", "3": "VHF_SCK", "4": "VHF_SDATA",
+            "5": "GND", "6": "RP_RUN", "7": "GND", "8": "QSPI_SS",
+            "9": "SUBG_TMSC", "10": "SWCLK", "11": "SUBG_TCKC", "12": "SWDIO",
+            "13": "SUBG_RESET", "14": "DEMOD0", "15": "GND", "16": "DEMOD1",
+            "17": "DEMOD3", "18": "DEMOD2", "19": "RECOVERED_CLK", "20": "PULSES",
         }
-        expected |= {(ref, "1"): net for ref, net in debug_nets.items()}
+        expected |= {("J11", pin): net for pin, net in debug_nets.items()}
         self.assertEqual({key: pin_nets.get(key) for key in expected}, expected)
         self.assertEqual(values["R37"], "0R")
         self.assertEqual(values["R48"], "0R")

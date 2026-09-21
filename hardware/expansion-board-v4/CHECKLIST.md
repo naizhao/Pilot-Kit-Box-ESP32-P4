@@ -1,11 +1,11 @@
-# V4.8 BOM Verification Checklist (reference-designator order)
+# V4.10 BOM Verification Checklist (reference-designator order)
 
 Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-240 designators in total.
+233 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -147,7 +147,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R47** | 10k | R_0603_1608Metric | (98.5, 91.7) | D 978 Transceiver |  |
 | ☐ | **R48** | 0R | R_0603_1608Metric | (126.8, 67.0) | A Power |  |
 | ☐ | **R49** | 0R | R_0603_1608Metric | (126.8, 69.4) | A Power |  |
-| ☐ | **R50** | 30k | R_0603_1608Metric | (86.5, 92.8) | B MCU + Flash |  |
+| ☐ | **R50** | 30k | R_0603_1608Metric | (87.2, 91.2) | B MCU + Flash |  |
 | ☐ | **R51** | 10k | R_0603_1608Metric | (85.5, 88.5) | B MCU + Flash |  |
 | ☐ | **R52** | 10k | R_0402_1005Metric | (64.4, 85.0) | C Sensors + GNSS |  |
 | ☐ | **R53** | 10k | R_0402_1005Metric | (64.3, 83.0) | C Sensors + GNSS |  |
@@ -162,6 +162,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R63** | 2.2k | R_0603_1608Metric | (78.4, 97.8) | A Power |  |
 | ☐ | **R64** | 1k | R_0603_1608Metric | (145.8, 80.3) | A Power |  |
 | ☐ | **R65** | 1k | R_0603_1608Metric | (145.8, 84.2) | A Power |  |
+| — | **R66** | 0R DNP(TCXO探测隔离) | R_0603_1608Metric | (138.1, 103.8) | **Not placed** (DNP) |  |
 | ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain |  |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
@@ -229,20 +230,12 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **J8** | U.FL→内置patch | U.FL_Hirose_U.FL-R-SMT | (54.0, 69.2) | C Sensors + GNSS |  |
 | ☐ | **J9** | MX1.25WT-2P BAT | MX1.25WT-2P_1x02-1MP_P | (144.8, 99.0) | A Power |  |
 | ☐ | **J10** | U.FL_VHF(经尾线转SMA) | U.FL_Hirose_U.FL-R-SMT | (124.4, 82.9) | G Airband |  |
+| ☐ | **J11** | 调试焊盘阵列 2x10 | TestPad_2x10_P2.54mm | (55.0, 85.9) | B MCU + Flash |  |
 | — | **ANT1** | IFA_1090 | ANT_IFA_1090MHz | (79.2, 57.8) | **Not placed** (on-board antenna; per-cut measured 50.0mm outer envelope / 48.5mm centerline span) | Per-cut measured 50.0mm outer envelope / 48.5mm centerline span |
 | — | **ZP1** | DNP 并-天线侧 | C_0603_1608Metric | (79.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | — | **ZP2** | DNP 并-电台侧 | C_0603_1608Metric | (84.2, 63.6) | **Not placed** (DNP) | DNP by default; see the Chinese companion for tuning details |
 | ☐ | **ZS1** | 0R 串 | L_0603_1608Metric | (81.7, 62.9) | E 1090 Receive Chain | See the Chinese companion for the detailed engineering note |
-| — | **SW1** | RESET短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 77.5) | **Not placed** (solder-bridge pad) |  |
-| — | **SW2** | BOOTSEL短接焊盘 | SolderJumper-2_P1.3mm_ | (51.9, 81.0) | **Not placed** (solder-bridge pad) |  |
 | ☐ | **SW3** | TS24CA | SW_TS24CA_2x4_SideAct | (147.9, 89.1) | A Power |  |
-| — | **TP1** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 86.0) | **Not placed** (test-point pad) |  |
-| — | **TP2** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 88.1) | **Not placed** (test-point pad) |  |
-| — | **TP3** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 90.1) | **Not placed** (test-point pad) |  |
-| — | **TP4** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 92.1) | **Not placed** (test-point pad) |  |
-| — | **TP5** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 94.2) | **Not placed** (test-point pad) |  |
-| — | **TP6** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 96.2) | **Not placed** (test-point pad) |  |
-| — | **TP7** | TestPoint | TestPoint_Pad_1.0x1.0m | (51.9, 98.2) | **Not placed** (test-point pad) |  |
 | — | **H1** | — | MountingHole_2.7mm_M2. | (54.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H2** | — | MountingHole_2.7mm_M2. | (146.0, 56.0) | **Not placed** (mounting hole) |  |
 | — | **H3** | — | MountingHole_2.7mm_M2. | (54.0, 106.0) | **Not placed** (mounting hole) |  |

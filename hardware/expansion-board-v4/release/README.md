@@ -1,11 +1,18 @@
-# V4.8 当前制造输出入口
+# V4.10 当前制造输出入口
+
+> 🔴 **V4.10 相对 V4.9 有两处会让人读错板的改动：**
+> `J11` 从 2x8 贴片排针改成 **2x10 裸焊盘阵列**（配 2x10p 测试夹，**不贴任何件**），
+> 脚号整体后移 4 位（V4.9 的 pin1~16 = 现在的 pin5~20），三对短接从插跳线帽改回
+> 镊子/锡桥：5-6 复位、7-8 BOOTSEL、19-20 自检。新增的 airband 四脚里，
+> pin1 的 26MHz 参考经 **`R66`（0Ω，默认不贴）** 隔离——直连会给 TCXO 加约 17pF，
+> 而手册负载预算只有 10pF ±10%，参考幅度不够则 airband 整条收不了。
 
 **当前审阅用制造包已刷新（C99=100nF，C100 VREF 去耦已完成布局布线）。** 工程包内 PCB 与当前板逐字节一致；原理图与本次 PCB 的元件及引脚网络一致，BOM/CPL 和装配文档也已刷新。
 
 **用户已接受本轮样板保留 Y4 的3.3V供电，不再因此要求改板；回板验证启动、频率及输出幅度。U22 VREF 已通过 C100 并联100nF，见[当前电气复查结论](../README.md#airband-reference-clock--v47-recheck)。**
 
-- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.8-20260914.zip)
-- [配套 KiCad 源包](expansion-board-v4-kicad-V4.8-20260914.zip)
+- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.10-20260921.zip)
+- [配套 KiCad 源包](expansion-board-v4-kicad-V4.10-20260921.zip)
 
 板上的主电源键是 **SW3**（TS24CA 侧按，接 SY6970 `/QON`）。它是纯硬件的：
 按住 1.25–2.25s 退 ship mode 开机，BUS 未插时按住 12–18s 触发 BATFET 复位。
@@ -16,22 +23,52 @@
 | 目录 | 是什么 |
 |---|---|
 | `smt/` | 当前正式 BOM / CPL |
-| `*-V4.x-*.zip` | 历代正式包；当前快照为本文件顶部两个 V4.8；Y4按上述样板取舍保留，C100已完成 |
+| `*-V4.x-*.zip` | 历代正式包；当前快照为本文件顶部两个 V4.10；Y4按上述样板取舍保留，C100已完成 |
 
 ## 本次快照校验
 
-PCB SHA-256：`4a56475a8c49839ec9021de841ba353087e7eb8d123b89cb787140eb7ebe0f91`。
+PCB SHA-256：`bc3e1180a364057fba9ef216c09c5e0b8b2bd9a7993ead6c83ad0ebee788cbcd`。
 
-- `expansion-board-v4-gerber-JLC-V4.8-20260914.zip`：`100427e00f79d121418c60a13f38097025370f6658b9e0d8a3f3a44f57f976e8`
-- `expansion-board-v4-kicad-V4.8-20260914.zip`：`2f792159843363561f7446f196a5f598704dd4f3cde65c1e9b95095e9357e30c`
+- `expansion-board-v4-gerber-JLC-V4.10-20260921.zip`：`89f234999982e2d6480da6f0adf9d65daa84b2b8ee3c9ad11881c0ad76216997`
+- `expansion-board-v4-kicad-V4.10-20260921.zip`：`367c1a63915fe875dcfba5afb6cc6de06036354bba2372698dbe9f5794334752`
 
 较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。
-**0913 日期的那两个 V4.8 包已移出 `release/`**（在 `build/pre-led-release/`）：
-它们不含下面的指示灯，别拿来下单。
+**V4.8 的两个包已移出 `release/`**（在 `build/v48-superseded/`）：它们没有下面的
+调试口 J11，也就是 CC1312R 的 cJTAG 三根在板上仍然没有落点，别拿来下单。
 
-## V4.8 相对 V4.7 的功能性差异
+## V4.10 / V4.9 相对 V4.8 的功能性差异
 
-两处，V4.7 都没有，**两版不可混用**。
+**一处：调试口 `J11`（V4.9 是 2x8 贴片双排排针；V4.10 已改为 2x10 裸焊盘阵列）。**
+
+板上此前**没有任何办法接触 CC1312R 的 cJTAG**——`U8`(RP2040) 与 `U10`(CC1312R) 之间
+`SUBG_TMSC`/`SUBG_TCKC`/`SUBG_RESET` 三根点对点直连，中途既不能断开也无处下探针，
+「ROM SSI 与 cJTAG 同时无响应」时分不清是 RP2040 时序问题还是 CC1312 本身问题。
+J11 把这三根引出来，并顺带取代了原来的 `TP1`~`TP7` 与 `SW1`/`SW2`（那 9 个已删除）。
+
+```
+ 1 GND            2 RP_RUN         ← 跳线帽跨 1-2 = 复位
+ 3 GND            4 QSPI_SS        ← 跳线帽跨 3-4 = BOOTSEL
+ 5 SUBG_TMSC      6 SWCLK
+ 7 SUBG_TCKC      8 SWDIO
+ 9 SUBG_RESET    10 DEMOD0
+11 GND           12 DEMOD1
+13 DEMOD3        14 DEMOD2
+15 RECOVERED_CLK 16 PULSES        ← 跳线帽跨 15-16 = 自检回环
+```
+
+跳线帽是 2.54mm 标准件，不在 BOM 里，自备。15-16 那对做自检回环时**必须先拆 `R57`**，
+否则 TLV3501 的推挽输出与 GPIO 对驱（见固件 `selftest_gen.h`）。
+B 面丝印：V4.9 是 16 格对照表紧挨 `J11` 位号；**V4.10 是 20 格表 + 一条竖排行号**。
+表放不进 J11 跟前（2 列×10 行全板最近只能到 9.1mm，行距改 2.54 与焊盘行对齐的版本
+根本放不下），所以把**脚号**单独印到座子紧邻处：偶数号 2~20 贴着偶数脚那一列、
+与焊盘行逐行对齐。数脚看行号，查名字看那张表，表下另有 `J11` 标题锁定归属。
+**丝印用的是缩写**（`RUN`/`BOOT`/`TMS`/`TCK`/`RST`/`RCLK`/`PLS`…），
+缩写 ↔ 完整网络 ↔ 原 TP/SW 位号的完整对照表在 [`PINMAP-zh_CN.md`](../PINMAP-zh_CN.md) 的「J11 调试焊盘阵列」一节。
+其中最容易搞混的两个：**`RUN` = 原 SW1（复位）**、**`BOOT` = 原 SW2（BOOTSEL）**。
+
+## V4.8 相对 V4.7 的功能性差异（V4.9 一并继承）
+
+两处，V4.7 都没有，**与 V4.7 不可混用**。
 
 **① GNSS 备份供电** — `U23` / `C101` / `C102` / `D7` / `R63` / `BT1`，且 `U7.pin6`
 已由 `3V3_GNSS` 改接 `GNSS_VBAT`。关机后 GNSS 模块保住 RTC 与星历，不再冷启动。

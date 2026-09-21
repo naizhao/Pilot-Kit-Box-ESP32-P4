@@ -1,17 +1,45 @@
 [
   {
+    "id": "v4.10-pwr",
+    "title": "V4.10 带电源版",
+    "subtitle": "含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；J11 由 V4.9 的 2x8 排针改成 2x10 裸焊盘阵列——**不贴任何件**，配 2x10p 测试夹；脚号整体后移 4 位，短接改用镊子/锡桥：5-6 复位、7-8 BOOTSEL、19-20 自检回环；BT1/D8/D9 手焊不进 SMT；R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+    "total": 218,
+    "groups": 86
+  },
+  {
+    "id": "v4.10-nopwr",
+    "title": "V4.10 不带电源版",
+    "subtitle": "电源区一个不贴（SW3、U23/BT1 备份供电、D9 充电灯都在内——它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；J11 是裸焊盘、本来就不用贴，D8 电源灯照贴（吃 3V3_DIG）；R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+    "total": 183,
+    "groups": 68
+  },
+  {
+    "id": "v4.9-pwr",
+    "title": "V4.9 带电源版",
+    "subtitle": "含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；新增 J11 调试排针（2x8 贴片）——CC1312R 的 cJTAG 三根首次引出，并取代原 TP1~7 与 SW1/SW2，跳线帽跨 1-2 复位、3-4 BOOTSEL、15-16 自检回环；BT1/D8/D9 手焊不进 SMT；R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+    "total": 219,
+    "groups": 87
+  },
+  {
+    "id": "v4.9-nopwr",
+    "title": "V4.9 不带电源版",
+    "subtitle": "电源区一个不贴（SW3、U23/BT1 备份供电、D9 充电灯都在内——它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；J11 调试排针照贴，D8 电源灯也照贴（吃 3V3_DIG）；R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+    "total": 184,
+    "groups": 69
+  },
+  {
     "id": "v4.8-pwr",
     "title": "V4.8 带电源版",
     "subtitle": "含 AIRBAND 与 SW3 电源键；新增 GNSS 模块 VBAT 常供电（U23 LDO 取自 BAT_P → D7 → U7.pin6，经 R63 挂 BT1 可充电电池）——关机后模块保住 RTC 与星历，不再每次开机冷启动；BT1 手焊、不进 SMT；R7/R8 绝不能贴（与 CH224K 并存会烧板）",
-    "total": 218,
-    "groups": 86
+    "total": 219,
+    "groups": 87
   },
   {
     "id": "v4.8-nopwr",
     "title": "V4.8 不带电源版",
     "subtitle": "电源区一个不贴（SW3 与 U23/BT1 备份供电都在内——它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；R7/R8 必贴（不贴则电脑不认，刷不进固件）",
-    "total": 183,
-    "groups": 68
+    "total": 184,
+    "groups": 69
   },
   {
     "id": "v4.7-pwr",

@@ -1,4 +1,4 @@
-# Expansion Board V4.8 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
+# Expansion Board V4.10 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -55,7 +55,7 @@ second-I2S capture); zero changes elsewhere.
 | GPIO14 / 15 | SUBG_IRQ / SUBG_SYNC | CC1312R interrupt + sync/bootloader trigger〔A〕 |
 | GPIO16 / 17 / 18 | SUBG_TMSC / SUBG_TCKC / SUBG_RESET | cJTAG for reflashing CC1312R firmware〔A〕— **proxy-flash implemented** (RP2040 bit-bang, `cjtag.c`; see `docs/firmware_update.md` CC1312R section) |
 | GPIO19 | PULSES | comparator output → PIO0 preamble detection〔A〕 |
-| GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. **No landing point in V4**: the original TP3–TP6 were removed, leaving the net with only the RP2040 end |
+| GPIO20–23 | DEMOD0–3 | PIO demod state-machine handshake/debug〔A〕. From V4.9 these land on **J11 pins 10/12/14/13** (see below) |
 | GPIO24 | RECOVERED_CLK | recovered clock for debugging〔A〕. TP7/RECOVERED_CLK **存在于正式 PCB**（kicad_pcb:38901），可作 RP2040 GPIO24 自检/调试落点（硬件文档勘误 2026-09-05，与 PCB 源核对；自检跳线步骤以 `firmware/rp2040/selftest_gen.h` 为准） |
 | GPIO25 | TL_PWM | comparator threshold PWM (RC-filtered into LEVEL_BIAS)〔A〕 |
 | GPIO26 / ADC0 | LEVEL_BIAS_SENSE | DC readback of the threshold〔A〕 |
@@ -65,7 +65,7 @@ second-I2S capture); zero changes elsewhere.
 | XIN | 12MHz crystal (C9002) | |
 | USB_DP/DM | USB-C receptacle | UF2 drag-and-drop flashing + CDC debug〔D〕 |
 | RUN + BOOTSEL | tactile switches ×2 | dev-board essentials〔D〕 |
-| SWD (SWCLK/SWDIO) | ~~3-pin test points~~ **removed in V4** | test points TP1–7 are gone in V4; firmware debug happens on the already-prototyped v3.2 |
+| SWD (SWCLK/SWDIO) | **J11 pins 6 / 8** | broken out with the J11 debug header from V4.9 (formerly TP1/TP2) |
 
 ### USB path for the RP2040 (verified 2026-08-23)
 
@@ -79,6 +79,110 @@ second-I2S capture); zero changes elsewhere.
 Switching requires burning the eFuse `USB_PHY_SEL` (irreversible, and it kills USB-JTAG). If the P4 is to reflash the RP2040,
 only the HS pair (pin27/25) can be used, at the cost of permanently occupying H2 and the carrier board's USB-A. See
 [VARIANTS.md](VARIANTS.md) §4–§5.
+
+## J11 debug pad array (new in V4.9; changed to a 2x10 bare-pad array in V4.10, bottom side)
+
+Before this revision there was **no way to reach the CC1312R's cJTAG pins**:
+`SUBG_TMSC`/`SUBG_TCKC`/`SUBG_RESET` ran point-to-point between `U8` (RP2040)
+and `U10`, with nowhere to break the link or land a probe. J11 breaks all three
+out and replaces the former `TP1`–`TP7` and `SW1`/`SW2` (nine parts removed).
+
+🔴 **Two V4.10 changes will make you misread a V4.9-era diagram:**
+
+1. **It is not a header, it is a bare-pad array** (in-house footprint
+   `TestPad_2x10_P2.54mm`: twenty φ1.0 mm bare copper pads on a 2.54 mm grid,
+   no part fitted). It mates with a 2x10p PCB test clip whose probes press
+   straight onto the pads. **With no header there are no jumper caps** — the
+   three bridges are now made with tweezers or a solder blob.
+2. **Every pin number shifted by four**: V4.9 pins 1–16 are now **pins 5–20**,
+   and the new pins 1–4 carry the airband signals.
+
+⚠️ **The silkscreen uses abbreviations** (0.8 mm text cannot fit a name like
+`RECOVERED_CLK`). Use this table when the board and the docs disagree:
+
+| Pin | Silkscreen | Net | V4.9 pin | Notes |
+|---|---|---|---|---|
+| 1 | `TCXO` | `VHF_TCXO_TP` | — | BK4819 26 MHz reference (new in V4.10). **Reaches `VHF_TCXO` only through `R66` (0 R, not fitted by default)** |
+| 2 | `AUD` | `VHF_AUDIO` | — | BK4819 demodulated analogue audio (new in V4.10) |
+| 3 | `VSCK` | `VHF_SCK` | — | BK4819 SPI clock (new in V4.10) |
+| 4 | `VSDA` | `VHF_SDATA` | — | BK4819 SPI data (new in V4.10) |
+| 5 | `GND` | GND | 1 | bridge 5-6 = reset |
+| 6 | `RUN` | `RP_RUN` | 2 (former **SW1** RESET solder jumper) | RP2040 reset |
+| 7 | `GND` | GND | 3 | bridge 7-8 = BOOTSEL |
+| 8 | `BOOT` | `QSPI_SS` | 4 (former **SW2** BOOTSEL solder jumper) | pull low to boot into UF2 mode |
+| 9 | `TMS` | `SUBG_TMSC` | 5 | **CC1312R cJTAG**, first broken out in V4.9 |
+| 10 | `SWCLK` | `SWCLK` | 6 (former TP1) | RP2040 SWD clock |
+| 11 | `TCK` | `SUBG_TCKC` | 7 | **CC1312R cJTAG** |
+| 12 | `SWDIO` | `SWDIO` | 8 (former TP2) | RP2040 SWD data |
+| 13 | `RST` | `SUBG_RESET` | 9 | **CC1312R reset** |
+| 14 | `D0` | `DEMOD0` | 10 (former TP3) | PIO demod state output |
+| 15 | `GND` | GND | 11 | ground reference for the cJTAG side |
+| 16 | `D1` | `DEMOD1` | 12 (former TP4) | same |
+| 17 | `D3` | `DEMOD3` | 13 (former TP6) | same |
+| 18 | `D2` | `DEMOD2` | 14 (former TP5) | same |
+| 19 | `RCLK` | `RECOVERED_CLK` | 15 (former TP7) | GPIO24, borrowed by firmware as the self-test pulse output |
+| 20 | `PLS` | `PULSES` | 16 | GPIO19, TLV3501 comparator → PIO 1090 pulse input |
+
+🔴 **Pin 1 (the 26 MHz reference) is open by default.** `R66` (0 R, 0603, top
+side at (138.10, 103.80), designator at (138.10, 106.13)) sits in series with it.
+Hand-solder a 0 R link when you want to look at the 26 MHz reference with the
+clip, and remove it afterwards.
+
+Why it cannot be a direct connection: the branch to J11 runs **119.9 mm on In2**,
+a stripline sandwiched between the In1 ground and In3 3V3 planes — the highest
+capacitance-per-length layer on the board — worth roughly **17 pF**. The
+`TG-5006CG` datasheet specifies `Output load` as **10 kΩ // 10 pF**, and the
+`fo-Load` row conditions that on **±10 %**. A direct connection would double or
+triple the load. Frequency is not the main risk (the crystal is inside the TCXO
+and the output is buffered, and AM airband tolerates large frequency error);
+**amplitude is**: the 0.8 Vpp minimum is specified into 10 pF, and 27 pF is only
+227 Ω at 26 MHz. The BK4819 XI pin is specified as a parallel-resonant crystal
+port with no external-injection threshold given, so a reference that fails to
+start means airband receives nothing at all.
+
+R66 **must sit at the TCXO end** (next to U21/Y4). Placing it at the J11 end
+would leave the 120 mm branch hanging on the oscillator node — no benefit at all.
+With R66 unfitted the oscillator node carries 11.0 mm plus two vias, about
+**1.8 pF**, for a total near 11.8 pF: 7 % above the 11 pF edge of the datasheet's
+±10 % window. Extrapolating linearly that is about ±0.35 ppm of load pulling
+(48 Hz at 130 MHz, inaudible on AM) and a load impedance of 612 Ω → 520 Ω, so
+roughly 10 % less amplitude — a different order of magnitude from the 218 Ω and
+−65 % of a direct connection.
+
+Pins 2–4 are directly connected: `VHF_AUDIO` feeds a 10 µF coupling cap and does
+not care about 10 pF at audio frequencies, and the SPI lines are slow.
+
+**Three bridge positions** (jumper caps in V4.9; on V4.10's bare pads use
+tweezers or a solder blob):
+
+| Bridge | Equivalent to | Purpose |
+|---|---|---|
+| 5-6 | former SW1 | reset the RP2040 |
+| 7-8 | former SW2 | enter BOOTSEL (UF2 flashing) |
+| 19-20 | previously a flying wire | self-test loopback `GPIO24 → GPIO19` |
+
+All three are the left/right pair of one row: 2.54 mm centre-to-centre,
+1.54 mm edge-to-edge.
+
+🔴 Before using the 19-20 loopback you **must remove `R57`** (33 Ω, the
+`PULSES_RAW`→`PULSES` series resistor). Otherwise the TLV3501 push-pull output
+fights the GPIO — see the audit round 5 correction in
+`firmware/rp2040/selftest_gen.h`.
+
+The pin order follows **the incoming routing order, not a functional grouping**:
+the eight former TP/SW nets arrive as a parallel bundle from the upper right,
+already sorted by y, so the pads must be ordered the same way for them to drop
+straight down without crossing. See `internal/tools/sheet_mcu.py` before
+rearranging pins.
+
+Growing to 2x10 in V4.10 **moved the centre up by exactly 2.54 mm**
+(y 88.44 → 85.90), and that number is not arbitrary: pad 5 of a 2x10 sits at
+-6.35 from centre while pad 1 of a 2x8 sits at -8.89, so the shift lands the new
+pins 5–20 exactly on the old pins 1–16, and none of the sixteen already-routed
+nets had to be redone. Growing downwards instead would have hit RT1 on the
+bottom side (y 99.41–102.46) and the through-hole H3 mounting hole.
+
+---
 
 ## 3. CC1312R (QFN48) logical assignment〔D; DIO→pin numbers get filled in from the datasheet when building the library〕
 
