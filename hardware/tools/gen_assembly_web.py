@@ -6,7 +6,8 @@
     ~/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/\\
         Versions/Current/bin/python3 hardware/tools/gen_assembly_web.py
 
-产出 `web/assembly/data/{v4-pwr,v4-nopwr,v3}.json`，契约见
+产出 `web/assembly/data/{各版本}.json` 与 `index.json`（版本清单见下方 VARIANTS
+表，当前为 v4.10/v4.9/v4.8/v4.7/v4.6/v4.5 双变体 + v3），契约见
 `hardware/test_assembly_web_contract.py`（跑在系统 python3 上）。
 
 ## 几何一律现读 .kicad_pcb，不读 render/ 下的图
@@ -465,6 +466,53 @@ def part_kind(ref):
     return ""
 
 
+# ── 极性判据 ─────────────────────────────────────────────────────
+# 「⚠ 有方向」必须是真约束：贴反会不工作/不亮才值得提醒，双向件上就是噪音。
+# 按封装名 + 型号精确判，判不出且形似有方向的**当场失败**——新二极管进来
+# 不可能被静默漏判（D2~D6 的双向 ESD 曾被前端前缀启发式误标过）。
+#
+# 1 脚 = 焊盘名 "1"。KiCad 库约定：二极管/LED 封装 pad 1 = 阴极 K。
+# J4（USB-C）没有名为 "1" 的焊盘，且本身可正反插 → 不标注极性。
+BIDIRECTIONAL_VALS = ("TPESD8L3.3",)   # 手册原文 "Bi-directional TVS Diode"
+
+
+def polarity_of(ref, val, fp, pads):
+    """(极性语义, 1 脚焊盘中心)。pol: "cath" 阴极 / "pin1" 1 脚 / "none" 双向无极性。"""
+    def center(poly):
+        xs = [q[0] for q in poly]
+        ys = [q[1] for q in poly]
+        return {"x": round(sum(xs) / len(xs), 3), "y": round(sum(ys) / len(ys), 3)}
+
+    pad1 = next((p for p in pads if p.get("n") == "1"), None)
+    if ref.startswith("D"):
+        if any(b in val for b in BIDIRECTIONAL_VALS):
+            return "none", None
+        if fp.startswith(("LED_", "D_")):
+            assert pad1, f"{ref}: 二极管/LED（{val}）找不到 1 脚焊盘"
+            return "cath", center(pad1["poly"])
+        raise SystemExit(
+            f"{ref}: 二极管型号 {val!r}（封装 {fp}）不在极性判据里——"
+            f"给 BIDIRECTIONAL_VALS 或封装前缀规则补一条，别让它静默漏判")
+    if ref.startswith(("U", "Q", "Y")):
+        assert pad1, f"{ref}: 有极性件（{val}）找不到 1 脚焊盘"
+        return "pin1", center(pad1["poly"])
+    if ref.startswith(("J", "BT")):
+        # 连接器/电池座：有 1 脚就标（J9 电池座、J1 排针），没有就不标（J4 USB-C）
+        return ("pin1", center(pad1["poly"])) if pad1 else (None, None)
+    return None, None
+
+
+def apply_polarity(doc):
+    """给文档里的全部零件补 pol/pin1 字段。现算变体和存档变体共用同一条路径。"""
+    for g in doc["groups"]:
+        for p in g["parts"]:
+            pol, pin1 = polarity_of(p["ref"], p["val"], p["fp"], p["pads"])
+            if pol:
+                p["pol"] = pol
+                if pin1:
+                    p["pin1"] = pin1
+
+
 # 封装名里的尺寸码：C_0402_1005Metric → 0402。手工贴片时「0402 还是 0603」
 # 决定用多大的镊子和风量，比完整封装名有用得多。
 SIZE_RE = re.compile(r"_(\d{4})_")
@@ -569,20 +617,39 @@ def _norm_spec(s):
     return re.sub(r"[\s±%]+", "", (s or "").strip().lower())
 
 
+# 规格尾巴上的介质代号和容差。**两边都会写、也都会漏写**：采购表 B 列写 `10nF`
+# 而板上组名是 `10nF C0G`；反过来采购表写 `30k ±1%` 而板上只有 `30k`。
+# `_norm_spec` 只删空格和 ±%，`30k ±1%` 会被搓成 `30k1`——跟 `30k` 一样对不上。
+SPEC_TAIL_RE = re.compile(
+    r"[\s,，/]*(?:c0g|np0|x7r|x5r|x6s|y5v|±?\s*\d+(?:\.\d+)?\s*%|±\s*\d+(?:\.\d+)?\s*p?f)\s*$",
+    re.I)
+AMBIGUOUS = object()   # 剥完后缀撞车的规格：宁可不给批次，也不能指错料袋
+
+
+def _spec_base(s):
+    """剥掉介质/容差后缀，用来做兜底匹配。
+
+    只剥尾巴，且**剥空了就当没剥**——`C0G` 单独成规格时剥完是空串，
+    空串会跟所有空规格互相匹配上，比匹配不上坏得多。
+    """
+    t = (s or "").strip()
+    while True:
+        cut = SPEC_TAIL_RE.sub("", t).strip()
+        if cut == t:
+            return t
+        if not cut:          # 整串都是后缀，说明它本身就是规格
+            return t
+        t = cut
+
+
 def _norm_fp(s):
     s = (s or "").strip()
     m = re.match(r"^(\d{4})", s)          # "0402"、"0603"
     return m.group(1) if m else re.split(r"[/\s]", s)[0].upper()
 
 
-def load_batches():
-    """读采购清单，返回三张索引表：位号 → / 料号 → / (规格,封装) → 批次。"""
-    import glob
-    files = sorted(glob.glob(BATCH_GLOB), key=os.path.getmtime)
-    if not files:
-        return None
-    # 文件名会变成 "(2)"、"(3)"……取最新的那个，别写死
-    path = files[-1]
+def _load_rows(path):
+    """解析一个采购 xlsx，返回 (工作表名, 三张索引表, 数据行数)。"""
     z = zipfile.ZipFile(path)
     # xlsx 存字符串有两种方式：共享字符串表，或单元格内联(t="inlineStr")。
     # 全内联的文件**根本没有 sharedStrings.xml**——脚本生成的 xlsx 常是这种
@@ -594,7 +661,7 @@ def load_batches():
         shared = []
     names = [s.get("name") for s in ET.fromstring(z.read("xl/workbook.xml")).iter(XL_NS + "sheet")]
 
-    by_ref, by_lcsc, by_spec = {}, {}, {}
+    rows = []
     total = 0
     for idx, name in enumerate(names, 1):
         try:
@@ -619,24 +686,64 @@ def load_batches():
             if cells.get("A") in (None, "类型"):
                 continue
             total += 1
-            info = {
+            rows.append({
                 "n": idx, "name": name,
                 "spec": cells.get("B", ""), "fp": cells.get("C", ""),
                 "qty": cells.get("F", ""), "mpn": cells.get("G", ""),
                 "bought": cells.get("J", ""),
-            }
-            for ref in BATCH_REF_RE.findall(cells.get("I", "") or ""):
-                by_ref.setdefault(ref, info)
-            lcsc = (cells.get("H") or "").strip()
-            if re.match(r"^C\d+$", lcsc):
-                by_lcsc.setdefault(lcsc, info)
-            key = (_norm_spec(cells.get("B")), _norm_fp(cells.get("C")))
-            if key[0]:
-                by_spec.setdefault(key, info)
+                "lcsc": (cells.get("H") or "").strip(),
+                "refs_text": cells.get("I", "") or "",
+            })
+    return names, build_index(rows), total
 
-    print(f"  采购批次：{os.path.basename(path)}  {len(names)} 批 / {total} 行")
-    return {"file": os.path.basename(path), "names": names,
-            "by_ref": by_ref, "by_lcsc": by_lcsc, "by_spec": by_spec}
+
+def build_index(rows):
+    """把采购表的行建成三张（半）索引。纯字符串逻辑，契约见
+    `hardware/test_assembly_batch_match.py`。"""
+    by_ref, by_lcsc, by_spec = {}, {}, {}
+    base_rows = {}          # 基础规格 → 落在它下面的所有行
+    for info in rows:
+        for ref in BATCH_REF_RE.findall(info["refs_text"]):
+            by_ref.setdefault(ref, info)
+        if re.match(r"^C\d+$", info["lcsc"]):
+            by_lcsc.setdefault(info["lcsc"], info)
+        fp = _norm_fp(info["fp"])
+        key = (_norm_spec(info["spec"]), fp)
+        if not key[0]:
+            continue
+        by_spec.setdefault(key, info)
+        base_rows.setdefault((_norm_spec(_spec_base(info["spec"])), fp), []).append(info)
+
+    # 兜底索引。采购表自己分了介质（C0G 一批、X7R 一批）时，两行会落在同一个
+    # 基础规格下——**那就整条作废**。猜一个等于把人指去翻另一袋料，而 0402 的
+    # C0G 和 X7R 外观完全一样，拿错了看不出来。
+    # 同一规格重复出现几行（分批补采同一种料）不算歧义，取第一行。
+    by_base = {}
+    for bkey, infos in base_rows.items():
+        specs = {_norm_spec(i["spec"]) for i in infos}
+        by_base[bkey] = infos[0] if len(specs) == 1 else AMBIGUOUS
+    return {"by_ref": by_ref, "by_lcsc": by_lcsc, "by_spec": by_spec, "by_base": by_base}
+
+
+def load_batches():
+    import glob
+    files = sorted(glob.glob(BATCH_GLOB), key=os.path.getmtime)
+    if not files:
+        return None
+    # ⚠️ 不能按「mtime 最新」选文件：Downloads 里会混进一次性的子清单
+    # （BOM_采购清单_V4.6_AIRBAND.xlsx 只含航空波段那几行），它比多批次
+    # 主表新，按最新选就拿它当了唯一数据源——2026-09-21 实际发生，
+    # v4.10 的 86 组只匹配上 11 组，网页上大片「未在采购表中」。
+    # 改成逐个解析、取**数据行最多**的那个；行数并列才按 mtime 取新。
+    best = None
+    for path in files:
+        names, idx, total = _load_rows(path)
+        if best is None or (total, os.path.getmtime(path)) > (best[2], best[3]):
+            best = (os.path.basename(path), names, total, os.path.getmtime(path), idx)
+    path_name, names, total, _, idx = best
+
+    print(f"  采购批次：{path_name}  {len(names)} 批 / {total} 行")
+    return {"file": path_name, "names": names, **idx}
 
 
 def size_conflict(a, b):
@@ -650,8 +757,17 @@ def size_conflict(a, b):
     return na.isdigit() and nb.isdigit() and len(na) == 4 == len(nb) and na != nb
 
 
+# 落进 batches.json 的字段。`lcsc`/`refs_text` 只用来建索引，
+# 网页上不显示，不该跟着进产物。
+HIT_FIELDS = ("n", "name", "spec", "fp", "qty", "mpn", "bought")
+
+
+def _hit(info, by):
+    return {**{k: info[k] for k in HIT_FIELDS}, "by": by}
+
+
 def match_batch(group, idx, warn=None):
-    """给一组料找采购批次。三级判据，可靠的优先。"""
+    """给一组料找采购批次。四级判据，可靠的优先。"""
     if not idx:
         return None
     # ① 位号直接写在「规格要求」里——最强证据，没有歧义。
@@ -666,7 +782,7 @@ def match_batch(group, idx, warn=None):
                 warn.append(f"{part['ref']}：采购表写在「{got['spec']} {got['fp']}」行下，"
                             f"但板上是 {group['spec']} {group['size']}——采购表位号可能笔误")
             continue
-        return {**got, "by": "位号"}
+        return _hit(got, "位号")
 
     # ② 立创料号。**必须交叉验证封装**：这张表的料号列栽过跟头
     #    （2026-08-29 核出 7 处料号错位，型号名是对的、料号列串了行）。
@@ -675,12 +791,27 @@ def match_batch(group, idx, warn=None):
     if group["lcsc"]:
         got = idx["by_lcsc"].get(group["lcsc"])
         if got and _norm_fp(got["fp"]) == _norm_fp(group["size"]):
-            return {**got, "by": "料号"}
+            return _hit(got, "料号")
 
     # ③ 规格 + 封装
     got = idx["by_spec"].get((_norm_spec(group["spec"]), _norm_fp(group["size"])))
     if got:
-        return {**got, "by": "规格"}
+        return _hit(got, "规格")
+
+    # ④ 规格（略去介质/容差后缀）+ 封装。两张表在这一位上经常不一致：
+    #    采购表 B 列写 `10nF`，板上组名是 `10nF C0G`；反过来采购表写 `30k ±1%`
+    #    而板上只有 `30k`。匹配不上会让网页写「未在采购表中（多半是库存已有）」——
+    #    那是个结论，不是留白，2026-09-21 就这么把「补3」买的 C87 说成了库存料。
+    #    封装照旧要一致：放宽的是介质，不是尺寸。
+    base = (_norm_spec(_spec_base(group["spec"])), _norm_fp(group["size"]))
+    got = idx["by_base"].get(base)
+    if got is AMBIGUOUS:
+        if warn is not None:
+            warn.append(f"{group['spec']} {group['size']}：采购表里剥掉介质后有多行同值"
+                        f"（C0G/X7R 分批买的），无法判断是哪一袋，不显示批次")
+        return None
+    if got:
+        return _hit(got, "规格(略介质)")
     return None
 
 
@@ -791,6 +922,9 @@ def build(variant):
         f"{variant.id}: 这些位号认不出元件大类：{unknown}——"
         f"给 KIND_RULES 补规则，否则它们不会出现在任何分类里"
     )
+
+    # 极性标注统一在组装前套上：现算变体和 main() 里的存档变体走同一条路径
+    apply_polarity({"groups": [{"parts": parts}]})
 
     groups = group_parts(parts)
     return {
@@ -968,6 +1102,9 @@ def main():
             doc = json.loads(path.read_text(encoding="utf-8"))
             # 标题/副标题仍以脚本为准，这样改了措辞能同步进数据文件
             doc["title"], doc["subtitle"] = variant.title, variant.subtitle
+            # 存档数据的焊盘几何和名称都在 json 里，极性判据照常可算——
+            # 不补的话旧版本在网页上没有极性标注（v3 还有人拿来贴板）
+            apply_polarity(doc)
         else:
             doc = build(variant)
         path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")),

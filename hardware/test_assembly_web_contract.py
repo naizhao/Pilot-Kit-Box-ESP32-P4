@@ -37,6 +37,14 @@ DATA = ROOT / "web" / "assembly" / "data"
 # 数量写下限而不是精确值：改板加件是常态，加了件不该让这份测试红，
 # 但整批消失（解析挂了、过滤写反）一定要红。
 VARIANTS = {
+    # V4.10 是当前板（J11 改 2x10 裸焊盘阵列），V4.9 起为存档，
+    # 但图还可能被人拿去贴板，一样要过全部契约。
+    "v4.10-pwr": "expansion-board-v4",
+    "v4.10-nopwr": "expansion-board-v4",
+    "v4.9-pwr": "expansion-board-v4",
+    "v4.9-nopwr": "expansion-board-v4",
+    "v4.8-pwr": "expansion-board-v4",
+    "v4.8-nopwr": "expansion-board-v4",
     "v4.7-pwr": "expansion-board-v4",
     "v4.7-nopwr": "expansion-board-v4",
     # V4.6 起同样是存档：V4.7 的 PCB 已覆盖它，但 V4.6 的图还可能被人拿去贴板
@@ -51,8 +59,9 @@ VARIANTS = {
 
 # 带电源/不带电源成对出现的版本。加新版本时往这里加一对，
 # 别再往下面的用例里塞字面量。
-PWR_PAIRS = [("v4.7-pwr", "v4.7-nopwr"), ("v4.6-pwr", "v4.6-nopwr"),
-             ("v4.5-pwr", "v4.5-nopwr")]
+PWR_PAIRS = [("v4.10-pwr", "v4.10-nopwr"), ("v4.9-pwr", "v4.9-nopwr"),
+             ("v4.8-pwr", "v4.8-nopwr"), ("v4.7-pwr", "v4.7-nopwr"),
+             ("v4.6-pwr", "v4.6-nopwr"), ("v4.5-pwr", "v4.5-nopwr")]
 
 # SELECTIVE_PLACEMENT-zh_CN.md ①：电源部分，两个版本逻辑相反。
 #
@@ -67,7 +76,17 @@ POWER_REFS_BASE = (
     | {f"C{n}" for n in range(70, 81)}
     | {f"R{n}" for n in range(37, 47)}
 )
-POWER_REFS_EXTRA = {"v4.7": {"SW3"}}
+# v4.7 加 SW3 电源键；v4.8 起再加 GNSS VBAT 常供电整组（U23/C101/C102/D7/R63/BT1）
+# 与充电指示灯（D9/R65）。D8/R64（电源指示灯）**不在**电源区：它接 3V3_DIG，
+# 不带电源版照样有电、照样该亮——判据见 gen_assembly_web.py 的 POWER_SECTION。
+# 注意 BT1 虽是手焊件，但它是 BOM 上的真器件，两个变体的数据里都有它，
+# 「nopwr 一个不贴」对它同样成立。
+POWER_REFS_EXTRA = {
+    "v4.7": {"SW3"},
+    "v4.8": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65"},
+    "v4.9": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65"},
+    "v4.10": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65"},
+}
 
 # 电源区里**允许**出现在不带电源版上的位号。
 #
@@ -85,8 +104,9 @@ def power_refs(variant_id):
     return POWER_REFS_BASE | POWER_REFS_EXTRA.get(rev, set())
 # 5.1k CC 下拉，跟电源区反向：带电源版绝不能贴，不带电源版必须贴。
 CC_PULLDOWN_REFS = {"R7", "R8"}
-# 两个版本都不贴：天线通路旁路 + IFA 并联匹配 + AD8313 输出上拉。
-ALWAYS_DNP_REFS = {"R24", "R25", "R30", "R36", "ZP1", "ZP2"}
+# 两个版本都不贴：天线通路旁路 + IFA 并联匹配 + AD8313 输出上拉
+# + R66（26MHz 探测点隔离，贴上给 TCXO 加约 17pF，超出手册负载预算）。
+ALWAYS_DNP_REFS = {"R24", "R25", "R30", "R36", "ZP1", "ZP2", "R66"}
 
 
 def load(variant: str) -> dict:
@@ -114,6 +134,13 @@ def ref_key(ref: str):
     """位号的自然顺序键。独立实现，不 import 生产代码。"""
     m = re.match(r"^([A-Za-z]+)(\d+)$", ref)
     return (m.group(1), int(m.group(2))) if m else (ref, 0)
+
+
+def _board_rev(variant_id: str):
+    """变体 id → 板本号元组：'v4.10-pwr' → (4, 10)。按数字比，别按字符串比
+    （'v4.10' < 'v4.8' 在字典序里是反的）。"""
+    m = re.match(r"^v(\d+)\.(\d+)", variant_id)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
 def body_area(part: dict) -> float:
@@ -173,13 +200,22 @@ class AssemblyWebDataContract(unittest.TestCase):
                 self.assertEqual(got, set(), f"{variant} 列出了设计上不贴的件：{sorted(got)}")
 
     def test_no_placeholder_refs(self):
-        """ANT1 是 PCB 铜箔、SW2 是焊盘跳线、H*/FID*/TP* 没有器件，不该出现在贴片流程里。"""
+        """ANT1 是 PCB 铜箔、SW2 是已删的焊盘跳线、H*/FID*/TP* 没有器件，
+        不该出现在贴片流程里；J11 自 V4.10 起是裸焊盘阵列，同样不该出现。
+
+        ⚠️ J11 禁令**只对 V4.10+ 生效**：V4.8/V4.9 板上 J11 是 2x8 贴片排针，
+        是要贴的真器件（v4.9 的数据里它照贴）。一刀切会让存档数据假红——
+        V4.10 改板踩过：生成文档一侧把裸焊盘 J11 当成要贴的件（总数 219 vs
+        web 的 218），这条守卫就是那时加的。
+        """
         for variant in VARIANTS:
             with self.subTest(variant=variant):
                 refs = refs_of(load(variant))
+                banned = {"ANT1", "SW2"}
+                if _board_rev(variant) >= (4, 10):
+                    banned.add("J11")
                 bad = {r for r in refs
-                       if r == "ANT1" or r == "SW2"
-                       or r.startswith(("H", "FID", "TP"))}
+                       if r in banned or r.startswith(("H", "FID", "TP"))}
                 self.assertEqual(bad, set(), f"{variant} 列出了无器件位号：{sorted(bad)}")
 
     def test_every_part_has_pads_inside_the_board(self):
@@ -249,7 +285,7 @@ class AssemblyWebDataContract(unittest.TestCase):
         1090 外接 / IFA 调试口 / 内置 patch——**接错口就是接错天线**。
         合并后组标题只剩公共部分「U.FL」，用途必须逐个留在位号上。
         """
-        doc = load("v4-pwr")
+        doc = load("v4.10-pwr")
         merged = [g for g in doc["groups"] if g.get("spec_variants")]
         self.assertTrue(merged, "没有任何合并组，用例失去意义（分组逻辑是不是退回按规格分了？）")
         for group in merged:
@@ -263,14 +299,17 @@ class AssemblyWebDataContract(unittest.TestCase):
                     f"{group['key']} 合并后丢了这些用途：{sorted(distinct - shown)}",
                 )
 
-        # U.FL 是最要命的一组：5 个座子是 5 个不同的射频口，接错就是接错天线。
-        # 单独钉死，防止将来有人"优化"掉逐位号的用途标注。
+        # U.FL 是最要命的一组：座子全是不同的射频口，接错就是接错天线。
+        # V4.6 起加 airband 的 J10 后是 6 个（此前 5 个）。单独钉死，
+        # 防止将来有人"优化"掉逐位号的用途标注。
         ufl = next((g for g in doc["groups"] if g["lcsc"] == "C41432122"), None)
         self.assertIsNotNone(ufl, "板上找不到 U.FL 座那一组")
-        self.assertEqual(len(ufl["parts"]), 5, "U.FL 座应该是 5 个")
+        self.assertEqual(len(ufl["parts"]), 6,
+                         "U.FL 座应该是 6 个（含 V4.6 airband 的 J10）")
         self.assertEqual(
-            len({p["use"] for p in ufl["parts"]}), 5,
-            "5 个 U.FL 座必须各自标出用途（GNSS外接/978/1090外接/IFA调试/内置patch）",
+            len({p["use"] for p in ufl["parts"]}), 6,
+            "6 个 U.FL 座必须各自标出用途"
+            "（GNSS外接/978/1090外接/IFA调试/内置patch/VHF）",
         )
 
     def test_refs_unique_across_groups(self):
@@ -392,7 +431,7 @@ class AssemblyWebDataContract(unittest.TestCase):
 
         没有这条，上一条在「恰好没有 R9/R10 这种组合」的数据上会假绿。
         """
-        doc = load("v4-pwr")
+        doc = load("v4.10-pwr")
         proof = []
         for group in doc["groups"]:
             refs = [p["ref"] for p in group["parts"]]
@@ -415,6 +454,108 @@ class AssemblyWebDataContract(unittest.TestCase):
                 self.assertGreater(board["w"], 10)
                 self.assertGreater(board["h"], 10)
                 self.assertGreaterEqual(len(board["edges"]), 3, "板框段数不足，画不出轮廓")
+
+
+class PolarityContract(unittest.TestCase):
+    """极性标注（pol/pin1）：语义正确 + 与 PCB 原文逐个对得上。
+
+    背景：⚠ 有方向曾是前端前缀启发式——双向 ESD（D2~D6）被误标、
+    真极性件却只说「有方向」不说往哪边。现在生成器按封装/型号输出
+    语义（cath 阴极 / pin1 / none 双向），这里两道护栏：
+    ① 语义自洽（谁该有、谁该没有、pin1 是不是 1 脚焊盘的形心）；
+    ② 用**第二条独立路径**直接解析 .kicad_pcb 原文（不经 pcbnew、
+    不经生成器）全量比对 pin1 坐标——生成器错一个旋转/移位都当场红。
+    """
+
+    def test_polarity_semantics(self):
+        for variant in VARIANTS:
+            for p in (part for g in load(variant)["groups"] for part in g["parts"]):
+                with self.subTest(variant=variant, ref=p["ref"]):
+                    if p["ref"].startswith("D"):
+                        if "TPESD8L3.3" in p["val"]:
+                            self.assertEqual(p["pol"], "none", p["ref"])
+                        else:
+                            self.assertEqual(p["pol"], "cath", p["ref"])
+                    elif p["ref"].startswith(("U", "Q", "Y")):
+                        self.assertEqual(p["pol"], "pin1", p["ref"])
+                    elif p["ref"].startswith(("J", "BT")):
+                        # J4（USB-C）没有名为 "1" 的焊盘且可正反插 → 允许不标
+                        self.assertIn(p.get("pol"), ("pin1", None), p["ref"])
+                    else:
+                        self.assertNotIn("pol", p, p["ref"])
+                    if p.get("pol") in ("cath", "pin1"):
+                        pad1 = next(q for q in p["pads"] if q["n"] == "1")
+                        xs = [q[0] for q in pad1["poly"]]
+                        ys = [q[1] for q in pad1["poly"]]
+                        self.assertAlmostEqual(p["pin1"]["x"], sum(xs) / len(xs), delta=0.02, msg=p["ref"])
+                        self.assertAlmostEqual(p["pin1"]["y"], sum(ys) / len(ys), delta=0.02, msg=p["ref"])
+
+    def test_pin1_matches_pcb_text(self):
+        pcb = ROOT / "hardware" / "expansion-board-v4" / "kicad" / "expansion-board-v4.kicad_pcb"
+        if not pcb.exists():
+            self.skipTest("当前板的 kicad_pcb 不在仓库（存档版本无法对比 PCB）")
+        toks = re.findall(r'\(|\)|"(?:[^"\\]|\\.)*"|[^\s()]+', pcb.read_text(encoding="utf-8"))
+        pos = 0
+
+        def parse():
+            nonlocal pos
+            assert toks[pos] == "("
+            pos += 1
+            node = []
+            while toks[pos] != ")":
+                if toks[pos] == "(":
+                    node.append(parse())
+                else:
+                    t = toks[pos]
+                    pos += 1
+                    node.append(t[1:-1] if t.startswith('"') else t)
+            pos += 1
+            return node
+
+        root = parse()
+        fps = {}
+
+        def walk(n):
+            if not (isinstance(n, list) and n):
+                return
+            if n[0] == "footprint":
+                ref = fx = fy = ang = None
+                pads = []
+                for c in n[1:]:
+                    if isinstance(c, list) and c:
+                        if c[0] == "property" and len(c) > 2 and c[1] == "Reference":
+                            ref = c[2]
+                        elif c[0] == "at" and len(c) >= 3 and fx is None:
+                            fx, fy = float(c[1]), float(c[2])
+                            ang = float(c[3]) if len(c) > 3 else 0.0
+                        elif c[0] == "pad":
+                            pat = next((cc for cc in c[2:]
+                                        if isinstance(cc, list) and cc and cc[0] == "at"), None)
+                            if pat:
+                                pads.append((c[1], float(pat[1]), float(pat[2])))
+                if ref:
+                    fps[ref] = ((fx, fy, ang), pads)
+            for c in n[1:]:
+                walk(c)
+
+        walk(root)
+        checked = 0
+        for g in load("v4.10-pwr")["groups"]:
+            for p in g["parts"]:
+                if not p.get("pin1"):
+                    continue
+                with self.subTest(ref=p["ref"]):
+                    self.assertIn(p["ref"], fps, f"PCB 原文里找不到 {p['ref']}")
+                    (fx, fy, ang), pads = fps[p["ref"]]
+                    pad1 = next(q for q in pads if q[0] == "1")
+                    t = math.radians(ang)
+                    # KiCad 文件坐标 y 向下、角度顺时针：[cos, sin; -sin, cos]
+                    dx = pad1[1] * math.cos(t) + pad1[2] * math.sin(t)
+                    dy = -pad1[1] * math.sin(t) + pad1[2] * math.cos(t)
+                    self.assertAlmostEqual(p["pin1"]["x"], p["x"] + dx, delta=0.05, msg=p["ref"])
+                    self.assertAlmostEqual(p["pin1"]["y"], p["y"] + dy, delta=0.05, msg=p["ref"])
+                    checked += 1
+        self.assertGreaterEqual(checked, 40, f"极性件只核到 {checked} 个，判据面缩水了")
 
 
 if __name__ == "__main__":

@@ -262,6 +262,9 @@ footer{
   padding:9px 16px;display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--dim);
 }
 footer .sp{flex:1}
+/* 计时：常驻页脚，等宽数字不跳动。停表时压暗——不压暗的话一个不走的秒表
+   跟正在走的长得一模一样，会以为贴了 3 小时，其实中间去吃了顿饭。 */
+#clock.idle{opacity:.45}
 .act{padding:5px 13px;border:1px solid var(--line);border-radius:7px}
 .act:hover{border-color:var(--cur);color:var(--cur)}
 
@@ -283,6 +286,7 @@ footer .sp{flex:1}
 .grpHead .v{font-size:16px;font-weight:650}
 .grpHead .f{font-size:13px;color:var(--dim);font-family:ui-monospace,monospace}
 .grpHead .c{margin-left:auto;font-size:13px;color:var(--dim)}
+.grpHead .dur{font-size:13px;color:var(--dim);font-family:ui-monospace,monospace}
 .grpRefs{display:flex;flex-wrap:wrap;gap:7px;padding:12px 15px}
 .chk{
   display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);
@@ -375,6 +379,7 @@ footer .sp{flex:1}
     <span class="sp"></span>
     <span id="src" class="mono" style="opacity:.65"></span>
     <span id="stat" class="mono"></span>
+    <span id="clock" class="mono"></span>
     <button class="act" id="btnSheet">焊接表 <kbd>Tab</kbd></button>
     <button class="act" id="btnBack">换版本</button>
   </footer>
@@ -406,6 +411,75 @@ let view = null;         // 板视图的 viewBox {x, y, w, h}
 const $ = (id) => document.getElementById(id);
 const KEY = (id) => "pk-assembly-" + id;
 
+/* ── 计时 ────────────────────────────────────────────────────
+ *
+ * 要回答的是「这块板贴下来花了多久」，用来估下一批的工时、以及判断哪几盘料
+ * 值得花钱让嘉立创贴。所以记的是**手上真在贴的时间**，不是挂机时间：
+ *
+ *   活跃时长 = 相邻两次动作的间隔之和，其中**超过 IDLE_MS 的间隔整段丢掉**。
+ *
+ * 去吃饭、隔天接着贴、开着页面过夜，都会产生一个巨大的间隔，丢掉它即可 ——
+ * 不需要监听鼠标、不需要心跳、不需要"暂停"按钮。间隔归给这次动作所属的那组料，
+ * 于是每盘料的耗时是顺带出来的，没有额外状态。
+ *
+ * 阈值取 5 分钟：正常贴一个件几十秒，换料卡也只停 4.5 秒，连着 5 分钟没有任何
+ * 动作基本就是离开了。取太小会把「拿镊子夹第二颗」也判成离开，越算越少。
+ */
+const IDLE_MS = 5 * 60 * 1000;
+let clock = { started: 0, active: 0, last: 0, groups: {} };
+let clockTimer = null;
+
+/** 一次贴片动作。key = 这次动作属于哪组料，用来分摊到组。 */
+function tickWork(key) {
+  const now = Date.now();
+  if (!clock.started) {
+    clock.started = now;
+  } else {
+    const gap = now - clock.last;
+    if (gap <= IDLE_MS) {
+      clock.active += gap;
+      if (key) clock.groups[key] = (clock.groups[key] || 0) + gap;
+    }
+  }
+  clock.last = now;
+  renderClock();
+}
+
+/** 当前应该显示的时长。还在连续作业中就把「上次动作到此刻」也算上，
+ *  这样秒表是走的；超过阈值就停在原地并标记为 idle。 */
+function clockNow() {
+  if (!clock.started) return { ms: 0, idle: false, running: false };
+  const gap = Date.now() - clock.last;
+  const idle = gap > IDLE_MS;
+  return { ms: clock.active + (idle ? 0 : gap), idle, running: true };
+}
+
+function fmtDur(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const p = (n) => String(n).padStart(2, "0");
+  const h = Math.floor(t / 3600);
+  return (h ? h + ":" + p(Math.floor(t % 3600 / 60)) : String(Math.floor(t / 60))) + ":" + p(t % 60);
+}
+
+function renderClock() {
+  const c = clockNow();
+  const el = $("clock");
+  el.textContent = c.running ? "⏱ " + fmtDur(c.ms) + (c.idle ? " 停表" : "") : "";
+  el.classList.toggle("idle", c.idle);
+}
+
+/** 每件平均耗时。两种情况下不给数：
+ *  - 样本太少（贴 3 个件就外推 215 个的工期毫无意义）；
+ *  - 算出来不足 1 秒。「整组已贴」会把一组 23 个件的时间压在一次动作上，
+ *    平均值被稀释到 0 秒——那时它已经不代表手速了，显示「平均 0 秒/件」
+ *    比不显示更糟：一个看着像数据的假数。 */
+function paceMs() {
+  const n = done.size + skipped.size;
+  if (n < 5) return 0;
+  const p = clockNow().ms / n;
+  return p >= 1000 ? p : 0;
+}
+
 /* DOM 一律用 createElement + textContent 拼，不走 innerHTML 字符串插值。
    位号、规格、备注都来自 BOM/PCB 文件——那是数据，不是代码，不该有机会
    变成 DOM 结构。事件也全部 addEventListener，没有内联 onclick。 */
@@ -429,15 +503,19 @@ fetch("data/index.json")
     const box = $("cards");
     clear(box);
     for (const v of list) {
-      let saved = 0;
+      let saved = 0, spent = 0;
       try {
-        saved = (JSON.parse(localStorage.getItem(KEY(v.id)) || "{}").done || []).length;
+        const s = JSON.parse(localStorage.getItem(KEY(v.id)) || "{}");
+        saved = (s.done || []).length;
+        spent = (s.clock && s.clock.active) || 0;
       } catch (e) { /* 存档坏了就当没有，不该挡住开工 */ }
       box.appendChild(h("button", { class: "card", onclick: () => load(v.id) },
         h("h2", { text: v.title }),
         h("div", { class: "sub", text: v.subtitle || "" }),
         h("div", { class: "num", text: `${v.total} 个位号 · ${v.groups} 种料` }),
-        saved ? h("div", { class: "resume", text: `已贴 ${saved} / ${v.total}，继续` }) : null,
+        saved ? h("div", { class: "resume",
+          // 顺带把已花的工时摆出来：挑哪块板接着贴时，这是除进度外唯一想知道的
+          text: `已贴 ${saved} / ${v.total}` + (spent ? ` · 已花 ${fmtDur(spent)}` : "") + "，继续" }) : null,
       ));
     }
   })
@@ -483,24 +561,34 @@ function load(id) {
     $("src").textContent = doc.pcb_date ? `PCB ${doc.pcb_date}` : "";
     $("picker").style.display = "none";
     $("app").classList.add("on");
+    // 「开始贴片」就是打开这块板的时刻，从这里起表——第一颗件的时间也是时间。
+    // 续做时保留原来的起点和累计值，只是把表重新走起来。
+    if (!clock.started) { clock.started = Date.now(); clock.last = clock.started; }
+    clearInterval(clockTimer);
+    clockTimer = setInterval(renderClock, 1000);
+    renderClock();   // 先画一次，否则续做时页脚会空白到下一个整秒
     render();
   });
 }
 
 function restore(id) {
   done = new Set(); skipped = new Set();
+  clock = { started: 0, active: 0, last: 0, groups: {} };
   try {
     const s = JSON.parse(localStorage.getItem(KEY(id)) || "{}");
     // 只认当前板上真实存在的位号：改板后旧存档里的幽灵位号不该算进进度
     const live = new Set(FLAT.map((f) => f.part.ref));
     done = new Set((s.done || []).filter((r) => live.has(r)));
     skipped = new Set((s.skipped || []).filter((r) => live.has(r)));
+    // 计时是后加的，早先的存档没有这一段；缺字段就从零起表，不影响已有进度
+    if (s.clock) clock = Object.assign(clock, s.clock, { groups: s.clock.groups || {} });
   } catch (e) { /* 存档坏了从零开始 */ }
 }
 
 function save() {
   if (!DOC) return;
-  localStorage.setItem(KEY(DOC.id), JSON.stringify({ done: [...done], skipped: [...skipped] }));
+  localStorage.setItem(KEY(DOC.id),
+    JSON.stringify({ done: [...done], skipped: [...skipped], clock }));
 }
 
 // ── 板子渲染 ────────────────────────────────────────────────
@@ -557,6 +645,7 @@ function drawBoard() {
     g.appendChild(node);
   }
   g.appendChild(s("g", { id: "marks" }));   // 高亮画最上层，不会被后面的元件盖住
+  svg.appendChild(s("g", { id: "pin1" }));  // 极性标记画在镜像组外："1" 字不能跟着 B 视图翻转
   paint();
 }
 
@@ -599,6 +688,23 @@ function paint() {
     width: box.w + pad * 2, height: box.h + pad * 2,
     rx: .4, fill: "none", stroke: "var(--cur)", "stroke-width": .17, opacity: .95,
   }));
+
+  // 极性标记：1 脚/阴极焊盘上画亮圈 + 「1」。画在镜像组外（#pin1），
+  // B 面视图手动镜像坐标——文字跟着组翻转就成反字了，贴片时看着别扭还会读错。
+  const pm = $("pin1");
+  if (pm) {
+    clear(pm);
+    if (p.pin1 && p.layer === viewSide) {
+      const x = viewSide === "B" ? DOC.board.w - p.pin1.x : p.pin1.x;
+      pm.appendChild(s("circle", { cx: x, cy: p.pin1.y, r: .42, fill: "none",
+        stroke: "var(--warn)", "stroke-width": .16 }));
+      const t = s("text", { x, y: p.pin1.y + .34, "text-anchor": "middle",
+        "font-size": .95, fill: "var(--warn)", "font-weight": 700,
+        style: "font-family:ui-monospace,monospace;pointer-events:none" });
+      t.textContent = "1";
+      pm.appendChild(t);
+    }
+  }
 
   // 小件（0402 只有 1×0.5mm）光靠框在全板视图上看不见，再套一圈脉冲环拉视线。
   // 环的半径跟件的大小无关，固定按视野给——它的作用是「指路」不是「描边」。
@@ -697,10 +803,15 @@ function drawZoom() {
 }
 
 // ── 顶部信息 ────────────────────────────────────────────────
-// 有极性/有方向的件贴反了不工作。位号前缀 + 封装名两个判据，宁可多提醒。
+// 极性：生成器按封装 + 型号判好语义（pol: "cath" 阴极 / "pin1" 1 脚 /
+// "none" 双向无极性），前端**不再猜**。旧数据没有 pol 字段时才回退到
+// 位号前缀启发式——D2~D6 双向 ESD 曾被它误标成「有方向」。
 const POLAR_REF = /^(D|LED|Q|U|J|SW|Y|RT|BT|F)\d/;
 const POLAR_FP = /Polarized|SOT|SOIC|QFN|DFN|SON|TSSOP|BGA|LGA|MX1\.25|USB|SMA|IPEX/i;
-const isPolar = (p) => POLAR_REF.test(p.ref) || POLAR_FP.test(p.fp);
+const polarKind = (p) => {
+  if (p.pol !== undefined) return p.pol;
+  return (POLAR_REF.test(p.ref) || POLAR_FP.test(p.fp)) ? "pin1" : null;
+};
 
 // 介质配色只认这三档；别的（X6S/Y5V 等）走统一的兜底色，
 // 不认识就不上色比上错色好——上错色会让人以为分好了。
@@ -730,7 +841,12 @@ function render() {
   if (bt) addTag("tag batch", `第 ${bt.n} 批`);
   if (!g.has_bom) addTag("tag", "无料号信息");
   if (p.layer === "B") addTag("tag back", "B 面 · 需翻板");
-  if (isPolar(p)) addTag("tag polar", "⚠ 有方向");
+  const pk = polarKind(p);
+  if (pk === "cath")
+    addTag("tag polar", p.fp.startsWith("LED") ? "⚠ 阴极 = 短杠端（板上亮圈 1）"
+                                               : "⚠ 阴极 = 色环端（板上亮圈 1）");
+  else if (pk === "pin1") addTag("tag polar", "⚠ 1 脚 = 圆点/缺角端（板上亮圈 1）");
+  else if (pk === "none") addTag("tag", "双向 · 无方向");
 
   // 材质列是**要求下限**，介质标签是实际配的料。两者一样就不用重复说，
   // 不一样才写一句：100pF 那组要求 X7R、配的 C1546 是 C0G，向上兼容。
@@ -909,7 +1025,10 @@ function drawTip() {
   clear(sub);
   sub.appendChild(h("span", { text: cur.part.ref }));
   if (g.dielectric) sub.appendChild(h("span", { class: "diel " + dielClass(g.dielectric), text: g.dielectric }));
-  if (isPolar(cur.part)) sub.appendChild(h("span", { text: "⚠ 有方向", style: "color:var(--warn)" }));
+  const pk = polarKind(cur.part);
+  if (pk === "cath") sub.appendChild(h("span", { text: "⚠ 阴极→亮圈 1", style: "color:var(--warn)" }));
+  else if (pk === "pin1") sub.appendChild(h("span", { text: "⚠ 1 脚→亮圈", style: "color:var(--warn)" }));
+  else if (pk === "none") sub.appendChild(h("span", { text: "双向", style: "color:#8b949e" }));
   if (cur.part.layer === "B") sub.appendChild(h("span", { text: "B 面", style: "color:var(--cur)" }));
 
   const r = node.getBoundingClientRect();
@@ -942,6 +1061,7 @@ function next() {
   if (!cur) return;
   done.add(cur.part.ref);
   skipped.delete(cur.part.ref);
+  tickWork(cur.group.key);
   save();
   advance(1);
 }
@@ -951,6 +1071,7 @@ function skip() {
   if (!cur) return;
   skipped.add(cur.part.ref);
   done.delete(cur.part.ref);
+  tickWork(cur.group.key);
   save();
   advance(1);
 }
@@ -961,7 +1082,16 @@ function advance(dir) {
     const r = FLAT[i].part.ref;
     if (!done.has(r) && !skipped.has(r)) { cursor = i; render(); return; }
   }
-  if (done.size + skipped.size >= FLAT.length) { render(); openSheet(); return; }
+  if (done.size + skipped.size >= FLAT.length) {
+    render();
+    openSheet();
+    // 整块板贴完的那一刻报一次总账——这是"这批花了多久"唯一值得记下来的数字
+    const c = clockNow();
+    const pace = paceMs();
+    if (c.running) toast(`这块板贴完了 · 总用时 ${fmtDur(c.ms)}`,
+      `${done.size} 个件` + (pace ? `，平均 ${Math.round(pace / 1000)} 秒/件` : ""));
+    return;
+  }
   const back = FLAT.findIndex((f) => !done.has(f.part.ref) && !skipped.has(f.part.ref));
   cursor = back >= 0 ? back : Math.min(Math.max(cursor + dir, 0), FLAT.length - 1);
   render();
@@ -974,6 +1104,7 @@ function prev() {
   const r = FLAT[cursor].part.ref;
   done.delete(r);
   skipped.delete(r);
+  tickWork(FLAT[cursor].group.key);   // 返工也是在干活，照计
   save();
   render();
 }
@@ -1000,6 +1131,7 @@ function markGroupDone(group, opts) {
 
   fresh.forEach((r) => { done.add(r); skipped.delete(r); });
   lastBulk = { refs: fresh, cursor, spec: g.spec, size: g.size };
+  tickWork(g.key);
   save();
   toast(`已标记 ${fresh.length} 个 ${g.spec}${g.size ? " " + g.size : ""} 为已贴`, "撤销按 Z");
 
@@ -1035,7 +1167,15 @@ function toast(msg, hint) {
 
 // ── 焊接表 ──────────────────────────────────────────────────
 function sheetStatText() {
-  return `已贴 ${done.size} / ${FLAT.length}　点方块打勾／取消，点位号跳到板上`;
+  const c = clockNow();
+  const pace = paceMs();
+  const left = FLAT.length - done.size - skipped.size;
+  return `已贴 ${done.size} / ${FLAT.length}` +
+    (c.running ? `　用时 ${fmtDur(c.ms)}` : "") +
+    (pace ? `　平均 ${Math.round(pace / 1000)} 秒/件` : "") +
+    // 按当前手速外推，只在还有剩的时候说——贴完了还写"预计还要 0 分钟"是噪音
+    (pace && left ? `　剩 ${left} 个约 ${fmtDur(pace * left)}` : "") +
+    `　点方块打勾／取消，点位号跳到板上`;
 }
 
 function openSheet() {
@@ -1056,6 +1196,9 @@ function openSheet() {
     if (g.category) head.appendChild(h("span", { class: "tag", text: g.category }));
     const counter = h("span", { class: "c", text: `${n} / ${g.qty}` });
     head.appendChild(counter);
+    // 这盘料花了多久。要判断哪几种料值得花钱让嘉立创贴，看的就是这一列
+    const dur = h("span", { class: "dur", text: clock.groups[g.key] ? fmtDur(clock.groups[g.key]) : "" });
+    head.appendChild(dur);
     // 焊接表里也能整组打勾——事后核对时一行一行点太慢
     head.appendChild(h("button", {
       class: "allBtn sheet", text: "整组打勾",
@@ -1075,7 +1218,9 @@ function openSheet() {
         if (done.has(p.ref)) done.delete(p.ref);
         else { done.add(p.ref); skipped.delete(p.ref); }
         item.classList.toggle("on", done.has(p.ref));
+        tickWork(g.key);
         counter.textContent = `${g.parts.filter((q) => done.has(q.ref)).length} / ${g.qty}`;
+        dur.textContent = clock.groups[g.key] ? fmtDur(clock.groups[g.key]) : "";
         $("sheetStat").textContent = sheetStatText();
         $("barFill").style.width = (done.size / FLAT.length * 100) + "%";
         save();
@@ -1106,6 +1251,9 @@ function closeSheet() {
 function resetAll() {
   if (!confirm("清空这块板的全部焊接记录？")) return;
   done = new Set(); skipped = new Set();
+  // 计时跟进度是一套数据：留着旧耗时配新进度，算出来的"平均每件"是错的
+  clock = { started: Date.now(), active: 0, last: Date.now(), groups: {} };
+  renderClock();
   save();
   cursor = 0;
   openSheet();
