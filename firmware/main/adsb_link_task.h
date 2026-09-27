@@ -99,4 +99,6 @@ void pk_adsb_link_push_config(void);
 void on_ingest_msg(const struct mode_s_msg *mm,
                    const modes_ingest_meta_t *meta,
                    void *user);
+/* 同理，配置 ACK 的确认状态机由 host 直接喂生产 dispatcher。 */
+void pk_adsb_link_test_dispatch(const void *msg);
 #endif

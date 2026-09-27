@@ -123,9 +123,10 @@ jobs:
       # 校验和对不上说明有人改了二进制却没更新 .sha256，必须当场失败而不是
       # 悄悄发出去一个来路不明的镜像。
       #
-      # ⚠ 该镜像**未经实板验证**（板上是空片，首刷需外部 cJTAG 仿真器，尚未
-      # 到位）。发布说明里必须保留这条标注，见 firmware/cc1312r/release/README.md。
-      - name: Stage CC1312R image (prebuilt, unverified)
+      # 2026-09-27 已在 V4.10 实板上验证 RP2040 代理擦写、设备端 CRC、镜像启动
+      # 和应用 SPI HELLO；RF Core / 978 MHz PHY 仍未实现。准确边界见
+      # firmware/cc1312r/release/README.md。
+      - name: Stage CC1312R image (prebuilt, transport verified)
         run: |
           set -euo pipefail
           cd firmware/cc1312r/release

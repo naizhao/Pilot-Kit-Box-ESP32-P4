@@ -9,6 +9,7 @@ catalog」这类断言，都改问那一个——问已经不产字库的脚本�
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -98,6 +99,18 @@ class I18nIdLedgerTest(unittest.TestCase):
 
 
 class I18nAssetGeneratorTest(unittest.TestCase):
+    def test_pfd_font_default_generation_includes_every_declared_size(self) -> None:
+        """默认生成不能留下头文件声明、却缺少定义的字体档位。"""
+        self.assertEqual(tuple(aafont.SIZES), aafont.DEFAULT_SIZES)
+        self.assertTrue(set(aafont.CJK_SIZES) <= set(aafont.DEFAULT_SIZES))
+
+    def test_gnss_open_wording_does_not_claim_a_broken_connection(self) -> None:
+        """OPEN 只是 VCC_RF 低负载；首页不能把它翻译成已判定的物理开路。"""
+        strings = dict(i18n_catalog.STRINGS)
+        self.assertNotEqual(strings["DIAG_V_ANT_OPEN"]["zh"], "天线开路")
+        self.assertIn("无法判定", strings["DIAG_V_ANT_OPEN"]["zh"])
+        self.assertIn("indeterminate", strings["DIAG_V_ANT_OPEN"]["en"].lower())
+
     def test_every_text_id_has_every_language(self) -> None:
         for text_id, translations in i18n_catalog.STRINGS:
             with self.subTest(text_id=text_id):
@@ -133,6 +146,26 @@ class I18nAssetGeneratorTest(unittest.TestCase):
         self.assertIn(ord("设"), expected)
         self.assertIn(ord("中"), expected)
         self.assertNotIn(ord("A"), expected)
+
+    def test_checked_in_font_covers_current_catalog(self) -> None:
+        """直接核对固件实际编入的码位表，防止只测生成器输入而产物仍陈旧。"""
+        font_c = Path(__file__).resolve().parents[1] / "main" / "pfd_aa_font.c"
+        body = font_c.read_text(encoding="utf-8")
+        match = re.search(
+            r"const uint16_t pk_aa_cjk_codes\[\] = \{(.*?)\n\};",
+            body,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "pfd_aa_font.c 缺少 pk_aa_cjk_codes")
+        checked_in = {
+            int(token, 16)
+            for token in re.findall(r"0x([0-9A-Fa-f]{4})", match.group(1))
+        }
+        expected = set(aafont.collect_cjk_codes())
+        self.assertTrue(
+            expected <= checked_in,
+            f"检入字库漏字: {sorted(expected - checked_in)}",
+        )
 
     def test_bitmap_cjk_font_generation_stays_removed(self) -> None:
         """本脚本产字库这条链路整条不许回潮。

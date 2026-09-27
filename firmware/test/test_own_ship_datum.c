@@ -126,6 +126,8 @@ static void reset_world(void)
     memset(&g_bound_ac, 0, sizeof(g_bound_ac));
     g_phase = PK_PHASE_AIRBORNE;
     pk_gps_state_init();
+    /* 本文件测试已确认来源下的本机/高度数据契约。 */
+    pk_gps_antenna_source_confirmed(PK_GPS_SOURCE_EXTERNAL);
 }
 
 /* ── GDL90 0x0A 线字节解码（只取本测试要的字段） ───────────────────── *

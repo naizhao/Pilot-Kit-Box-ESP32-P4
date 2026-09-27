@@ -49,7 +49,8 @@
  *      与复位都过 pk_i2c0_bus 的板级互斥（pk_i2c0_bus.h 的契约）。
  *      残余例外是 esp_lcd 组件内部的触摸事务（包不进板级锁，见
  *      touch_gt911.c panel_io 处注释），代价上限是一次 100 ms 超时。
- *   4. 板载音频 codec 也在这条总线上，它不参与探活、也不会重新初始化。
+ *   4. 板载音频 codec 不参与探活；AIRBAND speaker 任务会观察总线代数，
+ *      发现变化后保持 PA 关闭并重放 ES8311 初始化。
  */
 #pragma once
 

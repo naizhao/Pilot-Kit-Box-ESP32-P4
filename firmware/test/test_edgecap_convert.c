@@ -11,9 +11,10 @@
  *
  * 只包含 edge_cap.h / edge_cap_queue.h：两者必须保持无 pico 依赖（本文件
  * 能独立编译即证明）。换算合同（edge_cap.pio 逐周期推导）：上升沿检测后
- * edge 块固定 4 拍（mov isr/push/set x/mov x,~x）无递减；低/高相位每迭代
- * 2 拍、1 次递减，高→低转换 2 拍无递减。相邻上升沿检测之间 cycles =
- * 2×(PRELOAD − raw) + 6，1 tick = 2 SM 周期 → ticks = (PRELOAD − raw) + 3。
+ * low 路径仍按相邻边沿 cycles = 2×(PRELOAD − raw) + 6 换算，即 +3 tick；
+ * high 在约 88ns 延迟复查后才重载 X，固定前导为 16 个 SM cycle，因此
+ * high 是 +8 tick。PIO 输出 low/high 成对，块长 256 为偶数。实际拒绝路径
+ * 的逐指令时间守恒由 firmware/scripts/test_edgecap_pio_timing.py 覆盖。
  *
  * 块队列覆盖（block-queue 重设计：IRQ 生产者 / drain 消费者的显式所有权
  * 协议，合同见 edge_cap_queue.h；旧的 claim/window_ok 消费裁决算术随
@@ -125,6 +126,10 @@ int main(void)
     /* 1. raw 贴着 PRELOAD → 极小间隔：0/1 次递减。 */
     CHECK(edgecap_raw_to_ticks(EDGE_CAP_PRELOAD) == 3u, "raw=PRELOAD\n");
     CHECK(edgecap_raw_to_ticks(EDGE_CAP_PRELOAD - 1u) == 4u, "raw=PRELOAD-1\n");
+    CHECK(edgecap_raw_to_ticks_phase(EDGE_CAP_PRELOAD - 1u, false) == 4u,
+          "low phase correction\n");
+    CHECK(edgecap_raw_to_ticks_phase(EDGE_CAP_PRELOAD - 1u, true) == 9u,
+          "debounced high phase correction\n");
 
     /* 2. 斜率精确 1 tick/递减（间隔可分辨率 = 1 tick）。 */
     CHECK(edgecap_raw_to_ticks(EDGE_CAP_PRELOAD - 2u) ==

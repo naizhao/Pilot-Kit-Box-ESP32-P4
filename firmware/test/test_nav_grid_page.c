@@ -7,10 +7,10 @@
  * （本任务尚未实现那两段，纯函数区先落地）。
  *
  * 六段，每一段都对着一个"版面评审拍板过、代码里不能悄悄改回去"的坑：
- *   1) 分页切分——第 1 页 7 项、第 2 页 3 项，不是塞满 8 个换页；
+ *   1) 分页切分——航空电台占第 1 页原空白第 8 格，第 2 页仍从诊断开始；
  *   2) 格子位置跨页对齐——同一坐标在两页上必须落到"首格"这同一个语义位，
  *      不许因为项数不同就重新居中（产品负责人 2026-08-02 明确否掉过这条）；
- *   3) 空格不可点——第 2 页第 4 格没有内容，点它不能算出越界的 index；
+ *   3) 空格不可点——第 2 页第 5 格没有内容，点它不能算出越界的 index；
  *   4) 动作条三分——调平/亮度/关闭三等分 800 px 宽；
  *   5) pop 打开时网格整层吞掉触摸——压暗的东西不能被点中，pop 自己的三个
  *      档位按钮要能精确命中；
@@ -36,12 +36,12 @@ static void chk_true(const char *what, bool got)
 }
 
 /* ── 1) 分页切分 ──────────────────────────────────────────────────
- * 第 1 页 7 项、第 2 页 3 项——不是"4×2=8 塞满才换页"，切分点是常用度。 */
+ * 第 1 页 8 项、第 2 页 4 项；航空电台占用原先预留的第 8 格。 */
 static void test_paging(void)
 {
     chk_int("第 1 页起点", pk_nav_page_first(0), 0);
-    chk_int("第 1 页项数", pk_nav_page_count(0), 7);
-    chk_int("第 2 页起点", pk_nav_page_first(1), 7);
+    chk_int("第 1 页项数", pk_nav_page_count(0), 8);
+    chk_int("第 2 页起点", pk_nav_page_first(1), 8);
     /* 2026-09-12 加了「电源」（关机/重启），第 2 页 3 → 4 项。 */
     chk_int("第 2 页项数", pk_nav_page_count(1), 4);
 }
@@ -58,7 +58,18 @@ static void test_cell_position_stable(void)
     chk_int("第 1 页首格", a.kind, PK_NAV_HIT_CELL);
     chk_int("第 1 页首格 index", a.index, 0);
     chk_int("第 2 页同坐标也是首格", b.kind, PK_NAV_HIT_CELL);
-    chk_int("第 2 页首格 index", b.index, 7);
+    chk_int("第 2 页首格 index", b.index, 8);
+}
+
+/* 第 1 页原本留空的第 8 格现在是航空电台。缺这一格就只能从机场详情或
+ * 诊断页间接进入，用户在主导航中找不到功能。 */
+static void test_airband_is_reachable_from_primary_navigation(void)
+{
+    const int x = 3 * PK_NAV_CELL_W + PK_NAV_CELL_W / 2;
+    const int y = PK_NAV_BAR_BOT + PK_NAV_CELL_H + PK_NAV_CELL_H / 2;
+    const pk_nav_hit_t h = pk_nav_hit_test(x, y, 0, PK_NAV_POP_NONE);
+    chk_int("第一页第 8 格可点", h.kind, PK_NAV_HIT_CELL);
+    chk_int("第一页第 8 格是 AIRBAND index", h.index, 7);
 }
 
 /* ── 3) 第 2 页 4 项，第 5 格起是空的 ────────────────────────────
@@ -70,7 +81,7 @@ static void test_empty_cell(void)
     const int x4 = 3 * PK_NAV_CELL_W + 10, y = PK_NAV_BAR_BOT + 40;
     pk_nav_hit_t h4 = pk_nav_hit_test(x4, y, 1, PK_NAV_POP_NONE);
     chk_int("第 2 页第 4 格是电源，可点", h4.kind, PK_NAV_HIT_CELL);
-    chk_int("第 2 页第 4 格 index", h4.index, 10);
+    chk_int("第 2 页第 4 格 index", h4.index, 11);
 
     /* 第 5 格 = 第 2 行第 1 列（slot 4），第 2 页只有 4 项 → 空。 */
     const int y2 = PK_NAV_BAR_BOT + PK_NAV_CELL_H + 10;
@@ -218,6 +229,7 @@ int main(void)
 {
     test_paging();
     test_cell_position_stable();
+    test_airband_is_reachable_from_primary_navigation();
     test_empty_cell();
     test_power_pop();
     test_action_bar();

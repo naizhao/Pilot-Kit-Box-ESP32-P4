@@ -656,6 +656,13 @@ int pk_aero_db_nearest_airports(double lat, double lon,
                                            PK_AERO_DIST_APPROX));
 }
 
+int pk_aero_db_nearest_airports_with_freqs(double lat, double lon,
+                                           pk_aero_near_t *out, int max)
+{
+    AERO_QUERY(0, pk_aero_nearest_airports_with_freqs(
+        &s_db, lat, lon, out, max, PK_AERO_DIST_APPROX));
+}
+
 int pk_aero_db_nearest_navaids(double lat, double lon,
                                pk_aero_near_t *out, int max)
 {

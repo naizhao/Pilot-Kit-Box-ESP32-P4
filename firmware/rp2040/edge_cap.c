@@ -195,7 +195,7 @@ size_t edge_cap_drain(uint32_t *out, size_t cap, bool *discontinuity)
      * 停机前发布的旧块先于 disc 块出队、不带位）。 */
     bool disc = edgecap_q_take_disc(&s_q, idx);
     for (size_t i = 0; i < EDGE_CAP_Q_BLOCK_ITEMS; i++)
-        out[i] = edgecap_raw_to_ticks(s_blocks[idx][i]);
+        out[i] = edgecap_raw_to_ticks_phase(s_blocks[idx][i], (i & 1u) != 0);
     edgecap_q_free(&s_q, idx);
     if (disc && discontinuity)
         *discontinuity = true;

@@ -27,6 +27,100 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+
+int pk_diag_card_index_for_cell(int row, int col)
+{
+    if (row < 0 || col < 0 || col >= PK_DIAG_CARD_COLS) return -1;
+    const int idx = row * PK_DIAG_CARD_COLS + col;
+    return idx < PK_DIAG_CARD_N ? idx : -1;
+}
+
+pk_diag_airband_action_t pk_diag_airband_action_at(int x, int content_y)
+{
+    const int right_x0 = PK_DIAG_AIRBAND_BTN_X0 + PK_DIAG_AIRBAND_BTN_W +
+                         PK_DIAG_AIRBAND_BTN_GAP;
+    const bool left = x >= PK_DIAG_AIRBAND_BTN_X0 &&
+                      x < PK_DIAG_AIRBAND_BTN_X0 + PK_DIAG_AIRBAND_BTN_W;
+    const bool right = x >= right_x0 &&
+                       x < right_x0 + PK_DIAG_AIRBAND_BTN_W;
+    if ((!left && !right) || content_y < 0 ||
+        content_y % PK_DIAG_DETAIL_LINE_H >= 34) {
+        return PK_DIAG_AIRBAND_ACT_NONE;
+    }
+    const int content_line = content_y / PK_DIAG_DETAIL_LINE_H;
+    switch (content_line) {
+    case 4:
+        return left ? PK_DIAG_AIRBAND_ACT_FREQ_GUARD
+                    : PK_DIAG_AIRBAND_ACT_FREQ_AIR_AIR;
+    case 5:
+        return left ? PK_DIAG_AIRBAND_ACT_SCAN_TOGGLE
+                    : PK_DIAG_AIRBAND_ACT_SQUELCH_TOGGLE;
+    case 6:
+        return left ? PK_DIAG_AIRBAND_ACT_SQUELCH_DEC
+                    : PK_DIAG_AIRBAND_ACT_SQUELCH_INC;
+    case 7:
+        return left ? PK_DIAG_AIRBAND_ACT_SPEAKER_TEST
+                    : PK_DIAG_AIRBAND_ACT_NONE;
+    default:
+        return PK_DIAG_AIRBAND_ACT_NONE;
+    }
+}
+
+bool pk_diag_airband_make_command(pk_diag_airband_action_t action,
+                                  const pk_diag_airband_control_state_t *state,
+                                  pk_diag_airband_command_t *out)
+{
+    if (state == NULL || out == NULL) return false;
+    *out = (pk_diag_airband_command_t){0};
+    switch (action) {
+    case PK_DIAG_AIRBAND_ACT_FREQ_GUARD:
+        out->kind = PK_DIAG_AIRBAND_CMD_SET_FREQUENCY;
+        out->frequency_hz = 121500000u;
+        return true;
+    case PK_DIAG_AIRBAND_ACT_FREQ_AIR_AIR:
+        out->kind = PK_DIAG_AIRBAND_CMD_SET_FREQUENCY;
+        out->frequency_hz = 123450000u;
+        return true;
+    case PK_DIAG_AIRBAND_ACT_SCAN_TOGGLE:
+        if (state->scanning) {
+            out->kind = PK_DIAG_AIRBAND_CMD_STOP_SCAN;
+        } else {
+            out->kind = PK_DIAG_AIRBAND_CMD_START_SCAN;
+            out->scan_start_hz = 118000000u;
+            out->scan_end_hz = 137000000u;
+            out->scan_step_hz = 25000u;
+            out->scan_dwell_ms = 250u;
+        }
+        return true;
+    case PK_DIAG_AIRBAND_ACT_SQUELCH_TOGGLE:
+        out->kind = PK_DIAG_AIRBAND_CMD_SET_SQUELCH;
+        out->squelch_enabled = !state->squelch_enabled;
+        out->squelch_open_dbm_x2 = state->squelch_open_dbm_x2;
+        return true;
+    case PK_DIAG_AIRBAND_ACT_SQUELCH_DEC:
+    case PK_DIAG_AIRBAND_ACT_SQUELCH_INC: {
+        int threshold = state->squelch_open_dbm_x2;
+        threshold += action == PK_DIAG_AIRBAND_ACT_SQUELCH_INC ? 4 : -4;
+        if (threshold < -240) threshold = -240;
+        if (threshold > -80) threshold = -80;
+        out->kind = PK_DIAG_AIRBAND_CMD_SET_SQUELCH;
+        out->squelch_enabled = state->squelch_enabled;
+        out->squelch_open_dbm_x2 = (int16_t)threshold;
+        return true;
+    }
+    case PK_DIAG_AIRBAND_ACT_SPEAKER_TEST:
+        out->kind = PK_DIAG_AIRBAND_CMD_SPEAKER_TEST;
+        return true;
+    case PK_DIAG_AIRBAND_ACT_NONE:
+    default:
+        return false;
+    }
+}
+
+#ifndef PK_DIAG_PAGE_HOST_TEST
+#ifndef PK_SIM_BUILD
+#include "esp_log.h"
+#endif
 #include "esp_system.h"
 #include "esp_timer.h"
 
@@ -35,6 +129,8 @@
 #include "modes_ingest.h"    /* pk_dsp_get_stats, pk_dsp_stats_t */
 #include "adsb_link_task.h"  /* pk_adsb_link_state_get */
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
+#include "gps_antenna_diag.h"/* raw GPTXT 与不会误报的解释结果 */
+#include "config_antenna.h"  /* GNSS 当前请求的天线来源 */
 #include "baro.h"            /* pk_baro_get, pk_baro_state_t */
 #include "config_qnh.h"      /* pk_qnh_get — baro 高度的 QNH 基准 */
 #include "config_storage.h"  /* pk_log_store_get — 用户希望写哪个后端 */
@@ -45,11 +141,16 @@
 #include "pk_sdcard.h"       /* pk_sdcard_state / pk_sdcard_info */
 #include "pk_aero_db.h"      /* pk_aero_db_status_get — SD 航空库状态 */
 #include "pk_win.h"          /* pk_win_status_get — 滚动窗口运行状态 */
+#include "airband.h"        /* BK4819 + PCM1808 最近 1 s 闭环快照 */
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
 #include "pk_rec_store.h"    /* pk_rec_store_get_health —— LOG 卡片接入 SD 写失败/降级持续状态 */
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
+
+#ifndef PK_SIM_BUILD
+static const char *TAG = "diag";
+#endif
 
 /* Palette — matches about_page.c for visual consistency */
 #define COL_BG               pk_rgb565( 12,  12,  16)
@@ -156,7 +257,7 @@ static void fmt_clock(char *buf, size_t bufsz)
 #include "power_sy6970.h"    /* sy6970_diag_get — v4 powered 充电芯片取证（WP-D） */
 #include "soc_temp.h"
 
-#define CARD_COLS   2
+#define CARD_COLS   PK_DIAG_CARD_COLS
 #define CARD_PAD    PK_UI_PAD_L   /* 卡片外边距 = 整页左边距（pfd_layout.h） */
 #define CARD_GAP    12
 #define CARD_W      ((PK_DISPLAY_W - CARD_PAD * 2 - CARD_GAP) / CARD_COLS)
@@ -167,7 +268,7 @@ static void fmt_clock(char *buf, size_t bufsz)
 #define DET_KEY_X     PK_UI_PAD_L
 #define DET_TITLE_TOP (PK_UI_BACKBAR_BOT + 8)
 #define DET_TOP       (DET_TITLE_TOP + PK_AA_M_H + 10)
-#define DET_LINE_H    38
+#define DET_LINE_H    PK_DIAG_DETAIL_LINE_H
 #define DET_VAL_X     240
 #define CARD_H      ((PK_DISPLAY_H - CARD_TOP - CARD_PAD + CARD_GAP) \
                      / 4 - CARD_GAP)
@@ -240,19 +341,39 @@ static int s_detail_lines;
  *
  * 存的是词条 id 而不是字符串：语言可以在运行时切，取到的必须是**当前**语言
  * 的写法。存字符串就意味着切语言后这张表还停在旧语言上。 */
-static const pk_tr_id_t CARD_TITLE[] = {
-    PK_TR_DIAG_CARD_IMU, PK_TR_DIAG_CARD_BARO, PK_TR_DIAG_CARD_GPS,
-    PK_TR_DIAG_CARD_SDR, PK_TR_DIAG_CARD_BLE,  PK_TR_DIAG_CARD_LOG,
-    PK_TR_DIAG_CARD_CLK, PK_TR_DIAG_CARD_SYS,  PK_TR_DIAG_CARD_SD,
-    PK_TR_DIAG_CARD_QNH, PK_TR_DIAG_CARD_BATT, PK_TR_DIAG_CARD_UPTIME,
+typedef struct {
+    bool localized;
+    pk_tr_id_t tr;
+    const char *literal;
+} diag_card_title_t;
+
+static const diag_card_title_t CARD_TITLE[] = {
+    {true, PK_TR_DIAG_CARD_IMU, NULL},
+    {true, PK_TR_DIAG_CARD_BARO, NULL},
+    {true, PK_TR_DIAG_CARD_GPS, NULL},
+    {true, PK_TR_DIAG_CARD_SDR, NULL},
+    {true, PK_TR_DIAG_CARD_BLE, NULL},
+    {true, PK_TR_DIAG_CARD_LOG, NULL},
+    {true, PK_TR_DIAG_CARD_CLK, NULL},
+    {true, PK_TR_DIAG_CARD_SYS, NULL},
+    {true, PK_TR_DIAG_CARD_SD, NULL},
+    {true, PK_TR_DIAG_CARD_QNH, NULL},
+    {true, PK_TR_DIAG_CARD_BATT, NULL},
+    {true, PK_TR_DIAG_CARD_UPTIME, NULL},
+    {false, PK_TR_DIAG_TITLE, "AERO DB"},
+    {false, PK_TR_DIAG_TITLE, "WINDOW"},
+    {false, PK_TR_DIAG_TITLE, "AIRBAND"},
 };
 #define CARD_N  ((int)(sizeof(CARD_TITLE) / sizeof(CARD_TITLE[0])))
+_Static_assert(CARD_N == PK_DIAG_CARD_N,
+               "诊断卡表数量与纯命中模型不一致");
 
 /* 卡片标题的当前语言写法。总览与详情页共用，两处不各查一次表。 */
 static const char *card_title(int idx)
 {
-    return pk_i18n_text((idx >= 0 && idx < CARD_N) ? CARD_TITLE[idx]
-                                                   : PK_TR_DIAG_K_DETAIL);
+    if (idx < 0 || idx >= CARD_N) return pk_i18n_text(PK_TR_DIAG_K_DETAIL);
+    return CARD_TITLE[idx].localized ? pk_i18n_text(CARD_TITLE[idx].tr)
+                                     : CARD_TITLE[idx].literal;
 }
 
 /* 上次复位原因 → 词条。索引即 esp_reset_reason_t，表长必须覆盖枚举全域，
@@ -435,12 +556,14 @@ void pk_diag_page_render(uint16_t *fb)
     }
 
     /* ── GPS ──
-     * 有没有 fix 与看得见几颗星是两件事：sats 有数而 fix=0 说明信号弱/遮挡，
-     * sats=0 才是天线或接线问题。总览里两个数都给，省得点进详情才发现方向
-     * 找错了（这正是 no-fix 那次排查的教训）。 */
+     * 有没有 fix 与看得见几颗星是两件事：sats 有数而 fix=0 说明信号弱/遮挡；
+     * sats=0 还可能是冷启动、完全遮挡、天线不匹配或 RF 路径异常，不能单凭它
+     * 判定物理断线。总览里两个数都给，省得点进详情才发现排查方向错了。 */
     {
         pk_gps_state_t g = {0};
         pk_gps_get(&g);
+        pk_ant_gnss_status_t ant_cfg = {0};
+        pk_ant_gnss_status_get(&ant_cfg);
         const int64_t now = esp_timer_get_time();
         const bool fresh = g.have_fix && (now - g.updated_us) < GPS_FRESH_US;
 
@@ -459,6 +582,13 @@ void pk_diag_page_render(uint16_t *fb)
             /* 曾经在讲话，现在哑了 = 掉线/供电/接触不良，跟没装是两回事。 */
             draw_card(fb, 0, 1, card_title(2),
                       pk_i18n_text(PK_TR_DIAG_V_MODULE_SILENT), ST_BAD);
+        } else if (!ant_cfg.actual_known) {
+            /* 请求已经落 NVS 不等于 RP2040 已经驱动 U17。ACK 前不展示旧 fix，
+             * 否则用户刚点 INT 就会看到上一根 EXT 的定位证据。 */
+            draw_card(fb, 0, 1, card_title(2),
+                      ant_cfg.request_pending ? "GNSS source: pending ACK"
+                                              : "GNSS source: unknown",
+                      ST_WARN);
         } else if (fresh) {
             /* 有效定位优先于天线自检：ATGM336H-6N 对无源/某些有源天线会
              * 恒报 ANTENNA OPEN（手册 §2.8），若把 OPEN 画在 fix 之前，
@@ -477,9 +607,10 @@ void pk_diag_page_render(uint16_t *fb)
                      pk_i18n_text(PK_TR_DIAG_U_VISIBLE));
             draw_card(fb, 0, 1, card_title(2), buf, ST_WARN);
         } else if (g.ant_status == PK_GPS_ANT_OPEN) {
-            /* 无 fix、无可见星，且模块自检报开路 —— 这才是真该查天线。 */
+            /* 原始 OPEN 只说明 VCC_RF 负载低于阈值。6N 手册 §2.8 明确说明
+             * 无源天线恒报 OPEN；没有 RF 证据时只能提示，不能判硬件故障。 */
             draw_card(fb, 0, 1, card_title(2),
-                      pk_i18n_text(PK_TR_DIAG_V_ANT_OPEN), ST_BAD);
+                      pk_i18n_text(PK_TR_DIAG_V_ANT_OPEN), ST_WARN);
         } else if (g.ant_status == PK_GPS_ANT_SHORT) {
             draw_card(fb, 0, 1, card_title(2),
                       pk_i18n_text(PK_TR_DIAG_V_ANT_SHORT), ST_BAD);
@@ -794,7 +925,8 @@ void pk_diag_page_render(uint16_t *fb)
      * 标题/文案用 ASCII 字面量、不走 catalog：新增词条要重跑字库生成
      * 流程（gen_i18n_assets.py，见 project_i18n_onscreen_text_workflow），
      * 本卡全部内容（周期、计数、状态词）本来就是 ASCII，先不动字库。
-     * 序号 12 ≥ CARD_N，触摸层自然不进详情页——本卡暂无详情。 */
+     * 序号 12 已纳入统一卡表；当前进入详情后明确显示“无进一步信息”，不会再
+     * 因 CARD_N 落后于实际卡数而让后续 AIRBAND 卡永远不可达。 */
     {
         pk_aero_db_status_t a;
         pk_aero_db_status_get(&a);
@@ -829,7 +961,7 @@ void pk_diag_page_render(uint16_t *fb)
             st = ST_IDLE;
             break;
         }
-        draw_card(fb, 0, 6, "AERO DB", buf, st);
+        draw_card(fb, 0, 6, card_title(12), buf, st);
     }
 
     /* ── WINDOW ──
@@ -839,7 +971,7 @@ void pk_diag_page_render(uint16_t *fb)
      *
      * 追加在网格末尾、不往中间插——理由同 AERO DB 那格：卡片序号就是触摸分派
      * 与 CARD_TITLE 的下标，插中间会错位后面所有卡的详情映射。
-     * 序号 13 ≥ CARD_N，触摸层自然不进详情页——本卡暂无详情。
+     * 序号 13 已纳入统一卡表；当前详情使用通用“无进一步信息”占位。
      *
      * ── 字段取舍 ────────────────────────────────────────────────────
      * 值行只有 352 px（CARD_W - 26），装不下 pk_win_status_t 的十几个指标，
@@ -912,10 +1044,32 @@ void pk_diag_page_render(uint16_t *fb)
                 st = ST_OK;
             }
         }
-        draw_card(fb, 1, 6, "WINDOW", buf, st);
+        draw_card(fb, 1, 6, card_title(13), buf, st);
     }
 
-    s_card_rows = 7;
+    /* ── AIRBAND ──
+     * 这张卡只判断硬件闭环，不拿“有没有收到航空话音”当健康判据：室内无台时
+     * RSSI/噪声底与 PCM1808 帧仍应持续变化。R/N/G 是 BK4819 原始寄存器，
+     * A 是本秒收到的 I2S 帧数；完整 dBm、极值、RMS 和读错计数保留在串口。 */
+    {
+        pk_airband_state_t a;
+        card_state_t st = ST_BAD;
+        if (!pk_airband_get(&a)) {
+            snprintf(buf, sizeof(buf), "no data");
+        } else {
+            snprintf(buf, sizeof(buf), "R%u N%u G%u A%luk",
+                     (unsigned)a.rf.rssi_raw, (unsigned)a.rf.noise_raw,
+                     (unsigned)a.rf.glitch_raw,
+                     (unsigned long)(a.audio_frames / 1000u));
+            st = a.health == PK_AIRBAND_HEALTH_READY ? ST_OK
+               : a.health == PK_AIRBAND_HEALTH_DEGRADED ||
+                 a.health == PK_AIRBAND_HEALTH_AUDIO_IDLE ? ST_WARN
+               : ST_BAD;
+        }
+        draw_card(fb, 0, 7, card_title(PK_DIAG_CARD_AIRBAND), buf, st);
+    }
+
+    s_card_rows = 8;
 
     /* 滚动条：贴右缘，只在有内容超出一屏时出现。 */
     {
@@ -951,8 +1105,58 @@ void pk_diag_page_render(uint16_t *fb)
  * dock 展开时由 read_cb 统一让路，这里不重复判断。 */
 static int  s_press_x, s_press_y, s_press_scroll;
 static bool s_press_valid, s_moved;
+static pk_diag_airband_action_t s_airband_press;
 
 #define DIAG_DRAG_SLOP  12
+
+static void airband_apply_action(pk_diag_airband_action_t action)
+{
+    pk_airband_control_status_t current;
+    if (!pk_airband_control_get(&current)) return;
+    const pk_diag_airband_control_state_t state = {
+        .scanning = current.scanning,
+        .squelch_enabled = current.squelch_enabled,
+        .squelch_open_dbm_x2 = current.squelch_open_dbm_x2,
+    };
+    pk_diag_airband_command_t cmd;
+    if (!pk_diag_airband_make_command(action, &state, &cmd)) return;
+
+    switch (cmd.kind) {
+    case PK_DIAG_AIRBAND_CMD_SET_FREQUENCY:
+        (void)pk_airband_set_frequency(cmd.frequency_hz);
+        break;
+    case PK_DIAG_AIRBAND_CMD_START_SCAN: {
+        const pk_airband_scan_plan_t plan = {
+            .start_hz = cmd.scan_start_hz,
+            .end_hz = cmd.scan_end_hz,
+            .step_hz = cmd.scan_step_hz,
+            .dwell_ms = cmd.scan_dwell_ms,
+        };
+        (void)pk_airband_scan_start(&plan);
+        break;
+    }
+    case PK_DIAG_AIRBAND_CMD_STOP_SCAN:
+        pk_airband_scan_stop();
+        break;
+    case PK_DIAG_AIRBAND_CMD_SET_SQUELCH:
+        if (pk_airband_set_squelch(cmd.squelch_open_dbm_x2,
+                                   current.squelch_hysteresis_db_x2)) {
+            pk_airband_set_squelch_enabled(cmd.squelch_enabled);
+        }
+        break;
+    case PK_DIAG_AIRBAND_CMD_SPEAKER_TEST:
+#ifndef PK_SIM_BUILD
+        ESP_LOGI(TAG, "AIRBAND diagnostic speaker button -> %s",
+                 pk_airband_speaker_test() ? "accepted" : "rejected");
+#else
+        (void)pk_airband_speaker_test();
+#endif
+        break;
+    case PK_DIAG_AIRBAND_CMD_NONE:
+    default:
+        break;
+    }
+}
 
 /* 卡片区之外（顶栏、右侧 FAB 那条）一律不消费。 */
 static bool diag_in_cards(int x, int y)
@@ -969,6 +1173,21 @@ bool pk_diag_page_touch(int x, int y)
         /* 顶栏不拦：那块是 nav 的 backbar（LVGL 控件），让它自己收点击。
          * 三条退路里"顶栏按钮"与"FAB"都由导航层提供，本页只要不挡路。 */
         if (y < PFD_BAR_BOT) { s_press_valid = false; return false; }
+
+        /* AIRBAND 是当前唯一有原生动作的诊断详情。按钮从 x=48 开始，左缘
+         * 0..31 仍完整留给右滑返回；按下只锁定动作，真正写寄存器在松手时。 */
+        if (s_detail == PK_DIAG_CARD_AIRBAND) {
+            const pk_diag_airband_action_t action = pk_diag_airband_action_at(
+                x, y + s_detail_scroll_y - DET_TOP);
+            if (action != PK_DIAG_AIRBAND_ACT_NONE) {
+                s_airband_press = action;
+                s_press_valid = true;
+                s_press_x = x;
+                s_press_y = y;
+                s_moved = false;
+                return true;
+            }
+        }
 
         /* ⚠️ 内容不足一屏时必须**一个字节都不改**地走旧路径。
          *
@@ -1013,6 +1232,16 @@ bool pk_diag_page_touch(int x, int y)
 bool pk_diag_page_drag(int x, int y)
 {
     if (!s_press_valid) return false;
+
+    if (s_airband_press != PK_DIAG_AIRBAND_ACT_NONE) {
+        const int dx = x - s_press_x, dy = y - s_press_y;
+        const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+        if (adx > DIAG_DRAG_SLOP || ady > DIAG_DRAG_SLOP) {
+            s_moved = true;
+            s_airband_press = PK_DIAG_AIRBAND_ACT_NONE;
+        }
+        return true;
+    }
 
     /* ── 详情页：纵向滚内容，横向让路 ─────────────────────────────────
      *
@@ -1064,14 +1293,20 @@ bool pk_diag_page_drag(int x, int y)
 void pk_diag_page_touch_up(void)
 {
     const bool click = s_press_valid && !s_moved;
+    const pk_diag_airband_action_t airband_action = s_airband_press;
     const int  x = s_press_x, y = s_press_y;
     s_press_valid = false;
     s_moved       = false;
+    s_airband_press = PK_DIAG_AIRBAND_ACT_NONE;
+    if (click && airband_action != PK_DIAG_AIRBAND_ACT_NONE) {
+        airband_apply_action(airband_action);
+        return;
+    }
     if (!click || s_detail >= 0) return;
 
     const int col = (x < CARD_PAD + CARD_W + CARD_GAP / 2) ? 0 : 1;
     const int row = (y + s_scroll_y - CARD_TOP) / (CARD_H + CARD_GAP);
-    const int idx = row * CARD_COLS + col;
+    const int idx = pk_diag_card_index_for_cell(row, col);
     if (row >= 0 && idx >= 0 && idx < CARD_N) {
         s_detail = idx;
         /* 每次下钻都从顶开始，别继承上一个子系统的位置。行数也一并清零：
@@ -1089,7 +1324,12 @@ void pk_diag_page_touch_up(void)
         pk_ui_nav_set_subpage(true, pk_i18n_text(PK_TR_DIAG_TITLE));
     }
 }
-void pk_diag_page_touch_cancel(void) { s_press_valid = false; s_moved = false; }
+void pk_diag_page_touch_cancel(void)
+{
+    s_press_valid = false;
+    s_moved = false;
+    s_airband_press = PK_DIAG_AIRBAND_ACT_NONE;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 子系统详情（spec §5.5 第二层）
@@ -1165,6 +1405,23 @@ static void det_kv_tr2(uint16_t *fb, int line, pk_tr_id_t key, pk_tr_id_t val,
     det_kv(fb, line, pk_i18n_text(key), pk_i18n_text(val), vcol);
 }
 
+static void det_button(uint16_t *fb, int line, bool right, const char *label,
+                       bool hot)
+{
+    const int x = PK_DIAG_AIRBAND_BTN_X0 +
+                  (right ? PK_DIAG_AIRBAND_BTN_W +
+                               PK_DIAG_AIRBAND_BTN_GAP : 0);
+    const int y = det_line_y(line);
+    if (!det_line_visible(y)) return;
+    fill_rect(fb, x, y, x + PK_DIAG_AIRBAND_BTN_W, y + 34,
+              hot ? pk_rgb565(24, 86, 140) : pk_rgb565(38, 44, 56));
+    const int tw = pk_aa_text_width(label, PK_AA_S);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               x + (PK_DIAG_AIRBAND_BTN_W - tw) / 2,
+               y + (34 - pk_aa_cell_h(PK_AA_S)) / 2,
+               label, COL_VAL, PK_AA_S);
+}
+
 /* FAULTS 行的片段拼接：seg 追加到 buf[pos]，非首段以空格分隔。返回新
  * 长度，缓冲不够返回 -1（调用方放弃后续片段；片段都是短词，给足缓冲
  * 就到不了这步——worst case 全部故障同时置位约 72 B）。 */
@@ -1188,6 +1445,8 @@ static void draw_detail(uint16_t *fb, int which)
     case 2: {   /* GPS —— spec 点名的那一页 */
         pk_gps_state_t g = {0};
         pk_gps_get(&g);
+        pk_ant_gnss_status_t ant_cfg = {0};
+        pk_ant_gnss_status_get(&ant_cfg);
         const bool fresh = g.have_fix &&
                            (esp_timer_get_time() - g.updated_us) < GPS_FRESH_US;
 
@@ -1205,19 +1464,38 @@ static void draw_detail(uint16_t *fb, int which)
         snprintf(buf, sizeof(buf), "%.1f", (double)g.hdop);
         det_kv_tr(fb, line++, PK_TR_DIAG_K_HDOP, buf, COL_VAL);
 
-        /* 天线自检单独一行。注意：U7 pin14 VCC_RF 在 v3/v4 均悬空（有源天线
-         * 改由 3V3_GNSS 经 Q4/Q5 偏置），模块的天线检测回路被旁路，对无源/
-         * 旁路馈电的天线**恒报 OPEN**（ATGM336H-6N 手册 §2.8）。所以有定位或
-         * 有可见星时把 OPEN 降级为中性值色，只有无 fix 且无可见星才当告警。 */
-        static const pk_tr_id_t kAnt[] = {
-            PK_TR_DIAG_V_ANT_UNKNOWN, PK_TR_DIAG_V_ANT_OK,
-            PK_TR_DIAG_V_ANT_OPEN_S,  PK_TR_DIAG_V_ANT_SHORT_S };
-        bool ant_receiving = fresh || g.snr_count > 0;
-        det_kv_tr2(fb, line++, PK_TR_DIAG_K_ANTENNA,
-                   kAnt[g.ant_status <= PK_GPS_ANT_SHORT ? g.ant_status : 0],
-                   g.ant_status == PK_GPS_ANT_OK ? COL_ONLINE
-                   : g.ant_status == PK_GPS_ANT_UNKNOWN ? COL_OFFLINE
-                   : (ant_receiving ? COL_VAL : COL_ALERT));
+        /* 一行同时展示请求来源、ACK 确认的实际来源、模块 raw 和解释结果。
+         * V4.9 的 U7.14 VCC_RF
+         * 已经接到 Q4/Q5 源极；但 OPEN 仍可能是无源天线，故写成 INDET。
+         * CONFIG_ACK 只能确认 RP 接受了整套配置，仍不是 GPIO 电平回读；台架
+         * 最终可再用 G 命令核对。但请求值绝不能伪装成“实际已切换”。 */
+        const bool ant_receiving = ant_cfg.actual_known &&
+                                   (fresh || g.snr_count > 0);
+        const pk_gps_ant_result_t ant_result =
+            pk_gps_ant_assess(g.ant_status, ant_receiving);
+        const char *result_short =
+            ant_result == PK_GPS_ANT_RESULT_ACTIVE_LOAD_OK ? "LOAD-OK"
+            : ant_result == PK_GPS_ANT_RESULT_OPEN_OR_PASSIVE ? "INDET"
+            : ant_result == PK_GPS_ANT_RESULT_RF_RECEIVING ? "RECEIVING"
+            : ant_result == PK_GPS_ANT_RESULT_SHORT ? "SHORT" : "UNKNOWN";
+        const char *req = ant_cfg.requested == PK_ANT_GNSS_EXTERNAL
+                              ? "EXT" : "INT";
+        if (!ant_cfg.actual_known) {
+            snprintf(buf, sizeof(buf), "req=%s actual=%s raw=UNKNOWN",
+                     req, ant_cfg.request_pending ? "PENDING" : "UNKNOWN");
+        } else {
+            const char *actual = ant_cfg.actual == PK_ANT_GNSS_EXTERNAL
+                                     ? "EXT" : "INT";
+            snprintf(buf, sizeof(buf), "req=%s actual=%s raw=%s %s",
+                     req, actual, pk_gps_ant_raw_name(g.ant_status), result_short);
+        }
+        det_kv_tr(fb, line++, PK_TR_DIAG_K_ANTENNA, buf,
+                  !ant_cfg.actual_known ? COL_WARN
+                  : ant_result == PK_GPS_ANT_RESULT_ACTIVE_LOAD_OK ||
+                  ant_result == PK_GPS_ANT_RESULT_RF_RECEIVING ? COL_ONLINE
+                  : ant_result == PK_GPS_ANT_RESULT_SHORT ? COL_ALERT
+                  : ant_result == PK_GPS_ANT_RESULT_OPEN_OR_PASSIVE ? COL_WARN
+                  : COL_OFFLINE);
 
         if (fresh) snprintf(buf, sizeof(buf), "%.5f  %.5f", g.lat, g.lon);
         else       snprintf(buf, sizeof(buf), "---");
@@ -1651,6 +1929,94 @@ static void draw_detail(uint16_t *fb, int which)
         break;
     }
 
+    case PK_DIAG_CARD_AIRBAND: {
+        pk_airband_state_t a = {0};
+        const bool have_diag = pk_airband_get(&a);
+        pk_airband_control_status_t ctl;
+        const bool have_ctl = pk_airband_control_get(&ctl);
+
+        det_kv(fb, line++, "STATUS",
+               have_diag && a.online ? "RX ONLINE" : "RX OFFLINE",
+               have_diag && a.online ? COL_ONLINE : COL_ALERT);
+
+        const bool rf_online = have_diag && a.online;
+        const uint32_t hz = rf_online ? a.frequency_hz
+                                      : have_ctl ? ctl.requested_hz : 0;
+        if (hz != 0) {
+            snprintf(buf, sizeof(buf), "%lu.%03lu MHz%s",
+                     (unsigned long)(hz / 1000000u),
+                     (unsigned long)((hz % 1000000u) / 1000u),
+                     have_ctl && ctl.scanning ? " SCAN" : "");
+        } else {
+            snprintf(buf, sizeof(buf), "---");
+        }
+        det_kv(fb, line++, rf_online ? "ACTUAL FREQ" : "TARGET FREQ", buf,
+               !rf_online ? COL_WARN
+                          : have_ctl && ctl.scanning ? COL_WARN : COL_VAL);
+
+        if (rf_online) {
+            snprintf(buf, sizeof(buf), "RSSI %d.%d dBm  N%u G%u",
+                     a.rf.rssi_dbm_x2 / 2,
+                     (a.rf.rssi_dbm_x2 & 1) ? 5 : 0,
+                     (unsigned)a.rf.noise_raw, (unsigned)a.rf.glitch_raw);
+            det_kv(fb, line++, "RF", buf, COL_VAL);
+        } else {
+            det_kv(fb, line++, "RF", "unavailable", COL_ALERT);
+        }
+        if (have_diag) {
+            snprintf(buf, sizeof(buf), "L%lu R%lu RMS  %lu frames",
+                     (unsigned long)a.audio_rms,
+                     (unsigned long)a.audio_right_rms,
+                     (unsigned long)a.audio_frames);
+            det_kv(fb, line++, "AUDIO", buf,
+                   a.read_errors ? COL_WARN : COL_VAL);
+        } else {
+            det_kv(fb, line++, "AUDIO", "no data", COL_OFFLINE);
+        }
+
+        det_button(fb, line, false, "121.500 GUARD",
+                   !have_ctl || (!ctl.scanning && ctl.requested_hz == 121500000u));
+        det_button(fb, line++, true, "123.450 AIR-AIR",
+                   have_ctl && !ctl.scanning && ctl.requested_hz == 123450000u);
+        det_button(fb, line, false,
+                   have_ctl && ctl.scanning ? "SCAN: ON" : "SCAN: OFF",
+                   have_ctl && ctl.scanning);
+        det_button(fb, line++, true,
+                   have_ctl && ctl.squelch_enabled ? "SQUELCH: ON"
+                                                   : "SQUELCH: OFF",
+                   have_ctl && ctl.squelch_enabled);
+        snprintf(buf, sizeof(buf), "SQ -2 dB");
+        det_button(fb, line, false, buf, false);
+        snprintf(buf, sizeof(buf), "SQ +2 dB  (%d.%d)",
+                 have_ctl ? ctl.squelch_open_dbm_x2 / 2 : -90,
+                 have_ctl && (ctl.squelch_open_dbm_x2 & 1) ? 5 : 0);
+        det_button(fb, line++, true, buf, false);
+        det_button(fb, line++, false, "SPEAKER TEST 1s",
+                   have_diag && a.speaker_tone_active);
+        if (have_diag) {
+            const char *result = a.speaker_test_result ==
+                                     PK_AIRBAND_SPEAKER_TEST_PASS ? "PASS"
+                               : a.speaker_test_result ==
+                                     PK_AIRBAND_SPEAKER_TEST_FAIL ? "FAIL"
+                               : a.speaker_test_result ==
+                                     PK_AIRBAND_SPEAKER_TEST_RUNNING ? "RUNNING"
+                               : a.speaker_test_result ==
+                                     PK_AIRBAND_SPEAKER_TEST_STOPPED ? "STOPPED"
+                                                                    : "IDLE";
+            snprintf(buf, sizeof(buf), "%s %lu/%lu frames  PA=%d",
+                     result,
+                     (unsigned long)a.speaker_test_written_frames,
+                     (unsigned long)a.speaker_test_expected_frames,
+                     a.speaker_pa_enabled);
+            det_kv(fb, line++, "SPK TEST", buf,
+                   a.speaker_test_result == PK_AIRBAND_SPEAKER_TEST_PASS
+                       ? COL_ONLINE
+                       : a.speaker_test_result == PK_AIRBAND_SPEAKER_TEST_FAIL
+                             ? COL_ALERT : COL_VAL);
+        }
+        break;
+    }
+
     default:
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_DETAIL, PK_TR_DIAG_V_NO_FURTHER,
                    COL_OFFLINE);
@@ -1735,3 +2101,5 @@ void pk_diag_page_leave_detail(void)
 /* 当前是否在子系统详情里。pk_ui_nav_on_back() 据此决定是"退出详情"还是
  * "切回诊断页"——两者在诊断页上下文里是不同的动作。 */
 bool pk_diag_page_in_detail(void) { return s_detail >= 0; }
+
+#endif /* !PK_DIAG_PAGE_HOST_TEST */

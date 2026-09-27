@@ -22,6 +22,9 @@ dependencies:
   # 能对上的那一位，才算真的锁住。
   espressif/esp_hosted: '==2.12.7'
   espressif/esp_wifi_remote: '*'
+  # 微雪载板 ES8311/NS4150B/H4。精确锁版本避免 codec 初始化表和接口漂移；
+  # I2C 控制面不用组件默认实现，而走 pk_codec_ctrl 的板级总线互斥包装。
+  espressif/esp_codec_dev: '==1.5.9'
   # LVGL v9 —— 4.3″ 触摸 UI 的控件层。锁小版本而不用 '*'：布局评审要能复现，
   # 绘制细节在小版本之间也会变（模拟器侧同样固定在 v9.5.0）。
   lvgl/lvgl: '~9.5.0'

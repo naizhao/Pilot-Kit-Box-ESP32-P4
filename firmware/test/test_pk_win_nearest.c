@@ -39,7 +39,7 @@ static void chk_int(const char *what, int got, int want)
 }
 
 /* ---- 合成数据：rec_size=12，前 8 字节 lat_e7/lon_e7 ---- */
-#define REC_SIZE 12
+#define REC_SIZE PK_AERO_AIRPORT_SIZE
 #define MAX_RECS 128
 #define MAX_CELLS 16
 
@@ -58,6 +58,11 @@ static void put_rec(uint32_t k, double lat, double lon)
     uint8_t *r = s_payload + (size_t)k * REC_SIZE;
     r[0]=le&0xFF; r[1]=(le>>8)&0xFF; r[2]=(le>>16)&0xFF; r[3]=(le>>24)&0xFF;
     r[4]=ln&0xFF; r[5]=(ln>>8)&0xFF; r[6]=(ln>>16)&0xFF; r[7]=(ln>>24)&0xFF;
+}
+
+static void set_freq_count(uint32_t k, uint8_t count)
+{
+    s_payload[(size_t)k * REC_SIZE + 30] = count;
 }
 
 /* 格→(first,count) 映射，供窗口回调和全量 grid 表共用 */
@@ -178,6 +183,30 @@ int main(void)
     compare_one("北京区域 query=40.05,116.60", 40.05, 116.60, &db);
     compare_one("query 偏南 39.60,116.80",     39.60, 116.80, &db);
     compare_one("query 压格边界 40.00,117.00",  40.00, 117.00, &db);
+
+    /* 回归：普通 nearest 的前 32 个机场都没有频率，第 33 个才有。
+     * “先 nearest 32，再逐个看 freq_count”必然漏掉它；带频率过滤的
+     * reader 查询必须在全候选扫描阶段跳过无频率机场。 */
+    memset(s_payload, 0, sizeof(s_payload));
+    s_map[0] = (cell_map_t){47096, 0, 40};
+    s_n_map = 1;
+    s_n_rec = 40;
+    for (uint32_t i = 0; i < s_n_rec; ++i)
+        put_rec(i, 40.0000 + (double)i * 0.001, 116.6000);
+    set_freq_count(35, 1);
+    build_grid();
+    db.apt_idx.n_grid = s_n_map;
+    pk_aero_near_t ordinary[PK_AERO_NEAR_MAX] = {0};
+    pk_aero_near_t with_freqs[4] = {0};
+    int n_ordinary = pk_aero_nearest_airports(
+        &db, 40.0, 116.6, ordinary, PK_AERO_NEAR_MAX,
+        PK_AERO_DIST_HAVERSINE);
+    int n_with_freqs = pk_aero_nearest_airports_with_freqs(
+        &db, 40.0, 116.6, with_freqs, 4, PK_AERO_DIST_HAVERSINE);
+    chk_int("普通 nearest 仍只返回容量内的 32 个", n_ordinary,
+            PK_AERO_NEAR_MAX);
+    chk_int("带频率 nearest 跨过前 32 个无频率机场", n_with_freqs, 1);
+    chk_int("带频率 nearest 命中第 36 条机场", (int)with_freqs[0].idx, 35);
 
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

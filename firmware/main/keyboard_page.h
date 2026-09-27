@@ -62,6 +62,12 @@ void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
                            pk_keyboard_commit_fn on_commit,
                            pk_keyboard_cancel_fn on_cancel);
 
+/* 4×4 大按键数字键盘：0–9、小数点、删除与确定。 */
+void pk_keyboard_page_open_numeric(const char *title, const char *initial,
+                                   int max_len,
+                                   pk_keyboard_commit_fn on_commit,
+                                   pk_keyboard_cancel_fn on_cancel);
+
 /* 当前是否处于编辑态。渲染与触摸的分派靠它——键盘不是独立的 pk_ui_mode_t，
  * 它是设置页之上的模态层，模式循环里不该出现一个「键盘页」。 */
 bool pk_keyboard_page_active(void);

@@ -110,16 +110,18 @@ static int  m_tck_rise, m_tck_fall;
 static int m_tckc;
 static int m_host;          /* 主机驱动值，-1 = 松手 */
 static int m_dev;           /* 器件驱动值，-1 = 不驱动 */
+static int m_keeper;        /* 器件在 TDO 后保持的上一个电平 */
 static int m_phase;         /* OScan1 包内相位 0=nTDI 1=TMS 2=TDO，-1=待对齐 */
 static int m_tdi, m_tms;
 static int m_contention;    /* 器件驱动 TMSC 期间主机还在推挽输出的次数 */
+static int m_escape_edges;  /* TCKC 为高时 TMSC 实际电平的翻转数 */
 
 /* 线上的实际电平：谁驱动听谁的，都松手就是上拉 1。 */
 static int line(void)
 {
     if (m_host >= 0) return m_host;
     if (m_dev  >= 0) return m_dev;
-    return 1;
+    return m_keeper;
 }
 
 static void cw_reset(void)
@@ -244,6 +246,12 @@ static void on_tckc_rise(void)
     }
     if (m_phase == 0)      m_tdi = !line();   /* 周期1 送的是 ~TDI */
     else if (m_phase == 1) m_tms = line();
+    else if (m_phase == 2) {
+        /* SEGGER KEEPER 说明：目标在 TDO 周期的 TCKC 上升沿释放
+         * TMSC，keeper 继续保持它在上一个下降沿输出的值。 */
+        if (m_dev >= 0) m_keeper = m_dev;
+        m_dev = -1;
+    }
 }
 
 static void on_tckc_fall(void)
@@ -264,7 +272,6 @@ static void on_tckc_fall(void)
         if (m_host >= 0) m_contention++;
     } else {
         m_phase = 0;
-        m_dev = -1;
         tap_clock(m_tms, m_tdi);
     }
 }
@@ -274,14 +281,14 @@ static void on_tckc_fall(void)
 static void model_power_off(void)
 {
     m_wake_us = -1; m_tck_rise = 0; m_tck_fall = 0;
-    m_fmt = FMT_JSCAN2; m_dev = -1; m_phase = 0;
+    m_fmt = FMT_JSCAN2; m_dev = -1; m_keeper = 1; m_phase = 0;
     cw_reset();
     t_state = S_TLR; t_ir = JTAG_IR_IDCODE;
 }
 
 void cjtag_model_pin_init(void)
 {
-    m_tckc = 0; m_host = -1; m_contention = 0;
+    m_tckc = 0; m_host = -1; m_contention = 0; m_escape_edges = 0;
     model_power_off();
 }
 
@@ -312,6 +319,7 @@ void cjtag_model_tmsc_drive(int level)
 {
     level = level ? 1 : 0;
     if (m_dev >= 0) m_contention++;   /* 器件正在驱动 TDO，主机不该推挽 */
+    if (m_tckc && m_host >= 0 && m_host != level) m_escape_edges++;
     m_host = level;
 }
 
@@ -327,6 +335,7 @@ uint32_t cjtag_test_shift_dr(uint32_t tdi, int bits);
 void     cjtag_test_goto_pause_dr(void);
 void     cjtag_test_open_and_cmd(uint8_t inert, int cp0, int cp1);
 int      cjtag_test_tap_state(void);
+void     cjtag_test_escape(int toggles);
 
 /* ══ 用例 ═════════════════════════════════════════════════════════ */
 
@@ -335,6 +344,19 @@ static void test_icemelter_wakes_jtag_domain(void)
 {
     cjtag_enter();
     CHECK(jtag_ready());
+}
+
+/* Selection escape 只允许 6–7 次 TMSC 翻转；多出第 8 次就会被 TAP.7
+ * 当成 Reset escape。这里数的是 TCKC 高电平期间的实际电平变化，
+ * 不是函数参数，专门防止收尾时强制回零偷偷多造一个边沿。 */
+static void test_selection_escape_has_exactly_seven_edges(void)
+{
+    cjtag_model_pin_init();
+    cjtag_test_escape(7);
+    CHECK(m_escape_edges == 7);
+    if (m_escape_edges != 7)
+        fprintf(stderr, "      Selection escape 实际翻转 %d 次，期望 7\n",
+                m_escape_edges);
 }
 
 /* 命令窗 + STFMT 必须真的把链路切到 OScan1，
@@ -479,6 +501,7 @@ static void test_stfmt_differs_only_in_opcode(void)
 
 int main(void)
 {
+    test_selection_escape_has_exactly_seven_edges();
     test_matches_openocd_reference();
     test_stfmt_differs_only_in_opcode();
     test_icemelter_wakes_jtag_domain();

@@ -19,7 +19,8 @@ typedef enum {
     PK_NAVICON_ABOUT = 9,   /* info  U+E88E */
     PK_NAVICON_LEVEL = 10,   /* straighten  U+E41C */
     PK_NAVICON_POWER = 11,   /* power_settings_new  U+E8AC */
-    PK_NAVICON_COUNT = 12
+    PK_NAVICON_RADIO = 12,   /* radio  U+E03E */
+    PK_NAVICON_COUNT = 13
 } pk_navicon_id_t;
 
 extern const uint8_t pk_navicon_bitmap[];

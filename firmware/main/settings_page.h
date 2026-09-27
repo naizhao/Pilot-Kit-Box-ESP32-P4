@@ -28,8 +28,7 @@
  * 手指按肌肉记忆落下去就会选反 —— 2026-09-13 实机上就误切过一次 GNSS。
  *
  * 做成共用函数而不是"两边记得写一致"：段序在 settings_draw.c 决定怎么显示、
- * 在 settings_page.c 决定怎么写入，分头各写一份迟早再次漂开。而 GNSS 这一行
- * 选反的代价是有源天线拿不到电（见 SETTINGS_ANT_GNSS_HINT），直接没星。
+ * 在 settings_page.c 决定怎么写入，分头各写一份迟早再次漂开。
  */
 #define PK_ANT_SEG_ONBOARD   0
 #define PK_ANT_SEG_EXTERNAL  1
@@ -42,6 +41,20 @@ static inline int pk_ant_seg_of(bool onboard)
 static inline bool pk_ant_seg_is_onboard(int seg)
 {
     return seg == PK_ANT_SEG_ONBOARD;
+}
+
+typedef struct {
+    uint8_t segment_count;
+    uint8_t text_line_count;
+} pk_settings_antenna_row_layout_t;
+
+/* V4.10 的 GNSS 行只有标签与两段选择器，不再渲染旧板 ECO 警告。 */
+static inline pk_settings_antenna_row_layout_t pk_settings_gnss_row_layout(void)
+{
+    return (pk_settings_antenna_row_layout_t){
+        .segment_count = 2,
+        .text_line_count = 1,
+    };
 }
 
 void pk_settings_page_render(uint16_t *fb);

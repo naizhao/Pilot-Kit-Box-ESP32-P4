@@ -976,7 +976,8 @@ void pk_traffic_page_render(uint16_t *fb)
     }
 
     /* ── 目标：算几何 → 按距离排序 → 选中跟踪(复用列表选中) ── */
-    static vis_t    s_vis[AIRCRAFT_TABLE_CAPACITY];
+    /* 仅供本帧筛选/排序，不参与 DMA；放 PSRAM 保留启动期内部堆。 */
+    static EXT_RAM_BSS_ATTR vis_t s_vis[AIRCRAFT_TABLE_CAPACITY];
     static uint32_t s_icaos[AIRCRAFT_TABLE_CAPACITY];
     int nv = 0;
     /* 被量程挡在外面的架数。空雷达时全靠它区分「按 − 就能看见」和「真的没
@@ -1041,7 +1042,8 @@ void pk_traffic_page_render(uint16_t *fb)
     } else {
         /* 先摆位再画：标签要互相避让，就必须在动笔之前知道所有目标的落点。
          * 这也是符号与标签分成两趟画的原因——一趟画完，后画的会盖住先画的。 */
-        static lbl_t s_lbls[AIRCRAFT_TABLE_CAPACITY];
+        /* 标签布局是帧内临时数据，不参与 DMA；避免 4352 B 常驻内部 .bss。 */
+        static EXT_RAM_BSS_ATTR lbl_t s_lbls[AIRCRAFT_TABLE_CAPACITY];
         for (int k = 0; k < nv; k++) {
             int tx, ty;
             target_pos(&s_vis[k], orient_eff, range_nm, &tx, &ty);

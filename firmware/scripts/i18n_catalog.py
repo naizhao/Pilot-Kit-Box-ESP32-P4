@@ -822,17 +822,6 @@ STRINGS = [
         },
     ),
     (
-        "SETTINGS_ANT_GNSS_HINT",
-        {
-            # 跟在 GNSS 天线行后面的小字，红色。v3/v4 未打 ECO 的板子上，
-            # 这两根选择线兼做偏置馈电门控且配对是反的——选中哪一路就给另一
-            # 路供电，有源天线拿不到电、收不到星。固件改不了，只能在开关旁边
-            # 把代价说清楚，否则用户切过去发现没星，只会以为是天线坏了。
-            "en": "(un-ECO'd boards: feed is inverted)",
-            "zh": "(未改板：馈电反接)",
-        },
-    ),
-    (
         "SETTINGS_DEMO_HINT",
         {
             # 跟在行标签后面的小字。必须写「模拟」两个字而不是「测试」——
@@ -1154,10 +1143,12 @@ STRINGS = [
     ("DIAG_V_BARO_ONLINE", {"en": "BMP388 online",  "zh": "BMP388 在线"}),
     ("DIAG_V_BARO_OFFLINE",{"en": "BMP388 offline", "zh": "BMP388 离线"}),
     # GPS 的五种情况指向完全不同的处理动作，措辞必须能分开：
-    # 没装 / 装了但哑了 / 天线故障 / 搜星中 / 已定位。
+    # 没装 / 装了但哑了 / 偏置电流不可判定 / 搜星中 / 已定位。
+    # ATGM336H 的 OPEN 只代表 VCC_RF 负载低于阈值；无源天线也会恒报 OPEN，
+    # 所以首页不能把它翻译成已经确认的物理“天线开路”。
     ("DIAG_V_NO_MODULE",   {"en": "no module",         "zh": "无模块"}),
     ("DIAG_V_MODULE_SILENT", {"en": "module silent >5s", "zh": "模块静默 >5s"}),
-    ("DIAG_V_ANT_OPEN",    {"en": "antenna OPEN",  "zh": "天线开路"}),
+    ("DIAG_V_ANT_OPEN",    {"en": "open/passive; indeterminate", "zh": "开路/无源，无法判定"}),
     ("DIAG_V_ANT_SHORT",   {"en": "antenna SHORT", "zh": "天线短路"}),
     ("DIAG_V_SEARCHING",   {"en": "searching...",  "zh": "搜星中..."}),
     ("DIAG_V_FIX",         {"en": "fix",           "zh": "已定位"}),
@@ -1561,5 +1552,25 @@ STRINGS = [
     # 整页取不到数据：拔卡、库还没加载完、或下标越界。仍然把页面打开并显示
     # 这一句，而不是静默不开——静默会让用户以为自己没点中那个圆圈。
     ("APTD_UNAVAILABLE", {"en": "AIRPORT DATA UNAVAILABLE",
-                          "zh": "机场数据不可用"}),
+                           "zh": "机场数据不可用"}),
+    ("APTD_AIRBAND", {"en": "AIRBAND", "zh": "航空电台"}),
+    ("APTD_MUTED", {"en": "MUTED", "zh": "静音"}),
+    ("APTD_SPEAKER_OFFLINE", {"en": "SPEAKER OFFLINE", "zh": "喇叭离线"}),
+    ("APTD_SQUELCH_CLOSED", {"en": "SQUELCH", "zh": "静噪"}),
+    ("APTD_PLAYING", {"en": "PLAYING", "zh": "播放"}),
+    ("APTD_VOLUME", {"en": "VOL", "zh": "音量"}),
+    ("AIRBAND_RF_OFFLINE", {"en": "RF OFFLINE", "zh": "射频离线"}),
+    ("AIRBAND_SPEAKER_TEST", {"en": "SPEAKER TEST", "zh": "喇叭测试"}),
+    ("AIRBAND_SPEAKER_STOP", {"en": "STOP TEST", "zh": "停止测试"}),
+    ("AIRBAND_FREQ_INPUT", {"en": "ENTER FREQ", "zh": "输入频率"}),
+    ("AIRBAND_FREQ_HINT", {"en": "118.000-137.000 MHz",
+                            "zh": "范围 118.000-137.000 MHz"}),
+    ("AIRBAND_FREQ_INVALID", {"en": "INVALID AIRBAND FREQUENCY",
+                               "zh": "频率须在 118.000-137.000 MHz"}),
+    ("AIRBAND_TEST_STARTED", {"en": "SPEAKER TEST STARTED",
+                               "zh": "喇叭测试已启动"}),
+    ("AIRBAND_TEST_STOPPED", {"en": "SPEAKER TEST STOPPED",
+                               "zh": "喇叭测试已停止"}),
+    ("AIRBAND_TEST_FAILED", {"en": "SPEAKER TEST FAILED",
+                              "zh": "喇叭测试启动失败"}),
 ]

@@ -337,10 +337,12 @@ static int nearest_generic(pk_aero_db_t *db, const pk_aero_section_t *sec,
                            const pk_aero_index_t *gi,
                            double lat, double lon,
                            pk_aero_near_t *out, int max,
-                           pk_aero_dist_mode_t mode)
+                           pk_aero_dist_mode_t mode,
+                           bool require_airport_freqs)
 {
     if (max <= 0) return 0;
     if (max > PK_AERO_NEAR_MAX) max = PK_AERO_NEAR_MAX;
+    if (require_airport_freqs && sec->rec_size <= 30u) return 0;
 
     const uint8_t *data = db->payload + sec->data_off;
     db->stats.candidates = 0;
@@ -369,6 +371,10 @@ static int nearest_generic(pk_aero_db_t *db, const pk_aero_section_t *sec,
             for (uint32_t k = 0; k < count; k++) {
                 uint32_t idx = first + k;
                 const uint8_t *r = data + (size_t)idx * sec->rec_size;
+                /* airport.freq_count 位于记录 offset 30。必须在全候选扫描时
+                 * 过滤；先取 nearest top-N 再过滤会在密集小机场区域漏掉
+                 * 稍远但真正有电台频率的机场。 */
+                if (require_airport_freqs && r[30] == 0u) continue;
                 int32_t lat_e7 = rd_i32(r);
                 int32_t lon_e7 = rd_i32(r + 4);
                 if (lat_e7 == (int32_t)PK_AERO_COORD_NONE) continue;
@@ -415,7 +421,16 @@ int pk_aero_nearest_airports(pk_aero_db_t *db, double lat, double lon,
                              pk_aero_dist_mode_t mode)
 {
     return nearest_generic(db, &db->sec_airport, &db->apt_idx,
-                           lat, lon, out, max, mode);
+                           lat, lon, out, max, mode, false);
+}
+
+int pk_aero_nearest_airports_with_freqs(pk_aero_db_t *db,
+                                        double lat, double lon,
+                                        pk_aero_near_t *out, int max,
+                                        pk_aero_dist_mode_t mode)
+{
+    return nearest_generic(db, &db->sec_airport, &db->apt_idx,
+                           lat, lon, out, max, mode, true);
 }
 
 int pk_aero_nearest_navaids(pk_aero_db_t *db, double lat, double lon,
@@ -423,7 +438,7 @@ int pk_aero_nearest_navaids(pk_aero_db_t *db, double lat, double lon,
                             pk_aero_dist_mode_t mode)
 {
     return nearest_generic(db, &db->sec_navaid, &db->nav_idx,
-                           lat, lon, out, max, mode);
+                           lat, lon, out, max, mode, false);
 }
 
 int pk_aero_nearest_fixes(pk_aero_db_t *db, double lat, double lon,
@@ -432,7 +447,7 @@ int pk_aero_nearest_fixes(pk_aero_db_t *db, double lat, double lon,
 {
     /* FIX 记录前 8 字节同样是 lat_e7/lon_e7，直接复用通用 nearest */
     return nearest_generic(db, &db->sec_fix, &db->fix_idx,
-                           lat, lon, out, max, mode);
+                           lat, lon, out, max, mode, false);
 }
 
 /* ------------------------------------------------------------------ */

@@ -20,6 +20,7 @@
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
 #include "pico/stdlib.h"
+#include "board_pins.h"
 #endif
 
 /* 本端固件版本（HELLO §4.1 携带）。装配集成点（1090 主循环接线）可
@@ -368,15 +369,27 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
 #define SPIM_PIN_CSN   13
 #define SPIM_PIN_IRQ   14
 #define SPIM_PIN_RESET 18
-/* 4 MHz = CC1312R slave 模式硬上限（TI ssi.h：FSSI >= 12×bitrate，
- * 48 MHz/12；审计 round-WP-E-1 P1-2 从 8 MHz 下调）。时钟未冻结
- * （协议 §1），台架验证后可再压。 */
-#define SPIM_HZ        4000000
+/* 1 MHz：CC1312R 当前是 48 MHz CPU 上的轮询从机，每个字节既要排空 RX
+ * FIFO 又要补 TX FIFO。4 MHz 虽满足 SSI 外设的 FSSI >= 12×bitrate
+ * 硬上限，却只给软件约 96 个 CPU 周期/字节，实板会持续得到 NO_FRAME。
+ * 1 MHz 给约 384 周期/字节，先保证无 DMA 骨架可靠闭环；以后改成 DMA/
+ * 中断后再用台架数据提高时钟。 */
+#define SPIM_HZ        1000000
 
 void spim_hw_init(void)
 {
+    /* U10 的 CCFG 把 DIO13/SUBG_SYNC 配成高有效 bootloader backdoor。
+     * 应用态不使用 DIO13，所以这里用推挽低而不是约 50 kΩ 的内部下拉：
+     * 后者在实板上不足以证明复位采样点为低，写后 CRC 虽通过，目标仍可能
+     * 留在 ROM。任何应用态复位之前都把 backdoor 强制保持为非激活低。 */
+    gpio_init(PIN_SUBG_SYNC);
+    gpio_put(PIN_SUBG_SYNC, 0);
+    gpio_set_dir(PIN_SUBG_SYNC, GPIO_OUT);
+
     spi_init(spi1, SPIM_HZ);
-    spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    /* 与同一组物理线已实机验证稳定的 CC13 ROM BSL 一致，使用 mode 3。
+     * mode 0 在应用从机上能收到部分事务但始终没有合法帧。 */
+    spi_set_format(spi1, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
     gpio_set_function(SPIM_PIN_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(SPIM_PIN_MOSI, GPIO_FUNC_SPI);
     gpio_set_function(SPIM_PIN_MISO, GPIO_FUNC_SPI);
@@ -408,6 +421,11 @@ void spim_hw_reset_pulse(void)
 static void spim_hw_transfer(const uint8_t *mosi, uint8_t *miso)
 {
     gpio_put(SPIM_PIN_CSN, 0);
+    /* CC1312R SSI slave 需要在首个 SCK 前先稳定采样 FSS。此前 CSN↓ 后
+     * 立即启动 PL022，实板从机能看到片选且能收到部分字节、无 RX 溢出，
+     * 但永远凑不满 512 B，符合首字节边界丢失后永久等待的表现。10 us
+     * 远大于器件级 setup 要求，代价只占 1 MHz 定长事务的 0.24%。 */
+    sleep_us(10);
     /* 逐字节同步收发（spi_write_read_blocking 单调用即可全双工）。 */
     spi_write_read_blocking(spi1, mosi, miso, 512);
     gpio_put(SPIM_PIN_CSN, 1);
@@ -446,11 +464,10 @@ void spim_poll(spi_master_t *m, uint32_t now_us)
     const bool irq = gpio_get(SPIM_PIN_IRQ);
     if (spi_master_next_txn(m, now_us, mosi, irq) == 0) return;
     spim_hw_transfer(mosi, miso);
-    /* 实测时基（审计 WP-E-3 P1）：CSN 拉高后取真实结束时刻——
-     * 125 MHz 外设时钟下 4 MHz 请求实际得 3.90625 MHz（分频离散），
-     * 512 B 事务 ≈1048.6 µs；从入口时间推算（+1024 常量）会把结束
-     * 时刻记早 ≥24.6 µs，吞掉 R14 的 1 ms CSN 高电平合同。digest 的
-     * 看护时基同样用实测 delta。 */
+    /* 实测时基（审计 WP-E-3 P1）：CSN 拉高后取真实结束时刻。SPI 分频
+     * 后的实际速率不应以请求值推算；从入口时间加常量会把结束时刻
+     * 记早，吞掉 R14 的 1 ms CSN 高电平合同。digest 的看护时基同样
+     * 使用实测 delta。 */
     const uint32_t end_us = time_us_32();
     spi_master_digest(m, end_us - now_us, miso);
     last_txn_end_us = end_us;

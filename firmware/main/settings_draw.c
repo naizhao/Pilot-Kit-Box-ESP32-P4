@@ -469,10 +469,6 @@ void pk_settings_page_render(uint16_t *fb)
       hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
       row++; }
 
-    /* GNSS 那一行必须带警告小字：v3/v4 未打 ECO 的板子上，这两根选择线兼做
-     * 偏置馈电门控且配对是反的——选中哪一路就给另一路供电，有源天线拿不到
-     * 电。固件改不了这件事，开关旁边就得让人看见代价，否则用户切过去发现没
-     * 星，只会以为天线坏了。配色与演示模式那句警告同一档。 */
     /* 段序：**板载在前、外置在后，与上一行 1090 完全一致**。
      *
      * 这两行原来是反的——1090 是 [板载][外置]，GNSS 是 [外置][板载]。根源是
@@ -481,26 +477,18 @@ void pk_settings_page_render(uint16_t *fb)
      * 同一个位置含义相反，手指按肌肉记忆落下去就会选反——2026-09-13 实机上
      * 就误切过一次 GNSS。
      *
-     * 这一行选反的代价格外大：按下面那句警告，未打 ECO 的板子上选中哪一路
-     * 就给另一路供电，直接收不到星。
-     *
      * 段序与 pk_settings_apply() 的 case 14 是一对约定，改一处必须改另一处。 */
     { const char *o[] = { pk_i18n_text(PK_TR_SETTINGS_ANT_ONBOARD),
                           pk_i18n_text(PK_TR_SETTINGS_ANT_EXTERNAL) };
+      const pk_settings_antenna_row_layout_t layout =
+          pk_settings_gnss_row_layout();
       const char *label = pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS);
       ROW_LABEL(row, label);
-      const int _x = draw_seg(fb, ROW_Y(row), o, 2,
+      const int _x = draw_seg(fb, ROW_Y(row), o, layout.segment_count,
                               pk_ant_seg_of(pk_ant_gnss_get() ==
                                             PK_ANT_GNSS_ONBOARD),
                               false);
-      hit_set(row, 1, _x, seg_last_w(), 2, ROW_Y(row));
-      { const int _y = ROW_Y(row);
-        if (_y > PFD_BAR_BOT - SET_ROW_H && _y < PK_DISPLAY_H + SET_ROW_H)
-            pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-                       SET_PAD + pk_aa_text_width(label, PK_UI_ITEM_SIZE) + 16,
-                       _y - PK_AA_XS_H / 2,
-                       pk_i18n_text(PK_TR_SETTINGS_ANT_GNSS_HINT),
-                       pk_rgb565(255, 90, 80), PK_AA_XS); }
+      hit_set(row, 1, _x, seg_last_w(), layout.segment_count, ROW_Y(row));
       row++; }
 
     /* 15 1090 高级 —— 动作行，跳到解调门限/扫频页。

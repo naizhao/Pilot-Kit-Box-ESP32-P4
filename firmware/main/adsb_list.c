@@ -1059,7 +1059,9 @@ void pk_adsb_list_render(uint16_t *fb)
      * 与交通页的关键差别：**没有量程过滤，也不因本机无位置而放弃**。
      * 本机位置未知时方位/距离两列显 ---，但呼号、高度、速度、航向照常显示——
      * 那些字段本来就与本机无关，一起藏掉等于白丢掉大半个页面。 */
-    static row_t s_rows[AIRCRAFT_TABLE_CAPACITY];
+    /* 每帧由 PSRAM 中的 aircraft 快照重建并排序，不参与 DMA。完整重编译时
+     * 这块 2816 B 若落入内部 .bss，会挤占 ESP-Hosted 启动 mempool。 */
+    static EXT_RAM_BSS_ATTR row_t s_rows[AIRCRAFT_TABLE_CAPACITY];
     static uint32_t s_icaos[AIRCRAFT_TABLE_CAPACITY];
     int nr = 0;
 

@@ -127,25 +127,29 @@ SWCLK/SWDIO 引脚。
 
 ### CC1312R 固件（978 MHz 前端）
 
-**有两条不同的路径**，走哪条取决于这颗芯片有没有被烧录过。搞混会浪费很多时间，
-先看清区别：
+**有两条不同的路径**，走哪条取决于 ROM 串行 bootloader 是否可达，不能只按
+“烧没烧过”判断：
 
 | 情况 | 路径 | 要外部硬件吗 |
 |---|---|---|
-| 出厂空片（从没烧过） | cJTAG 仿真器 | **要** —— 仅此一次 |
-| 之后的任何一次升级 | RP2040 经 ROM 串行 bootloader 代刷 | 不要 |
+| 出厂空片（没有合法镜像） | RP2040 经 ROM 串行 bootloader 代刷 | 不要 |
+| 有合法镜像，且实际 CCFG 的 DIO13 backdoor 可达 | RP2040 经 ROM 串行 bootloader 代刷 | 不要 |
+| 有合法/损坏镜像，但实际 CCFG 使 ROM 路径不可达 | 外部 cJTAG 恢复 | **要** |
 
-#### 为什么空片必须上仿真器
+#### 为什么空片不需要仿真器
 
-CC13x2 的 ROM 里有串行 bootloader，但它被 CCFG 管着：`BOOTLOADER_ENABLE`
-**只有**读到 `0xC5` 才算使能（TRM SWCU185G 表 11-15）。出厂空片的 CCFG 是擦除态
-全 `0xFF`，所以 bootloader 是**关**的。它是**现场升级**机制，不是**首次烧录**
-机制 —— 这也是每块 TI LaunchPad 都焊着 XDS110 的原因。
+CC13x2 TRM 规定：没有合法 flash 镜像时会自动执行 ROM 串行 bootloader。
+`IMAGE_VALID_CONF` 的擦除态不是合法镜像，而 `BL_CONFIG` 的复位值为
+`0xC5FFFFFF`，所以 `BOOTLOADER_ENABLE=0xC5`。此时 GPIO backdoor 尚未配置也
+不影响空片进入 ROM。
+
+因此，某块实板的 SSI 探测无应答不能证明“空片首刷必须上探针”；必须分别核对
+目标供电、RESET_N、接口选择/接线、SSI 时序以及目标 flash/CCFG 的真实状态。
 
 `firmware/rp2040/cjtag.c` 里有一套位脉冲 cJTAG 引擎，正是为这种情况写的，但
 **实测没有打通**（见内部交接文档）。不要围绕它安排计划。
 
-#### 路径 A —— 首次烧录，用 cJTAG 仿真器
+#### 路径 A —— ROM 路径不可达时，用 cJTAG 仿真器恢复
 
 只要支持 **cJTAG（2 线 IEEE 1149.7）** 的仿真器都行。普通 SWD/JTAG 仿真器
 **不行**：CC13x2 没有 SWD，所以 DAPLink / ST-Link / 普通 CMSIS-DAP 无论多贵都用不了。
@@ -170,7 +174,7 @@ RESET_N、正好打断仿真器的会话。恢复靠复位 RP2040。
 然后用仿真器自带的工具链（OpenOCD / UniFlash / J-Link）把
 `firmware/cc1312r/build/adsb978_cc13.bin` 烧到地址 `0x0`。
 
-#### 路径 B —— 之后的所有升级，经 RP2040
+#### 路径 B —— 空片首刷及后续升级，经 RP2040
 
 ```sh
 python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
@@ -195,10 +199,12 @@ python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
 - `BL_ENABLE` 不是 `0xC5` —— backdoor 没了，以后烧进一个起不来的固件就换不掉
 - `BL_PIN_NUMBER` 不是 13，或 `BL_LEVEL` 不是高有效 —— backdoor 挂错脚，
   或者每次上电都会触发
-- 镜像**短到根本不含 CCFG** —— 烧录会整片擦除，CCFG 区随之变成 `0xFF`，
-  后果与显式关掉一模一样
+- 镜像**短到根本不含完整 `IMAGE_VALID_CONF`/CCFG** —— 它不是可交付的完整
+  镜像，工具必须在擦除前拒绝；但若目标因强制操作或中断而保持擦除、没有合法
+  镜像，擦除态 `BL_CONFIG=0xC5FFFFFF` 仍允许 ROM 串行 bootloader 恢复
 
-以上任何一种，恢复手段都是退回路径 A：拆机、焊 QFN 引脚。所以闸门默认拒绝。
+闸门默认拒绝上述危险镜像。只有目标中已有合法镜像、且其实际 CCFG 已明确关闭
+或错配 ROM 路径时，才需要退回路径 A；单纯擦除态不应先拆机焊 cJTAG。
 
 本仓库编出来的镜像满足闸门要求，并且有构建期检查
 （`firmware/cc1312r/check_ccfg.py`）盯着，防止它静默退回 SDK 默认值 ——
@@ -208,7 +214,7 @@ SDK 默认是**禁用** bootloader 的。
 
 | 现象 | 可能原因 |
 |---|---|
-| `BSL-FAIL: 无应答` | 芯片从没被烧录过（bootloader 是关的），或当前镜像的 CCFG 把 bootloader 关掉了 → 走路径 A |
+| `BSL-FAIL: 无应答` | 尚未证明是哪一层：先查目标供电/复位、ROM SSI 接线/方向/模式/时序和目标 flash/CCFG；只有确认实际 CCFG 使 ROM 不可达后才走路径 A |
 | `BSL-FAIL: CRC32 不匹配` | 数据全写完了但校验和对不上。TRM 没写 CRC32 用的多项式，我们按标准 IEEE 802.3 实现 —— **先怀疑这个假设**，别急着怀疑 flash |
 | `BSL-FAIL: 擦除被拒` | CCFG 里 `BANK_ERASE_DIS` 被置上了 |
 | 工具还没碰串口就拒绝了 | 防砖闸门 —— 读它的提示，它会点名具体是哪个字段 |

@@ -13,9 +13,9 @@
  * 会彻底用不上——而那条通道正是这块板当初的设计意图（PINMAP 里 SUBG_SYNC
  * 就标着「sync/bootloader trigger」）。
  *
- * 2026-09-11 的处境更说明这一点：这颗是空片，CCFG 是擦除态全 0xFF，
- * BOOTLOADER_ENABLE=0xFF≠0xC5，所以 bootloader 也是关的，首刷只能上仿真器。
- * **这一次是没办法；但烧进去的这一版必须保证以后不用再来一次。**
+ * 空片是另一条路径：IMAGE_VALID_CONF 的擦除态不是合法向量地址，启动代码自动
+ * 进入 ROM bootloader；BL_CONFIG 的擦除/复位语义为 0xC5FFFFFF，命令执行已
+ * 启用，不要求外部仿真器首刷。本文件保证的是写入应用后仍保留升级 backdoor。
  *
  * 取值依据
  * --------

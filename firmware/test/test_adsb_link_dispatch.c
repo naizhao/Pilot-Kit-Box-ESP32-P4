@@ -19,6 +19,7 @@
  * its identity/position fan-out on the floor.
  */
 #include "aircraft_state.h"
+#include "adsb_link.h"
 #include "adsb_link_task.h"
 #include "config_antenna.h"
 #include "vbus_sense.h"
@@ -35,10 +36,19 @@
 #include <stdio.h>
 #include <string.h>
 
-int64_t esp_timer_get_time(void) { return 1000000; }
+static int64_t g_now_us = 1000000;
+int64_t esp_timer_get_time(void) { return g_now_us; }
 
 static bool g_gps_valid;
 static pk_gps_state_t g_gps;
+static pk_ant_gnss_t g_requested_gnss = PK_ANT_GNSS_EXTERNAL;
+static int g_apply_started;
+static int g_apply_confirmed;
+static int g_apply_failed;
+static int g_config_pending;
+static bool g_actual_known;
+static pk_ant_gnss_t g_started_source;
+static pk_ant_gnss_t g_confirmed_source[4];
 static uint32_t g_position_icao;
 static bool g_airborne_decode_called;
 static uint32_t g_airborne_icao;
@@ -58,8 +68,12 @@ bool pk_demo_enabled(void) { return false; }
  * also keeps link_tx() off the UART path entirely. */
 size_t pk_antenna_build_config_payload(uint8_t *out, size_t cap)
 {
-    (void)out; (void)cap;
-    return 0;
+    if (cap < 7) return 0;
+    out[0] = 3;
+    out[1] = ADSB_LINK_CFG_ANT_1090; out[2] = 0;
+    out[3] = ADSB_LINK_CFG_ANT_GNSS; out[4] = (uint8_t)g_requested_gnss;
+    out[5] = ADSB_LINK_CFG_THRESHOLD; out[6] = 0;
+    return 7;
 }
 
 /* adsb_link_task.c 的 RP health 日志在 v1.3 里会读 P4 本地值做回退
@@ -67,7 +81,42 @@ size_t pk_antenna_build_config_payload(uint8_t *out, size_t cap)
  * 旧版把它们写在 ESP_LOGI 的参数里，host 的 `if(0)` 日志桩会优化掉调用，
  * 所以此前不需要桩。本测试不验配置存储，给固定值即可。 */
 pk_ant_1090_t pk_ant_1090_get(void) { return PK_ANT_1090_ONBOARD; }
+pk_ant_gnss_t pk_ant_gnss_get(void) { return g_requested_gnss; }
+void pk_ant_gnss_status_get(pk_ant_gnss_status_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->requested = g_requested_gnss;
+    out->actual_known = g_actual_known;
+    out->request_pending = g_config_pending != 0;
+}
 int pk_thresh_1090_get(void) { return 0; }
+void pk_ant_gnss_apply_started(pk_ant_gnss_t source)
+{
+    ++g_apply_started;
+    ++g_config_pending;
+    g_started_source = source;
+}
+void pk_ant_gnss_apply_confirmed(pk_ant_gnss_t source)
+{
+    if (g_config_pending) --g_config_pending;
+    g_actual_known = true;
+    if (g_apply_confirmed < (int)(sizeof g_confirmed_source /
+                                  sizeof g_confirmed_source[0]))
+        g_confirmed_source[g_apply_confirmed] = source;
+    ++g_apply_confirmed;
+}
+void pk_ant_gnss_apply_failed(pk_ant_gnss_t source)
+{
+    (void)source;
+    if (g_config_pending) --g_config_pending;
+    g_actual_known = false;
+    ++g_apply_failed;
+}
+void pk_ant_config_link_reset(void)
+{
+    g_config_pending = 0;
+    g_actual_known = false;
+}
 
 void pk_rec_ingest_init(void) {}
 void pk_rec_ingest_position(uint32_t icao24, int64_t ts_ms, double lat,
@@ -92,20 +141,56 @@ float pk_demo_yaw_deg(int64_t now_us) { (void)now_us; return 0.0f; }
 int pk_demo_own_alt_ft(int64_t now_us) { (void)now_us; return 0; }
 uint32_t pk_ui_get_own_icao(void) { return 0; }
 
-void adsb_link_dec_init(void) {}
+void adsb_link_dec_init(adsb_link_dec_t *d, adsb_link_on_msg_fn cb, void *user)
+{ (void)d; (void)cb; (void)user; }
 /* adsb_link_task.c 的常驻任务循环（`while(1)` + uart_read_bytes）会调
  * adsb_link_dec_feed；本测试不编入 codec.c（否则与上面这些桩重复定义），
  * 所以必须给桩。**缺了它在 -O2 下也能链上**——那个任务函数无人引用，会被
  * 优化掉、连调用一起消失——但 -O0 或将来测试开始引用它就会暴露，属于靠
  * 优化级别维持的假通过。 */
-void adsb_link_dec_feed(void) {}
-void adsb_link_encode(void) {}
-void adsb_link_uat_uplink_decode(void) {}
+void adsb_link_dec_feed(adsb_link_dec_t *d, const uint8_t *data, size_t n)
+{ (void)d; (void)data; (void)n; }
+size_t adsb_link_encode(uint8_t *out, size_t cap, uint8_t msg_type,
+                        uint8_t seq, const uint8_t *payload, size_t payload_len)
+{
+    (void)msg_type; (void)seq; (void)payload;
+    const size_t n = payload_len + ADSB_LINK_HDR_LEN + 2;
+    if (cap < n) return 0;
+    memset(out, 0, n);
+    return n;
+}
+bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
+                                 uint8_t *rssi, uint32_t *rp_ts_us,
+                                 const uint8_t **frame)
+{
+    (void)payload; (void)len; (void)rssi; (void)rp_ts_us; (void)frame;
+    return false;
+}
 /* 本测试驱动的是分发和扫描结果表，不验字节编码（那是 test_adsb_link_codec.c
  * 的事）。config_encode 返回 0 让 link_tx 整条路径不被触发——UART 在 host
  * 上并不存在。返回类型与真声明保持一致，其余同上面几个桩的惯例。 */
-size_t adsb_link_config_encode(void) { return 0; }
-bool adsb_link_sweep_row_decode(void) { return false; }
+size_t adsb_link_config_encode(uint8_t *out, size_t cap,
+                               const adsb_link_cfg_item_t *items, uint8_t n)
+{
+    const size_t len = 1u + 2u * n;
+    if (cap < len) return 0;
+    out[0] = n;
+    for (uint8_t i = 0; i < n; i++) {
+        out[1 + 2 * i] = items[i].key;
+        out[2 + 2 * i] = items[i].val;
+    }
+    return len;
+}
+bool adsb_link_sweep_row_decode(const uint8_t *payload, size_t len,
+                                uint8_t *idx, uint8_t *total,
+                                uint8_t *permille_val, uint16_t *level_mv,
+                                uint32_t *frames, uint32_t *pre,
+                                uint32_t *noise, uint32_t *ovr)
+{
+    (void)payload; (void)len; (void)idx; (void)total; (void)permille_val;
+    (void)level_mv; (void)frames; (void)pre; (void)noise; (void)ovr;
+    return false;
+}
 void cpr_init(void) {}
 bool cpr_decode_position(uint32_t icao24, int fflag, bool is_surface,
                          int lat_cpr, int lon_cpr, int64_t now_us,
@@ -395,6 +480,95 @@ static void test_sweep_running_state(void)
           "收满 9/9 后应自动收尾，不该还显示『扫描中』\n");
 }
 
+static void dispatch_ack(uint8_t applied, uint8_t rejected)
+{
+    adsb_link_msg_t m = { .type = ADSB_LINK_MSG_CONFIG_ACK,
+                          .payload_len = 2 };
+    m.payload[0] = applied;
+    m.payload[1] = rejected;
+    pk_adsb_link_test_dispatch(&m);
+}
+
+/* 请求值只是 P4 的意图。只有与已发送完整 CONFIG_REQ 对应、且 3 项全接受的
+ * ACK 才能把 GNSS 来源升级为“RP2040 已确认实际生效”。 */
+static void test_gnss_actual_source_requires_matching_ack(void)
+{
+    g_apply_started = g_apply_confirmed = g_apply_failed = 0;
+    g_config_pending = 0;
+    g_actual_known = false;
+
+    /* 链路锁还没建立，实际一字节都没发；不得进入“正在切换”。 */
+    g_requested_gnss = PK_ANT_GNSS_ONBOARD;
+    pk_adsb_link_push_config();
+    CHECK(g_apply_started == 0 && g_apply_confirmed == 0,
+          "未发送的请求不得改变实际来源状态\n");
+
+    pk_adsb_link_start();
+    pk_adsb_link_push_config();
+    CHECK(g_apply_started == 1 && g_started_source == PK_ANT_GNSS_ONBOARD,
+          "成功发送完整配置后应进入 ONBOARD pending\n");
+    dispatch_ack(3, 0);
+    CHECK(g_apply_confirmed == 1 &&
+          g_confirmed_source[0] == PK_ANT_GNSS_ONBOARD,
+          "3/0 ACK 应确认发送时快照 ONBOARD\n");
+
+    pk_adsb_link_push_config();
+    dispatch_ack(2, 1);
+    CHECK(g_apply_confirmed == 1 && g_apply_failed == 1,
+          "有 rejected 的 ACK 不得确认实际来源\n");
+
+    /* 两个在途请求必须按发送快照 FIFO 对应，不能在 ACK 时重读最新请求值。 */
+    g_requested_gnss = PK_ANT_GNSS_EXTERNAL;
+    pk_adsb_link_push_config();
+    g_requested_gnss = PK_ANT_GNSS_ONBOARD;
+    pk_adsb_link_push_config();
+    dispatch_ack(3, 0);
+    dispatch_ack(3, 0);
+    CHECK(g_confirmed_source[1] == PK_ANT_GNSS_EXTERNAL &&
+          g_confirmed_source[2] == PK_ANT_GNSS_ONBOARD,
+          "ACK 必须确认发送时 FIFO 快照，不得两次都读成最新请求\n");
+
+    /* SWEEP 也是 CONFIG_REQ/ACK，但只有一项；其 ACK 不得误认成天线确认。 */
+    pk_sweep_start();
+    dispatch_ack(1, 0);
+    CHECK(g_apply_confirmed == 3,
+          "扫描 ACK 不得冒充 GNSS 配置确认\n");
+}
+
+/* P4 单独复位/刷机时，RP2040 不会复位，可能已经处于 linked 状态而不再发
+ * HELLO。此时第一帧普通数据必须触发完整配置重下发，否则 actual 永远未知，
+ * 新的 GNSS 来源门控会永久拒绝定位。 */
+static void test_link_data_reapplies_config_when_p4_missed_hello(void)
+{
+    g_apply_started = g_apply_confirmed = g_apply_failed = 0;
+    g_config_pending = 0;
+    g_actual_known = false;
+    g_requested_gnss = PK_ANT_GNSS_EXTERNAL;
+
+    adsb_link_msg_t health = {
+        .type = ADSB_LINK_MSG_HEALTH_STATS,
+        .payload_len = 40,
+    };
+    pk_adsb_link_test_dispatch(&health);
+    CHECK(g_apply_started == 1 && g_config_pending == 1,
+          "已 linked 的 RP 首帧数据应补发配置，不能依赖 HELLO\n");
+
+    pk_adsb_link_test_dispatch(&health);
+    CHECK(g_apply_started == 1,
+          "等待 ACK 期间普通数据不得重复塞入配置请求\n");
+
+    /* UART 协议不重传；ACK 丢失后若永远把 pending 当成活请求，GNSS 会永久
+     * 拒绝定位。持续收到 HEALTH 证明 RP 在线，超时后必须清会话并重发。 */
+    g_now_us += 3000000;
+    pk_adsb_link_test_dispatch(&health);
+    CHECK(g_apply_started == 2 && g_config_pending == 1,
+          "CONFIG_ACK 丢失后应在普通在线帧驱动下超时重发\n");
+
+    dispatch_ack(3, 0);
+    CHECK(g_apply_confirmed == 1 && g_actual_known && g_config_pending == 0,
+          "补发配置的 3/0 ACK 应确认实际 GNSS 来源\n");
+}
+
 int main(void)
 {
     /* adsb_link_task.c registers this production sink with modes_ingest_init()
@@ -406,6 +580,8 @@ int main(void)
     test_tc20_position_reaches_airborne_cpr();
     test_sweep_table();
     test_sweep_running_state();
+    test_gnss_actual_source_requires_matching_ack();
+    test_link_data_reapplies_config_when_p4_missed_hello();
 
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);

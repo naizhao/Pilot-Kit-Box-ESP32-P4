@@ -6,9 +6,16 @@
 typedef enum {
     PK_GPS_ANT_UNKNOWN = 0,
     PK_GPS_ANT_OK,
-    PK_GPS_ANT_OPEN,           /* 天线开路：没接 / 馈电断 / 有源天线没供上电 */
+    PK_GPS_ANT_OPEN,           /* VCC_RF 低负载：无源/未接/偏置链异常均可能 */
     PK_GPS_ANT_SHORT,          /* 天线短路：保护启动 */
 } pk_gps_ant_t;
+
+/* RP2040 实际控制 U17；这里记录的是由 CONFIG_ACK 确认过的实际来源，不是
+ * P4/NVS 里的用户请求。两边枚举值刻意与 CONFIG_REQ 的 val 一致。 */
+typedef enum {
+    PK_GPS_SOURCE_EXTERNAL = 0,
+    PK_GPS_SOURCE_ONBOARD  = 1,
+} pk_gps_ant_source_t;
 
 #define PK_GPS_SNR_MAX  32     /* AT6558 32 通道，SNR 列表上限 */
 
@@ -84,7 +91,12 @@ typedef struct {
     uint8_t      snr_con[PK_GPS_SNR_MAX]; /* 与 snr[] 平行：pk_gnss_t 星座 ID */
     int          snr_count;        /* snr[]/snr_con[] 有效个数 */
     float        hdop;         /* GGA 水平精度因子；无星时模块报 25.5 */
-    pk_gps_ant_t ant_status;   /* 天线自检 */
+    pk_gps_ant_t ant_status;   /* 模块原始天线电流状态，不等同于定位/天线存在 */
+    int64_t      ant_status_us;/* 收到对应 GPTXT 的时刻；0 = 尚未收到/切换后待更新 */
+    pk_gps_ant_source_t ant_source; /* 仅 ant_source_confirmed=true 时有效 */
+    bool         ant_source_confirmed; /* RP CONFIG_ACK 已确认完整配置生效 */
+    uint32_t     ant_source_epoch; /* 每次开始切换递增；旧 RF 证据不可跨 epoch */
+    int64_t      ant_source_since_us; /* 当前 epoch 起点；诊断/日志原始证据 */
 
     /* --- 模块自身 RTC 的走时证据（2026-09-13，为「GNSS VBAT 常供电」方案取证） ---
      *
@@ -119,6 +131,17 @@ void pk_gps_start(void);
  * 先调它；host 测试直接调它来重置世界，不必去碰 UART。 */
 void pk_gps_state_init(void);
 
+/* CONFIG_REQ 真正写入 UART 前调用：进入来源未确认的新 epoch，清除 fix、
+ * GGA/GSV/SNR/TXT 等全部 RF 证据。ACK 前收到的 RF 证据不采信。 */
+void pk_gps_antenna_switch_started(void);
+
+/* 完整 CONFIG_REQ 收到 applied=3/rejected=0 的匹配 ACK 后调用。确认动作本身
+ * 不复活 ACK 前的 NMEA；只有之后到达的新句子才属于该来源。 */
+void pk_gps_antenna_source_confirmed(pk_gps_ant_source_t source);
+
+/* 兼容旧调用名：语义等同 switch_started，不代表实际来源已经改变。 */
+void pk_gps_antenna_selection_changed(void);
+
 /*
  * 喂一整行已经组装好的 NMEA 句子（不含 \r\n）。UART 任务拼完一行之后调用的
  * 就是这个函数——测试因此跑的是**生产解析链路本身**，不是它的复制品。
@@ -128,6 +151,12 @@ void pk_gps_state_init(void);
  * 非重入（与 gps_nmea 同一约定）：固件侧只有 gps 任务这一个消费者。
  */
 void pk_gps_feed_line(const char *line);
+
+/* UART 任务在开始消费一批字节时绑定来源 epoch，并用此入口提交完整行；若
+ * 切换/确认已推进 epoch，该行的 RF 证据会被拒绝。公开仅为生产任务与 host
+ * 竞态测试共用，普通调用方继续使用 pk_gps_feed_line()。 */
+uint32_t pk_gps_antenna_epoch(void);
+void pk_gps_feed_line_for_epoch(const char *line, uint32_t source_epoch);
 
 /*
  * Snapshot current GPS state into *out. Returns out->have_fix.

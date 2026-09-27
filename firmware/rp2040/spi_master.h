@@ -144,7 +144,7 @@ void spi_master_reset_done(spi_master_t *m, uint32_t now_us);
 
 /* ── 目标端胶水（host 测试不编译；实现见 spi_master.c 目标区）────── */
 
-/* 硬件初始化：SPI1（GPIO10-13，mode 0，SPIM_HZ）、CSN/RESET/IRQ GPIO。 */
+/* 硬件初始化：SPI1（GPIO10-13，mode 3，SPIM_HZ）、CSN/RESET/IRQ GPIO。 */
 void spim_hw_init(void);
 
 /* 单步轮询（core0 主循环调用；now_us 用 time_us_32()）：采样 IRQ →

@@ -18,8 +18,8 @@
  *         │ [TWR] GUANGZHOU TOWER              118.250            │ 44
  *   y=480 └───────────────────────────────────────────────────────┘
  *
- * 为什么行高不按 9 mm 触摸下限来：这一页的列表行**不是触摸目标**。全页只有
- * 三个可点的东西（BACK / SHOW ON MAP / 滚动），它们各自够大。把跑道行也撑到
+ * 为什么行高不按 9 mm 触摸下限来：跑道行不是触摸目标；频率行则整行可点，
+ * 44 px 在本机 4.3 英寸横屏上由连续行共同形成足够大的命中带。把跑道行也撑到
  * 76 px 只会让 ZGGG 那 10 条方向占掉 760 px、白白多滚一屏。
  *
  * 为什么跑道行是两行：一条方向要同时说清楚"多长多宽""什么道面""磁航向多少"
@@ -31,6 +31,7 @@
  * 列表行不可点，也就不需要每帧把几何留下来。
  */
 #include "apt_detail_page.h"
+#include "airband_frequency_input.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -187,6 +188,34 @@ void pk_apt_format_freq(char *out, size_t cap, uint32_t freq_khz)
              (unsigned long)(freq_khz / 1000u), (unsigned long)(freq_khz % 1000u));
 }
 
+bool pk_apt_airband_frequency_hz(uint32_t freq_khz, uint32_t *out_hz)
+{
+    return pk_airband_channel_to_carrier_hz(freq_khz, out_hz);
+}
+
+int pk_apt_freq_index_at(int screen_y, int scroll_px, int runway_count,
+                         int frequency_count, bool dragged)
+{
+    enum {
+        LIST_TOP = 48,
+        PLAYER_TOP = 432,
+        HEAD_H = 96,
+        SECTION_H = 28,
+        RUNWAY_H = 56,
+        EMPTY_H = 64,
+        FREQ_H = 44,
+    };
+    if (dragged || runway_count < 0 || frequency_count <= 0 ||
+        scroll_px < 0 || screen_y < LIST_TOP || screen_y >= PLAYER_TOP)
+        return -1;
+    const int first_y = LIST_TOP - scroll_px + HEAD_H + SECTION_H +
+                        (runway_count > 0 ? runway_count * RUNWAY_H : EMPTY_H) +
+                        SECTION_H;
+    if (screen_y < first_y) return -1;
+    const int index = (screen_y - first_y) / FREQ_H;
+    return index < frequency_count ? index : -1;
+}
+
 bool pk_apt_rwy_bearing_deg(const pk_apt_rwy_item_t *r, int *out_deg)
 {
     if (r == NULL || !r->has_bearing) return false;
@@ -204,6 +233,7 @@ bool pk_apt_rwy_bearing_deg(const pk_apt_rwy_item_t *r, int *out_deg)
  * ═══════════════════════════════════════════════════════════════════ */
 
 #include "display.h"
+#include "airband.h"
 #include "geo.h"
 #include "i18n.h"
 #include "keyboard_page.h"
@@ -262,7 +292,9 @@ static const char *TAG = "aptdetail";
 
 #define APTD_HDR_H      PFD_BAR_BOT                 /* 48，与各页顶栏同高 */
 #define APTD_LIST_TOP   APTD_HDR_H
-#define APTD_VIEW_H     (PK_DISPLAY_H - APTD_LIST_TOP)   /* 432 */
+#define APTD_PLAYER_H   48
+#define APTD_PLAYER_TOP (PK_DISPLAY_H - APTD_PLAYER_H)
+#define APTD_VIEW_H     (APTD_PLAYER_TOP - APTD_LIST_TOP) /* 384 */
 
 #define APTD_PAD        PK_UI_PAD_L                 /* 16 */
 #define APTD_R          (PK_DISPLAY_W - PK_UI_PAD_L) /* 784 */
@@ -310,6 +342,13 @@ static const char *TAG = "aptdetail";
 
 #define APTD_DRAG_SLOP  12
 
+#define APTD_MUTE_X0    480
+#define APTD_MUTE_X1    584
+#define APTD_VOL_DEC_X0 592
+#define APTD_VOL_DEC_X1 648
+#define APTD_VOL_INC_X0 728
+#define APTD_VOL_INC_X1 784
+
 /* ── 屏上文案（全部走 i18n catalog）────────────────────────────────
  * 词条与翻译理由写在 firmware/scripts/i18n_catalog.py 的「机场详情页」那一段
  * （含宽度账与"哪些缩写不译"的清单）。这里只留取词的短别名。 */
@@ -324,6 +363,12 @@ static const char *TAG = "aptdetail";
 #define TXT_NO_RWY      pk_i18n_text(PK_TR_APTD_NO_RUNWAY)
 #define TXT_NO_FREQ     pk_i18n_text(PK_TR_APTD_NO_FREQ)
 #define TXT_UNAVAIL     pk_i18n_text(PK_TR_APTD_UNAVAILABLE)
+#define TXT_AIRBAND     pk_i18n_text(PK_TR_APTD_AIRBAND)
+#define TXT_MUTED       pk_i18n_text(PK_TR_APTD_MUTED)
+#define TXT_SPK_OFFLINE pk_i18n_text(PK_TR_APTD_SPEAKER_OFFLINE)
+#define TXT_SQL_CLOSED  pk_i18n_text(PK_TR_APTD_SQUELCH_CLOSED)
+#define TXT_PLAYING     pk_i18n_text(PK_TR_APTD_PLAYING)
+#define TXT_VOLUME      pk_i18n_text(PK_TR_APTD_VOLUME)
 
 /* ── 页面数据（打开那一刻拷进来，之后每帧只读）────────────────────
  *
@@ -657,6 +702,63 @@ static void draw_freq_row(uint16_t *fb, int y, const pk_apt_freq_item_t *f)
                      y + APTD_FREQ_H, col_line());
 }
 
+static void draw_airband_player(uint16_t *fb)
+{
+    pk_airband_control_status_t ctl = {0};
+    pk_airband_state_t state = {0};
+    const bool have_ctl = pk_airband_control_get(&ctl);
+    const bool have_state = pk_airband_get(&state);
+    const uint32_t hz = have_ctl ? ctl.requested_hz
+                                 : have_state ? state.frequency_hz : 0;
+    const uint32_t display_khz = have_ctl && ctl.requested_channel_khz != 0
+                                     ? ctl.requested_channel_khz
+                                     : hz / 1000u;
+
+    pk_pfd_fill_rect(fb, 0, APTD_PLAYER_TOP, PK_DISPLAY_W, PK_DISPLAY_H,
+                     pk_rgb565(15, 22, 32));
+    pk_pfd_fill_rect(fb, 0, APTD_PLAYER_TOP, PK_DISPLAY_W,
+                     APTD_PLAYER_TOP + 1, col_apt());
+
+    char label[40];
+    if (hz != 0) {
+        snprintf(label, sizeof(label), "%s %lu.%03lu",
+                 TXT_AIRBAND, (unsigned long)(display_khz / 1000u),
+                 (unsigned long)(display_khz % 1000u));
+    } else {
+        snprintf(label, sizeof(label), "%s ---.---", TXT_AIRBAND);
+    }
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, APTD_PAD,
+               APTD_PLAYER_TOP + 14, label, col_txt(), PK_AA_S);
+
+    const char *status = !have_state || !state.online
+                           ? pk_i18n_text(PK_TR_AIRBAND_RF_OFFLINE)
+                       : !state.speaker_online ? TXT_SPK_OFFLINE
+                       : have_ctl && ctl.speaker_muted ? TXT_MUTED
+                       : state.squelch_enabled && !state.squelch_open
+                             ? TXT_SQL_CLOSED : TXT_PLAYING;
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 260,
+               APTD_PLAYER_TOP + 15, status,
+               have_state && state.speaker_online ? col_apt() : col_amber(),
+               PK_AA_XS);
+
+    draw_button(fb, APTD_MUTE_X0, APTD_PLAYER_TOP + 5,
+                APTD_MUTE_X1 - APTD_MUTE_X0, 38, TXT_MUTED,
+                have_ctl && ctl.speaker_muted ? col_apt() : col_panel(),
+                col_txt(), PK_AA_XS);
+    draw_button(fb, APTD_VOL_DEC_X0, APTD_PLAYER_TOP + 5,
+                APTD_VOL_DEC_X1 - APTD_VOL_DEC_X0, 38, "-",
+                col_panel(), col_txt(), PK_AA_M);
+    snprintf(label, sizeof(label), "%s %u", TXT_VOLUME,
+             have_ctl ? (unsigned)ctl.speaker_volume : 0u);
+    const int vw = pk_aa_text_width(label, PK_AA_XS);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               APTD_VOL_DEC_X1 + (APTD_VOL_INC_X0 - APTD_VOL_DEC_X1 - vw) / 2,
+               APTD_PLAYER_TOP + 15, label, col_txt(), PK_AA_XS);
+    draw_button(fb, APTD_VOL_INC_X0, APTD_PLAYER_TOP + 5,
+                APTD_VOL_INC_X1 - APTD_VOL_INC_X0, 38, "+",
+                col_panel(), col_txt(), PK_AA_M);
+}
+
 void pk_apt_detail_page_render(uint16_t *fb)
 {
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, col_bg());
@@ -698,11 +800,13 @@ void pk_apt_detail_page_render(uint16_t *fb)
         const int tx = PK_DISPLAY_W - 6;
         const int bar_h = APTD_VIEW_H * APTD_VIEW_H / s_content_h;
         const int bar_y = APTD_LIST_TOP + s_scroll * APTD_VIEW_H / s_content_h;
-        pk_pfd_fill_rect(fb, tx, APTD_LIST_TOP, tx + 3, PK_DISPLAY_H,
+        pk_pfd_fill_rect(fb, tx, APTD_LIST_TOP, tx + 3, APTD_PLAYER_TOP,
                          pk_rgb565(30, 38, 50));
         pk_pfd_fill_rect(fb, tx, bar_y, tx + 3, bar_y + bar_h,
                          pk_rgb565(120, 135, 155));
     }
+
+    draw_airband_player(fb);
 
     /* 顶栏最后画：内容从它底下滑过去，而不是压在上面。 */
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, APTD_LIST_TOP, col_bg());
@@ -936,9 +1040,41 @@ void pk_apt_detail_page_touch_up(void)
     if (y < APTD_HDR_H) {
         if (x < APTD_BACK_HIT_X1)          pk_apt_detail_page_close();
         else if (x >= APTD_MAP_HIT_X0 && s_d.valid) goto_map();
+        return;
     }
-    /* 列表区没有可点的行——这一页是只读的。点空白什么都不做，而不是顺手
-     * 关页：那会让"想滚但没滑够 12 px"变成"页面自己关了"。 */
+
+    if (y >= APTD_PLAYER_TOP) {
+        pk_airband_control_status_t ctl = {0};
+        if (!pk_airband_control_get(&ctl)) return;
+        if (x >= APTD_MUTE_X0 && x < APTD_MUTE_X1) {
+            pk_airband_set_speaker_muted(!ctl.speaker_muted);
+        } else if (x >= APTD_VOL_DEC_X0 && x < APTD_VOL_DEC_X1) {
+            pk_airband_set_speaker_volume(ctl.speaker_volume > 5
+                                              ? ctl.speaker_volume - 5 : 0);
+        } else if (x >= APTD_VOL_INC_X0 && x < APTD_VOL_INC_X1) {
+            pk_airband_set_speaker_volume(ctl.speaker_volume < 95
+                                              ? ctl.speaker_volume + 5 : 100);
+        }
+        return;
+    }
+
+    if (s_d.valid) {
+        const int index = pk_apt_freq_index_at(y, s_press_scroll, s_d.n_rwy,
+                                                s_d.n_freq, false);
+        uint32_t hz = 0;
+        if (index >= 0 &&
+            pk_apt_airband_frequency_hz(s_d.freq[index].freq_khz, &hz)) {
+            const bool tuned = pk_airband_set_channel(
+                s_d.freq[index].freq_khz);
+#ifndef PK_SIM_BUILD
+            ESP_LOGI(TAG, "airport frequency row %d: %lu kHz -> %s",
+                     index, (unsigned long)s_d.freq[index].freq_khz,
+                     tuned ? "tuned" : "rejected");
+#else
+            (void)tuned;
+#endif
+        }
+    }
 }
 
 /* ── 真机自检（见 apt_detail_page.h 的 PK_APT_DETAIL_SMOKE）────────

@@ -72,6 +72,15 @@ static void feed(const char *body)
     pk_gps_feed_line(line);
 }
 
+static void feed_for_epoch(const char *body, uint32_t source_epoch)
+{
+    char line[128];
+    unsigned char ck = 0;
+    for (const char *p = body; *p; ++p) ck ^= (unsigned char)*p;
+    snprintf(line, sizeof(line), "$%s*%02X", body, ck);
+    pk_gps_feed_line_for_epoch(line, source_epoch);
+}
+
 /* 一条有效定位 RMC：status='A'，31°00.0000'N 121°00.0000'E，5 kt，航迹 90°。 */
 static void feed_valid_rmc(void)
 {
@@ -88,6 +97,9 @@ static void reset(int64_t t0)
 {
     g_now_us = t0;
     pk_gps_state_init();
+    /* 绝大多数测试关心 NMEA 解析，不关心 CONFIG_ACK；给它们一个已确认来源。
+     * 专门的 epoch 测试会在此基础上主动开始下一次切换。 */
+    pk_gps_antenna_source_confirmed(PK_GPS_SOURCE_EXTERNAL);
 }
 
 /* 基线：刚收到有效 RMC 时必须有 fix，且经纬度落地正确。
@@ -221,6 +233,83 @@ static void test_time_lock_not_implied_by_position_fix(void)
     CHECK(!g.time_locked, "没有 PPS 时不得声称时间锁定\n");
 }
 
+/* 切换 RF 支路后，上一根天线的 GPTXT 状态必须立刻失效。否则外置天线曾报
+ * OK，切到断路的板载支路后，在模块下一条状态到来前 UI 仍会谎报 OK。 */
+static void test_antenna_state_clears_on_source_change(void)
+{
+    pk_gps_state_t g;
+    reset(100000000);
+    feed("GPTXT,01,01,01,ANTENNA OPEN");
+    pk_gps_get(&g);
+    CHECK(g.ant_status == PK_GPS_ANT_OPEN,
+          "前置条件：应解析模块原始 OPEN，got=%d\n", (int)g.ant_status);
+    CHECK(g.ant_status_us == g_now_us,
+          "GPTXT 时间戳应落地，got=%lld want=%lld\n",
+          (long long)g.ant_status_us, (long long)g_now_us);
+
+    pk_gps_antenna_selection_changed();
+    pk_gps_get(&g);
+    CHECK(g.ant_status == PK_GPS_ANT_UNKNOWN,
+          "切换后旧支路状态必须清为 UNKNOWN，got=%d\n", (int)g.ant_status);
+    CHECK(g.ant_status_us == 0,
+          "切换后旧 GPTXT 时间戳必须清零，got=%lld\n",
+          (long long)g.ant_status_us);
+}
+
+/* 天线开关不在 P4 上：CONFIG_REQ 发出到 CONFIG_ACK 回来之间，P4 不知道
+ * RP2040 已经切到哪一路。这个窗口内旧 fix/SNR/TXT 不能继续挂到用户刚点的
+ * 新来源上，新到的 RF 证据也不能在来源尚未确认时被采信。 */
+static void test_rf_evidence_isolated_by_confirmed_source_epoch(void)
+{
+    pk_gps_state_t g;
+    reset(100000000);
+
+    pk_gps_antenna_source_confirmed(PK_GPS_SOURCE_EXTERNAL);
+    feed_valid_rmc();
+    feed("GPTXT,01,01,01,ANTENNA OK");
+    CHECK(pk_gps_get(&g), "前置条件：外置来源确认后应能取得 fix\n");
+    CHECK(g.ant_source_confirmed && g.ant_source == PK_GPS_SOURCE_EXTERNAL,
+          "前置条件：来源应为已确认 EXT\n");
+    const uint32_t external_epoch = g.ant_source_epoch;
+
+    pk_gps_antenna_switch_started();
+    CHECK(!pk_gps_get(&g), "切换开始后旧 fix 必须立即失效\n");
+    CHECK(!g.ant_source_confirmed,
+          "ACK 前不得把请求来源冒充成实际来源\n");
+    CHECK(g.ant_status == PK_GPS_ANT_UNKNOWN && g.snr_count == 0,
+          "切换开始后旧 TXT/SNR 必须清空 (ant=%d snr=%d)\n",
+          (int)g.ant_status, g.snr_count);
+    CHECK(g.ant_source_epoch > external_epoch,
+          "切换开始必须推进来源 epoch，隔离旧证据\n");
+    const uint32_t pending_epoch = g.ant_source_epoch;
+
+    /* 模块 NMEA 与 RP ACK 走不同 UART；ACK 前飘来的句子来源不可证明。 */
+    feed_valid_rmc();
+    feed("GPTXT,01,01,01,ANTENNA OK");
+    CHECK(!pk_gps_get(&g), "来源未确认时新 RMC 也不得被采信为 fix\n");
+    CHECK(g.ant_status == PK_GPS_ANT_UNKNOWN,
+          "来源未确认时 GPTXT 不得落成新来源状态\n");
+
+    pk_gps_antenna_source_confirmed(PK_GPS_SOURCE_ONBOARD);
+    CHECK(!pk_gps_get(&g), "确认切换本身不能复活 ACK 前的 RMC\n");
+    CHECK(g.ant_source_confirmed && g.ant_source == PK_GPS_SOURCE_ONBOARD,
+          "ACK 后实际来源应为已确认 ONBOARD\n");
+    CHECK(g.ant_source_epoch > pending_epoch,
+          "确认来源必须再推进 epoch，隔离 ACK 前已缓冲字节\n");
+
+    /* 两类旧字节都可能还在 UART RX 环或本地半行里：切换前进入的，以及
+     * CONFIG_REQ→ACK 窗口进入的。即使此刻已经 confirmed，也不得归到新源。 */
+    feed_for_epoch("GPRMC,123519,A,3100.0000,N,12100.0000,E,5.0,90.0,230326,,",
+                   external_epoch);
+    feed_for_epoch("GPTXT,01,01,01,ANTENNA OK", pending_epoch);
+    CHECK(!pk_gps_get(&g), "旧 epoch 的缓冲 RMC 不得落到新来源\n");
+    CHECK(g.ant_status == PK_GPS_ANT_UNKNOWN,
+          "ACK 前 epoch 的缓冲 TXT 不得落到新来源\n");
+
+    feed_valid_rmc();
+    CHECK(pk_gps_get(&g), "确认来源后的新 RMC 应恢复 fix\n");
+}
+
 int main(void)
 {
     test_fresh_rmc_gives_fix();
@@ -230,6 +319,8 @@ int main(void)
     test_gga_altitude_expires_independently();
     test_fix_recovers_after_new_rmc();
     test_time_lock_not_implied_by_position_fix();
+    test_antenna_state_clears_on_source_change();
+    test_rf_evidence_isolated_by_confirmed_source_epoch();
 
     if (g_fail == 0) { printf("test_gps_fix_freshness: all OK\n"); return 0; }
     printf("test_gps_fix_freshness: %d FAIL\n", g_fail);

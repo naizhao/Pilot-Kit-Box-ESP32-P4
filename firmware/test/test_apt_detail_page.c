@@ -1,7 +1,8 @@
 /* test_apt_detail_page.c — host proof for 机场详情页的纯函数区
  * （频率业务序 / 服务与道面缩写 / kHz→MHz / 跑道哨兵处置）。
  *   cc -std=c11 -Wall -Wextra -O2 -I firmware/main -DPK_APT_DETAIL_HOST_TEST \
- *      -o /tmp/test_apt firmware/test/test_apt_detail_page.c && /tmp/test_apt
+ *      -o /tmp/test_apt firmware/test/test_apt_detail_page.c \
+ *      firmware/main/airband_frequency_input.c && /tmp/test_apt
  *
  * 同 test_pk_aero_layer.c / test_search_page.c 的翻译单元惯例：把被测 .c
  * 直接拉进来，用 PK_APT_DETAIL_HOST_TEST 切掉要 IDF 的渲染与触摸两段。
@@ -173,7 +174,75 @@ static void test_format_freq(void)
     pk_apt_format_freq(b, 0, 118250);
 }
 
-/* ── 4) 跑道的哨兵处置 ────────────────────────────────────────── */
+/* ── 4) 可调航空频率与滚动后的行命中 ─────────────────────────── */
+
+static void test_airband_frequency_selection(void)
+{
+    uint32_t hz = 0xA5A5A5A5u;
+    chk_true("118.000 下边界可调",
+             pk_apt_airband_frequency_hz(118000u, &hz));
+    chk_int("118.000 精确换算", (int)hz, 118000000);
+    chk_true("137.000 上边界可调",
+             pk_apt_airband_frequency_hz(137000u, &hz));
+    chk_int("137.000 精确换算", (int)hz, 137000000);
+    chk_true("118.275 可调",
+             pk_apt_airband_frequency_hz(118275u, &hz));
+    chk_int("118.275 精确换算", (int)hz, 118275000);
+    chk_true("118.010 的 8.33 kHz 频道可调",
+             pk_apt_airband_frequency_hz(118010u, &hz));
+    chk_int("118.010 映射实际载频", (int)hz, 118008330);
+
+    hz = 0x5A5A5A5Au;
+    chk_true("NDB 375 kHz 不能送进 AIRBAND",
+             !pk_apt_airband_frequency_hz(375u, &hz));
+    chk_true("下边界外拒绝",
+             !pk_apt_airband_frequency_hz(117999u, &hz));
+    chk_true("上边界外拒绝",
+             !pk_apt_airband_frequency_hz(137001u, &hz));
+    chk_true("118.896 非频道值拒绝",
+             !pk_apt_airband_frequency_hz(118896u, &hz));
+    chk_true("118.020 省略频道标识拒绝",
+             !pk_apt_airband_frequency_hz(118020u, &hz));
+    chk_true("溢出输入拒绝",
+             !pk_apt_airband_frequency_hz(UINT32_MAX, &hz));
+    chk_true("无出参拒绝",
+             !pk_apt_airband_frequency_hz(121500u, NULL));
+    chk_int("拒绝时不改出参", (int)hz, (int)0x5A5A5A5Au);
+}
+
+static void test_frequency_row_hit_after_scroll(void)
+{
+    /* 2 条跑道时首个频率行顶边：48+96+28+2*56+28 = 312。 */
+    chk_int("首行上方不命中",
+            pk_apt_freq_index_at(311, 0, 2, 3, false), -1);
+    chk_int("首行顶边命中 0",
+            pk_apt_freq_index_at(312, 0, 2, 3, false), 0);
+    chk_int("首行底部仍命中 0",
+            pk_apt_freq_index_at(355, 0, 2, 3, false), 0);
+    chk_int("第二行顶边命中 1",
+            pk_apt_freq_index_at(356, 0, 2, 3, false), 1);
+    chk_int("第三行可见部分命中 2",
+            pk_apt_freq_index_at(431, 0, 2, 3, false), 2);
+    chk_int("播放器覆盖区不命中",
+            pk_apt_freq_index_at(432, 0, 2, 3, false), -1);
+
+    /* 滚动 150 px 后首行顶边变成 162；206 落在第二行。 */
+    chk_int("滚动后内容坐标命中",
+            pk_apt_freq_index_at(206, 150, 2, 3, false), 1);
+    chk_int("拖动结算不调台",
+            pk_apt_freq_index_at(206, 150, 2, 3, true), -1);
+    chk_int("负跑道数拒绝",
+            pk_apt_freq_index_at(206, 0, -1, 3, false), -1);
+    chk_int("空频率表拒绝",
+            pk_apt_freq_index_at(206, 0, 0, 0, false), -1);
+    /* 没有跑道时渲染器会画 64 px 空态，不是把跑道区压成 0 高。 */
+    chk_int("无跑道空态上方不命中",
+            pk_apt_freq_index_at(263, 0, 0, 1, false), -1);
+    chk_int("无跑道时首频率行命中",
+            pk_apt_freq_index_at(264, 0, 0, 1, false), 0);
+}
+
+/* ── 5) 跑道的哨兵处置 ────────────────────────────────────────── */
 
 static void test_rwy_sentinels(void)
 {
@@ -497,6 +566,8 @@ int main(void)
     test_freq_sort();
     test_tags();
     test_format_freq();
+    test_airband_frequency_selection();
+    test_frequency_row_hit_after_scroll();
     test_rwy_sentinels();
     test_capacity();
     test_modal_order();

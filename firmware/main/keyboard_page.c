@@ -34,8 +34,10 @@
 #include <string.h>
 
 #include "apt_detail_page.h"   /* pk_ui_fab_sync —— FAB 显隐的唯一入口 */
+#include "airband_frequency_input.h"
 #include "display.h"
 #include "i18n.h"
+#include "keyboard_numeric.h"
 #include "pfd_aa_font.h"
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
@@ -101,6 +103,8 @@ static const char *s_title = "";
 static int        s_max_len = PK_KBD_TEXT_MAX;
 static char       s_text[PK_KBD_TEXT_MAX + 1];
 static int        s_len;
+static bool       s_numeric;
+static pk_airband_frequency_input_t s_frequency_input;
 
 /* 本次编辑归谁（见 keyboard_page.h 的「结果回调」）。close_page() 不清它们：
  * 「先关页再回调」是有意的顺序（回调里会写 NVS / 起后台任务，那时渲染任务
@@ -176,6 +180,27 @@ static void draw_input_box(uint16_t *fb)
                PK_AA_S);
 }
 
+static void draw_frequency_value(uint16_t *fb)
+{
+    const char *value = s_frequency_input.text[0] != '\0'
+                            ? s_frequency_input.text : "---";
+    const int field_x0 = 220;
+    const int field_w = 7 * PK_AA_XL_W;
+    const int value_w = pk_aa_text_width(value, PK_AA_XL);
+    const int x = field_x0 + field_w - value_w;
+    const int y = KBD_EDIT_TOP + (KBD_GRID_TOP - KBD_EDIT_TOP - PK_AA_XL_H) / 2;
+
+    /* 当前字库只有 regular；水平错开 1 px 重绘一次，得到仪表读数需要的粗字重。 */
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x, y, value,
+               col_key_txt(), PK_AA_XL);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, x + 1, y, value,
+               col_key_txt(), PK_AA_XL);
+    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
+               field_x0 + field_w + 18,
+               y + PK_AA_XL_H - PK_AA_M_H - 3,
+               "MHz", col_dim(), PK_AA_M);
+}
+
 /* 一枚键的几何。row/col 给命中区（整格），视觉再各内缩 KBD_KEY_PAD。 */
 static void key_rect(int row, int col, int *x0, int *y0)
 {
@@ -216,6 +241,46 @@ static void draw_grid(uint16_t *fb)
     }
 }
 
+static void draw_numeric_grid(uint16_t *fb)
+{
+    const int cols = 4;
+    const int rows = 4;
+    const int key_w = PK_DISPLAY_W / cols;
+    const int key_h = (PK_DISPLAY_H - KBD_GRID_TOP) / rows;
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            const int x0 = c * key_w;
+            const int y0 = KBD_GRID_TOP + r * key_h;
+            const char k = pk_keyboard_numeric_key_at(
+                x0 + key_w / 2, y0 + key_h / 2);
+            if (k == PK_KBD_NUM_NONE) continue;
+
+            const bool enabled = pk_airband_frequency_input_key_enabled(
+                &s_frequency_input, k);
+
+            const char *label;
+            char one[2] = {k, '\0'};
+            pk_aa_size_t size = PK_AA_M;
+            uint16_t bg = enabled ? col_key() : col_bg();
+            uint16_t fg = enabled ? col_key_txt() : col_dim();
+            if (k == PK_KBD_NUM_DELETE) {
+                label = pk_i18n_text(PK_TR_KBD_DELETE);
+                size = PK_AA_S;
+                if (enabled) bg = pk_rgb565(52, 40, 40);
+            } else if (k == PK_KBD_NUM_OK) {
+                label = pk_i18n_text(PK_TR_KBD_OK);
+                size = PK_AA_S;
+                if (enabled) bg = col_accent();
+            } else {
+                label = one;
+            }
+            draw_button(fb, x0 + KBD_KEY_PAD, y0 + KBD_KEY_PAD,
+                        key_w - 2 * KBD_KEY_PAD, key_h - 2 * KBD_KEY_PAD,
+                        label, bg, fg, size);
+        }
+    }
+}
+
 void pk_keyboard_page_render(uint16_t *fb)
 {
     pk_pfd_fill_rect(fb, 0, 0, PK_DISPLAY_W, PK_DISPLAY_H, col_bg());
@@ -232,12 +297,16 @@ void pk_keyboard_page_render(uint16_t *fb)
                 pk_i18n_text(PK_TR_KBD_CANCEL), pk_rgb565(52, 40, 40),
                 col_key_txt(), PK_AA_S);
 
-    draw_input_box(fb);
+    if (s_numeric) {
+        draw_frequency_value(fb);
+    } else {
+        draw_input_box(fb);
+        pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, KBD_TEXT_X, KBD_HINT_Y,
+                   pk_i18n_text(PK_TR_KBD_CHARSET_HINT), col_dim(), PK_AA_XS);
+    }
 
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, KBD_TEXT_X, KBD_HINT_Y,
-               pk_i18n_text(PK_TR_KBD_CHARSET_HINT), col_dim(), PK_AA_XS);
-
-    draw_grid(fb);
+    if (s_numeric) draw_numeric_grid(fb);
+    else draw_grid(fb);
 }
 
 /* ── 打开 / 关闭 ───────────────────────────────────────────────── */
@@ -258,19 +327,22 @@ static void close_page(void)
     pk_ui_fab_sync();
 }
 
-void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
-                           pk_keyboard_commit_fn on_commit,
-                           pk_keyboard_cancel_fn on_cancel)
+static void open_page(const char *title, const char *initial, int max_len,
+                      pk_keyboard_commit_fn on_commit,
+                      pk_keyboard_cancel_fn on_cancel, bool numeric)
 {
     s_title     = (title != NULL) ? title : "";
     s_on_commit = on_commit;
     s_on_cancel = on_cancel;
+    s_numeric = numeric;
     s_max_len = (max_len < 1) ? 1
               : (max_len > PK_KBD_TEXT_MAX ? PK_KBD_TEXT_MAX : max_len);
 
     s_len = 0;
     s_text[0] = '\0';
-    if (initial != NULL) {
+    if (numeric) {
+        pk_airband_frequency_input_init(&s_frequency_input, initial);
+    } else if (initial != NULL) {
         for (const char *p = initial; *p && s_len < s_max_len; ++p)
             s_text[s_len++] = *p;
         s_text[s_len] = '\0';
@@ -291,6 +363,21 @@ void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
      * 字的实心按钮，比一个含义随页面变化的圆钮更不会让人困住。
      */
     pk_ui_fab_sync();   /* s_active 已置真 → 必然算成"藏" */
+}
+
+void pk_keyboard_page_open(const char *title, const char *initial, int max_len,
+                           pk_keyboard_commit_fn on_commit,
+                           pk_keyboard_cancel_fn on_cancel)
+{
+    open_page(title, initial, max_len, on_commit, on_cancel, false);
+}
+
+void pk_keyboard_page_open_numeric(const char *title, const char *initial,
+                                   int max_len,
+                                   pk_keyboard_commit_fn on_commit,
+                                   pk_keyboard_cancel_fn on_cancel)
+{
+    open_page(title, initial, max_len, on_commit, on_cancel, true);
 }
 
 bool pk_keyboard_page_active(void) { return s_active; }
@@ -331,20 +418,43 @@ void pk_keyboard_page_touch_up(void)
             close_page();
             if (cb != NULL) cb();
         } else if (x >= KBD_CLEAR_X0 && x < KBD_CLEAR_X0 + KBD_BTN_W) {
-            s_len = 0;
-            s_text[0] = '\0';
+            if (s_numeric) {
+                pk_airband_frequency_input_init(&s_frequency_input, NULL);
+            } else {
+                s_len = 0;
+                s_text[0] = '\0';
+            }
         }
         return;
     }
 
     if (y < KBD_GRID_TOP) return;      /* 输入框那条带不响应点击 */
 
-    const int row = (y - KBD_GRID_TOP) / KBD_KEY_H;
-    const int col = x / KBD_KEY_W;
-    if (row < 0 || row >= KBD_ROW_CNT || col < 0 || col >= KBD_COLS) return;
-
-    const char k = KBD_KEYS[row][col];
-    if (k == KBD_K_DEL) {
+    char k;
+    if (s_numeric) {
+        k = pk_keyboard_numeric_key_at(x, y);
+        if (k == PK_KBD_NUM_NONE ||
+            !pk_airband_frequency_input_key_enabled(&s_frequency_input, k))
+            return;
+    } else {
+        const int row = (y - KBD_GRID_TOP) / KBD_KEY_H;
+        const int col = x / KBD_KEY_W;
+        if (row < 0 || row >= KBD_ROW_CNT || col < 0 || col >= KBD_COLS)
+            return;
+        k = KBD_KEYS[row][col];
+    }
+    if (s_numeric && k == KBD_K_OK) {
+        char out[PK_AIRBAND_FREQ_INPUT_TEXT_MAX + 1];
+        uint32_t hz = 0;
+        if (!pk_airband_frequency_input_commit(&s_frequency_input, out, &hz))
+            return;
+        (void)hz;
+        const pk_keyboard_commit_fn cb = s_on_commit;
+        close_page();
+        if (cb != NULL) cb(out);
+    } else if (s_numeric) {
+        (void)pk_airband_frequency_input_apply(&s_frequency_input, k);
+    } else if (k == KBD_K_DEL) {
         if (s_len > 0) s_text[--s_len] = '\0';
     } else if (k == KBD_K_OK) {
         /* 先关页再回调：回调里可能会重开 BLE 广播、写 NVS，那期间渲染任务

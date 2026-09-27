@@ -47,6 +47,7 @@ typedef enum {
     PK_UI_MODE_TRAFFIC,     /* 360° 交通雷达页(本机居中,目标按方位/距离) */
     PK_UI_MODE_MAP,         /* SD 离线地图页(PMTiles 栅格底图 + ADS-B 叠加) */
     PK_UI_MODE_ADSB_LIST,
+    PK_UI_MODE_AIRBAND,     /* 航空电台选台、静噪与微雪喇叭播放 */
     PK_UI_MODE_SETTINGS,
     PK_UI_MODE_ABOUT,
     PK_UI_MODE_DIAG,        /* 硬件诊断:各子系统在线状态 + 实时数值 */

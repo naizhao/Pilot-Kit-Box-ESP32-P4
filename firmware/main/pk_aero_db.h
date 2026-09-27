@@ -97,6 +97,9 @@ bool pk_aero_db_airport_freqs(uint32_t apt_idx,
  * ！毫秒级（东京最坏 ~16 ms）——只许后台/事件路径，禁止渲染循环。 */
 int pk_aero_db_nearest_airports(double lat, double lon,
                                 pk_aero_near_t *out, int max);
+/* 最近且确实带频率记录的机场；过滤发生在全候选扫描阶段。 */
+int pk_aero_db_nearest_airports_with_freqs(double lat, double lon,
+                                           pk_aero_near_t *out, int max);
 int pk_aero_db_nearest_navaids(double lat, double lon,
                                pk_aero_near_t *out, int max);
 int pk_aero_db_nearest_fixes(double lat, double lon,

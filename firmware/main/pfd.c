@@ -27,6 +27,7 @@
 #include "ant_adv_page.h"
 #include "adsb_list.h"
 #include "diag_page.h"
+#include "airband_page.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
 #include "gps.h"
@@ -224,6 +225,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_ADSB_LIST:
             pk_adsb_list_render(fb);
+            break;
+
+        case PK_UI_MODE_AIRBAND:
+            pk_airband_page_render(fb);
             break;
 
         case PK_UI_MODE_SETTINGS:

@@ -42,9 +42,38 @@ void cc13_bsl_put_be32(uint8_t *out, uint32_t v)
     out[3] = (uint8_t)v;
 }
 
+uint32_t cc13_bsl_get_be32(const uint8_t in[4])
+{
+    if (!in) return 0u;
+    return ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) |
+           ((uint32_t)in[2] << 8) | (uint32_t)in[3];
+}
+
+bool cc13_bsl_chip_id_is_cc1312(uint32_t chip_id)
+{
+    return (chip_id & 0x0FFFFFFFu) == 0x00828000u;
+}
+
 size_t cc13_bsl_chunk_len(size_t remaining)
 {
     return (remaining > CC13_BSL_MAX_DATA) ? (size_t)CC13_BSL_MAX_DATA : remaining;
+}
+
+size_t cc13_bsl_response_wait_bytes(uint8_t cmd)
+{
+    switch (cmd) {
+    case CC13_BSL_CMD_BANK_ERASE:
+    case CC13_BSL_CMD_CRC32:
+        /* 62500 bytes @ 100 kHz = 5 s。BANK_ERASE 是整片擦除，
+         * CRC32 要扫完整个已下载区域。 */
+        return 62500u;
+    case CC13_BSL_CMD_SEND_DATA:
+        /* 单个最大 252-byte flash program 块预留约 328 ms。 */
+        return 4096u;
+    default:
+        /* 纯链路/状态命令保持约 5 ms 的有界等待。 */
+        return 64u;
+    }
 }
 
 /* 标准 IEEE 802.3 CRC-32。不建表：352 KB 镜像上多跑几万次移位在 RP2040 上

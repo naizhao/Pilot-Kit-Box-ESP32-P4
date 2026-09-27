@@ -24,6 +24,8 @@
 #include "aircraft_db.h"
 #include "aircraft_state.h"
 #include "gps.h"
+#include "airband.h"
+#include "airband_page.h"
 #include "pk_clock_persist.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
@@ -77,10 +79,9 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "Pilot Kit Box (ESP32-P4) boot");
 
-    /* Log wakeup causes + GPIO wake status. MODE sleep uses
-     * esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(), so a
-     * successful MODE wake sets the ESP_SLEEP_WAKEUP_GPIO bit and
-     * should include GPIO5 in gpio_status. */
+    /* 记录唤醒原因和 GPIO 唤醒位图。V4.9 的 GPIO5 已由 VHF_MCLK 使用，
+     * 当前固件也没有配置 MODE 按键 GPIO 唤醒；这里仅保留通用复位/唤醒证据，
+     * 不能再把 gpio_status 的 GPIO5 解释成 MODE 事件。 */
     uint32_t wake_causes = esp_sleep_get_wakeup_causes();
     uint64_t gpio_status = esp_sleep_get_gpio_wakeup_status();
     ESP_LOGI(TAG, "boot wakeup_causes=0x%lx  gpio_status=0x%llx",
@@ -217,6 +218,7 @@ void app_main(void)
      * 只是把「开着没 / 在第几页 / 亮度 pop 开着没」摆回初值——静态量零初始化
      * 本来就与它写的一致，但生命周期得走全，不留「这一个例外不用 init」。 */
     pk_nav_grid_page_init();
+    pk_airband_page_init();
     /* 机场详情页**没有**初始化：它没有后台任务也没有 NVS，打开那一刻同步
      * 取数就够（89 条记录读全是 µs 级，见 apt_detail_page.h）。这里只挂一个
      * 默认关闭的自检钩子——PK_APT_DETAIL_SMOKE=0 时它是个空函数。 */
@@ -272,10 +274,11 @@ void app_main(void)
      * NimBLE 的 on_sync() 回调里一次拼好，那个回调紧跟着 init 就会触发，
      * 晚一步读到的就是空串，第一次广播出去的还是出厂名。 */
     pk_config_devname_load();
-    esp_err_t ble_err = pk_ble_enabled_get() ? ble_gatt_init() : ESP_OK;
-    if (!pk_ble_enabled_get())
+    const bool ble_enabled = pk_ble_enabled_get();
+    esp_err_t ble_err = ESP_OK;
+    if (!ble_enabled) {
         ESP_LOGI(TAG, "BLE disabled by user setting — skipping ble_gatt_init()");
-    if (ble_err != ESP_OK) {
+    } else if ((ble_err = ble_gatt_init()) != ESP_OK) {
         ESP_LOGW(TAG, "BLE init failed (%s) — UART + file sinks only",
                  esp_err_to_name(ble_err));
     } else {
@@ -366,6 +369,14 @@ void app_main(void)
     pk_qnh_load();     /* 从 NVS 加载 QNH,供 baro_task 立即使用 */
     pk_config_traffic_load();  /* 从 NVS 加载地图朝向 + 雷达量程 */
     pk_baro_start();   /* BMP388 on shared I²C0 */
+
+    /* V4.9 AIRBAND 是独立的 BK4819 三线控制 + PCM1808 I2S 输入；失败只降级
+     * 诊断，不影响导航/ADS-B/UI。PAOUT 在硬件上未连接，驱动也只开 RX。 */
+    esp_err_t airband_err = pk_airband_start();
+    if (airband_err != ESP_OK) {
+        ESP_LOGW(TAG, "AIRBAND init failed (%s) — continuing without VHF audio",
+                 esp_err_to_name(airband_err));
+    }
 
     /* QMC5883P 磁力计诊断（WP-B Task 4）：optional 器件，缺失/探测失败
      * 只在驱动里 WARN + 计数，不影响其余功能；R1——只出原始三轴诊断，

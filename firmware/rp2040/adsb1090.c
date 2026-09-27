@@ -14,6 +14,7 @@
 #include "rf_safety.h"
 #include "edge_cap.h"
 #include "edge_consume.h"
+#include "edge_glitch_filter.h"
 #include "modes_edge.h"
 #include "p4_link.h"
 #include "selftest_gen.h"
@@ -22,8 +23,8 @@
 #include "spi_master.h"      /* WP-E：CC1312R SPI master（core0 轮询） */
 #include "board_pins.h"      /* 运行期天线选择（U16/U17 软通断） */
 #include "rp_core0_scheduler.h"
-#include "cjtag.h"          /* CC13 首刷：cJTAG 位脉冲（'F' 烧录 / 'J' 诊断 / 'Z' 让路） */
-#include "cc13_bsl.h"       /* CC13 升级：ROM 串行 bootloader（'U' 烧录 / 'L' 诊断） */
+#include "cjtag.h"          /* CC13 cJTAG 探测（'F'/'J'）与外部探针让路（'Z'） */
+#include "cc13_bsl.h"       /* CC13 首刷/升级：ROM BSL（'U' 烧录 / 'L' 诊断） */
 
 #define FRAME_RING_LEN 64u
 
@@ -35,6 +36,7 @@ static slot_t s_ring[FRAME_RING_LEN];
 static atomic_uint s_ring_head, s_ring_tail;
 static atomic_uint s_ring_drops;
 static atomic_uint s_core1_beat;
+static atomic_uint s_glitch_rejected;
 
 /* ── CC1312R SPI master（WP-E）───────────────────────────────────────
  * core0 轮询驱动（审计 round-WP-E-1 P1-3：此前 spim_hw_init/spim_poll
@@ -68,8 +70,10 @@ static void tl_commit(void)
 {
     if (s_tl_n > 0 && s_tl_val <= 1000) {
         threshold_ctl_set_permille(s_tl_val);
-        printf("tl -> %d permille (level=%dmV)\n", s_tl_val,
-               threshold_ctl_read_level_mv());
+        /* LEVEL_BIAS 前有约 1ms RC；这里立刻读会显示上一档，曾在实板上
+         * 形成“PWM 映射反向”的假象。控制循环不能为诊断阻塞，稳定值用 H。 */
+        printf("tl -> %d permille (LEVEL RC settling; use H after 5ms)\n",
+               s_tl_val);
     } else {
         printf("tl set: 'P' + 0..1000\n");
     }
@@ -107,6 +111,9 @@ static atomic_int s_dcap_n = -1;       /* <0 = 空闲；0..DCAP_N = 已采集数
 static void core1_entry(void)
 {
     static uint32_t buf[256];
+    static uint32_t filtered[256];
+    edge_glitch_filter_t gf;
+    edge_glitch_filter_init(&gf);
     uint32_t last_overruns = 0;        /* edge_cap_start 清零先于本核启动 */
     while (true) {
         /* 每次至多取一块（edge_cap.h 合同）：断点只能表达在块边界，
@@ -132,8 +139,10 @@ static void core1_entry(void)
             if (act.degrade)
                 modes_edge_mark_degraded(&s_edge);
             last_overruns = ovr;
-            if (act.reset)
+            if (act.reset) {
                 modes_edge_reset(&s_edge);
+                edge_glitch_filter_resync(&gf);
+            }
             /* 诊断抓取：只在 'D' 触发后的一小段窗口里做，平时是一次
              * relaxed load 的代价。 */
             int dn = atomic_load_explicit(&s_dcap_n, memory_order_relaxed);
@@ -142,7 +151,11 @@ static void core1_entry(void)
                     s_dcap[dn++] = buf[i];
                 atomic_store_explicit(&s_dcap_n, dn, memory_order_release);
             }
-            modes_edge_feed(&s_edge, buf, n);
+            const size_t fn = edge_glitch_filter_feed(&gf, buf, n,
+                                                       filtered, 256);
+            atomic_store_explicit(&s_glitch_rejected, gf.rejected,
+                                  memory_order_relaxed);
+            modes_edge_feed(&s_edge, filtered, fn);
         }
         atomic_fetch_add_explicit(&s_core1_beat, 1, memory_order_release);
         tight_loop_contents();
@@ -282,9 +295,11 @@ static void core0_poll_control(void *user)
                p4_link_ant_1090()       ? "EXT-J6" : "ONBOARD-IFA",
                rf_safety_get_ant_gnss() ? "ONBOARD-PATCH" : "EXT-J2",
                p4_link_ant_gnss()       ? "ONBOARD-PATCH" : "EXT-J2");
-        printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u "
+        printf("stats pre=%u f56=%u f112=%u noise=%u ovr=%u glitch=%u "
                "ringdrop=%u tx=%u rx=%u linked=%d\n",
-               h[0], h[1], h[2], h[4], h[5], h[7], h[6], h[8],
+               h[0], h[1], h[2], h[4], h[5],
+               atomic_load_explicit(&s_glitch_rejected, memory_order_relaxed),
+               h[7], h[6], h[8],
                (int)p4_link_linked());
     } else if (c == 'H') {
         /* rssi_raw 标注为不可信：实测它读回的是门限那一路的电压，不是
@@ -349,10 +364,45 @@ static void core0_poll_control(void *user)
                    ((i % 12) == 11 || i == dn - 1) ? "\n" : " ");
         if (!dn)
             printf("  （一个边沿都没有——比较器完全没在翻转）\n");
+    } else if (c == 'U') {
+        /* CC1312R 正式代写入口：先切换 CDC 解析状态；镜像长度到齐后才会
+         * 接管 SSI/RESET 并执行 ROM BSL 流程。 */
+        cc13_bsl_cdc_start();
+    } else if (c == 'L') {
+        /* CC1312R ROM SSI 只读诊断：仅复位目标并发送 PING 变体矩阵，
+         * 不进入 CDC 烧录状态，也不执行任何 Flash 命令。 */
+        cc13_bsl_diag();
+    } else if (c == 'Q') {
+        /* CC1312R 应用层链路快照。ROM 无回应时，用它区分“芯片正运行
+         * 已有应用”与“应用链路也完全静默”；只读内存计数器，不改目标。 */
+        /* 应用固件把 DIO9 配成 SSI0_TX（RP GPIO12 输入）。弱上/下拉都
+         * 改不了读值说明器件正在驱动；读成 1/0 则是高阻。 */
+        gpio_pull_up(PIN_SUBG_MISO);
+        sleep_us(10);
+        int app_tx_up = gpio_get(PIN_SUBG_MISO);
+        gpio_pull_down(PIN_SUBG_MISO);
+        sleep_us(10);
+        int app_tx_dn = gpio_get(PIN_SUBG_MISO);
+        gpio_disable_pulls(PIN_SUBG_MISO);
+        printf("cc13-app: state=%d hello_tries=%u peer=%u.%u "
+               "txns=%lu legal=%lu noframe=%lu magic=%lu crc=%lu "
+               "recoveries=%lu irq=%d reset_n=%d backdoor=%d "
+               "DIO9_TX=%d/%d\n",
+               (int)s_spim.state, (unsigned)s_spim.hello_tries,
+               (unsigned)s_spim.peer_hello.fw_ver_major,
+               (unsigned)s_spim.peer_hello.fw_ver_minor,
+               (unsigned long)s_spim.stats.txns,
+               (unsigned long)s_spim.stats.legal_frames,
+               (unsigned long)s_spim.stats.no_frame_txns,
+               (unsigned long)s_spim.stats.resyncs,
+               (unsigned long)s_spim.stats.crc_errors,
+               (unsigned long)s_spim.stats.recoveries,
+               gpio_get(PIN_SUBG_IRQ), gpio_get(PIN_SUBG_RESET),
+               gpio_get(PIN_SUBG_SYNC), app_tx_up, app_tx_dn);
     } else if (c == 'F') {
         /* cJTAG 链路探测（**不是**烧录）：走一遍 ICEMelter 唤醒 + 命令窗 +
          * STFMT→OScan1，然后读 ICEPick 的 IDCODE 作为链路是否通的判据。
-         * 烧录走 'U'（cc13_bsl.c）；空片首刷用外部仿真器，先按 'Z' 让路。 */
+         * 正常烧录走 'U'（cc13_bsl.c）；只有恢复异常目标才需外部探针并先 'Z'。 */
         uint32_t id = 0;
         bool ok = cjtag_probe(&id);
         printf("cJTAG 探测: IDCODE=0x%08lX %s\n", (unsigned long)id,

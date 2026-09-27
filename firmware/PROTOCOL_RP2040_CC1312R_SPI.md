@@ -15,7 +15,10 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
   唯一：**SPI1**，SCK=GPIO10 / MOSI=GPIO11 / MISO=GPIO12 / CSn=GPIO13 ↔
   DIO_10/8/9/11（事实卡「SPI instance verdict: SPI1, unique」——GPIO10–13 只承载
   SPI1 功能，无 SPI0 替代）。
-- SPI 模式 0（CPOL=0、CPHA=0），字节内线序 MSB first；帧内多字节字段一律小端
+- SPI 模式 3（CPOL=1、CPHA=1），字节内线序 MSB first；帧内多字节字段一律小端。
+  V4.10 实板证据：mode 0 时 U10 能看到 FSS 且 SSI RX 有数据、无 overflow，
+  但 master 始终只能读到 NO_FRAME；双方切到与 ROM BSL 相同的 mode 3 后
+  立即得到合法 HELLO（peer 0.1、CRC/magic 错误均为 0）。
   （LE）。RP2040 侧为 ARM PL022（RP2040.pdf §4.4），CC1312R 侧为 SSI，两者均
   原生支持模式 0。
 - 时钟速率**不在本规范冻结范围**：事实卡确认 SCK/MOSI/MISO 上无串阻/缓冲/滤波，
@@ -408,9 +411,13 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 
 ## 8. 升级路径与 cJTAG 边界
 
-- **首烧（R4 现状）**：cJTAG 两线（SUBG_TCKC/TMSC）是 CC1312R 唯一编程路径，
-  与 SPI1 无引脚交叠、无协议影响（事实卡「cJTAG boundary」）。master 检测
-  「握手循环失败」（§6.2）即为"slave 未烧固件"的运行期信号，提示走 cJTAG。
+- **首烧**：无合法 flash 镜像时，CC1312R 启动代码自动进入 ROM 串行
+  bootloader；RP2040 经 ROM 固定 SSI0 引脚代刷，不要求外部 cJTAG。应用态的
+  SPI 数据方向与 ROM 固定方向相反，因此代刷实现必须换向 GPIO/使用 PIO，不能
+  直接复用 SPI1 外设。握手循环失败只能说明应用链路未建立，不能据此断言芯片
+  为空片，更不能断言空片必须走 cJTAG。
+- **恢复**：若目标已有合法镜像且其实际 CCFG 关闭或错配了 ROM backdoor，才需
+  cJTAG 两线（SUBG_TCKC/TMSC）恢复；它与 SPI1 无引脚交叠、无协议影响。
 - **未来固件内升级**：本规范**只冻结 UPGRADE_STATUS 查询**（§4.8）。
   升级数据流（镜像传输、写扇区、切换引导）**明确不在 v1 范围**，留给 WP-E
   二期以 minor 增量定义（新增 msg_type，§3.3）；v1 固件收到未知升级类命令

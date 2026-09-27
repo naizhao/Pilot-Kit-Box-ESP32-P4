@@ -17,14 +17,17 @@
 
 为什么这是"防砖"而不是"洁癖"
 ----------------------------
-CC1312R 的串行 bootloader 是**现场升级**机制，不是**首次烧录**机制：空片的
-CCFG 是擦除态全 0xFF，BOOTLOADER_ENABLE≠0xC5，bootloader 根本不响应（实测
-16 个变体全 0xFF）。所以一旦烧进一版把 bootloader 关掉的镜像，就**永久失去
-升级通道**，只能再上一次 cJTAG 仿真器——而本板既没有调试座、也没有这三根
-网络的测试点，得拆机焊 QFN 引脚。
+CC13x2/CC26x2 TRM §8、§10 与 IMAGE_VALID_CONF 的定义明确支持空片首刷：没有
+合法镜像时，启动代码自动进入 ROM 串行 bootloader；BL_CONFIG 的擦除/复位语义
+为 0xC5FFFFFF，其中 BOOTLOADER_ENABLE=0xC5。TI E2E 对裸片问题也给出了同样
+结论。空片不需要先经外部仿真器烧一次。
 
-顺带：镜像**短于 CCFG 区**同样致命。烧录前会整片擦除，CCFG 区随之变成 0xFF；
-镜像又没覆盖到那里，结果和"显式关掉 bootloader"一模一样。
+这道门禁保护的是**烧完以后**：一旦写入合法镜像，同时把 bootloader 或本板
+使用的 GPIO backdoor 关掉，后续 SSI0 更新就会失效，只能靠调试口恢复。
+
+镜像**短于 CCFG 区**也必须拒绝，但原因不是“空白 CCFG 会关 bootloader”：它
+无法写入合法 IMAGE_VALID_CONF 和本板要求的 backdoor 配置，应用不会形成完整、
+可启动且可现场升级的镜像。擦除态仍应留在 ROM bootloader，属于可恢复失败。
 """
 
 # CCFG 在 flash 末尾 8KB 区的尾部；352KB 器件上 CCFG 基址 = 0x58000-0x2000。
@@ -77,7 +80,8 @@ def problems(data: bytes) -> list:
     if len(data) < BL_CONFIG_END:
         return [f"镜像只有 {len(data)} 字节，覆盖不到 CCFG 区"
                 f"（需要 ≥ {BL_CONFIG_END} 字节）—— 烧录会整片擦除，"
-                f"CCFG 随之变成 0xFF，后果与显式关掉 bootloader 相同"]
+                f"无法写入 IMAGE_VALID_CONF 与本板 backdoor 配置；"
+                f"应用不会成为完整可启动镜像"]
     f = parse(data)
     out = []
     for name, want in EXPECT.items():

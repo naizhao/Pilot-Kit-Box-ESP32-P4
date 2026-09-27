@@ -14,6 +14,7 @@
 
 #include "adsb_link.h"
 #include "adsb_link_task.h"
+#include "gps.h"
 
 static const char *TAG = "cfg_ant";
 
@@ -26,6 +27,9 @@ static const char *TAG = "cfg_ant";
  * 同一个状态——见头文件里为什么这条对齐是必需的。 */
 static volatile uint8_t s_ant_1090;
 static volatile uint8_t s_ant_gnss;
+static uint8_t s_actual_gnss;
+static bool s_actual_gnss_known;
+static uint8_t s_gnss_pending;
 /* 门限按**协议编码值**存（0=用固件默认，1..100=10..1000‰），不存 permille：
  * 存原始值就得在 NVS、payload 两处各维护一次标度换算，迟早漂。 */
 static volatile uint8_t s_thresh_val;
@@ -55,6 +59,71 @@ pk_ant_gnss_t pk_ant_gnss_get(void)
     const uint8_t v = s_ant_gnss;
     portEXIT_CRITICAL(&s_mux);
     return v ? PK_ANT_GNSS_ONBOARD : PK_ANT_GNSS_EXTERNAL;
+}
+
+void pk_ant_gnss_status_get(pk_ant_gnss_status_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_mux);
+    out->requested = s_ant_gnss ? PK_ANT_GNSS_ONBOARD : PK_ANT_GNSS_EXTERNAL;
+    out->actual = s_actual_gnss ? PK_ANT_GNSS_ONBOARD : PK_ANT_GNSS_EXTERNAL;
+    out->actual_known = s_actual_gnss_known;
+    out->request_pending = s_gnss_pending != 0;
+    portEXIT_CRITICAL(&s_mux);
+}
+
+void pk_ant_gnss_apply_started(pk_ant_gnss_t source)
+{
+    bool invalidate;
+    portENTER_CRITICAL(&s_mux);
+    invalidate = !s_actual_gnss_known || s_actual_gnss != (uint8_t)source;
+    if (s_gnss_pending != UINT8_MAX) s_gnss_pending++;
+    if (invalidate) s_actual_gnss_known = false;
+    portEXIT_CRITICAL(&s_mux);
+    if (invalidate) pk_gps_antenna_switch_started();
+}
+
+void pk_ant_gnss_apply_confirmed(pk_ant_gnss_t source)
+{
+    bool changed;
+    bool superseded;
+    portENTER_CRITICAL(&s_mux);
+    if (s_gnss_pending) s_gnss_pending--;
+    superseded = s_gnss_pending != 0 &&
+                 (!s_actual_gnss_known || s_actual_gnss != (uint8_t)source);
+    if (superseded) {
+        /* 后面还有另一帧完整配置在途，当前 ACK 只证明一个已经被后续请求
+         * 覆盖的中间态；不能让 GPS 在两个 ACK 的缝隙里接纳 RF 证据。 */
+        portEXIT_CRITICAL(&s_mux);
+        return;
+    }
+    changed = !s_actual_gnss_known || s_actual_gnss != (uint8_t)source;
+    s_actual_gnss = (uint8_t)source;
+    s_actual_gnss_known = true;
+    portEXIT_CRITICAL(&s_mux);
+    if (changed) {
+        pk_gps_antenna_source_confirmed(source == PK_ANT_GNSS_ONBOARD
+            ? PK_GPS_SOURCE_ONBOARD : PK_GPS_SOURCE_EXTERNAL);
+    }
+}
+
+void pk_ant_gnss_apply_failed(pk_ant_gnss_t source)
+{
+    (void)source;
+    portENTER_CRITICAL(&s_mux);
+    if (s_gnss_pending) s_gnss_pending--;
+    s_actual_gnss_known = false;
+    portEXIT_CRITICAL(&s_mux);
+    pk_gps_antenna_switch_started();
+}
+
+void pk_ant_config_link_reset(void)
+{
+    portENTER_CRITICAL(&s_mux);
+    s_actual_gnss_known = false;
+    s_gnss_pending = 0;
+    portEXIT_CRITICAL(&s_mux);
+    pk_gps_antenna_switch_started();
 }
 
 static void save_u8(const char *key, uint8_t v)

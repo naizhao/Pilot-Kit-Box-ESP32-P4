@@ -38,6 +38,7 @@
 #include "adsb_list.h"
 #include "cal_wizard.h"
 #include "diag_page.h"
+#include "airband_page.h"
 #include "apt_detail_page.h"
 #include "keyboard_page.h"
 #include "nav_grid_page.h"
@@ -204,6 +205,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                 eaten = (m == PK_UI_MODE_TRAFFIC   && pk_traffic_page_touch(lx, ly))
                      || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
+                     || (m == PK_UI_MODE_AIRBAND   && pk_airband_page_touch(lx, ly))
                      || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
                      || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly))
@@ -261,6 +263,8 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                  * 只在按下那一瞬间取一次坐标是滚不起来的——这也是为什么这里
                  * 不能沿用交通页那种「一次按下只处理一次」的写法。 */
                 eaten = pk_adsb_list_drag(lx, ly);
+            } else if (m == PK_UI_MODE_AIRBAND) {
+                eaten = pk_airband_page_drag(lx, ly);
             }
             break;
 
@@ -285,6 +289,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         pk_traffic_page_touch_up();
         pk_map_page_touch_up();
         pk_adsb_list_touch_up();
+        pk_airband_page_touch_up();
         pk_diag_page_touch_up();
         pk_settings_page_touch_up();
         pk_keyboard_page_touch_up();

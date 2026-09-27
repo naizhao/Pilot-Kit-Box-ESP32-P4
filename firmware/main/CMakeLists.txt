@@ -27,6 +27,14 @@ idf_component_register(
         # host 单测 test_gps_nmea.c 直接编它（WP-B Task 1）。
         "gps_nmea.c"
         "gps_task.c"
+        "airband_bk4819.c"
+        "airband_audio.c"
+        "airband_speaker_policy.c"
+        "pk_codec_ctrl.c"
+        "airband_speaker.c"
+        "airband_task.c"
+        "airband_page.c"
+        "airband_frequency_input.c"
         "pk_clock.c"
         "pk_clock_persist.c"
         "own_ship.c"
@@ -129,6 +137,7 @@ idf_component_register(
         "settings_page.c"
         "settings_draw.c"
         "keyboard_page.c"
+        "keyboard_numeric.c"
         "search_page.c"
         "apt_detail_page.c"
         "nav_grid_page.c"
@@ -242,6 +251,8 @@ idf_component_register(
         lvgl__lvgl               # 4.3″ 触摸 UI 的控件层（见 lv_port.c）
         esp_hw_support           # esp_chip_info() for About page
         esp_driver_uart          # UART driver for GT-U8 GPS (UART1)
+        esp_driver_i2s           # PCM1808 AIRBAND audio capture
+        espressif__esp_codec_dev # ES8311 + NS4150B carrier speaker playback
         fatfs                    # microSD FAT mount/format (pk_sdcard.c)
         esp_driver_sdmmc         # SDMMC host for the on-board TF1 slot
         sdmmc                    # sdmmc_card_t protocol layer

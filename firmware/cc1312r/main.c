@@ -4,13 +4,13 @@
  * 职责（本骨架）：SPI slave 链路层——按冻结协议 v1.0
  * （PROTOCOL_RP2040_CC1312R_SPI.md）与 RP2040 master 事务对跑。
  * 纯逻辑在 spi_slave.c（host 全测：含 master↔slave 互通）；本文件
- * 只做器件胶水：SSI0 slave mode0、IOC 映射（pinmap_978.md）、IRQ
+ * 只做器件胶水：SSI0 slave mode3、IOC 映射（pinmap_978.md）、IRQ
  * GPIO、主循环的预载/收发/交付节奏。
  *
  * 明确不在本骨架（诚实边界）：
  *   - RF Core / 978 MHz PHY：结构占位，参数待台架实测（协议 §1/
  *     PLAN §5.2——不得宣称任何 RF 性能）；
- *   - SSI DMA：轮询流式收发（4 MHz 下 512 B 事务 ≈1 ms，48 MHz
+ *   - SSI DMA：轮询流式收发（1 MHz 下 512 B 事务 ≈4.1 ms，48 MHz
  *     CPU 轮询跟得上；DMA 优化留后续任务）；
  *   - 看门狗：骨架循环不喂狗——台架前必须补（备注：CC13x2 默认
  *     看门狗在复位后不自动使能，骨架不开启，风险面为台架项）。
@@ -51,7 +51,13 @@ static void ssi_txn(uint8_t mosi[CC13S_TXN_LEN],
                     const uint8_t miso_pre[CC13S_TXN_LEN])
 {
     size_t tx = 8, rx = 0;                  /* 头 8 字节已在 FIFO */
-    while (rx < CC13S_TXN_LEN) {
+    for (size_t i = 0; i < CC13S_TXN_LEN; i++) mosi[i] = 0;
+
+    /* 事务边界以硬件 FSS 为准，不能硬等 rx == 512：SSI slave 可能在
+     * FSS 边界少报告一个无意义的尾部 padding 字节；旧实现因此永久
+     * 卡住，下一事务也无法处理。帧本身含 length + CRC，短事务补零后
+     * 仍会被 codec 严格验证，不会把残帧当成合法帧。 */
+    for (;;) {
         uint32_t st = SSIStatus(SSI_BASE);
         if (st & SSI_RX_NOT_EMPTY) {
             uint32_t d = 0;
@@ -60,6 +66,10 @@ static void ssi_txn(uint8_t mosi[CC13S_TXN_LEN],
         }
         if ((st & SSI_TX_NOT_FULL) && tx < CC13S_TXN_LEN) {
             SSIDataPut(SSI_BASE, miso_pre[tx++]);
+        }
+        if (GPIO_readDio(PIN_FSS) != 0 &&
+            !(SSIStatus(SSI_BASE) & SSI_RX_NOT_EMPTY)) {
+            break;
         }
     }
 }
@@ -102,14 +112,16 @@ int main(void)
     IOCPinTypeGpioOutput(PIN_IRQ);
     irq_set(false);
 
-    /* SSI0：slave、mode 0（协议 §1）、8-bit、时钟由 master 提供。
+    /* SSI0：slave、mode 3、8-bit、时钟由 master 提供。mode 3 与同一组
+     * 物理线上的 ROM BSL 实机配置一致；应用 mode 0 无法形成合法帧。
      * bitrate 参数在 slave 模式不驱动时钟，但参与 SDK 的分频计算
      * （ssi.c 直接 ui32SSIClk/ui32BitRate——传 0 是除零，审计
      * round-WP-E-1 P1-2）；传 4 Mbps 与 master 侧一致。TI 要求
      * slave 模式 FSSI >= 12×bitrate：48 MHz/12 = 4 MHz 上限，
-     * master 侧（rp2040 spi_master.c SPIM_HZ）已同步降到 4 MHz。 */
-    SSIConfigSetExpClk(SSI_BASE, 48000000, SSI_FRF_MOTO_MODE_0,
-                       SSI_MODE_SLAVE, 4000000, 8);
+     * 当前轮询收发在 4 MHz 实板无软件裕量，双方先同步使用 1 MHz；
+     * bitrate 参数在 slave 模式仅用于合法性/分频检查。 */
+    SSIConfigSetExpClk(SSI_BASE, 48000000, SSI_FRF_MOTO_MODE_3,
+                       SSI_MODE_SLAVE, 1000000, 8);
     SSIEnable(SSI_BASE);
 
     cc13s_init(&g_slave, CC13_FW_VER_MAJOR, CC13_FW_VER_MINOR);
@@ -131,7 +143,6 @@ int main(void)
         /* 等 FSS 拉低（轮询 CSN 输入电平——FSS 已路由 SSI，此处读
          * IOC 输入状态；骨架轮询，台架后可改中断）。 */
         while (GPIO_readDio(PIN_FSS) != 0) { }
-
         ssi_txn(mosi, miso);                /* 512 B 全双工（阻塞） */
 
         /* CSN↑：交付沿清源 + 处理 MOSI + 装载下一 pending（§1/§2.3）。 */

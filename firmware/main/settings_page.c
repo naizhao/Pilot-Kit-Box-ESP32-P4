@@ -281,13 +281,11 @@ void pk_settings_apply(int row, int v)
                                                  : PK_ANT_1090_EXTERNAL);
         break;
 
-    case 14:  /* GNSS 天线。同上。行尾那句红色小字解释未改板时馈电是反的，
-               * 那是硬件事实，固件只负责说清楚。
-               *
+    case 14:  /* GNSS 天线。同上。
                * 段序 0=板载 1=外置，与上一行 1090 一致（2026-09-13 统一，
                * 原来两行是反的，手指按肌肉记忆落下去会选反）。这个映射与
                * settings_draw.c 里那行的选项数组是一对约定，改一处必须改
-               * 另一处——选反的代价是有源天线拿不到电、直接没星。 */
+               * 另一处。 */
         pk_ant_gnss_set(pk_ant_seg_is_onboard(v) ? PK_ANT_GNSS_ONBOARD
                                                  : PK_ANT_GNSS_EXTERNAL);
         break;

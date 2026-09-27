@@ -192,6 +192,10 @@ SIZES = {
     "xl": dict(pt=56, cell=(37, 64), last=0x3F),  # 43 px  PFD 当前值（仅数字与符号）
 }
 
+# 默认必须生成头文件声明的全部档位。此前默认值漏掉 l，生成出来的 .h 仍声明
+# pk_aa_l / pk_aa_l_cjk，但 .c 没有定义，直到固件最终链接才失败。
+DEFAULT_SIZES = tuple(SIZES)
+
 # Noto Sans SC 的可变字重实例化点。500 而不是 400：400 在 217 PPI 的
 # 半反半透面板上笔画偏细，反射态下汉字会"发飘"。
 CJK_WGHT = 500
@@ -311,7 +315,7 @@ def main() -> int:
                     help="Noto Sans SC 可变字重 TTF")
     ap.add_argument("--out-c", type=Path, required=True)
     ap.add_argument("--out-h", type=Path, required=True)
-    ap.add_argument("--sizes", default="xs,s,m,xl")
+    ap.add_argument("--sizes", default=",".join(DEFAULT_SIZES))
     args = ap.parse_args()
 
     want = [s.strip() for s in args.sizes.split(",") if s.strip()]

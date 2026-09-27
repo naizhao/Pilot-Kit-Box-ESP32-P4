@@ -35,12 +35,13 @@
 
 /* ── cJTAG 命令（TRM SWCU185G Table 6-4）────────────────────────────
  * 命令的「值」由 DR 扫描在 Shift-DR 里停留的时钟数承载（0..31），
- * CP0 = opcode，CP1 = operand。TI 的 cJTAG **不用** IEEE 1149.7 的 TMSC
- * escape 激活序列——整本 TRM 里 "escape" 一次都没出现。 */
+ * CP0 = opcode，CP1 = operand。IEEE 1149.7 链路层的 TMSC escape/selection
+ * 按 SEGGER 公布的标准连接流程实现；它与这里的 TI 命令层并存。 */
 #define CJTAG_CMD_STMC        0   /* Store Miscellaneous Control */
 #define CJTAG_CMD_STC1        1   /* Store Conditional 1 bit（含 SEDGE 采样沿） */
 #define CJTAG_CMD_STC2        2   /* Store Conditional 2 bit（APFC → 切 4 线） */
 #define CJTAG_CMD_STFMT       3   /* Store Scan Format */
+#define CJTAG_CMD_MSC         7   /* Mode Select Control（SEGGER 标准连接序列） */
 
 #define CJTAG_FMT_CODE_OSCAN1 9   /* STFMT operand：9 = OSCAN1（Table 6-4） */
 

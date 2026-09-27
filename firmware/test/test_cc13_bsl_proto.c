@@ -178,6 +178,56 @@ static void test_crc32_known_answer(void)
     CHECK(cc13_bsl_crc32_final(c) == one, "流式(逐字节)与一次性不一致\n");
 }
 
+/* ── 9. 命令响应等待不能一刀切 ──
+ * BANK_ERASE 要真正擦完整片 flash 才回 ACK；100 kHz SSI 下旧的
+ * 64 个空转字节只有约 5 ms，实机已证明会误报无应答。SEND_DATA
+ * 和 CRC32 也会执行 flash 操作，必须比 PING/查状态留更大余量。 */
+static void test_command_response_wait_budget(void)
+{
+    const size_t quick = cc13_bsl_response_wait_bytes(CC13_BSL_CMD_PING);
+    const size_t erase = cc13_bsl_response_wait_bytes(CC13_BSL_CMD_BANK_ERASE);
+    const size_t write = cc13_bsl_response_wait_bytes(CC13_BSL_CMD_SEND_DATA);
+    const size_t crc = cc13_bsl_response_wait_bytes(CC13_BSL_CMD_CRC32);
+
+    CHECK(quick >= 64u && quick < 1024u,
+          "PING 应是短等待，实际 %zu bytes\n", quick);
+    CHECK(erase >= 62500u,
+          "BANK_ERASE 在 100kHz 下至少需要约 5s，实际 %zu bytes\n", erase);
+    CHECK(write > quick,
+          "SEND_DATA 涉及 flash 编程，不应比 PING 短（%zu <= %zu）\n",
+          write, quick);
+    CHECK(crc > write,
+          "整段 CRC32 应比单块 SEND_DATA 等待更长（%zu <= %zu）\n",
+          crc, write);
+    CHECK(cc13_bsl_response_wait_bytes(0xFFu) == quick,
+          "未知命令应回退到受限的快速等待\n");
+}
+
+/* ── 10. 擦除前身份闸门 ──
+ * CC13x2 ROM 实机返回 FCFG1.USER_ID，而不是旧 CC2538 文档里的 16-bit
+ * JTAG part number。新板 U10 实测 0x30828000：PG_REV=3、VER=0、PA=0、
+ * CC13=1、PKG=2(RGZ)、PROTOCOL=8(proprietary)，TI chipinfo.c 将这组字段
+ * 判为 CC1312。只忽略 PG_REV，其他产品/封装字段必须完全匹配。 */
+static void test_cc1312_chip_id_gate(void)
+{
+    CHECK(CC13_BSL_CMD_GET_CHIP_ID == 0x28u,
+          "GET_CHIP_ID 命令码不是 TI 文档规定的 0x28\n");
+    CHECK(cc13_bsl_get_be32((const uint8_t[]){0x30, 0x82, 0x80, 0x00}) ==
+              0x30828000u,
+          "GET_CHIP_ID 四字节解析不是 MSB first\n");
+    CHECK(cc13_bsl_chip_id_is_cc1312(0x30828000u),
+          "实测 CC1312R rev3 USER_ID 被拒\n");
+    CHECK(cc13_bsl_chip_id_is_cc1312(0x20828000u),
+          "相同 CC1312R 字段的另一 PG_REV 被拒\n");
+    CHECK(!cc13_bsl_chip_id_is_cc1312(0x32828000u),
+          "带 PA 的 CC1312P 被误认成 CC1312R\n");
+    CHECK(!cc13_bsl_chip_id_is_cc1312(0x3002F000u),
+          "CC26x2 协议器件被误认成 CC1312R\n");
+    CHECK(!cc13_bsl_chip_id_is_cc1312(0x00000000u) &&
+          !cc13_bsl_chip_id_is_cc1312(0xFFFFFFFFu),
+          "开路/全 0 响应通过了身份闸门\n");
+}
+
 int main(void)
 {
     test_trm_figure_10_2();
@@ -188,6 +238,8 @@ int main(void)
     test_no_write_on_failure();
     test_incoming_validation();
     test_crc32_known_answer();
+    test_command_response_wait_budget();
+    test_cc1312_chip_id_gate();
 
     if (g_fail) { printf("test_cc13_bsl_proto: %d FAIL\n", g_fail); return 1; }
     printf("test_cc13_bsl_proto: all OK\n");

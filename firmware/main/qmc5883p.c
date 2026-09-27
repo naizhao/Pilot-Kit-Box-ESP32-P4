@@ -137,7 +137,11 @@ void qmc5883p_decode_status(uint8_t s, qmc5883p_status_t *out)
 static const char *TAG = "qmc";
 
 /* 与 BNO085/BMP388/GT911 同在 I²C0（400 kHz，见 pk_i2c0_bus.h）。 */
-#define QMC5883P_I2C_HZ      400000
+/* 这颗器件在新焊 V4.10 上 400 kHz 曾出现 ACK 正常但 CHIPID 随机为
+ * 0x00/0x32/0xFF、偶尔读对 0x80 后紧接着写超时。同总线 BNO085/BMP388
+ * 稳定，故先把 QMC 自身的 device speed 降到标准模式 100 kHz，给手焊
+ * LGA 焊点/边沿更多裕量；IDF 会按器件句柄为本次事务选择速率。 */
+#define QMC5883P_I2C_HZ      100000
 
 /* ±2G 满量程的灵敏度（§2.1 Table 2 p.5/18）：15000 LSB/G = 15 LSB/mG。
  * 一阶段选 ±2G 是为了诊断分辨率最大；地磁场 ~0.25-0.65 G，远在量程内。 */

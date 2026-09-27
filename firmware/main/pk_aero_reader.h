@@ -439,6 +439,13 @@ int32_t pk_aero_airport_by_icao(pk_aero_db_t *db, const char *code);
 int pk_aero_nearest_airports(pk_aero_db_t *db, double lat, double lon,
                              pk_aero_near_t *out, int max,
                              pk_aero_dist_mode_t mode);
+/* 与 nearest_airports 相同，但在扫描全部候选时跳过 freq_count=0 的机场。
+ * 不能用“先取 nearest top-N 再过滤”替代：密集区域前 N 个可能全是无频率
+ * 小机场，真正有管制频率的机场会因此永远进不了结果。 */
+int pk_aero_nearest_airports_with_freqs(pk_aero_db_t *db,
+                                        double lat, double lon,
+                                        pk_aero_near_t *out, int max,
+                                        pk_aero_dist_mode_t mode);
 int pk_aero_nearest_navaids(pk_aero_db_t *db, double lat, double lon,
                             pk_aero_near_t *out, int max,
                             pk_aero_dist_mode_t mode);

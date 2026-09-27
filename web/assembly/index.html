@@ -298,6 +298,80 @@ footer .sp{flex:1}
   display:flex;align-items:center;justify-content:center;font-size:11px;color:transparent;
 }
 .chk.on{border-color:var(--done);color:var(--done);background:#3fb95015}
+/* ── 备料清单（卡片式，交互与贴片页一致） ───────────────── */
+#prepSheet{
+  position:fixed;inset:0;z-index:40;background:#0d1117f7;display:none;
+  flex-direction:column;padding:26px 30px;backdrop-filter:blur(14px);
+}
+#prepSheet.on{display:flex}
+#prepHead{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex:none}
+#prepHead h2{font-size:21px}
+#prepStat{color:var(--dim);font-size:13.5px}
+#prepBody{flex:1;overflow-y:auto}
+.prepBatchHead{margin:16px 0 10px;font-size:15px;font-weight:700;color:var(--cur);letter-spacing:.5px}
+.prepBatchHead:first-child{margin-top:0}
+.prepGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:10px}
+.prepCard{
+  position:relative;border:1.5px solid var(--line);border-radius:11px;
+  padding:10px 12px;cursor:pointer;user-select:none;
+}
+.prepCard:hover{border-color:var(--peer)}
+.prepCard.cur{border-color:var(--cur);box-shadow:0 0 0 1.5px var(--cur)}
+.prepCard.on{border-color:var(--done);background:#3fb95014}
+.prepCard .top{display:flex;align-items:center;gap:7px}
+.prepCard .slotNo{display:flex;align-items:center;gap:6px}
+.prepCard .slotNo .lbl{font:600 12px/1 sans-serif;color:var(--dim)}
+.prepCard .slotNo b{
+  font:800 19px/1 ui-monospace,monospace;color:#fff;
+  background:var(--cur);border-radius:6px;padding:3px 8px;
+}
+.prepCard .mid{margin-top:7px}
+.prepCard .refsBig{
+  font:700 17px/1.4 ui-monospace,monospace;word-break:break-all;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.prepCard .specLine{margin-top:5px;font-size:12px;color:var(--dim)}
+.prepCard .qty{font:800 30px/1 ui-monospace,monospace;color:var(--cur);margin-left:auto;flex:none}
+.prepCard.on .qty{color:var(--done)}
+#prepFilter{
+  background:#0d1117;border:1px solid var(--line);border-radius:8px;
+  color:inherit;padding:7px 12px;font-size:14px;width:230px;outline:none;
+}
+#prepFilter:focus{border-color:var(--cur)}
+/* ── 打印：备料摆放格（一张 A4，100 小格 = 10×10，元件放进格子里） ─ */
+#printSheet{display:none}
+@media print{
+  body > *:not(#printSheet){display:none!important}
+  #printSheet{display:block}
+  @page{size:A4 landscape;margin:4mm}
+  /* 打印时清掉浏览器默认 body 边距，别让它把网格顶到第二页 */
+  body{margin:0!important;padding:0!important}
+  .printHead{margin-bottom:1.5mm}
+  .printHead .t{font:700 9.5pt sans-serif}
+  .printHead .s{font:6.5pt sans-serif;color:#444;margin-left:2mm}
+  /* 网格整体定高 192mm、10×10 均分。列行都用 minmax(0,1fr)——裸 1fr 的
+     隐含最小宽是内容宽，长规格字符串会把轨道撑破容器、横向溢出到第二页 */
+  .printGrid{
+    display:grid;grid-template-columns:repeat(10,minmax(0,1fr));grid-template-rows:repeat(10,1fr);
+    height:192mm;gap:1.2mm;
+  }
+  #printSheet{overflow:hidden;width:285mm}
+  .cell{
+    border:0.35mm solid #222;border-radius:1mm;padding:0.9mm 1.2mm;
+    overflow:hidden;display:flex;flex-direction:column;
+    box-sizing:border-box;min-height:0;min-width:0;
+  }
+  .cTop{display:flex;align-items:center;gap:1mm}
+  .cNo{font:700 9.5pt ui-monospace,monospace}
+  .cBat{font:600 5.5pt sans-serif;border:0.25mm solid #b8860b;color:#8a6508;border-radius:0.8mm;padding:0.1mm 0.7mm}
+  .cBat.none{border-color:#999;color:#777}
+  .cQty{margin-left:auto;font:700 7.5pt ui-monospace,monospace}
+  .cSpec{
+    font:700 7pt sans-serif;line-height:1.15;margin-top:0.5mm;word-break:break-all;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .cFp{margin-top:auto;font:5.5pt sans-serif;color:#555}
+}
 .chk.on .box{border-color:var(--done);background:var(--done);color:#0d1117}
 .chk .b{font-size:10px;color:var(--cur)}
 .chk .u{font-size:10.5px;color:var(--peer);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -313,7 +387,7 @@ footer .sp{flex:1}
   <div class="cards" id="cards"></div>
   <div style="color:var(--dim);font-size:12.5px;text-align:center">
     <kbd>空格</kbd> 标记已贴并跳下一个 &nbsp;·&nbsp; <kbd>←</kbd> 退回上一个 &nbsp;·&nbsp;
-    <kbd>S</kbd> 跳过 &nbsp;·&nbsp; <kbd>Tab</kbd> 焊接表
+    <kbd>S</kbd> 跳过 &nbsp;·&nbsp; <kbd>P</kbd> 备料 &nbsp;·&nbsp; <kbd>Tab</kbd> 焊接表
   </div>
 </div>
 
@@ -380,6 +454,8 @@ footer .sp{flex:1}
     <span id="src" class="mono" style="opacity:.65"></span>
     <span id="stat" class="mono"></span>
     <span id="clock" class="mono"></span>
+    <button class="act" id="btnRedo">重贴</button>
+    <button class="act" id="btnPrep">备料 <kbd>P</kbd></button>
     <button class="act" id="btnSheet">焊接表 <kbd>Tab</kbd></button>
     <button class="act" id="btnBack">换版本</button>
   </footer>
@@ -396,6 +472,21 @@ footer .sp{flex:1}
   <div id="sheetBody"></div>
 </div>
 
+<div id="prepSheet">
+  <div id="prepHead">
+    <h2>备料清单</h2>
+    <span id="prepStat"></span>
+    <span style="flex:1"></span>
+    <input id="prepFilter" placeholder="搜位号/型号，如 U16、AO3401A" />
+    <button class="act" id="btnPrepPrint">打印配料纸</button>
+    <button class="act" id="btnPrepClear">清空备料</button>
+    <button class="act" id="btnPrepClose">关闭 <kbd>Esc</kbd></button>
+  </div>
+  <div id="prepBody"></div>
+</div>
+
+<div id="printSheet"></div>
+
 <script>
 "use strict";
 
@@ -405,6 +496,7 @@ let FLAT = [];           // 展平的推进序列 [{gi, pi, part, group}]
 let cursor = 0;          // FLAT 的下标
 let done = new Set();    // 已贴位号
 let skipped = new Set(); // 主动跳过的位号
+let prep = new Set();    // 已备料组（开工前照单拿料，独立于贴片进度）
 let viewSide = "F";      // 当前显示哪一面
 let view = null;         // 板视图的 viewBox {x, y, w, h}
 
@@ -543,6 +635,11 @@ function batchOf(group) {
   return (v && v[group.key]) || null;
 }
 
+// 料位号 = 贴片顺序（第几种要贴的料：芯片 → 连接器 → … → 电阻）。
+// 桌面照「打印配料纸」的格子摆料，格号即**消耗顺序**——越贴越空、不回头。
+// 拉料备料时在网页备料卡片上能看到每组的料位号，照号入格。
+const slotOf = (g) => String(DOC.groups.indexOf(g) + 1).padStart(2, "0");
+
 function load(id) {
   fetch(`data/${id}.json`).then((r) => r.json()).then((doc) => {
     DOC = doc;
@@ -573,6 +670,7 @@ function load(id) {
 
 function restore(id) {
   done = new Set(); skipped = new Set();
+  prep = new Set();
   clock = { started: 0, active: 0, last: 0, groups: {} };
   try {
     const s = JSON.parse(localStorage.getItem(KEY(id)) || "{}");
@@ -580,6 +678,9 @@ function restore(id) {
     const live = new Set(FLAT.map((f) => f.part.ref));
     done = new Set((s.done || []).filter((r) => live.has(r)));
     skipped = new Set((s.skipped || []).filter((r) => live.has(r)));
+    // 备料按「组」勾，只认还存在的组键；早先的存档没有 prep，缺了就是没备
+    const keys = new Set(DOC.groups.map((g) => g.key));
+    prep = new Set((s.prep || []).filter((k) => keys.has(k)));
     // 计时是后加的，早先的存档没有这一段；缺字段就从零起表，不影响已有进度
     if (s.clock) clock = Object.assign(clock, s.clock, { groups: s.clock.groups || {} });
   } catch (e) { /* 存档坏了从零开始 */ }
@@ -588,7 +689,7 @@ function restore(id) {
 function save() {
   if (!DOC) return;
   localStorage.setItem(KEY(DOC.id),
-    JSON.stringify({ done: [...done], skipped: [...skipped], clock }));
+    JSON.stringify({ done: [...done], skipped: [...skipped], prep: [...prep], clock }));
 }
 
 // ── 板子渲染 ────────────────────────────────────────────────
@@ -847,6 +948,8 @@ function render() {
                                                : "⚠ 阴极 = 色环端（板上亮圈 1）");
   else if (pk === "pin1") addTag("tag polar", "⚠ 1 脚 = 圆点/缺角端（板上亮圈 1）");
   else if (pk === "none") addTag("tag", "双向 · 无方向");
+  addTag("tag", `料位 ${slotOf(g)}`);
+  if (prep.has(g.key)) addTag("tag", "✓ 已备");
 
   // 材质列是**要求下限**，介质标签是实际配的料。两者一样就不用重复说，
   // 不一样才写一句：100pF 那组要求 X7R、配的 C1546 是 C0G，向上兼容。
@@ -955,6 +1058,11 @@ function maybeSwap(g) {
   if (g.dielectric) meta.appendChild(h("span", { class: "diel " + dielClass(g.dielectric), text: g.dielectric }));
   if (g.lcsc) meta.appendChild(h("span", { class: "tag lcsc", text: g.lcsc }));
   if (g.kind) meta.appendChild(h("span", { class: "tag", text: g.kind }));
+  meta.appendChild(h("span", { class: "tag", text: `料位 ${slotOf(g)}`,
+    style: "color:var(--cur);border-color:var(--cur);font-weight:700" }));
+  if (prep.has(g.key))
+    meta.appendChild(h("span", { class: "tag", text: "✓ 已备",
+      style: "color:var(--done);border-color:var(--done)" }));
   if (left !== g.qty) meta.appendChild(h("span", { text: `（本组共 ${g.qty}，已贴 ${g.qty - left}）` }));
 
   const box = $("swap");
@@ -1248,17 +1356,30 @@ function closeSheet() {
   render();
 }
 
-function resetAll() {
-  if (!confirm("清空这块板的全部焊接记录？")) return;
+function resetProgress() {
+  if (!confirm("清空这块板的全部焊接记录？（重新贴）")) return false;
   done = new Set(); skipped = new Set();
   // 计时跟进度是一套数据：留着旧耗时配新进度，算出来的"平均每件"是错的
   clock = { started: Date.now(), active: 0, last: Date.now(), groups: {} };
   renderClock();
   save();
   cursor = 0;
+  return true;
+}
+
+function resetAll() {
+  if (!resetProgress()) return;
   openSheet();
   render();
 }
+
+// 底栏的「重贴」：清进度并回到第一件。0 键只复位视图，别混淆。
+$("btnRedo").addEventListener("click", () => {
+  if (!resetProgress()) return;
+  closeSheet(); closePrep();
+  resetView(); applyView();
+  render();
+});
 
 $("btnSheet").addEventListener("click", () =>
   $("sheet").classList.contains("on") ? closeSheet() : openSheet());
@@ -1266,16 +1387,201 @@ $("btnBack").addEventListener("click", () => location.reload());
 $("btnReset").addEventListener("click", resetAll);
 $("btnClose").addEventListener("click", closeSheet);
 
+// ── 备料清单 ────────────────────────────────────────────────
+// 开工前照单拿料：按「批次 → 位号编号」排。同一批的料一次拿完，批内按
+// 编号排，桌面照清单顺序摆——贴的时候只看换料卡，不用再回料架找。
+// 勾选独立于贴片进度存 localStorage；贴完一块板点「清空备料」再来下一块。
+function prepSortedGroups() {
+  const nat = (r) => { const m = /^([A-Za-z]+)(\d+)/.exec(r); return m ? [m[1], +m[2]] : [r, 0]; };
+  return DOC.groups
+    .map((g) => ({ g, b: batchOf(g), first: nat(g.parts[0].ref) }))
+    .sort((a, b) => {
+      const ba = a.b ? a.b.n : 999, bb = b.b ? b.b.n : 999;
+      if (ba !== bb) return ba - bb;
+      const pa = a.first, pb = b.first;
+      return pa[0] !== pb[0] ? (pa[0] < pb[0] ? -1 : 1) : pa[1] - pb[1];
+    });
+}
+
+function prepStatText() {
+  return `已备 ${prep.size} / ${DOC.groups.length} 组　空格=备好下一组　←/→ 前后走　点卡片打勾`;
+}
+
+let prepList = [];    // 打开期间的固定顺序（批次→编号），空格/方向键在上面走
+let prepCursor = 0;
+let prepFilterStr = "";
+
+// 过滤：按位号/规格/封装/型号搜（"U16"、"AO3401A"、"4x4" 都能搜到）
+function prepMatch(x) {
+  const f = prepFilterStr.trim().toLowerCase();
+  if (!f) return true;
+  return x.g.key.toLowerCase().includes(f)
+    || (x.g.spec || "").toLowerCase().includes(f)
+    || (x.g.size || "").toLowerCase().includes(f)
+    || (x.g.fp || "").toLowerCase().includes(f)
+    || x.g.parts.some((p) => p.ref.toLowerCase().includes(f));
+}
+
+function prepVisible() {
+  return prepList.map((x, i) => ({ x, i })).filter(({ x }) => prepMatch(x));
+}
+
+function togglePrep(g) {
+  prep.has(g.key) ? prep.delete(g.key) : prep.add(g.key);
+  save();
+  $("prepStat").textContent = prepStatText();
+}
+
+function renderPrep() {
+  const body = $("prepBody");
+  clear(body);
+  const vis = prepVisible();
+  let lastBatch = null, grid = null;
+  for (const { g, b } of vis) {
+    const label = b ? `第 ${b.n} 批（${b.name}）` : "库存 / 未在采购表";
+    if (label !== lastBatch) {
+      body.appendChild(h("div", { class: "prepBatchHead", text: label }));
+      lastBatch = label;
+      grid = null;
+    }
+    if (!grid) { grid = h("div", { class: "prepGrid" }); body.appendChild(grid); }
+    const i = prepList.indexOf ?
+      prepList.findIndex((x) => x.g === g) : -1;
+    const refsTxt = g.parts.map((q) => q.ref).join(" ");
+    const card = h("div", { class: "prepCard" + (prep.has(g.key) ? " on" : "") + (i === prepCursor ? " cur" : "") },
+      h("div", { class: "top" },
+        h("span", { class: "slotNo" },
+          h("span", { class: "lbl", text: "料位" }),
+          h("b", { text: slotOf(g) })),
+        b ? h("span", { class: "tag batch", text: `第 ${b.n} 批` })
+          : h("span", { class: "tag", text: "无批次" }),
+        h("span", { class: "qty", text: `×${g.qty}` }),
+      ),
+      // 位号优先：备料时脑子里是 U16/Q2，不是型号
+      h("div", { class: "mid" },
+        h("span", { class: "refsBig", text: refsTxt, title: refsTxt })),
+      h("div", { class: "specLine", text: `${g.spec || g.key} · ${g.size || g.fp}` }),
+    );
+    card.addEventListener("click", () => {
+      prepCursor = i;
+      togglePrep(g);
+      renderPrep();
+    });
+    grid.appendChild(card);
+  }
+  if (!vis.length) {
+    body.appendChild(h("div", { class: "prepBatchHead", text: "没有匹配的料，清一下搜索框" }));
+  }
+  $("prepStat").textContent = prepStatText();
+  const cur = body.querySelector(".prepCard.cur");
+  if (cur) cur.scrollIntoView({ block: "center" });
+}
+
+function openPrep() {
+  prepList = prepSortedGroups();
+  // 永远落在第一个还没备的组上：续备不用一路按空格
+  const first = prepList.findIndex((x) => !prep.has(x.g.key));
+  prepCursor = first >= 0 ? first : Math.max(0, prepList.length - 1);
+  renderPrep();
+  $("prepSheet").classList.add("on");
+}
+
+function closePrep() {
+  if (!$("prepSheet").classList.contains("on")) return;
+  $("prepSheet").classList.remove("on");
+  render();
+}
+
+$("btnPrep").addEventListener("click", () =>
+  $("prepSheet").classList.contains("on") ? closePrep() : openPrep());
+$("btnPrepClose").addEventListener("click", closePrep);
+// 搜索框必须绑 input：prepFilterStr 不更新的话过滤和可见卡导航全是死代码
+$("prepFilter").addEventListener("input", (e) => {
+  prepFilterStr = e.target.value;
+  renderPrep();
+});
+
+// 打印配料纸：**一张 A4、100 个小格**（10 列 × 10 行），按**贴片顺序**编号。
+// 料位 01 = 第一种要贴的料（芯片），格号即消耗顺序；元件放进对应格子，
+// 贴片时换料卡报「料位 NN」照号取料。
+function buildPrintSheet() {
+  const root = $("printSheet");
+  clear(root);
+  root.appendChild(h("div", { class: "printHead" },
+    h("span", { class: "t", text: `${DOC.title} · 备料摆放格（按贴片顺序）` }),
+    h("span", { class: "s", text: `料位号 = 贴片顺序（芯片→连接器→…→电阻），元件放入对应格；贴片时换料卡报「料位 NN」照号取料。` }),
+  ));
+  const grid = h("div", { class: "printGrid" });
+  root.appendChild(grid);
+  DOC.groups.forEach((g, i) => {
+    const b = batchOf(g);
+    grid.appendChild(h("div", { class: "cell" },
+      h("div", { class: "cTop" },
+        h("span", { class: "cNo", text: String(i + 1).padStart(2, "0") }),
+        h("span", { class: "cBat" + (b ? "" : " none"), text: b ? `${b.n}批` : "库" }),
+        h("span", { class: "cQty", text: `×${g.qty}` }),
+      ),
+      h("div", { class: "cSpec", text: g.spec || g.key }),
+      // 丝印号只对单件组显示：一颗料对一位号（Y1、U9），核对最有用；
+      // 多件组的位号列在网页备料卡片上看，纸面不挤
+      h("div", { class: "cFp", text: (g.parts.length === 1 ? g.parts[0].ref + " · " : "") + (g.size || g.fp) }),
+    ));
+  });
+}
+
+$("btnPrepPrint").addEventListener("click", () => {
+  buildPrintSheet();
+  window.print();
+});
+$("btnPrepClear").addEventListener("click", () => {
+  if (!confirm("清空这块板的备料勾选？（不影响贴片进度）")) return;
+  prep = new Set();
+  save();
+  openPrep();
+});
+
 // ── 键盘 ────────────────────────────────────────────────────
 document.addEventListener("keydown", (e) => {
   if (!$("app").classList.contains("on")) return;
+  // 备料搜索框里打字：不触发任何快捷键，Esc 清空并退出输入
+  if (e.target && e.target.id === "prepFilter") {
+    if (e.key === "Escape") {
+      e.target.value = ""; prepFilterStr = ""; renderPrep(); e.target.blur();
+    }
+    return;
+  }
   // 按了键说明料已经拿到手、正在贴了，换料卡不该再挡着板子。
   // 放在最前面：如果这次按键又切到新的一组，下面的 render 会重新弹。
   hideSwap();
-  if (e.key === "Escape") { closeSheet(); return; }
+  if (e.key === "Escape") { closeSheet(); closePrep(); return; }
   if (e.key === "Tab") {
     e.preventDefault();
     $("sheet").classList.contains("on") ? closeSheet() : openSheet();
+    return;
+  }
+  if (e.key.toLowerCase() === "p") {
+    e.preventDefault();
+    $("prepSheet").classList.contains("on") ? closePrep() : openPrep();
+    return;
+  }
+  // 备料开着时空格=备好并到下一组、←/→ 前后走；导航只走**过滤后可见**的卡
+  if ($("prepSheet").classList.contains("on")) {
+    const vis = prepVisible();
+    if (!vis.length) return;
+    let pos = vis.findIndex(({ i }) => i === prepCursor);
+    if (pos < 0) pos = 0;
+    if (e.key === " ") {
+      e.preventDefault();
+      togglePrep(vis[pos].x.g);
+      if (pos < vis.length - 1) prepCursor = vis[pos + 1].i;
+      renderPrep();
+    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      if (pos < vis.length - 1) { prepCursor = vis[pos + 1].i; renderPrep(); }
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (pos > 0) { prepCursor = vis[pos - 1].i; renderPrep(); }
+    }
     return;
   }
   if ($("sheet").classList.contains("on")) return;

@@ -3,10 +3,18 @@
  * （1 tick = 2 SM 周期；SM 默认 125MHz → 16ns/tick）。X 预载 0xFFFFFFE0
  * （set x,31 + mov x,~x 两个已知常数合成），高低两段相位都在同一个 X 上递减。
  *
- * 两条推送路径的恒定开销逐指令相等（mov/push/set/mov = 4 拍 + 转换 2 拍，
- * 合计 6 拍 = 3 tick），所以换算常数统一为 +3：true_ticks = (PRELOAD − raw) + 3，
- * 下取整、误差 ≤1 tick（16ns）。饱和（X 减到 0 停住）推送 ≈PRELOAD+3 的超大
- * 值 = 空闲标记，与解码器 ">5µs 关 burst" 语义一致。
+ * 上升沿先延迟约 88ns 复查：V4.9 实板在 TLV3501→GPIO19 抓到大量 48–80ns
+ * 高毛刺，若每个都 push，会以百万级边沿/秒淹没 FIFO/DMA。复查时已经回落就
+ * 直接回 low_wait、不产生 FIFO 项；合法 Mode-S 0.5µs 脉冲则通过。这里是
+ * 「延迟复查」而不是模拟低通，不能声称检查窗口内每一拍都连续为高；CPU 层
+ * 仍保留 <12 tick 流式合并作为第二道保护。
+ *
+ * 拒绝路径必须时间守恒：从保存 ISR 到回到 low_wait 共 12 个 SM cycle，路径
+ * 上恰有 6 次 x--，每次代表 2 cycle，故被吞掉的毛刺及控制开销全部并回随后
+ * 的 low 间隔，不会每次毛刺偷偷压短时间基。low 推送值仍取首次上升沿时保存
+ * 的 X，原有 +3 tick 换算不变。接受路径在复查后才重载 X，因此 high 的固定
+ * 前导时间由宿主 +8 tick 补回。饱和（X 减到 0 停住）推送
+ * ≈PRELOAD+3 的超大值 = 空闲标记，与解码器 ">5µs 关 burst" 语义一致。
  *
  * R11（P0）：必须捕获双沿——真实 Mode-S 里 bit0→bit1 的两个 0.5µs 脉冲背靠背
  * 融合成 1µs 连续高电平；只有双沿（上升+下降）加脉宽才能把融合串重建为
@@ -23,10 +31,33 @@ low_wait:                ; 低电平：等上升沿
     jmp x-- low_wait
     jmp low_wait         ; X 饱和：继续等沿
 rise:                    ; 上升沿 → 推送（低电平时长）
-    mov isr, x
-    push noblock         ; RX FIFO 满则丢这一沿（奇偶错乱的 burst 由解码端整帧丢弃）
+    mov isr, x            ; 保存首次上升沿处的 low 时长
+    ; 延迟复查。拒绝路径的非计数指令与 x-- 各 6 条：12 cycle = 6 tick。
+    jmp x-- db1
+db1:
+    jmp db2
+db2:
+    jmp x-- db3
+db3:
+    jmp db4
+db4:
+    jmp x-- db5
+db5:
+    jmp db6
+db6:
+    jmp x-- db7
+db7:
+    jmp db8
+db8:
+    jmp x-- db_pin
+db_pin:
+    jmp pin rise_ok
+    jmp x-- low_wait      ; 毛刺：第 6 次递减，完整计入 low
+rise_ok:
+    push noblock          ; 推送首次上升沿保存的 low；满则安全丢帧
     set x, 31
-    mov x, ~x
+    mov x, ~x             ; high 从复查后开始计，前导由宿主 +8 tick 补回
+    jmp high_wait
 high_wait:               ; 高电平：等下降沿
     jmp pin high_cnt
     jmp fall

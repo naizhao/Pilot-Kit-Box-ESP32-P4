@@ -19,6 +19,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "driver/sdmmc_host.h"
@@ -35,6 +37,7 @@ static const char *TAG = "pk_sd";
 #define SD_PIN_D1        40
 #define SD_PIN_D2        41
 #define SD_PIN_D3        42
+#define SD_PIN_PWR_EN    45  /* 载板 P 沟道 MOSFET gate，低有效 */
 
 /* GPIO39-44 是 P4 SDMMC SLOT_0 的专用引脚（UHS-I capable）。SLOT_0 的
  * IO 电源 VDD_IO_5 由 P4 片上 LDO 通道 4 (LDO_VO4) 供给 —— 必须经
@@ -78,56 +81,72 @@ static void sd_refresh_info_locked(void)
 
 /* --- mount / unmount（调用方须持锁） ----------------------------------- */
 
-/* SLOT_0 IO 电源（LDO_VO4）— init 时创建一次，常驻 */
+/*
+ * SLOT_0 IO 电源（LDO_VO4）必须常驻。
+ *
+ * ESP32-P4 数据手册把 GPIO39..48 都列在 VDD_IO_5 域；微雪实际原理图把
+ * ESP_LDO_VO4 接到这个域和 SD 上拉，而 TF1 的 VDD 是 ESP_3V3 经 GPIO45
+ * 控制的低有效 PMOS。扩展板又把 BK4819 SDATA 接 GPIO47、PCM1808 DOUT
+ * 接 GPIO48。因此删除这个句柄不是“只给卡断电”，而是会同时切断两路
+ * AIRBAND 输入缓冲。句柄从首次 mount 起常驻，卡本体的 POR 只切 GPIO45。
+ */
 static sd_pwr_ctrl_handle_t s_pwr_ctrl;
+static bool s_card_power_gpio_ready;
 
-/* IDF ≥6.0 的 SDMMC 控制器只能被 init 一次（IDF issue #16233），而本板
- * ESP-Hosted 走 SDIO（C6 在 Slot 1）已经 init 过了 —— 再调 sdmmc_host_init
- * 会报 "no available sd host controller"。照抄 esp_hosted 官方示例
- * examples/host_sdcard_with_hosted 的 workaround：把 init/deinit 换成
- * 空函数，复用 hosted 持有的控制器，TF 卡只占 Slot 0。 */
+/* IDF 6.x 的 SDMMC 控制器只能初始化一次。本板已验证的
+ * ESP-Hosted 拓扑是 C6 占 slot 1、microSD 占 slot 0；Hosted 先创建
+ * 共享控制器。这与仓库内 esp_hosted/host_sdcard_with_hosted 官方示例
+ * 的 workaround 相同。若日后改为非 SDIO transport，编译期条件会恢复
+ * SDMMC_HOST_DEFAULT() 的标准 init/deinit，不会吞掉必需的控制器初始化。 */
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE && \
+    (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0))
+#define SD_HOST_SHARED_WITH_HOSTED 1
 static esp_err_t sdmmc_host_init_dummy(void)   { return ESP_OK; }
 static esp_err_t sdmmc_host_deinit_dummy(void) { return ESP_OK; }
+#else
+#define SD_HOST_SHARED_WITH_HOSTED 0
+#endif
 
-/*
- * 卡槽上电。拔卡时会被 sd_unmount_locked() 拆掉，重挂前再建一次。
- *
- * 为什么要拆了重建：热插拔插入后一直挂不上（2026-07-29 实测），而**开机
- * 挂载是成功的**（日志 "microSD mounted at /sdcard: SL32G 29.7 GB"）——同一
- * 套引脚和 LDO 配置，区别只在于开机那次卡是从**冷态**开始的。
- *
- * unmount 走的 esp_vfs_fat_sdcard_unmount() 只会调 host.deinit()，而这里的
- * deinit 是 dummy（ESP-Hosted 占着同一个 SDMMC 控制器，不能真 deinit，
- * 见 project_sd_slot0_hosted_workaround）。于是电源一直没断，新插入的卡跳不
- * 回 idle 状态，后续 CMD0/CMD8 自然谈不拢。
- *
- * 拆掉 LDO 句柄 = 给卡断电，重建 = 重新上电，等于把冷启动那条路再走一遍。
- */
 static bool sd_power_on_locked(void)
 {
-    if (s_pwr_ctrl != NULL) return true;
-    sd_pwr_ctrl_ldo_config_t ldo_cfg = { .ldo_chan_id = SD_LDO_CHAN };
-    esp_err_t err = sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg, &s_pwr_ctrl);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "LDO chan %d power-on failed: %s",
-                 SD_LDO_CHAN, esp_err_to_name(err));
-        s_pwr_ctrl = NULL;
-        return false;
+    if (s_pwr_ctrl == NULL) {
+        sd_pwr_ctrl_ldo_config_t ldo_cfg = { .ldo_chan_id = SD_LDO_CHAN };
+        esp_err_t err = sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg, &s_pwr_ctrl);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "VDD_IO_5 LDO chan %d enable failed: %s",
+                     SD_LDO_CHAN, esp_err_to_name(err));
+            s_pwr_ctrl = NULL;
+            return false;
+        }
     }
-    /* 上电后给卡一段稳定时间再发命令。sd_pwr_ctrl_new_on_chip_ldo 里
-     * esp_ldo_acquire_channel 只是把 LDO 使能位打开就返回（ref_cnt 0→1 时
-     * ldo_ll_enable(true)），轨压建立和卡自身的上电复位都还没走完；SD 规范
-     * 要求上电到首条命令之间留出电源爬升时间。20 ms 相对 3 s 的重试周期
-     * 可以忽略，却能让"插回来的卡"稳稳走完 POR。 */
+    if (!s_card_power_gpio_ready) {
+        const gpio_config_t power_io = {
+            .pin_bit_mask = 1ULL << SD_PIN_PWR_EN,
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        esp_err_t err = gpio_config(&power_io);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "card power GPIO%d init failed: %s",
+                     SD_PIN_PWR_EN, esp_err_to_name(err));
+            return false;
+        }
+        s_card_power_gpio_ready = true;
+    }
+    gpio_set_level(SD_PIN_PWR_EN, 0);
+    /* PMOS 导通后给 TF1 本体完成电源爬升与 POR；VDD_IO_5 始终保持。 */
     vTaskDelay(pdMS_TO_TICKS(20));
     return true;
 }
 
 static void sd_power_off_locked(void)
 {
-    if (s_pwr_ctrl == NULL) return;
-    sd_pwr_ctrl_del_on_chip_ldo(s_pwr_ctrl);
-    s_pwr_ctrl = NULL;
+    if (!s_card_power_gpio_ready) return;
+    gpio_set_level(SD_PIN_PWR_EN, 1);
+    /* 给卡电源去耦放电；下一次 3 s 探测再拉低并等待 POR。 */
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 static bool sd_mount_locked(void)
@@ -136,8 +155,10 @@ static bool sd_mount_locked(void)
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot   = SD_SLOT;
+#if SD_HOST_SHARED_WITH_HOSTED
     host.init   = &sdmmc_host_init_dummy;
     host.deinit = &sdmmc_host_deinit_dummy;
+#endif
     host.pwr_ctrl_handle = s_pwr_ctrl;
 
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
@@ -188,42 +209,19 @@ static bool sd_mount_locked(void)
          */
         s_media_error = (err == ESP_FAIL);
 
-        /*
-         * 补上 IDF 在挂载失败路径上漏掉的 slot 注销——热插拔「插回去也认不出，
-         * 只能重启」的真因。
-         *
-         * esp_vfs_fat_sdmmc_sdcard_init()（fatfs/vfs/vfs_fat_sdmmc.c:230-266）
-         * 的顺序是：host_config->init() → sdmmc_host_init_slot()（**slot 在这里
-         * 就注册好了**）→ sdmmc_card_init()（探卡协商）。无卡时前两步都成功、
-         * 第三步失败，而它的 cleanup 只有一句 call_host_deinit()。IDF 自己在
-         * 那段代码上留了注释直说这事没做完：
-         *     "If this failed …, slot deinit needs to called()
-         *      … though slot deinit not implemented yet."
-         * 官方路径下 host.deinit 是真的 sdmmc_host_deinit()，它会顺手把所有
-         * slot 一起拆掉，所以缺陷被掩盖；而本板的 deinit 是 dummy（不能真拆
-         * ESP-Hosted 共用的控制器，见上面 sdmmc_host_deinit_dummy 的说明），
-         * 于是**每一次无卡的挂载重试都会泄漏一个已注册的 slot**。
-         *
-         * 后果链：拔卡后探测任务 3 s 试一次 → 第一次无卡重试就泄漏 slot →
-         * 下一次 sdmmc_host_init_slot 被 sd_host_sdmmc.c:156 的
-         * `slot_available` 挡下返回 ESP_ERR_INVALID_STATE → 此后卡插回来也
-         * 一样，只有重启能清。实测日志里那串连续的
-         * "mount attempt #27..#36 failed: ESP_ERR_INVALID_STATE" 就是它。
-         *
-         * 放在失败分支里无条件调一次，两种失败都被覆盖且幂等：
-         *   - 卡协商失败 → 注销刚注册的 slot，不留泄漏；
-         *   - slot 已被泄漏占着（init_slot 就返回 INVALID_STATE）→ 这次注销把
-         *     它清掉，下一轮重试即可自愈，不必重启。
-         * INVALID_STATE 是「本来就没注册」的正常回报，不算错。
-         */
+#if SD_HOST_SHARED_WITH_HOSTED
+        /* VFS 失败路径只会调 dummy deinit；显式注销本轮 slot 0，
+         * 避免下次热插拔重试因 slot 泄漏而永久 INVALID_STATE。 */
         esp_err_t derr = sdmmc_host_deinit_slot(SD_SLOT);
-        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE)
+        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "post-fail deinit_slot(%d): %s",
                      SD_SLOT, esp_err_to_name(derr));
+        }
+#endif
 
         /*
-         * 失败后也要断电——否则插槽在两次重试之间一直带电，而**带电插入的卡
-         * 不会执行上电复位（POR）**。
+         * 失败后切 TF1 的 3V3 PMOS——否则插槽在两次重试之间一直带电，而
+         * **带电插入的卡不会执行上电复位（POR）**。
          *
          * 2026-08-01 实测：开机无卡→插入，识别成功；随后拔出（此时卡正在被
          * pk_aero 读取，状态机停在中途）→ 再插回，就一直
@@ -233,11 +231,9 @@ static bool sd_mount_locked(void)
          * 卡带电插入也能认，被中途拔走的卡则必须靠断电走一遍 POR 才能回到
          * idle。
          *
-         * cd0ddc9 当初就是为这件事在 unmount 路径加的断电，但漏了这条挂载
-         * 失败路径：拔卡后第一次重试上电，之后 s_pwr_ctrl 非空，
-         * sd_power_on_locked() 直接短路返回，于是插槽长期带电，用户插回来的
-         * 那一下正好落在带电窗口里。这里补齐后，插槽只在每次重试的短暂
-         * 尝试期间带电，其余时间断电。
+         * 旧实现错误地删除 LDO_VO4 句柄；那只会切 VDD_IO_5（GPIO39..48），
+         * 不会切微雪原理图中的卡 VDD，且会破坏 GPIO47/48 上的 AIRBAND。
+         * 这里明确只切 GPIO45 控制的卡电源 PMOS。
          */
         sd_power_off_locked();
         return false;
@@ -309,26 +305,15 @@ static void sd_unmount_locked(void)
         }
         s_card = NULL;
 
-        /*
-         * 注销 slot——这是 dummy deinit 漏掉的那一半，也是热插拔挂不上的真因。
-         *
-         * host.deinit 被换成 dummy 是为了不去动 ESP-Hosted 共用的那个 SDMMC
-         * **控制器**（project_sd_slot0_hosted_workaround）。但 slot 是控制器
-         * 之下的一层：mount 时 esp_vfs_fat_sdmmc_sdcard_init() 会调
-         * init_sdmmc_host() 注册 slot，而 dummy deinit 什么都不做，于是 slot
-         * 一直停在"已注册"。下一次 mount 走到同一处就被
-         * sd_host_sdmmc.c:156 的 `ESP_GOTO_ON_FALSE(slot_available, ...)`
-         * 挡下，返回 ESP_ERR_INVALID_STATE——实测日志里那串
-         * "mount attempt #77..#81 failed: ESP_ERR_INVALID_STATE" 就是它。
-         *
-         * sdmmc_host_deinit_slot() 只注销 slot、不碰控制器，正好是我们要的
-         * 粒度：Hosted 的 SDIO 仍在 slot 1 上跑，互不影响。
-         */
+#if SD_HOST_SHARED_WITH_HOSTED
+        /* unmount 保留 Hosted 的共享控制器，只释放 microSD slot 0。 */
         esp_err_t derr = sdmmc_host_deinit_slot(SD_SLOT);
-        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE)
+        if (derr != ESP_OK && derr != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "deinit_slot(%d): %s", SD_SLOT, esp_err_to_name(derr));
+        }
+#endif
 
-        /* 断电，让下一张卡能从冷态开始。 */
+        /* 只给 TF1 本体断电，让下一张卡从冷态开始；VDD_IO_5 保持。 */
         sd_power_off_locked();
     }
 }
@@ -382,11 +367,9 @@ void pk_sdcard_init(void)
     esp_log_level_set("sdmmc_cmd", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_common", ESP_LOG_DEBUG);
     esp_log_level_set("sdmmc_periph", ESP_LOG_DEBUG);
-    /* SD_HOST 是**共享** tag：ESP-Hosted 的 SDIO（slot 1）与本卡（slot 0）
-     * 都用它，而 hosted 每笔传输都打一条 DEBUG。开到 DEBUG 会以每秒上百行
-     * 淹掉串口——2026-08-01 实测一次 4 分钟抓包里 SD_HOST 占了 16765/17391
-     * 行，把要看的 SD 事件全挤掉，PFD 也从 12 FPS 掉到 9。留在 WARN：
-     * 真正的 slot/控制器错误照样报，hosted 的流水账不进来。 */
+    /* SD_HOST 同时承载 Hosted slot 1 和 microSD slot 0；DEBUG 会记录
+     * 每笔 SDMMC 传输，每秒上百行会淹掉串口并拖慢 PFD。留在
+     * WARN，真正的 slot/控制器错误仍会报出。 */
     esp_log_level_set("SD_HOST", ESP_LOG_WARN);
 #else
     esp_log_level_set("sdmmc_req", ESP_LOG_NONE);
@@ -403,10 +386,8 @@ void pk_sdcard_init(void)
      * 3 s 一条相当。 */
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_ERROR);
 
-    /* SLOT_0 IO 供电：P4 片上 LDO 通道 4。失败则 SD 永远探测不到，
-     * 打 ERROR 但不崩 —— 其余固件功能不受影响。 */
-/* 上电交给 sd_power_on_locked()（mount 内部会调），这里不再单独建句柄——
-     * 两处各建一次的话，热插拔断电后 init 那份就成了悬空引用。 */
+    /* SLOT_0 / GPIO39..48 IO 供电由首次 sd_power_on_locked() 建立后
+     * 常驻；TF1 本体的上/下电由 GPIO45 单独控制。 */
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!sd_mount_locked()) {

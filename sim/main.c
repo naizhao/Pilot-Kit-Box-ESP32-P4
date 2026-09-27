@@ -681,6 +681,12 @@ static int run_headless(float at_sec, const char *out)
                                   getenv("PK_SIM_KBD"), PK_DEVNAME_MAX_LEN,
                                   NULL, NULL);
             pk_keyboard_page_render(fb);
+        } else if (strcmp(page, "airbandkbd") == 0) {
+            pk_keyboard_page_open_numeric(
+                pk_i18n_text(PK_TR_AIRBAND_FREQ_INPUT),
+                getenv("PK_SIM_KBD") ? getenv("PK_SIM_KBD") : "121.500",
+                7, NULL, NULL);
+            pk_keyboard_page_render(fb);
         } else {
             fprintf(stderr, "未知的 PK_SIM_PAGE=%s\n", page);
             return 2;

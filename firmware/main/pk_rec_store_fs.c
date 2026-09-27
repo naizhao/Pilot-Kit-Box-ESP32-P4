@@ -224,6 +224,16 @@ static void write_session_json_locked(bool final)
         ESP_LOGW(TAG, "fopen(%s) failed: %s", path, strerror(errno));
         return;
     }
+    /* ESP-IDF 6.0.1 / ESP32-P4 实板：newlib 的默认 FILE 缓冲与 FATFS 的
+     * PSRAM 文件对象组合时，session JSON 跨过缓冲刷新边界会破坏内部堆；
+     * 同一文件改为无缓冲后，逐段写、fflush、fsync 与 fclose 均通过堆完整性
+     * 探针，且同卡持续读写稳定。session JSON 很小且只在开/关 session 写，
+     * 这里用无缓冲换取确定的生命周期，不影响 ADS-B 热路径文件。 */
+    if (setvbuf(fp, NULL, _IONBF, 0) != 0) {
+        ESP_LOGW(TAG, "setvbuf(%s) failed: %s", path, strerror(errno));
+        fclose(fp);
+        return;
+    }
 
     const esp_app_desc_t *app = esp_app_get_description();
     char devname[40];
@@ -300,6 +310,8 @@ static void write_session_json_locked(bool final)
 
     fprintf(fp, "  \"complete\": %s\n}\n", final ? "true" : "false");
 
+    fflush(fp);
+    fsync(fileno(fp));
     fclose(fp);
 }
 

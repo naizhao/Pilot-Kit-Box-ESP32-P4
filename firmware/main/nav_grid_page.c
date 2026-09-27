@@ -51,9 +51,8 @@
  * 结论：按钮宽度靠英文截图验，提示行只能靠算。改文案或改宽度时两样都做，
  * 下面那两条 _Static_assert 会在编译期兜住。
  *
- * 提示行（PWR_HINT_H）写的是"关机后需插 USB 唤醒；重启只重启主控"——
- * /QON 悬空导致关机后只能插 USB 唤醒（SY6970 DS p.30），不写这句用户会
- * 以为设备坏了。它只是文字，不参与命中。
+ * 提示行说明 V4.9 的实际唤醒方式：ship mode 下按住 SW3 约 2.3 s，或插
+ * USB（SY6970 DS p.4/p.10/p.30）。SW3 只接 /QON，不参与软件命中。
  */
 #define PWR_BW        240
 #define PWR_BH        64
@@ -199,6 +198,7 @@ int pk_nav_swipe_dir(int dx, int dy)
 #include "pfd_draw.h"
 #include "pfd_layout.h"
 #include "apt_detail_page.h"   /* pk_ui_fab_sync —— FAB 显隐的唯一入口 */
+#include "airband_page.h"
 #include "pk_ui_nav.h"
 #include "search_page.h"
 #include "ui_state.h"
@@ -323,6 +323,7 @@ static const nav_item_t ITEMS[] = {
     { PK_NAVICON_SEARCH, PK_TR_NAV_SEARCH,   MODE_NONE            },
     { PK_NAVICON_REC,    PK_TR_NAV_LOGBOOK,  MODE_NONE            },
     { PK_NAVICON_TOOL,   PK_TR_NAV_TOOLS,    MODE_NONE            },
+    { PK_NAVICON_RADIO,  PK_TR_APTD_AIRBAND, PK_UI_MODE_AIRBAND   },
     /* ── 第 2 页：地面才碰的 ── */
     { PK_NAVICON_DIAG,   PK_TR_NAV_DIAG,     PK_UI_MODE_DIAG      },
     { PK_NAVICON_SET,    PK_TR_NAV_SETTINGS, PK_UI_MODE_SETTINGS  },
@@ -524,8 +525,9 @@ static void draw_bright_pop(uint16_t *fb)
  * 一个会让人以为当前处于那个状态。
  *
  * 关机键用警示橙（COL_ACT）而不是主操作蓝：整板断电（含 RP2040）在这块板
- * 上不可撤销——/QON 悬空，醒过来只能靠插 USB（power_sy6970.h）。重启只影响
- * P4，用常规蓝。颜色本身就是这个区别的第一道提示，提示行是第二道。
+ * 上会进入 ship mode——V4.9 可按住 SW3 约 2.3 s 或插 USB 唤醒
+ *（power_sy6970.h）。重启只影响 P4，用常规蓝。颜色本身就是这个区别的
+ * 第一道提示，提示行是第二道。
  */
 static void draw_power_pop(uint16_t *fb)
 {
@@ -925,6 +927,8 @@ static void activate_item(int index)
     if (!pk_nav_item_enabled(index)) return;
 
     if (ITEMS[index].mode >= 0) {
+        if ((pk_ui_mode_t)ITEMS[index].mode == PK_UI_MODE_AIRBAND)
+            pk_airband_page_open();
         pk_ui_set_mode((pk_ui_mode_t)ITEMS[index].mode);
     } else if (ITEMS[index].label == PK_TR_NAV_SEARCH) {
         /*

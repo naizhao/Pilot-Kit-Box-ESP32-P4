@@ -1,0 +1,16 @@
+;
+; CC13x2 ROM bootloader SSI transport (Motorola CPOL=1, CPHA=1).
+;
+; This is the CPHA=1 full-duplex program from Raspberry Pi's BSD-3-Clause
+; pico-examples pio/spi example, kept local so the diagnostic does not depend
+; on the RP2040 hardware-SPI pin mapping.  SCK polarity is inverted by the
+; GPIO output override in cc13_bsl.c.
+;
+.program cc13_bsl_spi_cpha1
+.side_set 1
+
+.wrap_target
+    out x, 1     side 0
+    mov pins, x  side 1 [1]
+    in pins, 1   side 0
+.wrap

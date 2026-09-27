@@ -394,9 +394,8 @@ static void test_iinlim_code_is_2a_not_por_default(void)
 }
 
 /* ── 11 关机序列：REG09 BATFET_DIS 置位 ────────────────────────────
- * V4.4 板上 /QON(U19 pad 12) 悬空、J1 没有任何电源控制线，电池在位时
- * SYS 恒供电、RP2040 永远 POR 不了——BATFET_DIS 是唯一的软件断电途径
- * （DS p.20 REG09[5]、p.30 BATFET Disable Mode）。
+ * V4.9 的 SW3 只接 /QON，不能把按键事件送给 MCU；BATFET_DIS 仍是软件
+ * 关断电池→SYS 的路径，关机后可按住 SW3 退出 ship mode（DS p.4/p.30）。
  * 突变哨兵：掩码改成别的位（如 0x10）或改成 RMW_CLEAR，这条必红。 */
 static void test_shutdown_seq_sets_batfet_dis(void)
 {
@@ -418,6 +417,8 @@ static void test_shutdown_seq_sets_batfet_dis(void)
         CHECK(seq[i].op != SY6970_SEQ_VERIFY);
         CHECK(seq[i].why != NULL && seq[i].why[0] != '\0');
     }
+    CHECK(strstr(seq[0].why, "SW3") != NULL);
+    CHECK(strstr(seq[0].why, "只能靠插 USB") == NULL);
 }
 
 int main(void)

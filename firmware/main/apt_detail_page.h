@@ -322,6 +322,15 @@ const char *pk_apt_surface_tag(uint8_t surface);
  * （118.275 在 double 上是 118.27499999…，%.3f 侥幸对，%.2f 就错了）。 */
 void pk_apt_format_freq(char *out, size_t cap, uint32_t freq_khz);
 
+/* 机场库频率是 ICAO 频道标识（kHz）；校验 25/8.33 kHz 栅格并换算为
+ * BK4819 实际载频。失败时不修改 out_hz。 */
+bool pk_apt_airband_frequency_hz(uint32_t freq_khz, uint32_t *out_hz);
+
+/* 把屏幕 y 坐标映射到频率行。固定使用本页真实布局，并把底部 48 px
+ * 播放器排除在命中区外；拖动手势一律返回 -1。 */
+int pk_apt_freq_index_at(int screen_y, int scroll_px, int runway_count,
+                         int frequency_count, bool dragged);
+
 /* 磁航向（整度，0..359）。has_bearing=false 时返回 false，调用方**不显示**
  * 这一项——哨兵 0xFFFF 直接除 10 会画出 "6553°"，而填 0 会被读成"正北"，
  * 两种都是在编数据。 */

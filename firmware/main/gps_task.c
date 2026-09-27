@@ -1,4 +1,5 @@
 #include "gps.h"
+#include "gps_antenna_diag.h"
 #include "gps_nmea.h"
 #include <string.h>
 #include <stdlib.h>
@@ -181,7 +182,7 @@ static bool rmc_epoch_ms(const char *tod, const char *date, int64_t *out){
  * 这里只做「字段 → gps 状态」的落地，函数体保持原样，仅字段来源从老的
  * fields[]/n 换成 msg->f/msg->n。 */
 
-static void parse_rmc(const gps_nmea_msg_t *msg){
+static void parse_rmc(const gps_nmea_msg_t *msg, uint32_t source_epoch){
     if(msg->n < 10) return;                 /* 需含日期字段 f[9] */
     /* status 必须**恰好**是 "A"：'AV' 这类残句的首字母同样是 'A'。 */
     bool status_a = (msg->f[2][0] == 'A' && msg->f[2][1] == '\0');
@@ -189,18 +190,22 @@ static void parse_rmc(const gps_nmea_msg_t *msg){
     /* 坐标解析失败 = 没有定位。status='A' 但经纬度是空的/越界的（模块半死时
      * 真实存在）不能当成定位——老代码的 atof 会把它变成 0°,0°。 */
     double lat = 0.0, lon = 0.0;
-    bool   valid = status_a &&
+    const bool signal_valid = status_a &&
                    nmea_to_deg(msg->f[3], msg->f[4], /*is_lat=*/true,  &lat) &&
                    nmea_to_deg(msg->f[5], msg->f[6], /*is_lat=*/false, &lon);
 
     /* 地速/航迹各自独立采信：同一句里坏掉一个不连累另一个，也不连累位置。 */
     double v;
-    bool have_gs = valid && parse_num(msg->f[7], &v) && v >= 0.0 && v < 10000.0;
+    bool have_gs = signal_valid && parse_num(msg->f[7], &v) && v >= 0.0 && v < 10000.0;
     int    gs_kt = have_gs ? (int)(v + 0.5) : 0;
-    bool have_trk = valid && parse_num(msg->f[8], &v) && v >= 0.0 && v <= 360.0;
+    bool have_trk = signal_valid && parse_num(msg->f[8], &v) && v >= 0.0 && v <= 360.0;
     int    trk_deg = have_trk ? ((int)(v + 0.5)) % 360 : 0;
 
     take();
+    /* 与 switch_started 共用 s_lock，在“确认来源”与“落 RF 证据”之间不给
+     * 切换插入窗口；否则先读到 true、随后切换清空、最后又把旧句写回来。 */
+    if (source_epoch != s_gps.ant_source_epoch) { give(); return; }
+    const bool valid = signal_valid && s_gps.ant_source_confirmed;
     s_gps.have_fix = valid;
     if(valid){
         s_gps.lat = lat;
@@ -255,7 +260,7 @@ static void parse_rmc(const gps_nmea_msg_t *msg){
     }
 }
 
-static void parse_gga(const gps_nmea_msg_t *msg){
+static void parse_gga(const gps_nmea_msg_t *msg, uint32_t source_epoch){
     if(msg->n < 11) return;                  /* 需含高度单位字段 f[10] */
     int    q     = atoi(msg->f[6]);          /* fix quality, 0 = no fix */
     int    sats  = atoi(msg->f[7]);
@@ -265,6 +270,8 @@ static void parse_gga(const gps_nmea_msg_t *msg){
     bool   alt_ok = q > 0 && parse_num(msg->f[9], &alt_m) &&
                     msg->f[10][0] == 'M' && msg->f[10][1] == '\0';
     take();
+    if (!s_gps.ant_source_confirmed ||
+        source_epoch != s_gps.ant_source_epoch) { give(); return; }
     s_gps.sats = sats;
     s_gps.hdop = (float)atof(msg->f[8]);     /* GGA field 8 = HDOP */
     if(alt_ok){
@@ -297,8 +304,11 @@ static uint8_t gsv_constellation(const char *t){
 }
 
 /* GSV: $xxGSV,numMsg,msgNum,totalInView, {prn,elev,az,snr}×N [,signalID] */
-static void parse_gsv(const gps_nmea_msg_t *msg){
+static void parse_gsv(const gps_nmea_msg_t *msg, uint32_t source_epoch){
     if(msg->n < 4) return;
+    take();
+    if(!s_gps.ant_source_confirmed ||
+       source_epoch != s_gps.ant_source_epoch) { give(); return; }
     uint8_t con = gsv_constellation(msg->f[0]);
     int msgNum = atoi(msg->f[2]);
     int total  = atoi(msg->f[3]);
@@ -315,10 +325,11 @@ static void parse_gsv(const gps_nmea_msg_t *msg){
             s_acc_snr_n++;
         }
     }
+    give();
 }
 
 /* TXT: $GPTXT,01,01,01,ANTENNA OK|OPEN|SHORT */
-static void parse_txt(const gps_nmea_msg_t *msg){
+static void parse_txt(const gps_nmea_msg_t *msg, uint32_t source_epoch){
     if(msg->n < 5) return;
     const char *m = msg->f[4];
     pk_gps_ant_t a;
@@ -326,7 +337,12 @@ static void parse_txt(const gps_nmea_msg_t *msg){
     else if (strstr(m, "ANTENNA SHORT")) a = PK_GPS_ANT_SHORT;
     else if (strstr(m, "ANTENNA OK"))    a = PK_GPS_ANT_OK;
     else return;                           /* 其它 TXT 不关心 */
-    take(); s_gps.ant_status = a; give();
+    take();
+    if (!s_gps.ant_source_confirmed ||
+        source_epoch != s_gps.ant_source_epoch) { give(); return; }
+    s_gps.ant_status = a;
+    s_gps.ant_status_us = esp_timer_get_time();
+    give();
 }
 
 void pk_gps_state_init(void){
@@ -336,10 +352,10 @@ void pk_gps_state_init(void){
     }
     take();
     memset(&s_gps, 0, sizeof(s_gps));
-    give();
     /* GSV 累积器与诊断计数器同属解析状态：不一并清零，下一段测试/下一次
      * 重启就会继承上一段的可见星数与字节计数。 */
     s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
+    give();
     s_rx_bytes = 0; s_nmea_lines = 0;
     portENTER_CRITICAL(&s_pps_mux);
     s_pps_count   = 0;
@@ -347,7 +363,79 @@ void pk_gps_state_init(void){
     portEXIT_CRITICAL(&s_pps_mux);
 }
 
-void pk_gps_feed_line(const char *line){
+static void gps_clear_rf_evidence_locked(void)
+{
+    s_gps.have_fix = false;
+    s_gps.lat = 0.0;
+    s_gps.lon = 0.0;
+    s_gps.have_ground_speed = false;
+    s_gps.ground_speed_kt = 0;
+    s_gps.have_track = false;
+    s_gps.track_deg = 0;
+    s_gps.updated_us = 0;
+    s_gps.have_altitude = false;
+    s_gps.altitude_ft = 0;
+    s_gps.altitude_us = 0;
+    s_gps.sats = 0;
+    s_gps.sats_in_view = 0;
+    s_gps.sats_in_view_gps = 0;
+    s_gps.sats_in_view_bds = 0;
+    s_gps.snr_max = 0;
+    memset(s_gps.snr, 0, sizeof s_gps.snr);
+    memset(s_gps.snr_con, 0, sizeof s_gps.snr_con);
+    s_gps.snr_count = 0;
+    s_gps.hdop = 0.0f;
+    s_gps.ant_status = PK_GPS_ANT_UNKNOWN;
+    s_gps.ant_status_us = 0;
+    s_gps.time_locked = false;
+}
+
+void pk_gps_antenna_switch_started(void)
+{
+    if (!s_lock) pk_gps_state_init();
+    take();
+    gps_clear_rf_evidence_locked();
+    s_gps.ant_source_confirmed = false;
+    s_gps.ant_source_epoch++;
+    s_gps.ant_source_since_us = esp_timer_get_time();
+    /* 未提交的 GSV 也属于旧 epoch；只清 s_gps 会让它在下一次 1 Hz 提交时
+     * 又“复活”。累积器与来源切换同受 s_lock 保护。 */
+    s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
+    give();
+}
+
+void pk_gps_antenna_source_confirmed(pk_gps_ant_source_t source)
+{
+    if (!s_lock) pk_gps_state_init();
+    take();
+    /* 丢弃 CONFIG_REQ→ACK 窗口内到达的任何 RF 句子；RTC/last_nmea 保留，
+     * 因为它们证明模块活性/后备域走时，不是天线来源证据。 */
+    gps_clear_rf_evidence_locked();
+    /* CONFIG_REQ→ACK 窗口内已经进入 UART 环的字节带着 switch epoch；确认时
+     * 再推进一次，保证它们即使稍后才拼成完整句也不会归到新来源。 */
+    s_gps.ant_source_epoch++;
+    s_gps.ant_source = source;
+    s_gps.ant_source_confirmed = true;
+    s_gps.ant_source_since_us = esp_timer_get_time();
+    s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
+    give();
+}
+
+void pk_gps_antenna_selection_changed(void)
+{
+    pk_gps_antenna_switch_started();
+}
+
+uint32_t pk_gps_antenna_epoch(void)
+{
+    if (!s_lock) pk_gps_state_init();
+    take();
+    const uint32_t epoch = s_gps.ant_source_epoch;
+    give();
+    return epoch;
+}
+
+void pk_gps_feed_line_for_epoch(const char *line, uint32_t source_epoch){
     if(!line) return;
     if(!s_lock) pk_gps_state_init();   /* 生产路径上 pk_gps_start 已建好 */
     s_nmea_lines++;
@@ -361,26 +449,49 @@ void pk_gps_feed_line(const char *line){
      * 直接整行丢弃——老代码不验 *hh，损坏句子的字段会一路进 fix/校时。 */
     gps_nmea_msg_t msg;
     if(!gps_nmea_feed_line(&msg, line)) return;
-    if(strncmp(msg.type, "RMC", 3) == 0)      parse_rmc(&msg);
-    else if(strncmp(msg.type, "GGA", 3) == 0) parse_gga(&msg);
-    else if(strncmp(msg.type, "GSV", 3) == 0) parse_gsv(&msg);
-    else if(strncmp(msg.type, "TXT", 3) == 0) parse_txt(&msg);
+    if(strncmp(msg.type, "RMC", 3) == 0)      parse_rmc(&msg, source_epoch);
+    else if(strncmp(msg.type, "GGA", 3) == 0) parse_gga(&msg, source_epoch);
+    else if(strncmp(msg.type, "GSV", 3) == 0) parse_gsv(&msg, source_epoch);
+    else if(strncmp(msg.type, "TXT", 3) == 0) parse_txt(&msg, source_epoch);
     /* 其余类型（GSA/VTG/GLL…）解析照返回 1，这里不接就是忽略——与老行为一致。 */
+}
+
+void pk_gps_feed_line(const char *line)
+{
+    pk_gps_feed_line_for_epoch(line, pk_gps_antenna_epoch());
 }
 
 static void gps_task(void *arg){
     (void)arg;
     uint8_t buf[GPS_BUF_SZ];
     static char line[128]; int li = 0;
+    uint32_t line_epoch = pk_gps_antenna_epoch();
     ESP_LOGI(TAG, "gps task running — UART%d TX=GPIO%d RX=GPIO%d @%d",
              GPS_UART, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
     for(;;){
+        const uint32_t read_epoch = pk_gps_antenna_epoch();
         int len = uart_read_bytes(GPS_UART, buf, sizeof(buf), pdMS_TO_TICKS(200));
+        const uint32_t chunk_epoch = pk_gps_antenna_epoch();
+        if (read_epoch != chunk_epoch) {
+            /* 切换或 ACK 在阻塞读取期间发生：这一批可能混有旧来源字节，整批
+             * 丢弃；NMEA 10 Hz 以下，最多损失一个 200 ms 读取窗口。 */
+            li = 0;
+            line_epoch = chunk_epoch;
+            continue;
+        }
+        if (line_epoch != chunk_epoch) {
+            li = 0;                    /* 丢弃跨 epoch 的半行 */
+            line_epoch = chunk_epoch;
+        }
         if(len > 0) s_rx_bytes += (uint32_t)len;   /* 诊断：原始字节计数 */
         for(int i = 0; i < len; i++){
             char c = (char)buf[i];
             if(c == '\n' || c == '\r'){
-                if(li > 0){ line[li] = '\0'; pk_gps_feed_line(line); li = 0; }
+                if(li > 0){
+                    line[li] = '\0';
+                    pk_gps_feed_line_for_epoch(line, line_epoch);
+                    li = 0;
+                }
             } else if(li < (int)sizeof(line) - 1){
                 line[li++] = c;
             } else { li = 0; }   /* overflow → drop line */
@@ -402,8 +513,8 @@ static void gps_task(void *arg){
                 if(s_acc_snr[i] > mx) mx = s_acc_snr[i];
             }
             s_gps.snr_max = mx;
-            give();
             s_acc_view = 0; s_acc_view_gps = 0; s_acc_view_bds = 0; s_acc_snr_n = 0;
+            give();
 
             /* PPS/NMEA 快照：spinlock 临界区让 (计数, 时间戳) 对 ISR 原子
              * （2026-09 审计三轮），每个快照都是自洽对——不再有 seqlock
@@ -422,7 +533,8 @@ static void gps_task(void *arg){
              * NMEA 新鲜度项用 updated_us（只在**有效** RMC 落地时刷新）：
              * last_nmea_us 连坏 checksum 的行也算「在讲话」，挡不住
              * 「UART 半死、只剩乱码」的假锁定（2026-09 审计 P2）。 */
-            s_gps.time_locked = s_gps.have_fix && s_gps.last_pps_us != 0 &&
+            s_gps.time_locked = s_gps.ant_source_confirmed &&
+                                s_gps.have_fix && s_gps.last_pps_us != 0 &&
                                 (now - s_gps.last_pps_us) < GPS_PPS_LOCK_US &&
                                 s_gps.updated_us != 0 &&
                                 (now - s_gps.updated_us) < GPS_NMEA_LOCK_US;
@@ -454,10 +566,17 @@ static void gps_task(void *arg){
                          (long long)(g.rmc_epoch_ms / 1000),
                          g.rmc_epoch_from_fix ? 'A' : 'V');
             }
-            ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant=%d lat=%.6f lon=%.6f "
+            const bool rf_evidence = g.have_fix || g.snr_count > 0;
+            const pk_gps_ant_result_t ant_result =
+                pk_gps_ant_assess(g.ant_status, rf_evidence);
+            ESP_LOGI(TAG, "fix=%d sats=%d view=%d(G%dB%d) snr=%d ant_raw=%s ant_result=%s "
+                          "ant_age_ms=%lld lat=%.6f lon=%.6f "
                           "alt=%dft gs=%dkt trk=%d hdop=%.1f pps=%u tl=%d rmc=%s rx=%u lines=%u",
                      g.have_fix, g.sats, g.sats_in_view, g.sats_in_view_gps,
-                     g.sats_in_view_bds, g.snr_max, (int)g.ant_status,
+                     g.sats_in_view_bds, g.snr_max,
+                     pk_gps_ant_raw_name(g.ant_status),
+                     pk_gps_ant_result_name(ant_result),
+                     g.ant_status_us ? (long long)((now - g.ant_status_us) / 1000) : -1LL,
                      g.lat, g.lon, g.altitude_ft, g.ground_speed_kt, g.track_deg,
                      (double)g.hdop, (unsigned)g.pps_count, (int)g.time_locked,
                      rmc, (unsigned)s_rx_bytes, (unsigned)s_nmea_lines);

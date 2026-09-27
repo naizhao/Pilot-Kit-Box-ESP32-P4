@@ -138,29 +138,32 @@ require flying wires to the chip's SWCLK/SWDIO pins.
 
 ### CC1312R firmware (978 MHz front-end)
 
-There are **two different paths**, and which one you need depends on whether the
-chip has ever been programmed. Getting this wrong wastes a lot of time, so read
-the distinction first.
+There are **two different paths**. The choice depends on whether the ROM serial
+bootloader is reachable, not simply on whether the chip has been programmed.
 
 | Situation | Path | Needs external hardware? |
 |---|---|---|
-| Factory-blank chip (never programmed) | cJTAG probe | **Yes** — one time only |
-| Any later firmware update | RP2040 proxy over the ROM serial bootloader | No |
+| Factory-blank chip (no valid image) | RP2040 proxy over the ROM serial bootloader | No |
+| Valid image with the configured DIO13 backdoor | RP2040 proxy over the ROM serial bootloader | No |
+| Valid/corrupt image whose actual CCFG makes the ROM path unreachable | External cJTAG recovery | Yes |
 
-#### Why a blank chip needs a probe
+#### Why a blank chip does not need a probe
 
-The CC13x2 ROM contains a serial bootloader, but it is gated by CCFG:
-`BOOTLOADER_ENABLE` is **only** enabled when it reads `0xC5` (TRM SWCU185G
-Table 11-15). A factory-blank chip has erased CCFG — all `0xFF` — so the
-bootloader is **disabled**. It is a *field-update* mechanism, not a
-*first-programming* mechanism. This is why every TI LaunchPad ships with an
-XDS110 on board.
+The CC13x2 TRM states that the ROM serial bootloader executes automatically
+when no valid flash image exists. `IMAGE_VALID_CONF` resets erased/invalid,
+while the `BL_CONFIG` reset value is `0xC5FFFFFF`, so
+`BOOTLOADER_ENABLE=0xC5`. The unconfigured GPIO backdoor is irrelevant in this
+case. TI's answer for programming a naked CC1312R confirms this behavior.
 
-An RP2040 bit-bang cJTAG engine exists in `firmware/rp2040/cjtag.c` and was
-written for exactly this case, but it has **not** been made to work on real
-hardware (see the internal handover doc). Do not plan around it.
+Therefore a failed SSI probe on one board is not evidence that factory-blank
+parts require a preliminary external flash. Check the actual SSI transport,
+reset/interface selection, and target flash/CCFG state separately.
 
-#### Path A — first flash, with a cJTAG probe
+An RP2040 bit-bang cJTAG diagnostic exists in `firmware/rp2040/cjtag.c`, but it
+has **not** been made to work on real hardware (see the internal handover doc).
+Do not plan around it as a recovery tool.
+
+#### Path A — recovery with a cJTAG probe
 
 Any probe that speaks **cJTAG (2-wire IEEE 1149.7)** works. Plain SWD/JTAG
 probes do **not**: the CC13x2 has no SWD, so DAPLink / ST-Link / generic
@@ -187,7 +190,7 @@ RESET_N low and kills the probe's session. Reset the RP2040 to restore.
 Then flash `firmware/cc1312r/build/adsb978_cc13.bin` to address `0x0` with
 your probe's usual tooling (OpenOCD, UniFlash, or J-Link).
 
-#### Path B — all later updates, through the RP2040
+#### Path B — blank-chip first flash and later updates, through the RP2040
 
 ```sh
 python3 tools/cc13_flash.py /dev/ttyACM0 firmware/cc1312r/build/adsb978_cc13.bin
@@ -214,11 +217,13 @@ anything** and refuses to flash if the result would be unrecoverable:
   could no longer be replaced
 - `BL_PIN_NUMBER` not 13, or `BL_LEVEL` not active-high — the backdoor would be
   on the wrong pin or would trigger on every power-up
-- an image too short to contain CCFG at all — flashing erases the whole bank,
-  so the CCFG area becomes `0xFF`, which has the same effect as disabling it
+- an image too short to contain CCFG at all — it cannot provide a complete
+  `IMAGE_VALID_CONF` and board backdoor configuration, so it is not a complete
+  bootable, field-upgradable image (the erased target remains ROM-recoverable)
 
-Recovering from any of these means going back to Path A: dismantling the unit
-and soldering to QFN pins. That is why the gate refuses by default.
+If a valid image disables the bootloader/backdoor, recovery means going back to
+Path A. A too-short image normally leaves no valid image and therefore remains
+reachable through the ROM path, but is still rejected as an invalid deliverable.
 
 The image built from this repository satisfies the gate; a build-time check
 (`firmware/cc1312r/check_ccfg.py`) enforces it so the setting cannot silently
@@ -228,7 +233,7 @@ regress to the SDK default, which disables the bootloader.
 
 | Symptom | Likely cause |
 |---|---|
-| `BSL-FAIL: no response` | Chip has never been programmed (bootloader disabled), or it is running an image whose CCFG disabled the bootloader → Path A |
+| `BSL-FAIL: no response` | Target did not expose ROM SSI0: verify mode 3/FSS/first-byte timing, reset and interface selection; if those pass, read the target's actual flash/CCFG with a debug probe. Do not infer “factory blank needs cJTAG” from this symptom |
 | `BSL-FAIL: CRC mismatch` | Data all written but checksum differs. The TRM does not state the CRC32 polynomial; we use standard IEEE 802.3. Suspect that assumption before suspecting the flash |
 | `BSL-FAIL: erase refused` | `BANK_ERASE_DIS` set in CCFG |
 | Tool refuses before touching the port | Anti-brick gate — read its message; it names the exact field |

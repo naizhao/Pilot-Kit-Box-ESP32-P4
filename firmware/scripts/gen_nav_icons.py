@@ -57,6 +57,8 @@ ICONS = [
     # nav_grid_page.c 的 ITEMS 表和动作条按索引取的——那种错位不会报错，
     # 只会画错图标。屏上顺序由 ITEMS 表决定，与这里的行号无关。
     ("POWER",  "power_settings_new",   0xE8AC, 0),
+    # 航空电台：加在表尾以保持所有既有图标 id 稳定（同 POWER 的理由）。
+    ("RADIO",  "radio",                0xE03E, 0),
 ]
 
 # 实测 pointsize=N 时墨迹为 (N+1)×(N+1)（见 gen_pfd_icons.py 文件头）。

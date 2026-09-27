@@ -1,5 +1,6 @@
 /* edge_cap.h — PIO 双沿捕获 + DMA 块队列取数（block-queue 重设计）。 */
 #pragma once
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,11 +21,19 @@
  * 那拍 jmp pin edge 1），即真实间隔 = D+3.5 tick。tick 只能取整：+3 是该值
  * 的 floor，每个间隔带 ≤1 tick（16ns）的同号偏差；该偏差逐间隔累积、不会
  * 跨帧抵消，必须逐沿修正——这就是 +3 在每个沿上各自应用的原因。
- * 饱和（raw≈0，X 停在 0）得到 ≈PRELOAD+3 的超大值 = 空闲标记，与 >5µs gap 语义一致。 */
+ * PIO 的 high 路径在约 88ns 延迟复查后才重载 X；逐周期模型中，从首次上升沿
+ * 采样到 high_wait 的首次下降沿采样固定跨 16 个 SM cycle，因此 high 用
+ * +8 tick 补回这段前导时间（测试直接解释 edge_cap.pio，不是复制常量模型）。
+ * 输出从 low 开始严格 low/high 成对，DMA 块长 256 为偶数，块内可按下标奇偶
+ * 应用。饱和（raw≈0，X 停在 0）得到超大值 = 空闲标记，与 >5µs gap 语义一致。 */
 #define EDGE_CAP_PRELOAD 0xFFFFFFE0u
+static inline uint32_t edgecap_raw_to_ticks_phase(uint32_t raw, bool high)
+{
+    return (EDGE_CAP_PRELOAD - raw) + (high ? 8u : 3u);
+}
 static inline uint32_t edgecap_raw_to_ticks(uint32_t raw)
 {
-    return (EDGE_CAP_PRELOAD - raw) + 3u;
+    return edgecap_raw_to_ticks_phase(raw, false);
 }
 
 /* tick→µs（PROTOCOL §2 勘误 2026-09-05 的回绕合同）：tick = 16ns 精确，

@@ -757,21 +757,145 @@ static uint32_t le32(const uint8_t *p)
 static SemaphoreHandle_t s_tx_mux;
 static uint8_t s_tx_seq;
 
-static void link_tx(uint8_t type, const uint8_t *pl, size_t len)
+static bool link_tx(uint8_t type, const uint8_t *pl, size_t len)
 {
-    if (!s_tx_mux) return;               /* 链路任务还没起来，等 HELLO 那次 */
+    if (!s_tx_mux) return false;          /* 链路任务还没起来，等 HELLO 那次 */
     static uint8_t out[ADSB_LINK_MAX_FRAME];
     xSemaphoreTake(s_tx_mux, portMAX_DELAY);
     size_t n = adsb_link_encode(out, sizeof out, type, s_tx_seq++, pl, len);
-    if (n) uart_write_bytes(ADSB_UART, out, n);
+    const bool sent = n && uart_write_bytes(ADSB_UART, out, n) == (int)n;
     xSemaphoreGive(s_tx_mux);
+    return sent;
+}
+
+typedef enum {
+    CFG_PENDING_FULL,
+    CFG_PENDING_SWEEP,
+} cfg_pending_kind_t;
+
+typedef struct {
+    cfg_pending_kind_t kind;
+    pk_ant_gnss_t gnss;
+    int64_t sent_us;
+} cfg_pending_t;
+
+/* CONFIG_ACK 没有 request-id，只有 applied/rejected；UART 保序，因此必须按
+ * CONFIG_REQ 发送顺序排队匹配。扫描也走同一消息类型，不能把它的 1/0 ACK
+ * 误认成天线确认。16 深度与协议单包最大 item 数同量级；满了就不再发送，
+ * 不能发送后又丢掉对应关系。s_tx_mux 同时保护 UART 发送和这个 FIFO。 */
+#define CFG_PENDING_CAP 16
+#define CONFIG_ACK_TIMEOUT_US 2000000LL
+static cfg_pending_t s_cfg_pending[CFG_PENDING_CAP];
+static uint8_t s_cfg_pending_head;
+static uint8_t s_cfg_pending_count;
+
+static bool config_tx(uint8_t *pl, size_t len, cfg_pending_t pending)
+{
+    if (!s_tx_mux) return false;
+    static uint8_t out[ADSB_LINK_MAX_FRAME];
+    xSemaphoreTake(s_tx_mux, portMAX_DELAY);
+    if (s_cfg_pending_count == CFG_PENDING_CAP) {
+        xSemaphoreGive(s_tx_mux);
+        ESP_LOGW(TAG, "CONFIG queue full; request not sent");
+        return false;
+    }
+    const size_t n = adsb_link_encode(out, sizeof out, ADSB_LINK_MSG_CONFIG_REQ,
+                                      s_tx_seq++, pl, len);
+    if (!n) {
+        xSemaphoreGive(s_tx_mux);
+        return false;
+    }
+    const uint8_t tail = (uint8_t)((s_cfg_pending_head + s_cfg_pending_count) %
+                                   CFG_PENDING_CAP);
+    pending.sent_us = esp_timer_get_time();
+    s_cfg_pending[tail] = pending;
+    s_cfg_pending_count++;
+    if (pending.kind == CFG_PENDING_FULL)
+        pk_ant_gnss_apply_started(pending.gnss);
+    const bool sent = uart_write_bytes(ADSB_UART, out, n) == (int)n;
+    if (!sent) {
+        s_cfg_pending_count--;            /* 刚压入的是队尾，可安全回滚 */
+        if (pending.kind == CFG_PENDING_FULL)
+            pk_ant_gnss_apply_failed(pending.gnss);
+    }
+    xSemaphoreGive(s_tx_mux);
+    return sent;
+}
+
+static bool config_pending_pop(cfg_pending_t *out)
+{
+    if (!s_tx_mux) return false;
+    xSemaphoreTake(s_tx_mux, portMAX_DELAY);
+    if (s_cfg_pending_count == 0) {
+        xSemaphoreGive(s_tx_mux);
+        return false;
+    }
+    *out = s_cfg_pending[s_cfg_pending_head];
+    s_cfg_pending_head = (uint8_t)((s_cfg_pending_head + 1) % CFG_PENDING_CAP);
+    s_cfg_pending_count--;
+    xSemaphoreGive(s_tx_mux);
+    return true;
+}
+
+static void config_pending_reset(void)
+{
+    if (!s_tx_mux) return;
+    xSemaphoreTake(s_tx_mux, portMAX_DELAY);
+    s_cfg_pending_head = 0;
+    s_cfg_pending_count = 0;
+    xSemaphoreGive(s_tx_mux);
+}
+
+/* 协议层不重传；任一 CONFIG_ACK 丢失都会让这个保序 FIFO 永久错位。收到
+ * 普通合法帧证明 RP 仍在线时，以队头年龄判超时并整体丢弃会话，而不是只弹
+ * 一项后拿迟到 ACK 去匹配下一项。调用方随后重发完整配置。 */
+static bool config_pending_expire(int64_t now_us)
+{
+    bool expired = false;
+    if (!s_tx_mux) return false;
+    xSemaphoreTake(s_tx_mux, portMAX_DELAY);
+    if (s_cfg_pending_count != 0 &&
+        now_us - s_cfg_pending[s_cfg_pending_head].sent_us >=
+            CONFIG_ACK_TIMEOUT_US) {
+        s_cfg_pending_head = 0;
+        s_cfg_pending_count = 0;
+        expired = true;
+    }
+    xSemaphoreGive(s_tx_mux);
+    if (expired) {
+        ESP_LOGW(TAG, "CONFIG_ACK timeout; reset queue and resend full config");
+        pk_ant_config_link_reset();
+    }
+    return expired;
 }
 
 void pk_adsb_link_push_config(void)
 {
     uint8_t pl[1 + ADSB_LINK_CFG_MAX_ITEMS * 2];
     size_t n = pk_antenna_build_config_payload(pl, sizeof pl);
-    if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
+    if (!n) return;
+    /* 快照必须取自真正要发的 payload，不能 build 完再重读 getter：UI 任务可能
+     * 在两步之间又改一次，ACK 最终确认的是字节流，不是那一刻的全局变量。 */
+    pk_ant_gnss_t gnss = PK_ANT_GNSS_EXTERNAL;
+    bool found = false;
+    if (n == (size_t)(1 + 2 * pl[0])) {
+        for (uint8_t i = 0; i < pl[0]; i++) {
+            if (pl[1 + 2 * i] == ADSB_LINK_CFG_ANT_GNSS) {
+                gnss = pl[2 + 2 * i] ? PK_ANT_GNSS_ONBOARD
+                                      : PK_ANT_GNSS_EXTERNAL;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found) {
+        ESP_LOGW(TAG, "CONFIG payload has no GNSS item; not sent as full config");
+        return;
+    }
+    (void)config_tx(pl, n, (cfg_pending_t){
+        .kind = CFG_PENDING_FULL,
+        .gnss = gnss,
+    });
 }
 
 /* RP2040 最近一次 HEALTH_STATS 的原始字段（见 adsb_link_task.h）。
@@ -879,7 +1003,10 @@ static void sweep_send_cfg(uint8_t on)
     const adsb_link_cfg_item_t it = { ADSB_LINK_CFG_SWEEP, on };
     uint8_t pl[1 + 2];
     const size_t n = adsb_link_config_encode(pl, sizeof pl, &it, 1);
-    if (n) link_tx(ADSB_LINK_MSG_CONFIG_REQ, pl, n);
+    if (n) (void)config_tx(pl, n, (cfg_pending_t){
+        .kind = CFG_PENDING_SWEEP,
+        .gnss = PK_ANT_GNSS_EXTERNAL,
+    });
 }
 
 void pk_sweep_start(void)
@@ -912,6 +1039,22 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
                           memory_order_relaxed);
     atomic_store_explicit(&s_ever_linked, true, memory_order_relaxed);
     atomic_fetch_add_explicit(&s_stats.rx_frames, 1, memory_order_relaxed);
+
+    /* P4 可以单独复位/刷机，而 RP2040 保持供电并继续处于 linked。那种情况下
+     * RP 不会再发 HELLO；如果只在 HELLO 分支推配置，P4 的 actual_known 会
+     * 永久为假，GNSS 来源门控也就永久拒绝定位。任意普通合法帧都足以证明
+     * RP 在线：在没有已确认来源、也没有请求在途时补发一次完整配置。
+     * HELLO/CAPABILITIES 自己会 reset + push，ACK 则必须先匹配现有 FIFO，
+     * 所以这三类不能从这里抢跑。 */
+    if (m->type != ADSB_LINK_MSG_HELLO &&
+        m->type != ADSB_LINK_MSG_CAPABILITIES &&
+        m->type != ADSB_LINK_MSG_CONFIG_ACK) {
+        (void)config_pending_expire(esp_timer_get_time());
+        pk_ant_gnss_status_t ant;
+        pk_ant_gnss_status_get(&ant);
+        if (!ant.actual_known && !ant.request_pending)
+            pk_adsb_link_push_config();
+    }
 
     switch (m->type) {
     case ADSB_LINK_MSG_MODES_RAW: {
@@ -959,6 +1102,9 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * 风险。日志只首条 LOGI，之后降 DEBUG。seq 用本侧单调计数（协议
          * §2 seq 是按发送方递增的）：恒 0 会让 RP 侧 seq_gaps 持续虚增。 */
         static bool s_hello_logged;
+        /* HELLO = 对面刚回到上电默认；旧 ACK 不会再来，旧实际来源也已失效。 */
+        config_pending_reset();
+        pk_ant_config_link_reset();
         uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
         memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
         link_tx(ADSB_LINK_MSG_HELLO, pl, sizeof pl);
@@ -973,6 +1119,31 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
             ESP_LOGI(TAG, "RP2040 %s seq=%u", m->type == ADSB_LINK_MSG_HELLO
                      ? "HELLO" : "CAPABILITIES", m->seq);
             s_hello_logged = true;
+        }
+        break;
+    }
+    case ADSB_LINK_MSG_CONFIG_ACK: {
+        cfg_pending_t pending;
+        if (!config_pending_pop(&pending)) {
+            ESP_LOGW(TAG, "unmatched CONFIG_ACK applied=%u rejected=%u",
+                     m->payload_len > 0 ? m->payload[0] : 0,
+                     m->payload_len > 1 ? m->payload[1] : 0);
+            break;
+        }
+        if (pending.kind == CFG_PENDING_FULL) {
+            const bool accepted = m->payload_len == 2 &&
+                                  m->payload[0] == 3 && m->payload[1] == 0;
+            if (accepted) {
+                pk_ant_gnss_apply_confirmed(pending.gnss);
+                ESP_LOGI(TAG, "GNSS antenna actual confirmed: %s",
+                         pending.gnss == PK_ANT_GNSS_EXTERNAL ? "EXT-J2"
+                                                              : "ONBOARD-PATCH");
+            } else {
+                pk_ant_gnss_apply_failed(pending.gnss);
+                ESP_LOGW(TAG, "GNSS antenna config not confirmed: applied=%u rejected=%u",
+                         m->payload_len > 0 ? m->payload[0] : 0,
+                         m->payload_len > 1 ? m->payload[1] : 0);
+            }
         }
         break;
     }
@@ -1035,6 +1206,13 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         break;                                     /* 未知类型：忽略（规范§3.5） */
     }
 }
+
+#ifdef PK_HOST_TEST
+void pk_adsb_link_test_dispatch(const void *msg)
+{
+    on_link_msg(NULL, (const adsb_link_msg_t *)msg);
+}
+#endif
 
 static void adsb_link_task(void *arg)
 {

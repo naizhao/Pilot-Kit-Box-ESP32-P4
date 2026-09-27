@@ -80,6 +80,9 @@ static void reset_world(int64_t t0, pk_flight_phase_t phase)
     g_now_us = t0;
     g_phase  = phase;
     pk_gps_state_init();
+    /* 与生产 CONFIG_ACK 后的状态一致；来源切换门控由
+     * test_gps_fix_freshness.c 单独覆盖。 */
+    pk_gps_antenna_source_confirmed(PK_GPS_SOURCE_EXTERNAL);
 }
 
 /* ── GDL90 线字节解码（字段位置见 gdl90.c 的 27 字节 payload 布局） ── */

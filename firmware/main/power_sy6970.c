@@ -188,8 +188,8 @@ static const sy6970_init_step_t s_shutdown_seq[] = {
     { SY6970_SEQ_RMW_SET, SY6970_REG09,
       SY6970_BATFET_DIS_MASK, 0,
       "BATFET_DIS=1 关断 Q4 进 shipping mode (DS p.20 REG09[5] / p.30)："
-      "/QON 悬空 + J1 无电源控制线，这是本板唯一的软件断电途径；"
-      "唤醒只能靠插 USB (DS p.30)" },
+      "V4.9 SW3 只接 /QON、没有 MCU GPIO 事件；关机后按住 SW3 约 2.3 s"
+      "或插 USB 可唤醒 (DS p.4/p.10/p.30)" },
 };
 
 const sy6970_init_step_t *sy6970_shutdown_seq(size_t *n)
@@ -440,17 +440,29 @@ static bool run_seq(const sy6970_init_step_t *seq, size_t n, const char *label)
 }
 
 /*
- * F1 看门狗管理 + ADC 连续转换开启（bring-up）。
+ * bring-up：开 ADC → 按 sy6970_init_seq() 逐字执行初始化序列。
  *
- * 序列按 sy6970_init_seq() **逐字执行**（顺序不得重排）：写前 REG00
- * 在位校验 → REG07 关狗 → REG03 喂狗 → 写后 REG07 回读（关狗落定）
- * → 写后 REG00 回读验证。开 ADC 的 REG02 写后也回读验证 CONV_RATE
- * （审计 F2：不回读就证明不了配置真的落进寄存器，REG00 回读只能
- * 证明器件在场）。各回读值都以 INFO 进日志（write-intent +
- * write-result 证据，计划约束）；任一步失败 WARN 带 why 并返回
- * false。本文件唯一的寄存器写豁免是看门狗管理（F1，计划全局约束）
- * + ADC 转换开启（Task 3 取证表事实 14 点名 Task 4 职责）；充电参数
- * （IINLIM/ICHG/VREG 等）一概不碰。
+ * 序列顺序不得重排（写 → 回读分成前后两段，且 AUTO_DPDM 必须排在
+ * IINLIM 之前，理由见该步 why）：
+ *   写前  REG00 在位校验
+ *   写    REG07 关狗 → REG03 喂狗 → REG02 关 AUTO_DPDM
+ *         → REG00 IINLIM=2000mA → REG09 JEITA_VSET=1
+ *   写后  REG07 / REG02 / REG00(器件位) / REG00(IINLIM) / REG09 逐条回读
+ * 写后回读是审计 F2 的裁定：只回读 REG00 只能证明器件在场，证明不了
+ * 配置真的落进寄存器。各回读值都以 INFO 进日志（write-intent +
+ * write-result 证据，计划约束）；任一步失败 WARN 带 why 并返回 false。
+ * 开 ADC 的 REG02 写后也回读验证 CONV_RATE（本函数内做，CONV_START
+ * 写 1 自清，进不了那张表）。
+ *
+ * ── 仍然不碰的充电参数：ICHG(REG04) 与 VREG(REG06)────────────────────
+ * 两者都用 POR 默认值，理由不同：
+ *   ICHG：硬件 ILIM 脚(R38=180R)≈2.08A 已在外侧兜底，实测快充 2050mA
+ *         正是撞在这条线上，再配一次没有增量。
+ *   VREG：**安全相关，保守是对的**。实测充满静置 BATV=4164mV，离单节
+ *         锂电保护板的典型过充检测线（4.25~4.30V，行业通性不是本电芯
+ *         实测）还有 ~90mV 余量。往上调能多榨一点容量，但**本电芯至今
+ *         没有正式规格书**——2026-09-13 向卖家索要，只拿到一张别的型号
+ *         (1160100/10000mAh) 的通用图。拿到本电芯规格书之前不动这个值。
  */
 static bool bring_up(void)
 {
@@ -534,7 +546,8 @@ bool power_sy6970_shutdown(void)
     }
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_shutdown_seq(&n);
-    ESP_LOGW(TAG, "执行关机：置 BATFET_DIS，唤醒只能靠插 USB（/QON 悬空）");
+    ESP_LOGW(TAG, "执行关机：置 BATFET_DIS；V4.9 唤醒请按住 SW3 约 2.3 s"
+                  "后松开，或插 USB（DS p.4/p.10/p.30）");
     if (!run_seq(seq, n, "关机")) return false;
 
     /*
@@ -828,14 +841,17 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
                      (unsigned)st.ichg_ma);
         ESP_LOGI(TAG,
                  "ICHG=%s VBUS=%umV BATT=%umV SYS=%umV NTC=%u(%lu.%lu%%) "
-                 "IINLIM=%umA REG00=0x%02X%s REG0C=0x%02X chg=%d therm=%d",
+                 "IINLIM=%umA REG00=0x%02X%s REG0B=0x%02X "
+                 "CHRG_STAT=%u chg=%d term=%d REG0C=0x%02X therm=%d",
                  ichg_s, (unsigned)st.vbus_mv,
                  (unsigned)st.batt_mv, (unsigned)st.sys_mv,
                  (unsigned)st.ntc_fault,
                  (unsigned long)(st.ntc_pct_x1000 / 1000u),
                  (unsigned long)(st.ntc_pct_x1000 % 1000u / 100u),
-                 iinlim_ma, r00, r00_live ? "" : "(stale)", win[1],
-                 (int)st.charging, (int)st.therm_reg);
+                 iinlim_ma, r00, r00_live ? "" : "(stale)", win[0],
+                 (unsigned)((win[0] >> 3) & 0x03),
+                 (int)st.charging, (int)st.term_done, win[1],
+                 (int)st.therm_reg);
         /* 只在真有故障位时才连读取证，平时不占日志。
          *
          * 2026-09-12 查过一轮 CHRG_FAULT=01("输入故障")：它在 9V 正常供电、

@@ -25,6 +25,8 @@
 #include "config_antenna.h"    /* pk_ant_1090_get / pk_ant_gnss_get 桩 */
 #include "power_service.h"     /* power_snapshot_t —— power_service_snapshot 桩 */
 #include "record_sink.h"       /* record_sink_uart_stats 桩 */
+#include "airband.h"          /* 机场详情播放器 / AIRBAND 诊断页桩 */
+#include "airband_frequency_input.h"
 
 /* 环境变量取整数，缺省回落。全文件的 PK_SIM_* 旋钮都走它。 */
 static int sim_env(const char *k, int dflt)
@@ -716,6 +718,22 @@ pk_ant_gnss_t pk_ant_gnss_get(void)
                                                   : PK_ANT_GNSS_EXTERNAL;
 }
 
+void pk_ant_gnss_status_get(pk_ant_gnss_status_t *out)
+{
+    if (out == NULL) return;
+    out->requested = pk_ant_gnss_get();
+    out->actual = out->requested;
+    out->actual_known = true;
+    out->request_pending = false;
+}
+
+/* 门限同样来自未链接的 config_antenna.c；0 表示使用 RP2040 固件默认，
+ * 设置页将其显示为“默认”，不是 0‰ 的实际解调门限。 */
+int pk_thresh_1090_get(void)
+{
+    return 0;
+}
+
 /* QNH 模式：出厂默认 AUTO（config_qnh.h）。PK_SIM_QNH_MANUAL=1 看另一档版面。 */
 pk_qnh_mode_t pk_qnh_mode_get(void)
 {
@@ -762,6 +780,102 @@ bool record_sink_uart_stats(uint32_t *out_written, uint32_t *out_dropped,
     if (out_pending) *out_pending = 5;
     return true;
 }
+
+/* AIRBAND 运行时。模拟器只负责版面/命中，不启动 BK4819、I2S 或 codec；
+ * 这些状态仍保持可写，让机场频率行、静音和音量按钮走真实页面代码。 */
+static pk_airband_control_status_t s_sim_airband_ctl = {
+    .requested_hz = 121500000u,
+    .requested_channel_khz = 121500u,
+    .squelch_enabled = true,
+    .squelch_open_dbm_x2 = -180,
+    .squelch_hysteresis_db_x2 = 12,
+    .speaker_volume = 35,
+};
+
+bool pk_airband_get(pk_airband_state_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    out->online = true;
+    out->frequency_hz = s_sim_airband_ctl.requested_hz;
+    out->speaker_online = !pk_sim_flag("PK_SIM_AIRBAND_SPEAKER_OFFLINE");
+    out->speaker_muted = s_sim_airband_ctl.speaker_muted;
+    out->speaker_volume = s_sim_airband_ctl.speaker_volume;
+    out->squelch_enabled = s_sim_airband_ctl.squelch_enabled;
+    out->squelch_open = pk_sim_flag("PK_SIM_AIRBAND_SQUELCH_OPEN");
+    out->rf.rssi_dbm_x2 = -196;
+    out->rf.noise_raw = 72;
+    out->audio_frames = 48000;
+    out->updated_us = esp_timer_get_time();
+    return true;
+}
+
+bool pk_airband_control_get(pk_airband_control_status_t *out)
+{
+    if (out == NULL) return false;
+    *out = s_sim_airband_ctl;
+    return true;
+}
+
+bool pk_airband_set_frequency(uint32_t hz)
+{
+    if (hz < 118000000u || hz > 137000000u) return false;
+    s_sim_airband_ctl.requested_hz = hz;
+    s_sim_airband_ctl.requested_channel_khz = 0;
+    s_sim_airband_ctl.scanning = false;
+    return true;
+}
+
+bool pk_airband_set_channel(uint32_t channel_khz)
+{
+    uint32_t carrier_hz = 0;
+    if (!pk_airband_channel_to_carrier_hz(channel_khz, &carrier_hz))
+        return false;
+    s_sim_airband_ctl.requested_hz = carrier_hz;
+    s_sim_airband_ctl.requested_channel_khz = channel_khz;
+    s_sim_airband_ctl.scanning = false;
+    return true;
+}
+
+bool pk_airband_scan_start(const pk_airband_scan_plan_t *plan)
+{
+    if (plan == NULL) return false;
+    s_sim_airband_ctl.scan_plan = *plan;
+    s_sim_airband_ctl.requested_hz = plan->start_hz;
+    s_sim_airband_ctl.requested_channel_khz = 0;
+    s_sim_airband_ctl.scanning = true;
+    return true;
+}
+
+void pk_airband_scan_stop(void) { s_sim_airband_ctl.scanning = false; }
+
+bool pk_airband_set_squelch(int16_t threshold, uint16_t hysteresis)
+{
+    s_sim_airband_ctl.squelch_open_dbm_x2 = threshold;
+    s_sim_airband_ctl.squelch_hysteresis_db_x2 = hysteresis;
+    return true;
+}
+
+void pk_airband_set_squelch_enabled(bool enabled)
+{
+    s_sim_airband_ctl.squelch_enabled = enabled;
+}
+
+void pk_airband_set_speaker_muted(bool muted)
+{
+    s_sim_airband_ctl.speaker_muted = muted;
+}
+
+void pk_airband_set_speaker_volume(uint8_t volume)
+{
+    s_sim_airband_ctl.speaker_volume = volume > 100 ? 100 : volume;
+}
+
+bool pk_airband_speaker_test(void) { return true; }
+
+/* 导航网格的 AIRBAND 格会在切 mode 前触发一次后台选台加载。模拟器没有
+ * FreeRTOS/SD 航空库任务，页面本身不编入，只保留这个无副作用入口。 */
+void pk_airband_page_open(void) { }
 
 /* ── display.c 的两个入口 ────────────────────────────────────────
  *

@@ -522,6 +522,20 @@ def part_size(fp_name):
     m = SIZE_RE.search(fp_name)
     if m:
         return m.group(1)
+    # 功率电感/二极管/开关的封装名是厂家系列号，不含 4 位尺寸码——备料卡上
+    # 只显示 "L"/"D"/"SW" 没法跟料盒对上（2026-09-26 维护者反馈"4x4 的 L
+    # 只写了 L"）。按系列码给尺寸，新系列进来先在这里登记。
+    for series, size in (("SRN4018", "4x4"),      # Bourns 一体成型 4.8×4.8×1.8
+                         ("XxL4030", "4x3"),      # Coilcraft XxL/XEL4030 4×3
+                         ("SOD-323", "SOD-323"),
+                         ("TS24CA", "TS24CA")):
+        if series.lower() in fp_name.lower():
+            return size
+    # 明确写了长×宽的（"L_4x4mm" 之类）
+    m = re.search(r"(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)", fp_name, re.I)
+    if m:
+        fmt = lambda x: x.rstrip("0").rstrip(".") if "." in x else x
+        return f"{fmt(m.group(1))}x{fmt(m.group(2))}"
     # 非无源件：取封装名里能认的第一段（QFN-48-1EP_7x7mm → QFN-48）
     head = re.split(r"[_（(]", fp_name)[0]
     return head[:14]
@@ -623,9 +637,6 @@ def _norm_spec(s):
 SPEC_TAIL_RE = re.compile(
     r"[\s,，/]*(?:c0g|np0|x7r|x5r|x6s|y5v|±?\s*\d+(?:\.\d+)?\s*%|±\s*\d+(?:\.\d+)?\s*p?f)\s*$",
     re.I)
-AMBIGUOUS = object()   # 剥完后缀撞车的规格：宁可不给批次，也不能指错料袋
-
-
 def _spec_base(s):
     """剥掉介质/容差后缀，用来做兜底匹配。
 
@@ -645,7 +656,14 @@ def _spec_base(s):
 def _norm_fp(s):
     s = (s or "").strip()
     m = re.match(r"^(\d{4})", s)          # "0402"、"0603"
-    return m.group(1) if m else re.split(r"[/\s]", s)[0].upper()
+    if m:
+        return m.group(1)
+    # 采购表手写笔误：4 位尺寸码丢了前导 0（补2 表把 0402 写成 "402"）。
+    # 只认这几颗常见尺寸，别把 "33R" 这类真 3 位值误归一。
+    m3 = re.match(r"^(\d{3})(?!\d)", s)
+    if m3 and m3.group(1) in ("201", "402", "603", "805"):
+        return "0" + m3.group(1)
+    return re.split(r"[/\s]", s)[0].upper()
 
 
 def _load_rows(path):
@@ -689,6 +707,7 @@ def _load_rows(path):
             rows.append({
                 "n": idx, "name": name,
                 "spec": cells.get("B", ""), "fp": cells.get("C", ""),
+                "material": cells.get("D", ""),   # 材质列：X7R/C0G，分批买时是挑袋证据
                 "qty": cells.get("F", ""), "mpn": cells.get("G", ""),
                 "bought": cells.get("J", ""),
                 "lcsc": (cells.get("H") or "").strip(),
@@ -714,15 +733,17 @@ def build_index(rows):
         by_spec.setdefault(key, info)
         base_rows.setdefault((_norm_spec(_spec_base(info["spec"])), fp), []).append(info)
 
-    # 兜底索引。采购表自己分了介质（C0G 一批、X7R 一批）时，两行会落在同一个
-    # 基础规格下——**那就整条作废**。猜一个等于把人指去翻另一袋料，而 0402 的
-    # C0G 和 X7R 外观完全一样，拿错了看不出来。
-    # 同一规格重复出现几行（分批补采同一种料）不算歧义，取第一行。
+    # 兜底索引。同一基础规格下按（规格, 材质介质）区分身份：只有一种身份 =
+    # 分批补采同一种料，取最早一行；多种身份（C0G 一批、X7R 一批）**保留候选
+    # 列表**交给 ④ 拿组名里的介质去挑——组名点了介质就挑得对，没点宁可不给。
     by_base = {}
     for bkey, infos in base_rows.items():
-        specs = {_norm_spec(i["spec"]) for i in infos}
-        by_base[bkey] = infos[0] if len(specs) == 1 else AMBIGUOUS
-    return {"by_ref": by_ref, "by_lcsc": by_lcsc, "by_spec": by_spec, "by_base": by_base}
+        sigs = {(_norm_spec(i["spec"]),
+                 parse_dielectric(i.get("spec"), i.get("material")) or "")
+                for i in infos}
+        by_base[bkey] = infos[0] if len(sigs) == 1 else list(infos)
+    return {"by_ref": by_ref, "by_lcsc": by_lcsc, "by_spec": by_spec, "by_base": by_base,
+            "base_rows": base_rows}
 
 
 def load_batches():
@@ -803,16 +824,30 @@ def match_batch(group, idx, warn=None):
     #    而板上只有 `30k`。匹配不上会让网页写「未在采购表中（多半是库存已有）」——
     #    那是个结论，不是留白，2026-09-21 就这么把「补3」买的 C87 说成了库存料。
     #    封装照旧要一致：放宽的是介质，不是尺寸。
+    #    2026-09-22 再进一步：C0G/X7R 分批买时（100pF 0402 两袋），剥掉介质
+    #    会撞车、封装还可能有 "402" 笔误。现在索引按（规格,材质介质）留候选
+    #    列表，这里用**组名里的介质**去挑——组名点了介质就挑得对，没点宁可
+    #    不给，不猜。
     base = (_norm_spec(_spec_base(group["spec"])), _norm_fp(group["size"]))
     got = idx["by_base"].get(base)
-    if got is AMBIGUOUS:
-        if warn is not None:
-            warn.append(f"{group['spec']} {group['size']}：采购表里剥掉介质后有多行同值"
-                        f"（C0G/X7R 分批买的），无法判断是哪一袋，不显示批次")
+    if got is None:
         return None
-    if got:
-        return _hit(got, "规格(略介质)")
-    return None
+    cands = got if isinstance(got, list) else [got]
+    if len(cands) > 1:
+        die = parse_dielectric(group["spec"])
+        if die:
+            m = [r for r in cands
+                 if die in (parse_dielectric(r.get("spec"), r.get("material")) or "")]
+            if m:
+                cands = m
+        if len(cands) > 1:
+            # 组名没点介质（或点了但对不上任何一行），剥掉介质后仍有多行——
+            # 不能猜：0402 的 C0G 和 X7R 拿错了看不出来。
+            if warn is not None:
+                warn.append(f"{group['spec']} {group['size']}：采购表里剥掉介质后有多行同值"
+                            f"（C0G/X7R 分批买的），无法判断是哪一袋，不显示批次")
+            return None
+    return _hit(cands[0], "规格(略介质)")
 
 
 # ── 组装 ──────────────────────────────────────────────────────────
@@ -843,7 +878,7 @@ def fp_area(part):
     return (max(xs) - min(xs)) * (max(ys) - min(ys))
 
 
-def build(variant):
+def build(variant, batch_idx=None):
     board = pcbnew.LoadBoard(str(variant.pcb))
     bbox = board.GetBoardEdgesBoundingBox()
     origin = (bbox.GetLeft(), bbox.GetTop())
@@ -926,7 +961,7 @@ def build(variant):
     # 极性标注统一在组装前套上：现算变体和 main() 里的存档变体走同一条路径
     apply_polarity({"groups": [{"parts": parts}]})
 
-    groups = group_parts(parts)
+    groups = group_parts(parts, batch_idx)
     return {
         "id": variant.id,
         "title": variant.title,
@@ -948,7 +983,47 @@ def build(variant):
     }
 
 
-def group_parts(parts):
+def split_by_purchase_rows(members, spec, fp, batch_idx):
+    """同规格分批买时按采购位号把一组拆成几盘。
+
+    条件（三个都满足才拆，防止采购表笔误把组切碎）：
+    1. 该规格在采购表里有 ≥2 行（确实分批买了同一种料）；
+    2. 组内有位号命中这些行——命中哪行归哪行；
+    3. 没命中位号的成员归**最早一行**（先买的先用）。
+
+    0R 组的反例：R37 被采购表写在「6.8k」行下——那行不在本组的基础规格里，
+    视同未命中，不会把 0R 拆散。
+    """
+    if not batch_idx:
+        return [(None, members)]
+    # fp 是封装库名（C_0603_1608Metric），要用 part_size 提尺寸码才能和
+    # 采购表那侧（"0603"）的键对上——_norm_fp 只认短码，库名会整串大写。
+    base = (_norm_spec(_spec_base(spec)), part_size(fp))
+    rows = (batch_idx.get("base_rows") or {}).get(base) or []
+    if len(rows) < 2:
+        return [(None, members)]
+    ids = [(r["n"], r["spec"], r["fp"]) for r in rows]
+    by_row, unhit = {}, []
+    for p in members:
+        r = batch_idx["by_ref"].get(p["ref"])
+        rid = (r["n"], r["spec"], r["fp"]) if r else None
+        if rid and rid in ids:
+            by_row.setdefault(rid, []).append(p)
+        else:
+            unhit.append(p)
+    if not by_row:
+        return [(None, members)]
+    out, earliest = [], ids[0]
+    for rid in ids:
+        mem = by_row.get(rid, [])
+        if rid == earliest:
+            mem = mem + unhit
+        if mem:
+            out.append((rid[0], mem))
+    return out if len(out) > 1 else [(None, members)]
+
+
+def group_parts(parts, batch_idx=None):
     """按料聚合：一组 = 一盘料。
 
     分组键优先用**立创料号**，不是规格字符串。BOM 里同一个料号常常按用途拆成
@@ -976,94 +1051,35 @@ def group_parts(parts):
         buckets.setdefault(key, []).append(part)
 
     groups = []
+    def emit(key, members):
+        lcsc_keyed = bool((members[0]["bom"] or {}).get("lcsc", ""))
+        if lcsc_keyed:
+            # 同料号多行但**型号后缀不同**（介质/耐压要求差异）= BOM 按采购
+            # 要求拆了行，物理上就是两盘料，不能合成一组。实例：C1546 的
+            # 11 颗普通 100pF（X7R 批）+ 5 颗 100pF C0G（射频位 C31~C35，
+            # 介质必须分，拿错是电路故障）；C12891 的 C76/C77 耐压要求不同
+            # （10V/16V）。按行拆开后，备料不混袋、批次匹配各归各行。
+            classes = {}
+            for p in members:
+                classes.setdefault(parse_dielectric(p["val"]) or "", []).append(p)
+            if len(classes) > 1:
+                for cls in sorted(classes):
+                    emit(f"{key}|{cls or 'STD'}", classes[cls])
+                return
+        # 同规格分批买（采购表 ≥2 行）时再按采购位号拆：命中哪批归哪批，
+        # 没命中位号的归最早一批（1uF 0603：C78/C79/C80 是补买的第2批）
+        specs = sorted({(p.get("bom") or {}).get("spec", "") for p in members} - {""})
+        spec = common_prefix(specs) if specs else (members[0].get("val") or "")
+        fp = collections.Counter(p["fp"] for p in members).most_common(1)[0][0]
+        subs = split_by_purchase_rows(members, spec, fp, batch_idx)
+        if len(subs) == 1:
+            groups.append(build_group(key, subs[0][1]))
+        else:
+            for sn, sub in subs:
+                groups.append(build_group(f"{key}|S{sn}", sub))
+
     for key, members in buckets.items():
-        infos = [p["bom"] for p in members if p["bom"]] or [{}]
-        # 同一料号的多行去重后合并。**介质不一致就是数据出问题了**——
-        # 一个料号不可能既是 C0G 又是 X7R，合并会让人照着错的介质拿料，
-        # 而射频位拿错介质是电路故障，不是外观问题。
-        seen, rows = set(), []
-        for info in infos:
-            sig = (info.get("spec"), info.get("part_no"), info.get("note"))
-            if sig not in seen:
-                seen.add(sig)
-                rows.append(info)
-
-        dielectrics = {parse_dielectric(r.get("part_no"), r.get("spec"), r.get("material"))
-                       for r in rows}
-        dielectrics.discard("")
-        assert len(dielectrics) <= 1, (
-            f"{key}: 同一料号解析出多种介质 {sorted(dielectrics)}——"
-            f"BOM 数据有问题，合并会让人拿错料"
-        )
-
-        # 同一料号必须对应同一个物理尺寸。名字可以不同（R_0603 / L_0603），
-        # 尺寸不能——**把 0402 和 0603 合成一盘料，人就会照着拿错**，
-        # 而贴上去之前看不出来。1.5 倍留给同尺寸封装的焊盘画法差异。
-        spans = [pad_span(p) for p in members]
-        if min(spans) > 0 and max(spans) / min(spans) > 1.5:
-            big = max(members, key=pad_span)
-            small = min(members, key=pad_span)
-            raise AssertionError(
-                f"{key}: 同一料号下焊盘尺寸差太多——"
-                f"{big['ref']}({big['fp']}, {max(spans):.2f}mm) vs "
-                f"{small['ref']}({small['fp']}, {min(spans):.2f}mm)。"
-                f"检查 BOM 是不是把两种尺寸配了同一个料号"
-            )
-
-        fps = collections.Counter(p["fp"] for p in members)
-        group_kind = collections.Counter(p["kind"] for p in members).most_common(1)[0][0]
-        specs = [r.get("spec") for r in rows if r.get("spec")]
-        notes = [r.get("note", "").strip() for r in rows]
-        # 材质列是**要求下限**，跟实配介质可以不同（C21 组要求 X7R、实配 C0G）
-        required = sorted({r.get("material", "").strip() for r in rows} - {""})
-
-        # 组内按**位号**排：D2 → D3 → D4 → D5。
-        #
-        # 原来按板上位置排（y 分箱 + x），想的是减少找焊盘时的眼睛跳跃，
-        # 结果贴出来是 D2 → D4 → D5 → D3——对着位号清单核对时完全对不上，
-        # 也说不清自己贴到哪了。位号有序才能一眼看出漏没漏。
-        members.sort(key=lambda p: ref_sort_key(p["ref"]))
-        groups.append({
-            "key": key,
-            "spec": common_prefix(specs) if specs else members[0]["val"],
-            # 拆行时各行的规格差异（用途/版本）留着，位号多的时候要靠它分辨
-            "spec_variants": specs if len(specs) > 1 else [],
-            # 同一盘料可能落在多个封装名下（R_0603 / L_0603），显示用得最多的那个，
-            # 其余留在 fp_variants 里——不显示出来会让人以为板上没有那个封装
-            "fp": fps.most_common(1)[0][0],
-            "fp_variants": [f for f, _ in fps.most_common()[1:]],
-            # 0402 / 0603 决定用多大镊子和风量，比完整封装名有用
-            "size": part_size(fps.most_common(1)[0][0]),
-            # 组的大类取组内多数位号，并**回填给每个位号**（见下面的 parts）。
-            #
-            # 一开始是让每个位号各自按前缀归类的，结果 C21189 那盘 0R 里
-            # ZS1 归「匹配网络」、R21~R23 归「电阻」，这一组排在电阻段，
-            # 中间那个匹配网络就把电阻段劈成了两截——贴电阻贴到一半冒出
-            # 一个别的类。
-            #
-            # 分类的粒度必须跟「一盘料」对齐，因为分类导航是用来**找料**的：
-            # ZS1 用的就是电阻那盘料，找料时它就该在电阻里。它的特殊用途
-            # 由 use（"0R 串"）表达，不靠分类。
-            "kind": group_kind,
-            "dielectric": next(iter(dielectrics), ""),
-            "required": " / ".join(required),
-            "category": next((r.get("category") for r in rows if r.get("category")), ""),
-            "voltage": next((r.get("voltage") for r in rows if r.get("voltage")), ""),
-            "part_no": next((r.get("part_no") for r in rows if r.get("part_no")), ""),
-            "lcsc": next((r.get("lcsc") for r in rows if r.get("lcsc")), ""),
-            "note": " ｜ ".join(n for n in dict.fromkeys(notes) if n),
-            "grade": strictest_grade([r.get("grade") for r in rows]),
-            "has_bom": bool(members[0]["bom"]),
-            "qty": len(members),
-            # use 跟组标题一样就是冗余，去掉，省得每行都重复一遍 "100pF"。
-            # kind 一律回填成组的大类，保证推进序列里同类连成一段。
-            "parts": [
-                {**{k: v for k, v in p.items()
-                    if k != "bom" and not (k == "use" and v == common_prefix(specs))},
-                 "kind": group_kind}
-                for p in members
-            ],
-        })
+        emit(key, members)
 
     # 一级按大类分段——手边一盒电容就一次贴完所有电容，不用贴两个就去翻电阻盒。
     # 二级才是「先大后小」：同类里大件先贴，热风吹外围不会掀翻已贴的小件。
@@ -1079,6 +1095,96 @@ def group_parts(parts):
 
     groups.sort(key=sort_key)
     return groups
+
+
+def build_group(key, members):
+    infos = [p["bom"] for p in members if p["bom"]] or [{}]
+    # 同一料号的多行去重后合并。**介质不一致就是数据出问题了**——
+    # 一个料号不可能既是 C0G 又是 X7R，合并会让人照着错的介质拿料，
+    # 而射频位拿错介质是电路故障，不是外观问题。
+    seen, rows = set(), []
+    for info in infos:
+        sig = (info.get("spec"), info.get("part_no"), info.get("note"))
+        if sig not in seen:
+            seen.add(sig)
+            rows.append(info)
+
+    dielectrics = {parse_dielectric(r.get("part_no"), r.get("spec"), r.get("material"))
+                   for r in rows}
+    dielectrics.discard("")
+    assert len(dielectrics) <= 1, (
+        f"{key}: 同一料号解析出多种介质 {sorted(dielectrics)}——"
+        f"BOM 数据有问题，合并会让人拿错料"
+    )
+
+    # 同一料号必须对应同一个物理尺寸。名字可以不同（R_0603 / L_0603），
+    # 尺寸不能——**把 0402 和 0603 合成一盘料，人就会照着拿错**，
+    # 而贴上去之前看不出来。1.5 倍留给同尺寸封装的焊盘画法差异。
+    spans = [pad_span(p) for p in members]
+    if min(spans) > 0 and max(spans) / min(spans) > 1.5:
+        big = max(members, key=pad_span)
+        small = min(members, key=pad_span)
+        raise AssertionError(
+            f"{key}: 同一料号下焊盘尺寸差太多——"
+            f"{big['ref']}({big['fp']}, {max(spans):.2f}mm) vs "
+            f"{small['ref']}({small['fp']}, {min(spans):.2f}mm)。"
+            f"检查 BOM 是不是把两种尺寸配了同一个料号"
+        )
+
+    fps = collections.Counter(p["fp"] for p in members)
+    group_kind = collections.Counter(p["kind"] for p in members).most_common(1)[0][0]
+    specs = [r.get("spec") for r in rows if r.get("spec")]
+    notes = [r.get("note", "").strip() for r in rows]
+    # 材质列是**要求下限**，跟实配介质可以不同（C21 组要求 X7R、实配 C0G）
+    required = sorted({r.get("material", "").strip() for r in rows} - {""})
+
+    # 组内按**位号**排：D2 → D3 → D4 → D5。
+    #
+    # 原来按板上位置排（y 分箱 + x），想的是减少找焊盘时的眼睛跳跃，
+    # 结果贴出来是 D2 → D4 → D5 → D3——对着位号清单核对时完全对不上，
+    # 也说不清自己贴到哪了。位号有序才能一眼看出漏没漏。
+    members.sort(key=lambda p: ref_sort_key(p["ref"]))
+    return {
+        "key": key,
+        "spec": common_prefix(specs) if specs else members[0]["val"],
+        # 拆行时各行的规格差异（用途/版本）留着，位号多的时候要靠它分辨
+        "spec_variants": specs if len(specs) > 1 else [],
+        # 同一盘料可能落在多个封装名下（R_0603 / L_0603），显示用得最多的那个，
+        # 其余留在 fp_variants 里——不显示出来会让人以为板上没有那个封装
+        "fp": fps.most_common(1)[0][0],
+        "fp_variants": [f for f, _ in fps.most_common()[1:]],
+        # 0402 / 0603 决定用多大镊子和风量，比完整封装名有用
+        "size": part_size(fps.most_common(1)[0][0]),
+        # 组的大类取组内多数位号，并**回填给每个位号**（见下面的 parts）。
+        #
+        # 一开始是让每个位号各自按前缀归类的，结果 C21189 那盘 0R 里
+        # ZS1 归「匹配网络」、R21~R23 归「电阻」，这一组排在电阻段，
+        # 中间那个匹配网络就把电阻段劈成了两截——贴电阻贴到一半冒出
+        # 一个别的类。
+        #
+        # 分类的粒度必须跟「一盘料」对齐，因为分类导航是用来**找料**的：
+        # ZS1 用的就是电阻那盘料，找料时它就该在电阻里。它的特殊用途
+        # 由 use（"0R 串"）表达，不靠分类。
+        "kind": group_kind,
+        "dielectric": next(iter(dielectrics), ""),
+        "required": " / ".join(required),
+        "category": next((r.get("category") for r in rows if r.get("category")), ""),
+        "voltage": next((r.get("voltage") for r in rows if r.get("voltage")), ""),
+        "part_no": next((r.get("part_no") for r in rows if r.get("part_no")), ""),
+        "lcsc": next((r.get("lcsc") for r in rows if r.get("lcsc")), ""),
+        "note": " ｜ ".join(n for n in dict.fromkeys(notes) if n),
+        "grade": strictest_grade([r.get("grade") for r in rows]),
+        "has_bom": bool(members[0]["bom"]),
+        "qty": len(members),
+        # use 跟组标题一样就是冗余，去掉，省得每行都重复一遍 "100pF"。
+        # kind 一律回填成组的大类，保证推进序列里同类连成一段。
+        "parts": [
+            {**{k: v for k, v in p.items()
+                if k != "bom" and not (k == "use" and v == common_prefix(specs))},
+             "kind": group_kind}
+            for p in members
+        ],
+    }
 
 
 def main():
@@ -1106,7 +1212,7 @@ def main():
             # 不补的话旧版本在网页上没有极性标注（v3 还有人拿来贴板）
             apply_polarity(doc)
         else:
-            doc = build(variant)
+            doc = build(variant, batch_idx)
         path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")),
                         encoding="utf-8")
         size_kb = path.stat().st_size / 1024

@@ -6,26 +6,28 @@
 两条通道
 --------
   bsl （默认，**正式通道**）— 走 CC1312R 的 ROM 串行 bootloader (SSI0)。
-        前提：目标 flash 里已有一版镜像，且其 CCFG 开了 bootloader+backdoor。
-  cjtag（--channel cjtag）— 位脉冲 cJTAG。为空片首刷而写，**实测未打通**，
+        TI 明确支持无合法镜像的空片自动进入，也支持已烧镜像经 backdoor 进入。
+  cjtag（--channel cjtag）— 遗留的位脉冲 cJTAG 探测，**实测未打通**，
         留着只为不丢代码，正常不要用（见 HANDOVER-CC13-CJTAG.md）。
 
-⚠ 空片烧不了
-------------
-空片的 CCFG 是擦除态全 0xFF，BOOTLOADER_ENABLE≠0xC5 → ROM bootloader 被禁用。
-串行 bootloader 是**现场升级**机制，不是**首次烧录**机制。第一次必须用 cJTAG
-仿真器（J-Link -if cJTAG / XDS110），之后才轮到本工具。
+空片首刷
+--------
+CC13x2/CC26x2 TRM 规定：没有合法应用镜像时自动进入 ROM 串行 bootloader；
+BL_CONFIG 的擦除/复位值为 0xC5FFFFFF，BOOTLOADER_ENABLE 已启用。因此芯片层面
+不存在“必须先外部烧一次”的限制。某块板无响应应分别核对 SSI 时序、复位、实际
+目标 Flash/CCFG 状态，不能反推为 TI 不支持空片首刷。
 
 防砖闸门
 --------
 烧录前解析镜像自带的 CCFG，**拒绝会把升级通道关掉的镜像**。理由见
-tools/cc13_ccfg.py：这类镜像烧完不是"这次没成功"，而是"以后再也烧不了"，
+tools/cc13_ccfg.py：这类镜像一旦作为合法应用启动，后续 SSI 升级可能失效，
 而本板没有调试座、也没有那三根网络的测试点，只能拆机焊 QFN 引脚。
 确实要烧（比如手上有仿真器）用 --force。
 
 需要 pyserial：pip3 install pyserial
 """
 import argparse
+import hashlib
 import pathlib
 import struct
 import sys
@@ -40,6 +42,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 try:
     import serial
+    import serial.tools.list_ports
 except ImportError:
     print("需要 pyserial：pip3 install pyserial", file=sys.stderr)
     sys.exit(2)
@@ -92,10 +95,23 @@ def gate(fw: bytes, force: bool) -> bool:
     return True
 
 
-def flash(port: str, fw_path: str, channel: str, force: bool) -> bool:
+def flash(port: str, fw_path: str, channel: str, force: bool,
+          expect_usb_serial=None) -> bool:
     ch = CHANNELS[channel]
     fw = pathlib.Path(fw_path).read_bytes()
-    print(f"镜像: {fw_path}（{len(fw)} 字节）  通道: {channel}")
+    digest = hashlib.sha256(fw).hexdigest()
+    match = next((p for p in serial.tools.list_ports.comports()
+                  if p.device == port), None)
+    if match is None:
+        print(f"端口未枚举：{port}", file=sys.stderr)
+        return False
+    print(f"目标: {match.device} VID:PID={match.vid or 0:04X}:{match.pid or 0:04X} "
+          f"USB序列号={match.serial_number or '-'}")
+    if expect_usb_serial and match.serial_number != expect_usb_serial:
+        print(f"拒绝烧录：USB序列号 {match.serial_number or '-'} != "
+              f"期望 {expect_usb_serial}", file=sys.stderr)
+        return False
+    print(f"镜像: {fw_path}（{len(fw)} 字节）  SHA256={digest}  通道: {channel}")
 
     if not gate(fw, force):
         return False
@@ -123,6 +139,15 @@ def flash(port: str, fw_path: str, channel: str, force: bool) -> bool:
         if early.strip():
             print(f"  {early.strip()}")
         if any(k in early for k in ch["fail"]):
+            # 设备端在 begin 失败后会进入“吞完声明载荷”状态，防止镜像中的
+            # 任意字节被重新解释成控制命令。主机若直接退出，RP2040 会永久
+            # 留在该状态，后续 U/L/Q 全部无响应；因此失败路径也必须补齐载荷。
+            if "BSL-ABORT" not in early:
+                for i in range(0, len(fw), 4096):
+                    ser.write(fw[i:i + 4096])
+                drained = read_for(ser, 10.0, until=("BSL-ABORT",))
+                if drained.strip():
+                    print(f"  {drained.strip()}")
             return False
 
         CHUNK = 4096
@@ -155,8 +180,11 @@ def main():
                     help="默认 bsl（正式通道）；cjtag 实测未打通")
     ap.add_argument("--force", action="store_true",
                     help="绕过防砖闸门（明知会失去升级通道仍要烧）")
+    ap.add_argument("--expect-usb-serial",
+                    help="仅当端口枚举出的 USB 序列号完全匹配时才烧录")
     a = ap.parse_args()
-    sys.exit(0 if flash(a.port, a.firmware, a.channel, a.force) else 1)
+    sys.exit(0 if flash(a.port, a.firmware, a.channel, a.force,
+                        a.expect_usb_serial) else 1)
 
 
 if __name__ == "__main__":

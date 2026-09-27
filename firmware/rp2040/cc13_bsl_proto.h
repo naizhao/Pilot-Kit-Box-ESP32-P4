@@ -33,6 +33,7 @@
 #define CC13_BSL_CMD_RESET         0x25u
 #define CC13_BSL_CMD_SECTOR_ERASE  0x26u
 #define CC13_BSL_CMD_CRC32         0x27u
+#define CC13_BSL_CMD_GET_CHIP_ID   0x28u
 #define CC13_BSL_CMD_BANK_ERASE    0x2Cu
 #define CC13_BSL_CMD_SET_CCFG      0x2Du
 
@@ -64,8 +65,18 @@ bool cc13_bsl_pkt_valid(const uint8_t *pkt, size_t len);
 /* 把 32 位值按 MSB first 写进 out[0..3]（TRM §10.2.3.2 等）。 */
 void cc13_bsl_put_be32(uint8_t *out, uint32_t v);
 
+/* GET_CHIP_ID 的 4 字节结果是 MSB first。CC13x2 ROM 返回 FCFG1.USER_ID；
+ * CC1312R1F3RGZ 的实测值为 0x30828000。身份闸门忽略 PG_REV[31:28]，
+ * 但严格核对其余型号/PA/封装/协议字段。 */
+uint32_t cc13_bsl_get_be32(const uint8_t in[4]);
+bool cc13_bsl_chip_id_is_cc1312(uint32_t chip_id);
+
 /* 一条 SEND_DATA 该带多少字节：min(remaining, 252)。 */
 size_t cc13_bsl_chunk_len(size_t remaining);
+
+/* 发完命令后最多再打多少个 SSI 空字节等 ACK。100 kHz 下
+ * 12500 bytes 约等于 1 s；flash 擦写/CRC 命令不能沿用 PING 的短等待。 */
+size_t cc13_bsl_response_wait_bytes(uint8_t cmd);
 
 /*
  * CRC32，用于和 COMMAND_CRC32 的返回值比对。

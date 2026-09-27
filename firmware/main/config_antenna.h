@@ -10,10 +10,8 @@
  * 它让"P4 还没来得及下发"和"用户选的就是默认值"落到同一个 RF 状态，
  * 否则开机那几百毫秒里屏上显示的和板上实际接的会不一致。
  *
- * ⚠ GNSS 那一路：选择线在 v3/v4 上兼做偏置馈电门控，未打 ECO 的板子上
- * 配对是反的——选中哪一路就给另一路供电，有源天线收不到星
- * （board_pins.h "U17 V1 / Q4 gate（ECO 后配对）"）。固件改不了，设置页
- * 那一行必须带提示，见 settings_draw.c。
+ * GNSS 那一路的 V4.10 当前实现与实板状态以 RP2040 CONFIG_ACK 回读为准；
+ * 设置页不再显示早期版本的 ECO 警告，原始/实际来源仍在诊断页保留。
  */
 #pragma once
 
@@ -34,9 +32,24 @@ typedef enum {
     PK_ANT_GNSS_ONBOARD  = 1,   /* 板载 patch J8 */
 } pk_ant_gnss_t;
 
+typedef struct {
+    pk_ant_gnss_t requested;  /* P4/NVS 用户意图 */
+    pk_ant_gnss_t actual;     /* actual_known=true 时才有效 */
+    bool actual_known;        /* 已有匹配 CONFIG_ACK 确认 */
+    bool request_pending;     /* 至少一帧完整 CONFIG_REQ 在等 ACK */
+} pk_ant_gnss_status_t;
+
 /* 当前选择。热路径安全（只读一个受临界区保护的字节，不碰 NVS）。 */
 pk_ant_1090_t pk_ant_1090_get(void);
 pk_ant_gnss_t pk_ant_gnss_get(void);
+void pk_ant_gnss_status_get(pk_ant_gnss_status_t *out);
+
+/* 仅供 RP2040 链路层驱动实际状态机。started 必须在完整 CONFIG_REQ 已编码、
+ * 已进入发送队列之后调用；confirmed 只能来自匹配的 3/0 CONFIG_ACK。 */
+void pk_ant_gnss_apply_started(pk_ant_gnss_t source);
+void pk_ant_gnss_apply_confirmed(pk_ant_gnss_t source);
+void pk_ant_gnss_apply_failed(pk_ant_gnss_t source);
+void pk_ant_config_link_reset(void);
 
 /* 设值并落 NVS，随即把整套配置推给 RP2040。 */
 void pk_ant_1090_set(pk_ant_1090_t sel);

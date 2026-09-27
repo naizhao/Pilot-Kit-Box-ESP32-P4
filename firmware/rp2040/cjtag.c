@@ -20,9 +20,9 @@
  *        必须先把扫描格式切到 OScan1。
  *
  * §6.2.1「cJTAG commands are conveyed through benign JTAG scan activity.」
- *        TI 的 cJTAG 不用 IEEE 1149.7 的 TMSC escape 序列——**整本 TRM 里
- *        "escape" 这个词一次都没出现**。命令是用「在 Shift-DR 里停留了几个
- *        时钟」来编码的：CP0 = opcode，CP1 = operand，各 0~31。
+ *        TI TRM 在命令层规定：命令用「在 Shift-DR 里停留了几个时钟」
+ *        来编码，CP0 = opcode，CP1 = operand，各 0~31。IEEE 1149.7 链路层的
+ *        escape/selection 序列则按 SEGGER 公布的标准连接流程实现；两者不冲突。
  *
  * §6.2.2.1 开命令窗：IR 扫惰性指令(BYPASS) 停在 Pause-DR → 两次 ZBS
  *        （经 Capture-DR 与 Update-DR 但一次都不进 Shift-DR，每次 control
@@ -273,7 +273,10 @@ static void raw_escape(int toggles)
         pin_tmsc_drive(v);
         pin_delay_half();
     }
-    pin_tmsc_drive(0);
+    /* 保持最后一个电平直到 TCKC 拉低。奇数次 escape 若在高相内
+     * 强制回零，会凭空多出一次 TMSC 翻转：Selection(7) 就变成
+     * Reset(8+)，后续 activation packet 全部被丢弃。下一个 raw_tms
+     * 会在 TCKC 低相设好所需的首位，无需在这里归零。 */
     pin_delay_half();
     pin_tckc(0);
     pin_delay_half();
@@ -568,6 +571,75 @@ static void cjtag_select_oscan1(const cjtag_open_opt_t *o)
     }
 }
 
+/* SEGGER 标准连接序列在 STFMT=OScan1 后还有一段不可省略的收尾：check
+ * packet、MSC=0、SPA→CPA、第二个 check packet，最后用 0x1B 六个 OScan1
+ * TMS 位退出 command level 2。旧实现 STFMT 后直接拿 TLR/IR/ECL 猜着关窗，
+ * 与已知可用序列并不等价；这条先作为诊断变体实机裁决。
+ *
+ * 逐步出处：SEGGER KB "J-Link cJTAG specifics" / Standard connect sequence。
+ */
+static void cjtag_segger_standard_oscan1(void)
+{
+    cjtag_segger_wake();
+    s_fmt = FMT_JSCAN2;
+    s_tap = TAP_RTI;
+
+    cjtag_open_command_window(JTAG_IR_BYPASS);
+    cjtag_command(CJTAG_CMD_STC1, 1);     /* STC1.SREDGE = 1 */
+    s_tap = TAP_UPDATE_DR;
+    tap_goto(TAP_PAUSE_DR);
+    cjtag_command(CJTAG_CMD_STFMT, CJTAG_FMT_CODE_OSCAN1);
+    s_tap = TAP_UPDATE_DR;
+
+    raw_tms(0x0u, 4);                    /* STFMT 后 check packet */
+    s_fmt = FMT_OSCAN1;
+    s_tap = TAP_RTI;
+
+    tap_goto(TAP_PAUSE_DR);
+    cjtag_command(CJTAG_CMD_MSC, 0);      /* MSC = 0 */
+    s_tap = TAP_UPDATE_DR;
+    tap_clock_tms(0);                    /* WriteOScan1(0, 0, 1): SPA→CPA */
+    raw_tms(0x0u, 4);                    /* 第二个 check packet */
+
+    /* LSB first: 1,1,0,1,1,0 = Idle→SelectDR→SelectIR→CaptureIR→
+     * Exit1IR→UpdateIR→Idle，退出 command level 2。 */
+    for (int i = 0; i < 6; i++)
+        tap_clock_tms((uint8_t)((0x1Bu >> i) & 1u));
+    s_tap = TAP_RTI;
+}
+
+/* SEGGER 公布的 short connect sequence。它主要面向未完整实现
+ * cJTAG 命令层的器件，不是 CC1312R 的默认连接方式；这里只把它作为
+ * 一条完全独立的只读诊断路径，用来裁决「命令窗实现错误」假设。 */
+static void cjtag_segger_short_oscan1(void)
+{
+    raw_escape(10);
+    raw_tms(0xFFFFFFFFu, 24);      /* >=22 拍 TMS=1 -> Test-Logic-Reset */
+    raw_tms(0x00u, 1);             /* -> Run-Test/Idle */
+    raw_escape(7);
+    raw_tms(0x0Cu, 4);             /* OAC=1100 (LSB first): 2-wire TAP7 */
+    raw_tms(0x08u, 4);             /* EC=1000 (LSB first): OScan1 active */
+    raw_tms(0x00u, 4);             /* Check packet */
+    s_fmt = FMT_OSCAN1;
+    s_tap = TAP_RTI;
+}
+
+/* OpenOCD ftdi.c/cjtag_reset_online_activate() 公开实现的短式激活。
+ * 它与 SEGGER short sequence 选择同一个 OScan1，但在边界上使用
+ * Reset escape=8、3 个低 TMS 填充时钟、Selection escape=6。
+ * check 默认为 OpenOCD/SEGGER 实机路径使用的 0。 */
+static void cjtag_openocd_short_oscan1(uint8_t check)
+{
+    raw_escape(8);
+    raw_tms(0x00u, 3);
+    raw_escape(6);
+    raw_tms(0x0Cu, 4);
+    raw_tms(0x08u, 4);
+    raw_tms(check, 4);
+    s_fmt = FMT_OSCAN1;
+    s_tap = TAP_RTI;  /* Reset escape 后 3 个 TMS=0 填充拍已进入 Idle */
+}
+
 /* ── 公共 API ────────────────────────────────────────────────────── */
 
 void cjtag_enter(void)
@@ -855,6 +927,89 @@ void cjtag_diag(void)
     tap_reset();
     diag_tms_echo();
 
+    /* 先单独跑 SEGGER 公布的完整标准序列。半周期 1 us 是可读的
+     * 基线；零延时变体用来满足 SEGGER 指出的 >500 kHz keeper 兼容条件。
+     * 两条都只扫 IDCODE，不会改写 Flash。 */
+    for (unsigned fast = 0; fast < 2; fast++) {
+        s_tck_half_us = fast ? 0u : 1u;
+        hw_reset_pulse();
+        s_fmt = FMT_JSCAN2;
+        s_tap = TAP_TLR;
+        hw_wake_icemelter();
+        cjtag_segger_standard_oscan1();
+        uint32_t segger_id = cjtag_read_idcode();
+        printf("  SEGGER完整标准序列(%s) → IDCODE=0x%08lX %s\n",
+               fast ? "零延时" : "1us半周期", (unsigned long)segger_id,
+               ((segger_id & CC13_IDCODE_MASK) ==
+                (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+                   ? "← 对上 ICEPick JRC" : "");
+    }
+
+    s_tck_half_us = 0u;
+    hw_reset_pulse();
+    s_fmt = FMT_JSCAN2;
+    s_tap = TAP_TLR;
+    hw_wake_icemelter();
+    cjtag_segger_short_oscan1();
+    uint32_t short_id = cjtag_read_idcode();
+    printf("  SEGGER短序列(零延时)     → IDCODE=0x%08lX %s\n",
+           (unsigned long)short_id,
+           ((short_id & CC13_IDCODE_MASK) ==
+            (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+               ? "← 对上 ICEPick JRC" : "");
+
+    for (unsigned strict = 0; strict < 2; strict++) {
+        s_tck_half_us = 0u;
+        hw_reset_pulse();
+        s_fmt = FMT_JSCAN2;
+        s_tap = TAP_TLR;
+        hw_wake_icemelter();
+        cjtag_openocd_short_oscan1(strict ? 0x04u : 0x00u);
+        uint32_t openocd_id = cjtag_read_idcode();
+        printf("  OpenOCD短序列(check=%u)    → IDCODE=0x%08lX %s\n",
+               strict ? 4u : 0u, (unsigned long)openocd_id,
+               ((openocd_id & CC13_IDCODE_MASK) ==
+                (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+                   ? "← 对上 ICEPick JRC" : "");
+    }
+
+    /* 连接时机裁决：未知应用可按 TRM §6.4 关闭 TCK 输入。常规
+     * hw_reset_pulse() 在释放 RESET 后等 10 ms，可能已经输给应用。
+     * 这两条分别在释放后零等待和 RESET 持续拉低时激活。 */
+    s_tck_half_us = 0u;
+    pin_tmsc_hiz();
+    pin_tckc(0);
+    pin_reset(0);
+    pin_sleep_ms(2);
+    pin_reset(1);
+    s_fmt = FMT_JSCAN2;
+    s_tap = TAP_TLR;
+    hw_wake_icemelter();
+    cjtag_openocd_short_oscan1(0);
+    uint32_t immediate_id = cjtag_read_idcode();
+    printf("  OpenOCD短序列(复位后零等待) → IDCODE=0x%08lX %s\n",
+           (unsigned long)immediate_id,
+           ((immediate_id & CC13_IDCODE_MASK) ==
+            (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+               ? "← 对上 ICEPick JRC" : "");
+
+    pin_tmsc_hiz();
+    pin_tckc(0);
+    pin_reset(0);
+    pin_sleep_ms(2);
+    s_fmt = FMT_JSCAN2;
+    s_tap = TAP_TLR;
+    hw_wake_icemelter();
+    cjtag_openocd_short_oscan1(0);
+    uint32_t held_id = cjtag_read_idcode();
+    printf("  OpenOCD短序列(RESET拉低中)  → IDCODE=0x%08lX %s\n",
+           (unsigned long)held_id,
+           ((held_id & CC13_IDCODE_MASK) ==
+            (CC13_JRC_IDCODE & CC13_IDCODE_MASK))
+               ? "← 对上 ICEPick JRC" : "");
+    pin_reset(1);
+    pin_sleep_ms(10);
+
     /*
      * 变体矩阵。每一维都对应一条"TRM 没写死、只能试"的分歧，不是瞎撞：
      *   close  —— §6.2.2.3 给了三种关命令窗的办法。STFMT 之后必须先关窗才能
@@ -906,6 +1061,7 @@ void cjtag_diag(void)
 void     cjtag_test_shift_ir(uint32_t instr, int bits) { jtag_shift_ir(instr, bits); }
 uint32_t cjtag_test_shift_dr(uint32_t tdi, int bits)   { return jtag_shift_dr(tdi, bits); }
 void     cjtag_test_goto_pause_dr(void)                { tap_goto(TAP_PAUSE_DR); }
+void     cjtag_test_escape(int toggles)                { raw_escape(toggles); }
 /* 只开窗 + 发一条命令，不切格式。用来把本实现发出的 TMS 序列与 OpenOCD
  * 那段实测可用的 ti_cjtag_to_4pin_jtag 逐拍对拍（见 test_cjtag.c）。 */
 void     cjtag_test_open_and_cmd(uint8_t inert, int cp0, int cp1)
@@ -996,7 +1152,8 @@ void cjtag_ahb_write32(uint32_t addr, uint32_t val)
  * 因为"留着看起来能用的死代码"栽过（U13/U14 双检波位那次，注释与决策正好相反，
  * 照着贴板子就是错的）。
  *
- * 真正的烧录通道是 cc13_bsl.c（ROM 串行 bootloader）。首刷用外部仿真器。
+ * 真正的首刷/升级通道是 cc13_bsl.c（ROM 串行 bootloader）。外部仿真器只用于
+ * 实际 CCFG 关闭/错配 backdoor 等 ROM 通道不可达时的恢复。
  * 需要考古的话：git log -- firmware/rp2040/cjtag.c
  */
 
@@ -1010,8 +1167,8 @@ void cjtag_ahb_write32(uint32_t addr, uint32_t val)
  * 挂链也没写，加上 cJTAG 链路本身实测没打通——从来没有、也不可能跑通过。
  * 留着一个"看起来能烧"的入口，只会让人把首刷计划押在它上面。
  *
- * 正式烧录通道见 cc13_bsl.c（CDC 'U'）；空片首刷用外部 cJTAG 仿真器
- * （CDC 'Z' 让路），见 docs/firmware_update.md。
+ * 正式首刷/升级通道见 cc13_bsl.c（CDC 'U'）；异常目标恢复才使用外部 cJTAG
+ * 仿真器（CDC 'Z' 让路），见 docs/firmware_update.md。
  */
 
 bool cjtag_probe(uint32_t *idcode_out)

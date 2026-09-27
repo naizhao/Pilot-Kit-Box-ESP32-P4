@@ -4,10 +4,14 @@
 
 #include <stdio.h>
 
+#include "hardware/clocks.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
 #include "pico/stdlib.h"
 
 #include "board_pins.h"
+#include "cc13_bsl_spi.pio.h"
+#include "spi_master.h"
 
 /* ROM bootloader 的固定角色 ↔ 本板网络（推导见头文件）。
  * 注意 TO_DEV / FROM_DEV 是**按 ROM 的角色**命名的，与板上 MOSI/MISO 的名字
@@ -19,18 +23,81 @@
 
 static unsigned s_half_us = 5;        /* ~100 kHz，远低于 4 MHz 上限 */
 
-/*
- * SPI 模式。TRM §10.2.2.2 白纸黑字写「Motorola format with SPH set to 1 and
- * SPO set to 1」= mode 3，但 **实机不是这样**：
- *
- * PantsForBirds/adsbee（同样是 RP2040 + CC1312 的开源项目，GPLv3——这里只取
- * 事实、不抄代码）在 cc1312.cc 里把 SPI 初始化成 CPOL_0/CPHA_0 = **mode 0**，
- * 而那段「进 bootloader 后切成 CPOL_1/CPHA_1」的代码是**被注释掉的**。也就是
- * 说他们试过手册写的 mode 3，最后跑通的是 mode 0。
- *
- * 手册和实机冲突时以实机为准，但两个都留着当变体试——这正是变体矩阵的用途。
- */
-static bool s_mode3 = false;
+/* TRM §10.2.2.2 指定 SPO=1/SPH=1（mode 3）。诊断保留 mode 0 作为反证
+ * 变体，但生产路径必须从 mode 3 开始。外部 ADSBee 项目的当前源码同时存在
+ * mode-3 配置常量、mode-0 初始化和互相矛盾的旧注释，不能作为 mode 0 已被
+ * 实机证明的证据。 */
+static bool s_mode3 = true;
+
+/* PIO 后端只用于无破坏诊断：本板 ROM 的数据方向与 RP2040 SPI1 固定功能
+ * 相反，硬件 SPI 无法直连；PIO 可在任意 GPIO 上产生确定的 mode-3 边沿。 */
+static PIO s_bsl_pio = pio0;
+static int s_bsl_pio_sm = -1;
+static uint s_bsl_pio_offset;
+static bool s_use_pio;
+static unsigned s_first_gap_us = 500u;
+
+static bool bsl_pio_start(uint input_pin, unsigned hz)
+{
+    if (s_bsl_pio_sm >= 0) return true;
+    if (!pio_can_add_program(s_bsl_pio, &cc13_bsl_spi_cpha1_program))
+        return false;
+
+    int sm = pio_claim_unused_sm(s_bsl_pio, false);
+    if (sm < 0) return false;
+    s_bsl_pio_sm = sm;
+    s_bsl_pio_offset = pio_add_program(s_bsl_pio,
+                                       &cc13_bsl_spi_cpha1_program);
+
+    pio_sm_config c = cc13_bsl_spi_cpha1_program_get_default_config(
+        s_bsl_pio_offset);
+    sm_config_set_out_pins(&c, BSL_TO_DEV, 1);
+    sm_config_set_in_pins(&c, input_pin);
+    sm_config_set_sideset_pins(&c, BSL_CLK);
+    sm_config_set_out_shift(&c, false, true, 8); /* MSB first */
+    sm_config_set_in_shift(&c, false, true, 8);
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (4.0f * hz));
+
+    pio_gpio_init(s_bsl_pio, BSL_CLK);
+    pio_gpio_init(s_bsl_pio, BSL_TO_DEV);
+    pio_gpio_init(s_bsl_pio, input_pin);
+    pio_sm_set_pins_with_mask(s_bsl_pio, (uint)sm, 0,
+                              (1u << BSL_CLK) | (1u << BSL_TO_DEV));
+    pio_sm_set_pindirs_with_mask(s_bsl_pio, (uint)sm,
+                                 (1u << BSL_CLK) | (1u << BSL_TO_DEV),
+                                 (1u << BSL_CLK) | (1u << BSL_TO_DEV) |
+                                 (1u << input_pin));
+    /* PIO 程序的 side=0 是逻辑空闲；反相后引脚空闲高，即 CPOL=1。 */
+    gpio_set_outover(BSL_CLK, GPIO_OVERRIDE_INVERT);
+    pio_sm_init(s_bsl_pio, (uint)sm, s_bsl_pio_offset, &c);
+    pio_sm_set_enabled(s_bsl_pio, (uint)sm, true);
+    return true;
+}
+
+static void bsl_pio_stop(void)
+{
+    if (s_bsl_pio_sm < 0) return;
+    pio_sm_set_enabled(s_bsl_pio, (uint)s_bsl_pio_sm, false);
+    pio_sm_clear_fifos(s_bsl_pio, (uint)s_bsl_pio_sm);
+    pio_sm_unclaim(s_bsl_pio, (uint)s_bsl_pio_sm);
+    pio_remove_program(s_bsl_pio, &cc13_bsl_spi_cpha1_program,
+                       s_bsl_pio_offset);
+    s_bsl_pio_sm = -1;
+    s_use_pio = false;
+    gpio_set_outover(BSL_CLK, GPIO_OVERRIDE_NORMAL);
+}
+
+static uint8_t bsl_pio_xfer(uint8_t out)
+{
+    io_rw_8 *tx = (io_rw_8 *)&s_bsl_pio->txf[s_bsl_pio_sm];
+    io_rw_8 *rx = (io_rw_8 *)&s_bsl_pio->rxf[s_bsl_pio_sm];
+    while (pio_sm_is_tx_fifo_full(s_bsl_pio, (uint)s_bsl_pio_sm))
+        tight_loop_contents();
+    *tx = out; /* 8-bit FIFO 写会复制字节，配合左移得到 MSB-first */
+    while (pio_sm_is_rx_fifo_empty(s_bsl_pio, (uint)s_bsl_pio_sm))
+        tight_loop_contents();
+    return *rx;
+}
 
 static void bsl_pins_take(void)
 {
@@ -61,6 +128,7 @@ static void bsl_pins_take(void)
  */
 static uint8_t bsl_xfer(uint8_t out)
 {
+    if (s_use_pio) return bsl_pio_xfer(out);
     uint8_t in = 0;
     for (int i = 7; i >= 0; i--) {
         if (s_mode3) {
@@ -84,6 +152,14 @@ static uint8_t bsl_xfer(uint8_t out)
     return in;
 }
 
+/* TRM Figure 22-9: mode 3 下 FSS 下降后要再过半个 CLK 周期，才出现首个
+ * CLK 下降沿并把首位送上线。此前这里没有建立时间，FSS 与首沿几乎同时到。 */
+static void bsl_fss_assert(void)
+{
+    gpio_put(BSL_FSS, 0);
+    busy_wait_us(s_half_us);
+}
+
 /*
  * 复位进 ROM bootloader。
  *
@@ -91,11 +167,11 @@ static uint8_t bsl_xfer(uint8_t out)
  * BL_PIN_NUMBER 指定的脚摆在 BL_LEVEL 上。本板 SUBG_SYNC = DIO13 ←
  * RP2040 GPIO15，PINMAP 里本来就标着「bootloader trigger」。
  *
- * ⚠ 空片上 backdoor 其实用不了（CCFG 擦除态 BL_PIN_NUMBER=0xFF、
- * BL_ENABLE=0xFF），指望的是「无有效镜像 → 自动进 bootloader」那一条。
+ * 空片上 backdoor 本身未配置（BL_PIN_NUMBER/BL_ENABLE 为默认值），但无需它：
+ * IMAGE_VALID_CONF 擦除态不是合法向量地址，启动代码会自动进 bootloader。
  * sync 当变体试只是为了把「摆错电平反而挡住了自动进入」这种可能排掉。
  */
-static void bsl_reset_into_rom(bool sync_high)
+static void bsl_reset_into_rom(bool sync_high, unsigned settle_ms)
 {
     gpio_put(BSL_FSS, 1);
     gpio_put(BSL_CLK, s_mode3 ? 1 : 0);
@@ -107,7 +183,36 @@ static void bsl_reset_into_rom(bool sync_high)
     gpio_put(PIN_SUBG_RESET, 0);
     sleep_ms(5);
     gpio_put(PIN_SUBG_RESET, 1);
-    sleep_ms(80);                     /* 等 ROM 起来并采样 backdoor 脚 */
+    sleep_ms(settle_ms);              /* 等 ROM 起来并采样 backdoor 脚 */
+}
+
+/* 未知 CCFG 的 backdoor 扫描：在 RESET_N 已拉低后，把本板实际
+ * 连出的 DIO8..DIO13 同时摆成同一电平，释放复位给 ROM 采样，
+ * 然后立即改回 SSI0 角色。先拉 RESET 再驱动 DIO，避免和未知应用
+ * 的输出短暂对顶。这不能覆盖未引出的 DIO，但能一次性裁决六根
+ * 现有信号中是否藏着可用 backdoor。 */
+static void bsl_reset_all_connected_dio(bool high, unsigned settle_ms)
+{
+    static const uint k_dio_pins[] = {
+        PIN_SUBG_MOSI, PIN_SUBG_MISO, PIN_SUBG_SCK,
+        PIN_SUBG_CSN, PIN_SUBG_IRQ, PIN_SUBG_SYNC,
+    };
+
+    gpio_init(PIN_SUBG_RESET);
+    gpio_put(PIN_SUBG_RESET, 0);
+    gpio_set_dir(PIN_SUBG_RESET, GPIO_OUT);
+    sleep_ms(2);
+
+    for (size_t i = 0; i < sizeof k_dio_pins / sizeof k_dio_pins[0]; i++) {
+        gpio_init(k_dio_pins[i]);
+        gpio_put(k_dio_pins[i], high ? 1 : 0);
+        gpio_set_dir(k_dio_pins[i], GPIO_OUT);
+    }
+    sleep_ms(2);
+    gpio_put(PIN_SUBG_RESET, 1);
+    sleep_ms(2);                       /* 保持到 ROM 完成 backdoor 采样 */
+    bsl_pins_take();                   /* DIO8..11 恢复成 SSI0 角色 */
+    if (settle_ms > 2u) sleep_ms(settle_ms - 2u);
 }
 
 /*
@@ -120,22 +225,37 @@ static void bsl_reset_into_rom(bool sync_high)
  * 2. §10.2.1：发送方可以一直发 0 直到收到非 0 回应；接收方在准备好 ACK/NAK
  *    之前也可以一直回 0。所以"读到一串 0"是正常的，要继续клок。
  */
-static int bsl_ping(uint8_t *log, int cap, bool fss_per_byte, bool first_gap)
+static int bsl_diag_cmd(uint8_t cmd, uint8_t *log, int cap,
+                        bool fss_per_byte, bool first_gap,
+                        int *first_up, int *first_dn)
 {
-    const uint8_t pkt[3] = { 0x03, CC13_BSL_CMD_PING, CC13_BSL_CMD_PING };  /* size/校验和/命令 */
+    const uint8_t pkt[3] = { 0x03, cmd, cmd };  /* size/校验和/命令 */
     int n = 0;
 
-    if (!fss_per_byte) gpio_put(BSL_FSS, 0);
+    if (!fss_per_byte) bsl_fss_assert();
     for (int i = 0; i < 3; i++) {
-        if (fss_per_byte) gpio_put(BSL_FSS, 0);
+        if (fss_per_byte) bsl_fss_assert();
         uint8_t r = bsl_xfer(pkt[i]);
         if (fss_per_byte) gpio_put(BSL_FSS, 1);
         if (n < cap) log[n++] = r;
-        if (i == 0 && first_gap) sleep_us(500);   /* 坑 1 */
+        if (i == 0 && first_gap) {
+            sleep_us(s_first_gap_us);            /* 坑 1 */
+            if (first_up && first_dn) {
+                /* 若 ROM 已把 SSI0_TX 切成推挽输出，内部约 50k 的弱上下拉
+                 * 都改变不了读值；1/0 则证明 DIO8 此刻仍是高阻。 */
+                gpio_pull_up(BSL_FROM_DEV);
+                sleep_us(10);
+                *first_up = gpio_get(BSL_FROM_DEV);
+                gpio_pull_down(BSL_FROM_DEV);
+                sleep_us(10);
+                *first_dn = gpio_get(BSL_FROM_DEV);
+                gpio_pull_up(BSL_FROM_DEV);
+            }
+        }
     }
     /* 继续空转读 ACK：接收方准备好之前可以一直回 0（坑 2）。 */
     for (int i = 0; i < 12 && n < cap; i++) {
-        if (fss_per_byte) gpio_put(BSL_FSS, 0);
+        if (fss_per_byte) bsl_fss_assert();
         uint8_t r = bsl_xfer(0x00);
         if (fss_per_byte) gpio_put(BSL_FSS, 1);
         log[n++] = r;
@@ -162,6 +282,137 @@ void cc13_bsl_diag(void)
     printf("  线探针 DIO8(器件输出): 上拉=%d 下拉=%d %s\n", up, dn,
            (up && dn) ? "← 线上有外部上拉" : "← 只有我们自己在拉");
 
+    /* TRM §10.1.1：即便 CCFG 禁用了 bootloader，GET_STATUS 仍可执行；但先发
+     * 任何其他命令，ROM 就连后续 GET_STATUS 也不再响应。因此它必须是每次
+     * reset 后的第一条命令，才能把“CCFG 禁用”与“SSI 根本没被看到”分开。 */
+    s_mode3 = true;
+    s_half_us = 5u;
+    bsl_pins_take();
+    bsl_reset_into_rom(false, 10u);
+    uint8_t status_log[16];
+    int status_n = bsl_diag_cmd(CC13_BSL_CMD_GET_STATUS,
+                                status_log, (int)sizeof status_log,
+                                false, true, NULL, NULL);
+    bool status_ack = false;
+    printf("  首命令 GET_STATUS 回读:");
+    for (int i = 0; i < status_n; i++) {
+        printf(" %02X", status_log[i]);
+        if (status_log[i] == CC13_BSL_ACK) status_ack = true;
+    }
+    printf("%s\n", status_ack ? "   ← ACK(0xCC)!" : "");
+
+    /* 若目标并非空片、CCFG 也不是我们镜像预期的 DIO13 高有效，
+     * 可能仍有 backdoor 配在已引出的 DIO8..13 之一。全低/全高各复位
+     * 一次即可覆盖这六根线的两种有效电平。 */
+    for (int high = 0; high <= 1; high++) {
+        s_mode3 = true;
+        s_first_gap_us = 10u;
+        bsl_reset_all_connected_dio(high != 0, 10u);
+        if (!bsl_pio_start(BSL_FROM_DEV, 500000u)) {
+            printf("  backdoor DIO8..13 全%d: PIO 不可用\n", high);
+            continue;
+        }
+        s_use_pio = true;
+        uint8_t bd_log[16];
+        int bd_n = bsl_diag_cmd(CC13_BSL_CMD_GET_STATUS,
+                                bd_log, (int)sizeof bd_log,
+                                false, true, NULL, NULL);
+        bool bd_ack = false;
+        printf("  backdoor DIO8..13 全%d，首命令 GET_STATUS 回读:", high);
+        for (int i = 0; i < bd_n; i++) {
+            printf(" %02X", bd_log[i]);
+            if (bd_log[i] == CC13_BSL_ACK) bd_ack = true;
+        }
+        printf("%s\n", bd_ack ? "   ← ACK(0xCC)!" : "");
+        bsl_pio_stop();
+        bsl_pins_take();
+    }
+    s_first_gap_us = 500u;
+
+    /* 用 PIO 重做相同的首命令探测。它与 bit-bang 共用接线、复位和包格式，
+     * 只替换时钟/移位引擎，可直接裁决 C 循环边沿是否是无应答根因。 */
+    /* 先把 PIO 输入临时映射到自己的输出脚做片内回环，验证 FIFO 字节对齐、
+     * MSB-first 与状态机确实在工作；FSS 保持高，目标不会把它当成事务。 */
+    if (bsl_pio_start(BSL_TO_DEV, 100000u)) {
+        s_use_pio = true;
+        uint8_t a5 = bsl_xfer(0xA5), c3 = bsl_xfer(0x3C);
+        printf("  PIO片内回环: A5→%02X 3C→%02X %s\n", a5, c3,
+               (a5 == 0xA5 && c3 == 0x3C) ? "OK" : "← PIO移位错误");
+        bsl_pio_stop();
+    } else {
+        printf("  PIO片内回环: 无空闲状态机或指令空间，跳过\n");
+    }
+
+    bsl_pins_take();
+    bsl_reset_into_rom(false, 10u);
+    s_first_gap_us = 500u;
+    if (bsl_pio_start(BSL_FROM_DEV, 100000u)) {
+        s_use_pio = true;
+        uint8_t pio_log[16];
+        int pio_n = bsl_diag_cmd(CC13_BSL_CMD_GET_STATUS,
+                                 pio_log, (int)sizeof pio_log,
+                                 false, true, NULL, NULL);
+        bool pio_ack = false;
+        printf("  PIO mode3 首命令 GET_STATUS 回读:");
+        for (int i = 0; i < pio_n; i++) {
+            printf(" %02X", pio_log[i]);
+            if (pio_log[i] == CC13_BSL_ACK) pio_ack = true;
+        }
+        printf("%s\n", pio_ack ? "   ← ACK(0xCC)!" : "");
+        bsl_pio_stop();
+        bsl_pins_take();
+    } else {
+        printf("  PIO mode3: 无空闲状态机或指令空间，跳过\n");
+    }
+
+    /* 最后一组纯时序排除：100 kHz 可能过慢、500 us 也可能超过 ROM 的
+     * 包内等待。逐次 reset，保证 GET_STATUS 永远是第一条被尝试的命令；
+     * 只打印命中或非 FF/00 回应，避免全静默时刷出几十行噪声。 */
+    static const unsigned k_pio_hz[] = {
+        100000u, 500000u, 1000000u, 4000000u
+    };
+    static const unsigned k_gap_us[] = { 0u, 2u, 10u, 50u };
+    static const unsigned k_settle_ms[] = { 10u, 100u };
+    unsigned pio_tries = 0, pio_nontrivial = 0;
+    printf("  PIO mode3 时序扫描: 100k/500k/1M/4MHz × gap 0/2/10/50us "
+           "× wait 10/100ms × sync 0/1\n");
+    for (size_t hi = 0; hi < sizeof k_pio_hz / sizeof k_pio_hz[0]; hi++) {
+        for (size_t gi = 0; gi < sizeof k_gap_us / sizeof k_gap_us[0]; gi++) {
+            for (size_t wi = 0; wi < sizeof k_settle_ms / sizeof k_settle_ms[0]; wi++) {
+                for (int sync = 0; sync <= 1; sync++) {
+                    s_mode3 = true;
+                    s_first_gap_us = k_gap_us[gi];
+                    bsl_pins_take();
+                    bsl_reset_into_rom(sync != 0, k_settle_ms[wi]);
+                    if (!bsl_pio_start(BSL_FROM_DEV, k_pio_hz[hi]))
+                        continue;
+                    s_use_pio = true;
+                    uint8_t scan_log[16];
+                    int scan_n = bsl_diag_cmd(CC13_BSL_CMD_GET_STATUS,
+                                              scan_log, (int)sizeof scan_log,
+                                              false, true, NULL, NULL);
+                    bool interesting = false;
+                    for (int i = 0; i < scan_n; i++)
+                        if (scan_log[i] != 0xFF && scan_log[i] != 0x00)
+                            interesting = true;
+                    pio_tries++;
+                    if (interesting) {
+                        pio_nontrivial++;
+                        printf("    hz=%u gap=%uus wait=%ums sync=%d:",
+                               k_pio_hz[hi], k_gap_us[gi], k_settle_ms[wi], sync);
+                        for (int i = 0; i < scan_n; i++) printf(" %02X", scan_log[i]);
+                        printf("\n");
+                    }
+                    bsl_pio_stop();
+                }
+            }
+        }
+    }
+    printf("  PIO时序扫描汇总: %u 次，非 FF/00 回应 %u 次\n",
+           pio_tries, pio_nontrivial);
+    s_first_gap_us = 500u;
+    bsl_pins_take();
+
     for (int v = 0; v < 16; v++) {
         s_mode3                 = (v & 1) != 0;
         const bool sync_high    = (v & 2) != 0;
@@ -170,9 +421,10 @@ void cc13_bsl_diag(void)
         s_half_us = 5u;
 
         bsl_pins_take();
-        bsl_reset_into_rom(sync_high);
+        bsl_reset_into_rom(sync_high, 80u);
         uint8_t log[16];
-        int n = bsl_ping(log, (int)sizeof log, fss_per_byte, first_gap);
+        int n = bsl_diag_cmd(CC13_BSL_CMD_PING, log, (int)sizeof log,
+                             fss_per_byte, first_gap, NULL, NULL);
 
         bool acked = false, any = false;
         for (int i = 0; i < n; i++) {
@@ -187,8 +439,36 @@ void cc13_bsl_diag(void)
         printf("%s\n", acked ? "   ← ACK(0xCC)!" : (any ? "   ← 有非平凡回应" : ""));
     }
 
-    /* 收工：把线交还给 SPI master（它会在下一次 spim_poll 里重新配好）。 */
-    gpio_put(PIN_SUBG_RESET, 1);
+    /* ROM 会选择最先被访问的 UART0/SSI0。UART0_RX(DIO2) 在本板悬空，
+     * 所以扫描 RESET 释放到首个 SSI 字节的等待，排除等待太久期间 UART
+     * 浮空噪声抢先选中接口。这里固定使用 TRM 指定的 mode3、整包 FSS 和
+     * 首字节延时，只改变等待时间与 backdoor 电平。 */
+    static const unsigned k_wait_ms[] = { 0u, 1u, 2u, 5u, 10u, 20u, 40u, 80u };
+    printf("  RESET释放→SSI首字节等待扫描（mode3/FSS整包/首字节延时）:\n");
+    for (size_t w = 0; w < sizeof k_wait_ms / sizeof k_wait_ms[0]; w++) {
+        for (int sync_high = 0; sync_high <= 1; sync_high++) {
+            s_mode3 = true;
+            s_half_us = 5u;
+            bsl_pins_take();
+            bsl_reset_into_rom(sync_high != 0, k_wait_ms[w]);
+            uint8_t log[16];
+            int first_up = -1, first_dn = -1;
+            int n = bsl_diag_cmd(CC13_BSL_CMD_PING, log, (int)sizeof log,
+                                 false, true, &first_up, &first_dn);
+
+            printf("  wait=%ums sync=%d DIO8=%d/%d 回读:", k_wait_ms[w],
+                   sync_high, first_up, first_dn);
+            for (int i = 0; i < n; i++) printf(" %02X", log[i]);
+            printf("\n");
+        }
+    }
+
+    /* 收工：诊断最后一次尝试可能以 backdoor 高电平把目标留在 ROM，且
+     * bsl_pins_take() 已把 GPIO10..13 从 SPI1 pinmux 改成 SIO。必须显式
+     * 恢复 SPI1 并在 DIO13 下拉状态下再复位；spim_poll() 本身不会重配
+     * pinmux。 */
+    spim_hw_init();
+    printf("cc13-bsl: DIAG-DONE\n");
 }
 
 
@@ -216,15 +496,34 @@ static int bsl_wait_nonzero(int max_bytes)
  * 器件收到第一个字节后才去配置 SSI0_TX 输出脚，主机得给它这个时间）。 */
 static cc13_bsl_result_t bsl_send_pkt(const uint8_t *pkt, size_t len, bool first)
 {
-    gpio_put(BSL_FSS, 0);
+    uint8_t trace[20];
+    size_t trace_n = 0;
+    bsl_fss_assert();
     for (size_t i = 0; i < len; i++) {
-        (void)bsl_xfer(pkt[i]);
+        const uint8_t rx = bsl_xfer(pkt[i]);
+        if (trace_n < sizeof trace) trace[trace_n++] = rx;
         if (i == 0 && first) sleep_us(500);
     }
-    int r = bsl_wait_nonzero(64);
+    int r = -1;
+    const uint8_t cmd = len >= 3 ? pkt[2] : 0u;
+    const size_t wait_bytes = cc13_bsl_response_wait_bytes(cmd);
+    for (size_t i = 0; i < wait_bytes; i++) {
+        const uint8_t rx = bsl_xfer(0x00);
+        if (trace_n < sizeof trace) trace[trace_n++] = rx;
+        if (rx != 0x00 && rx != 0xFF) {
+            r = rx;
+            break;
+        }
+    }
     gpio_put(BSL_FSS, 1);
 
-    if (r < 0) return CC13_BSL_ERR_LINK;
+    if (r < 0) {
+        printf("cc13-bsl: cmd=0x%02X no ACK, raw:",
+               cmd);
+        for (size_t i = 0; i < trace_n; i++) printf(" %02X", trace[i]);
+        printf("\n");
+        return CC13_BSL_ERR_LINK;
+    }
     if ((uint8_t)r == CC13_BSL_NACK) return CC13_BSL_ERR_PROTOCOL;
     if ((uint8_t)r != CC13_BSL_ACK)  return CC13_BSL_ERR_PROTOCOL;
     return CC13_BSL_OK;
@@ -234,7 +533,7 @@ static cc13_bsl_result_t bsl_send_pkt(const uint8_t *pkt, size_t len, bool first
  * 返回 data 长度（= size-2），失败返回负的 cc13_bsl_result_t。 */
 static int bsl_recv_pkt(uint8_t *out, size_t cap)
 {
-    gpio_put(BSL_FSS, 0);
+    bsl_fss_assert();
     int size = bsl_wait_nonzero(256);
     if (size < 3 || (size_t)size - 2u > cap) {
         gpio_put(BSL_FSS, 1);
@@ -301,6 +600,7 @@ const char *cc13_bsl_result_str(cc13_bsl_result_t r)
     case CC13_BSL_ERR_SIZE:     return "镜像长度非法";
     case CC13_BSL_ERR_LINK:     return "无应答(没进 bootloader/模式或接线不对)";
     case CC13_BSL_ERR_PROTOCOL: return "包不自洽(长度或校验和)";
+    case CC13_BSL_ERR_TARGET:   return "目标芯片身份不是 CC1312R";
     case CC13_BSL_ERR_ERASE:    return "擦除被拒";
     case CC13_BSL_ERR_PROGRAM:  return "写入失败(GET_STATUS 非 SUCCESS)";
     case CC13_BSL_ERR_CRC:      return "CRC32 不匹配(先查多项式假设，别急着重擦)";
@@ -317,7 +617,10 @@ static void bsl_release(void)
     /* backdoor 脚交还高阻+下拉：留着高电平会让下次复位又进 bootloader。 */
     gpio_set_dir(PIN_SUBG_SYNC, GPIO_IN);
     gpio_pull_down(PIN_SUBG_SYNC);
-    gpio_put(PIN_SUBG_RESET, 1);
+    /* bsl_pins_take() 把 GPIO10..13 全部切到了 SIO。仅放开 RESET/SYNC
+     * 不足以回到产品态：后续 spim_poll 会继续在错误 pinmux 上产生“全零
+     * 帧”。统一重建 SPI1/CS/IRQ/RESET，并在已下拉的 backdoor 下复位 U10。 */
+    spim_hw_init();
 }
 
 cc13_bsl_result_t cc13_bsl_begin(uint32_t total_len)
@@ -327,11 +630,27 @@ cc13_bsl_result_t cc13_bsl_begin(uint32_t total_len)
 
     bsl_pins_take();
     s_active = true;
-    bsl_reset_into_rom(true);            /* backdoor 拉高再复位 */
+    bsl_reset_into_rom(true, 80u);       /* backdoor 拉高再复位 */
 
     /* PING 是唯一一条"只看 ACK"的命令——此时还没有状态可问。 */
     cc13_bsl_result_t r = bsl_cmd(CC13_BSL_CMD_PING, NULL, 0, true);
     if (r != CC13_BSL_OK) { bsl_release(); return r; }
+
+    /* 任何擦除动作前先读取 ROM 身份。CC13x2 ROM 返回 FCFG1.USER_ID；
+     * 本板 CC1312R1F3RGZ 实测为 0x30828000，协议层按 TI chipinfo.c 的
+     * 型号字段核对。这样即使 RP2040 身份正确，错误的 U10 也不会被误擦。 */
+    r = bsl_cmd(CC13_BSL_CMD_GET_CHIP_ID, NULL, 0, false);
+    if (r != CC13_BSL_OK) { bsl_release(); return r; }
+    uint8_t chip_id_bytes[4];
+    const int chip_id_n = bsl_recv_pkt(chip_id_bytes, sizeof chip_id_bytes);
+    if (chip_id_n != 4) { bsl_release(); return CC13_BSL_ERR_PROTOCOL; }
+    const uint32_t chip_id = cc13_bsl_get_be32(chip_id_bytes);
+    printf("cc13-bsl: GET_CHIP_ID=0x%08lX part=0x%04lX\n",
+           (unsigned long)chip_id, (unsigned long)(chip_id & 0xFFFFu));
+    if (!cc13_bsl_chip_id_is_cc1312(chip_id)) {
+        bsl_release();
+        return CC13_BSL_ERR_TARGET;
+    }
 
     /* 整片擦除。BANK_ERASE 受 CCFG 的 BANK_ERASE_DIS 管；被拒时不要自作聪明
      * 退回逐扇区擦——那只会把"配置不允许"伪装成"擦了一半"。 */
@@ -412,7 +731,13 @@ cc13_bsl_result_t cc13_bsl_finish(void)
         return CC13_BSL_ERR_CRC;
     }
 
-    /* 复位让新固件跑起来。RESET 之后器件不再应答，不要等 ACK。 */
+    /* 复位让新固件跑起来。当前 ROM 会在 RESET 时重新采样 DIO13
+     * backdoor；begin() 为进 BSL 把它拉高，因此必须先明确拉低再发 RESET，
+     * 否则刚写完会再次回到 ROM，要等 RP 应用层下一轮恢复复位才可能启动。 */
+    gpio_put(PIN_SUBG_SYNC, 0);
+    gpio_set_dir(PIN_SUBG_SYNC, GPIO_OUT);
+    sleep_ms(1);
+    /* RESET 之后器件不再应答，不要等 ACK。 */
     (void)bsl_cmd(CC13_BSL_CMD_RESET, NULL, 0, false);
     bsl_release();
     return CC13_BSL_OK;
