@@ -31,6 +31,7 @@
 #include "pfd_draw.h"
 #include "pfd_layout.h"
 #include "pk_sdcard.h"
+#include "airband_record.h"
 #include "record_sink.h"
 #include "ui_state.h"          /* pk_ui_cal_wizard_last_accuracy —— 罗盘校准那行的值 */
 
@@ -531,14 +532,17 @@ void pk_settings_page_render(uint16_t *fb)
       const int w  = 200;
       const int x0 = SET_CTL_R - w;
       const bool armed = (pk_settings_format_state() == 1);
-      const bool avail = pk_sdcard_is_mounted() && !record_sink_file_uses_sd();
+      pk_airband_record_status_t rec;
+      pk_airband_record_get(&rec);
+      const bool in_use = record_sink_file_uses_sd() || rec.enabled || rec.active || rec.stopping;
+      const bool avail = pk_sdcard_is_mounted() && !in_use;
       pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + SET_CTL_H, SET_CTL_H / 2,
                        !avail  ? pk_rgb565(45, 45, 50)
                        : armed ? pk_rgb565(200, 40, 40)
                                : pk_rgb565(90, 30, 30));
       const char *txt =
             !pk_sdcard_is_mounted()      ? pk_i18n_text(PK_TR_FORMAT_BTN_NO_CARD)
-          : record_sink_file_uses_sd()   ? pk_i18n_text(PK_TR_FORMAT_BTN_IN_USE)
+          : in_use                       ? pk_i18n_text(PK_TR_FORMAT_BTN_IN_USE)
           : armed                        ? pk_i18n_text(PK_TR_FORMAT_BTN_ARMED)
                                          : pk_i18n_text(PK_TR_FORMAT_BTN_FORMAT);
       const int tw = pk_aa_text_width(txt, PK_AA_S);

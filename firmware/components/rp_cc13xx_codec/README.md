@@ -1,6 +1,7 @@
 # rp_cc13xx_codec — RP2040↔CC1312R Sub-GHz 链路共享编解码器
 
-规范唯一权威：`firmware/PROTOCOL_RP2040_CC1312R_SPI.md`（v1.0，冻结）。
+规范唯一权威：`firmware/PROTOCOL_RP2040_CC1312R_SPI.md`（v1.0 冻结，
+v1.1 新增可变长 RX_DESCRIPTOR_V2）。
 本组件是规范 §3/§4/§5 的可执行镜像；golden vectors 见规范附录 B，其可执行
 形式在 `firmware/test/test_rp_cc13xx_codec.c`（向量 id ↔ 附录 B 条目一一对应）。
 
@@ -33,6 +34,10 @@ CSN 边界天然分帧）。
   保留位：接收方非 0 → payload 违规计 len_errors（§4.8 明文，§4.5/§4.3 同纪律）。
 - `HELLO.reset_reason` 保留位：接收方**不检查**——§4.1 明文
   "接收方不解释未定义位"。
+
+v1.1 的 descriptor type 0x13 严格绑定 kind/长度 1→30、2→48、3→552，携带
+有符号 RSSI、CC RAT 4 MHz 原始时钟、frame_seq 与三项验证 flags。旧 0x10 的
+14 B codec 仍兼容解析，但新生产路径只发 0x13。
 
 ## 编译
 

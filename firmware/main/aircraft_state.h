@@ -23,6 +23,7 @@
 #include <stdint.h>
 
 struct mode_s_msg;  /* forward decl from mode-s.h */
+struct uat_aircraft_msg;  /* forward decl from uat_decode.h */
 
 #define AIRCRAFT_TABLE_CAPACITY   64
 #define AIRCRAFT_STALE_AGE_US     (60ULL * 1000000ULL)  /* 60 s */
@@ -76,6 +77,8 @@ typedef enum {
  */
 typedef struct {
     uint32_t icao24;          /* 0 → empty slot */
+    uint8_t  address_type;    /* GDL90: 0=direct ADS-B, 2=TIS-B ICAO */
+    bool     address_direct;  /* direct report outranks later rebroadcast */
     int64_t  last_seen_us;    /* 目标级：任何一帧（含 DF11）都刷新 */
 
     bool     have_callsign;
@@ -217,6 +220,15 @@ void aircraft_state_init(void);
  * decoded cpr_position_t through aircraft_state_update_position().
  */
 void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us);
+
+/*
+ * Ingest one corrected and parsed 978 MHz UAT ADS-B/TIS-B report.
+ * Only address qualifiers which explicitly carry an ICAO address are
+ * accepted; track-file, vehicle and beacon addresses must stay out of the
+ * shared ICAO-keyed table. Returns true when a report was accepted.
+ */
+bool aircraft_state_ingest_uat(const struct uat_aircraft_msg *m,
+                               int64_t now_us);
 
 /*
  * Override an aircraft's position. Used by adsb_link_task.c after running

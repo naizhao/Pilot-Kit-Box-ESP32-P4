@@ -446,6 +446,11 @@ int pk_aero_nearest_airports_with_freqs(pk_aero_db_t *db,
                                         double lat, double lon,
                                         pk_aero_near_t *out, int max,
                                         pk_aero_dist_mode_t mode);
+/* All airports with frequency records in the same 3x3 grid as nearest.
+ * Exact distance order, no top-N. Caller owns *out and must free it.
+ * False on invalid input, corrupt grid or allocation failure; outputs empty. */
+bool pk_aero_airports_with_freqs_nearby_all(pk_aero_db_t *db,
+    double lat, double lon, pk_aero_near_t **out, size_t *count);
 int pk_aero_nearest_navaids(pk_aero_db_t *db, double lat, double lon,
                             pk_aero_near_t *out, int max,
                             pk_aero_dist_mode_t mode);

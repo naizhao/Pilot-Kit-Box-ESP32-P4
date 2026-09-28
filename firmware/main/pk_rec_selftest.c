@@ -39,6 +39,7 @@
 #include "pk_rec_format.h"
 #include "pk_rec_idx.h"
 #include "pk_rec_ingest.h"
+#include "pk_sdcard.h"
 
 static const char *TAG = "rec_selftest";
 
@@ -59,8 +60,9 @@ static int g_fail;
 
 static bool file_contains(const char *path, const char *needle)
 {
+    if (!pk_sdcard_io_acquire()) return false;
     FILE *fp = fopen(path, "rb");
-    if (fp == NULL) return false;
+    if (fp == NULL) { pk_sdcard_io_release(); return false; }
     char buf[512];
     bool found = false;
     size_t n;
@@ -70,6 +72,7 @@ static bool file_contains(const char *path, const char *needle)
         if (strstr(buf, needle) != NULL) { found = true; break; }
     }
     fclose(fp);
+    pk_sdcard_io_release();
     return found;
 }
 
@@ -144,7 +147,8 @@ static void selftest_task(void *arg)
     /* --- 4) 读回 traffic.trk 最后三条记录，逐字段解码校验 --- */
     char trk_path[80];
     snprintf(trk_path, sizeof(trk_path), "%s/traffic.trk", session_dir);
-    FILE *fp = fopen(trk_path, "rb");
+    bool io_acquired = pk_sdcard_io_acquire();
+    FILE *fp = io_acquired ? fopen(trk_path, "rb") : NULL;
     CHECK(fp != NULL);
     if (fp != NULL) {
         fseek(fp, 0, SEEK_END);
@@ -183,6 +187,7 @@ static void selftest_task(void *arg)
         }
         fclose(fp);
     }
+    if (io_acquired) pk_sdcard_io_release();
 
     /* --- 5) 独立重建索引（不碰运行中那份），校验点数/呼号/IS_OWN --- */
     uint8_t own_icao_bytes[3] = {

@@ -39,7 +39,14 @@ typedef enum {
     PK_ICON_BATT_CHG_6 = 25,   /* battery_android_frame_6  U+F252  FILL=0 */
     PK_ICON_BATT_CHG_FULL = 26,   /* battery_android_frame_full  U+F24F  FILL=0 */
     PK_ICON_COMPASS = 27,   /* explore  U+E87A  FILL=0 */
-    PK_ICON_COUNT = 28
+    PK_ICON_VOLUME_UP = 28,   /* volume_up  U+E050  FILL=1 */
+    PK_ICON_VOLUME_OFF = 29,   /* volume_off  U+E04F  FILL=1 */
+    PK_ICON_PAUSE = 30,   /* pause  U+E034  FILL=1 */
+    PK_ICON_ADD = 31,   /* add  U+E145  FILL=1 */
+    PK_ICON_REMOVE = 32,   /* remove  U+E15B  FILL=1 */
+    PK_ICON_VOLUME_DOWN = 33,   /* volume_down  U+E04D  FILL=1 */
+    PK_ICON_BRAND_AWARENESS = 34,   /* brand_awareness  U+E98E  FILL=1 */
+    PK_ICON_COUNT = 35
 } pk_icon_id_t;
 
 /* 单一字重（见脚本头「字重」一节）。所有图标按 PK_ICON_W×H 顺序拼接。 */

@@ -1,7 +1,8 @@
 /*
  * spi_master.h — RP2040 侧 CC1312R SPI master 事务状态机（WP-E T3）。
  *
- * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.0（十轮审计后冻结）。
+ * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.1（v1.0 冻结，
+ * 可变长 descriptor 以新 msg_type 向前兼容加入）。
  * 本文件只实现**纯逻辑**（状态机 + 调度决策 + 帧消化）——host 可测
  * （SPI_MASTER_HOST_TEST 隔离，模式照 modes_edge / power_service）；SPI1
  * DMA / GPIO 采样 / RESET 脉冲的胶水在 spi_master.c 的目标区。
@@ -30,9 +31,10 @@
  *               等待（§6.1）→ 回 WAIT_HELLO。
  *
  * ── UAT 数据出口 ────────────────────────────────────────────────────
- * 分片重组完成（552 B 交织帧，事实卡 §7）→ uat 回调一次性交付
- * （rssi/ts_us 取自 RX_DESCRIPTOR，§4.3）。目标区胶水把它编码成
- * adsb_link UAT_UPLINK（UART v1.1 §6）送 p4_link；host 测试直接捕获。
+ * 分片重组完成（30/48/552 B 原始帧）→ uat 回调一次性交付
+ * （kind/flags/有符号 RSSI/CC RAT/frame_seq 取自 RX_DESCRIPTOR_V2，§4.3a）。
+ * 目标区胶水把它编码成 adsb_link UAT_RX_FRAME（UART v1.4 §9）送 p4_link；
+ * host 测试直接捕获。
  */
 #pragma once
 
@@ -57,9 +59,9 @@ typedef enum {
     SPIM_RECOVERY,
 } spim_state_t;
 
-/* UAT 帧完成回调：552 B 交织帧 + 描述符元数据（§4.3）。 */
+/* UAT 帧完成回调：30/48/552 B 原始帧 + v2 描述符元数据。 */
 typedef void (*spim_uat_fn)(const uint8_t *frame, size_t len,
-                            uint8_t rssi, uint32_t ts_us, void *user);
+                            const rp_cc13xx_rx_meta_t *meta, void *user);
 
 /* 统计（诊断口径，§5.3 计数由 codec 返回值累加；此处 master 会话级） */
 typedef struct {
@@ -75,6 +77,7 @@ typedef struct {
     uint32_t seq_gaps;          /* 事件类 seq_gap 判定累计（§5.5）        */
     uint32_t recoveries;        /* 进入 RECOVERY 次数                     */
     uint32_t uat_complete;      /* 重组完成的 UAT 帧                      */
+    uint32_t frame_seq_gaps;    /* RF frame_seq 缺口（队满/丢帧可观测）  */
 } spim_stats_t;
 
 typedef struct {
@@ -100,11 +103,18 @@ typedef struct {
 
     /* UAT 通路 */
     rp_cc13xx_reasm_t reasm;
-    rp_cc13xx_rx_desc_t desc;      /* 当前重组报文的元数据（rssi/ts_us）  */
+    rp_cc13xx_rx_desc_t desc;      /* 当前重组报文的 v2 元数据             */
     bool           uat_done;       /* 本报文完成回调已触发（start 时清）   */
+    uint16_t       last_frame_seq;
+    bool           frame_seq_valid;
 
     /* 对端信息（诊断） */
     rp_cc13xx_hello_t peer_hello;
+    uint8_t        last_error_code;
+    uint8_t        last_error_msg_len;
+    uint8_t        last_error_msg[RP_CC13XX_ERROR_MSG_MAX];
+    rp_cc13xx_rf_health_t peer_rf_health;
+    bool           peer_rf_health_valid;
 
     /* RESET 脉冲请求（胶水层消费；digest 置位，spi_master_reset_done 清除） */
     bool           reset_req;

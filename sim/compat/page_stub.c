@@ -704,6 +704,12 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
     return up ? PK_ADSB_LINK_LINKED : PK_ADSB_LINK_NO_LINK;
 }
 
+int pk_adsb_rp_health(uint32_t *out)
+{
+    (void)out;
+    return 0;
+}
+
 /* 天线选择：真源在 NVS（config_antenna.c 不进 sim 链接）。默认取两个枚举的
  * 0 值——它们被刻意对齐成"上电默认"，见 config_antenna.h 的说明。 */
 pk_ant_1090_t pk_ant_1090_get(void)
@@ -792,6 +798,13 @@ static pk_airband_control_status_t s_sim_airband_ctl = {
     .speaker_volume = 35,
 };
 
+#include "airband_record.h"
+void pk_airband_record_get(pk_airband_record_status_t *out)
+{ if (out) *out=(pk_airband_record_status_t){.sd_missing=true}; }
+bool pk_airband_record_set_enabled(bool enabled) { return !enabled; }
+const char *pk_airband_record_label(const pk_airband_record_status_t *status)
+{ (void)status;return "SD MISSING"; }
+
 bool pk_airband_get(pk_airband_state_t *out)
 {
     if (out == NULL) return false;
@@ -875,7 +888,12 @@ bool pk_airband_speaker_test(void) { return true; }
 
 /* 导航网格的 AIRBAND 格会在切 mode 前触发一次后台选台加载。模拟器没有
  * FreeRTOS/SD 航空库任务，页面本身不编入，只保留这个无副作用入口。 */
-void pk_airband_page_open(void) { }
+pk_airband_speaker_test_click_t pk_airband_speaker_test_action(void)
+{ return PK_AIRBAND_SPEAKER_TEST_CLICK_START; }
+bool pk_airband_speaker_test_active(void) { return false; }
+
+bool ble_gatt_airband_owner_window_toggle(void) { return true; }
+uint32_t ble_gatt_airband_owner_window_remaining_s(void) { return 0; }
 
 /* ── display.c 的两个入口 ────────────────────────────────────────
  *

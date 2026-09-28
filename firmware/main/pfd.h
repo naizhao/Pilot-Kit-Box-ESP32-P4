@@ -11,6 +11,8 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #include "esp_err.h"
 
 /*
@@ -20,3 +22,7 @@
  * until an IMU sample arrives.
  */
 esp_err_t pk_pfd_start(void);
+
+/* 只有 LVGL、canvas、触摸/nav 控件均初始化完成后才为 true。任务创建成功
+ * 不等于 UI 已可显示，SW3 长按关机用它作可见提示的硬闸门。 */
+bool pk_pfd_ready(void);

@@ -31,10 +31,37 @@ static const char *TAG = "syslog";
 static StreamBufferHandle_t s_ring;
 static vprintf_like_t       s_orig;
 static atomic_uint          s_dropped;
+/* s_writing 从取得 SD lease 前一直覆盖到 fclose/lease release 后；调用方只有
+ * 同时看见 ring 为空且 s_writing=false，才能断言刚才入队的字节已越过
+ * FATFS。s_last_flush_ok 防止“队列已经被失败写入吃掉”被误报成成功。 */
+static atomic_bool          s_writing;
+static atomic_bool          s_last_flush_ok;
 
 unsigned pk_syslog_dropped(void)
 {
     return atomic_load_explicit(&s_dropped, memory_order_relaxed);
+}
+
+bool pk_syslog_flush(uint32_t timeout_ms)
+{
+    /* 用户没有打开诊断记录时没有“必须落盘”的承诺，也不能因此阻止关机。 */
+    if (!pk_diaglog_enabled()) return true;
+    if (!s_ring || !pk_sdcard_is_mounted()) return false;
+
+    uint32_t waited_ms = 0;
+    for (;;) {
+        if (xStreamBufferBytesAvailable(s_ring) == 0 &&
+            !atomic_load_explicit(&s_writing, memory_order_acquire)) {
+            return atomic_load_explicit(&s_last_flush_ok,
+                                        memory_order_acquire);
+        }
+        if (waited_ms >= timeout_ms) return false;
+        const uint32_t step_ms = (timeout_ms - waited_ms < 10)
+                               ? timeout_ms - waited_ms : 10;
+        if (step_ms == 0) return false;
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+        waited_ms += step_ms;
+    }
 }
 
 /*
@@ -96,28 +123,49 @@ static void syslog_task(void *arg)
             continue;
         }
 
+        if (!xStreamBufferBytesAvailable(s_ring)) continue;
+        atomic_store_explicit(&s_writing, true, memory_order_release);
+        bool flush_ok = false;
+        if (!pk_sdcard_io_acquire()) {
+            atomic_store_explicit(&s_last_flush_ok, false, memory_order_release);
+            atomic_store_explicit(&s_writing, false, memory_order_release);
+            continue;
+        }
         const uint32_t gen = pk_sdcard_mount_generation();
         if (gen != last_gen) { last_gen = gen; marked = false; }
 
-        if (!xStreamBufferBytesAvailable(s_ring)) continue;
-
         rotate_if_needed();
         FILE *fp = fopen(SYSLOG_PATH, "a");
-        if (!fp) continue;
+        if (!fp) {
+            pk_sdcard_io_release();
+            atomic_store_explicit(&s_last_flush_ok, false, memory_order_release);
+            atomic_store_explicit(&s_writing, false, memory_order_release);
+            continue;
+        }
 
+        bool write_ok = true;
         if (!marked) {
-            fprintf(fp, "\n=== boot reset=%d ===\n", (int)esp_reset_reason());
-            marked = true;
+            if (fprintf(fp, "\n=== boot reset=%d ===\n",
+                        (int)esp_reset_reason()) < 0) {
+                write_ok = false;
+            } else {
+                marked = true;
+            }
         }
         size_t got;
-        while ((got = xStreamBufferReceive(s_ring, buf, sizeof buf, 0)) > 0)
-            fwrite(buf, 1, got, fp);
+        while ((got = xStreamBufferReceive(s_ring, buf, sizeof buf, 0)) > 0) {
+            if (fwrite(buf, 1, got, fp) != got) write_ok = false;
+        }
 
         /* FATFS 上只 fflush 不 fsync，目录项里的文件大小不更新，掉电会丢
          * 整段而且平时完全看不出来。2 s 一次付得起。 */
-        fflush(fp);
-        fsync(fileno(fp));
-        fclose(fp);
+        const bool fflush_ok = fflush(fp) == 0;
+        const bool fsync_ok = fflush_ok && fsync(fileno(fp)) == 0;
+        const bool close_ok = fclose(fp) == 0;
+        flush_ok = write_ok && fflush_ok && fsync_ok && close_ok;
+        pk_sdcard_io_release();
+        atomic_store_explicit(&s_last_flush_ok, flush_ok, memory_order_release);
+        atomic_store_explicit(&s_writing, false, memory_order_release);
     }
 }
 

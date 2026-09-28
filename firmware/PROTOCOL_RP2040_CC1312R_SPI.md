@@ -1,6 +1,8 @@
-# RP2040 ↔ CC1312R Sub-GHz 链路协议（SPI），v1.0
+# RP2040 ↔ CC1312R Sub-GHz 链路协议（SPI），v1.2
 
-状态：冻结（2026-09-08；定稿前修订见附录 C.3，不升版本）。修改协议必须递增
+状态：v1.0 冻结（2026-09-08）；v1.1（2026-09-28）以新增 msg_type
+向前兼容加入真实 UAT 可变帧描述符；v1.2（2026-09-28）新增 RF 健康事件。
+修改协议必须递增
 minor（向前兼容新增）或 major（不兼容），并同步更新
 `firmware/components/rp_cc13xx_codec/`（WP-P0b Task 3 产出）与两侧实现及测试。
 
@@ -25,7 +27,8 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
   速率上限由 WP-E 台架实测决定（§9）。
 - `SUBG_IRQ`（GPIO14 ↔ DIO_12）：**电平触发、高有效**，slave 持有驱动。
   **置位条件（四源枚举，全或）**：事件队列非空 ∨ 已交付的 RX_DESCRIPTOR
-  尚有未取分片 ∨ `queue_full_pending`（§4.5）∨ `async_error_pending`
+  尚有未取分片 ∨ `queue_full_pending`（§4.5）∨ `async_error_pending` ∨
+  `rf_health_pending`（§4.8a）
   （§2.3 规则 4，code 0x04/0x05）。**生命周期不变式（各源清除时点的唯一
   规范出处）**：IRQ 置位 ⟺ 存在**尚未完成 MISO 交付**的挂起源。
   「交付完成」= 携带该源帧的事务之 **CSN 上升沿**；**装载（§2.3）不清除
@@ -175,15 +178,17 @@ minor（向前兼容新增）或 major（不兼容），并同步更新
 | 0x02 | IRQ_ACK | master→slave | 空（len=0） | 每取一事件/一片一发 |
 | 0x03 | PING | master→slave | 空（len=0） | LINKED 后 1 Hz 看护（drain 挂起）；WAIT_HELLO 对 PING 静默（§6.2） |
 | 0x04 | PONG | slave→master | 空（len=0） | 仅 **LINKED 态**应答 PING（§6.2） |
-| 0x10 | RX_DESCRIPTOR | slave→master | §4.3 | 事件到达即入队 |
+| 0x10 | RX_DESCRIPTOR_LEGACY | slave→master | §4.3 | v1.0 兼容解析；新固件不再生产 |
 | 0x11 | RX_PAYLOAD_CHUNK | slave→master | §4.4 | 仅紧随其 RX_DESCRIPTOR |
 | 0x12 | QUEUE_FULL | slave→master | §4.5 | 队满置位、交付完成清（§1；一切状态照常装载） |
+| 0x13 | RX_DESCRIPTOR_V2 | slave→master | §4.3a | v1.1 新生产路径；30/48/552 B |
 | 0x20 | RF_CONFIG | master→slave | §4.6 | （re)LINKED 后 1 s 内先查询，按需写 |
 | 0x21 | RF_CONFIG_STATUS | slave→master | §4.6 | 仅应答 0x20 |
 | 0x22 | RESET_STATUS_REQ | master→slave | 空（len=0） | 按需；drain 期间禁止 |
 | 0x23 | RESET_STATUS | slave→master | §4.7 | 仅应答 0x22 |
 | 0x24 | UPGRADE_STATUS_REQ | master→slave | 空（len=0） | 按需；drain 期间禁止 |
 | 0x25 | UPGRADE_STATUS | slave→master | §4.8 | 仅应答 0x24 |
+| 0x26 | RF_HEALTH_STATUS | slave→master | §4.8a | 状态变化/周期探测后，由 IRQ 交付 |
 | 0x7F | ERROR | 双向 | §4.9 | 事件驱动，无周期 |
 
 `0x00` 禁用（全 0 填充不得被解析为帧）；`0xFF` 永不分配（全 `0xFF` 擦除/悬空
@@ -226,6 +231,34 @@ flags bit1，4096 ≥ 10× UAT 上行帧 432 B，裕量充足且 master 缓冲�
 bit0=高优先级（建议 master 尽快取走）、bit1=截断，其余保留必须为 0（接收方
 校验非 0 视为 payload 违规，与 len 违规同计 len_errors 并作废整事务，§5.2；
 同 §4.8）。
+
+### 4.3a RX_DESCRIPTOR_V2（v1.1，0x13）
+
+v1.0 的 0x10 字段不能表达 UAT 下行短/长帧种类、有符号 RF Core RSSI、
+36-bit sync/SET_LEN 校验状态，也把时间单位误写为 µs。为避免静默改变已冻结
+类型的含义，v1.1 **新增** 0x13；0x10 只保留兼容解析。payload 固定 16 B：
+
+| 偏移 | 长度 | 字段 |
+|---|---:|---|
+| 0 | 2 | `frame_seq`：通过格式门的 RF 帧序号，u16le 模回绕；格式合法但队满丢弃也递增，因此 RP 可从 gap 观察丢帧 |
+| 2 | 4 | `freq_hz`：固定 978000000，u32le |
+| 6 | 4 | `cc_time`：CC1312R RF RAT 原始 4 MHz tick，u32le 模回绕；不是 µs |
+| 10 | 2 | `total_len`：严格等于 kind 对应的 30 / 48 / 552 |
+| 12 | 1 | `rssi_dbm`：RF Core 附加 RSSI，二补码有符号 dBm |
+| 13 | 1 | `kind`：1=DOWNLINK_SHORT，2=DOWNLINK_LONG，3=UPLINK |
+| 14 | 1 | `flags`：bit0=完整 36-bit sync 已核；bit1=RF status result=0；bit2=`CMD_PROP_SET_LEN` 成功；其余位必须 0 |
+| 15 | 1 | `reserved`：必须 0 |
+
+kind/长度不匹配、未知 kind、保留位非 0 均按 payload 违规拒绝；不得截断、补齐
+或猜测类型。后续分片仍复用 0x11，`desc_id` 字段等于 `frame_seq`。CC 侧队列
+保存每项实际长度，不得再以 552 B 作为队列的逻辑帧长。序号 `0xFFFF→0` 是正常
+回绕；只有无符号差值不等于 1 才计 gap。
+
+该类型对应的 UAT PHY 接收合同：RF Core 匹配 32-bit 前缀 ADS-B
+`0xEACDDA4E` / uplink `0x153225B1`；随后 4-bit header 必须分别为 `0x2` / `0xD`，
+逐 bit 补齐完整 36-bit sync `0xEACDDA4E2` / `0x153225B1D`。ADS-B 首字节 MDB type
+0 为 30 B，其余为 48 B；uplink 固定 552 B。partial data entry 收到首 16 B 后
+必须用 RX-only immediate `CMD_PROP_SET_LEN` 限长；任一校验失败都不得进入队列。
 
 ### 4.4 RX_PAYLOAD_CHUNK
 
@@ -292,6 +325,16 @@ len 违规同计 len_errors 并作废整事务，§5.2）。
 `running_image_version`：当前运行固件版本（与 §4.1 fw_ver 同编码）。
 **cJTAG 状态不在本消息内**：cJTAG 是独立硬件调试路径，CC1312R 固件无法观测
 （事实卡「cJTAG boundary」）——本消息只描述固件侧升级状态机（§8）。
+
+### 4.8a RF_HEALTH_STATUS（v1.2，0x26）
+
+slave→master 事件，payload 固定 16 B：`{u8 flags; i8 idle_rssi_dbm;
+u16le last_raw_status; u32le probe_successes; u32le probe_errors;
+u32le rf_reinits}`。`flags`：bit0=RF 接收链 active，bit1=最近一次只读
+`RF_getRssi` 探测成功，bit2=`idle_rssi_dbm` 有效，bit3=正在恢复；其余位保留。
+RSSI 是空闲频谱/噪声探测值，不是空中 UAT 包 RSSI；没有收到包但 bit0/bit1 为 1
+仍表示 RF Core 存活。该事件使用 `rf_health_pending` 单槽覆盖最新快照，按 §2.3
+事件路径由 IRQ 交付。RP 一旦进入 CC recovery/reset 必须立即使旧快照失效。
 
 ### 4.9 ERROR
 

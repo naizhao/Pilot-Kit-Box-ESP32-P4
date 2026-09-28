@@ -4,7 +4,7 @@
  *
  *   cc -std=c11 -Wall -Wextra -Werror -O2 \
  *      -o /tmp/test_uat_decode firmware/test/test_uat_decode.c \
- *      firmware/main/uat_decode.c && /tmp/test_uat_decode
+ *      firmware/main/uat_decode.c -lm && /tmp/test_uat_decode
  *
  * 每个期望值的出处都在断言旁以「事实卡 §N」引用
  * docs/internal/firmware-v3v4/UAT-PROTOCOL-FACTS.md；向量溯源总表
@@ -165,6 +165,16 @@ static const char VEC_DL_MISMATCH_IN[] =    /* 2-104 #28：basic/long 判别失�
     "287F318C2A9FFF7F0784CA4036E252DEB0226A9F9E183CBB933FA68DBF5E1F018F635"
     "195DE87894F16BDA55E42A64137";
 
+/* 已完成 RS 纠错的真实 UAT ADS-B/TIS-B 消息层样本。来源是公开 RF 捕获，
+ * 期望值用独立 uat2text 解码后逐字段冻结；这里测试的是本仓自己的消息层，
+ * 不把第三方实现编进产品。 */
+static const char VEC_DL_ADSB_LONG_DATA[] =
+    "08a66ef1353e2d525fd4050911882aa038101d06b85d440be2a4c2a0000590000000";
+static const char VEC_DL_TISB_ICAO_DATA[] =
+    "0aa952b5358bd752400005a8139213004f039f0264e6c404c8974200000610000000";
+static const char VEC_DL_TISB_TRACK_DATA[] =
+    "0bac012235606d5221340436111c17c08105c4e6c4e6c40a2a700300000000000000";
+
 /* ── 上行 happy path（UP-CLEAN，事实卡 §8）──────────────────────── */
 
 static void test_uplink_clean(void)
@@ -217,6 +227,8 @@ static void test_uplink_clean(void)
     CHECK(up.app_data_valid == true);
     CHECK(up.slot_id == 7);
     CHECK(up.tisb_site_id == 11);
+    CHECK(up.raw_data == data);
+    CHECK(memcmp(up.raw_data, exp, UAT_UPLINK_DATA_BYTES) == 0);
 
     CHECK(up.num_info_frames == 5);         /* 43/43/79/81/90 B + 终止符 */
     static const uint16_t lens[5] = { 43, 43, 79, 81, 90 };
@@ -396,6 +408,59 @@ static void test_downlink_all_zero_rejected(void)
         CHECK(data[i] == 0xEE);
 }
 
+/* ── 下行消息层：真实 ADS-B、ICAO TIS-B 与非 ICAO track file ─────── */
+
+static void test_downlink_aircraft_message(void)
+{
+    uint8_t data[UAT_DL_LONG_DATA_BYTES];
+    uat_aircraft_msg_t m;
+
+    CHECK(unhex(VEC_DL_ADSB_LONG_DATA, data, sizeof data) == 34);
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m));
+    CHECK(m.mdb_type == 1 && m.addr_qualifier == UAT_ADDR_ADSB_ICAO);
+    CHECK(m.address == 0xA66EF1 && m.address_is_icao);
+    CHECK(m.has_state_vector && m.has_mode_status && m.has_aux_state);
+    CHECK(m.position_valid);
+    CHECK(m.lat_deg_e6 == 37436385 && m.lon_deg_e6 == -122080551);
+    CHECK(m.altitude_valid && m.altitude_ft == 975);
+    CHECK(m.altitude_source == UAT_ALT_BARO);
+    CHECK(m.air_ground == UAT_AG_SUBSONIC);
+    CHECK(m.ns_velocity_valid && m.ns_velocity_kt == -97);
+    CHECK(m.ew_velocity_valid && m.ew_velocity_kt == 84);
+    CHECK(m.speed_valid && m.speed_kt == 128);
+    CHECK(m.track_valid && m.track_deg == 139);
+    CHECK(m.vertical_rate_valid && m.vertical_rate_fpm == -128);
+    CHECK(m.vertical_rate_source == UAT_ALT_GEO);
+    CHECK(strcmp(m.callsign, "N5130E") == 0 && m.callsign_is_flight_id);
+    CHECK(m.emitter_category == 2);
+    CHECK(m.aux_altitude_valid && m.aux_altitude_ft == 1200);
+    CHECK(m.aux_altitude_source == UAT_ALT_GEO);
+
+    CHECK(unhex(VEC_DL_TISB_ICAO_DATA, data, sizeof data) == 34);
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m));
+    CHECK(m.addr_qualifier == UAT_ADDR_TISB_ICAO);
+    CHECK(m.address == 0xA952B5 && m.address_is_icao);
+    CHECK(strcmp(m.callsign, "N70FC") == 0);
+
+    CHECK(unhex(VEC_DL_TISB_TRACK_DATA, data, sizeof data) == 34);
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m));
+    CHECK(m.addr_qualifier == UAT_ADDR_TISB_TRACK);
+    CHECK(m.address == 0xAC0122 && !m.address_is_icao);
+    CHECK(m.position_valid && m.altitude_valid && m.speed_valid);
+
+    /* DO-282B short-frame符合性向量纠错后的 18 B，也必须能由精确长度解析；
+     * 解析器不得为探测 long type 越过 18 B 输入。 */
+    CHECK(unhex(VEC_DL_SHORT_EXP, data, sizeof data) == 18);
+    CHECK(uat_downlink_parse_aircraft(data, 18, &m));
+    CHECK(m.mdb_type == 0 && m.address == 0x7E6987);
+    CHECK(m.position_valid && m.lat_deg_e6 == -31752527);
+    CHECK(m.lon_deg_e6 == 39905819);
+
+    memset(&m, 0xA5, sizeof m);
+    CHECK(!uat_downlink_parse_aircraft(data, 17, &m));
+    CHECK(((const uint8_t *)&m)[0] == 0xA5); /* 失败路径不污染输出 */
+}
+
 /* ── NULL/越界合同（契约 4）───────────────────────────────────── */
 
 static void test_null_contracts(void)
@@ -430,6 +495,7 @@ int main(void)
     test_downlink_long();
     test_downlink_failures();
     test_downlink_all_zero_rejected();
+    test_downlink_aircraft_message();
     test_null_contracts();
     if (g_fail) {
         fprintf(stderr, "test_uat_decode: %d FAIL\n", g_fail);

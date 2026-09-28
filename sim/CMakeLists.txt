@@ -125,6 +125,9 @@ set(FW_DRAW_SRC
     ${FW}/keyboard_page.c
     ${FW}/keyboard_numeric.c
     ${FW}/airband_frequency_input.c
+    ${FW}/airband_am_gain.c
+    ${FW}/airband_bk4819.c
+    ${FW}/airband_page.c
     # 航空数据搜索页。版面、分桶排序、空态文案都要在模拟器上评审，所以原样
     # 编进来；host 上跑不起来的只有后台任务与 NVS 历史，那两段在 PK_SIM_BUILD
     # 下退化成"同步查 + 内存里的历史"（见 search_page.c 尾部）。数据源同样
@@ -199,6 +202,9 @@ target_compile_definitions(pkbox_sim PRIVATE
 target_include_directories(pkbox_sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/compat   # 必须排在 FW 前面，桩头优先
     ${FW}
+    # diag_page.c 与固件共用 ADS-B/UAT 健康快照类型；ESP-IDF 会由组件依赖
+    # 自动导出这个目录，桌面模拟器需显式补齐同一公共头路径。
+    ${FW}/../components/adsb_link_codec
     # compat/pk_tile_loader_sim.c 要 #include "libs/lodepng/lodepng.h"——
     # 与固件那份完全同一行 include（pk_tile_loader.c 里也是这么写的）。
     # ESP-IDF 那边的 lvgl 组件把 src/ 也加进了 INCLUDE_DIRS（见

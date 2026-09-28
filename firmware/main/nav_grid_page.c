@@ -179,6 +179,14 @@ int pk_nav_swipe_dir(int dx, int dy)
     return dx > 0 ? -1 : 1;
 }
 
+pk_nav_poweroff_outcome_t pk_nav_poweroff_outcome(bool vbus_present,
+                                                   bool shutdown_returned)
+{
+    if (vbus_present) return PK_NAV_POWEROFF_BLOCKED_NEED_UNPLUG;
+    return shutdown_returned ? PK_NAV_POWEROFF_POWER_CUT
+                             : PK_NAV_POWEROFF_FAILED_VISIBLE;
+}
+
 #ifndef PK_NAV_GRID_HOST_TEST
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1137,14 +1145,21 @@ void pk_nav_grid_page_touch_up(void)
          * 菜单**不关**：让提示和那两个键留在同一屏，拔完线直接再点。
          */
         const power_snapshot_t ps = power_service_snapshot();
-        if (ps.vbus_present) {
+        if (pk_nav_poweroff_outcome(ps.vbus_present, false)
+                == PK_NAV_POWEROFF_BLOCKED_NEED_UNPLUG) {
             pk_ui_toast_show(PK_TR_POWER_NEED_UNPLUG, true);
             break;
         }
         s_pop = PK_NAV_POP_NONE;
         pk_nav_grid_page_close();
-        pk_display_panel_off();
-        power_sy6970_shutdown();
+        /* 真正仅电池关机成功时 MCU 在调用中掉电，函数不会返回；因此不必像
+         * “重启”那样预先关面板。若 H1 从 U19 下游顶住 VCC_5V，执行器会
+         * 返回 false，此时底页仍可见，并给用户一个明确错误。 */
+        const bool shutdown_returned = power_sy6970_shutdown();
+        if (pk_nav_poweroff_outcome(false, shutdown_returned)
+                == PK_NAV_POWEROFF_FAILED_VISIBLE) {
+            pk_ui_toast_show(PK_TR_POWER_OFF_FAILED, true);
+        }
         break;
     }
 

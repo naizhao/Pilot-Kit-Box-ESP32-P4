@@ -28,6 +28,7 @@
 #include "power_service.h"
 #include "ble_gatt.h"
 #include "gps.h"
+#include "config_antenna.h"
 #include "pk_sdcard.h"
 #include "soc_temp.h"
 #include "ui_state.h"      /* pk_ui_cal_hint_active —— 罗盘校准提示的电平 */
@@ -128,10 +129,15 @@ void pk_ui_topbar_status_collect(pk_pfd_status_t *st)
 {
     const int64_t now_us = esp_timer_get_time();
 
-    pk_gps_state_t gps;
+    pk_gps_state_t gps = {0};
     pk_gps_get(&gps);
     st->gps_have_fix = gps.have_fix;
     st->gps_sats     = (uint8_t)(gps.sats < 0 ? 0 : (gps.sats > 99 ? 99 : gps.sats));
+    pk_ant_gnss_status_t ant = {0};
+    pk_ant_gnss_status_get(&ant);
+    st->gps_antenna_result = ant.actual_known
+        ? pk_gps_ant_assess(gps.ant_status, gps.have_fix || gps.snr_count > 0)
+        : PK_GPS_ANT_RESULT_UNKNOWN;
 
     st->ble_connected = ble_gatt_is_connected();
     st->sd_mounted     = pk_sdcard_is_mounted();
@@ -193,9 +199,17 @@ void pk_ui_topbar_status_render(uint16_t *fb, const pk_pfd_status_t *s)
         bar_item_t items[5] = {0};
         int n = 0;
 
-        if (s->gps_have_fix) {
+        const pk_gps_header_state_t gps_header =
+            pk_gps_header_state(s->gps_have_fix, s->gps_antenna_result);
+        if (gps_header == PK_GPS_HEADER_SATS) {
             snprintf(items[n].text, sizeof(items[n].text), "%u", (unsigned)s->gps_sats);
             items[n].col = COL_GREEN;
+        } else if (gps_header == PK_GPS_HEADER_SHORT) {
+            snprintf(items[n].text, sizeof(items[n].text), "SHORT");
+            items[n].col = COL_RED;
+        } else if (gps_header == PK_GPS_HEADER_ANT_UNKNOWN) {
+            snprintf(items[n].text, sizeof(items[n].text), "ANT ?");
+            items[n].col = COL_WARN;
         } else {
             snprintf(items[n].text, sizeof(items[n].text), "NO FIX");
             items[n].col = COL_RED;

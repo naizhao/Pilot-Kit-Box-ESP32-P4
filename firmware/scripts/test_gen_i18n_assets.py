@@ -8,6 +8,7 @@ catalog」这类断言，都改问那一个——问已经不产字库的脚本�
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import tempfile
@@ -99,6 +100,26 @@ class I18nIdLedgerTest(unittest.TestCase):
 
 
 class I18nAssetGeneratorTest(unittest.TestCase):
+    def test_checked_in_catalog_matches_source_and_ledger(self) -> None:
+        """检入的 C/H 必须能由 catalog 源文件和永久 ID 台账原样重建。
+
+        只检查「源里的 key 都有 ID」挡不住反方向漂移：直接手改生成后的 C/H
+        会让真机暂时能用，但下一次正常重跑生成器时整条文案会静默消失。
+        """
+        _, ids = gen.load_ledger()
+        slots = gen.build_slots(ids, list(i18n_catalog.STRINGS))
+        main_dir = Path(__file__).resolve().parents[1] / "main"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            gen.emit_i18n_header(tmp_dir / "i18n_catalog.h", slots)
+            gen.emit_i18n_source(tmp_dir / "i18n_catalog.c", slots)
+            for name in ("i18n_catalog.h", "i18n_catalog.c"):
+                self.assertEqual(
+                    (tmp_dir / name).read_text(encoding="utf-8"),
+                    (main_dir / name).read_text(encoding="utf-8"),
+                    f"{name} 与 scripts/i18n_catalog.py + i18n_ids.json 不一致",
+                )
+
     def test_pfd_font_default_generation_includes_every_declared_size(self) -> None:
         """默认生成不能留下头文件声明、却缺少定义的字体档位。"""
         self.assertEqual(tuple(aafont.SIZES), aafont.DEFAULT_SIZES)
@@ -165,6 +186,24 @@ class I18nAssetGeneratorTest(unittest.TestCase):
         self.assertTrue(
             expected <= checked_in,
             f"检入字库漏字: {sorted(expected - checked_in)}",
+        )
+
+    def test_checked_in_lvgl_font_covers_current_catalog(self) -> None:
+        """直接解析 toast/TinyTTF 真正编入的子集字体，不能只验直绘位图字库。"""
+        from fontTools.ttLib import TTFont
+        import gen_lv_font
+
+        font_c = Path(__file__).resolve().parents[1] / "main" / "lv_font_zh.c"
+        body = font_c.read_text(encoding="utf-8")
+        blob = bytes(
+            int(token, 16)
+            for token in re.findall(r"0x([0-9A-Fa-f]{2})", body)
+        )
+        cmap = set(TTFont(io.BytesIO(blob)).getBestCmap())
+        expected = {ord(ch) for ch in gen_lv_font.collect_chars()}
+        self.assertTrue(
+            expected <= cmap,
+            f"检入 LVGL/TinyTTF 字库漏字: {sorted(expected - cmap)}",
         )
 
     def test_bitmap_cjk_font_generation_stays_removed(self) -> None:

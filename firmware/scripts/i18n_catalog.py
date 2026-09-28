@@ -414,6 +414,26 @@ STRINGS = [
         },
     ),
     (
+        # H1 USB0_5V 经主板 Q2 直接进入 VCC_5V，绕过 U19 的 VBUS 检测。
+        # 因此 power_service 看不到这路 USB，只能先尝试置 BATFET_DIS；若 P4
+        # 仍由 H1 供电，power_sy6970_shutdown() 会返回，再用这条 toast 说明
+        # 关机没有完成。与上面的“已知 VBUS 在位、尚未执行关机”是两个阶段。
+        "POWER_OFF_FAILED",
+        {
+            "en": "Power off failed: disconnect all USB",
+            "zh": "关机失败：请断开所有 USB",
+        },
+    ),
+    (
+        # 达到软件长按阈值时先提示；必须等 SW3 松开、/QON 恢复高电平后才写
+        # BATFET_DIS，否则仍为低的 /QON 可能让 SY6970 立即退出 shipping mode。
+        "POWER_RELEASE_TO_OFF",
+        {
+            "en": "Release button to power off",
+            "zh": "松开按键关机",
+        },
+    ),
+    (
         # 全屏导航网格新增的一格。dock 时代放不下第 8 个页签（8×94+100 > 800，
         # 见 search_page.h 文件头），网格没有这个限制。
         "NAV_TOOLS",
@@ -1573,4 +1593,16 @@ STRINGS = [
                                "zh": "喇叭测试已停止"}),
     ("AIRBAND_TEST_FAILED", {"en": "SPEAKER TEST FAILED",
                               "zh": "喇叭测试启动失败"}),
+    ("AIRBAND_PAIR", {"en": "PAIR", "zh": "配对"}),
+    ("AIRBAND_LIST_ERROR", {"en": "LIST ERROR", "zh": "列表错误"}),
+    ("AIRBAND_VOLUME_FORMAT", {"en": "VOLUME %u%%", "zh": "音量 %u%%"}),
+    ("AIRBAND_REC_WRITING", {"en": "WRITING", "zh": "写入中"}),
+    ("AIRBAND_REC_ERROR", {"en": "ERROR", "zh": "录制错误"}),
+    ("AIRBAND_REC_SD_MISSING", {"en": "SD MISSING", "zh": "未插SD卡"}),
+    ("AIRBAND_REC_DROPPED", {"en": "DROPPED", "zh": "录音丢帧"}),
+    ("AIRBAND_REC_ACTIVE", {"en": "RECORDING", "zh": "录制中"}),
+    ("AIRBAND_REC_ARMED", {"en": "ARMED", "zh": "等待信号"}),
+    ("AIRBAND_REC_IDLE", {"en": "IDLE", "zh": "待录制"}),
+    ("AIRBAND_PRESET_GUARD", {"en": "GUARD", "zh": "紧急频率"}),
+    ("AIRBAND_PRESET_AIR_AIR", {"en": "AIR-AIR", "zh": "空对空"}),
 ]

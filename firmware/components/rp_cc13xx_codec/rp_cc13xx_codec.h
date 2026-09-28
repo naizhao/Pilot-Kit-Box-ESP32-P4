@@ -1,7 +1,7 @@
 /*
  * rp_cc13xx_codec.h — RP2040↔CC1312R Sub-GHz 链路 v1 的共享编解码器接口。
  *
- * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md（v1.0）。与 adsb_link_codec
+ * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md（v1.1；帧 major 仍为 1）。与 adsb_link_codec
  * 同模式：两侧固件编译同一份实现（RP2040: rp2040/CMakeLists.txt 直接引用；
  * CC1312R 侧同源复制），协议永不漂移。纯 C99，无平台依赖、无 malloc、
  * 无 FreeRTOS；host 测试直编（firmware/test/test_rp_cc13xx_codec.c）。
@@ -20,7 +20,7 @@
 /* 帧格式常量（规范 §3，小端多字节） */
 #define RP_CC13XX_MAGIC0        0x50   /* 'P'（§3，沿用 P0a 家族） */
 #define RP_CC13XX_MAGIC1        0x4B   /* 'K' */
-#define RP_CC13XX_VER           1      /* §3/§3.3：ver 仅 1 B major */
+#define RP_CC13XX_VER           1      /* 帧 major 保持 1；descriptor 以新 type 升版 */
 #define RP_CC13XX_HDR_LEN       8
 #define RP_CC13XX_MAX_PAYLOAD   502    /* §3.1：payload 上限 */
 #define RP_CC13XX_MAX_FRAME     (RP_CC13XX_HDR_LEN + RP_CC13XX_MAX_PAYLOAD + 2)
@@ -34,23 +34,26 @@
 #define RP_CC13XX_MSG_RX_DESCRIPTOR      0x10
 #define RP_CC13XX_MSG_RX_PAYLOAD_CHUNK   0x11
 #define RP_CC13XX_MSG_QUEUE_FULL         0x12
+#define RP_CC13XX_MSG_RX_DESCRIPTOR_V2   0x13
 #define RP_CC13XX_MSG_RF_CONFIG          0x20
 #define RP_CC13XX_MSG_RF_CONFIG_STATUS   0x21
 #define RP_CC13XX_MSG_RESET_STATUS_REQ   0x22
 #define RP_CC13XX_MSG_RESET_STATUS       0x23
 #define RP_CC13XX_MSG_UPGRADE_STATUS_REQ 0x24
 #define RP_CC13XX_MSG_UPGRADE_STATUS     0x25
+#define RP_CC13XX_MSG_RF_HEALTH_STATUS   0x26
 #define RP_CC13XX_MSG_ERROR              0x7F
 
 /* payload 布局常量（规范 §4.x——每条均为 codec 断言的直接引用对象） */
 #define RP_CC13XX_HELLO_LEN          8    /* §4.1 */
-#define RP_CC13XX_RX_DESCRIPTOR_LEN  14   /* §4.3 */
+#define RP_CC13XX_RX_DESCRIPTOR_LEN  16   /* v2 §4.3 */
 #define RP_CC13XX_CHUNK_HDR_LEN      6    /* §4.4：desc_id+offset+total_len */
 #define RP_CC13XX_CHUNK_MAX_DATA     496  /* §4.4：= 502 − 6 */
 #define RP_CC13XX_QUEUE_FULL_LEN     4    /* §4.5 */
 #define RP_CC13XX_RF_CONFIG_LEN      20   /* §4.6 */
 #define RP_CC13XX_RESET_STATUS_LEN   8    /* §4.7 */
 #define RP_CC13XX_UPGRADE_STATUS_LEN 8    /* §4.8 */
+#define RP_CC13XX_RF_HEALTH_LEN      16   /* additive receive-health event */
 #define RP_CC13XX_ERROR_MSG_MAX      32   /* §4.9 */
 #define RP_CC13XX_MAX_MSG_LEN        4096 /* §4.3：报文总长上限（超限截断） */
 
@@ -61,9 +64,23 @@
 #define RP_CC13XX_RESET_SOFTWARE 0x4  /* bit2：软件复位 */
 #define RP_CC13XX_RESET_WDT      0x8  /* bit3：看门狗/时钟安全复位 */
 
-/* RX_DESCRIPTOR flags（§4.3；bit2 以上保留必须为 0，接收方按 len 违规拒收） */
-#define RP_CC13XX_DESC_F_HIGH_PRIO  0x01  /* bit0：高优先级 */
-#define RP_CC13XX_DESC_F_TRUNCATED  0x02  /* bit1：超 4096 被截断 */
+/* v2 UAT 帧种类。kind 与 total_len 必须严格配对，未知值不得透传。 */
+#define RP_CC13XX_UAT_DOWNLINK_SHORT  0x01
+#define RP_CC13XX_UAT_DOWNLINK_LONG   0x02
+#define RP_CC13XX_UAT_UPLINK          0x03
+#define RP_CC13XX_UAT_SHORT_LEN       30u
+#define RP_CC13XX_UAT_LONG_LEN        48u
+#define RP_CC13XX_UAT_UPLINK_LEN      552u
+#define RP_CC13XX_UAT_MAX_LEN         RP_CC13XX_UAT_UPLINK_LEN
+
+/* RX_DESCRIPTOR flags（v2 §4.3；bit3 以上保留必须为 0）。 */
+#define RP_CC13XX_DESC_F_SYNC36_OK    0x01
+#define RP_CC13XX_DESC_F_RF_STATUS_OK 0x02
+#define RP_CC13XX_DESC_F_SET_LEN_OK   0x04
+#define RP_CC13XX_DESC_F_KNOWN_MASK   0x07
+/* v1 源码兼容：仅在 kind=0 的 legacy descriptor 编解码中有效。 */
+#define RP_CC13XX_DESC_F_HIGH_PRIO    0x01
+#define RP_CC13XX_DESC_F_TRUNCATED    0x02
 
 /* UPGRADE_STATUS.state（§4.8） */
 #define RP_CC13XX_UPG_NORMAL      0x00
@@ -149,13 +166,29 @@ rp_cc13xx_status_t rp_cc13xx_decode_hello(const rp_cc13xx_msg_t *m,
 
 /* §4.3 RX_DESCRIPTOR */
 typedef struct {
-    uint16_t desc_id;           /* slave 侧单调递增，关联其分片 */
+    union {
+        uint16_t desc_id;       /* 分片关联 id；等于 RF frame_seq */
+        uint16_t frame_seq;     /* 每个通过格式门的 RF 帧递增，模 2^16 */
+    };
     uint32_t freq_hz;           /* 接收频率 Hz */
-    uint32_t ts_us;             /* 模 2^32 单调 µs，回绕不是回跳 */
-    uint16_t total_len;         /* ≤ 4096，超限被 slave 截断置 flags bit1 */
-    uint8_t  rssi;              /* 0.5 dB/LSB 无符号，0xFF=无值 */
-    uint8_t  flags;             /* RP_CC13XX_DESC_F_*，保留位必须为 0 */
+    union {
+        uint32_t cc_time;       /* CC1312R RAT 原始 4 MHz 时钟，模 2^32 */
+        uint32_t ts_us;         /* v1 源码兼容别名；v2 线上单位不再是 us */
+    };
+    uint16_t total_len;         /* kind 对应 30 / 48 / 552 */
+    union {
+        int8_t  rssi_dbm;       /* RF Core 附加 RSSI，二补码 dBm */
+        uint8_t rssi;           /* 源码兼容别名，线上同一字节 */
+    };
+    uint8_t  kind;              /* RP_CC13XX_UAT_* */
+    uint8_t  flags;             /* RP_CC13XX_DESC_F_* */
+    uint8_t  reserved;          /* 发送端 0；接收端非 0 拒绝 */
 } rp_cc13xx_rx_desc_t;
+
+typedef rp_cc13xx_rx_desc_t rp_cc13xx_rx_meta_t;
+
+/* kind/长度合同。1=合法；0=未知 kind 或长度不匹配。 */
+int rp_cc13xx_uat_kind_len_valid(uint8_t kind, uint16_t len);
 size_t rp_cc13xx_encode_rx_descriptor(uint8_t *out, size_t cap, uint16_t seq,
                                       const rp_cc13xx_rx_desc_t *d);
 rp_cc13xx_status_t rp_cc13xx_decode_rx_descriptor(const rp_cc13xx_msg_t *m,
@@ -214,6 +247,26 @@ size_t rp_cc13xx_encode_upgrade_status(uint8_t *out, size_t cap, uint16_t seq,
                                        const rp_cc13xx_upgrade_status_t *u);
 rp_cc13xx_status_t rp_cc13xx_decode_upgrade_status(const rp_cc13xx_msg_t *m,
                                                    rp_cc13xx_upgrade_status_t *u);
+
+/* Receive-only RF health event.  idle_rssi_dbm is a periodic RF Core probe
+ * (noise floor while no packet is being decoded), not packet RSSI. */
+#define RP_CC13XX_RF_HEALTH_ACTIVE       0x01u
+#define RP_CC13XX_RF_HEALTH_PROBE_OK     0x02u
+#define RP_CC13XX_RF_HEALTH_RSSI_VALID   0x04u
+#define RP_CC13XX_RF_HEALTH_RECOVERING   0x08u
+#define RP_CC13XX_RF_HEALTH_KNOWN_MASK   0x0Fu
+typedef struct {
+    uint8_t flags;
+    int8_t idle_rssi_dbm;
+    uint16_t last_raw_status;
+    uint32_t probe_successes;
+    uint32_t probe_errors;
+    uint32_t rf_reinits;
+} rp_cc13xx_rf_health_t;
+size_t rp_cc13xx_encode_rf_health(uint8_t *out, size_t cap, uint16_t seq,
+                                  const rp_cc13xx_rf_health_t *h);
+rp_cc13xx_status_t rp_cc13xx_decode_rf_health(const rp_cc13xx_msg_t *m,
+                                              rp_cc13xx_rf_health_t *h);
 
 /* §4.9 ERROR（msg 为 UTF-8 诊断串，非 NUL 结尾合法，以 len 为准） */
 typedef struct {

@@ -13,9 +13,10 @@
  * 布局权威：Pilot-Kit 仓 scripts/aero_data_pipeline/export_box_bin.py。
  * 逐字节组装所有多字节字段（小端），字符串池 24-bit 偏移为大端
  * （照抄本仓 firmware/main/aircraft_db.c 的 rec_reg_off 手法）。
- * 除 init 外零堆分配；nearest 的工作区在栈上定容。
+ * nearest 的工作区在栈上定容；nearby_all 是显式动态分配的完整结果接口。
  */
 #include "pk_aero_reader.h"
+#include <stdlib.h>
 
 #include <math.h>
 #include <string.h>
@@ -431,6 +432,64 @@ int pk_aero_nearest_airports_with_freqs(pk_aero_db_t *db,
 {
     return nearest_generic(db, &db->sec_airport, &db->apt_idx,
                            lat, lon, out, max, mode, true);
+}
+
+static int near_distance_compare(const void *a, const void *b)
+{
+    const pk_aero_near_t *aa = a, *bb = b;
+    if (aa->dist_nm < bb->dist_nm) return -1;
+    if (aa->dist_nm > bb->dist_nm) return 1;
+    return aa->idx < bb->idx ? -1 : aa->idx > bb->idx;
+}
+
+bool pk_aero_airports_with_freqs_nearby_all(pk_aero_db_t *db,
+    double lat, double lon, pk_aero_near_t **out, size_t *count)
+{
+    if (!out || !count) return false;
+    *out = NULL;
+    *count = 0;
+    if (!db || !db->payload || !isfinite(lat) || !isfinite(lon) ||
+        lat < -90 || lat > 90 || lon < -180 || lon > 180 ||
+        db->sec_airport.rec_size <= 30) return false;
+    uint16_t cell = pk_aero_grid_cell(lat, lon);
+    int row0 = cell / 360, col0 = cell % 360;
+    pk_aero_near_t *rows = NULL;
+    size_t n = 0, cap = 0;
+    for (int dr = -1; dr <= 1; ++dr) {
+        int row = row0 + dr;
+        if (row < 0 || row >= 180) continue;
+        for (int dc = -1; dc <= 1; ++dc) {
+            uint32_t first = 0, num = 0;
+            pk_aero_grid_lookup(db, &db->apt_idx,
+                (uint16_t)(row * 360 + (col0 + dc + 360) % 360), &first, &num);
+            if ((uint64_t)first + num > db->sec_airport.n) goto fail;
+            for (uint32_t k = 0; k < num; ++k) {
+                uint32_t idx = first + k;
+                const uint8_t *r = db->payload + db->sec_airport.data_off +
+                                  (size_t)idx * db->sec_airport.rec_size;
+                if (r[30] == 0 || rd_i32(r) == (int32_t)PK_AERO_COORD_NONE) continue;
+                if (n == cap) {
+                    size_t next = cap ? cap * 2 : 16;
+                    if (next < cap || next > SIZE_MAX / sizeof(*rows)) goto fail;
+                    void *p = realloc(rows, next * sizeof(*rows));
+                    if (!p) goto fail;
+                    rows = p;
+                    cap = next;
+                }
+                rows[n].idx = idx;
+                geo_dist_brg(lat, lon, rd_i32(r) / 1e7, rd_i32(r + 4) / 1e7,
+                             &rows[n].dist_nm, &rows[n].brg_deg);
+                n++;
+            }
+        }
+    }
+    if (n > 1) qsort(rows, n, sizeof(*rows), near_distance_compare);
+    *out = rows;
+    *count = n;
+    return true;
+fail:
+    free(rows);
+    return false;
 }
 
 int pk_aero_nearest_navaids(pk_aero_db_t *db, double lat, double lon,

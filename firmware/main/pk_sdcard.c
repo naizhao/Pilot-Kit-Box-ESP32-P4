@@ -60,6 +60,28 @@ static volatile uint32_t s_mount_generation;
 /* 「卡在位，但文件系统挂不上」。契约见 pk_sdcard.h。 */
 static volatile bool     s_media_error;
 static SemaphoreHandle_t      s_lock;
+/* Admission/count is independent of the lifecycle mutex. A consumer finishing
+ * I/O must be able to release while format/unmount owns s_lock and waits. */
+static portMUX_TYPE s_io_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_io_users;
+
+static void sd_set_state(pk_sd_state_t state)
+{
+    portENTER_CRITICAL(&s_io_mux);
+    s_state = state;
+    portEXIT_CRITICAL(&s_io_mux);
+}
+
+static void sd_wait_io_idle(void)
+{
+    for (;;) {
+        portENTER_CRITICAL(&s_io_mux);
+        bool idle = s_io_users == 0;
+        portEXIT_CRITICAL(&s_io_mux);
+        if (idle) return;
+        vTaskDelay(1);
+    }
+}
 
 /* 容量缓存 — 由挂载点/探测任务刷新；pk_sdcard_info 只读缓存，
  * 这样诊断页每帧调用不会触发 FAT 扫描 I/O。 */
@@ -239,9 +261,9 @@ static bool sd_mount_locked(void)
         return false;
     }
 
-    s_state = PK_SD_MOUNTED;
     s_media_error = false;  /* 挂上了，之前那张读不出的卡已经被换掉 */
     s_mount_generation++;   /* 契约见 pk_sdcard.h：只增不减的「卡换过了」凭据 */
+    sd_set_state(PK_SD_MOUNTED);
     sd_refresh_info_locked();
     ESP_LOGI(TAG, "microSD mounted at %s: %s %.1f GB",
              SD_MOUNT_POINT, s_card->cid.name,
@@ -250,9 +272,8 @@ static bool sd_mount_locked(void)
     return true;
 }
 
-/* 「卸载前静默」回调表。固定槽位够用：目前只有 tile_loader 与 aero_db
- * 两个 SD 消费方（record_sink_file 是上轮修复前就有的旧句柄，不在本轮
- * 回归范围）。注册通常发生在 init 期，但探测任务已在跑，写表要持锁。 */
+/* 常驻句柄的「卸载前静默」回调表；短开短关消费者使用 I/O lease。
+ * 注册通常发生在 init 期，但探测任务已在跑，写表要持锁。 */
 /* 4 → 8：地图/航空库/航空DB/日志四家已把 4 槽占满，ADS-B 落盘(pk_rec_store)
  * 再来就注册不上了。曾试过挂在 record_sink_file 的回调里转调，但那个注册是
  * `if (s_on_sdcard)` 有条件的、而日志后端默认是 flash——默认配置下转调根本
@@ -275,9 +296,12 @@ static void sd_unmount_locked(void)
      *    use-after-free（IDF 的 vfs_fat_close 即使卡已不在、f_close 报错
      *    也会无条件释放 FIL 槽与 fd，所以「卸载前 fclose」能可靠清空句柄）。
      */
-    s_state = PK_SD_NO_CARD;
+    sd_set_state(PK_SD_NO_CARD);
     s_total_bytes = 0;
     s_free_bytes  = 0;
+    /* One-shot consumers close their own handles before release. Drain these
+     * before taking any persistent consumer's module lock in its callback. */
+    sd_wait_io_idle();
     for (int i = 0; i < s_pre_unmount_cb_n; i++) {
         s_pre_unmount_cb[i]();
     }
@@ -401,12 +425,32 @@ void pk_sdcard_init(void)
 
 pk_sd_state_t pk_sdcard_state(void)
 {
-    return s_state;
+    portENTER_CRITICAL(&s_io_mux);
+    pk_sd_state_t state = s_state;
+    portEXIT_CRITICAL(&s_io_mux);
+    return state;
 }
 
 bool pk_sdcard_is_mounted(void)
 {
-    return s_state == PK_SD_MOUNTED;
+    return pk_sdcard_state() == PK_SD_MOUNTED;
+}
+
+bool pk_sdcard_io_acquire(void)
+{
+    portENTER_CRITICAL(&s_io_mux);
+    bool admitted = s_state == PK_SD_MOUNTED;
+    if (admitted) ++s_io_users;
+    portEXIT_CRITICAL(&s_io_mux);
+    return admitted;
+}
+
+void pk_sdcard_io_release(void)
+{
+    portENTER_CRITICAL(&s_io_mux);
+    configASSERT(s_io_users > 0);
+    --s_io_users;
+    portEXIT_CRITICAL(&s_io_mux);
 }
 
 uint32_t pk_sdcard_mount_generation(void)
@@ -433,23 +477,32 @@ bool pk_sdcard_info(uint64_t *out_total, uint64_t *out_free)
     return true;
 }
 
-void pk_sdcard_register_pre_unmount_cb(void (*cb)(void))
+bool pk_sdcard_register_pre_unmount_cb(void (*cb)(void))
 {
-    if (cb == NULL) return;
+    if (cb == NULL) return false;
     /* 探测任务可能正持锁跑卸载序列，写表必须与之互斥；调用方按约定在
      * pk_sdcard_init() 之后才注册，s_lock 此时必然已建。 */
     if (s_lock == NULL) {
         ESP_LOGE(TAG, "register_pre_unmount_cb before init — dropped");
-        return;
+        return false;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool registered = false;
+    for (int i = 0; i < s_pre_unmount_cb_n; ++i) {
+        if (s_pre_unmount_cb[i] == cb) {
+            xSemaphoreGive(s_lock);
+            return true;
+        }
+    }
     if (s_pre_unmount_cb_n < SD_PRE_UNMOUNT_CB_MAX) {
         s_pre_unmount_cb[s_pre_unmount_cb_n++] = cb;
+        registered = true;
     } else {
         ESP_LOGE(TAG, "pre-unmount cb table full (%d) — dropped",
                  SD_PRE_UNMOUNT_CB_MAX);
     }
     xSemaphoreGive(s_lock);
+    return registered;
 }
 
 esp_err_t pk_sdcard_format(void)
@@ -462,11 +515,19 @@ esp_err_t pk_sdcard_format(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    s_state = PK_SD_FORMATTING;
+    sd_set_state(PK_SD_FORMATTING);
+    s_total_bytes = 0;
+    s_free_bytes = 0;
+    sd_wait_io_idle();
+    /* Same lifetime barrier as removal: all consumers see not-mounted before
+     * their callbacks run, and every open fd/in-flight I/O is gone before FAT
+     * is reformatted. Callbacks must not acquire this module's lock. */
+    for (int i = 0; i < s_pre_unmount_cb_n; ++i) s_pre_unmount_cb[i]();
     ESP_LOGI(TAG, "formatting microSD (FAT32)…");
     esp_err_t err = esp_vfs_fat_sdcard_format(SD_MOUNT_POINT, s_card);
     if (err == ESP_OK) {
-        s_state = PK_SD_MOUNTED;
+        s_mount_generation++;
+        sd_set_state(PK_SD_MOUNTED);
         sd_refresh_info_locked();
         ESP_LOGI(TAG, "format done");
     } else {

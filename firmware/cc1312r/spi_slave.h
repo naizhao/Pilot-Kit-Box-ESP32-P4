@@ -26,7 +26,8 @@
 #include "rp_cc13xx_codec.h"
 
 #define CC13S_MAXQ        4      /* 事件队列容量（UAT 报文数）          */
-#define CC13S_UAT_LEN     552    /* 事实卡 §7：交织帧定长               */
+#define CC13S_UAT_MAX_LEN RP_CC13XX_UAT_MAX_LEN
+#define CC13S_UAT_LEN     CC13S_UAT_MAX_LEN /* 旧源码容量别名，不是固定合同 */
 #define CC13S_TXN_LEN     512    /* §2.1 定长事务                       */
 
 typedef enum {
@@ -38,16 +39,26 @@ typedef struct {
     cc13s_state_t state;
 
     /* 事件队列（IRQ 背书源 1）*/
-    uint8_t  q[CC13S_MAXQ][CC13S_UAT_LEN];
-    uint8_t  q_rssi[CC13S_MAXQ];
-    uint32_t q_ts[CC13S_MAXQ];
+    uint8_t  q[CC13S_MAXQ][CC13S_UAT_MAX_LEN];
+    uint16_t q_len[CC13S_MAXQ];
+    uint16_t q_frame_seq[CC13S_MAXQ];
+    int8_t   q_rssi_dbm[CC13S_MAXQ];
+    uint8_t  q_kind[CC13S_MAXQ];
+    uint8_t  q_flags[CC13S_MAXQ];
+    uint32_t q_cc_time[CC13S_MAXQ];
     int      qn;
     uint32_t dropped;             /* 队满丢弃累计（§4.5 events_dropped） */
+    uint32_t invalid_frames;      /* kind/长度/flags 不合法，未入队 */
+    uint16_t next_frame_seq;      /* 合法 RF 帧序号；即使队满丢弃也递增 */
 
     /* 挂起标志（IRQ 背书源 3/4）*/
     bool     qfull;
     bool     aerr;                /* 异步 ERROR 待交付（§2.3 规则 4c）   */
     uint8_t  async_code;          /* 异步错误码（0x04/0x05，§4.9）       */
+    bool     async_has_detail;    /* msg 是否携带 RF 原始状态            */
+    uint16_t async_detail;        /* little-endian RF Core command status */
+    bool     rf_health_pending;   /* 周期 RF 活性/RSSI 快照待交付 */
+    rp_cc13xx_rf_health_t rf_health;
 
     /* 交付中的报文（IRQ 背书源 2：分片未取完）*/
     int      cur;                 /* 队列下标；-1 = 无                   */
@@ -63,6 +74,7 @@ typedef struct {
     uint16_t pend_dlen;           /* pend 为 CHUNK 时的 data_len         */
     bool     pend_final;          /* pend 为末片                         */
     bool     pend_async;          /* pend 为异步 ERROR（交付沿才清 aerr）*/
+    bool     pend_rf_health;      /* pend 为 RF health（交付沿才清源） */
 
     /* 顺延的命令性 ERROR（§2.3 规则 2：无后备队列，优先于直接应答
      * 之外的一切装载）。来源：ver≠1 拒收 ERROR{0x01}（§6.2）、
@@ -100,9 +112,14 @@ void cc13s_txn_done(cc13s_slave_t *s, const uint8_t mosi[CC13S_TXN_LEN]);
  * 不驱动事件流——§6.2）。 */
 bool cc13s_irq(const cc13s_slave_t *s);
 
-/* RF 收包注入（事件入队；队满置 qfull 并计 dropped，§4.5）。 */
-void cc13s_push_uat(cc13s_slave_t *s, const uint8_t frame[CC13S_UAT_LEN],
-                    uint8_t rssi, uint32_t ts_us);
+/* RF 收包注入。仅接收 30/48/552 三种 kind/长度严格配对的完整帧。
+ * frame_seq 在格式门后、队满门前递增，因而队满丢帧可由 RP 观察到 gap。 */
+bool cc13s_push_rx(cc13s_slave_t *s, uint8_t kind, const uint8_t *frame,
+                   size_t len, int8_t rssi_dbm, uint32_t cc_time);
 
 /* 异步错误注入（固件内部错误 / RX 溢出 → ERROR 0x04/0x05，§4.9）。 */
 void cc13s_raise_async(cc13s_slave_t *s, uint8_t code);
+void cc13s_raise_async_detail(cc13s_slave_t *s, uint8_t code,
+                              uint16_t detail);
+void cc13s_publish_rf_health(cc13s_slave_t *s,
+                             const rp_cc13xx_rf_health_t *health);

@@ -65,7 +65,11 @@ CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 # --- Memory -----------------------------------------------------------------
 # Keep the main task stack modest and give the heap room to breathe
 # (UI/链路/记录各任务的栈都在自己的 xTaskCreate 里给)。
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+# ESP32-P4 / ESP-IDF #19020：小于 8 KiB 的 main task 栈可能被分配到
+# 0x30100000 的 SPM heap；首次 NVS/partition 操作关 Cache 时，当前 IDF
+# 的栈安全检查不识别 SPM，会立即断言重启。8192 无法装入扣除链接段后的
+# SPM 剩余池，强制回到普通内部 DRAM。上游正式修复落地前保留此规避。
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # --- Compiler ---------------------------------------------------------------
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
@@ -89,6 +93,10 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
 # Bump MTU so a single GDL90 Traffic Report (≤62 B) fits in one ATT PDU.
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+# AIRBAND Control can silence a physical speaker, so its encrypted GATT write
+# permission is backed by a bond that survives P4 reboots.  The runtime still
+# uses NimBLE's round-robin store policy and the configured three-bond limit.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
 # Default NimBLE transport for a "controller disabled" host is the H4 UART
 # bound to a couple of fixed GPIOs (4/5 at 921600). We don't have a real
 # UART HCI — the BT controller lives on the C6 and the HCI rides over

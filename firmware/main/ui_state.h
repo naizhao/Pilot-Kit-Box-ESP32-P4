@@ -238,6 +238,9 @@ void     pk_ui_clear_own_icao(void);
 void pk_ui_toast_show(pk_tr_id_t id, bool is_error);
 bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error);
 
+/* pk_ui_init() 成功创建状态锁后为 true；SW3 不得在 false 时执行关机。 */
+bool pk_ui_ready(void);
+
 /*
  * 同 pk_ui_toast_show()，多一个"闪 N 次"的强调模式（SD 写失败 / 降级告警
  * 用，阶段 5b：ADS-B 数据持久化设计（内部文档）

@@ -8,20 +8,67 @@
  */
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include "adsb_link.h"
 #include "modes_edge.h"
+#include "rp_cc13xx_codec.h"
 
 void p4_link_init(void);
 bool p4_link_send_modes(const modes_edge_frame_t *f, uint8_t rssi);
-/* UAT_UPLINK 转发（协议 v1.1 §6，type 0x11）：552 B 交织帧原样 +
+/* legacy UAT_UPLINK 转发（协议 v1.1 §6，type 0x11）：552 B 交织帧原样 +
  * rssi（0.5 dB/LSB，0xFF=无值）+ ts_us（CC1312R 描述符时钟，单位
  * 不改写）。帧内容合同见 uat_decode.h / UAT 事实卡 §7。 */
 bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
                       uint32_t ts_us);
+/* 新生产路径（协议 v1.4 §9，type 0x13）：严格承载 30/48/552 B 与
+ * kind/flags/有符号 RSSI/frame_seq/CC RAT 原始 4 MHz tick。 */
+bool p4_link_send_uat_rx(const uint8_t *frame, size_t len,
+                         const rp_cc13xx_rx_meta_t *meta);
+
+/* Host-testable RP→P4 boundary used by p4_link_send_uat_rx itself.  Keeping the
+ * metadata mapping here proves the UART producer does not silently coerce the
+ * signed RSSI, frame sequence, CC RAT clock, kind, or variable length. */
+static inline size_t p4_link_pack_uat_rx(
+    uint8_t *payload, size_t cap, const uint8_t *frame, size_t len,
+    const rp_cc13xx_rx_meta_t *meta)
+{
+    if (!payload || !frame || !meta || len > UINT16_MAX) return 0;
+    const adsb_link_uat_rx_meta_t out = {
+        .kind = meta->kind,
+        .flags = meta->flags,
+        .rssi_dbm = meta->rssi_dbm,
+        .frame_seq = meta->frame_seq,
+        .cc_time = meta->cc_time,
+    };
+    return adsb_link_uat_rx_encode(payload, cap, &out, frame,
+                                   (uint16_t)len);
+}
+
+/* Compatibility boundary for SPI RX_DESCRIPTOR v1 (kind=0, fixed 552 B).
+ * New descriptors use UART v1.4 type 0x13; a legacy descriptor retains its
+ * exact UART v1.1 type 0x11 metadata units instead of being silently dropped
+ * by the strict kind/length gate. */
+static inline size_t p4_link_pack_uat_auto(
+    uint8_t *payload, size_t cap, uint8_t *msg_type,
+    const uint8_t *frame, size_t len, const rp_cc13xx_rx_meta_t *meta)
+{
+    if (!payload || !msg_type || !frame || !meta) return 0;
+    if (meta->kind == 0) {
+        if (len != RP_CC13XX_UAT_UPLINK_LEN) return 0;
+        const size_t n = adsb_link_uat_uplink_encode(
+            payload, cap, meta->rssi, meta->ts_us, frame);
+        if (n) *msg_type = ADSB_LINK_MSG_UAT_UPLINK;
+        return n;
+    }
+    const size_t n = p4_link_pack_uat_rx(payload, cap, frame, len, meta);
+    if (n) *msg_type = ADSB_LINK_MSG_UAT_RX_FRAME;
+    return n;
+}
 void p4_link_send_error(uint8_t code);
 void p4_link_poll_rx(void);
-/* HEALTH_STATS：ADSB_LINK_HEALTH_FIELDS 个 u32（协议 v1.3；v1.0 是 10 个，
- * 第 11 个是 VBUS 分压中点 mV，第 12/13 个是**实际生效**的门限/天线）。
+/* HEALTH_STATS：ADSB_LINK_HEALTH_FIELDS 个 u32（前 13 项兼容 v1.3，
+ * 后缀是 UAT RF 活性/RSSI/错误/恢复；v1.0 只有 10 项）。
  * 接收方只看前缀也仍然正确——这是 minor 前向兼容的用法。 */
 void p4_link_tick_health(const uint32_t counters[ADSB_LINK_HEALTH_FIELDS]);
 bool p4_link_linked(void);

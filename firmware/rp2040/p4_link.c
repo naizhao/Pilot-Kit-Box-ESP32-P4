@@ -161,6 +161,18 @@ bool p4_link_send_uat(const uint8_t frame552[552], uint8_t rssi,
     return true;
 }
 
+bool p4_link_send_uat_rx(const uint8_t *frame, size_t len,
+                         const rp_cc13xx_rx_meta_t *meta)
+{
+    static uint8_t pl[ADSB_LINK_MAX_PAYLOAD];
+    uint8_t msg_type = 0;
+    const size_t n = p4_link_pack_uat_auto(pl, sizeof(pl), &msg_type,
+                                           frame, len, meta);
+    if (!n) { s_encode_fail++; return false; }
+    tx_frame(msg_type, pl, n);
+    return true;
+}
+
 void p4_link_poll_rx(void)
 {
     uint8_t b;

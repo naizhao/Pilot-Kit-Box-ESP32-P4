@@ -34,6 +34,9 @@ void pk_airband_speaker_set_program_playable(bool playable);
 bool pk_airband_speaker_get(pk_airband_speaker_status_t *out);
 void pk_airband_speaker_set_muted(bool muted);
 bool pk_airband_speaker_is_muted(void);
+/* BLE route overlay is volatile and never persisted. It combines with the
+ * local/NVS mute by OR; disconnect must clear it. */
+void pk_airband_speaker_set_remote_muted(bool muted);
 void pk_airband_speaker_set_volume(uint8_t volume);
 pk_airband_speaker_test_click_t pk_airband_speaker_test_tone_action(void);
 bool pk_airband_speaker_test_tone_active(void);

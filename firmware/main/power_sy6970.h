@@ -36,6 +36,91 @@
 #define SY6970_WIN_REG0 0x0B
 #define SY6970_WIN_LEN  8
 
+/* 关机取证窗口：REG00..REG14 共 21 字节。格式固定为
+ * `REG00=0xNN ... REG14=0xNN`，含结尾 NUL 需要 231 字节。 */
+#define SY6970_REG_FIRST       0x00
+#define SY6970_REG_LAST        0x14
+#define SY6970_REG_COUNT       21
+#define SY6970_REG_DUMP_BUFSZ  231
+
+/* SY6970 的 watchdog fault、I2C 总线复位或连续失联都意味着寄存器配置
+ * 可能已经回到 POR。这个小状态机由 host 单测覆盖、目标端放在 portMUX 后使用：
+ * 一旦发现配置丢失，必须先关掉关机闸；只有完整 bring-up 重放成功才
+ * 能重新允许 BATFET_DIS。 */
+typedef struct {
+    bool ready;
+} sy6970_config_gate_t;
+
+void sy6970_config_gate_mark_lost(sy6970_config_gate_t *gate);
+void sy6970_config_gate_finish_replay(sy6970_config_gate_t *gate,
+                                      bool replay_ok);
+bool sy6970_config_gate_allows_shutdown(const sy6970_config_gate_t *gate);
+
+/* 把同一次连续读取的 REG00..REG14 格式化为一行。只接受完整窗口和足够
+ * 输出缓冲；失败时若 out 可写则清成空串，避免调用方误打旧内容。 */
+bool sy6970_format_register_dump(const uint8_t *regs, size_t n,
+                                 char *out, size_t out_n);
+
+typedef struct {
+    uint8_t  watchdog_code;  /* REG07 WATCHDOG[5:4]：0/40/80/160 s */
+    bool     batfet_dis;     /* REG09 BATFET_DIS bit5              */
+    bool     batfet_dly;     /* REG09 BATFET_DLY bit3              */
+    bool     batfet_rst_en;  /* REG09 BATFET_RST_EN bit2           */
+    uint8_t  bus_stat;       /* REG0B BUS_STAT[7:5]                */
+    bool     vbus_present;   /* REG11 BUS_GD 且非 OTG              */
+    uint16_t batt_mv;        /* REG0E BATV                         */
+    uint16_t sys_mv;         /* REG0F SYSV                         */
+    uint16_t vbus_mv;        /* REG11 BUSV                         */
+} sy6970_shutdown_evidence_t;
+
+/* BATFET_DIS 写入后 MCU 仍能继续执行时的证据分类。`BATFET_DIS=1` 加
+ * `VBUS_PRESENT=0` 还不足以证明 H1/下游供电：只有 U19 的 SYS ADC 也确实
+ * 降到量程下限，才能把“MCU 仍活着”归为 U19 以外的供电路径。 */
+typedef enum {
+    SY6970_SHUTDOWN_WRITE_NOT_LANDED = 0,
+    SY6970_SHUTDOWN_U19_VBUS_POWER,
+    SY6970_SHUTDOWN_NO_U19_VBUS_SURVIVAL,
+    SY6970_SHUTDOWN_DOWNSTREAM_POWER,
+} sy6970_shutdown_survival_reason_t;
+
+sy6970_shutdown_survival_reason_t
+sy6970_shutdown_survival_reason(bool batfet_dis, bool vbus_present,
+                                bool sys_dropped);
+
+/* SY6970 连续 ADC 每 1s 更新一次。BATFET_DIS 写后的立即快照可能仍是
+ * 上一拍，因此在“位已落定、U19 VBUS 不在、SYS 尚未下降”时跨过一个
+ * 完整转换周期再读。额外 100ms 覆盖调度相位，不用于正常仅电池关机路径。 */
+#define SY6970_SHUTDOWN_ADC_SETTLE_MS 1100u
+
+typedef bool (*sy6970_shutdown_snapshot_fn)(
+    void *ctx, uint8_t regs[SY6970_REG_COUNT]);
+typedef void (*sy6970_shutdown_wait_fn)(void *ctx, uint32_t wait_ms);
+
+typedef struct {
+    sy6970_shutdown_survival_reason_t reason;
+    bool adc_refresh_attempted;
+    bool adc_refreshed;
+    bool vbus_present;
+    bool sys_dropped;
+    uint8_t reg09;
+    uint16_t pre_sys_mv;
+    uint16_t post_sys_mv;
+} sy6970_shutdown_probe_result_t;
+
+/* 读取 BATFET_DIS 写后的完整快照；若第一拍可能仍是旧 ADC，则调用 wait
+ * 后再读一次。snapshot/wait 由目标端注入，host 可用确定性假数据验证真实
+ * 的“旧样本 → 等待 → 新样本”行为。至少取得一份可解码快照才返回 true。 */
+bool sy6970_probe_shutdown_survival(
+    const uint8_t *pre_regs, size_t pre_n,
+    sy6970_shutdown_snapshot_fn snapshot,
+    sy6970_shutdown_wait_fn wait,
+    void *ctx,
+    sy6970_shutdown_probe_result_t *out);
+
+/* 从完整 REG00..REG14 快照提取关机/唤醒判据。失败会清零 *out。 */
+bool sy6970_decode_shutdown_evidence(const uint8_t *regs, size_t n,
+                                     sy6970_shutdown_evidence_t *out);
+
 /* 一次解码的结果（字段最小集，消费方：Task 4 的 backend → 状态栏）。 */
 typedef struct {
     /* REG0B（只读状态） */
@@ -166,7 +251,7 @@ const sy6970_init_step_t *sy6970_init_seq(size_t *n);
 
 /* ── 关机序列（BATFET_DIS / shipping mode）────────────────────────────
  *
- * 为什么需要它：V4.9 板上 SW3 只连接 /QON（U19 pad 12）与 GND，没有
+ * 为什么需要它：V4.10 板上 SW3 只连接 /QON（U19 pad 12）与 GND，没有
  * 并接 ESP32-P4/RP2040 GPIO。电池一旦在位，
  * SY6970 的 power path 就恒供 SYS_4V → SY7069 → VCC_5V → ME6211 →
  * 3V3_DIG，RP2040(U8) 永远掉不了电、POR 不了；而 RP2040 的 RUN 脚只接
@@ -179,7 +264,7 @@ const sy6970_init_step_t *sy6970_init_seq(size_t *n);
  *    USB 时 SYS 由 VBUS 供电，断开电池不影响系统供电。真正要断电必须
  *    先拔 USB。执行器会在 VBUS 在位时照写不误但打 WARN——这是调用方
  *    的语义，不是本层该替它决定的。
- * 2. **V4.9 可用 SW3 唤醒**。ship mode 下按住 SW3，把 /QON 拉低至少
+ * 2. **V4.10 可用 SW3 唤醒**。ship mode 下按住 SW3，把 /QON 拉低至少
  *    TQON_LOW 的最大值 2.25 s，即可恢复 BATFET；插 USB 也能恢复
  *    （[DS] p.4、p.10、p.30）。为避开 12–18 s 的 BATFET reset 阈值，
  *    操作口径定为按住约 2.3 s 后松开。
@@ -212,7 +297,7 @@ void power_sy6970_init(void);
 
 /*
  * 执行关机（sy6970_shutdown_seq）。语义与两条硬约束——「VBUS 在位时
- * 不会真断电」「V4.9 关机后按住 SW3 约 2.3 s 或插 USB 唤醒」——见上面
+ * 不会真断电」「V4.10 关机后按住 SW3 约 2.3 s 或插 USB 唤醒」——见上面
  * sy6970_shutdown_seq 的注释，
  * 调用前务必读一遍。未探测到器件（v3 / 未上电 v4）返回 false。
  * 成功时函数**可能不返回**：电池供电下 BATFET 一断，MCU 随即掉电。

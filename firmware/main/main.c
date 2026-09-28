@@ -66,6 +66,7 @@
 #include "pfd.h"
 #include "record_sink.h"
 #include "settings_page.h"
+#include "sw3_button.h"
 #include "ui_state.h"
 
 static const char *TAG = "pilot_kit";
@@ -460,6 +461,13 @@ void app_main(void)
         } else {
             ESP_LOGI(TAG, "PFD render task running");
         }
+    }
+
+    /* SW3 的硬件唤醒仍由 SY6970 /QON 完成；这里仅启动开机态 GPIO4 副本的
+     * 短按息屏/长按关机状态机。放在 UI 初始化和 PFD 启动之后，提示可见。 */
+    esp_err_t sw3_err = pk_sw3_button_start();
+    if (sw3_err != ESP_OK) {
+        ESP_LOGW(TAG, "SW3 button start failed (%s)", esp_err_to_name(sw3_err));
     }
 
     /*

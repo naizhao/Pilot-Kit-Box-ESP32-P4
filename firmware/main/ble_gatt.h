@@ -3,7 +3,8 @@
  *
  * Brings up NimBLE on top of ESP-Hosted's virtual HCI (controller on
  * the on-board ESP32-C6, host on the ESP32-P4) and publishes a custom
- * "Pilot Kit ADS-B" primary service with three notify characteristics:
+ * "Pilot Kit" primary service. UUIDs 01..04 retain the deployed GDL90/time
+ * contract; UUIDs 05..06 add versioned AIRBAND program audio and route control:
  *
  *   Service                   1090AD5B-0000-1000-8000-1090AD5B0000
  *   ├─ Traffic Report (NOTIFY) 1090AD5B-0000-1000-8000-1090AD5B0001
@@ -14,10 +15,13 @@
  *   └─ Raw ts-line   (NOTIFY)  1090AD5B-0000-1000-8000-1090AD5B0003
  *         "<ts_ms> *<HEX>;" — the same shape the file/uart sinks emit;
  *         convenient fallback for clients without a GDL90 parser
+ *   ├─ Time Sync     (R/W)     1090AD5B-0000-1000-8000-1090AD5B0004
+ *   ├─ AIRBAND Audio (NOTIFY)  1090AD5B-0000-1000-8000-1090AD5B0005
+ *   └─ Audio Control (R/W)     1090AD5B-0000-1000-8000-1090AD5B0006
  *
- * The Pilot Kit mobile app subscribes to whichever subset of these it
- * needs. Subscriptions are tracked per characteristic so we don't burn
- * radio time encoding+notifying frames nobody is listening to.
+ * Audio is 16 kHz mono IMA-ADPCM, versioned and explicitly fragmented when
+ * the negotiated ATT MTU cannot carry its 176-byte frame. Subscriptions are
+ * tracked per characteristic so absent clients consume no encoder/radio time.
  */
 #pragma once
 
@@ -26,6 +30,16 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "airband_ble_stream.h"
+
+typedef struct {
+    bool connected, subscribed, mtu_paused;
+    uint16_t mtu, stream_id, frame_seq;
+    uint32_t sample_clock, encoded, sent, dropped, congested, mtu_paused_count;
+    uint32_t queue_drops, current_age_ms, max_age_ms;
+    pk_airband_ble_route_t route;
+    uint8_t last_error;
+} pk_ble_airband_status_t;
 
 /*
  * Initialise ESP-Hosted (Bluetooth controller on C6), bring up NimBLE
@@ -48,6 +62,11 @@ esp_err_t ble_gatt_init(void);
  * buffer immediately after returning.
  */
 void ble_gatt_notify_raw_line(const char *line);
+
+/* Queue one corrected UAT uplink message for GDL90 Message ID 7 pass-through.
+ * Exact length is required; non-blocking and bounded. Returns false when no
+ * peer subscribes to the traffic stream or the queue is full. */
+bool ble_gatt_notify_uat_uplink(const uint8_t *payload, size_t len);
 
 /*
  * True if at least one BLE peer is currently connected. Cheap; safe to
@@ -87,3 +106,16 @@ const char *pk_ble_device_name(void);
  * BLE 关闭或控制器尚未同步时是安全的空操作。
  */
 void pk_ble_device_name_apply(void);
+
+/* Capture-task hot path: bounded zero-wait copy only. pcm is the 16k mono
+ * program tap after squelch and before speaker mute/test tone. */
+bool ble_gatt_airband_submit(const int16_t *pcm, size_t frames, bool valid);
+void ble_gatt_airband_stream_break(void);
+bool ble_gatt_airband_status(pk_ble_airband_status_t *out);
+
+/* Explicit physical authorization for owner enrollment/replacement.
+ * Called only by the on-device AIRBAND page.  A tap opens the 60-second
+ * window; another tap while it is active cancels it instead of extending it.
+ * Returns the state after the toggle. */
+bool ble_gatt_airband_owner_window_toggle(void);
+uint32_t ble_gatt_airband_owner_window_remaining_s(void);

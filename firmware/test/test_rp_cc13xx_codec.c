@@ -419,6 +419,36 @@ int main(void)
               out.uptime_ms == 123456, "reset_status fields\n");
     }
 
+    /* RF_HEALTH_STATUS is an additive event: old peers ignore its new type,
+     * while new peers get idle-noise RSSI, probe liveness and recovery/error
+     * counters without pretending that a received-aircraft RSSI exists. */
+    {
+        rp_cc13xx_rf_health_t in = {
+            .flags = RP_CC13XX_RF_HEALTH_ACTIVE |
+                     RP_CC13XX_RF_HEALTH_PROBE_OK |
+                     RP_CC13XX_RF_HEALTH_RSSI_VALID,
+            .idle_rssi_dbm = -104,
+            .last_raw_status = 0x3802,
+            .probe_successes = 9,
+            .probe_errors = 2,
+            .rf_reinits = 3,
+        };
+        uint8_t buf[RP_CC13XX_MAX_FRAME];
+        size_t n = rp_cc13xx_encode_rf_health(buf, sizeof(buf), 0x0042, &in);
+        CHECK(n == RP_CC13XX_HDR_LEN + RP_CC13XX_RF_HEALTH_LEN + 2,
+              "rf health encoded length=%zu\n", n);
+        rp_cc13xx_msg_t m;
+        CHECK(rp_cc13xx_decode_frame(buf, n, &m) == RP_CC13XX_OK &&
+              m.type == RP_CC13XX_MSG_RF_HEALTH_STATUS,
+              "rf health frame decode\n");
+        rp_cc13xx_rf_health_t out;
+        CHECK(rp_cc13xx_decode_rf_health(&m, &out) == RP_CC13XX_OK &&
+              out.flags == in.flags && out.idle_rssi_dbm == -104 &&
+              out.last_raw_status == 0x3802 && out.probe_successes == 9 &&
+              out.probe_errors == 2 && out.rf_reinits == 3,
+              "rf health fields did not round-trip\n");
+    }
+
     /* 10. B16/B17（§4.8/§4.9）：UPGRADE_STATUS 与 ERROR（code=0x03、"DENY"）。 */
     {
         rp_cc13xx_msg_t m;

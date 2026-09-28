@@ -27,6 +27,7 @@
 #define GDL90_FLAG           0x7E
 #define GDL90_ESCAPE         0x7D
 #define GDL90_ID_HEARTBEAT   0x00
+#define GDL90_ID_UPLINK_DATA 0x07
 #define GDL90_ID_OWNSHIP     0x0A
 #define GDL90_ID_TRAFFIC     0x14
 
@@ -34,6 +35,9 @@
 #define GDL90_MAX_HEARTBEAT  24   /* 1+2*(1+6+2)+1 = 20 — round up */
 #define GDL90_MAX_TRAFFIC    64   /* 1+2*(1+27+2)+1 = 62 — round up */
 #define GDL90_MAX_FRAME      GDL90_MAX_TRAFFIC
+#define GDL90_UPLINK_PAYLOAD_BYTES 432
+/* Fully escaped: flags + 2*(ID + TOR3 + payload432 + CRC2) + flag. */
+#define GDL90_MAX_UPLINK     880
 
 /*
  * Encode a Heartbeat message into `out`. Returns the number of framed
@@ -63,6 +67,16 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
                               uint32_t uat_timestamp_s,
                               uint8_t msg_count_uplink,
                               uint16_t msg_count_basic_long);
+
+/* FAA 560-1058-00 Rev A §3.3 pass-through Uplink Data (message ID 7).
+ * `uat_payload` is the complete corrected 432-byte UAT message (8-byte
+ * UAT-specific header + 424-byte application data), not an individual FIS-B
+ * APDU. TOR is the 24-bit 80 ns fraction of the current second; pass
+ * 0xFFFFFF when the receiver clock is not UTC-coupled. */
+size_t gdl90_encode_uplink(uint8_t *out, size_t out_cap,
+                           uint32_t tor_80ns,
+                           const uint8_t *uat_payload,
+                           size_t payload_len);
 
 /*
  * Encode an Ownship (msg ID 0x0A) or Traffic (msg ID 0x14) report.
@@ -104,6 +118,29 @@ size_t gdl90_encode_heartbeat(uint8_t *out, size_t out_cap,
 size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
                             bool     is_ownship,
                             uint32_t icao24,
+                            bool     have_position,
+                            double   lat,
+                            double   lon,
+                            bool     have_altitude,
+                            int      altitude_ft,
+                            bool     have_ground_speed,
+                            int      ground_speed_kt,
+                            bool     have_track,
+                            int      track_deg,
+                            bool     have_vertical_rate,
+                            int      vert_rate_fpm,
+                            bool     have_air_ground,
+                            bool     on_ground,
+                            uint8_t  emitter_category,
+                            const char *callsign,
+                            size_t   callsign_len);
+
+/* Variant preserving the GDL90 address-type nibble (notably 2 for TIS-B
+ * reports carrying an ICAO address). */
+size_t gdl90_encode_traffic_typed(uint8_t *out, size_t out_cap,
+                            bool     is_ownship,
+                            uint8_t  address_type,
+                            uint32_t participant_address,
                             bool     have_position,
                             double   lat,
                             double   lon,

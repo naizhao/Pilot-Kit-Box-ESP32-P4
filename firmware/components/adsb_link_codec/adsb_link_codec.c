@@ -63,6 +63,66 @@ bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
     return true;
 }
 
+bool adsb_link_uat_kind_len_valid(uint8_t kind, uint16_t len)
+{
+    switch (kind) {
+    case ADSB_LINK_UAT_DOWNLINK_SHORT: return len == 30;
+    case ADSB_LINK_UAT_DOWNLINK_LONG:  return len == 48;
+    case ADSB_LINK_UAT_UPLINK:         return len == 552;
+    default:                           return false;
+    }
+}
+
+size_t adsb_link_uat_rx_encode(uint8_t *out, size_t cap,
+                               const adsb_link_uat_rx_meta_t *meta,
+                               const uint8_t *frame, uint16_t frame_len)
+{
+    const size_t total = ADSB_LINK_UAT_RX_META_BYTES + frame_len;
+    if (!out || !meta || !frame || cap < total ||
+        !adsb_link_uat_kind_len_valid(meta->kind, frame_len) ||
+        (meta->flags & (uint8_t)~ADSB_LINK_UAT_F_KNOWN_MASK))
+        return 0;
+    out[0] = meta->kind;
+    out[1] = meta->flags;
+    out[2] = (uint8_t)meta->rssi_dbm;
+    out[3] = 0;
+    out[4] = (uint8_t)meta->frame_seq;
+    out[5] = (uint8_t)(meta->frame_seq >> 8);
+    out[6] = (uint8_t)frame_len;
+    out[7] = (uint8_t)(frame_len >> 8);
+    out[8] = (uint8_t)meta->cc_time;
+    out[9] = (uint8_t)(meta->cc_time >> 8);
+    out[10] = (uint8_t)(meta->cc_time >> 16);
+    out[11] = (uint8_t)(meta->cc_time >> 24);
+    memcpy(out + ADSB_LINK_UAT_RX_META_BYTES, frame, frame_len);
+    return total;
+}
+
+bool adsb_link_uat_rx_decode(const uint8_t *payload, size_t len,
+                             adsb_link_uat_rx_meta_t *meta,
+                             const uint8_t **frame, uint16_t *frame_len)
+{
+    if (!payload || len < ADSB_LINK_UAT_RX_META_BYTES) return false;
+    const uint16_t n = (uint16_t)(payload[6] | ((uint16_t)payload[7] << 8));
+    if (len != ADSB_LINK_UAT_RX_META_BYTES + n ||
+        !adsb_link_uat_kind_len_valid(payload[0], n) || payload[3] != 0 ||
+        (payload[1] & (uint8_t)~ADSB_LINK_UAT_F_KNOWN_MASK))
+        return false;
+
+    adsb_link_uat_rx_meta_t tmp = {
+        .kind = payload[0],
+        .flags = payload[1],
+        .rssi_dbm = (int8_t)payload[2],
+        .frame_seq = (uint16_t)(payload[4] | ((uint16_t)payload[5] << 8)),
+        .cc_time = (uint32_t)payload[8] | ((uint32_t)payload[9] << 8) |
+                   ((uint32_t)payload[10] << 16) | ((uint32_t)payload[11] << 24),
+    };
+    if (meta) *meta = tmp;
+    if (frame) *frame = payload + ADSB_LINK_UAT_RX_META_BYTES;
+    if (frame_len) *frame_len = n;
+    return true;
+}
+
 /* ── SWEEP_ROW（v1.3）──────────────────────────────────────────────
  * 小端，与本文件其它多字节字段（rp_ts_us）同序。定长消息，长度即完整性
  * 判据。 */

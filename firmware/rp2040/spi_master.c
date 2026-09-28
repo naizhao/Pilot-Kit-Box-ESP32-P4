@@ -2,7 +2,7 @@
  * spi_master.c — RP2040 侧 CC1312R SPI master：纯逻辑状态机（host 可测）
  * + 目标端胶水（SPI1 DMA / GPIO / RESET 脉冲）。
  *
- * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.0。本实现是 §6.7 所称
+ * 规范：firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.1。本实现是 §6.7 所称
  * "master 侧行为合同（WP-E 实现目标）"的第一个消费者——凡与规范冲突，
  * 以规范为准；发现规范缺陷上报，不得在代码里私自变通。
  *
@@ -66,6 +66,10 @@ void spi_master_init(spi_master_t *m, spim_uat_fn uat_cb, void *user)
 /* LINKED → RECOVERY（§6.6）：请求 RESET 脉冲（胶水执行）。 */
 static void enter_recovery(spi_master_t *m)
 {
+    /* The snapshot belongs to the failed CC session.  Invalidating it at the
+     * transition prevents RP→P4 from advertising a formerly healthy RF core
+     * while reset/re-handshake is in progress. */
+    m->peer_rf_health_valid = false;
     m->state       = SPIM_RECOVERY;
     m->reset_req   = true;
     m->t_reset_req = m->t_now;
@@ -82,6 +86,8 @@ void spi_master_reset_done(spi_master_t *m, uint32_t now_us)
     m->t_last_hello = now_us - SPIM_HELLO_RETRY_US;  /* 立即发首个 HELLO */
     m->t_last_legal = now_us;
     m->ev_seq_valid = false;
+    m->frame_seq_valid = false;
+    m->peer_rf_health_valid = false;
     m->rf_pending   = false;
     m->stall_cnt    = 0;      /* 无事件事务串（drain 停滞，§7.2） */
     m->t_irq_high   = 0;
@@ -213,6 +219,7 @@ static void on_hello(spi_master_t *m, const rp_cc13xx_msg_t *msg)
          * seq 为新基线"对事件链的操作化 = 跳过下一事件帧的 gap 判定
          * （ev_seq_valid 清零），而非把命令 seq 当事件基线数值使用。 */
         m->ev_seq_valid = false;
+        m->frame_seq_valid = false;
         m->rf_pending   = true;      /* §6.4：新会话必须查询 RF 配置 */
         m->stall_cnt    = 0;
         m->t_last_ping  = m->t_now;  /* 1 Hz PING 从会话建立起算 */
@@ -242,12 +249,18 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
             on_hello(m, &msg);
             break;
 
-        case RP_CC13XX_MSG_RX_DESCRIPTOR: {
+        case RP_CC13XX_MSG_RX_DESCRIPTOR:
+        case RP_CC13XX_MSG_RX_DESCRIPTOR_V2: {
             rp_cc13xx_rx_desc_t d;
             if (rp_cc13xx_decode_rx_descriptor(&msg, &d) == RP_CC13XX_OK &&
                 rp_cc13xx_reasm_start(&m->reasm, &d) == RP_CC13XX_OK) {
-                m->desc     = d;     /* rssi/ts_us 随报文携带（§4.3） */
+                m->desc     = d;
                 m->uat_done = false;
+                if (m->frame_seq_valid &&
+                    (uint16_t)(d.frame_seq - m->last_frame_seq) != 1)
+                    m->stats.frame_seq_gaps++;
+                m->last_frame_seq = d.frame_seq;
+                m->frame_seq_valid = true;
                 track_event_seq(m, msg.seq);
                 ev_txn = true;
             } else {
@@ -264,13 +277,12 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
                 ev_txn = true;
                 if (!m->uat_done && m->reasm.active &&
                     m->reasm.have == m->reasm.total_len) {
-                    /* 报文取毕：UAT 帧一次性交付（552 B 合同见事实卡 §7，
-                     * 长度裁别在回调方/胶水，master 不私设上限）。 */
+                    /* 报文取毕：按 descriptor kind/length 一次性交付。 */
                     m->uat_done = true;
                     m->stats.uat_complete++;
                     if (m->uat_cb) {
                         m->uat_cb(m->reasm.data, m->reasm.total_len,
-                                  m->desc.rssi, m->desc.ts_us, m->uat_user);
+                                  &m->desc, m->uat_user);
                     }
                 }
             } else {
@@ -293,6 +305,9 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
         case RP_CC13XX_MSG_ERROR: {
             rp_cc13xx_error_t e;
             if (rp_cc13xx_decode_error(&msg, &e) == RP_CC13XX_OK) {
+                m->last_error_code = e.code;
+                m->last_error_msg_len = e.msg_len;
+                memcpy(m->last_error_msg, e.msg, e.msg_len);
                 if (e.code >= 0x04) {
                     /* 异步 ERROR 是事件（§3.5）：计入事件事务（drain
                      * 活性证明）。其 seq 为 0x0000 哨兵——§3.5 明文
@@ -311,6 +326,19 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
             rp_cc13xx_rf_config_t c;
             if (rp_cc13xx_decode_rf_config(&msg, &c) == RP_CC13XX_OK) {
                 m->peer_rf = c;
+            } else {
+                m->stats.len_errors++;
+            }
+            break;
+        }
+
+        case RP_CC13XX_MSG_RF_HEALTH_STATUS: {
+            rp_cc13xx_rf_health_t h;
+            if (rp_cc13xx_decode_rf_health(&msg, &h) == RP_CC13XX_OK) {
+                m->peer_rf_health = h;
+                m->peer_rf_health_valid = true;
+                track_event_seq(m, msg.seq);
+                ev_txn = true;
             } else {
                 m->stats.len_errors++;
             }
@@ -369,11 +397,10 @@ void spi_master_digest(spi_master_t *m, uint32_t txn_us, const uint8_t miso[512]
 #define SPIM_PIN_CSN   13
 #define SPIM_PIN_IRQ   14
 #define SPIM_PIN_RESET 18
-/* 1 MHz：CC1312R 当前是 48 MHz CPU 上的轮询从机，每个字节既要排空 RX
- * FIFO 又要补 TX FIFO。4 MHz 虽满足 SSI 外设的 FSSI >= 12×bitrate
- * 硬上限，却只给软件约 96 个 CPU 周期/字节，实板会持续得到 NO_FRAME。
- * 1 MHz 给约 384 周期/字节，先保证无 DMA 骨架可靠闭环；以后改成 DMA/
- * 中断后再用台架数据提高时钟。 */
+/* 1 MHz：CC1312R 从机已使用 SSI uDMA，但每次 512 B 事务结束后仍需在
+ * FSS 高电平窗口中重装描述符和预载下一帧。4 MHz 虽满足 SSI 外设的
+ * FSSI >= 12×bitrate 硬上限，却在早期实板上持续得到 NO_FRAME；当前
+ * 1 MHz 已完成正式镜像的稳定链路验收，提速必须重新做台架压力测试。 */
 #define SPIM_HZ        1000000
 
 void spim_hw_init(void)

@@ -19,8 +19,19 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
+static int fail_allocation_after = -1;
+static void *test_realloc(void *p, size_t n)
+{
+    if (fail_allocation_after == 0) return NULL;
+    if (fail_allocation_after > 0) fail_allocation_after--;
+    return realloc(p,n);
+}
+
+#define realloc test_realloc
 #include "../main/pk_aero_reader.c"
+#undef realloc
 #include "pk_win_nearest.h"   /* 声明；实现由命令行单独编译链接 pk_win_nearest.c */
 
 static int g_fail = 0;
@@ -207,6 +218,25 @@ int main(void)
             PK_AERO_NEAR_MAX);
     chk_int("带频率 nearest 跨过前 32 个无频率机场", n_with_freqs, 1);
     chk_int("带频率 nearest 命中第 36 条机场", (int)with_freqs[0].idx, 35);
+    for (uint32_t i = 0; i < 40; ++i) set_freq_count(i, 1);
+    db.sec_airport.n = 40;
+    pk_aero_near_t *dense = NULL;
+    size_t dense_count = 0;
+    chk_true("完整查询成功", pk_aero_airports_with_freqs_nearby_all(
+        &db, 40.0, 116.6, &dense, &dense_count));
+    chk_int("密集区域 40 个有频机场全部保留", (int)dense_count, 40);
+    for (size_t i = 1; i < dense_count; ++i)
+        chk_true("完整查询按实际距离排序", dense[i-1].dist_nm <= dense[i].dist_nm);
+    free(dense);
+    fail_allocation_after = 1;
+    dense = (pk_aero_near_t *)1; dense_count=999;
+    chk_true("分配失败显式返回失败", !pk_aero_airports_with_freqs_nearby_all(
+        &db, 40.0, 116.6, &dense, &dense_count));
+    chk_true("分配失败不发布半截机场列表", dense == NULL && dense_count == 0);
+    fail_allocation_after = -1;
+    chk_true("范围外查询可正常为空", pk_aero_airports_with_freqs_nearby_all(
+        &db, 23.0, 113.0, &dense, &dense_count));
+    chk_true("3x3范围外机场不泄漏进入列表", dense == NULL && dense_count == 0);
 
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

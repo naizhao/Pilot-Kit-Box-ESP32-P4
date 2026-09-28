@@ -36,6 +36,7 @@ static const char *TAG = "ui";
 #define UI_TOAST_DURATION_US      (1500 * 1000)  /* toast 在屏幕上停留 1.5s */
 
 static SemaphoreHandle_t s_lock;
+static volatile bool     s_ready;
 static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
 
 /* List selection is tracked by ICAO, not row index. s_list_selected_icao
@@ -105,6 +106,7 @@ static int64_t           s_toast_start_us;
 
 esp_err_t pk_ui_init(void)
 {
+    s_ready = false;
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) {
         ESP_LOGE(TAG, "mutex alloc failed");
@@ -114,8 +116,14 @@ esp_err_t pk_ui_init(void)
      * 因为"初值由谁定"该有一个看得见的答案，而不是靠读者自己去确认
      * pk_cal_advisor_reset() 只是一句 memset(0)。 */
     pk_cal_advisor_reset(&s_cal_advisor);
+    s_ready = true;
     ESP_LOGI(TAG, "ui_state ready (default mode: PFD)");
     return ESP_OK;
+}
+
+bool pk_ui_ready(void)
+{
+    return s_ready;
 }
 
 pk_ui_mode_t pk_ui_get_mode(void)

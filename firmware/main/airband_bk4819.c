@@ -13,6 +13,43 @@
 
 #define RX_REG30 0xBFF1u /* VCO calibrate + RX link/AF/DISC/PLL + RX DSP；TX/PA/MIC=0 */
 
+bool pk_airband_bk_apply_gain(const pk_airband_bk_io_t *io, uint16_t gain_bits,
+                              pk_airband_bk_gain_diag_t *diag)
+{
+    if (io == NULL || io->read == NULL || io->write == NULL || diag == NULL ||
+        gain_bits > 0x03FFu) return false;
+    uint16_t r30, r7e, r13;
+    if (!io->read(io->context, 0x30, &r30) || r30 != RX_REG30 ||
+        !io->read(io->context, 0x7E, &r7e) ||
+        !io->read(io->context, 0x13, &r13)) {
+        diag->read_errors++;
+        return false;
+    }
+    /* REG7E[15] fixed gain, [14:12]=3 selects REG13. Other bits include
+     * unrelated DSP/DC controls and must be preserved. */
+    const uint16_t want7e = (r7e & 0x0FFFu) | 0xB000u;
+    const uint16_t want13 = (r13 & 0xFC00u) | gain_bits;
+    if (!io->write(io->context, 0x13, want13) ||
+        !io->write(io->context, 0x7E, want7e)) {
+        diag->write_errors++;
+        return false;
+    }
+    if (!io->read(io->context, 0x13, &r13) ||
+        !io->read(io->context, 0x7E, &r7e) ||
+        !io->read(io->context, 0x30, &r30)) {
+        diag->read_errors++;
+        return false;
+    }
+    diag->reg13 = r13;
+    diag->reg7e = r7e;
+    if (r13 != want13 || r7e != want7e || r30 != RX_REG30) {
+        diag->read_errors++;
+        return false;
+    }
+    diag->changes++;
+    return true;
+}
+
 static const pk_airband_reg_step_t s_rx_init[] = {
     {0x00, 0x8000, "software reset assert (reference driver)"},
     {0x00, 0x0000, "software reset release (reference driver)"},

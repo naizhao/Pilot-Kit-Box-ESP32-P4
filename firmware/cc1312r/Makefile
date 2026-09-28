@@ -1,26 +1,35 @@
-# CC1312R 固件骨架构建（WP-E T4）
+# CC1312R 978 MHz RX-only 固件构建
 #
 # 跑法：
 #   export SIMPLELINK_SDK_ROOT=~/ti/simplelink_cc13xx_cc26xx_sdk_8_33_00_16
 #   cd firmware/cc1312r && make
 SDK   ?= $(SIMPLELINK_SDK_ROOT)
+SDK_ARCHIVE ?= /Users/samwu/ti/simplelink_sdk_win.zip
 CROSS ?= arm-none-eabi-
 CC    := $(CROSS)gcc
 OBJCOPY := $(CROSS)objcopy
 
 DEV   := cc13x2_cc26x2
 DEVP  := $(SDK)/source/ti/devices/$(DEV)
+OVERLAY := build/ti-sdk
+OVERLAY_MARKER := $(OVERLAY)/.prepared-8.33.00.16
+DRIVERS := $(OVERLAY)/source/ti/drivers
+NORTOS := $(SDK)/kernel/nortos
+LINKER := $(OVERLAY)/examples/nortos/CC1312R1_LAUNCHXL/prop_rf/rfPacketRx/gcc/cc13x2_cc26x2_nortos.lds
 
 CFLAGS := -std=c11 -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
-          -O2 -g3 -Wall -Wextra \
+          -O2 -g3 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+          -fstack-usage \
           -DDeviceFamily_CC13X2 \
-          -DCC13_FW_VER_MAJOR=0 -DCC13_FW_VER_MINOR=1 \
+          -DCC13_FW_VER_MAJOR=0 -DCC13_FW_VER_MINOR=2 \
           -I. -I../components/rp_cc13xx_codec -I../components/adsb_link_codec \
-          -I$(DEVP)/inc -I$(SDK)/source
+          -I$(OVERLAY)/source -I$(SDK)/source -I$(NORTOS) -I$(NORTOS)/posix \
+          -I$(DEVP)/inc
 
 LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
-           -T $(DEVP)/linker_files/cc13x2r1f3.lds \
-           --specs=nosys.specs -Wl,--gc-sections
+           -Wl,-T,$(LINKER) -Wl,-Map,build/adsb978_cc13.map \
+           -Wl,-eresetISR -nostartfiles -static \
+           --specs=nano.specs --specs=nosys.specs -Wl,--gc-sections
 
 # ccfg.c 用**本目录**这一份，不是 SDK 那份：SDK 自带的默认 BOOTLOADER_ENABLE=0x00
 # （禁用 ROM bootloader），照默认烧进去之后这颗片子就只能靠 cJTAG 仿真器更新，
@@ -30,24 +39,36 @@ LDFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 \
 # ⚠ 注意 OBJS 用了 $(notdir)：同名 .c 到底编哪一个由 VPATH 顺序决定，而 `.`
 # 排在最前——也就是说**光把 SDK 那行从 SRCS_C 删掉并不能切换**，反过来光加也
 # 没用。真要切换得动文件本身。这个隐式行为已被 check_ccfg.py 的构建门禁兜住。
-SRCS_C := main.c spi_slave.c ccfg.c \
+SRCS_C := main.c spi_slave.c uat_phy.c uat_rf.c uat_radio_config.c \
+          ti_platform.c ccfg.c \
           ../components/rp_cc13xx_codec/rp_cc13xx_codec.c \
           ../components/adsb_link_codec/adsb_link_codec.c \
-          $(DEVP)/startup_files/startup_gcc.c
+          $(NORTOS)/startup/startup_cc13x2_cc26x2_gcc.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS_C)))
 VPATH := . ../components/rp_cc13xx_codec ../components/adsb_link_codec \
-         $(DEVP)/startup_files
+         $(NORTOS)/startup
+
+RF_LIB := $(DRIVERS)/rf/lib/gcc/m4f/rf_multiMode_cc13x2.a
+DRIVER_LIB := $(DRIVERS)/lib/gcc/m4f/drivers_cc13x2.a
+NORTOS_LIB := $(NORTOS)/lib/gcc/m4f/nortos_cc13x2.a
+DRIVERLIB := $(DEVP)/driverlib/bin/gcc/driverlib.lib
 
 all: build/adsb978_cc13.bin
 
 build:
 	mkdir -p build
 
-build/%.o: %.c | build
+$(OVERLAY_MARKER): prepare_ti_sdk.py | build
+	python3 prepare_ti_sdk.py "$(SDK_ARCHIVE)" "$(OVERLAY)"
+
+build/%.o: %.c | build $(OVERLAY_MARKER)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/adsb978_cc13.elf: $(OBJS) $(DEVP)/driverlib/bin/gcc/driverlib.lib
-	$(CC) $(LDFLAGS) $(OBJS) $(DEVP)/driverlib/bin/gcc/driverlib.lib -o $@
+build/adsb978_cc13.elf: $(OBJS) $(RF_LIB) $(DRIVER_LIB) $(NORTOS_LIB) $(DRIVERLIB)
+	$(CC) $(LDFLAGS) $(OBJS) -Wl,--start-group \
+		$(RF_LIB) $(DRIVER_LIB) $(NORTOS_LIB) $(DRIVERLIB) \
+		-lc -lm -lgcc -Wl,--end-group -o $@
+	@python3 check_stack.py build "$(LINKER)"
 
 build/adsb978_cc13.bin: build/adsb978_cc13.elf
 	$(OBJCOPY) -O binary $< $@

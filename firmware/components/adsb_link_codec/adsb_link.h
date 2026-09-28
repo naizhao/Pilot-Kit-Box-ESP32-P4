@@ -1,9 +1,10 @@
 /*
  * adsb_link.h — P4↔RP2040 链路 v1 的共享编解码器接口。
  *
- * 规范：firmware/PROTOCOL_P4_RP2040_UART.md（v1.3；v1.0 冻结于 2026-09-05，
+ * 规范：firmware/PROTOCOL_P4_RP2040_UART.md（v1.4；v1.0 冻结于 2026-09-05，
  * v1.1 加 UAT_UPLINK、v1.2 加 CONFIG_REQ/ACK、v1.3 加 SWEEP_ROW 与
- * HEALTH_STATS 的实际生效门限/天线，均向前兼容，见规范变更清单）。本文件被
+ * HEALTH_STATS 的实际生效门限/天线，v1.4 加可变长 UAT_RX_FRAME，均向前
+ * 兼容，见规范变更清单）。本文件被
  * 两侧固件编译同一份实现（P4: components/adsb_link_codec；RP2040:
  * rp2040/CMakeLists.txt 直接引用同一 .c），协议永不漂移。纯 C99，无平台依赖。
  */
@@ -16,7 +17,7 @@
 #define ADSB_LINK_MAGIC0       0x50   /* 'P' */
 #define ADSB_LINK_MAGIC1       0x4B   /* 'K' */
 #define ADSB_LINK_VER_MAJOR    1
-#define ADSB_LINK_VER_MINOR    3      /* v1.3（v1.2=2、v1.1=1、v1.0=0；接收方只看 major）*/
+#define ADSB_LINK_VER_MINOR    4      /* v1.4：新增可变长 UAT_RX_FRAME */
 #define ADSB_LINK_HDR_LEN      8
 #define ADSB_LINK_MAX_PAYLOAD  576    /* v1.0 为 464；v1.1 扩容，规范 §6 */
 #define ADSB_LINK_MAX_FRAME    (ADSB_LINK_HDR_LEN + ADSB_LINK_MAX_PAYLOAD + 2)
@@ -28,6 +29,7 @@
 #define ADSB_LINK_MSG_MODES_RAW     0x10
 #define ADSB_LINK_MSG_UAT_UPLINK    0x11   /* v1.1，规范 §6 */
 #define ADSB_LINK_MSG_SWEEP_ROW     0x12   /* v1.3：门限扫描逐点结果，见下 */
+#define ADSB_LINK_MSG_UAT_RX_FRAME  0x13   /* v1.4：30/48/552 B RX-only */
 #define ADSB_LINK_MSG_CONFIG_REQ    0x20   /* v1.2 起有定义，见下 */
 #define ADSB_LINK_MSG_CONFIG_ACK    0x21
 #define ADSB_LINK_MSG_ERROR         0x7F
@@ -107,19 +109,32 @@ bool adsb_link_sweep_row_decode(const uint8_t *payload, size_t len,
                                 uint32_t *noise, uint32_t *ovr);
 
 /* ── HEALTH_STATS payload（u32le × N，RP→P4，1 Hz）────────────────────
- * 字段下标与两侧实现共用，避免 P4 用字面量偏移、RP 用另一套。v1.3 起 N=13：
+ * 字段下标与两侧实现共用，避免 P4 用字面量偏移、RP 用另一套。前 13 项
+ * 保持 v1.3 布局，后缀追加 UAT RF 诊断：
  *   0 preamble_hits  1 frames_56  2 frames_112  3 time_degraded
  *   4 dropped_noise  5 edge_overruns  6 tx_frames  7 tx_drops
  *   8 rx_frames      9 rx_seq_gaps
  *   10 vbus_mid_mV（v1.3 早期加入，见规范 §4）
  *   11 门限**实际生效值**（permille，RP 侧 threshold_ctl_get_permille()）
  *   12 1090 天线**实际生效值**（0=板载 IFA / 1=外接 J6，RP 侧 rf_safety）
+ *   13..18 UAT RF flags / idle RSSI / raw error / probe ok+err / reinit
  * 11/12 记的是实际生效值而不是 P4 的下发值：扫描或 CDC 切换期间两者会不同，
  * 而计数正是产生在那个条件下——落盘日志必须带上它（见 rf1090_log.h）。
  * 接收方用 payload_len 判断字段是否存在，缺字段时回退到本地值。 */
-#define ADSB_LINK_HEALTH_FIELDS          13
+#define ADSB_LINK_HEALTH_FIELDS          19
 #define ADSB_LINK_HEALTH_IDX_THRESHOLD   11
 #define ADSB_LINK_HEALTH_IDX_ANT_1090    12
+#define ADSB_LINK_HEALTH_IDX_UAT_RF_FLAGS      13
+#define ADSB_LINK_HEALTH_IDX_UAT_IDLE_RSSI     14
+#define ADSB_LINK_HEALTH_IDX_UAT_LAST_ERROR    15
+#define ADSB_LINK_HEALTH_IDX_UAT_PROBE_OK      16
+#define ADSB_LINK_HEALTH_IDX_UAT_PROBE_ERRORS  17
+#define ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS    18
+
+#define ADSB_LINK_UAT_RF_ACTIVE       0x01u
+#define ADSB_LINK_UAT_RF_PROBE_OK     0x02u
+#define ADSB_LINK_UAT_RF_RSSI_VALID   0x04u
+#define ADSB_LINK_UAT_RF_RECOVERING   0x08u
 
 /* 组 CONFIG_REQ payload。返回 payload 长度；cap 不足或 n 超限返回 0
  * （与 adsb_link_encode 同款约定：失败返回 0 且不写输出）。 */
@@ -165,6 +180,34 @@ size_t adsb_link_uat_uplink_encode(uint8_t *out, size_t cap, uint8_t rssi,
 bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
                                  uint8_t *rssi, uint32_t *rp_ts_us,
                                  const uint8_t **frame);
+
+/* v1.4 UAT_RX_FRAME：保留旧 0x11/557 B helper 供旧镜像兼容解析，新生产
+ * 路径使用本合同，完整保留 CC1312R 原始 RAT 时钟、帧序号和有符号 RSSI。 */
+#define ADSB_LINK_UAT_DOWNLINK_SHORT  0x01
+#define ADSB_LINK_UAT_DOWNLINK_LONG   0x02
+#define ADSB_LINK_UAT_UPLINK          0x03
+#define ADSB_LINK_UAT_F_SYNC36_OK     0x01
+#define ADSB_LINK_UAT_F_RF_STATUS_OK  0x02
+#define ADSB_LINK_UAT_F_SET_LEN_OK    0x04
+#define ADSB_LINK_UAT_F_KNOWN_MASK    0x07
+#define ADSB_LINK_UAT_RX_META_BYTES   12u
+
+typedef struct {
+    uint8_t kind;
+    uint8_t flags;
+    int8_t rssi_dbm;
+    uint16_t frame_seq;
+    uint32_t cc_time;       /* CC1312R RAT 原始 4 MHz tick，模 2^32 */
+} adsb_link_uat_rx_meta_t;
+
+bool adsb_link_uat_kind_len_valid(uint8_t kind, uint16_t len);
+size_t adsb_link_uat_rx_encode(uint8_t *out, size_t cap,
+                               const adsb_link_uat_rx_meta_t *meta,
+                               const uint8_t *frame, uint16_t frame_len);
+/* 失败不修改任何输出；成功时 *frame 回指 payload 内部。 */
+bool adsb_link_uat_rx_decode(const uint8_t *payload, size_t len,
+                             adsb_link_uat_rx_meta_t *meta,
+                             const uint8_t **frame, uint16_t *frame_len);
 
 typedef struct {
     uint8_t  type;

@@ -44,6 +44,7 @@ static const audio_codec_gpio_if_t *s_gpio_if;
 
 static atomic_bool s_online;
 static atomic_bool s_muted;
+static atomic_bool s_remote_muted;
 static atomic_bool s_tone_request;
 static atomic_bool s_tone_cancel;
 static atomic_bool s_tone_active;
@@ -154,7 +155,8 @@ static void codec_shutdown(void)
 static int apply_mute_and_pa(bool tone_active)
 {
     const bool audible = pk_airband_speaker_pa_enabled(
-        atomic_load(&s_online), atomic_load(&s_muted),
+        atomic_load(&s_online),
+        atomic_load(&s_muted) || atomic_load(&s_remote_muted),
         atomic_load(&s_program_playable), tone_active);
     int pa_rc = ESP_CODEC_DEV_OK;
     if (!audible) pa_rc = pa_set(false);
@@ -494,7 +496,7 @@ bool pk_airband_speaker_get(pk_airband_speaker_status_t *out)
     if (out == NULL) return false;
     *out = (pk_airband_speaker_status_t){
         .online = atomic_load(&s_online),
-        .muted = atomic_load(&s_muted),
+        .muted = atomic_load(&s_muted) || atomic_load(&s_remote_muted),
         .tone_active = atomic_load(&s_tone_active),
         .pa_enabled = atomic_load(&s_pa_enabled),
         .volume = atomic_load(&s_volume),
@@ -519,7 +521,14 @@ void pk_airband_speaker_set_muted(bool muted)
 
 bool pk_airband_speaker_is_muted(void)
 {
-    return atomic_load(&s_muted);
+    return atomic_load(&s_muted) || atomic_load(&s_remote_muted);
+}
+
+void pk_airband_speaker_set_remote_muted(bool muted)
+{
+    if (atomic_exchange(&s_remote_muted, muted) == muted) return;
+    atomic_fetch_add(&s_control_generation, 1);
+    if (muted) queue_drain();
 }
 
 void pk_airband_speaker_set_volume(uint8_t volume)

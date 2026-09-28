@@ -26,6 +26,10 @@ typedef struct {
     uint32_t rx_seq_gaps;
     uint32_t rx_resyncs;
     uint32_t modes_fed;      /* 实际送入 modes_ingest 的 MODES_RAW 帧数 */
+    uint32_t uat_dl_frames;  /* 30/48 B 下行通过 FEC 的帧数 */
+    uint32_t uat_aircraft;   /* 已解析并递交融合层的 978 目标报文 */
+    uint32_t uat_bad_rs;     /* 非全零下行的 RS/FEC 拒绝数 */
+    uint32_t uat_transport_drops; /* 链路布局或 CC 完整性 flags 拒绝数 */
 } pk_adsb_link_stats_t;
 
 /* 诊断页只读快照；stats 可传 NULL。 */
@@ -35,7 +39,8 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats);
  * adsb_link.h 的 ADSB_LINK_HEALTH_FIELDS，out 必须能放下这么多个 u32）：
  * 0=pre 1=f56 2=f112 3=degraded 4=noise 5=ovr 6=tx 7=txdrop 8=rx 9=gap
  * 10=vbus_mid_mV 11=**实际生效**门限(permille) 12=**实际生效** 1090 天线
- * (0=板载 IFA/1=外接 J6)。返回**有效字段数**，0 = 还没收到过任何一帧。
+ * (0=板载 IFA/1=外接 J6)，13..18=UAT RF flags、idle RSSI、最近原始错误、
+ * probe 成功/失败与 RF 重初始化次数。返回**有效字段数**，0 = 未收到。
  *
  * 下标 11/12 是扫描/CDC 切换时唯一能反映板上真实配置的来源：P4 本地存的是
  * 用户设定值，扫描期间 RP 的门限由扫描状态机逐点改，两者会不同。对面是

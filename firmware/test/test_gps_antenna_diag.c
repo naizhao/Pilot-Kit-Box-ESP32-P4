@@ -24,6 +24,12 @@ static int g_fail;
 
 int main(void)
 {
+    CHECK(pk_gps_header_state(true, PK_GPS_ANT_RESULT_SHORT) == PK_GPS_HEADER_SHORT);
+    CHECK(pk_gps_header_state(false, PK_GPS_ANT_RESULT_OPEN_OR_PASSIVE) == PK_GPS_HEADER_ANT_UNKNOWN);
+    CHECK(pk_gps_header_state(true, PK_GPS_ANT_RESULT_OPEN_OR_PASSIVE) == PK_GPS_HEADER_SATS);
+    CHECK(pk_gps_header_state(false, PK_GPS_ANT_RESULT_ACTIVE_LOAD_OK) == PK_GPS_HEADER_SATS);
+    CHECK(pk_gps_header_state(false, PK_GPS_ANT_RESULT_RF_RECEIVING) == PK_GPS_HEADER_SATS);
+    CHECK(pk_gps_header_state(false, PK_GPS_ANT_RESULT_UNKNOWN) == PK_GPS_HEADER_NO_FIX);
     CHECK(pk_gps_ant_assess(PK_GPS_ANT_UNKNOWN, false) ==
           PK_GPS_ANT_RESULT_UNKNOWN);
     CHECK(pk_gps_ant_assess(PK_GPS_ANT_OK, false) ==

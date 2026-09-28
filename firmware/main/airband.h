@@ -6,12 +6,23 @@
 
 #include "esp_err.h"
 #include "airband_bk4819.h"
+#include "airband_am_gain.h"
+#include "airband_pcm16.h"
 #include "airband_speaker_policy.h"
 
 typedef struct {
     bool online;
     uint32_t frequency_hz;
     pk_airband_diag_t rf;
+    int16_t reference_rssi_dbm_x2;
+    uint8_t gain_index;
+    int8_t gain_db;
+    pk_airband_am_gain_reason_t gain_reason;
+    pk_airband_bk_gain_diag_t gain_regs;
+    uint32_t gain_control_max_us;
+    uint32_t gain_control_overruns;
+    uint32_t gain_control_max_late_us;
+    pk_airband_pcm16_stats_t pcm16;
     pk_airband_health_t health;
     uint32_t audio_frames;
     uint32_t audio_nonzero;

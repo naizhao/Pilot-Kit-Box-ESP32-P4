@@ -122,6 +122,30 @@ static void test_power_pop(void)
                      != PK_NAV_HIT_POWER_RESTART);
 }
 
+/* ── 3c) 关机返回代表失败，画面必须留下可见恢复路径 ───────────────
+ * 真正仅电池关机成功后 MCU 当场掉电，函数不会返回；能返回 false 就是
+ * “系统仍活着”。2026-09-28 H1 下游供电实测曾先关面板再忽略 false，留下
+ * 黑屏/背光/LED 常亮。这里钉住用户可见结果，而不是检查源码关键词。
+ * 突变哨兵：把 FAILED_VISIBLE 退成 POWER_CUT，测试必须红。 */
+static void test_poweroff_returned_failure_stays_visible(void)
+{
+    enum {
+        WANT_BLOCKED_NEED_UNPLUG = 0,
+        WANT_POWER_CUT = 1,
+        WANT_FAILED_VISIBLE = 2,
+    };
+
+    chk_int("U19 VBUS 在位时不尝试关机",
+            pk_nav_poweroff_outcome(true, false),
+            WANT_BLOCKED_NEED_UNPLUG);
+    chk_int("关机调用返回 false 必须显示失败",
+            pk_nav_poweroff_outcome(false, false),
+            WANT_FAILED_VISIBLE);
+    chk_int("只有执行器确认成功才算电源已切断",
+            pk_nav_poweroff_outcome(false, true),
+            WANT_POWER_CUT);
+}
+
 /* ── 4) 动作条三分 ────────────────────────────────────────────── */
 static void test_action_bar(void)
 {
@@ -232,6 +256,7 @@ int main(void)
     test_airband_is_reachable_from_primary_navigation();
     test_empty_cell();
     test_power_pop();
+    test_poweroff_returned_failure_stays_visible();
     test_action_bar();
     test_pop_swallows_grid();
     test_x_out_of_bounds();

@@ -155,14 +155,19 @@ bool pk_aero_span_open(void)
         s_io_lock = xSemaphoreCreateMutex();
         if (s_io_lock == NULL) return false;
     }
-    if (s_fp != NULL) return true;          /* 幂等 */
-    if (!pk_sdcard_is_mounted()) return false;
+    /* Admission must be checked inside the same lock as the close callback:
+     * otherwise it can finish between the check/stat and the subsequent open. */
+    xSemaphoreTake(s_io_lock, portMAX_DELAY);
+    if (!pk_sdcard_is_mounted()) { xSemaphoreGive(s_io_lock); return false; }
+    if (s_fp != NULL) { xSemaphoreGive(s_io_lock); return true; }
 
     struct stat fst;
-    if (stat(SPAN_BIN_PATH, &fst) != 0 || !S_ISREG(fst.st_mode)) return false;
-    if ((size_t)fst.st_size < PK_AERO_HEADER_SIZE) return false;
+    if (stat(SPAN_BIN_PATH, &fst) != 0 || !S_ISREG(fst.st_mode) ||
+        (size_t)fst.st_size < PK_AERO_HEADER_SIZE) {
+        xSemaphoreGive(s_io_lock);
+        return false;
+    }
 
-    xSemaphoreTake(s_io_lock, portMAX_DELAY);
     bool ok = false;
     s_fp = fopen(SPAN_BIN_PATH, "rb");      /* SD 只读红线：只 "rb" */
     if (s_fp != NULL) {

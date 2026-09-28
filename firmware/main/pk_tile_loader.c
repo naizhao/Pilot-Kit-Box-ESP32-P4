@@ -319,6 +319,7 @@ static volatile uint32_t s_timing_logged;
  * 卡已经拔掉时 fopen 会失败，io_error 保持置位，下一轮插卡重扫会整体重来。 */
 static bool reopen_faulted_packs(size_t pack_count)
 {
+    if (!pk_sdcard_is_mounted()) return false;
     bool any = false;
     for (size_t i = 0; i < pack_count && i < PK_MAP_STORE_MAX_PACKS; i++) {
         pk_map_pack_t *p = &s_store.packs[i];
@@ -357,6 +358,10 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
     /* io_lock 覆盖 find→fread 全程：中途放锁会给 sd_close_files_cb 一个把
      * FILE* 关掉的窗口，回来 fread 就是已关句柄。渲染线程不等这把锁，长持无害。 */
     xSemaphoreTake(s_io_lock, portMAX_DELAY);
+    if (!pk_sdcard_is_mounted()) {
+        xSemaphoreGive(s_io_lock);
+        return FETCH_TRANSIENT;
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     size_t pack_count = s_store.count;
     bool idx_ok = pack_index < pack_count;
@@ -570,6 +575,10 @@ static void handle_sd_transition(void)
     if (claim_edge(&s_sd_was_mounted, mounted)) {
         if (mounted) {
             xSemaphoreTake(s_io_lock, portMAX_DELAY);   /* 锁序 io→s */
+            if (!pk_sdcard_is_mounted()) {
+                xSemaphoreGive(s_io_lock);
+                return;
+            }
             xSemaphoreTake(s_lock, portMAX_DELAY);
             pk_map_store_invalidate(&s_store);
             size_t n = pk_map_store_scan(&s_store, MAP_DIR);
@@ -752,10 +761,12 @@ void pk_tile_loader_init(void)
         ESP_LOGW(TAG, "JPEG 硬件解码器未就绪，仅支持 PNG 瓦片包");
     }
 
+    xSemaphoreTake(s_io_lock, portMAX_DELAY);
     if (pk_sdcard_is_mounted()) {
         size_t n = pk_map_store_scan(&s_store, MAP_DIR);
         ESP_LOGI(TAG, "启动扫描 %s：%u 个有效包", MAP_DIR, (unsigned)n);
     }
+    xSemaphoreGive(s_io_lock);
     /* 按真实状态播种，两条边沿都从"当前即常态"起步：开机就插着卡不弹
      * "已挂载"，开机就插着一张坏卡也不弹"读不出"——那是启动状态，不是
      * 用户刚做的动作，日志里已经有记录。 */

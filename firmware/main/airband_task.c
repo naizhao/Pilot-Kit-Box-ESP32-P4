@@ -15,7 +15,10 @@
 #include "airband_bk4819.h"
 #include "airband_audio.h"
 #include "airband_speaker.h"
+#include "airband_record.h"
 #include "airband_frequency_input.h"
+#include "ble_gatt.h"
+#include "config_airband.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -42,6 +45,7 @@
 #define DEFAULT_SQUELCH_DBM_X2 (-180)
 #define DEFAULT_SQUELCH_HYST_X2 12u
 #define BK_RETRY_INTERVAL_US 1000000LL
+#define GAIN_CONTROL_INTERVAL_US 10000LL
 
 static const char *TAG = "airband";
 static i2s_chan_handle_t s_rx;
@@ -127,6 +131,22 @@ static uint16_t reg_read(uint8_t reg)
     gpio_set_level(VHF_SDATA_GPIO, 1);
     return value;
 }
+
+static bool gain_reg_read(void *context, uint8_t reg, uint16_t *value)
+{
+    (void)context;
+    *value = reg_read(reg);
+    return true; /* The three-wire bus has no ACK; exact readback detects errors. */
+}
+
+static bool gain_reg_write(void *context, uint8_t reg, uint16_t value)
+{
+    (void)context;
+    reg_write(reg, value);
+    return true;
+}
+
+static const pk_airband_bk_io_t gain_io = {NULL, gain_reg_read, gain_reg_write};
 
 static bool bk_configure(uint32_t frequency_hz)
 {
@@ -257,11 +277,23 @@ static void task(void *arg)
     bool online = false;
     bool squelch_open = false;
     uint32_t active_hz = 0;
-    uint8_t samples[PK_AIRBAND_I2S_DMA_FRAME_NUM *
+    static uint8_t samples[PK_AIRBAND_I2S_DMA_FRAME_NUM *
                     PK_AIRBAND_PACKED_STEREO_FRAME_BYTES];
-    int16_t speaker_pcm[PK_AIRBAND_I2S_DMA_FRAME_NUM * 2u];
-    pk_airband_audio_gate_t speaker_gate;
-    pk_airband_audio_gate_reset(&speaker_gate, false);
+    static int16_t speaker_pcm[PK_AIRBAND_I2S_DMA_FRAME_NUM * 2u];
+    static int16_t program_pcm[PK_AIRBAND_I2S_DMA_FRAME_NUM / 3u + 1u];
+    static pk_airband_pcm16_t pcm16;
+    pk_airband_audio_route_t audio_route;
+    pk_airband_audio_route_reset(&audio_route);
+    pk_airband_pcm16_reset(&pcm16);
+    pk_airband_am_gain_t gain;
+    pk_airband_am_gain_reset(&gain, PK_AIRBAND_AM_GAIN_MAX_INDEX, 0);
+    pk_airband_bk_gain_diag_t gain_regs = {0};
+    pk_airband_am_gain_reason_t last_gain_reason = PK_AIRBAND_AM_GAIN_RESET;
+    pk_airband_diag_t d = {0};
+    int16_t reference_rssi = 0;
+    uint16_t r30_before = 0, r30_after = 0;
+    uint32_t control_max_us = 0, control_max_late_us = 0, control_overruns = 0;
+    int64_t control_at = 0;
     pk_airband_audio_stats_t audio;
     pk_airband_audio_stats_reset(&audio);
     uint32_t read_errors = 0;
@@ -272,6 +304,23 @@ static void task(void *arg)
         const int64_t before_read = esp_timer_get_time();
         scan_advance_if_due(before_read, online);
         airband_control_t ctl = control_snapshot();
+        const bool reconfigure = !online && before_read >= next_configure_at_us;
+        const bool retune = online && ctl.requested_hz != active_hz;
+        if (reconfigure || retune) {
+            (void)pk_airband_record_submit(NULL,0,false,false,0,0);
+            ble_gatt_airband_stream_break();
+            /* ESP-IDF disable clears curr_ptr; enable resets RX msg_queue. Stop
+             * capture before changing RF, so queued samples cannot be the
+             * old station after the FIR has been reset. */
+            pk_airband_speaker_set_program_playable(false);
+            if (i2s_channel_disable(s_rx) != ESP_OK) read_errors++;
+            pk_airband_audio_stats_reset(&audio);
+            pk_airband_pcm16_reset(&pcm16);
+            pk_airband_audio_route_reset(&audio_route);
+            squelch_open = false;
+            d = (pk_airband_diag_t){0};
+            reference_rssi = 0;
+        }
         if (!online) {
             if (before_read >= next_configure_at_us) {
                 online = bk_configure(ctl.requested_hz);
@@ -294,35 +343,131 @@ static void task(void *arg)
             }
         }
 
+        if (reconfigure || retune) {
+            /* Reset the actual hardware gain before committing the reset
+             * index. On failure the previous applied index is retained. */
+            if (online) online = pk_airband_bk_apply_gain(&gain_io,
+                pk_airband_am_gain_reg13(PK_AIRBAND_AM_GAIN_MAX_INDEX), &gain_regs);
+            if (online) {
+                pk_airband_am_gain_reset(&gain, PK_AIRBAND_AM_GAIN_MAX_INDEX,
+                                          esp_timer_get_time() / 1000);
+                last_gain_reason = PK_AIRBAND_AM_GAIN_RESET;
+            } else {
+                (void)pk_airband_am_gain_update(&gain, false, 0, esp_timer_get_time() / 1000);
+                next_configure_at_us = esp_timer_get_time() + BK_RETRY_INTERVAL_US;
+            }
+            if (i2s_channel_enable(s_rx) != ESP_OK) read_errors++;
+            control_at = 0;
+        }
+
+        const int64_t control_start = esp_timer_get_time();
+        if (control_start >= control_at) {
+            if (control_at != 0) {
+                const uint32_t late = (uint32_t)(control_start - control_at);
+                if (late > control_max_late_us) control_max_late_us = late;
+                if (late >= GAIN_CONTROL_INTERVAL_US) control_overruns++;
+            }
+            /* Keep the original deadline; skip missed slots, never run a
+             * burst of release decisions after a long scheduling pause. */
+            control_at += GAIN_CONTROL_INTERVAL_US;
+            if (control_at <= control_start) control_at = control_start + GAIN_CONTROL_INTERVAL_US;
+            if (online) {
+                r30_before = reg_read(0x30);
+                const uint16_t r67 = reg_read(0x67);
+                r30_after = reg_read(0x30);
+                online = pk_airband_decode_valid_rf(online, r30_before, r30_after,
+                                                    r67, d.noise_raw, d.glitch_raw, &d);
+                if (!online) gain_regs.read_errors++;
+                if (online) {
+                    /* This RSSI was measured at the previously applied gain,
+                     * not at a newly requested gain awaiting readback. */
+                    reference_rssi = pk_airband_am_reference_rssi_x2(d.rssi_raw, gain.applied_index);
+                    squelch_open = pk_airband_squelch_gate(ctl.squelch_enabled,
+                        squelch_open, reference_rssi, ctl.squelch_open_dbm_x2,
+                        ctl.squelch_hysteresis_db_x2);
+                    if (pk_airband_am_gain_update(&gain, true, d.rssi_raw, control_start / 1000)) {
+                        if (pk_airband_bk_apply_gain(&gain_io,
+                                pk_airband_am_gain_reg13(gain.requested_index), &gain_regs)) {
+                            last_gain_reason = gain.reason;
+                            pk_airband_am_gain_commit(&gain, gain.requested_index,
+                                                       esp_timer_get_time() / 1000);
+                        } else {
+                            online = false;
+                        }
+                    }
+                }
+                if (!online) {
+                    squelch_open = false;
+                    reference_rssi = 0;
+                    d = (pk_airband_diag_t){0};
+                    (void)pk_airband_am_gain_update(&gain, false, 0, control_start / 1000);
+                    last_gain_reason = PK_AIRBAND_AM_GAIN_INVALID;
+                    pk_airband_pcm16_reset(&pcm16);
+                    pk_airband_audio_route_reset(&audio_route);
+                    pk_airband_speaker_set_program_playable(false);
+                    next_configure_at_us = esp_timer_get_time() + BK_RETRY_INTERVAL_US;
+                }
+            }
+            const uint32_t duration = (uint32_t)(esp_timer_get_time() - control_start);
+            if (duration > control_max_us) control_max_us = duration;
+            if (duration >= GAIN_CONTROL_INTERVAL_US) control_overruns++;
+        }
+
+        /* Save only the channel whose hardware carrier was confirmed. Scans
+         * have no durable channel and must never overwrite the last station. */
+        if (online && active_hz == ctl.requested_hz && !ctl.scanning)
+            pk_airband_config_tuned(ctl.requested_channel_khz, active_hz);
+
         size_t got = 0;
+        /* One 192-frame DMA block is 4ms. Permit it to finish instead of
+         * chopping a valid block at the RF deadline (which would reset FIR
+         * every 10ms). RF lateness remains bounded by this 5ms read timeout. */
+        const uint32_t read_timeout_ms = 5u;
         esp_err_t err = i2s_channel_read(s_rx, samples, sizeof(samples), &got,
-                                         pdMS_TO_TICKS(250));
+                                         read_timeout_ms);
         bool pcm_valid = false;
         bool requested_playable = false;
         size_t rendered_frames = 0;
+        size_t program_frames = 0;
+        const bool program_open = !ctl.squelch_enabled || squelch_open;
         if (err == ESP_OK && got != 0) {
             if (!pk_airband_audio_accumulate_packed24(samples, got, &audio)) {
                 read_errors++;
             } else {
                 pcm_valid = true;
-                const bool audible = online &&
-                    (!ctl.squelch_enabled || squelch_open) &&
-                    !pk_airband_speaker_is_muted();
-                const bool had_audio = speaker_gate.level_q15 != 0;
-                rendered_frames = pk_airband_audio_render(
-                    samples, got, speaker_pcm,
-                    PK_AIRBAND_I2S_DMA_FRAME_NUM, audible, &speaker_gate);
-                requested_playable = audible || had_audio;
+                if (online) {
+                    const bool muted = pk_airband_speaker_is_muted();
+                    const bool had_audio = audio_route.program_gate.level_q15 != 0 &&
+                                           audio_route.speaker_gate.level_q15 != 0;
+                    program_frames = pk_airband_pcm16_process(&pcm16,
+                        samples, got, program_pcm, sizeof(program_pcm)/sizeof(program_pcm[0]),
+                        PK_AIRBAND_AUDIO_PROGRAM_GAIN);
+                    rendered_frames = pk_airband_audio_route16(&audio_route,
+                        program_pcm, program_frames, program_open, muted,
+                        speaker_pcm, PK_AIRBAND_I2S_DMA_FRAME_NUM);
+                    /* program_pcm is now a 16k mono squelched program tap.
+                     * Speaker mute and local test tone cannot change it. */
+                    requested_playable = (program_open && !muted) || had_audio;
+                }
             }
         } else if (err != ESP_ERR_TIMEOUT) {
             read_errors++;
         }
         const bool read_ok = err == ESP_OK && got != 0;
+        /* Record the shared 16k mono program before the speaker/test-tone
+         * branch. Every read publishes its gate, including timeout/bad PCM. */
+        (void)pk_airband_record_submit(program_pcm,program_frames,
+            online && read_ok && pcm_valid,program_open,
+            ctl.requested_channel_khz,active_hz);
+        (void)ble_gatt_airband_submit(program_pcm, program_frames,
+            online && read_ok && pcm_valid && program_frames != 0);
         const bool capture_continuous =
             pk_airband_speaker_capture_continuous(read_ok, pcm_valid,
                                                    rendered_frames);
-        if (!capture_continuous)
-            pk_airband_audio_gate_stream_break(&speaker_gate);
+        if (!capture_continuous) {
+            pk_airband_audio_route_reset(&audio_route);
+            pk_airband_pcm16_reset(&pcm16);
+        }
         const bool capture_playable = pk_airband_speaker_capture_playable(
             read_ok, pcm_valid, rendered_frames, requested_playable);
         pk_airband_speaker_set_program_playable(capture_playable);
@@ -336,27 +481,12 @@ static void task(void *arg)
         if (now < report_at) continue;
         report_at = now + 1000000;
 
-        const uint16_t r30_before = reg_read(0x30);
-        uint16_t r67 = 0, r65 = 0, r63 = 0;
-        uint16_t r30_after = r30_before;
-        if (online && r30_before == 0xBFF1u) {
-            r67 = reg_read(0x67);
-            r65 = reg_read(0x65);
-            r63 = reg_read(0x63);
-            r30_after = reg_read(0x30);
+        const bool rf_valid = online;
+        if (online) {
+            d.noise_raw = reg_read(0x65) & 0x7Fu;
+            d.glitch_raw = reg_read(0x63) & 0xFFu;
         }
-        pk_airband_diag_t d;
-        const bool rf_valid = pk_airband_decode_valid_rf(
-            online, r30_before, r30_after, r67, r65, r63, &d);
-        online = rf_valid;
         ctl = control_snapshot();
-        if (rf_valid) {
-            squelch_open = pk_airband_squelch_gate(
-                ctl.squelch_enabled, squelch_open, d.rssi_dbm_x2,
-                ctl.squelch_open_dbm_x2, ctl.squelch_hysteresis_db_x2);
-        } else {
-            squelch_open = false;
-        }
         const uint32_t left_rms =
             pk_airband_audio_rms(audio.left_sum_sq, audio.frames);
         const uint32_t right_rms =
@@ -367,6 +497,15 @@ static void task(void *arg)
             .online = online,
             .frequency_hz = online ? active_hz : 0,
             .rf = d,
+            .reference_rssi_dbm_x2 = reference_rssi,
+            .gain_index = gain.applied_index,
+            .gain_db = pk_airband_am_gain_db(gain.applied_index),
+            .gain_reason = last_gain_reason,
+            .gain_regs = gain_regs,
+            .gain_control_max_us = control_max_us,
+            .gain_control_max_late_us = control_max_late_us,
+            .gain_control_overruns = control_overruns,
+            .pcm16 = pcm16.stats,
             .health = pk_airband_assess(online, audio.frames, read_errors),
             .audio_frames = audio.frames,
             .audio_nonzero = audio.left_nonzero,
@@ -445,12 +584,39 @@ static void task(void *arg)
                      speaker.queue_drops, speaker.write_errors);
         }
         pk_airband_audio_stats_reset(&audio);
+        ESP_LOGI(TAG, "AM gain=%u/%ddB reason=%s obs_x2=%d ref_x2=%d r7e=%04X r13=%04X "
+                 "gain_err[w=%" PRIu32 " r=%" PRIu32 "] ctrl[max=%" PRIu32 "us late=%" PRIu32
+                 "us over=%" PRIu32 "] PCM16[n=%" PRIu32 " raw/pre/post=%" PRIu32 "/%" PRIu32
+                 "/%" PRIu32 " rms=%" PRIu32 "/%" PRIu32 "/%" PRIu32
+                 " clip=%" PRIu32 "/%" PRIu32 "/%" PRIu32 "]",
+                 gain.applied_index, pk_airband_am_gain_db(gain.applied_index),
+                 pk_airband_am_gain_reason_name(last_gain_reason), d.rssi_dbm_x2, reference_rssi,
+                 gain_regs.reg7e, gain_regs.reg13, gain_regs.write_errors, gain_regs.read_errors,
+                 control_max_us, control_max_late_us, control_overruns, pcm16.stats.output_frames,
+                 pcm16.stats.raw_peak, pcm16.stats.pre_peak, pcm16.stats.post_peak,
+                 pk_airband_audio_rms(pcm16.stats.raw_sum_sq, pcm16.stats.input_frames),
+                 pk_airband_audio_rms(pcm16.stats.pre_sum_sq, pcm16.stats.output_frames),
+                 pk_airband_audio_rms(pcm16.stats.post_sum_sq, pcm16.stats.output_frames),
+                 pcm16.stats.raw_clips, pcm16.stats.pre_clips, pcm16.stats.post_clips);
+        pk_airband_pcm16_stats_reset(&pcm16);
+        control_max_us = 0;
+        control_max_late_us = 0;
         read_errors = 0;
     }
 }
 
 esp_err_t pk_airband_start(void)
 {
+    pk_airband_config_load();
+    const pk_airband_config_t saved = pk_airband_config_get();
+    portENTER_CRITICAL(&s_diag_mux);
+    s_control.requested_hz = saved.carrier_hz;
+    s_control.requested_channel_khz = saved.channel_khz;
+    s_control.squelch_enabled = saved.squelch_enabled;
+    s_control.squelch_open_dbm_x2 = saved.squelch_dbm_x2;
+    s_control.squelch_hysteresis_db_x2 = saved.hysteresis_db_x2;
+    s_control.scanning = false;
+    portEXIT_CRITICAL(&s_diag_mux);
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << VHF_SCN_GPIO) | (1ULL << VHF_SCK_GPIO) |
                         (1ULL << VHF_SDATA_GPIO),
@@ -474,10 +640,22 @@ esp_err_t pk_airband_start(void)
         ESP_LOGW(TAG, "ES8311 speaker start failed: %s; RX diagnostics continue",
                  esp_err_to_name(speaker_err));
     }
+    pk_airband_speaker_set_volume(saved.volume);
+    pk_airband_speaker_set_muted(saved.muted);
+    if (!pk_airband_record_init()) {
+        ESP_LOGE(TAG,"cannot start AIRBAND SD recording task");
+    }
+    if (!pk_airband_config_start()) {
+        ESP_LOGE(TAG, "cannot start NVS persistence task");
+        return ESP_ERR_NO_MEM;
+    }
     if (xTaskCreate(task, "airband", 4096, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "task started: RX-only 121.500MHz, PCM1808 48k/packed-24 stereo");
+    ESP_LOGI(TAG, "task started: RX-only channel %lu.%03luMHz carrier=%luHz, volume=%u mute=%u, PCM1808 48k/packed-24 stereo",
+             (unsigned long)(saved.channel_khz / 1000u),
+             (unsigned long)(saved.channel_khz % 1000u),
+             (unsigned long)saved.carrier_hz, saved.volume, saved.muted);
     return ESP_OK;
 }
 
@@ -552,7 +730,9 @@ bool pk_airband_set_squelch(int16_t open_dbm_x2,
     portENTER_CRITICAL(&s_diag_mux);
     s_control.squelch_open_dbm_x2 = open_dbm_x2;
     s_control.squelch_hysteresis_db_x2 = hysteresis_db_x2;
+    const bool enabled = s_control.squelch_enabled;
     portEXIT_CRITICAL(&s_diag_mux);
+    pk_airband_config_squelch(enabled, open_dbm_x2, hysteresis_db_x2);
     return true;
 }
 
@@ -560,7 +740,10 @@ void pk_airband_set_squelch_enabled(bool enabled)
 {
     portENTER_CRITICAL(&s_diag_mux);
     s_control.squelch_enabled = enabled;
+    const int16_t threshold = s_control.squelch_open_dbm_x2;
+    const uint16_t hysteresis = s_control.squelch_hysteresis_db_x2;
     portEXIT_CRITICAL(&s_diag_mux);
+    pk_airband_config_squelch(enabled, threshold, hysteresis);
 }
 
 bool pk_airband_control_get(pk_airband_control_status_t *out)
@@ -590,11 +773,13 @@ bool pk_airband_control_get(pk_airband_control_status_t *out)
 void pk_airband_set_speaker_muted(bool muted)
 {
     pk_airband_speaker_set_muted(muted);
+    pk_airband_config_muted(muted);
 }
 
 void pk_airband_set_speaker_volume(uint8_t volume)
 {
     pk_airband_speaker_set_volume(volume);
+    pk_airband_config_volume(volume);
 }
 
 bool pk_airband_speaker_test(void)

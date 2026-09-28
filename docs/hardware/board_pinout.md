@@ -451,6 +451,29 @@ The current Pilot Kit firmware does not initialize the audio subsystem.
   non-rechargeable coin cell because the board supplies a charging path.
 - The PWR LED is tied to Core_5V and is not software-controlled.
 
+### V4.10 measured power baseline (2026-09-29)
+
+These are approximate bench readings reported by the user from the same V4.10
+prototype. They are suitable for preliminary battery-capacity and protection-
+current sizing. The measurement points and meter insertion methods differ, so
+battery-side current and Type-C input current must not be compared as bare
+current numbers.
+
+| Supply and state | Measured reading | Equivalent input power / use |
+|---|---:|---|
+| Battery powered, startup transient | about 850 mA maximum | Battery voltage was not captured simultaneously; use for startup-peak and protection-margin checks |
+| Battery powered, stable after boot | about 750 mA | about 2.78 W at the 3.7 V nominal voltage, or 3.15 W at 4.2 V full charge |
+| Battery powered, software shutdown from the touch UI | about 1 mA | about 3.7–4.2 mW; this is an approximate whole-device reading, not the SY6970-only 12 µA typical specification |
+| Type-C input, battery absent | 9 V / about 360 mA | about 3.24 W |
+| Type-C input, battery fitted and charging | 9 V / about 530 mA | about 4.77 W, including system load, battery charging, and conversion losses |
+
+The Type-C current number is smaller mainly because the input is 9 V; it does
+not mean that device power fell in the ratio `360/750`. Using the measured
+750 mA battery-side steady current, a 5000 mAh battery gives an idealized
+runtime of about 6.7 hours. Real sizing must derate for usable capacity,
+temperature, aging, and cutoff-voltage margin. Do not treat 6.7 hours as a
+guarantee until a controlled full-discharge test is available.
+
 ## 10. Pilot external modules
 
 ### BNO085 IMU

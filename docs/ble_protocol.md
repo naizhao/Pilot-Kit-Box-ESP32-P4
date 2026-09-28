@@ -2,7 +2,7 @@
 
 | Item | Value |
 |------|-------|
-| **Document version** | 1.1 |
+| **Document version** | 1.3 |
 | **Status** | Draft — implemented in firmware, ready for client integration |
 | **Audience** | Mobile / desktop client developers integrating with Pilot Kit Box |
 | **Firmware reference** | `firmware/main/ble_gatt.c` |
@@ -23,11 +23,14 @@ broadcast.
 
 The protocol is intentionally minimal:
 
-- **One primary GATT service** with **four characteristics**
-- **No bonding, no pairing, no encryption in protocol v1.1** — treat
-  the link as open local telemetry. ADS-B traffic is publicly
-  broadcast, but clients must not use this BLE link for confidential
-  data, aircraft control, or safety-critical command paths.
+- **One primary GATT service** with **six characteristics**
+- Traffic Report, Heartbeat, Raw, Time Sync and AIRBAND Audio remain open local
+  telemetry. **AIRBAND Control writes require encryption, a bonded peer, and
+  the owner identity enrolled on the Box.** For first enrollment or phone
+  replacement, the user taps `PAIR` on the Box AIRBAND page, then completes LE
+  Secure Connections Just Works pairing and a control write within 60 seconds.
+  Clients must not use this link for confidential data, aircraft control, or
+  safety-critical command paths.
 - **No vendor extensions** beyond the published GDL90 standard for
   traffic frames
 - **Auto-time-sync via SIG-standard Current Time Service** on iOS;
@@ -127,7 +130,9 @@ Service:                                  1090AD5B-0000-1000-8000-1090AD5B0000
   ├─ Traffic Report   (0x14 / NOTIFY)     1090AD5B-0000-1000-8000-1090AD5B0001
   ├─ Heartbeat        (0x00 / NOTIFY)     1090AD5B-0000-1000-8000-1090AD5B0002
   ├─ Raw ts-line      (ASCII / NOTIFY)    1090AD5B-0000-1000-8000-1090AD5B0003
-  └─ Time Sync        (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0004
+  ├─ Time Sync        (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0004
+  ├─ AIRBAND Audio    (NOTIFY)            1090AD5B-0000-1000-8000-1090AD5B0005
+  └─ AIRBAND Control  (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0006
 ```
 
 The Pilot Kit ADS-B service uses a custom 128-bit base UUID. The
@@ -140,9 +145,11 @@ lower 32 bits identify the resource:
 | `0002` | Heartbeat notify characteristic |
 | `0003` | Raw ts-line notify characteristic |
 | `0004` | Time Sync read/write characteristic |
+| `0005` | Versioned AIRBAND program-audio notify characteristic |
+| `0006` | AIRBAND route control and status read/write characteristic |
 
 A subsequent revision of this protocol **MAY** allocate further
-characteristics in the same low-32-bit range (`0005`+). Clients
+characteristics in the same low-32-bit range (`0007`+). Clients
 **MUST** ignore any characteristic with an unrecognised UUID under
 the same service.
 
@@ -153,7 +160,7 @@ the same service.
        ─────────────────────────────                  ─────────────────────────
                                                       Scan, filter by name/UUID
                                                       Connect()
-       GAP CONNECT  ───────────────────────────────►  (encrypted=false, no pairing)
+       GAP CONNECT  ───────────────────────────────►  (telemetry is available)
        GATT discover all services  ────────────────►  (returns Pilot Kit service +
                                                        Current Time Service if iOS)
        § 5 — Time sync flow runs here
@@ -163,6 +170,10 @@ the same service.
        Notify Traffic Report (GDL90) ──────────────►
        Notify Heartbeat (GDL90)      ──────────────►   1 / sec
        Notify Raw ts-line (ASCII)    ──────────────►   per CRC-valid Mode-S frame
+
+       user taps PAIR on Box ──────────────────────  60 s owner enrollment window
+       AIRBAND Control WRITE ◄─────────────────────  first write requests security
+       LE SC Just Works pairing / encryption  ◄──►  platform pairing flow
 
        GAP DISCONNECT  ◄───────────────────────────   Disconnect() or out of range
        (re-enters advertising)
@@ -358,7 +369,111 @@ ATT errors returned on WRITE:
 | `0x0D` `Invalid Attribute Value Length` | The write was not exactly 8 bytes |
 | `0x13` `Value Not Allowed` | The epoch is older than the minimum |
 
-### 6.5. Demo mode — what the client sees
+### 6.5. AIRBAND Audio (`…0005`, NOTIFY)
+
+This optional stream carries the receiver's 16 kHz, mono program audio. It is
+active only while AIRBAND Control selects `PHONE`; subscribing by itself does
+not redirect the speaker.
+
+Each protocol-v1 audio frame is exactly **176 bytes** and represents 320
+samples (20 ms): a 16-byte little-endian header followed by 160 bytes of
+IMA-ADPCM (two samples per byte, earlier sample in the low nibble).
+
+| Offset | Size | Encoding | Meaning |
+|--------|------|----------|---------|
+| 0 | 1 | `uint8` | Protocol version, currently `1` |
+| 1 | 1 | bit field | Flags, currently `0` |
+| 2 | 2 | `uint16_le` | Non-zero stream ID |
+| 4 | 2 | `uint16_le` | Frame sequence within that stream |
+| 6 | 2 | `uint16_le` | Sample count, currently `320` |
+| 8 | 4 | `uint32_le` | Sample clock within that stream |
+| 12 | 2 | `int16_le` | IMA predictor before the first nibble |
+| 14 | 1 | `uint8` | IMA step index (`0…88`) before the first nibble |
+| 15 | 1 | — | Reserved, currently `0` |
+| 16 | 160 | IMA-ADPCM | 320 four-bit samples |
+
+If the negotiated ATT notification payload (`ATT_MTU - 3`) can hold all 176
+bytes, the characteristic sends the frame without a transport header. At
+smaller usable MTUs, every notification starts with this **12-byte fragment
+header**:
+
+| Offset | Size | Encoding | Meaning |
+|--------|------|----------|---------|
+| 0 | 1 | `0xAF` | Fragment marker |
+| 1 | 1 | `uint8` | Protocol version, currently `1` |
+| 2 | 2 | `uint16_le` | Stream ID |
+| 4 | 2 | `uint16_le` | Frame sequence |
+| 6 | 1 | `uint8` | Zero-based fragment index |
+| 7 | 1 | `uint8` | Fragment count |
+| 8 | 2 | `uint16_le` | Byte offset in the 176-byte frame |
+| 10 | 2 | `uint16_le` | Total frame size, currently `176` |
+| 12 | variable | bytes | Contiguous frame bytes at `offset` |
+
+Fragment data must be at least 64 bytes. Therefore PHONE routing requires a
+notification payload of at least **76 bytes**, i.e. **ATT MTU ≥ 79**. A full
+unfragmented frame requires ATT MTU ≥ 179. Clients must validate that all
+fragments agree on stream ID, sequence, count and total length, reject overlaps
+or out-of-range offsets, and discard incomplete frames rather than decoding
+them.
+
+A stream break increments `stream_id` (zero is skipped) and resets sequence,
+sample clock, IMA state, partial capture, and queued audio. It occurs on route,
+connection, subscription or MTU changes, capture discontinuity, queue overflow,
+or a notification failure. Clients must discard fragment and jitter state on a
+stream-ID change; a sequence gap is packet loss, not permission to concatenate
+old and new data. The per-frame predictor and step index make every complete
+frame independently decodable.
+
+AIRBAND is deliberately lower priority than the existing GDL90/heartbeat/raw
+path. At each 1 Hz traffic deadline the audio sender pauses before its next
+fragment; after each audio fragment it yields so traffic telemetry cannot be
+starved. Notifications on the other characteristics may therefore appear
+between audio fragments.
+
+### 6.6. AIRBAND Control (`…0006`, READ / WRITE)
+
+READ status is available on an ordinary connection. WRITE carries the GATT
+`WRITE_ENC` permission, so NimBLE rejects plaintext before the callback. The
+callback then requires a bonded peer whose identity address matches the owner
+stored in NVS. To enroll the first owner or replace a phone, the user taps
+`PAIR` on the physical AIRBAND page; the button shows a 60-second countdown and
+the next encrypted, bonded peer that writes Control becomes owner. Other bonded
+peers receive ATT `Insufficient Authorization`. Up to three bonds are retained
+using NimBLE's round-robin policy. Just Works itself has no MITM, so a nearby
+device could race during an intentionally opened enrollment window; with the
+window closed, pairing alone cannot mute the Box.
+
+Writes are exactly two bytes: `{ version, route }`, where version is `1` and
+route is `0=DEVICE`, `1=PHONE`, or `2=MUTE`. `DEVICE` keeps playback on the Box;
+`PHONE` mutes the Box speaker and enables `…0005`; `MUTE` mutes the Box without
+enabling phone audio. Use a write with response and do not display a route as
+selected until the write succeeds.
+
+The firmware rejects PHONE with ATT `Value Not Allowed` unless the audio task is
+ready, a peer is connected, `…0005` notifications are subscribed, and ATT MTU
+is at least 79. It also returns automatically to DEVICE on disconnect, audio
+CCCD unsubscribe, an MTU drop below the usable threshold, pairing failure, or
+loss of link encryption. A client-side
+player initialization/write failure must stop local playback and immediately
+write `{1,0}`; if that fail-safe write cannot complete, disconnect so the
+firmware's link teardown restores DEVICE. A stale callback from an earlier
+connection must never change the route of a newer connection.
+
+READ returns this 16-byte little-endian status:
+
+| Offset | Size | Meaning |
+|--------|------|---------|
+| 0 | 1 | Version (`1`) |
+| 1 | 1 | Current route (`0…2`) |
+| 2 | 1 | Last error: `0` none, `1` invalid control, `2` PHONE prerequisites, `3` notify failure |
+| 3 | 1 | Flags: bit 0 connected, bit 1 audio subscribed, bit 2 MTU paused |
+| 4 | 2 | Negotiated ATT MTU |
+| 6 | 2 | Current stream ID |
+| 8 | 2 | Next frame sequence |
+| 10 | 4 | Next sample clock |
+| 14 | 2 | Reserved (`0`) |
+
+### 6.7. Demo mode — what the client sees
 
 Since firmware v0.9.5 the box has a user-selectable **demo mode**
 (Setup → DEMO MODE). While it is on, every on-screen reading — attitude,
@@ -479,8 +594,9 @@ are on the firmware roadmap; they will get their own sections once
 implemented:
 
 - **Device Info Service (0x180A)** for firmware version
-- **Bonding + LESC encryption** before adding any non-public,
-  user-identifying, control, or cockpit-sensitive data path
+- **MITM-protected authentication** before adding any non-public,
+  user-identifying, aircraft-control, or cockpit-sensitive data path; current
+  owner enrollment relies on a 60-second physical authorization window
 - **Multiple concurrent peers** — currently one at a time
 
 ## 10. References

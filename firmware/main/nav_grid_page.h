@@ -195,6 +195,17 @@ pk_nav_hit_t pk_nav_hit_test(int x, int y, int page, pk_nav_pop_t pop);
  */
 int pk_nav_swipe_dir(int dx, int dy);
 
+/* 关机动作的用户可见结果。真正断电时函数不会返回；若执行器返回 false，
+ * 底页必须保持可见并提示失败，不能先关面板把用户留在黑屏。 */
+typedef enum {
+    PK_NAV_POWEROFF_BLOCKED_NEED_UNPLUG = 0,
+    PK_NAV_POWEROFF_POWER_CUT,
+    PK_NAV_POWEROFF_FAILED_VISIBLE,
+} pk_nav_poweroff_outcome_t;
+
+pk_nav_poweroff_outcome_t pk_nav_poweroff_outcome(bool vbus_present,
+                                                   bool shutdown_returned);
+
 #ifdef __cplusplus
 }
 #endif

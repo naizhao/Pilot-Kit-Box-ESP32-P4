@@ -41,17 +41,17 @@ static atomic_uint s_glitch_rejected;
 /* ── CC1312R SPI master（WP-E）───────────────────────────────────────
  * core0 轮询驱动（审计 round-WP-E-1 P1-3：此前 spim_hw_init/spim_poll
  * 无调用点、UF2 不含 SUBG 路径——现在正式接线）。UAT 帧经回调转
- * p4_link_send_uat() 上送 P4。事务间隔节流（协议 R14）在 spim_poll
+ * p4_link_send_uat_rx() 上送 P4（内部按 descriptor 版本选择 UART
+ * 0x11 legacy 或 0x13 v1.4）。事务间隔节流（协议 R14）在 spim_poll
  * 内部：drain 流水时每事务阻塞 ≈1 ms——1090 帧环积压由 s_ring_drops
  * 计数暴露，台架期再调（SSI 中断/DMA 化是二期项）。 */
 static spi_master_t s_spim;
 
 static void on_uat_frame(const uint8_t *frame, size_t len,
-                         uint8_t rssi, uint32_t ts_us, void *user)
+                         const rp_cc13xx_rx_meta_t *meta, void *user)
 {
     (void)user;
-    if (len != 552) return;             /* UAT 事实卡 §7 定长合同 */
-    p4_link_send_uat(frame, rssi, ts_us);
+    p4_link_send_uat_rx(frame, len, meta);
 }
 
 static modes_edge_t s_edge;
@@ -195,6 +195,19 @@ static void health_fill(uint32_t c[ADSB_LINK_HEALTH_FIELDS])
         (uint32_t)threshold_ctl_get_permille();
     c[ADSB_LINK_HEALTH_IDX_ANT_1090] =
         rf_safety_get_ant_1090() ? 1u : 0u;
+    if (s_spim.peer_rf_health_valid) {
+        const rp_cc13xx_rf_health_t *rf = &s_spim.peer_rf_health;
+        c[ADSB_LINK_HEALTH_IDX_UAT_RF_FLAGS] = rf->flags;
+        c[ADSB_LINK_HEALTH_IDX_UAT_IDLE_RSSI] =
+            (uint32_t)(int32_t)rf->idle_rssi_dbm;
+        c[ADSB_LINK_HEALTH_IDX_UAT_LAST_ERROR] = rf->last_raw_status;
+        c[ADSB_LINK_HEALTH_IDX_UAT_PROBE_OK] = rf->probe_successes;
+        c[ADSB_LINK_HEALTH_IDX_UAT_PROBE_ERRORS] = rf->probe_errors;
+        c[ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS] = rf->rf_reinits;
+    } else {
+        for (unsigned i = ADSB_LINK_HEALTH_IDX_UAT_RF_FLAGS;
+             i <= ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS; ++i) c[i] = 0;
+    }
 }
 
 static bool core0_send_one_modes(void *user)
@@ -384,10 +397,18 @@ static void core0_poll_control(void *user)
         sleep_us(10);
         int app_tx_dn = gpio_get(PIN_SUBG_MISO);
         gpio_disable_pulls(PIN_SUBG_MISO);
+        uint16_t rf_raw = 0;
+        bool has_rf_raw = s_spim.last_error_msg_len == 4 &&
+                          s_spim.last_error_msg[0] == 'R' &&
+                          s_spim.last_error_msg[1] == 'F';
+        if (has_rf_raw) {
+            rf_raw = (uint16_t)s_spim.last_error_msg[2] |
+                     ((uint16_t)s_spim.last_error_msg[3] << 8);
+        }
         printf("cc13-app: state=%d hello_tries=%u peer=%u.%u "
                "txns=%lu legal=%lu noframe=%lu magic=%lu crc=%lu "
                "recoveries=%lu irq=%d reset_n=%d backdoor=%d "
-               "DIO9_TX=%d/%d\n",
+               "DIO9_TX=%d/%d err=%02X rf_raw=%s%04X\n",
                (int)s_spim.state, (unsigned)s_spim.hello_tries,
                (unsigned)s_spim.peer_hello.fw_ver_major,
                (unsigned)s_spim.peer_hello.fw_ver_minor,
@@ -398,7 +419,8 @@ static void core0_poll_control(void *user)
                (unsigned long)s_spim.stats.crc_errors,
                (unsigned long)s_spim.stats.recoveries,
                gpio_get(PIN_SUBG_IRQ), gpio_get(PIN_SUBG_RESET),
-               gpio_get(PIN_SUBG_SYNC), app_tx_up, app_tx_dn);
+               gpio_get(PIN_SUBG_SYNC), app_tx_up, app_tx_dn,
+               s_spim.last_error_code, has_rf_raw ? "0x" : "n/a-", rf_raw);
     } else if (c == 'F') {
         /* cJTAG 链路探测（**不是**烧录）：走一遍 ICEMelter 唤醒 + 命令窗 +
          * STFMT→OScan1，然后读 ICEPick 的 IDCODE 作为链路是否通的判据。

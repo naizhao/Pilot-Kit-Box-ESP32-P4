@@ -78,7 +78,7 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
                           uint8_t msg_id,
                           const uint8_t *payload, size_t payload_len)
 {
-    uint8_t tmp[1 + 27 + 2];  /* worst case: traffic = 1 id + 27 payload + 2 CRC */
+    uint8_t tmp[1 + 3 + GDL90_UPLINK_PAYLOAD_BYTES + 2];
     if (1 + payload_len + 2 > sizeof(tmp)) return 0;
 
     size_t tmp_len = 0;
@@ -107,6 +107,25 @@ static size_t gdl90_frame(uint8_t *out, size_t out_cap,
     if (n >= out_cap) return 0;
     out[n++] = GDL90_FLAG;
     return n;
+}
+
+size_t gdl90_encode_uplink(uint8_t *out, size_t out_cap,
+                           uint32_t tor_80ns,
+                           const uint8_t *uat_payload,
+                           size_t payload_len)
+{
+    if (out == NULL || uat_payload == NULL ||
+        payload_len != GDL90_UPLINK_PAYLOAD_BYTES) {
+        return 0;
+    }
+    if (tor_80ns > 12499999u) tor_80ns = 0xFFFFFFu;
+    uint8_t payload[3 + GDL90_UPLINK_PAYLOAD_BYTES];
+    payload[0] = (uint8_t)tor_80ns;
+    payload[1] = (uint8_t)(tor_80ns >> 8);
+    payload[2] = (uint8_t)(tor_80ns >> 16);
+    memcpy(payload + 3, uat_payload, GDL90_UPLINK_PAYLOAD_BYTES);
+    return gdl90_frame(out, out_cap, GDL90_ID_UPLINK_DATA,
+                       payload, sizeof payload);
 }
 
 /* ------------------------------------------------------------------ */
@@ -216,8 +235,9 @@ uint8_t gdl90_emitter_from_wake(int wake)
     }
 }
 
-size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
+size_t gdl90_encode_traffic_typed(uint8_t *out, size_t out_cap,
                             bool     is_ownship,
+                            uint8_t  address_type,
                             uint32_t icao24,
                             bool     have_position,
                             double   lat,
@@ -239,9 +259,8 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
     uint8_t p[27];
     memset(p, 0, sizeof(p));
 
-    /* Byte 0: Alert Status (4 bits) | Address Type (4 bits).
-     *   alert=0 (no alert), addr=0 (ADS-B with ICAO 24-bit address). */
-    p[0] = 0x00;
+    /* Byte 0: Alert Status (4 bits) | Address Type (4 bits). */
+    p[0] = (uint8_t)(address_type & 0x0F);
 
     /* Bytes 1..3: 24-bit Participant Address (ICAO). */
     p[1] = (uint8_t)((icao24 >> 16) & 0xFF);
@@ -348,4 +367,23 @@ size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
 
     uint8_t msg_id = is_ownship ? GDL90_ID_OWNSHIP : GDL90_ID_TRAFFIC;
     return gdl90_frame(out, out_cap, msg_id, p, sizeof(p));
+}
+
+size_t gdl90_encode_traffic(uint8_t *out, size_t out_cap,
+                            bool is_ownship, uint32_t icao24,
+                            bool have_position, double lat, double lon,
+                            bool have_altitude, int altitude_ft,
+                            bool have_ground_speed, int ground_speed_kt,
+                            bool have_track, int track_deg,
+                            bool have_vertical_rate, int vert_rate_fpm,
+                            bool have_air_ground, bool on_ground,
+                            uint8_t emitter_category,
+                            const char *callsign, size_t callsign_len)
+{
+    return gdl90_encode_traffic_typed(
+        out, out_cap, is_ownship, 0, icao24,
+        have_position, lat, lon, have_altitude, altitude_ft,
+        have_ground_speed, ground_speed_kt, have_track, track_deg,
+        have_vertical_rate, vert_rate_fpm, have_air_ground, on_ground,
+        emitter_category, callsign, callsign_len);
 }

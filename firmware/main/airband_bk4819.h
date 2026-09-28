@@ -97,3 +97,21 @@ bool pk_airband_squelch_update(bool was_open, int16_t rssi_dbm_x2,
 bool pk_airband_squelch_gate(bool enabled, bool was_open,
                              int16_t rssi_dbm_x2, int16_t open_dbm_x2,
                              uint16_t hysteresis_db_x2);
+
+typedef struct {
+    void *context;
+    bool (*read)(void *context, uint8_t reg, uint16_t *value);
+    bool (*write)(void *context, uint8_t reg, uint16_t value);
+} pk_airband_bk_io_t;
+typedef struct {
+    uint16_t reg7e;
+    uint16_t reg13;
+    uint32_t write_errors;
+    uint32_t read_errors;
+    uint32_t changes;
+} pk_airband_bk_gain_diag_t;
+
+/* RX safety guard, preserving reserved bits, exact readback. False means the
+ * previously committed gain must remain unchanged and RF is untrusted. */
+bool pk_airband_bk_apply_gain(const pk_airband_bk_io_t *io, uint16_t gain_bits,
+                              pk_airband_bk_gain_diag_t *diag);

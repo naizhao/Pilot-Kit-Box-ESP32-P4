@@ -394,7 +394,7 @@ static void test_iinlim_code_is_2a_not_por_default(void)
 }
 
 /* ── 11 关机序列：REG09 BATFET_DIS 置位 ────────────────────────────
- * V4.9 的 SW3 只接 /QON，不能把按键事件送给 MCU；BATFET_DIS 仍是软件
+ * V4.10 的 SW3 只接 /QON，不能把按键事件送给 MCU；BATFET_DIS 仍是软件
  * 关断电池→SYS 的路径，关机后可按住 SW3 退出 ship mode（DS p.4/p.30）。
  * 突变哨兵：掩码改成别的位（如 0x10）或改成 RMW_CLEAR，这条必红。 */
 static void test_shutdown_seq_sets_batfet_dis(void)
@@ -421,6 +421,202 @@ static void test_shutdown_seq_sets_batfet_dis(void)
     CHECK(strstr(seq[0].why, "只能靠插 USB") == NULL);
 }
 
+/* ── 12 关机取证必须覆盖 REG00..REG14 的同一份完整快照 ──────────────
+ * 阶段一不能只拿轮询窗口 REG0B..REG12：BATFET_DIS 在 REG09、watchdog
+ * 配置在 REG07，二者正是区分“真进 ship mode”与“黑屏但仍运行”的判据。
+ * 格式化函数只接受完整的 21 字节窗口，避免日志把短帧冒充全量快照。 */
+static void test_full_register_dump_is_complete_and_bounded(void)
+{
+    uint8_t regs[SY6970_REG_COUNT];
+    for (size_t i = 0; i < sizeof regs; i++) regs[i] = (uint8_t)i;
+
+    char line[SY6970_REG_DUMP_BUFSZ];
+    CHECK(sy6970_format_register_dump(regs, sizeof regs,
+                                      line, sizeof line) == true);
+    CHECK(strcmp(line,
+        "REG00=0x00 REG01=0x01 REG02=0x02 REG03=0x03 REG04=0x04 "
+        "REG05=0x05 REG06=0x06 REG07=0x07 REG08=0x08 REG09=0x09 "
+        "REG0A=0x0A REG0B=0x0B REG0C=0x0C REG0D=0x0D REG0E=0x0E "
+        "REG0F=0x0F REG10=0x10 REG11=0x11 REG12=0x12 REG13=0x13 "
+        "REG14=0x14") == 0);
+
+    line[0] = 'x';
+    CHECK(sy6970_format_register_dump(regs, sizeof regs - 1,
+                                      line, sizeof line) == false);
+    CHECK(line[0] == '\0');
+
+    char short_line[SY6970_REG_DUMP_BUFSZ - 1];
+    short_line[0] = 'x';
+    CHECK(sy6970_format_register_dump(regs, sizeof regs,
+                                      short_line, sizeof short_line) == false);
+    CHECK(short_line[0] == '\0');
+    CHECK(sy6970_format_register_dump(NULL, sizeof regs,
+                                      line, sizeof line) == false);
+    CHECK(sy6970_format_register_dump(regs, sizeof regs,
+                                      NULL, sizeof line) == false);
+}
+
+/* ── 13 完整快照必须直接给出 ship-mode 判据，不能靠人肉看十六进制 ──── */
+static void test_shutdown_evidence_decodes_control_and_rails(void)
+{
+    uint8_t regs[SY6970_REG_COUNT] = {0};
+    regs[0x07] = 0x20; /* WATCHDOG=10 → 80 s */
+    regs[0x09] = 0x2C; /* BATFET_DIS=1, DLY=1, RST_EN=1 */
+    regs[0x0B] = 0x7E; /* BUS_STAT=3, CHRG_STAT=3, PG=1 */
+    regs[0x0E] = 93;   /* BATT=4164 mV */
+    regs[0x0F] = 98;   /* SYS=4264 mV */
+    regs[0x11] = 0x99; /* BUS_GD=1, VBUS=5100 mV */
+
+    sy6970_shutdown_evidence_t ev;
+    memset(&ev, 0xA5, sizeof ev);
+    CHECK(sy6970_decode_shutdown_evidence(regs, sizeof regs, &ev) == true);
+    CHECK(ev.watchdog_code == 2);
+    CHECK(ev.batfet_dis == true);
+    CHECK(ev.batfet_dly == true);
+    CHECK(ev.batfet_rst_en == true);
+    CHECK(ev.bus_stat == 3);
+    CHECK(ev.vbus_present == true);
+    CHECK(ev.batt_mv == 4164);
+    CHECK(ev.sys_mv == 4264);
+    CHECK(ev.vbus_mv == 5100);
+
+    memset(regs, 0xFF, sizeof regs);
+    memset(&ev, 0xA5, sizeof ev);
+    CHECK(sy6970_decode_shutdown_evidence(regs, sizeof regs, &ev) == false);
+    sy6970_shutdown_evidence_t zero = {0};
+    CHECK(memcmp(&ev, &zero, sizeof ev) == 0);
+    CHECK(sy6970_decode_shutdown_evidence(regs, sizeof regs - 1, &ev) == false);
+    CHECK(sy6970_decode_shutdown_evidence(NULL, sizeof regs, &ev) == false);
+    CHECK(sy6970_decode_shutdown_evidence(regs, sizeof regs, NULL) == false);
+}
+
+/* ── 14 无 U19 VBUS 但 MCU 仍活着，只有 SYS 已下降才能确认下游供电 ──
+ * 2026-09-28 本机 H1 反例同时具备三条证据：BATFET_DIS=1、
+ * VBUS_PRESENT=0、SYS 4164→2304mV。前两条单独只能说明“U19 没看到
+ * VBUS 且软件位已置”，排除不了 BATFET 实际未断/电源轨异常。
+ *
+ * 突变哨兵：忽略 sys_dropped、把 true/false/false 直接归为
+ * DOWNSTREAM_POWER 时，本测试必须红。 */
+static void test_shutdown_survival_reason_requires_sys_drop_for_downstream(void)
+{
+    enum {
+        WANT_WRITE_NOT_LANDED = 0,
+        WANT_U19_VBUS_POWER = 1,
+        WANT_NO_U19_VBUS_SURVIVAL = 2,
+        WANT_DOWNSTREAM_POWER = 3,
+    };
+
+    CHECK(sy6970_shutdown_survival_reason(false, false, false)
+          == WANT_WRITE_NOT_LANDED);
+    CHECK(sy6970_shutdown_survival_reason(true, true, false)
+          == WANT_U19_VBUS_POWER);
+    CHECK(sy6970_shutdown_survival_reason(true, false, false)
+          == WANT_NO_U19_VBUS_SURVIVAL);
+    CHECK(sy6970_shutdown_survival_reason(true, false, true)
+          == WANT_DOWNSTREAM_POWER);
+}
+
+typedef struct {
+    uint8_t samples[2][SY6970_REG_COUNT];
+    size_t sample_count;
+    size_t reads;
+    size_t waits;
+    uint32_t waited_ms;
+} shutdown_probe_fake_t;
+
+static bool fake_shutdown_snapshot(void *ctx,
+                                   uint8_t regs[SY6970_REG_COUNT])
+{
+    shutdown_probe_fake_t *fake = ctx;
+    if (fake->reads >= fake->sample_count) return false;
+    memcpy(regs, fake->samples[fake->reads], SY6970_REG_COUNT);
+    fake->reads++;
+    return true;
+}
+
+static void fake_shutdown_wait(void *ctx, uint32_t wait_ms)
+{
+    shutdown_probe_fake_t *fake = ctx;
+    fake->waits++;
+    fake->waited_ms += wait_ms;
+}
+
+/* ── 15 写 BATFET_DIS 后必须跨过一次 ADC 转换再裁定 SYS 是否下降 ────
+ * 实板日志已证明写后的立即快照可能仍保留旧 SYS：第一次 4164mV 不能直接
+ * 判“没有下游供电证据”。连续转换周期为 1s；策略必须等待 1.1s，再取第二
+ * 份完整快照。这个测试同时约束 wait 调用、二次读取和最终分类，不能用只
+ * 给纯分类函数塞一个人工 sys_dropped=true 的测试替代。 */
+static void test_shutdown_probe_waits_for_fresh_adc_before_classifying(void)
+{
+    uint8_t pre[SY6970_REG_COUNT] = {0};
+    pre[0x0F] = 93; /* SYS=4164mV */
+
+    shutdown_probe_fake_t fake = {0};
+    fake.sample_count = 2;
+    fake.samples[0][0x09] = 0x20; /* BATFET_DIS=1 */
+    fake.samples[0][0x0F] = 93;   /* immediate stale SYS=4164mV */
+    fake.samples[1][0x09] = 0x20;
+    fake.samples[1][0x0F] = 0;    /* refreshed SYS ADC floor=2304mV */
+
+    sy6970_shutdown_probe_result_t out;
+    memset(&out, 0xA5, sizeof out);
+    CHECK(sy6970_probe_shutdown_survival(pre, sizeof pre,
+                                         fake_shutdown_snapshot,
+                                         fake_shutdown_wait,
+                                         &fake, &out) == true);
+    CHECK(fake.reads == 2);
+    CHECK(fake.waits == 1);
+    CHECK(fake.waited_ms == SY6970_SHUTDOWN_ADC_SETTLE_MS);
+    CHECK(out.adc_refreshed == true);
+    CHECK(out.reason == SY6970_SHUTDOWN_DOWNSTREAM_POWER);
+    CHECK(out.reg09 == 0x20);
+    CHECK(out.pre_sys_mv == 4164);
+    CHECK(out.post_sys_mv == 2304);
+
+    /* U19 自己看到 VBUS 时已有直接证据，不应为了 SYS 再等 1.1s。 */
+    memset(&fake, 0, sizeof fake);
+    fake.sample_count = 1;
+    fake.samples[0][0x09] = 0x20;
+    fake.samples[0][0x0B] = 0x20; /* BUS_STAT=1 */
+    fake.samples[0][0x11] = 0x80; /* BUS_GD=1 */
+    fake.samples[0][0x0F] = 93;
+    CHECK(sy6970_probe_shutdown_survival(pre, sizeof pre,
+                                         fake_shutdown_snapshot,
+                                         fake_shutdown_wait,
+                                         &fake, &out) == true);
+    CHECK(fake.reads == 1);
+    CHECK(fake.waits == 0);
+    CHECK(out.adc_refreshed == false);
+    CHECK(out.reason == SY6970_SHUTDOWN_U19_VBUS_POWER);
+}
+
+/* ── 17 配置丢失必须立即关闭关机闸，失败重放不得沿用历史 ready ────────
+ * 回归审查场景：先成功 bring-up，随后 WATCHDOG_FAULT 表示寄存器已回
+ * POR；若重放失败，BATFET_DIS 后 POR 40 s watchdog 会再次清掉该位，
+ * 设备表现为“关机后约 40 s 自行复活”。状态机必须 fail closed。 */
+static void test_config_gate_fails_closed_across_watchdog_replay(void)
+{
+    sy6970_config_gate_t gate = { 0 };
+    CHECK(sy6970_config_gate_allows_shutdown(&gate) == false);
+
+    sy6970_config_gate_finish_replay(&gate, true);
+    CHECK(sy6970_config_gate_allows_shutdown(&gate) == true);
+
+    sy6970_config_gate_mark_lost(&gate);
+    CHECK(sy6970_config_gate_allows_shutdown(&gate) == false);
+
+    sy6970_config_gate_finish_replay(&gate, false);
+    CHECK(sy6970_config_gate_allows_shutdown(&gate) == false);
+
+    sy6970_config_gate_finish_replay(&gate, true);
+    CHECK(sy6970_config_gate_allows_shutdown(&gate) == true);
+
+    /* NULL 防御也必须 fail closed。 */
+    sy6970_config_gate_mark_lost(NULL);
+    sy6970_config_gate_finish_replay(NULL, true);
+    CHECK(sy6970_config_gate_allows_shutdown(NULL) == false);
+}
+
 int main(void)
 {
     test_decode_normal_not_charging();
@@ -435,6 +631,11 @@ int main(void)
     test_init_seq_matches_evidence();
     test_iinlim_code_is_2a_not_por_default();
     test_shutdown_seq_sets_batfet_dis();
+    test_full_register_dump_is_complete_and_bounded();
+    test_shutdown_evidence_decodes_control_and_rails();
+    test_shutdown_survival_reason_requires_sys_drop_for_downstream();
+    test_shutdown_probe_waits_for_fresh_adc_before_classifying();
+    test_config_gate_fails_closed_across_watchdog_replay();
 
     if (g_fail == 0) {
         printf("test_power_sy6970: all OK\n");

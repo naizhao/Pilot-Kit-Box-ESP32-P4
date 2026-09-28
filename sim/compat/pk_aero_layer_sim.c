@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /* 与 sim/compat/mock_runtime.c 的 MAP_DEMO_OWN_LAT/LON 同值（珠三角，落在
  * datafiles/maps 的 prd_pilot 试点包高清区间内）。那两个是它的 static 宏，这里
@@ -236,6 +237,50 @@ void pk_aero_db_status_get(pk_aero_db_status_t *out)
 }
 
 uint32_t pk_aero_db_generation(void) { return aero_on() ? 1u : 0u; }
+
+static uint16_t sim_grid_cell(double lat, double lon)
+{
+    int row=(int)floor(lat)+90;
+    if (row < 0) row=0;
+    if (row > 179) row=179;
+    int col=((int)floor(lon)+180)%360;
+    if (col < 0) col+=360;
+    return (uint16_t)(row*360+col);
+}
+
+bool pk_aero_db_airports_with_freqs_nearby_all(double lat, double lon,
+    pk_aero_near_t **out, size_t *count)
+{
+    if (!out || !count) return false;
+    *out = NULL; *count = 0;
+    if (!aero_on()) return false;
+    pk_aero_near_t *rows = malloc((size_t)NAPT * sizeof(*rows));
+    if (!rows) return false;
+    int n = near_all(kApt, sizeof(kApt[0]), NAPT, lat, lon, rows, NAPT);
+    const uint16_t cell = sim_grid_cell(lat, lon);
+    for (int i = 0; i < n; ++i) {
+        pk_aero_airport_t apt;
+        uint32_t first, num;
+        if (!pk_aero_db_airport_get(rows[i].idx, &apt) ||
+            !pk_aero_db_airport_freqs(rows[i].idx, &first, &num) || !num) continue;
+        uint16_t ac = sim_grid_cell(apt.lat, apt.lon);
+        int dr = (int)(ac / 360) - (int)(cell / 360);
+        int dc = ((int)(ac % 360) - (int)(cell % 360) + 540) % 360 - 180;
+        if (dr < -1 || dr > 1 || dc < -1 || dc > 1) continue;
+        rows[(*count)++] = rows[i];
+    }
+    *out = rows;
+    return true;
+}
+
+bool pk_aero_db_freq_get_copy(uint32_t idx, pk_aero_freq_t *out,
+                              char *callsign, size_t callsign_size)
+{
+    if (!callsign || !callsign_size || !pk_aero_db_freq_get(idx, out)) return false;
+    snprintf(callsign, callsign_size, "%s", out->callsign ? out->callsign : "");
+    out->callsign=callsign;
+    return true;
+}
 
 /*
  * 滚动窗口（pk_win）的状态快照。真身依赖 FreeRTOS 任务 + SD 区间读，host 上

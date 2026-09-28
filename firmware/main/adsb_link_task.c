@@ -30,6 +30,7 @@
 #include "adsb_link_task.h"
 #include "config_antenna.h"
 #include "vbus_sense.h"        /* F6：RP2040 上报的 VBUS 分压中点 */   /* 天线选择：NVS 真源，经 CONFIG_REQ 下发 */
+#include "ble_gatt.h"
 #include "freertos/semphr.h"
 
 static const char *TAG      = "dsp";     /* 沿用旧 TAG，日志检索连续 */
@@ -733,6 +734,28 @@ static void on_uat_uplink(const uat_uplink_t *up,
              "UAT uplink: site=%.5f,%.5f slot=%u tisb=%u info=%u rs_corr=%u",
              up->lat_deg_e6 / 1e6, up->lon_deg_e6 / 1e6,
              up->slot_id, up->tisb_site_id, up->num_info_frames, rs_corrected);
+    if (up->app_data_valid && up->raw_data != NULL)
+        (void)ble_gatt_notify_uat_uplink(up->raw_data, UAT_UPLINK_DATA_BYTES);
+}
+
+/* 978 MHz 下行 ADS-B/TIS-B 与 1090 共用同一张 ICAO 状态表。地址限定符
+ * 的安全判定在 aircraft_state_ingest_uat() 内完成：track-file / vehicle /
+ * beacon 地址不会伪装成 ICAO。这里保留 CC RAT/RSSI 作为接收链证据，但不把
+ * RAT 时钟与 RP2040 的 1090 时间戳跨域比较。 */
+static void on_uat_downlink(const uat_aircraft_msg_t *msg,
+                            const uat_downlink_meta_t *meta,
+                            uint8_t rs_corrected, void *user)
+{
+    (void)user;
+    const int64_t now_us = esp_timer_get_time();
+    const bool accepted = aircraft_state_ingest_uat(msg, now_us);
+    if (accepted) icao_seen_insert(msg->address);
+    ESP_LOGD(TAG_ADSB,
+             "UAT downlink: type=%u aq=%u addr=%06" PRIX32
+             " accepted=%u rssi=%d seq=%u rat=%" PRIu32 " rs_corr=%u",
+             msg->mdb_type, (unsigned)msg->addr_qualifier, msg->address,
+             accepted ? 1u : 0u, (int)meta->rssi_dbm,
+             (unsigned)meta->frame_seq, meta->cc_time, rs_corrected);
 }
 
 /* --- 链路消息分发 ------------------------------------------------------ */
@@ -904,10 +927,15 @@ void pk_adsb_link_push_config(void)
 static uint32_t s_rp_health[ADSB_LINK_HEALTH_FIELDS];
 static int      s_rp_health_n;          /* 有效字段数，0 = 尚未收到 */
 static bool     s_rp_health_valid;
+static atomic_llong s_rp_health_rx_us;  /* HEALTH_STATS 本身的接收时刻 */
 
 int pk_adsb_rp_health(uint32_t *out)
 {
     if (!s_rp_health_valid) return 0;
+    const int64_t received = atomic_load_explicit(&s_rp_health_rx_us,
+                                                  memory_order_relaxed);
+    if (received <= 0 || esp_timer_get_time() - received > LINK_STALE_US)
+        return 0;
     for (int i = 0; i < ADSB_LINK_HEALTH_FIELDS; i++) out[i] = s_rp_health[i];
     return s_rp_health_n;
 }
@@ -1090,6 +1118,42 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         uat_ingest_feed(u_fr, &meta);
         break;
     }
+    case ADSB_LINK_MSG_UAT_RX_FRAME: {
+        adsb_link_uat_rx_meta_t rx;
+        const uint8_t *frame = NULL;
+        uint16_t frame_len = 0;
+        if (!adsb_link_uat_rx_decode(m->payload, m->payload_len, &rx,
+                                     &frame, &frame_len)) {
+            atomic_fetch_add_explicit(&s_stats.uat_len_drop, 1,
+                                      memory_order_relaxed);
+            break;
+        }
+        const uint8_t required = ADSB_LINK_UAT_F_SYNC36_OK |
+                                 ADSB_LINK_UAT_F_RF_STATUS_OK |
+                                 ADSB_LINK_UAT_F_SET_LEN_OK;
+        if ((rx.flags & required) != required) {
+            atomic_fetch_add_explicit(&s_stats.uat_len_drop, 1,
+                                      memory_order_relaxed);
+            break;
+        }
+        if (rx.kind == ADSB_LINK_UAT_UPLINK) {
+            /* 旧上行 meta 的 RSSI 编码与 v1.4 有符号 dBm 不同；不伪造一次
+             * 换算，明确标为 unknown，CC RAT 仍按原有字段原样保留。 */
+            uat_ingest_meta_t meta = {
+                .rssi = 0xFF,
+                .rp_ts_us = rx.cc_time,
+            };
+            uat_ingest_feed(frame, &meta);
+        } else {
+            uat_downlink_meta_t meta = {
+                .rssi_dbm = rx.rssi_dbm,
+                .frame_seq = rx.frame_seq,
+                .cc_time = rx.cc_time,
+            };
+            uat_downlink_ingest_feed(frame, frame_len, &meta);
+        }
+        break;
+    }
     case ADSB_LINK_MSG_SWEEP_ROW:
         sweep_store_row(m);
         break;
@@ -1105,6 +1169,8 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         /* HELLO = 对面刚回到上电默认；旧 ACK 不会再来，旧实际来源也已失效。 */
         config_pending_reset();
         pk_ant_config_link_reset();
+        s_rp_health_valid = false;
+        atomic_store_explicit(&s_rp_health_rx_us, 0, memory_order_relaxed);
         uint8_t pl[17] = { 0 };              /* min_minor + build[16] */
         memcpy(pl + 1, "p4-mvp", sizeof "p4-mvp");
         link_tx(ADSB_LINK_MSG_HELLO, pl, sizeof pl);
@@ -1157,7 +1223,7 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         /* 存一份给 rf1090_log 落 SD：串口日志的存活取决于有没有插线，
          * 而这些计数只产生在 RP2040 上，P4 是唯一的落盘出口。
          * 字段数按 payload_len 推导：旧 RP2040 只发 11 个（44 B），
-         * v1.3 起发 13 个（52 B）；缺的字段填 0 并记下有效数，调用方
+         * v1.3 发 13 个（52 B），新固件在后缀追加 UAT RF 诊断；缺字段填 0，
          * 据此回退到 P4 本地值。 */
         int nf = 0;
         for (int i = 0; i < ADSB_LINK_HEALTH_FIELDS; i++) {
@@ -1170,6 +1236,8 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
         }
         s_rp_health_n = nf;
         s_rp_health_valid = true;
+        atomic_store_explicit(&s_rp_health_rx_us, esp_timer_get_time(),
+                              memory_order_relaxed);
 
         /* 1 Hz 概要打进日志；诊断页取 P4 本地计数。
          *
@@ -1182,7 +1250,7 @@ static void on_link_msg(void *user, const adsb_link_msg_t *m)
          * 天线/门限**优先取 RP 实报值**：扫描期间门限由 RP 的扫描状态机逐点
          * 改、CDC 的 'a'/'A' 直接改天线，都不经过 P4，P4 本地值此时是错的。
          * 对面是旧 RP2040（只发 11 个字段）时才回退到 P4 本地值。 */
-        const bool rp_rf = (nf >= ADSB_LINK_HEALTH_FIELDS);
+        const bool rp_rf = (nf > ADSB_LINK_HEALTH_IDX_ANT_1090);
         const int  tl = rp_rf
             ? (int)s_rp_health[ADSB_LINK_HEALTH_IDX_THRESHOLD]
             : pk_thresh_1090_get();
@@ -1223,6 +1291,7 @@ static void adsb_link_task(void *arg)
     cpr_init();
     modes_ingest_init(on_ingest_msg, NULL);
     uat_ingest_init(on_uat_uplink, NULL);
+    uat_downlink_ingest_init(on_uat_downlink, NULL);
     adsb_link_dec_init(&s_dec, on_link_msg, NULL);
     atomic_store_explicit(&s_last_frame_us, esp_timer_get_time(),
                           memory_order_relaxed);
@@ -1286,6 +1355,13 @@ pk_adsb_link_state_t pk_adsb_link_state_get(pk_adsb_link_stats_t *stats)
                                                     memory_order_relaxed);
         stats->modes_fed     = atomic_load_explicit(&s_stats.modes_fed,
                                                     memory_order_relaxed);
+        uat_downlink_ingest_stats_t uat = {0};
+        uat_downlink_ingest_get_stats(&uat);
+        stats->uat_dl_frames = uat.frames_total;
+        stats->uat_aircraft = uat.aircraft_msgs;
+        stats->uat_bad_rs = uat.bad_rs;
+        stats->uat_transport_drops =
+            atomic_load_explicit(&s_stats.uat_len_drop, memory_order_relaxed);
     }
     if (atomic_load_explicit(&s_proto_mismatch_seen, memory_order_relaxed))
         return PK_ADSB_LINK_PROTO_MISMATCH;

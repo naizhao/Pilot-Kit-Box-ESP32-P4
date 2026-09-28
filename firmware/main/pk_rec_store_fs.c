@@ -534,18 +534,21 @@ bool pk_rec_store_rebuild_index(const char *session_dir, const uint8_t own_icao[
     int n = snprintf(path, sizeof(path), "%s/traffic.trk", session_dir);
     if (n < 0 || (size_t)n >= sizeof(path)) return false;
 
+    if (!pk_sdcard_io_acquire()) return false;
     FILE *fp = fopen(path, "rb");
-    if (fp == NULL) return false;
+    if (fp == NULL) { pk_sdcard_io_release(); return false; }
 
     uint8_t hdrbuf[PK_REC_HEADER_LEN];
     if (fread(hdrbuf, 1, PK_REC_HEADER_LEN, fp) != PK_REC_HEADER_LEN) {
         fclose(fp);
+        pk_sdcard_io_release();
         return false;
     }
     pk_rec_header_t hdr;
     if (!pk_rec_header_decode(hdrbuf, &hdr) || hdr.file_kind != PK_REC_FILE_KIND_TRAFFIC_TRK) {
         ESP_LOGW(TAG, "rebuild_index(%s): 文件头校验失败", path);
         fclose(fp);
+        pk_sdcard_io_release();
         return false;
     }
 
@@ -574,6 +577,7 @@ bool pk_rec_store_rebuild_index(const char *session_dir, const uint8_t own_icao[
     }
     #undef REBUILD_CHUNK_RECORDS
     fclose(fp);
+    pk_sdcard_io_release();
     return true;
 }
 
@@ -662,13 +666,18 @@ void pk_rec_store_init(void)
         return;
     }
 
+    if (!pk_sdcard_register_pre_unmount_cb(pk_rec_store_pre_unmount)) {
+        ESP_LOGE(TAG, "pre-unmount barrier unavailable; recording disabled");
+        vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+        return;
+    }
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (pk_sdcard_is_mounted()) {
         ensure_session_open_locked();
     }
     xSemaphoreGive(s_lock);
-
-    pk_sdcard_register_pre_unmount_cb(pk_rec_store_pre_unmount);
 
     BaseType_t ok = xTaskCreatePinnedToCore(rec_store_task, "rec_store",
                                             REC_STORE_TASK_STACK, NULL, 2, NULL, 0);

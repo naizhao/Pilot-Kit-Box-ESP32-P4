@@ -69,6 +69,7 @@
 #include <string.h>
 
 static const char *TAG = "pfd";
+static volatile bool s_pfd_ready;
 
 /* --- Transient toast overlay ---------------------------------------- *
  * 每帧把 ui_state 里的 toast 状态同步给控件层。
@@ -114,11 +115,13 @@ static void pfd_task(void *arg)
     if (pk_lv_port_init() != ESP_OK) {
         ESP_LOGE(TAG, "LVGL init failed — exiting");
         vTaskDelete(NULL);
+        return;
     }
     uint16_t *fb = pk_lv_port_canvas_px();
     if (fb == NULL) {
         ESP_LOGE(TAG, "no canvas buffer — exiting");
         vTaskDelete(NULL);
+        return;
     }
     /* 先有输入设备再建控件：nav 层那些 lv_indev_active() 取的是「当前正在
      * 上报的设备」，一个都没注册的话 dock 与 FAB 全是死的。 */
@@ -127,6 +130,8 @@ static void pfd_task(void *arg)
     pk_ui_nav_init();
     /* 建完 FAB 才能把它摆回上次的落点。 */
     pk_ui_nav_host_init();
+    s_pfd_ready = true;
+    ESP_LOGI(TAG, "UI render path ready");
 
     /* Big stack-eaters live here as file-static so they don't blow the
      * task stack. Pinned to PSRAM (.ext_ram.bss) so they don't compete
@@ -561,9 +566,15 @@ static void pfd_task(void *arg)
 
 esp_err_t pk_pfd_start(void)
 {
+    s_pfd_ready = false;
     /* 6 KiB stack — generous because trig / floating-point ESP_LOGI
      * format strings can each chew 1 KiB on RISC-V. */
     BaseType_t ok = xTaskCreatePinnedToCore(
         pfd_task, "pfd", 6 * 1024, NULL, 4, NULL, 0);
     return (ok == pdTRUE) ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+bool pk_pfd_ready(void)
+{
+    return s_pfd_ready;
 }

@@ -64,9 +64,14 @@ static void demo_sd_task(void *arg)
         waited += WAIT_POLL_MS;
     }
 
+    if (!pk_sdcard_io_acquire()) {
+        vTaskDelete(NULL);
+        return;
+    }
     static char names[PK_DEMO_GPX_LIST_MAX][PK_DEMO_GPX_NAME_MAX];
     const int n = pk_demo_gpx_list_dir(PK_DEMO_SD_DIR, names, PK_DEMO_GPX_LIST_MAX);
     if (n <= 0) {
+        pk_sdcard_io_release();
         /* 目录不存在与目录空着在这里没必要分开——用户要做的事都是"往
          * /sdcard/demo 里拷一个 .gpx"，日志把路径写全就够了。 */
         ESP_LOGI(TAG, "no *.gpx in %s — using built-in demo track", PK_DEMO_SD_DIR);
@@ -89,11 +94,13 @@ static void demo_sd_task(void *arg)
     pk_demo_gpx_result_t res;
     const char *err = NULL;
     if (!pk_demo_gpx_load_file(path, 0, &PSRAM_HOOKS, &res, &err)) {
+        pk_sdcard_io_release();
         ESP_LOGW(TAG, "parse %s failed: %s — falling back to built-in demo track",
                  path, err ? err : "?");
         vTaskDelete(NULL);
         return;
     }
+    pk_sdcard_io_release();
     const int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
 
     if (res.truncated) {

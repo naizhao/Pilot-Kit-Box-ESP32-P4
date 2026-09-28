@@ -1,7 +1,7 @@
 /*
  * rp_cc13xx_codec.c — RP2040↔CC1312R Sub-GHz 链路 v1 共享编解码器实现。
  *
- * 判据来源：firmware/PROTOCOL_RP2040_CC1312R_SPI.md（v1.0）§3/§4/§5。
+ * 判据来源：firmware/PROTOCOL_RP2040_CC1312R_SPI.md（v1.1）§3/§4/§5。
  * CRC-16/CCITT-FALSE 直接复用 adsb_link_crc16（adsb_link_codec.c:4-13，
  * 规范 §3.2 指定的实现唯一权威，"一仓一族 CRC"）——不复制、不另立参数，
  * 由编译期链接保证本链路与 P4 UART 链路的 CRC 永不漂移。
@@ -39,6 +39,20 @@ static void wr_le32(uint8_t *p, uint32_t v)
     p[1] = (uint8_t)(v >> 8);
     p[2] = (uint8_t)(v >> 16);
     p[3] = (uint8_t)(v >> 24);
+}
+
+int rp_cc13xx_uat_kind_len_valid(uint8_t kind, uint16_t len)
+{
+    switch (kind) {
+    case RP_CC13XX_UAT_DOWNLINK_SHORT:
+        return len == RP_CC13XX_UAT_SHORT_LEN;
+    case RP_CC13XX_UAT_DOWNLINK_LONG:
+        return len == RP_CC13XX_UAT_LONG_LEN;
+    case RP_CC13XX_UAT_UPLINK:
+        return len == RP_CC13XX_UAT_UPLINK_LEN;
+    default:
+        return 0;
+    }
 }
 
 size_t rp_cc13xx_encode(uint8_t *out, size_t cap, uint8_t msg_type,
@@ -83,10 +97,15 @@ static rp_cc13xx_status_t payload_check(uint8_t type, const uint8_t *p,
     case RP_CC13XX_MSG_UPGRADE_STATUS_REQ:
         return plen == 0 ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_RX_DESCRIPTOR:
-        /* §4.3：len=14、保留位 0、total_len ≤ 4096（编码/解码两侧强制，
-         * 超限即 len 违规——线上不存在 4097+ 的合法描述符）。 */
-        return (plen == RP_CC13XX_RX_DESCRIPTOR_LEN && (p[13] & 0xFC) == 0 &&
+        return (plen == 14 && (p[13] & 0xFC) == 0 &&
                 rd_le16(p + 10) <= RP_CC13XX_MAX_MSG_LEN)
+               ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
+    case RP_CC13XX_MSG_RX_DESCRIPTOR_V2:
+        /* v2 §4.3：kind/长度严格配对，flags/reserved 不得夹带未知语义。 */
+        return (plen == RP_CC13XX_RX_DESCRIPTOR_LEN &&
+                rp_cc13xx_uat_kind_len_valid(p[13], rd_le16(p + 10)) &&
+                (p[14] & (uint8_t)~RP_CC13XX_DESC_F_KNOWN_MASK) == 0 &&
+                p[15] == 0)
                ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_RX_PAYLOAD_CHUNK:
         /* data 长度 = plen − 6 ∈ [1, 496]（§4.4：空分片拒绝——无推进的
@@ -103,6 +122,10 @@ static rp_cc13xx_status_t payload_check(uint8_t type, const uint8_t *p,
                ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_RESET_STATUS:
         return plen == RP_CC13XX_RESET_STATUS_LEN
+               ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
+    case RP_CC13XX_MSG_RF_HEALTH_STATUS:
+        return (plen == RP_CC13XX_RF_HEALTH_LEN &&
+                (p[0] & (uint8_t)~RP_CC13XX_RF_HEALTH_KNOWN_MASK) == 0)
                ? RP_CC13XX_OK : RP_CC13XX_ERR_LEN;
     case RP_CC13XX_MSG_UPGRADE_STATUS:
         return (plen == RP_CC13XX_UPGRADE_STATUS_LEN &&
@@ -147,11 +170,13 @@ rp_cc13xx_status_t rp_cc13xx_decode_frame(const uint8_t *buf, size_t buflen,
         type != RP_CC13XX_MSG_PING && type != RP_CC13XX_MSG_PONG &&
         type != RP_CC13XX_MSG_RX_DESCRIPTOR &&
         type != RP_CC13XX_MSG_RX_PAYLOAD_CHUNK &&
+        type != RP_CC13XX_MSG_RX_DESCRIPTOR_V2 &&
         type != RP_CC13XX_MSG_QUEUE_FULL &&
         type != RP_CC13XX_MSG_RF_CONFIG &&
         type != RP_CC13XX_MSG_RF_CONFIG_STATUS &&
         type != RP_CC13XX_MSG_RESET_STATUS_REQ &&
         type != RP_CC13XX_MSG_RESET_STATUS &&
+        type != RP_CC13XX_MSG_RF_HEALTH_STATUS &&
         type != RP_CC13XX_MSG_UPGRADE_STATUS_REQ &&
         type != RP_CC13XX_MSG_UPGRADE_STATUS &&
         type != RP_CC13XX_MSG_ERROR) {
@@ -225,18 +250,33 @@ rp_cc13xx_status_t rp_cc13xx_decode_hello(const rp_cc13xx_msg_t *m,
 size_t rp_cc13xx_encode_rx_descriptor(uint8_t *out, size_t cap, uint16_t seq,
                                       const rp_cc13xx_rx_desc_t *d)
 {
-    /* §4.3：保留位发送方置 0；total_len ≤ 4096 发送侧强制（P2-a：
-     * 截断只发生在 slave 入队前并置 flags bit1，编码器不得透传超限值）。 */
-    if (!d || (d->flags & 0xFC) || d->total_len > RP_CC13XX_MAX_MSG_LEN)
+    if (!d) return 0;
+    if (d->kind == 0) {
+        if ((d->flags & 0xFC) || d->total_len > RP_CC13XX_MAX_MSG_LEN)
+            return 0;
+        uint8_t legacy[14];
+        wr_le16(legacy, d->desc_id);
+        wr_le32(legacy + 2, d->freq_hz);
+        wr_le32(legacy + 6, d->ts_us);
+        wr_le16(legacy + 10, d->total_len);
+        legacy[12] = d->rssi;
+        legacy[13] = d->flags;
+        return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_RX_DESCRIPTOR, seq,
+                                legacy, sizeof legacy);
+    }
+    if (!rp_cc13xx_uat_kind_len_valid(d->kind, d->total_len) ||
+        (d->flags & (uint8_t)~RP_CC13XX_DESC_F_KNOWN_MASK) || d->reserved)
         return 0;
     uint8_t pl[RP_CC13XX_RX_DESCRIPTOR_LEN];
-    wr_le16(pl, d->desc_id);
+    wr_le16(pl, d->frame_seq);
     wr_le32(pl + 2, d->freq_hz);
-    wr_le32(pl + 6, d->ts_us);
+    wr_le32(pl + 6, d->cc_time);
     wr_le16(pl + 10, d->total_len);
-    pl[12] = d->rssi;
-    pl[13] = d->flags;
-    return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_RX_DESCRIPTOR, seq,
+    pl[12] = (uint8_t)d->rssi_dbm;
+    pl[13] = d->kind;
+    pl[14] = d->flags;
+    pl[15] = 0;
+    return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_RX_DESCRIPTOR_V2, seq,
                             pl, sizeof pl);
 }
 
@@ -244,16 +284,34 @@ rp_cc13xx_status_t rp_cc13xx_decode_rx_descriptor(const rp_cc13xx_msg_t *m,
                                                   rp_cc13xx_rx_desc_t *d)
 {
     if (!m || !d) return RP_CC13XX_ERR_ARG;
-    if (m->payload_len != RP_CC13XX_RX_DESCRIPTOR_LEN || (m->payload[13] & 0xFC))
+    if (m->type == RP_CC13XX_MSG_RX_DESCRIPTOR && m->payload_len == 14) {
+        /* v1 generic descriptor 兼容；kind=0 明确表示无帧族语义。 */
+        if (rd_le16(m->payload + 10) > RP_CC13XX_MAX_MSG_LEN ||
+            (m->payload[13] & 0xFC)) return RP_CC13XX_ERR_LEN;
+        d->frame_seq = rd_le16(m->payload);
+        d->freq_hz = rd_le32(m->payload + 2);
+        d->cc_time = rd_le32(m->payload + 6);
+        d->total_len = rd_le16(m->payload + 10);
+        d->rssi_dbm = (int8_t)m->payload[12];
+        d->kind = 0;
+        d->flags = m->payload[13];
+        d->reserved = 0;
+        return RP_CC13XX_OK;
+    }
+    if (m->type != RP_CC13XX_MSG_RX_DESCRIPTOR_V2 ||
+        m->payload_len != RP_CC13XX_RX_DESCRIPTOR_LEN ||
+        !rp_cc13xx_uat_kind_len_valid(m->payload[13], rd_le16(m->payload + 10)) ||
+        (m->payload[14] & (uint8_t)~RP_CC13XX_DESC_F_KNOWN_MASK) ||
+        m->payload[15])
         return RP_CC13XX_ERR_LEN;
-    if (rd_le16(m->payload + 10) > RP_CC13XX_MAX_MSG_LEN)
-        return RP_CC13XX_ERR_LEN;   /* §4.3：total_len ≤ 4096 接收侧强制 */
-    d->desc_id = rd_le16(m->payload);
+    d->frame_seq = rd_le16(m->payload);
     d->freq_hz = rd_le32(m->payload + 2);
-    d->ts_us = rd_le32(m->payload + 6);
+    d->cc_time = rd_le32(m->payload + 6);
     d->total_len = rd_le16(m->payload + 10);
-    d->rssi = m->payload[12];
-    d->flags = m->payload[13];
+    d->rssi_dbm = (int8_t)m->payload[12];
+    d->kind = m->payload[13];
+    d->flags = m->payload[14];
+    d->reserved = 0;
     return RP_CC13XX_OK;
 }
 
@@ -363,6 +421,37 @@ rp_cc13xx_status_t rp_cc13xx_decode_reset_status(const rp_cc13xx_msg_t *m,
     return RP_CC13XX_OK;
 }
 
+size_t rp_cc13xx_encode_rf_health(uint8_t *out, size_t cap, uint16_t seq,
+                                  const rp_cc13xx_rf_health_t *h)
+{
+    if (!h || (h->flags & (uint8_t)~RP_CC13XX_RF_HEALTH_KNOWN_MASK)) return 0;
+    uint8_t pl[RP_CC13XX_RF_HEALTH_LEN];
+    pl[0] = h->flags;
+    pl[1] = (uint8_t)h->idle_rssi_dbm;
+    wr_le16(pl + 2, h->last_raw_status);
+    wr_le32(pl + 4, h->probe_successes);
+    wr_le32(pl + 8, h->probe_errors);
+    wr_le32(pl + 12, h->rf_reinits);
+    return rp_cc13xx_encode(out, cap, RP_CC13XX_MSG_RF_HEALTH_STATUS, seq,
+                            pl, sizeof(pl));
+}
+
+rp_cc13xx_status_t rp_cc13xx_decode_rf_health(const rp_cc13xx_msg_t *m,
+                                              rp_cc13xx_rf_health_t *h)
+{
+    if (!m || !h || m->type != RP_CC13XX_MSG_RF_HEALTH_STATUS ||
+        m->payload_len != RP_CC13XX_RF_HEALTH_LEN ||
+        (m->payload[0] & (uint8_t)~RP_CC13XX_RF_HEALTH_KNOWN_MASK))
+        return RP_CC13XX_ERR_LEN;
+    h->flags = m->payload[0];
+    h->idle_rssi_dbm = (int8_t)m->payload[1];
+    h->last_raw_status = rd_le16(m->payload + 2);
+    h->probe_successes = rd_le32(m->payload + 4);
+    h->probe_errors = rd_le32(m->payload + 8);
+    h->rf_reinits = rd_le32(m->payload + 12);
+    return RP_CC13XX_OK;
+}
+
 /* ── §4.8 UPGRADE_STATUS ───────────────────────────────────────────────── */
 
 size_t rp_cc13xx_encode_upgrade_status(uint8_t *out, size_t cap, uint16_t seq,
@@ -450,7 +539,8 @@ rp_cc13xx_status_t rp_cc13xx_reasm_start(rp_cc13xx_reasm_t *r,
     r->desc_id = d->desc_id;
     r->total_len = d->total_len;
     r->have = 0;
-    r->truncated = (d->flags & RP_CC13XX_DESC_F_TRUNCATED) ? 1 : 0;
+    /* v2 只承载三种完整 RF 帧；PHY/队列不允许截断后冒充合法帧。 */
+    r->truncated = 0;
     r->active = 1;
     return RP_CC13XX_OK;
 }

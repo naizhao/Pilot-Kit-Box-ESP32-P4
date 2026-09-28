@@ -155,6 +155,7 @@ static void power_log_task(void *arg)
             continue;
         }
         warned = false;
+        if (!pk_sdcard_io_acquire()) continue;
 
         /* 卡拔了又插回来算新的一段：挂载代数变了就重打 boot 标记。
          * 用代数而不是 is_mounted 的电平——卡不在的窗口可能整个落在两次
@@ -164,6 +165,7 @@ static void power_log_task(void *arg)
 
         FILE *fp = open_log();
         if (fp == NULL) {
+            pk_sdcard_io_release();
             ESP_LOGW(TAG, "打开 %s 失败，下一拍重试", PWRLOG_PATH);
             vTaskDelay(pdMS_TO_TICKS(PWRLOG_PERIOD_MS));
             continue;
@@ -186,6 +188,7 @@ static void power_log_task(void *arg)
         fflush(fp);
         fsync(fileno(fp));
         fclose(fp);
+        pk_sdcard_io_release();
 
         vTaskDelay(pdMS_TO_TICKS(PWRLOG_PERIOD_MS));
     }

@@ -163,6 +163,7 @@ static const uint8_t s_bl_step_duty[PK_BL_STEP_COUNT] = { 38, 180, 255 };
  * get——PWM 占空比反推不出档位（档位到占空比不是线性的）。
  * 默认 MID：main.c 点亮 splash 时就是这一档，开机进设置页高亮要对得上。 */
 static uint8_t s_bl_step = PK_BL_STEP_MID;
+static volatile bool s_screen_awake = true;
 
 uint8_t pk_backlight_step_get(void) { return s_bl_step; }
 
@@ -181,6 +182,25 @@ void pk_display_set_brightness(uint8_t level)
     if (ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, duty) == ESP_OK) {
         (void)ledc_update_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL);
     }
+}
+
+void pk_display_screen_set_awake(bool awake)
+{
+    if (awake == s_screen_awake) return;
+
+    if (awake) {
+        /* 档位是用户设置，息屏期间不改它；恢复时回到原档。 */
+        pk_display_set_brightness(s_bl_step_duty[s_bl_step]);
+        s_screen_awake = true;
+    } else {
+        pk_display_set_brightness(0);
+        s_screen_awake = false;
+    }
+}
+
+bool pk_display_screen_awake(void)
+{
+    return s_screen_awake;
 }
 
 void pk_display_panel_off(void)

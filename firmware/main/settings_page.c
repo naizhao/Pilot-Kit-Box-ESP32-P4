@@ -35,6 +35,7 @@
 #include "adsb_link_task.h"  /* pk_sweep_running —— 扫描中锁住天线切换 */
 #include "keyboard_page.h"
 #include "pk_sdcard.h"
+#include "airband_record.h"
 #include "record_sink.h"
 #include "ui_state.h"      /* pk_ui_toast_show —— 演示模式开关的即时反馈；
                             * pk_ui_cal_wizard_enter —— 罗盘校准那一行 */
@@ -113,6 +114,15 @@ int pk_settings_format_state(void)
 void pk_settings_format_action(void)
 {
     fmt_decay();
+    pk_airband_record_status_t rec;
+    pk_airband_record_get(&rec);
+    if ((s_fmt_state == FMT_IDLE || s_fmt_state == FMT_ARM) &&
+        (rec.enabled || rec.active || rec.stopping)) {
+        ESP_LOGW(TAG,"format refused: stop AIRBAND recording first");
+        s_fmt_state=FMT_INUSE;
+        s_fmt_since=esp_timer_get_time();
+        return;
+    }
     switch (s_fmt_state) {
     case FMT_IDLE:
         if (!pk_sdcard_is_mounted()) {

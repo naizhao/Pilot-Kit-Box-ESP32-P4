@@ -29,6 +29,7 @@
 #include "modes_ingest.h"
 #include "pk_rec_ingest.h"
 #include "record_sink.h"
+#include "uat_ingest.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -61,6 +62,8 @@ bool pk_gps_get(pk_gps_state_t *out)
 }
 
 bool pk_demo_enabled(void) { return false; }
+bool ble_gatt_notify_uat_uplink(const uint8_t *payload, size_t len)
+{ (void)payload; (void)len; return false; }
 
 /* Antenna config lives in NVS on the P4 and is pushed to the RP2040 over
  * CONFIG_REQ.  This test exercises the message dispatcher, not the config
@@ -166,6 +169,34 @@ bool adsb_link_uat_uplink_decode(const uint8_t *payload, size_t len,
     (void)payload; (void)len; (void)rssi; (void)rp_ts_us; (void)frame;
     return false;
 }
+bool adsb_link_uat_rx_decode(const uint8_t *payload, size_t len,
+                             adsb_link_uat_rx_meta_t *meta,
+                             const uint8_t **frame, uint16_t *frame_len)
+{
+    if (!payload || len < ADSB_LINK_UAT_RX_META_BYTES) return false;
+    const uint16_t n = (uint16_t)(payload[6] | ((uint16_t)payload[7] << 8));
+    if (len != ADSB_LINK_UAT_RX_META_BYTES + n ||
+        !adsb_link_uat_kind_len_valid(payload[0], n)) return false;
+    if (meta) {
+        meta->kind = payload[0];
+        meta->flags = payload[1];
+        meta->rssi_dbm = (int8_t)payload[2];
+        meta->frame_seq = (uint16_t)(payload[4] | ((uint16_t)payload[5] << 8));
+        meta->cc_time = (uint32_t)payload[8] |
+                        ((uint32_t)payload[9] << 8) |
+                        ((uint32_t)payload[10] << 16) |
+                        ((uint32_t)payload[11] << 24);
+    }
+    if (frame) *frame = payload + ADSB_LINK_UAT_RX_META_BYTES;
+    if (frame_len) *frame_len = n;
+    return true;
+}
+bool adsb_link_uat_kind_len_valid(uint8_t kind, uint16_t len)
+{
+    return (kind == ADSB_LINK_UAT_DOWNLINK_SHORT && len == 30) ||
+           (kind == ADSB_LINK_UAT_DOWNLINK_LONG && len == 48) ||
+           (kind == ADSB_LINK_UAT_UPLINK && len == 552);
+}
 /* 本测试驱动的是分发和扫描结果表，不验字节编码（那是 test_adsb_link_codec.c
  * 的事）。config_encode 返回 0 让 link_tx 整条路径不被触发——UART 在 host
  * 上并不存在。返回类型与真声明保持一致，其余同上面几个桩的惯例。 */
@@ -217,9 +248,44 @@ bool cpr_decode_surface_local(int fflag, int lat_cpr, int lon_cpr,
     out_pos->lon = -122.0;
     return true;
 }
-void uat_ingest_init(void) {}
-void uat_ingest_feed(void) {}
-void uat_ingest_get_stats(void) {}
+static int g_uat_up_feed_calls;
+static int g_uat_dl_feed_calls;
+static size_t g_uat_dl_len;
+static uat_downlink_meta_t g_uat_dl_meta;
+static uint8_t g_uat_first_byte;
+void uat_ingest_init(uat_ingest_sink_fn sink, void *user)
+{ (void)sink; (void)user; }
+void uat_ingest_feed(const uint8_t frame[UAT_UPLINK_FRAME_BYTES],
+                     const uat_ingest_meta_t *meta)
+{
+    (void)meta;
+    ++g_uat_up_feed_calls;
+    g_uat_first_byte = frame[0];
+}
+void uat_ingest_get_stats(uint32_t *frames_total, uint32_t *bad_rs,
+                          uint32_t *no_sync)
+{
+    if (frames_total) *frames_total = 0;
+    if (bad_rs) *bad_rs = 0;
+    if (no_sync) *no_sync = 0;
+}
+void uat_downlink_ingest_init(uat_downlink_ingest_sink_fn sink, void *user)
+{ (void)sink; (void)user; }
+void uat_downlink_ingest_feed(const uint8_t *frame, size_t frame_len,
+                              const uat_downlink_meta_t *meta)
+{
+    ++g_uat_dl_feed_calls;
+    g_uat_dl_len = frame_len;
+    g_uat_first_byte = frame[0];
+    g_uat_dl_meta = *meta;
+}
+void uat_downlink_ingest_get_stats(uat_downlink_ingest_stats_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    out->frames_total = (uint32_t)g_uat_dl_feed_calls;
+    out->aircraft_msgs = (uint32_t)g_uat_dl_feed_calls;
+}
 void record_dispatch(const record_t *rec) { (void)rec; }
 bool record_sink_uart_stats(uint32_t *written, uint32_t *dropped,
                             uint32_t *pending)
@@ -569,6 +635,112 @@ static void test_link_data_reapplies_config_when_p4_missed_hello(void)
           "补发配置的 3/0 ACK 应确认实际 GNSS 来源\n");
 }
 
+static void make_uat_rx_msg(adsb_link_msg_t *m, uint8_t kind, uint8_t flags,
+                            uint16_t frame_len, uint8_t first_byte)
+{
+    memset(m, 0, sizeof *m);
+    m->type = ADSB_LINK_MSG_UAT_RX_FRAME;
+    m->payload_len = (uint16_t)(ADSB_LINK_UAT_RX_META_BYTES + frame_len);
+    m->payload[0] = kind;
+    m->payload[1] = flags;
+    m->payload[2] = (uint8_t)-73;
+    m->payload[4] = 0x34;
+    m->payload[5] = 0x12;
+    m->payload[6] = (uint8_t)frame_len;
+    m->payload[7] = (uint8_t)(frame_len >> 8);
+    m->payload[8] = 0xEF;
+    m->payload[9] = 0xCD;
+    m->payload[10] = 0xAB;
+    m->payload[11] = 0x89;
+    m->payload[ADSB_LINK_UAT_RX_META_BYTES] = first_byte;
+}
+
+static void test_uat_rx_dispatches_exact_kind_and_metadata(void)
+{
+    adsb_link_msg_t m;
+    const uint8_t all_ok = ADSB_LINK_UAT_F_SYNC36_OK |
+                           ADSB_LINK_UAT_F_RF_STATUS_OK |
+                           ADSB_LINK_UAT_F_SET_LEN_OK;
+    g_uat_up_feed_calls = g_uat_dl_feed_calls = 0;
+    g_uat_dl_len = 0;
+
+    make_uat_rx_msg(&m, ADSB_LINK_UAT_DOWNLINK_SHORT, all_ok, 30, 0xA1);
+    pk_adsb_link_test_dispatch(&m);
+    CHECK(g_uat_dl_feed_calls == 1 && g_uat_up_feed_calls == 0,
+          "30 B downlink 必须进入 downlink ingest\n");
+    CHECK(g_uat_dl_len == 30 && g_uat_first_byte == 0xA1,
+          "downlink 实际长度/首字节丢失\n");
+    CHECK(g_uat_dl_meta.rssi_dbm == -73 &&
+          g_uat_dl_meta.frame_seq == 0x1234 &&
+          g_uat_dl_meta.cc_time == 0x89ABCDEF,
+          "CC RSSI/seq/RAT metadata 未原样透传\n");
+
+    make_uat_rx_msg(&m, ADSB_LINK_UAT_DOWNLINK_LONG, all_ok, 48, 0xA2);
+    pk_adsb_link_test_dispatch(&m);
+    CHECK(g_uat_dl_feed_calls == 2 && g_uat_dl_len == 48,
+          "48 B downlink 必须保留长帧长度\n");
+
+    make_uat_rx_msg(&m, ADSB_LINK_UAT_UPLINK, all_ok, 552, 0xA3);
+    pk_adsb_link_test_dispatch(&m);
+    CHECK(g_uat_up_feed_calls == 1 && g_uat_first_byte == 0xA3,
+          "552 B uplink 必须进入既有 uplink ingest\n");
+
+    /* 缺 RF status/SET_LEN 的包不具备完整接收证据，不能送给 FEC 猜。 */
+    make_uat_rx_msg(&m, ADSB_LINK_UAT_DOWNLINK_SHORT,
+                    ADSB_LINK_UAT_F_SYNC36_OK, 30, 0xA4);
+    pk_adsb_link_test_dispatch(&m);
+    CHECK(g_uat_dl_feed_calls == 2 && g_uat_up_feed_calls == 1,
+          "flags 不完整的 RF 包必须 fail closed\n");
+    pk_adsb_link_stats_t stats;
+    (void)pk_adsb_link_state_get(&stats);
+    CHECK(stats.uat_dl_frames == 2 && stats.uat_aircraft == 2,
+          "978 downlink 计数未暴露到诊断快照\n");
+    CHECK(stats.uat_transport_drops >= 1,
+          "flags 拒绝必须在诊断中可见\n");
+}
+
+static void put_u32le(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void test_uat_rf_health_reaches_p4_snapshot(void)
+{
+    adsb_link_msg_t m = {
+        .type = ADSB_LINK_MSG_HEALTH_STATS,
+        .payload_len = ADSB_LINK_HEALTH_FIELDS * 4u,
+    };
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_RF_FLAGS * 4u,
+              ADSB_LINK_UAT_RF_ACTIVE | ADSB_LINK_UAT_RF_PROBE_OK |
+              ADSB_LINK_UAT_RF_RSSI_VALID);
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_IDLE_RSSI * 4u,
+              (uint32_t)(int32_t)-103);
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_LAST_ERROR * 4u, 0x3802);
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_PROBE_OK * 4u, 21);
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_PROBE_ERRORS * 4u, 2);
+    put_u32le(m.payload + ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS * 4u, 3);
+    pk_adsb_link_test_dispatch(&m);
+
+    uint32_t health[ADSB_LINK_HEALTH_FIELDS] = {0};
+    CHECK(pk_adsb_rp_health(health) == ADSB_LINK_HEALTH_FIELDS,
+          "P4 did not retain extended UAT RF health\n");
+    CHECK((int32_t)health[ADSB_LINK_HEALTH_IDX_UAT_IDLE_RSSI] == -103 &&
+          health[ADSB_LINK_HEALTH_IDX_UAT_LAST_ERROR] == 0x3802 &&
+          health[ADSB_LINK_HEALTH_IDX_UAT_PROBE_OK] == 21 &&
+          health[ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS] == 3,
+          "UAT RF liveness/RSSI/error counters were altered in P4 dispatch\n");
+
+    g_now_us += 6000000;
+    const pk_adsb_link_state_t state = pk_adsb_link_state_get(NULL);
+    CHECK(state == PK_ADSB_LINK_STALLED,
+          "silent RP link did not become stale after 5 seconds\n");
+    CHECK(pk_adsb_rp_health(health) == 0,
+          "stale RF health remained green after RP UART stalled\n");
+}
+
 int main(void)
 {
     /* adsb_link_task.c registers this production sink with modes_ingest_init()
@@ -582,6 +754,8 @@ int main(void)
     test_sweep_running_state();
     test_gnss_actual_source_requires_matching_ack();
     test_link_data_reapplies_config_when_p4_missed_hello();
+    test_uat_rx_dispatches_exact_kind_and_metadata();
+    test_uat_rf_health_reaches_p4_snapshot();
 
     if (g_fail) {
         printf("FAILED: %d check(s)\n", g_fail);

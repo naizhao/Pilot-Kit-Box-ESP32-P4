@@ -15,6 +15,16 @@ static atomic_uint s_frames_total;
 static atomic_uint s_bad_rs;
 static atomic_uint s_no_sync;
 
+static uint8_t s_dl_data[UAT_DL_LONG_DATA_BYTES];
+static uat_downlink_ingest_sink_fn s_dl_sink;
+static void *s_dl_user;
+static atomic_uint s_dl_frames_total;
+static atomic_uint s_dl_aircraft_msgs;
+static atomic_uint s_dl_unhandled_type;
+static atomic_uint s_dl_bad_rs;
+static atomic_uint s_dl_no_sync;
+static atomic_uint s_dl_bad_length;
+
 void uat_ingest_init(uat_ingest_sink_fn sink, void *user)
 {
     s_sink = sink;
@@ -61,4 +71,90 @@ void uat_ingest_get_stats(uint32_t *frames_total, uint32_t *bad_rs,
         *bad_rs = atomic_load_explicit(&s_bad_rs, memory_order_relaxed);
     if (no_sync)
         *no_sync = atomic_load_explicit(&s_no_sync, memory_order_relaxed);
+}
+
+void uat_downlink_ingest_init(uat_downlink_ingest_sink_fn sink, void *user)
+{
+    s_dl_sink = sink;
+    s_dl_user = user;
+    atomic_store_explicit(&s_dl_frames_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dl_aircraft_msgs, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dl_unhandled_type, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dl_bad_rs, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dl_no_sync, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dl_bad_length, 0, memory_order_relaxed);
+    uat_fec_init();
+}
+
+void uat_downlink_ingest_feed(const uint8_t *frame, size_t frame_len,
+                              const uat_downlink_meta_t *meta)
+{
+    if (frame == NULL ||
+        (frame_len != UAT_DL_SHORT_FRAME_BYTES &&
+         frame_len != UAT_DL_LONG_FRAME_BYTES)) {
+        atomic_fetch_add_explicit(&s_dl_bad_length, 1, memory_order_relaxed);
+        return;
+    }
+
+    bool all_zero = true;
+    for (size_t i = 0; i < frame_len; ++i) {
+        if (frame[i] != 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    if (all_zero) {
+        atomic_fetch_add_explicit(&s_dl_no_sync, 1, memory_order_relaxed);
+        return;
+    }
+
+    /* uat_downlink_decode deliberately receives a full 48-byte buffer so it
+     * can try the long codeword first. A 30-byte RF frame is zero-padded only
+     * in this local work buffer; the returned FEC kind must still match the
+     * physical packet length, preventing a damaged long frame from being
+     * accepted accidentally as a basic frame. */
+    uint8_t work[UAT_DL_LONG_FRAME_BYTES] = {0};
+    memcpy(work, frame, frame_len);
+    uat_dl_hdr_t hdr;
+    uint8_t rs_corrected = 0;
+    const int kind = uat_downlink_decode(work, s_dl_data, &hdr,
+                                         &rs_corrected);
+    const int expected_kind = frame_len == UAT_DL_SHORT_FRAME_BYTES ? 1 : 2;
+    if (kind != expected_kind) {
+        atomic_fetch_add_explicit(&s_dl_bad_rs, 1, memory_order_relaxed);
+        return;
+    }
+    atomic_fetch_add_explicit(&s_dl_frames_total, 1, memory_order_relaxed);
+
+    uat_aircraft_msg_t msg;
+    const size_t data_len = kind == 1 ? UAT_DL_SHORT_DATA_BYTES
+                                      : UAT_DL_LONG_DATA_BYTES;
+    if (!uat_downlink_parse_aircraft(s_dl_data, data_len, &msg)) {
+        atomic_fetch_add_explicit(&s_dl_unhandled_type, 1,
+                                  memory_order_relaxed);
+        return;
+    }
+    atomic_fetch_add_explicit(&s_dl_aircraft_msgs, 1, memory_order_relaxed);
+    if (s_dl_sink) {
+        uat_downlink_meta_t m = {0};
+        if (meta) m = *meta;
+        s_dl_sink(&msg, &m, rs_corrected, s_dl_user);
+    }
+}
+
+void uat_downlink_ingest_get_stats(uat_downlink_ingest_stats_t *out)
+{
+    if (out == NULL) return;
+    *out = (uat_downlink_ingest_stats_t) {
+        .frames_total = atomic_load_explicit(&s_dl_frames_total,
+                                             memory_order_relaxed),
+        .aircraft_msgs = atomic_load_explicit(&s_dl_aircraft_msgs,
+                                              memory_order_relaxed),
+        .unhandled_type = atomic_load_explicit(&s_dl_unhandled_type,
+                                               memory_order_relaxed),
+        .bad_rs = atomic_load_explicit(&s_dl_bad_rs, memory_order_relaxed),
+        .no_sync = atomic_load_explicit(&s_dl_no_sync, memory_order_relaxed),
+        .bad_length = atomic_load_explicit(&s_dl_bad_length,
+                                           memory_order_relaxed),
+    };
 }

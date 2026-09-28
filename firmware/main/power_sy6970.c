@@ -83,6 +83,8 @@
 #include "power_sy6970.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <string.h>
 
 /* ── 寄存器与器件常量（取证页码见文件头表）───────────────────────────── */
 
@@ -95,6 +97,22 @@
 
 /* 关机：REG09 BATFET_DIS bit5=1 → Force BATFET Off（[DS] p.20）。 */
 #define SY6970_BATFET_DIS_MASK 0x20
+
+void sy6970_config_gate_mark_lost(sy6970_config_gate_t *gate)
+{
+    if (gate != NULL) gate->ready = false;
+}
+
+void sy6970_config_gate_finish_replay(sy6970_config_gate_t *gate,
+                                      bool replay_ok)
+{
+    if (gate != NULL) gate->ready = replay_ok;
+}
+
+bool sy6970_config_gate_allows_shutdown(const sy6970_config_gate_t *gate)
+{
+    return gate != NULL && gate->ready;
+}
 
 /* JEITA 高温段充电电压：REG09[4] JEITA_VSET（[DS] p.20）。
  * 0（POR）= Warm(T3~T4) 段把 VREG 降 150mV；1 = 维持 VREG 不降。
@@ -188,7 +206,7 @@ static const sy6970_init_step_t s_shutdown_seq[] = {
     { SY6970_SEQ_RMW_SET, SY6970_REG09,
       SY6970_BATFET_DIS_MASK, 0,
       "BATFET_DIS=1 关断 Q4 进 shipping mode (DS p.20 REG09[5] / p.30)："
-      "V4.9 SW3 只接 /QON、没有 MCU GPIO 事件；关机后按住 SW3 约 2.3 s"
+      "V4.10 SW3 只接 /QON、没有 MCU GPIO 事件；关机后按住 SW3 约 2.3 s"
       "或插 USB 可唤醒 (DS p.4/p.10/p.30)" },
 };
 
@@ -196,6 +214,123 @@ const sy6970_init_step_t *sy6970_shutdown_seq(size_t *n)
 {
     if (n != NULL) *n = sizeof(s_shutdown_seq) / sizeof(s_shutdown_seq[0]);
     return s_shutdown_seq;
+}
+
+bool sy6970_format_register_dump(const uint8_t *regs, size_t n,
+                                 char *out, size_t out_n)
+{
+    if (out != NULL && out_n > 0) out[0] = '\0';
+    if (regs == NULL || out == NULL || n < SY6970_REG_COUNT ||
+        out_n < SY6970_REG_DUMP_BUFSZ) {
+        return false;
+    }
+
+    size_t used = 0;
+    for (size_t i = 0; i < SY6970_REG_COUNT; i++) {
+        const int wrote = snprintf(out + used, out_n - used,
+                                   "%sREG%02X=0x%02X",
+                                   i == 0 ? "" : " ",
+                                   (unsigned)(SY6970_REG_FIRST + i),
+                                   (unsigned)regs[i]);
+        if (wrote < 0 || (size_t)wrote >= out_n - used) {
+            out[0] = '\0';
+            return false;
+        }
+        used += (size_t)wrote;
+    }
+    return true;
+}
+
+bool sy6970_decode_shutdown_evidence(const uint8_t *regs, size_t n,
+                                     sy6970_shutdown_evidence_t *out)
+{
+    if (out == NULL) return false;
+    *out = (sy6970_shutdown_evidence_t){0};
+    if (regs == NULL || n < SY6970_REG_COUNT) return false;
+
+    bool all_ff = true;
+    for (size_t i = 0; i < SY6970_REG_COUNT; i++) {
+        if (regs[i] != 0xFF) {
+            all_ff = false;
+            break;
+        }
+    }
+    if (all_ff) return false;
+
+    out->watchdog_code = (uint8_t)((regs[0x07] >> 4) & 0x03);
+    out->batfet_dis     = (regs[0x09] & 0x20) != 0;
+    out->batfet_dly     = (regs[0x09] & 0x08) != 0;
+    out->batfet_rst_en  = (regs[0x09] & 0x04) != 0;
+    out->bus_stat       = (uint8_t)((regs[0x0B] >> 5) & 0x07);
+    out->vbus_present   = ((regs[0x11] & 0x80) != 0) &&
+                          out->bus_stat != 7;
+    out->batt_mv = (uint16_t)(2304 + (regs[0x0E] & 0x7F) * 20);
+    out->sys_mv  = (uint16_t)(2304 + (regs[0x0F] & 0x7F) * 20);
+    out->vbus_mv = (uint16_t)(2600 + (regs[0x11] & 0x7F) * 100);
+    return true;
+}
+
+sy6970_shutdown_survival_reason_t
+sy6970_shutdown_survival_reason(bool batfet_dis, bool vbus_present,
+                                bool sys_dropped)
+{
+    if (!batfet_dis) return SY6970_SHUTDOWN_WRITE_NOT_LANDED;
+    if (vbus_present) return SY6970_SHUTDOWN_U19_VBUS_POWER;
+    return sys_dropped ? SY6970_SHUTDOWN_DOWNSTREAM_POWER
+                       : SY6970_SHUTDOWN_NO_U19_VBUS_SURVIVAL;
+}
+
+bool sy6970_probe_shutdown_survival(
+    const uint8_t *pre_regs, size_t pre_n,
+    sy6970_shutdown_snapshot_fn snapshot,
+    sy6970_shutdown_wait_fn wait,
+    void *ctx,
+    sy6970_shutdown_probe_result_t *out)
+{
+    if (out == NULL) return false;
+    *out = (sy6970_shutdown_probe_result_t){0};
+    if (snapshot == NULL) return false;
+
+    sy6970_shutdown_evidence_t pre = {0};
+    const bool have_pre = sy6970_decode_shutdown_evidence(pre_regs, pre_n,
+                                                          &pre);
+    uint8_t post_regs[SY6970_REG_COUNT];
+    if (!snapshot(ctx, post_regs)) return false;
+
+    sy6970_shutdown_evidence_t post = {0};
+    if (!sy6970_decode_shutdown_evidence(post_regs, sizeof post_regs, &post)) {
+        return false;
+    }
+
+    const bool needs_fresh_adc =
+        have_pre && pre.sys_mv > 2304u && post.batfet_dis &&
+        !post.vbus_present && post.sys_mv > 2304u && wait != NULL;
+    if (needs_fresh_adc) {
+        out->adc_refresh_attempted = true;
+        wait(ctx, SY6970_SHUTDOWN_ADC_SETTLE_MS);
+
+        uint8_t refreshed_regs[SY6970_REG_COUNT];
+        if (snapshot(ctx, refreshed_regs)) {
+            sy6970_shutdown_evidence_t refreshed = {0};
+            if (sy6970_decode_shutdown_evidence(refreshed_regs,
+                                                sizeof refreshed_regs,
+                                                &refreshed)) {
+                memcpy(post_regs, refreshed_regs, sizeof post_regs);
+                post = refreshed;
+                out->adc_refreshed = true;
+            }
+        }
+    }
+
+    out->reg09 = post_regs[0x09];
+    out->vbus_present = post.vbus_present;
+    out->pre_sys_mv = have_pre ? pre.sys_mv : 0;
+    out->post_sys_mv = post.sys_mv;
+    out->sys_dropped = have_pre && pre.sys_mv > 2304u &&
+                       post.sys_mv == 2304u;
+    out->reason = sy6970_shutdown_survival_reason(
+        post.batfet_dis, post.vbus_present, out->sys_dropped);
+    return true;
 }
 
 /* ── 纯解码（host 可测）─────────────────────────────────────────────── */
@@ -275,12 +410,13 @@ bool sy6970_decode_status(const uint8_t *regs, size_t n, sy6970_status_t *out)
  */
 #ifndef SY6970_HOST_TEST
 
-#include <string.h>
-
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs.h"
 #include "pk_i2c0_bus.h"
 #include "pk_batt_model.h"
+#include "pk_syslog.h"
 #include "power_service.h"
 
 static const char *TAG = "sy6970";
@@ -319,6 +455,19 @@ static const char *TAG = "sy6970";
  * 30 s 而不是 10 s：这些也是慢变量，不跟 1090 帧流抢串口。 */
 #define SY6970_DETAIL_LOG_TICKS 30
 
+/* 仅在关机请求时写一次。NVS blob 自带页/记录 CRC，额外 magic 用于拒绝旧版
+ * 或尺寸碰巧相同的垃圾数据；下次启动会把这份“掉电前最后快照”重新打印到
+ * 串口，因此仅电池实验不依赖 H1 在线。 */
+#define SY6970_EVIDENCE_NVS_NS  "sw3_diag"
+#define SY6970_EVIDENCE_NVS_KEY "pre_regs"
+#define SY6970_EVIDENCE_MAGIC   0x53573331u /* "SW31" */
+#define SY6970_SYSLOG_FLUSH_MS  3500
+
+typedef struct {
+    uint32_t magic;
+    uint8_t regs[SY6970_REG_COUNT];
+} sy6970_saved_evidence_t;
+
 /* 5V/9V 判档中点：CH224K 诱骗档位只到 9V，7V 中点区分两档。仅作
  * 诊断参考口径——权威 VBUS 值来自 BUSV ADC，见 sy6970_poll 的 F6 注。 */
 #define SY6970_VBUS_9V_MIDPOINT_MV 7000
@@ -332,16 +481,15 @@ static i2c_master_dev_handle_t s_dev;
  * gps_task.c:48-53（RVWMO 弱序下计数与负载无真全序；C11 口径下裸
  * 负载/存储的竞争是 UB）。portMUX 自旋锁是 ESP-IDF 标准，跨核正确性
  * 由构造保证；临界区只有几条拷贝，纳秒级（合同见 power_sy6970.h）。 */
-static bool            s_ready;      /* bring-up 成功（在读数）；仅 poll
-                                      * 上下文读写，诊断页经 s_diag.ready
-                                      * 取副本                             */
+static sy6970_config_gate_t s_config_gate; /* 配置有效性；写者为 poll，
+                                            * shutdown 跨核读取时走 mux      */
 static uint8_t         s_reg00;      /* 最近一次 REG00 回读（F1 证据），
                                       * 仅 poll 上下文，随每拍提交进 s_diag */
 static power_snapshot_t s_last_good; /* 最近一份好快照：读失败时原样上报，
                                       * 让服务端按 updated_us 判 stale 回落 */
 static uint32_t        s_bus_gen;    /* 已认账的总线代数                   */
 static int             s_fail_streak;
-static int             s_boot_streak;   /* !s_ready 补试连击（日志节流）   */
+static int             s_boot_streak;   /* 配置闸关闭后的补试连击（日志节流）*/
 static int             s_gen_streak;    /* 代数失配重放连击（日志节流）    */
 static int             s_wd_streak;     /* WATCHDOG_FAULT 重放连击（节流） */
 static int64_t         s_up_us;      /* 首拍成功时刻：60 s 复检的锚        */
@@ -358,6 +506,34 @@ static struct {
     int64_t          updated_us;   /* 最近成功采集时刻（0=从未报数哨兵）   */
 } s_diag;
 
+/* 配置闸与诊断快照共用一把锁：poll 是唯一写者，但关机入口和 SW3/UI
+ * 都可能跨核读取。发现配置丢失时立即同步把 diag.ready 拉低；重放成功
+ * 只恢复内部闸，diag.ready 要等下一份完整、干净的寄存器帧提交后才变真。 */
+static void config_gate_mark_lost(void)
+{
+    portENTER_CRITICAL(&s_diag_mux);
+    sy6970_config_gate_mark_lost(&s_config_gate);
+    s_diag.ready = false;
+    portEXIT_CRITICAL(&s_diag_mux);
+}
+
+static void config_gate_finish_replay(bool replay_ok)
+{
+    portENTER_CRITICAL(&s_diag_mux);
+    sy6970_config_gate_finish_replay(&s_config_gate, replay_ok);
+    if (!replay_ok) s_diag.ready = false;
+    portEXIT_CRITICAL(&s_diag_mux);
+}
+
+static bool config_gate_allows_shutdown(void)
+{
+    portENTER_CRITICAL(&s_diag_mux);
+    const bool allowed =
+        sy6970_config_gate_allows_shutdown(&s_config_gate);
+    portEXIT_CRITICAL(&s_diag_mux);
+    return allowed;
+}
+
 static esp_err_t reg_read(uint8_t reg, uint8_t *buf, size_t n)
 {
     return pk_i2c0_bus_transmit_receive(s_dev, &reg, 1, buf, n,
@@ -368,6 +544,91 @@ static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     uint8_t b[2] = { reg, val };
     return pk_i2c0_bus_transmit(s_dev, b, 2, SY6970_I2C_TIMEOUT_MS);
+}
+
+/* 关机专项取证：同一次顺序读拿 REG00..REG14，既保存逐字节原值，也把
+ * WATCHDOG/BATFET/VBUS/BAT/SYS 这些决定 ship-mode 语义的字段单列出来。
+ * 这里故意不复用 1 Hz 诊断窗口：它从 REG0B 才开始，缺 REG07/REG09，
+ * 正好缺掉本次要判断的两个控制寄存器。 */
+static bool log_register_snapshot(const char *phase,
+                                  uint8_t out_regs[SY6970_REG_COUNT])
+{
+    uint8_t regs[SY6970_REG_COUNT];
+    const esp_err_t err = reg_read(SY6970_REG_FIRST, regs, sizeof regs);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "%s：REG00..REG14 连读失败（%s）",
+                 phase, esp_err_to_name(err));
+        return false;
+    }
+
+    char line[SY6970_REG_DUMP_BUFSZ];
+    sy6970_shutdown_evidence_t ev;
+    if (!sy6970_format_register_dump(regs, sizeof regs, line, sizeof line) ||
+        !sy6970_decode_shutdown_evidence(regs, sizeof regs, &ev)) {
+        ESP_LOGW(TAG, "%s：REG00..REG14 快照格式/解码失败", phase);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "%s：%s", phase, line);
+    ESP_LOGI(TAG,
+             "%s判据：WATCHDOG=%u BATFET_DIS=%d BATFET_DLY=%d "
+             "BATFET_RST_EN=%d BUS_STAT=%u VBUS_PRESENT=%d "
+             "VBUS=%umV BAT=%umV SYS=%umV",
+             phase, (unsigned)ev.watchdog_code, (int)ev.batfet_dis,
+             (int)ev.batfet_dly, (int)ev.batfet_rst_en,
+             (unsigned)ev.bus_stat, (int)ev.vbus_present,
+             (unsigned)ev.vbus_mv, (unsigned)ev.batt_mv,
+             (unsigned)ev.sys_mv);
+    if (out_regs != NULL) memcpy(out_regs, regs, sizeof regs);
+    return true;
+}
+
+static bool save_shutdown_evidence(const uint8_t regs[SY6970_REG_COUNT])
+{
+    if (regs == NULL) return false;
+    const sy6970_saved_evidence_t saved = {
+        .magic = SY6970_EVIDENCE_MAGIC,
+    };
+    /* designated 初始化不能给数组赋运行期值，保留 const 头部后复制一份。 */
+    sy6970_saved_evidence_t writable = saved;
+    memcpy(writable.regs, regs, sizeof writable.regs);
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SY6970_EVIDENCE_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return false;
+    err = nvs_set_blob(h, SY6970_EVIDENCE_NVS_KEY, &writable, sizeof writable);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err == ESP_OK;
+}
+
+static void log_saved_shutdown_evidence(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SY6970_EVIDENCE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    sy6970_saved_evidence_t saved;
+    size_t n = sizeof saved;
+    const esp_err_t err = nvs_get_blob(h, SY6970_EVIDENCE_NVS_KEY, &saved, &n);
+    nvs_close(h);
+    if (err != ESP_OK || n != sizeof saved ||
+        saved.magic != SY6970_EVIDENCE_MAGIC) return;
+
+    char line[SY6970_REG_DUMP_BUFSZ];
+    sy6970_shutdown_evidence_t ev;
+    if (!sy6970_format_register_dump(saved.regs, sizeof saved.regs,
+                                     line, sizeof line) ||
+        !sy6970_decode_shutdown_evidence(saved.regs, sizeof saved.regs, &ev)) {
+        ESP_LOGW(TAG, "上次关机前 NVS 快照损坏或无法解码");
+        return;
+    }
+    ESP_LOGI(TAG, "上次关机前保存：%s", line);
+    ESP_LOGI(TAG,
+             "上次关机前判据：WATCHDOG=%u BATFET_DIS=%d BATFET_DLY=%d "
+             "BATFET_RST_EN=%d VBUS_PRESENT=%d VBUS=%umV BAT=%umV SYS=%umV",
+             (unsigned)ev.watchdog_code, (int)ev.batfet_dis,
+             (int)ev.batfet_dly, (int)ev.batfet_rst_en,
+             (int)ev.vbus_present, (unsigned)ev.vbus_mv,
+             (unsigned)ev.batt_mv, (unsigned)ev.sys_mv);
 }
 
 /*
@@ -504,6 +765,27 @@ static bool bring_up(void)
     return run_seq(seq, n, "F1");
 }
 
+typedef struct {
+    unsigned reads;
+} shutdown_probe_target_ctx_t;
+
+static bool shutdown_probe_snapshot(void *opaque,
+                                    uint8_t regs[SY6970_REG_COUNT])
+{
+    shutdown_probe_target_ctx_t *ctx = opaque;
+    const char *label = ctx->reads == 0
+        ? "BATFET_DIS 写入后仍在运行（立即快照）"
+        : "BATFET_DIS 写入后仍在运行（ADC 刷新后）";
+    ctx->reads++;
+    return log_register_snapshot(label, regs);
+}
+
+static void shutdown_probe_wait(void *opaque, uint32_t wait_ms)
+{
+    (void)opaque;
+    vTaskDelay(pdMS_TO_TICKS(wait_ms));
+}
+
 /*
  * 按需关机：执行 sy6970_shutdown_seq()（BATFET_DIS=1 → shipping mode）。
  * 语义、板级理由与调用方约束全部写在 power_sy6970.h 的序列注释里。
@@ -516,7 +798,7 @@ static bool bring_up(void)
  * 未探测到器件（v3 / 未上电的 v4）直接返回 false——那种板子上根本没有
  * 这颗芯片，谈不上关机。
  *
- * ── 为什么必须等 s_ready 而不是只看 s_dev ───────────────────────────
+ * ── 为什么必须等配置闸而不是只看 s_dev ──────────────────────────────
  * s_dev != NULL 只说明 0x6A 探测 ACK、handle 建起来了，**不说明 bring_up
  * 成功**——而「关看门狗」正是 bring_up 里的一步（REG07 WATCHDOG[5:4]=00）。
  * 看门狗没关成时它还是 POR 的 40 s，而 ship mode 一进 MCU 就掉电、再没人
@@ -532,11 +814,24 @@ bool power_sy6970_shutdown(void)
         ESP_LOGW(TAG, "关机请求被忽略：未探测到 SY6970（v3 / 未上电 v4）");
         return false;
     }
-    if (!s_ready) {
+    if (!config_gate_allows_shutdown()) {
         ESP_LOGW(TAG, "关机请求被拒：bring-up 未落定，看门狗可能仍在跑"
                       "（POR 40 s）——ship mode 后无人喂狗，超时会把 "
                       "BATFET_DIS 一起打回默认值，设备约 40 s 后自行复活"
                       "（[DS] p.29）。先让 bring-up 成功再关机。");
+        return false;
+    }
+
+    /* ready 不是历史荣誉：关机前现场回读 REG07。这样即使 watchdog 在
+     * 最近一拍刚把寄存器打回 POR、poll 还没来得及看到 REG0C，40 s 档
+     * 也会在写 BATFET_DIS 前被拦住。读失败同样 fail closed。 */
+    uint8_t reg07 = 0;
+    if (reg_read(SY6970_REG07, &reg07, 1) != ESP_OK ||
+        (reg07 & SY6970_WATCHDOG_MASK) != 0) {
+        config_gate_mark_lost();
+        ESP_LOGE(TAG, "关机请求被拒：REG07 现场校验失败或 WATCHDOG 未关闭"
+                      "（REG07=0x%02X，要求 WATCHDOG[5:4]=00）；已撤销 ready，"
+                      "等待 bring-up 重放成功", reg07);
         return false;
     }
     if (s_last_good.vbus_present) {
@@ -544,33 +839,89 @@ bool power_sy6970_shutdown(void)
                       "供电，系统不会真的断电——要整板断电须先拔 USB "
                       "（[DS] p.30）");
     }
+    uint8_t pre_regs[SY6970_REG_COUNT];
+    const bool have_pre = log_register_snapshot("关机前", pre_regs);
+    if (have_pre) {
+        if (save_shutdown_evidence(pre_regs)) {
+            ESP_LOGI(TAG, "关机前 REG00..REG14 已同步保存到 NVS");
+        } else {
+            ESP_LOGW(TAG, "关机前 REG00..REG14 写 NVS 失败");
+        }
+    }
     size_t n = 0;
     const sy6970_init_step_t *seq = sy6970_shutdown_seq(&n);
-    ESP_LOGW(TAG, "执行关机：置 BATFET_DIS；V4.9 唤醒请按住 SW3 约 2.3 s"
+    ESP_LOGW(TAG, "执行关机：置 BATFET_DIS；V4.10 唤醒请按住 SW3 约 2.3 s"
                   "后松开，或插 USB（DS p.4/p.10/p.30）");
-    if (!run_seq(seq, n, "关机")) return false;
+    if (!pk_syslog_flush(SY6970_SYSLOG_FLUSH_MS)) {
+        /* NVS 快照仍是独立证据兜底。日志失败不劫持产品的关机能力，但把
+         * 失败留在仍在线的串口；台架实验若看见这条就不把 SD 当证据。 */
+        ESP_LOGW(TAG, "关机前 syslog 在 %dms 内未完成 fsync；继续关机，"
+                      "仅以 NVS 快照和电源轨为证据",
+                 SY6970_SYSLOG_FLUSH_MS);
+    }
+    if (!run_seq(seq, n, "关机")) {
+        (void)log_register_snapshot("关机序列失败后", NULL);
+        return false;
+    }
 
     /*
-     * 走到这里说明**系统还活着**——电池供电下 BATFET 一断 MCU 就该掉电，
-     * 能执行到下一条指令本身就是"没真关掉"的证据。最常见的原因是 VBUS 在位
-     * （SYS 由 VBUS 供电，[DS] p.30），但也可能是写根本没落到寄存器里。
-     * 这两种情况的排查方向完全不同，回读 REG09 把它们分开：
-     *   bit5=1 → 写成功了，是外部供电撑着，拔 USB 即可；
-     *   bit5=0 → 写没落定（总线问题 / 被看门狗打回），是固件侧的事。
-     * 关机序列表里刻意没有 VERIFY 步（"写完就断电，读不回来"），那条在
-     * 电池供电路径上成立；这里是它不成立的那条路径，所以补在执行器里。
+     * 走到这里说明系统在 BATFET_DIS 写入后仍活着，但这还不能直接推出
+     * “外部供电撑着”：REG09 必须证明写已落定，U19 VBUS 状态必须区分，
+     * 只有 SYS ADC 也从正常值降到 2304mV 量程下限，才能确认 MCU 是由
+     * U19 之外的路径（本板为 H1）继续供电。
+     *
+     * 连续 ADC 的更新周期是 1s，写后的立即快照可能仍是旧值。probe 会在
+     * “BATFET_DIS=1、VBUS 不在、SYS 尚未下降”时等 1.1s 再取第二拍；仅
+     * 电池正常关机时 MCU 已掉电，不会走到这个等待。
      */
-    uint8_t r09 = 0;
-    if (reg_read(SY6970_REG09, &r09, 1) != ESP_OK) {
+    shutdown_probe_target_ctx_t probe_ctx = {0};
+    sy6970_shutdown_probe_result_t probe = {0};
+    const bool have_probe = sy6970_probe_shutdown_survival(
+        have_pre ? pre_regs : NULL,
+        have_pre ? sizeof pre_regs : 0,
+        shutdown_probe_snapshot,
+        shutdown_probe_wait,
+        &probe_ctx,
+        &probe);
+
+    uint8_t r09 = have_probe ? probe.reg09 : 0;
+    if (!have_probe && reg_read(SY6970_REG09, &r09, 1) != ESP_OK) {
         ESP_LOGW(TAG, "关机后仍在运行，且 REG09 回读失败——无法判断 "
                       "BATFET_DIS 是否落定");
         return false;
     }
-    ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=%d。%s",
-             r09, (r09 & SY6970_BATFET_DIS_MASK) ? 1 : 0,
-             (r09 & SY6970_BATFET_DIS_MASK)
-                 ? "位已置上 → 是 VBUS 在供电撑着，拔掉 USB 才会真断电"
-                 : "位没置上 → 写未落定，查 I²C 或看门狗");
+    const bool batfet_dis = (r09 & SY6970_BATFET_DIS_MASK) != 0;
+    const sy6970_shutdown_survival_reason_t reason = have_probe
+        ? probe.reason
+        : sy6970_shutdown_survival_reason(
+              batfet_dis, s_last_good.vbus_present, false);
+    if (probe.adc_refresh_attempted && !probe.adc_refreshed) {
+        ESP_LOGW(TAG, "关机后 SYS ADC 刷新快照失败；保留立即快照并按"
+                      "证据不足处理");
+    }
+    switch (reason) {
+    case SY6970_SHUTDOWN_U19_VBUS_POWER:
+        ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=1，"
+                      "U19 VBUS 仍在位；SYS 由 U19 BUS 路径供电", r09);
+        break;
+    case SY6970_SHUTDOWN_DOWNSTREAM_POWER:
+        ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=1，"
+                      "U19 VBUS 不在位且 SYS 已从 %umV 降至 %umV；"
+                      "存在 U19 以外的供电路径，检查 H1 等下游输入",
+                 r09, (unsigned)probe.pre_sys_mv,
+                 (unsigned)probe.post_sys_mv);
+        break;
+    case SY6970_SHUTDOWN_NO_U19_VBUS_SURVIVAL:
+        ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=1，"
+                      "U19 VBUS 不在位，但没有 SYS 轨下降证据；不能直接"
+                      "归因于 H1，须核对 SYS/BAT 电压和外部供电", r09);
+        break;
+    case SY6970_SHUTDOWN_WRITE_NOT_LANDED:
+    default:
+        ESP_LOGW(TAG, "关机后仍在运行：REG09=0x%02X，BATFET_DIS=0；"
+                      "写未落定，查 I2C 或看门狗", r09);
+        break;
+    }
     return false;   /* 没真关掉，就不能报成功 */
 }
 
@@ -705,7 +1056,7 @@ static void diag_commit(const sy6970_status_t *st, const uint8_t *win,
     s_diag.st         = *st;
     memcpy(s_diag.regs, win, SY6970_WIN_LEN);
     s_diag.reg00      = s_reg00;
-    s_diag.ready      = s_ready;
+    s_diag.ready      = s_config_gate.ready;
     s_diag.updated_us = now_us;
     portEXIT_CRITICAL(&s_diag_mux);
 }
@@ -719,21 +1070,29 @@ static void diag_commit(const sy6970_status_t *st, const uint8_t *win,
 static power_snapshot_t sy6970_poll(int64_t now_us)
 {
     /* 防御闸（同 eta6098_poll 的口径，服务层不假设 backend 内部状态）：
-     * 正常路径注册前 bring-up 已成功；唯一能走到 !s_ready 的场景是
+     * 正常路径注册前 bring-up 已成功；唯一能走到配置闸关闭的场景是
      * init 期 bring-up 失败但 ACK 已注册——按连击节流补试：首拍立试
      * 立报，之后每 SY6970_FAIL_STREAK_MAX 拍一试，失败 WARN 不以 1 Hz
      * 刷日志；成功只报一条恢复行。 */
-    if (!s_ready) {
+    if (!config_gate_allows_shutdown()) {
         s_boot_streak++;
         if (s_boot_streak != 1 &&
             s_boot_streak % SY6970_FAIL_STREAK_MAX != 0) {
             return s_last_good;               /* 初值=全零快照，恒 stale */
         }
-        if (!bring_up()) return s_last_good;
-        s_ready       = true;
+        const bool replay_ok = bring_up();
+        config_gate_finish_replay(replay_ok);
+        if (!replay_ok) return s_last_good;
         s_boot_streak = 0;
+        s_fail_streak = 0;
+        s_gen_streak  = 0;
+        s_wd_streak   = 0;
         s_bus_gen     = pk_i2c0_bus_generation();
         ESP_LOGI(TAG, "SY6970 bring-up 成功");
+        /* SW3 关机专项的启动基线。这里放在 F1 全部写后回读通过之后，
+         * 所以同一行能同时证明 WATCHDOG 已关闭、BATFET 配置、电源来源和
+         * 三条电源轨；仅顺序读取寄存器，不改变充电或关机状态。 */
+        (void)log_register_snapshot("启动基线", NULL);
     }
 
     /* 总线被救回来 → 重放配置 + F1。器件 handle 不重建（总线复位不清
@@ -742,6 +1101,9 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
      * 一直挂着时每拍两条 WARN 会刷日志），成功只报一条恢复行。 */
     const uint32_t gen = pk_i2c0_bus_generation();
     if (gen != s_bus_gen) {
+        /* 总线复位可能对应器件掉电；从发现代数失配这一刻起，历史 ready
+         * 就失效，哪怕本拍因节流暂不重放也不允许关机。 */
+        config_gate_mark_lost();
         s_gen_streak++;
         if (s_gen_streak != 1 &&
             s_gen_streak % SY6970_FAIL_STREAK_MAX != 0) {
@@ -749,7 +1111,9 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
         }
         ESP_LOGW(TAG, "I²C0 总线已复位（第 %lu 轮）— 重放 SY6970 bring-up",
                  (unsigned long)gen);
-        if (!bring_up()) {
+        const bool replay_ok = bring_up();
+        config_gate_finish_replay(replay_ok);
+        if (!replay_ok) {
             ESP_LOGW(TAG, "重放失败，再等 %d 拍后重试",
                      SY6970_FAIL_STREAK_MAX);
             return s_last_good;
@@ -790,6 +1154,9 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
      * diag_commit——不然 WDFAULT 的屏上证据（REG0C 原始字节 + 译码）
      * 永远不可达，只剩一条控制台 WARN。 */
     if (st.wd_fault) {
+        /* WATCHDOG_FAULT 明确表示配置曾回 POR。先关闸、再提交诊断证据，
+         * 使 diag.ready 与故障帧原子一致；失败重放绝不能继承历史 true。 */
+        config_gate_mark_lost();
         diag_commit(&st, win, now_us);
         s_wd_streak++;
         if (s_wd_streak != 1 &&
@@ -798,7 +1165,9 @@ static power_snapshot_t sy6970_poll(int64_t now_us)
         }
         ESP_LOGW(TAG, "WATCHDOG_FAULT（REG0C[7]）— 寄存器被打回默认模式，"
                       "重放 SY6970 bring-up");
-        if (!bring_up()) {
+        const bool replay_ok = bring_up();
+        config_gate_finish_replay(replay_ok);
+        if (!replay_ok) {
             ESP_LOGW(TAG, "看门狗自愈重放失败，再等 %d 拍后重试",
                      SY6970_FAIL_STREAK_MAX);
             return s_last_good;
@@ -903,7 +1272,11 @@ static power_snapshot_t poll_fail(int64_t now_us)
     if (s_fail_streak >= SY6970_FAIL_STREAK_MAX) {
         ESP_LOGW(TAG, "连续 %d 拍无有效数据 — 重放 SY6970 bring-up",
                  s_fail_streak);
-        if (!bring_up()) {
+        /* 连续失联后无法再证明 REG07 仍是关狗态；重放前先 fail closed。 */
+        config_gate_mark_lost();
+        const bool replay_ok = bring_up();
+        config_gate_finish_replay(replay_ok);
+        if (!replay_ok) {
             ESP_LOGW(TAG, "自愈重放失败，再等 %d 拍后重试",
                      SY6970_FAIL_STREAK_MAX);
         }
@@ -946,6 +1319,8 @@ void power_sy6970_init(void)
     if (s_brought_up) return;                      /* 幂等：只探一次 */
     s_brought_up = true;
 
+    log_saved_shutdown_evidence();
+
     i2c_master_bus_handle_t bus = pk_i2c0_bus_get();
     if (bus == NULL) {
         ESP_LOGW(TAG, "I2C0 总线不可用——SY6970 探测跳过，电源回落 ETA6098");
@@ -964,7 +1339,7 @@ void power_sy6970_init(void)
      * 周期都没有电量显示，非得人工复位一次。一次瞬态换一次重启，不合理。
      *
      * 现在照常 add_device + 注册，把恢复交给 poll 侧已有的自愈逻辑：
-     * sy6970_poll() 开头的 !s_ready 分支每 SY6970_FAIL_STREAK_MAX 拍补试
+     * sy6970_poll() 开头的配置闸分支每 SY6970_FAIL_STREAK_MAX 拍补试
      * 一次 bring_up()，首拍立试立报、之后节流，成功后只打一条恢复行。
      * 探测本身失败不影响 add_device——那一步只建 handle、不上总线。
      *

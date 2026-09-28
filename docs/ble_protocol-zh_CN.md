@@ -4,7 +4,7 @@
 
 | 项目 | 值 |
 |---|---|
-| 文档版本 | 1.1 |
+| 文档版本 | 1.3 |
 | 状态 | 固件已实现，可供客户端集成 |
 | 读者 | Pilot Kit Box 移动端 / 桌面端客户端开发者 |
 | 固件参考 | `firmware/main/ble_gatt.c` |
@@ -17,8 +17,8 @@ Pilot Kit Box 是基于 ESP32-P4 的 ADS-B 接收器。它通过 v3/v4 扩展板
 协议设计刻意保持简单：
 
 - 一个自定义 128-bit GATT service。
-- 四个 characteristic：Traffic Report、Heartbeat、Raw ts-line、Time Sync。
-- v1.1 当前不做 bonding、pairing 或加密；必须把它视为开放的近距离遥测链路。ADS-B 交通本身是公开广播，但不要把此 BLE 链路用于保密数据、飞机控制或安全关键命令。
+- 六个 characteristic：Traffic Report、Heartbeat、Raw ts-line、Time Sync、AIRBAND Audio、AIRBAND Control。
+- Traffic Report、Heartbeat、Raw、Time Sync 和 AIRBAND Audio 仍是开放的近距离遥测链路。AIRBAND Control 的 **WRITE 同时要求加密、bonded peer 和本机登记的 owner 身份**。首次登记或换手机时，用户必须先在盒子的航空电台页点 `PAIR`，再在 60 秒窗口内由手机完成 LE Secure Connections Just Works 配对并写控制值。不要把此 BLE 链路用于保密数据、飞机控制或安全关键命令。
 - 交通帧使用 GDL90 标准格式。
 - iOS 可通过系统 Current Time Service 自动校时；Android 和跨平台客户端可写自定义 Time Sync characteristic。
 
@@ -84,7 +84,9 @@ Service:                                  1090AD5B-0000-1000-8000-1090AD5B0000
   ├─ Traffic Report   (GDL90 / NOTIFY)    1090AD5B-0000-1000-8000-1090AD5B0001
   ├─ Heartbeat        (GDL90 / NOTIFY)    1090AD5B-0000-1000-8000-1090AD5B0002
   ├─ Raw ts-line      (ASCII / NOTIFY)    1090AD5B-0000-1000-8000-1090AD5B0003
-  └─ Time Sync        (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0004
+  ├─ Time Sync        (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0004
+  ├─ AIRBAND Audio    (NOTIFY)            1090AD5B-0000-1000-8000-1090AD5B0005
+  └─ AIRBAND Control  (R/W binary)        1090AD5B-0000-1000-8000-1090AD5B0006
 ```
 
 低 32 bit 表示资源：
@@ -96,14 +98,18 @@ Service:                                  1090AD5B-0000-1000-8000-1090AD5B0000
 | `0002` | Heartbeat notify |
 | `0003` | Raw ts-line notify |
 | `0004` | Time Sync read/write |
+| `0005` | 带版本的 AIRBAND 节目音频 notify |
+| `0006` | AIRBAND 路由控制与状态 read/write |
 
-未来版本可以在同一 service 下增加 `0005` 之后的可选 characteristic。客户端必须忽略未知 UUID。
+未来版本可以在同一 service 下增加 `0007` 之后的可选 characteristic。客户端必须忽略未知 UUID。
 
 ## 4. 连接生命周期
 
 ```text
 客户端扫描 -> 按名称前缀或 service UUID 过滤
-客户端连接 -> GATT discover
+客户端连接 -> GATT discover（遥测可直接使用）
+本机点 PAIR -> 60 秒 owner 登记窗口
+首次写 AIRBAND Control -> 系统 Just Works 配对 -> 链路加密并登记 owner
 固件尝试读取 iOS CTS；客户端也可以写 Time Sync
 客户端订阅 Traffic / Heartbeat / Raw
 固件按订阅状态发送 notify
@@ -233,7 +239,96 @@ ASCII 诊断格式，每个 notification 是一行，没有换行和 NUL：
 | `0x0D` Invalid Attribute Value Length | 写入长度不是 8 字节 |
 | `0x13` Value Not Allowed | epoch 早于最小允许值 |
 
-### 6.5 演示模式下客户端看到什么
+### 6.5 AIRBAND Audio (`...0005`，NOTIFY)
+
+这个可选数据流传输接收机的 16 kHz、单声道节目音频。只有 AIRBAND Control
+选择 `PHONE` 时才会发送；仅订阅 characteristic 不会切走机身喇叭。
+
+协议 v1 的每个音频帧固定为 **176 字节**，表示 320 个采样（20 ms）：先是
+16 字节小端 header，再是 160 字节 IMA-ADPCM（每字节两个采样，较早采样在
+低半字节）。
+
+| 偏移 | 长度 | 编码 | 含义 |
+|---|---|---|---|
+| 0 | 1 | `uint8` | 协议版本，当前为 `1` |
+| 1 | 1 | bit field | 标志，当前为 `0` |
+| 2 | 2 | `uint16_le` | 非零 stream ID |
+| 4 | 2 | `uint16_le` | 当前 stream 内的帧序号 |
+| 6 | 2 | `uint16_le` | 采样数，当前为 `320` |
+| 8 | 4 | `uint32_le` | 当前 stream 内的 sample clock |
+| 12 | 2 | `int16_le` | 第一个半字节前的 IMA predictor |
+| 14 | 1 | `uint8` | 第一个半字节前的 IMA step index（`0…88`） |
+| 15 | 1 | — | 保留，当前为 `0` |
+| 16 | 160 | IMA-ADPCM | 320 个 4-bit 采样 |
+
+如果协商出的 ATT notification payload（`ATT_MTU - 3`）能容纳 176 字节，固件
+不加传输 header，直接发送完整帧。较小 MTU 下，每个 notification 前带以下
+**12 字节分片 header**：
+
+| 偏移 | 长度 | 编码 | 含义 |
+|---|---|---|---|
+| 0 | 1 | `0xAF` | 分片标记 |
+| 1 | 1 | `uint8` | 协议版本，当前为 `1` |
+| 2 | 2 | `uint16_le` | Stream ID |
+| 4 | 2 | `uint16_le` | 帧序号 |
+| 6 | 1 | `uint8` | 从 0 开始的分片序号 |
+| 7 | 1 | `uint8` | 分片总数 |
+| 8 | 2 | `uint16_le` | 在 176 字节帧内的偏移 |
+| 10 | 2 | `uint16_le` | 完整帧长度，当前为 `176` |
+| 12 | 可变 | bytes | 从 `offset` 开始的连续帧数据 |
+
+每片数据部分至少要有 64 字节，因此 PHONE 路由要求 notification payload 至少
+**76 字节**，即 **ATT MTU ≥ 79**。完整帧不分片则要求 ATT MTU ≥ 179。客户端
+必须确认同一帧所有分片的 stream ID、sequence、count、total 一致，拒绝越界或
+重叠分片；不完整帧应直接丢弃，不能送进解码器。
+
+发生 stream break 时，固件递增 `stream_id`（跳过 0），并清零 sequence、
+sample clock、IMA 状态、未满帧采样和音频队列。路由、连接、订阅或 MTU 变化，
+采集不连续、队列溢出、notify 失败都会触发 break。客户端看到 stream ID 变化
+必须丢弃分片和抖动缓冲状态；sequence 跳号表示丢包，不能把旧、新 stream 拼接。
+每帧自带 predictor 和 step index，所以每个完整帧都能独立解码。
+
+AIRBAND 的优先级刻意低于原有 GDL90/Heartbeat/Raw 通道。每到 1 Hz 交通数据
+发送点，音频发送器会在下一个分片前暂停；每发一个音频分片也会主动 yield，避免
+交通数据被饿死。因此其他 characteristic 的 notification 可能插在音频分片之间。
+
+### 6.6 AIRBAND Control (`...0006`，READ / WRITE)
+
+READ 可在普通连接上读取诊断状态。WRITE 带 GATT `WRITE_ENC` 权限，明文连接在
+进入固件回调前就会被 NimBLE 拒绝；加密后固件还会核对 bonded peer 的 identity
+address 是否等于 NVS 中的 owner。没有 owner 或需要换手机时，用户必须先在本机
+航空电台页点 `PAIR`；按钮显示 60 秒倒计时，窗口内下一台完成加密、bonding 并
+写控制值的手机成为 owner。窗口外的陌生 bonded peer 返回 ATT `Insufficient
+Authorization`。bond 最多保留 3 个并按 NimBLE 的 round-robin 策略腾位。
+Just Works 本身没有 MITM，打开窗口时附近设备理论上可以竞速，因此仍不能作为
+敏感命令通道；但窗口关闭后，附近手机仅自行配对不能静音机身。
+
+WRITE 必须正好两个字节 `{version, route}`：版本固定为 `1`，路由为
+`0=DEVICE`、`1=PHONE`、`2=MUTE`。`DEVICE` 由机身播放；`PHONE` 静音机身并
+启用 `...0005`；`MUTE` 静音机身但不向手机发音频。客户端必须使用有响应写入，
+写成功前不能在 UI 中伪装成已经切换。
+
+只有音频任务已就绪、BLE 已连接、`...0005` 的 notify 已订阅且 ATT MTU ≥ 79，
+固件才接受 PHONE，否则返回 ATT `Value Not Allowed`。断连、取消音频 CCCD 订阅，
+MTU 降到不可用范围、配对失败或链路失去加密时，固件会自动回到 DEVICE。手机播放器初始化或写入失败时，
+客户端必须停止本地播放并立刻写 `{1,0}`；若安全回写本身也失败，则断开 BLE，让
+固件的断连保护恢复 DEVICE。旧连接迟到的 callback 绝不能更改新连接的路由。
+
+READ 返回以下 16 字节小端状态：
+
+| 偏移 | 长度 | 含义 |
+|---|---|---|
+| 0 | 1 | 版本（`1`） |
+| 1 | 1 | 当前路由（`0…2`） |
+| 2 | 1 | 最近错误：`0` 无、`1` 控制值无效、`2` PHONE 前提不足、`3` notify 失败 |
+| 3 | 1 | flags：bit 0 已连接、bit 1 音频已订阅、bit 2 MTU paused |
+| 4 | 2 | 已协商 ATT MTU |
+| 6 | 2 | 当前 stream ID |
+| 8 | 2 | 下一帧 sequence |
+| 10 | 4 | 下一帧 sample clock |
+| 14 | 2 | 保留（`0`） |
+
+### 6.7 演示模式下客户端看到什么
 
 固件 v0.9.5 起，盒子有一个用户可选的**演示模式**（设置 → 演示模式）。打开后，
 屏上的一切读数——姿态、GPS、气压、ADS-B 目标——都来自固件内置的一套合成数据，
@@ -301,7 +396,7 @@ traffic.lastValueStream.listen(onGdl90TrafficFrame);
 当前未包含但在路线图中的项目：
 
 - Bluetooth Device Information Service (`0x180A`) 暴露固件版本
-- 在加入非公开、可识别用户、控制类或座舱敏感数据前，必须补 bonding + LESC encryption
+- 在加入非公开、可识别用户、飞机控制或座舱敏感数据前，必须增加有 MITM 防护的认证；当前 owner 登记依赖本机 60 秒物理授权窗口
 - 多客户端同时连接
 
 ## 10. 参考

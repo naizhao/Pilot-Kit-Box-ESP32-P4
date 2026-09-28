@@ -128,6 +128,7 @@ bool pk_diag_airband_make_command(pk_diag_airband_action_t action,
 #include "imu_task.h"        /* pk_imu_sample_get, pk_imu_sample_t */
 #include "modes_ingest.h"    /* pk_dsp_get_stats, pk_dsp_stats_t */
 #include "adsb_link_task.h"  /* pk_adsb_link_state_get */
+#include "adsb_link.h"       /* HEALTH_STATS UAT RF diagnostic fields */
 #include "gps.h"             /* pk_gps_get, pk_gps_state_t */
 #include "gps_antenna_diag.h"/* raw GPTXT 与不会误报的解释结果 */
 #include "config_antenna.h"  /* GNSS 当前请求的天线来源 */
@@ -142,6 +143,7 @@ bool pk_diag_airband_make_command(pk_diag_airband_action_t action,
 #include "pk_aero_db.h"      /* pk_aero_db_status_get — SD 航空库状态 */
 #include "pk_win.h"          /* pk_win_status_get — 滚动窗口运行状态 */
 #include "airband.h"        /* BK4819 + PCM1808 最近 1 s 闭环快照 */
+#include "airband_record.h"
 #include "record_sink.h"     /* record_sink_file_stats / _uses_sd */
 #include "pk_rec_store.h"    /* pk_rec_store_get_health —— LOG 卡片接入 SD 写失败/降级持续状态 */
 #include <string.h>
@@ -1643,10 +1645,53 @@ static void draw_detail(uint16_t *fb, int which)
                   ls.rx_crc_errors ? COL_WARN : COL_VAL);
         snprintf(buf, sizeof(buf), "%lu", (unsigned long)d.msgs_total);
         det_kv_tr(fb, line++, PK_TR_DIAG_K_ADSB_MSGS, buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "frames=%lu aircraft=%lu",
+                 (unsigned long)ls.uat_dl_frames,
+                 (unsigned long)ls.uat_aircraft);
+        det_kv(fb, line++, "UAT 978", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "fec=%lu transport=%lu",
+                 (unsigned long)ls.uat_bad_rs,
+                 (unsigned long)ls.uat_transport_drops);
+        det_kv(fb, line++, "UAT ERROR", buf,
+               (ls.uat_bad_rs || ls.uat_transport_drops) ? COL_WARN : COL_VAL);
+        uint32_t rh[ADSB_LINK_HEALTH_FIELDS] = {0};
+        const int rhn = pk_adsb_rp_health(rh);
+        if (rhn > ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS) {
+            const uint32_t flags = rh[ADSB_LINK_HEALTH_IDX_UAT_RF_FLAGS];
+            const bool active = (flags & ADSB_LINK_UAT_RF_ACTIVE) != 0;
+            const bool probe_ok = (flags & ADSB_LINK_UAT_RF_PROBE_OK) != 0;
+            const bool recovering =
+                (flags & ADSB_LINK_UAT_RF_RECOVERING) != 0;
+            const bool link_fresh = st == PK_ADSB_LINK_LINKED;
+            const bool rf_live = link_fresh && active && probe_ok && !recovering;
+            const char *rf_state = !link_fresh ? "LINK STALE"
+                : recovering ? "RECOVERING"
+                : (active && probe_ok) ? "LIVE (QUIET OK)" : "RF FAULT";
+            det_kv(fb, line++, "UAT RF CORE", rf_state,
+                   rf_live ? COL_ONLINE : COL_WARN);
+            if (flags & ADSB_LINK_UAT_RF_RSSI_VALID) {
+                snprintf(buf, sizeof(buf), "%ld dBm (idle/noise)",
+                         (long)(int32_t)rh[ADSB_LINK_HEALTH_IDX_UAT_IDLE_RSSI]);
+            } else {
+                snprintf(buf, sizeof(buf), "unavailable");
+            }
+            det_kv(fb, line++, "UAT IDLE RSSI", buf,
+                   (flags & ADSB_LINK_UAT_RF_RSSI_VALID) ? COL_VAL : COL_WARN);
+            snprintf(buf, sizeof(buf), "raw=0x%04lX ok=%lu err=%lu reinit=%lu",
+                     (unsigned long)rh[ADSB_LINK_HEALTH_IDX_UAT_LAST_ERROR],
+                     (unsigned long)rh[ADSB_LINK_HEALTH_IDX_UAT_PROBE_OK],
+                     (unsigned long)rh[ADSB_LINK_HEALTH_IDX_UAT_PROBE_ERRORS],
+                     (unsigned long)rh[ADSB_LINK_HEALTH_IDX_UAT_RF_REINITS]);
+            det_kv(fb, line++, "UAT RF DIAG", buf,
+                   rh[ADSB_LINK_HEALTH_IDX_UAT_PROBE_ERRORS] ? COL_WARN : COL_VAL);
+        } else {
+            det_kv(fb, line++, "UAT RF CORE", "unavailable (old firmware)",
+                   COL_WARN);
+        }
         break;
     }
 
-    case 4:     /* BLE */
+    case 4: {   /* BLE */
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_LINK,
                    ble_gatt_is_connected()   ? PK_TR_DIAG_V_BLE_CONN
                    : ble_gatt_is_advertising() ? PK_TR_DIAG_V_BLE_ADV
@@ -1654,7 +1699,38 @@ static void draw_detail(uint16_t *fb, int which)
                    ble_gatt_is_connected() ? COL_ONLINE : COL_OFFLINE);
         det_kv_tr2(fb, line++, PK_TR_DIAG_K_PROTOCOL, PK_TR_DIAG_V_BLE_PROTO,
                    COL_VAL);
+        pk_ble_airband_status_t a = {0};
+#ifdef ESP_PLATFORM
+        (void)ble_gatt_airband_status(&a);
+#else
+        /* Simulator has no NimBLE host; keep the card structurally visible
+         * without inventing a connected phone/audio stream. */
+        a.mtu = 23;
+        a.route = PK_AIRBAND_BLE_ROUTE_DEVICE;
+        a.mtu_paused = true;
+#endif
+        static const char *routes[] = { "DEVICE", "PHONE", "MUTE" };
+        snprintf(buf, sizeof(buf), "%s sub=%u MTU=%u%s(%lu)",
+                 routes[a.route <= PK_AIRBAND_BLE_ROUTE_MUTE ? a.route : 0],
+                 a.subscribed, a.mtu, a.mtu_paused ? " PAUSED" : "",
+                 (unsigned long)a.mtu_paused_count);
+        det_kv(fb, line++, "AIR AUDIO", buf,
+               a.mtu_paused ? COL_WARN : COL_VAL);
+        snprintf(buf, sizeof(buf), "%u/%u clk=%lu",
+                 a.stream_id, a.frame_seq, (unsigned long)a.sample_clock);
+        det_kv(fb, line++, "STREAM/SEQ", buf, COL_VAL);
+        snprintf(buf, sizeof(buf), "enc=%lu sent=%lu drop=%lu q=%lu",
+                 (unsigned long)a.encoded, (unsigned long)a.sent,
+                 (unsigned long)a.dropped, (unsigned long)a.queue_drops);
+        det_kv(fb, line++, "AUDIO TX", buf,
+               (a.dropped || a.queue_drops) ? COL_WARN : COL_VAL);
+        snprintf(buf, sizeof(buf), "now=%lums max=%lums cong=%lu err=%u",
+                 (unsigned long)a.current_age_ms, (unsigned long)a.max_age_ms,
+                 (unsigned long)a.congested, a.last_error);
+        det_kv(fb, line++, "AGE/ERR", buf,
+               (a.congested || a.last_error) ? COL_WARN : COL_VAL);
         break;
+    }
 
     case 5: {   /* LOG */
         uint32_t written = 0, dropped = 0;
@@ -2013,7 +2089,53 @@ static void draw_detail(uint16_t *fb, int which)
                        ? COL_ONLINE
                        : a.speaker_test_result == PK_AIRBAND_SPEAKER_TEST_FAIL
                              ? COL_ALERT : COL_VAL);
+            snprintf(buf, sizeof(buf), "obs %.1f / ref %.1f dBm",
+                     a.rf.rssi_dbm_x2 / 2.0, a.reference_rssi_dbm_x2 / 2.0);
+            det_kv(fb, line++, "AM RSSI", buf, a.online ? COL_VAL : COL_ALERT);
+            snprintf(buf, sizeof(buf), "%u / %ddB  %s", a.gain_index, a.gain_db,
+                     pk_airband_am_gain_reason_name(a.gain_reason));
+            det_kv(fb, line++, "AM GAIN", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "7E=%04X 13=%04X W%lu R%lu",
+                     a.gain_regs.reg7e, a.gain_regs.reg13,
+                     (unsigned long)a.gain_regs.write_errors,
+                     (unsigned long)a.gain_regs.read_errors);
+            det_kv(fb, line++, "AM REGS", buf,
+                   a.gain_regs.write_errors || a.gain_regs.read_errors ? COL_WARN : COL_VAL);
+            snprintf(buf, sizeof(buf), "%luus late %luus over %lu",
+                     (unsigned long)a.gain_control_max_us,
+                     (unsigned long)a.gain_control_max_late_us,
+                     (unsigned long)a.gain_control_overruns);
+            det_kv(fb, line++, "AM CONTROL", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "raw %lu pre %lu post %lu",
+                     (unsigned long)a.pcm16.raw_peak, (unsigned long)a.pcm16.pre_peak,
+                     (unsigned long)a.pcm16.post_peak);
+            det_kv(fb, line++, "PCM PEAK", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "%lu / %lu / %lu",
+                     (unsigned long)pk_airband_audio_rms(a.pcm16.raw_sum_sq, a.pcm16.input_frames),
+                     (unsigned long)pk_airband_audio_rms(a.pcm16.pre_sum_sq, a.pcm16.output_frames),
+                     (unsigned long)pk_airband_audio_rms(a.pcm16.post_sum_sq, a.pcm16.output_frames));
+            det_kv(fb, line++, "PCM RMS", buf, COL_VAL);
+            snprintf(buf, sizeof(buf), "raw/pre/post %lu/%lu/%lu",
+                     (unsigned long)a.pcm16.raw_clips, (unsigned long)a.pcm16.pre_clips,
+                     (unsigned long)a.pcm16.post_clips);
+            det_kv(fb, line++, "PCM CLIP", buf, a.pcm16.post_clips ? COL_WARN : COL_VAL);
         }
+        pk_airband_record_status_t rec;
+        pk_airband_record_get(&rec);
+        snprintf(buf,sizeof(buf),"%s enabled=%u active=%u q=%lu",
+            pk_airband_record_label(&rec),rec.enabled,rec.active,(unsigned long)rec.queued_blocks);
+        det_kv(fb,line++,"SD REC",buf,rec.error ? COL_ALERT : COL_VAL);
+        det_kv(fb,line++,"REC FILE",rec.file[0] ? rec.file : "--",COL_VAL);
+        snprintf(buf,sizeof(buf),"%llu B / %lu segments / gen %lu",
+            (unsigned long long)rec.bytes,(unsigned long)rec.segments,(unsigned long)rec.mount_generation);
+        det_kv(fb,line++,"REC DATA",buf,COL_VAL);
+        snprintf(buf,sizeof(buf),"drop %lu/%lu samples write %lu sync %lu close %lu",
+            (unsigned long)rec.dropped_blocks,(unsigned long)rec.dropped_samples,
+            (unsigned long)rec.write_errors,(unsigned long)rec.sync_errors,(unsigned long)rec.close_errors);
+        det_kv(fb,line++,"REC ERR",buf,rec.error || rec.dropped_blocks ? COL_WARN : COL_VAL);
+        snprintf(buf,sizeof(buf),"recovered %lu / errors %lu",
+            (unsigned long)rec.recovered,(unsigned long)rec.recovery_errors);
+        det_kv(fb,line++,"REC REPAIR",buf,rec.recovery_errors ? COL_ALERT : COL_VAL);
         break;
     }
 

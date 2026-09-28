@@ -106,6 +106,16 @@ ICONS = [
     # 偏移插在前面也不会错，但整张 4bpp 位图表会整体平移，生成的 pfd_icon_font.c
     # 变成一份 12 KB 的全文件 diff，读的人分不出哪几行是真的新东西。
     ("COMPASS",   "explore",             0xE87A, 0),
+    # AIRBAND 底部控制栏。统一使用项目内置的 Material Symbols，不再在页面中
+    # 用矩形、三角形和折线拼图标。仍追加在表尾，避免改变所有既有枚举值。
+    # 码位通过仓库内 MaterialSymbolsRounded.ttf 的 cmap 反查确认。
+    ("VOLUME_UP",  "volume_up",           0xE050, 1),
+    ("VOLUME_OFF", "volume_off",          0xE04F, 1),
+    ("PAUSE",      "pause",               0xE034, 1),
+    ("ADD",        "add",                 0xE145, 1),
+    ("REMOVE",     "remove",              0xE15B, 1),
+    ("VOLUME_DOWN", "volume_down",        0xE04D, 1),
+    ("BRAND_AWARENESS", "brand_awareness",0xE98E, 1),
 ]
 
 # 图标不能与文字等高。图形内部留白远多于字母笔画（fiber_manual_record

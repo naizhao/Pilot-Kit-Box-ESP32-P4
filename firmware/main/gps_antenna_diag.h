@@ -18,6 +18,23 @@ typedef enum {
     PK_GPS_ANT_RESULT_SHORT,
 } pk_gps_ant_result_t;
 
+typedef enum {
+    PK_GPS_HEADER_SATS,
+    PK_GPS_HEADER_SHORT,
+    PK_GPS_HEADER_ANT_UNKNOWN,
+    PK_GPS_HEADER_NO_FIX,
+} pk_gps_header_state_t;
+
+static inline pk_gps_header_state_t pk_gps_header_state(bool fix,
+                                                       pk_gps_ant_result_t result)
+{
+    if (result == PK_GPS_ANT_RESULT_SHORT) return PK_GPS_HEADER_SHORT;
+    if (fix || result == PK_GPS_ANT_RESULT_RF_RECEIVING ||
+        result == PK_GPS_ANT_RESULT_ACTIVE_LOAD_OK) return PK_GPS_HEADER_SATS;
+    if (result == PK_GPS_ANT_RESULT_OPEN_OR_PASSIVE) return PK_GPS_HEADER_ANT_UNKNOWN;
+    return PK_GPS_HEADER_NO_FIX;
+}
+
 static inline pk_gps_ant_result_t
 pk_gps_ant_assess(pk_gps_ant_t raw, bool have_rf_evidence)
 {

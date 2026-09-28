@@ -202,6 +202,7 @@ static bool file_mount(void)
  * 不能沿用内存里的旧值。 */
 static bool file_open_fresh_locked(void)
 {
+    if (s_on_sdcard && !pk_sdcard_is_mounted()) return false;
     int max_seq = 0, existing = 0;
     scan_existing(&max_seq, &existing);
     s_fp_seq = max_seq + 1;

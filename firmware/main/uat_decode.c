@@ -16,6 +16,7 @@
  * 无堆、无静态可写状态（除 uat_fec_init 一次性构建的常量表）。
  */
 
+#include <math.h>
 #include <string.h>
 
 #include "uat_decode.h"
@@ -311,6 +312,7 @@ bool uat_uplink_decode(const uint8_t frame[UAT_UPLINK_FRAME_BYTES],
         *rs_corrected = (uint8_t)total; /* ≤ 60，u8 放得下 */
 
     if (out) {
+        out->raw_data = data_out;
         uint32_t raw_lat = ((uint32_t)data_out[0] << 15) |
                            ((uint32_t)data_out[1] << 7) |
                            (data_out[2] >> 1);
@@ -389,4 +391,212 @@ int uat_downlink_decode(const uint8_t frame[UAT_DL_LONG_FRAME_BYTES],
         return 1;
     }
     return 0;
+}
+
+/* ── 下行 ADS-B/TIS-B 消息层 ─────────────────────────────────── */
+
+static int32_t uat_coord_e6(uint32_t raw, bool latitude)
+{
+    int32_t v = (int32_t)(((uint64_t)raw * 360000000u) >> 24);
+    if (latitude) {
+        if (v > 90000000) v -= 180000000;
+    } else if (v > 180000000) {
+        v -= 360000000;
+    }
+    return v;
+}
+
+static void parse_state_vector(const uint8_t *d, uat_aircraft_msg_t *m)
+{
+    m->has_state_vector = true;
+    m->nic = (uint8_t)(d[11] & 0x0f);
+
+    uint32_t raw_lat = ((uint32_t)d[4] << 15) |
+                       ((uint32_t)d[5] << 7) | (d[6] >> 1);
+    uint32_t raw_lon = (((uint32_t)d[6] & 1u) << 23) |
+                       ((uint32_t)d[7] << 15) |
+                       ((uint32_t)d[8] << 7) | (d[9] >> 1);
+    if (m->nic != 0 || raw_lat != 0 || raw_lon != 0) {
+        m->position_valid = true;
+        m->lat_deg_e6 = uat_coord_e6(raw_lat, true);
+        m->lon_deg_e6 = uat_coord_e6(raw_lon, false);
+    }
+
+    uint16_t raw_alt = (uint16_t)(((uint16_t)d[10] << 4) |
+                                  ((d[11] & 0xf0) >> 4));
+    if (raw_alt != 0) {
+        m->altitude_valid = true;
+        m->altitude_source = (d[9] & 1u) ? UAT_ALT_GEO : UAT_ALT_BARO;
+        m->altitude_ft = ((int32_t)raw_alt - 1) * 25 - 1000;
+    }
+
+    m->air_ground = (uat_air_ground_t)((d[12] >> 6) & 0x03);
+    if (m->air_ground == UAT_AG_SUBSONIC ||
+        m->air_ground == UAT_AG_SUPERSONIC) {
+        int raw_ns = ((d[12] & 0x1f) << 6) | ((d[13] & 0xfc) >> 2);
+        int raw_ew = ((d[13] & 0x03) << 9) | (d[14] << 1) |
+                     ((d[15] & 0x80) >> 7);
+        if ((raw_ns & 0x3ff) != 0) {
+            int v = (raw_ns & 0x3ff) - 1;
+            if (raw_ns & 0x400) v = -v;
+            if (m->air_ground == UAT_AG_SUPERSONIC) v *= 4;
+            m->ns_velocity_valid = true;
+            m->ns_velocity_kt = (int16_t)v;
+        }
+        if ((raw_ew & 0x3ff) != 0) {
+            int v = (raw_ew & 0x3ff) - 1;
+            if (raw_ew & 0x400) v = -v;
+            if (m->air_ground == UAT_AG_SUPERSONIC) v *= 4;
+            m->ew_velocity_valid = true;
+            m->ew_velocity_kt = (int16_t)v;
+        }
+        if (m->ns_velocity_valid && m->ew_velocity_valid) {
+            double ns = m->ns_velocity_kt;
+            double ew = m->ew_velocity_kt;
+            m->speed_valid = true;
+            m->speed_kt = (uint16_t)sqrt(ns * ns + ew * ew);
+            if (m->ns_velocity_kt != 0 || m->ew_velocity_kt != 0) {
+                double deg = 450.0 - atan2(ns, ew) *
+                                      (180.0 / 3.14159265358979323846);
+                int track = (int)deg % 360;
+                if (track < 0) track += 360;
+                m->track_valid = true;
+                m->track_deg = (uint16_t)track;
+            }
+        }
+
+        int raw_v = ((d[15] & 0x7f) << 4) | ((d[16] & 0xf0) >> 4);
+        if ((raw_v & 0x1ff) != 0) {
+            int v = ((raw_v & 0x1ff) - 1) * 64;
+            if (raw_v & 0x200) v = -v;
+            m->vertical_rate_valid = true;
+            m->vertical_rate_fpm = (int16_t)v;
+            m->vertical_rate_source = (raw_v & 0x400)
+                                    ? UAT_ALT_BARO : UAT_ALT_GEO;
+        }
+    } else if (m->air_ground == UAT_AG_GROUND) {
+        int raw_speed = ((d[12] & 0x1f) << 6) | ((d[13] & 0xfc) >> 2);
+        if ((raw_speed & 0x3ff) != 0) {
+            m->speed_valid = true;
+            m->speed_kt = (uint16_t)((raw_speed & 0x3ff) - 1);
+        }
+        int raw_track = ((d[13] & 0x03) << 9) | (d[14] << 1) |
+                        ((d[15] & 0x80) >> 7);
+        unsigned tt = (unsigned)(raw_track >> 9) & 3u;
+        if (tt != 0) {
+            m->track_valid = true;
+            m->track_deg = (uint16_t)((raw_track & 0x1ff) * 360 / 512);
+            m->track_is_heading = tt >= 2;
+            m->track_is_magnetic = tt == 2;
+        }
+    }
+
+    if (m->addr_qualifier == UAT_ADDR_TISB_ICAO ||
+        m->addr_qualifier == UAT_ADDR_TISB_TRACK) {
+        m->tisb_site_id = (uint8_t)(d[16] & 0x0f);
+    } else {
+        m->utc_coupled = (d[16] & 0x08) != 0;
+    }
+}
+
+static const char k_uat_base40[] =
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ  ..";
+
+static void parse_mode_status(const uint8_t *d, uat_aircraft_msg_t *m)
+{
+    m->has_mode_status = true;
+    uint16_t v = (uint16_t)(((uint16_t)d[17] << 8) | d[18]);
+    m->emitter_category = (uint8_t)((v / 1600u) % 40u);
+    m->callsign[0] = k_uat_base40[(v / 40u) % 40u];
+    m->callsign[1] = k_uat_base40[v % 40u];
+    v = (uint16_t)(((uint16_t)d[19] << 8) | d[20]);
+    m->callsign[2] = k_uat_base40[(v / 1600u) % 40u];
+    m->callsign[3] = k_uat_base40[(v / 40u) % 40u];
+    m->callsign[4] = k_uat_base40[v % 40u];
+    v = (uint16_t)(((uint16_t)d[21] << 8) | d[22]);
+    m->callsign[5] = k_uat_base40[(v / 1600u) % 40u];
+    m->callsign[6] = k_uat_base40[(v / 40u) % 40u];
+    m->callsign[7] = k_uat_base40[v % 40u];
+    m->callsign[8] = '\0';
+    for (int i = 7; i >= 0 && m->callsign[i] == ' '; --i)
+        m->callsign[i] = '\0';
+    m->callsign_valid = m->callsign[0] != '\0';
+
+    m->emergency_status = (uint8_t)((d[23] >> 5) & 7u);
+    m->uat_version = (uint8_t)((d[23] >> 2) & 7u);
+    m->sil = (uint8_t)(d[23] & 3u);
+    m->nac_p = (uint8_t)((d[25] >> 4) & 15u);
+    m->nac_v = (uint8_t)((d[25] >> 1) & 7u);
+    m->nic_baro = (d[25] & 1u) != 0;
+    m->has_cdti = (d[26] & 0x80) != 0;
+    m->has_acas = (d[26] & 0x40) != 0;
+    m->acas_ra_active = (d[26] & 0x20) != 0;
+    m->ident_active = (d[26] & 0x10) != 0;
+    m->atc_services = (d[26] & 0x08) != 0;
+    m->callsign_is_flight_id = m->callsign_valid && (d[26] & 0x02) != 0;
+}
+
+static void parse_aux_state(const uint8_t *d, uat_aircraft_msg_t *m)
+{
+    m->has_aux_state = true;
+    uint16_t raw_alt = (uint16_t)(((uint16_t)d[29] << 4) |
+                                  ((d[30] & 0xf0) >> 4));
+    if (raw_alt != 0) {
+        m->aux_altitude_valid = true;
+        m->aux_altitude_ft = ((int32_t)raw_alt - 1) * 25 - 1000;
+        m->aux_altitude_source = (d[9] & 1u)
+                               ? UAT_ALT_BARO : UAT_ALT_GEO;
+    }
+}
+
+bool uat_downlink_parse_aircraft(const uint8_t *data, size_t data_len,
+                                 uat_aircraft_msg_t *out)
+{
+    if (!data || !out || data_len < 4)
+        return false;
+
+    const uint8_t type = (uint8_t)(data[0] >> 3);
+    if ((type == 0 && data_len < UAT_DL_SHORT_DATA_BYTES) ||
+        (type != 0 && data_len < UAT_DL_LONG_DATA_BYTES))
+        return false;
+
+    uat_aircraft_msg_t m;
+    memset(&m, 0, sizeof m);
+    m.mdb_type = type;
+    m.addr_qualifier = (uat_addr_qualifier_t)(data[0] & 7u);
+    m.address = ((uint32_t)data[1] << 16) |
+                ((uint32_t)data[2] << 8) | data[3];
+    m.address_is_icao = m.addr_qualifier == UAT_ADDR_ADSB_ICAO ||
+                        m.addr_qualifier == UAT_ADDR_TISB_ICAO;
+
+    switch (type) {
+    case 0:
+    case 4:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+        parse_state_vector(data, &m);
+        break;
+    case 1:
+        parse_state_vector(data, &m);
+        parse_mode_status(data, &m);
+        parse_aux_state(data, &m);
+        break;
+    case 2:
+    case 5:
+    case 6:
+        parse_state_vector(data, &m);
+        parse_aux_state(data, &m);
+        break;
+    case 3:
+        parse_state_vector(data, &m);
+        parse_mode_status(data, &m);
+        break;
+    default:
+        return false;
+    }
+
+    *out = m;
+    return true;
 }

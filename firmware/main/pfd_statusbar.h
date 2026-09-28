@@ -11,6 +11,7 @@
 #include <stddef.h>
 
 #include "pfd_layout.h"   /* PFD_BAR_BOT —— 徽标槽位的垂直居中要用 */
+#include "gps_antenna_diag.h"
 
 typedef struct {
     /* ── 固定两端，永不隐藏 ── */
@@ -21,6 +22,7 @@ typedef struct {
     /* ── 中段状态位，空间不足时按优先级降级（见 pfd_statusbar.c）── */
     bool    gps_have_fix;
     uint8_t gps_sats;
+    pk_gps_ant_result_t gps_antenna_result;
     bool    rec_active;         /* 正在写记录（TF 卡 / LittleFS）*/
     bool    ble_connected;      /* GDL90 已连上 App              */
     bool    batt_valid;

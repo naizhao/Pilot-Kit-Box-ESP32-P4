@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -55,6 +56,13 @@ esp_err_t pk_display_init(void);
  * 0 是 power.c 软关机专用的"灭屏"值。
  */
 void pk_display_set_brightness(uint8_t level);
+
+/*
+ * SW3 的“息屏”只关背光，不停 DSI/PFD，也不切系统电源。恢复时回到用户当前
+ * 亮度档。这样不需要从按键任务跨线程发送面板命令，黑屏期间画面仍持续刷新。
+ */
+void pk_display_screen_set_awake(bool awake);
+bool pk_display_screen_awake(void);
 
 /* 设置页的亮度档位。AUTO 不在其中：没有环境光传感器，选了也无从自动。 */
 typedef enum {

@@ -7,7 +7,8 @@
  *      -o /tmp/test_aircraft_state_ingest \
  *      firmware/test/test_aircraft_state_ingest.c \
  *      firmware/main/mode_s.c firmware/main/modes_ingest.c \
- *      firmware/main/aircraft_state.c firmware/main/pk_callsign.c -lm \
+ *      firmware/main/aircraft_state.c firmware/main/pk_callsign.c \
+ *      firmware/main/uat_decode.c -lm \
  *   && /tmp/test_aircraft_state_ingest
  *
  * ESP/FreeRTOS stubs only replace locking/logging and demo/UI externals.  The
@@ -18,6 +19,7 @@
 #include "demo_data.h"
 #include "mode_s.h"
 #include "modes_ingest.h"
+#include "uat_decode.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -807,6 +809,87 @@ static void test_demo_snapshot_keeps_synthetic_fields(void)
     g_demo_on = false;
 }
 
+static size_t decode_hex_bytes(const char *hex, uint8_t *out, size_t cap)
+{
+    size_t n = 0;
+    while (hex[0] && hex[1] && n < cap) {
+        unsigned value = 0;
+        if (sscanf(hex, "%2x", &value) != 1) break;
+        out[n++] = (uint8_t)value;
+        hex += 2;
+    }
+    return n;
+}
+
+static void test_uat_icao_fuses_without_faking_track_addresses(void)
+{
+    static const char adsb[] =
+        "08a66ef1353e2d525fd4050911882aa038101d06b85d440be2a4c2a0000590000000";
+    static const char tisb_track[] =
+        "0bac012235606d5221340436111c17c08105c4e6c4e6c40a2a700300000000000000";
+    uint8_t data[UAT_DL_LONG_DATA_BYTES];
+    uat_aircraft_msg_t m;
+    aircraft_t a;
+    const int64_t now = FIELD_TEST_T0;
+
+    reset_chain();
+    CHECK(decode_hex_bytes(adsb, data, sizeof data) == 34,
+          "UAT ADS-B fixture 长度错误\n");
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m),
+          "UAT ADS-B fixture 解析失败\n");
+    CHECK(aircraft_state_ingest_uat(&m, now),
+          "真实 ICAO UAT 应进入共享 aircraft_state\n");
+    CHECK(aircraft_state_get_own(0xA66EF1, now, AIRCRAFT_STALE_AGE_US, &a),
+          "UAT ICAO 未能从共享表读回\n");
+    CHECK(a.have_callsign && strcmp(a.callsign, "N5130E") == 0,
+          "UAT callsign 未融合\n");
+    CHECK(a.address_type == 0, "direct UAT ADS-B 地址类型必须保持 0\n");
+    CHECK(a.wake == PK_WAKE_SMALL, "UAT emitter category 未映射\n");
+    CHECK(a.have_position && fabs(a.lat - 37.436385) < 0.000001 &&
+          fabs(a.lon - (-122.080551)) < 0.000001,
+          "UAT position 未融合/精度错误\n");
+    CHECK(a.have_altitude && a.altitude_ft == 975,
+          "UAT baro altitude 未融合\n");
+    CHECK(a.have_ground_speed && a.ground_speed_kt == 128,
+          "UAT ground speed 未融合\n");
+    CHECK(a.have_heading && a.heading_deg == 139 && a.have_velocity,
+          "UAT track/vector 未融合\n");
+    CHECK(a.have_vertical_rate && a.vert_rate_fpm == -128,
+          "UAT vertical rate 未融合\n");
+    CHECK(a.have_air_ground && !a.on_ground,
+          "UAT airborne 状态未融合\n");
+
+    static const char tisb_icao[] =
+        "0aa952b5358bd752400005a8139213004f039f0264e6c404c8974200000610000000";
+    CHECK(decode_hex_bytes(tisb_icao, data, sizeof data) == 34,
+          "UAT TIS-B ICAO fixture 长度错误\n");
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m) &&
+          aircraft_state_ingest_uat(&m, now + 1),
+          "TIS-B ICAO 应进入共享表\n");
+    CHECK(aircraft_state_get_own(0xA952B5, now + 1,
+                                 AIRCRAFT_STALE_AGE_US, &a),
+          "TIS-B ICAO 未能读回\n");
+    CHECK(a.address_type == 2,
+          "TIS-B ICAO 必须保留 GDL90 address type 2，不得冒充 direct ADS-B\n");
+    uint8_t direct[14];
+    build_df11(direct, 0xA952B5);
+    modes_ingest_feed(direct, 56, NULL);
+    CHECK(aircraft_state_get_own(0xA952B5, g_now_us,
+                                 AIRCRAFT_STALE_AGE_US, &a) &&
+          a.address_type == 0 && a.address_direct,
+          "收到 direct Mode-S 后必须升级为 address type 0\n");
+
+    CHECK(decode_hex_bytes(tisb_track, data, sizeof data) == 34,
+          "UAT TIS-B fixture 长度错误\n");
+    CHECK(uat_downlink_parse_aircraft(data, 34, &m),
+          "UAT TIS-B fixture 解析失败\n");
+    CHECK(!aircraft_state_ingest_uat(&m, now + 2),
+          "非 ICAO track-file 地址不得伪装成 ICAO 入表\n");
+    CHECK(!aircraft_state_get_own(0xAC0122, now + 2,
+                                  AIRCRAFT_STALE_AGE_US, &a),
+          "非 ICAO track-file 地址污染了共享 ICAO 表\n");
+}
+
 int main(void)
 {
     test_velocity_vectors_reach_state();
@@ -824,6 +907,7 @@ int main(void)
     test_df20_altitude_freshness();
     test_airspeed_fields_expire();
     test_demo_snapshot_keeps_synthetic_fields();
+    test_uat_icao_fuses_without_faking_track_addresses();
     printf(g_fail ? "FAIL (%d)\n" : "PASS: raw Mode-S to aircraft state\n", g_fail);
     return g_fail ? 1 : 0;
 }

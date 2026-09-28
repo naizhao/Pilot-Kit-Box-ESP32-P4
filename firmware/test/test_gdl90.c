@@ -332,6 +332,63 @@ static void test_traffic_callsign_bounded(void)
        && buf[26] == ' ' && buf[27] == ' ');
 }
 
+static size_t unstuff_frame(const uint8_t *in, size_t n,
+                            uint8_t *out, size_t cap)
+{
+    if (n < 2 || in[0] != 0x7E || in[n - 1] != 0x7E) return 0;
+    size_t used = 0;
+    for (size_t i = 1; i + 1 < n; ++i) {
+        uint8_t b = in[i];
+        if (b == 0x7D) {
+            if (++i + 1 > n) return 0;
+            b = in[i] ^ 0x20;
+        }
+        if (used >= cap) return 0;
+        out[used++] = b;
+    }
+    return used;
+}
+
+/* FAA 560-1058-00A §3.3: ID 7, invalid TOR=FFFFFF, then the complete
+ * corrected 432-byte UAT uplink payload without reinterpretation. */
+static void test_uplink_pass_through(void)
+{
+    uint8_t payload[GDL90_UPLINK_PAYLOAD_BYTES];
+    for (size_t i = 0; i < sizeof payload; ++i)
+        payload[i] = (uint8_t)(i * 17u + 3u);
+    uint8_t wire[GDL90_MAX_UPLINK];
+    uint8_t raw[1 + 3 + GDL90_UPLINK_PAYLOAD_BYTES + 2];
+
+    size_t n = gdl90_encode_uplink(wire, sizeof wire, 0xFFFFFFu,
+                                   payload, sizeof payload);
+    CHECK(n > 0 && n <= sizeof wire);
+    size_t rn = unstuff_frame(wire, n, raw, sizeof raw);
+    CHECK(rn == sizeof raw);
+    CHECK(raw[0] == GDL90_ID_UPLINK_DATA);
+    CHECK(raw[1] == 0xFF && raw[2] == 0xFF && raw[3] == 0xFF);
+    CHECK(memcmp(raw + 4, payload, sizeof payload) == 0);
+    CHECK(crc_icd_reference(raw, sizeof raw - 2) ==
+          (uint16_t)(raw[sizeof raw - 2] | (raw[sizeof raw - 1] << 8)));
+
+    CHECK(gdl90_encode_uplink(wire, sizeof wire, 0, payload,
+                              sizeof payload - 1) == 0);
+}
+
+static void test_tisb_address_type_is_preserved(void)
+{
+    uint8_t wire[64], raw[40];
+    size_t n = gdl90_encode_traffic_typed(
+        wire, sizeof wire, false, 2, 0xA952B5,
+        false, 0, 0, false, 0, false, 0, false, 0,
+        false, 0, false, false, 0, "", 0);
+    CHECK(n > 0);
+    size_t rn = unstuff_frame(wire, n, raw, sizeof raw);
+    CHECK(rn == 30);
+    CHECK(raw[0] == GDL90_ID_TRAFFIC);
+    CHECK((raw[1] & 0x0F) == 2);
+    CHECK(raw[2] == 0xA9 && raw[3] == 0x52 && raw[4] == 0xB5);
+}
+
 int main(void)
 {
     crc_table_init();
@@ -342,6 +399,8 @@ int main(void)
     test_heartbeat_icd_golden_vector();
     test_heartbeat_message_counts_packing();
     test_traffic_callsign_bounded();
+    test_uplink_pass_through();
+    test_tisb_address_type_is_preserved();
 
     if (g_fail == 0) {
         printf("test_gdl90: all OK\n");

@@ -110,8 +110,10 @@ static void write_row(FILE *fp, const uint32_t h[ADSB_LINK_HEALTH_FIELDS],
 
 void rf1090_log_dump(void)
 {
+    if (!pk_sdcard_io_acquire()) return;
     FILE *fp = fopen(RFLOG_PATH, "r");
     if (!fp) {
+        pk_sdcard_io_release();
         ESP_LOGW(TAG, "%s 打不开（没插卡，或还没记过）", RFLOG_PATH);
         return;
     }
@@ -126,6 +128,7 @@ void rf1090_log_dump(void)
         if ((n % 20) == 0) vTaskDelay(pdMS_TO_TICKS(10));
     }
     fclose(fp);
+    pk_sdcard_io_release();
     ESP_LOGI(TAG, "===== %s 结束（%d 行）=====", RFLOG_PATH, n);
 }
 
@@ -168,6 +171,7 @@ static void rf1090_log_task(void *arg)
             continue;
         }
         warned = false;
+        if (!pk_sdcard_io_acquire()) continue;
 
         /* 拔了又插回来算新的一段。用挂载代数而不是 is_mounted 电平——
          * 卡不在的窗口可能整个落在两次轮询之间，边沿检测抓不到。 */
@@ -189,6 +193,7 @@ static void rf1090_log_task(void *arg)
 
         FILE *fp = open_log();
         if (fp == NULL) {
+            pk_sdcard_io_release();
             ESP_LOGW(TAG, "打开 %s 失败，下一拍重试", RFLOG_PATH);
             continue;
         }
@@ -201,7 +206,7 @@ static void rf1090_log_task(void *arg)
         }
 
         if (s_have_prev)
-            write_row(fp, h, nf >= ADSB_LINK_HEALTH_FIELDS);
+            write_row(fp, h, nf > ADSB_LINK_HEALTH_IDX_ANT_1090);
         memcpy(s_prev, h, sizeof s_prev);
         s_have_prev = true;
 
@@ -210,6 +215,7 @@ static void rf1090_log_task(void *arg)
         fflush(fp);
         fsync(fileno(fp));
         fclose(fp);
+        pk_sdcard_io_release();
     }
 }
 

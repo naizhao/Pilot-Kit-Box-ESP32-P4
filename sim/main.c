@@ -69,6 +69,7 @@
  * 版面位置类（与空态常配合用）：
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
  *     PK_SIM_DIAG_DETAIL=<0..11>   直接进某个子系统的详情页
+ *     PK_SIM_AIRBAND_PRESS=<x>,<y>  按住航空电台页控件并渲染按压态
  *
  * 开机画面的进度条（PK_SIM_PAGE=splash 才有意义）：
  *     PK_SIM_SPLASH_STAGE=<0..3>  停在第几个阶段（0 正在启动 / 1 传感器 /
@@ -93,6 +94,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "airband_page.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -681,6 +683,25 @@ static int run_headless(float at_sec, const char *out)
                                   getenv("PK_SIM_KBD"), PK_DEVNAME_MAX_LEN,
                                   NULL, NULL);
             pk_keyboard_page_render(fb);
+        } else if (strcmp(page, "airband") == 0) {
+            pk_airband_page_init();
+            pk_airband_page_open();
+            const char *scroll = getenv("PK_SIM_AIRBAND_SCROLL");
+            if (scroll) {
+                pk_airband_page_touch(400, 350);
+                pk_airband_page_drag(400, 350 - atoi(scroll));
+                pk_airband_page_touch_up();
+            }
+            const char *press = getenv("PK_SIM_AIRBAND_PRESS");
+            if (press != NULL) {
+                int px = 0, py = 0;
+                if (sscanf(press, "%d,%d", &px, &py) == 2) {
+                    const bool eaten = pk_airband_page_touch(px, py);
+                    printf("airband press (%d,%d) -> eaten=%d\n",
+                           px, py, (int)eaten);
+                }
+            }
+            pk_airband_page_render(fb);
         } else if (strcmp(page, "airbandkbd") == 0) {
             pk_keyboard_page_open_numeric(
                 pk_i18n_text(PK_TR_AIRBAND_FREQ_INPUT),

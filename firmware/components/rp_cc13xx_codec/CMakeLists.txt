@@ -1,7 +1,7 @@
 # 纯 C99 共享编解码器：RP2040（SPI master）与 CC1312R（SPI slave）编同一份源。
 # RP2040 侧不走本清单——firmware/rp2040/CMakeLists.txt 直接列 .c 路径，
 # 所以本文件只服务 ESP-IDF。规范：
-# firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.0。
+# firmware/PROTOCOL_RP2040_CC1312R_SPI.md v1.1（帧 major 仍为 1）。
 #
 # 注意：本组件当前在 P4 主树**没有任何调用点**，但 EXTRA_COMPONENT_DIRS 下的
 # 组件不论是否被 REQUIRES 都会编译并归档（build_v4 里存在 librp_cc13xx_codec.a

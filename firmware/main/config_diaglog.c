@@ -56,20 +56,22 @@ bool pk_diaglog_enabled(void)
 
 void pk_diaglog_clear_files(void)
 {
-    if (!pk_sdcard_is_mounted()) return;
+    if (!pk_sdcard_io_acquire()) return;
     for (size_t i = 0; i < DIAG_FILE_N; i++) {
         if (unlink(DIAG_FILES[i]) == 0)
             ESP_LOGI(TAG, "已删除 %s", DIAG_FILES[i]);
     }
+    pk_sdcard_io_release();
 }
 
 long pk_diaglog_size_bytes(void)
 {
-    if (!pk_sdcard_is_mounted()) return 0;
+    if (!pk_sdcard_io_acquire()) return 0;
     long total = 0;
     struct stat st;
     for (size_t i = 0; i < DIAG_FILE_N; i++)
         if (stat(DIAG_FILES[i], &st) == 0) total += (long)st.st_size;
+    pk_sdcard_io_release();
     return total;
 }
 

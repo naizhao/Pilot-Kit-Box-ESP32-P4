@@ -26,9 +26,18 @@
  */
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
 /* 注册日志钩子并启动写盘任务（幂等）。应尽早调用——在它之前产生的日志只会
  * 进串口，落不了盘。 */
 void pk_syslog_init(void);
 
 /* 当前缓冲溢出丢弃的日志条数（诊断用：非 0 说明写盘跟不上产生速度）。 */
 unsigned pk_syslog_dropped(void);
+
+/* 等待已经进入 syslog 环形缓冲的内容真正完成 fwrite + fflush + fsync +
+ * fclose。诊断记录未启用时没有持久化合同，直接返回 true；已启用但 SD
+ * 不可用、最近一次落盘失败或超时则返回 false。用于断电前证据屏障，不能
+ * 在普通高频日志路径调用。 */
+bool pk_syslog_flush(uint32_t timeout_ms);

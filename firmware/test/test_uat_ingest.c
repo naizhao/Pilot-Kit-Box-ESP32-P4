@@ -10,6 +10,7 @@
  *      firmware/main/uat_ingest.c \
  *      firmware/main/uat_decode.c \
  *      firmware/components/adsb_link_codec/adsb_link_codec.c \
+ *      -lm \
  *   && /tmp/test_uat_ingest
  *
  * 被测：uat_ingest.c 前门（镜像 modes_ingest 的 init(sink)/feed/get_stats
@@ -209,7 +210,7 @@ static void link_sink(void *user, const adsb_link_msg_t *m)
 }
 
 /* ── 6. v1.1 golden vector 整线走查（协议 §6.2；ver_minor 随版本递增，
- *      当前 v1.3 → CRC=0xFBBC）──────────────────────────────────── */
+ *      当前 v1.4 → CRC=0xDDB6）──────────────────────────────────── */
 
 static void test_v11_golden_vector_wire(void)
 {
@@ -232,11 +233,12 @@ static void test_v11_golden_vector_wire(void)
     /* ver_minor = 3（v1.3）。协议每加一次向前兼容的新增都会碰这一字节，
      * 连带整帧 CRC 也变——两者都由规范 §6.2 的 golden vector 钉死，CRC 由
      * 独立 Python 实现算出（KAT "123456789"→0x29B1 对拍），不经被测代码。
-     * v1.1 时 CRC=0x5FAD、v1.2 时 0x21A4、v1.3 时 0xFBBC。 */
-    static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x03, 0x11, 0x00,
+     * v1.1 时 CRC=0x5FAD、v1.2 时 0x21A4、v1.3 时 0xFBBC、
+     * v1.4 时 0xDDB6（独立 Python CCITT-FALSE 重算）。 */
+    static const uint8_t HDR[8] = { 0x50, 0x4B, 0x01, 0x04, 0x11, 0x00,
                                     0x2D, 0x02 };
     CHECK(memcmp(wire, HDR, 8) == 0);
-    CHECK(wire[n - 2] == 0xBC && wire[n - 1] == 0xFB);   /* crc16=0xFBBC LE */
+    CHECK(wire[n - 2] == 0xB6 && wire[n - 1] == 0xDD);   /* crc16=0xDDB6 LE */
 
     /* 6c. codec 解码（分块 256 B，模拟 P4 UART 读长）→ payload 助手 →
      *     前门（与 adsb_link_task.c 的 UAT_UPLINK 分发同一条链）。 */

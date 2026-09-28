@@ -269,8 +269,10 @@ static bool aero_sha_verify(const pk_aero_db_t *db)
  * 无文件，探测周期自动跟进）。 */
 static bool aero_load_once(void)
 {
+    if (!pk_sdcard_io_acquire()) return false;
     struct stat fst;
     if (stat(AERO_BIN_PATH, &fst) != 0 || !S_ISREG(fst.st_mode)) {
+        pk_sdcard_io_release();
         return false;   /* 没有文件：保持 ABSENT，周期性重试 */
     }
     size_t len = (size_t)fst.st_size;
@@ -278,6 +280,7 @@ static bool aero_load_once(void)
         s_state = PK_AERO_DB_ERROR;
         s_err   = "file too small";
         ESP_LOGE(TAG, "%s: %u B — too small", AERO_BIN_PATH, (unsigned)len);
+        pk_sdcard_io_release();
         return false;
     }
 
@@ -292,6 +295,7 @@ static bool aero_load_once(void)
         s_state = PK_AERO_DB_ERROR;
         s_err   = "psram alloc";
         ESP_LOGE(TAG, "PSRAM alloc %u B failed", (unsigned)len);
+        pk_sdcard_io_release();
         return false;
     }
 
@@ -309,6 +313,8 @@ static bool aero_load_once(void)
         fclose(f);
     }
     xSemaphoreGive(s_io_lock);
+
+    pk_sdcard_io_release();  /* stat/open/read/close complete; parsing is RAM-only */
 
     pk_aero_db_t db;
     if (ok) {
@@ -625,6 +631,20 @@ bool pk_aero_db_freq_get(uint32_t idx, pk_aero_freq_t *out)
     AERO_QUERY(false, pk_aero_freq_get(&s_db, idx, out));
 }
 
+bool pk_aero_db_freq_get_copy(uint32_t idx, pk_aero_freq_t *out,
+                              char *callsign, size_t callsign_size)
+{
+    if (!out || !callsign || !callsign_size || s_state != PK_AERO_DB_READY) return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool ok = s_state == PK_AERO_DB_READY && pk_aero_freq_get(&s_db, idx, out);
+    if (ok) {
+        snprintf(callsign, callsign_size, "%s", out->callsign ? out->callsign : "");
+        out->callsign = callsign;
+    }
+    xSemaphoreGive(s_lock);
+    return ok;
+}
+
 bool pk_aero_db_navaid_get(uint32_t idx, pk_aero_navaid_t *out)
 {
     AERO_QUERY(false, pk_aero_navaid_get(&s_db, idx, out));
@@ -661,6 +681,16 @@ int pk_aero_db_nearest_airports_with_freqs(double lat, double lon,
 {
     AERO_QUERY(0, pk_aero_nearest_airports_with_freqs(
         &s_db, lat, lon, out, max, PK_AERO_DIST_APPROX));
+}
+
+bool pk_aero_db_airports_with_freqs_nearby_all(double lat, double lon,
+    pk_aero_near_t **out, size_t *count)
+{
+    if (!out || !count) return false;
+    *out = NULL;
+    *count = 0;
+    AERO_QUERY(false, pk_aero_airports_with_freqs_nearby_all(&s_db, lat, lon,
+                                                          out, count));
 }
 
 int pk_aero_db_nearest_navaids(double lat, double lon,

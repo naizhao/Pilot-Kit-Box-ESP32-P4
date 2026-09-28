@@ -17,11 +17,9 @@
  * traffic.idx / session.json 只在关闭时短开。pk_sdcard.c 的 max_files
  * 已从 8 提到 16 与此配套。
  *
- * pre-unmount 回调预算：pk_sdcard 的槽位只有 4 个且已被 pk_tile_loader /
- * record_sink_file / pk_aero_db / aircraft_db 用满（实测，非文档所写的
- * "已用 3"——见 pk_rec_store_pre_unmount() 的调用方注释）。本模块**不**
- * 调用 pk_sdcard_register_pre_unmount_cb，而是被 record_sink_file.c 的
- * sd_close_log_cb 转调，复用它已经占的那一个槽位。
+ * pre-unmount 回调在打开 session 前独立注册，失败时不启用本模块；不能
+ * 依赖 record_sink_file 的有条件注册（它可能选择 flash 后端）。普通写入
+ * 由模块锁与该回调串行化，独立 rebuild_index 读会话则持 SD I/O lease。
  *
  * 纯逻辑（序号分配/回绕、保留策略选谁删、降级档位判定）与真机文件系统
  * 操作分层：前者不摸文件系统、可直接进 host 单测

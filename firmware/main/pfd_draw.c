@@ -120,15 +120,34 @@ void pk_pfd_fill_rect(uint16_t *fb, int x0, int y0, int x1, int y1, uint16_t c)
     }
 }
 
+/* 4x4 子像素采样角部覆盖率。采样点使用 1/8 像素定点坐标，避免浮点和
+ * sqrt；16 级面积覆盖比旧整数平方根算法仅有的半透明一档平滑得多。 */
+static uint8_t rounded_corner_coverage(int col, int row, int w, int h, int r)
+{
+    const bool left = col < r, right = col >= w - r;
+    const bool top = row < r, bottom = row >= h - r;
+    if ((!left && !right) || (!top && !bottom)) return 255;
+
+    const int cx8 = (left ? r : w - r) * 8;
+    const int cy8 = (top ? r : h - r) * 8;
+    const int radius8 = r * 8;
+    const int radius2 = radius8 * radius8;
+    int covered = 0;
+    for (int sy = 0; sy < 4; ++sy) {
+        const int py8 = row * 8 + sy * 2 + 1;
+        const int dy8 = py8 - cy8;
+        for (int sx = 0; sx < 4; ++sx) {
+            const int px8 = col * 8 + sx * 2 + 1;
+            const int dx8 = px8 - cx8;
+            covered += dx8 * dx8 + dy8 * dy8 <= radius2;
+        }
+    }
+    return covered == 16 ? 255 : (uint8_t)((covered * 255 + 8) / 16);
+}
+
 /*
- * 圆角矩形填充（抗锯齿）。
- *
- * 从 boot_splash.c 的 rounded_coverage() 泛化而来——那个只吃一个 size，
- * 是正方形专用（开机卡片）。分段控件是扁矩形，宽高不等，所以拆成 dx/dy
- * 各自判边。算法不变：离角圆心 r±1 的 1 px 过渡带内按距离线性插值，
- * 整数平方根，无浮点。
- *
- * 半径会被自动收到 min(w,h)/2 —— 传一个比控件还大的 r 时不至于画出鬼影。
+ * 圆角矩形填充（4x4 子像素抗锯齿）。半径会被自动收到 min(w,h)/2，
+ * 传一个比控件还大的 r 时不至于画出鬼影。
  */
 void pk_pfd_fill_round_rect(uint16_t *fb, int x0, int y0, int x1, int y1,
                             int r, uint16_t c)
@@ -139,33 +158,16 @@ void pk_pfd_fill_round_rect(uint16_t *fb, int x0, int y0, int x1, int y1,
     if (r > h / 2) r = h / 2;
     if (r <= 0) { pk_pfd_fill_rect(fb, x0, y0, x1, y1, c); return; }
 
-    const int rin = r - 1, rout = r + 1;
-
     for (int row = 0; row < h; ++row) {
         const int yy = y0 + row;
         if (yy < 0 || yy >= PK_DISPLAY_H) continue;
-        int dy = 0;
-        if (row < r)              dy = r - row;
-        else if (row >= h - r)    dy = row - (h - r - 1);
 
         for (int col = 0; col < w; ++col) {
             const int xx = x0 + col;
             if (xx < 0 || xx >= PK_DISPLAY_W) continue;
-            int dx = 0;
-            if (col < r)           dx = r - col;
-            else if (col >= w - r) dx = col - (w - r - 1);
-
-            if (dx == 0 || dy == 0) { pk_pfd_put_pixel(fb, xx, yy, c); continue; }
-
-            const int d2 = dx * dx + dy * dy;
-            if (d2 <= rin * rin) { pk_pfd_put_pixel(fb, xx, yy, c); continue; }
-            if (d2 >= rout * rout) continue;
-
-            int d = 0;
-            while ((d + 1) * (d + 1) <= d2) ++d;
-            int t = (rout - d) * 255 / (rout - rin);
-            if (t < 0) t = 0; else if (t > 255) t = 255;
-            pk_pfd_blend_pixel(fb, xx, yy, c, (uint8_t)t);
+            const uint8_t coverage =
+                rounded_corner_coverage(col, row, w, h, r);
+            pk_pfd_blend_pixel(fb, xx, yy, c, coverage);
         }
     }
 }

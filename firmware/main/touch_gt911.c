@@ -70,6 +70,25 @@ static esp_lcd_touch_handle_t s_tp;
  * 抢走。规则与踩坑过程见 pk_touch_arbiter.h。 */
 static pk_touch_arbiter_t s_arb;
 
+/* 松手和息屏共用同一条收尾路径。息屏前若手指正拖动，必须把所有页面的
+ * 手势状态一并释放，否则亮屏后第一下会接在旧手势后面。 */
+static void touch_release_all(void)
+{
+    pk_touch_arbiter_release(&s_arb);
+    pk_nav_grid_page_touch_up();
+    pk_traffic_page_touch_up();
+    pk_map_page_touch_up();
+    pk_adsb_list_touch_up();
+    pk_airband_page_touch_up();
+    pk_diag_page_touch_up();
+    pk_settings_page_touch_up();
+    pk_keyboard_page_touch_up();
+    pk_apt_detail_page_touch_up();
+    pk_search_page_touch_up();
+    pk_about_page_touch_up();
+    pk_cal_wizard_touch_up();
+}
+
 /*
  * 原生触摸坐标 → 逻辑屏坐标。
  *
@@ -131,6 +150,14 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         return;
     }
     if (esp_lcd_touch_get_data(s_tp, &pt, &cnt, 1) != ESP_OK) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    /* SW3 息屏时触摸只能被丢弃，不能在看不见的页面上继续点按钮。屏幕只能
+     * 由下一次 SW3 短按恢复，避免一次普通触摸同时“唤醒并误触”。 */
+    if (!pk_display_screen_awake()) {
+        touch_release_all();
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
@@ -284,19 +311,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
          * 上一版把这行写在 pressed 分支**内部**（if (!pressed) s_armed = true;），
          * 那里 !pressed 恒假——于是第一次点击把闸门关上之后再也没机会恢复，
          * 所有自绘按钮从此全部失灵。 */
-        pk_touch_arbiter_release(&s_arb);
-        pk_nav_grid_page_touch_up();
-        pk_traffic_page_touch_up();
-        pk_map_page_touch_up();
-        pk_adsb_list_touch_up();
-        pk_airband_page_touch_up();
-        pk_diag_page_touch_up();
-        pk_settings_page_touch_up();
-        pk_keyboard_page_touch_up();
-        pk_apt_detail_page_touch_up();
-        pk_search_page_touch_up();
-        pk_about_page_touch_up();
-        pk_cal_wizard_touch_up();
+        touch_release_all();
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }

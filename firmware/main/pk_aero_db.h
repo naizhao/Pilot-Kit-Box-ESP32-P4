@@ -84,6 +84,9 @@ int32_t pk_aero_db_airport_by_icao(const char *code);
 bool pk_aero_db_airport_get(uint32_t idx, pk_aero_airport_t *out);
 bool pk_aero_db_rwy_dir_get(uint32_t idx, pk_aero_rwy_dir_t *out);
 bool pk_aero_db_freq_get(uint32_t idx, pk_aero_freq_t *out);
+/* Copies the callsign while holding the database lock, safe during card removal. */
+bool pk_aero_db_freq_get_copy(uint32_t idx, pk_aero_freq_t *out,
+                              char *callsign, size_t callsign_size);
 bool pk_aero_db_navaid_get(uint32_t idx, pk_aero_navaid_t *out);
 bool pk_aero_db_fix_get(uint32_t idx, pk_aero_fix_t *out);
 
@@ -100,6 +103,9 @@ int pk_aero_db_nearest_airports(double lat, double lon,
 /* 最近且确实带频率记录的机场；过滤发生在全候选扫描阶段。 */
 int pk_aero_db_nearest_airports_with_freqs(double lat, double lon,
                                            pk_aero_near_t *out, int max);
+/* Caller frees *out. False if database unavailable or allocation/read fails. */
+bool pk_aero_db_airports_with_freqs_nearby_all(double lat, double lon,
+    pk_aero_near_t **out, size_t *count);
 int pk_aero_db_nearest_navaids(double lat, double lon,
                                pk_aero_near_t *out, int max);
 int pk_aero_db_nearest_fixes(double lat, double lon,

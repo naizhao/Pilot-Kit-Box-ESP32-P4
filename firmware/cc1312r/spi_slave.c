@@ -12,6 +12,15 @@
 
 #include <string.h>
 
+/* One CC1312R owns one SPI slave instance.  Keep the protocol work buffers in
+ * BSS instead of the 1 KiB NoRTOS main stack: the old nested locals consumed
+ * 1080 B in load_next alone (compiler -fstack-usage evidence), before its
+ * encoder callees.  The API is deliberately single-context/non-reentrant;
+ * RF callback only enqueues through cc13s_push_rx under the platform lock. */
+static uint8_t g_frame_scratch[CC13S_TXN_LEN];
+static rp_cc13xx_chunk_t g_chunk_scratch;
+static rp_cc13xx_msg_t g_input_scratch;
+
 static void load_frame(cc13s_slave_t *s, const uint8_t *frame, size_t n,
                        int kind)
 {
@@ -21,6 +30,7 @@ static void load_frame(cc13s_slave_t *s, const uint8_t *frame, size_t n,
     s->pend_dlen  = 0;
     s->pend_final = false;
     s->pend_async = false;
+    s->pend_rf_health = false;
 }
 
 static void load_all_zero(cc13s_slave_t *s)
@@ -32,8 +42,15 @@ static void pop_queue(cc13s_slave_t *s)
 {
     if (s->qn <= 0) { s->cur = -1; return; }
     memmove(s->q, s->q + 1, sizeof(s->q[0]) * (size_t)(s->qn - 1));
-    memmove(s->q_rssi, s->q_rssi + 1, sizeof(s->q_rssi[0]) * (size_t)(s->qn - 1));
-    memmove(s->q_ts, s->q_ts + 1, sizeof(s->q_ts[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_len, s->q_len + 1, sizeof(s->q_len[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_frame_seq, s->q_frame_seq + 1,
+            sizeof(s->q_frame_seq[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_rssi_dbm, s->q_rssi_dbm + 1,
+            sizeof(s->q_rssi_dbm[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_kind, s->q_kind + 1, sizeof(s->q_kind[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_flags, s->q_flags + 1, sizeof(s->q_flags[0]) * (size_t)(s->qn - 1));
+    memmove(s->q_cc_time, s->q_cc_time + 1,
+            sizeof(s->q_cc_time[0]) * (size_t)(s->qn - 1));
     s->qn--;
     s->cur = -1;
 }
@@ -60,32 +77,63 @@ bool cc13s_irq(const cc13s_slave_t *s)
      * iff 自然成立；若测试注入造成"未握手却有源"，iff 语义也保持
      * 诚实：源在即报。WAIT_HELLO 的 master 行为不受影响——master
      * 在该态只发 HELLO，不看 IRQ【§6.2】）。 */
-    if (s->qfull || s->aerr) return true;
+    if (s->qfull || s->aerr || s->rf_health_pending) return true;
     if (s->cur >= 0 && s->cur_sent < s->cur_total) return true;
     return s->qn > 0;
 }
 
-void cc13s_push_uat(cc13s_slave_t *s, const uint8_t frame[CC13S_UAT_LEN],
-                    uint8_t rssi, uint32_t ts_us)
+bool cc13s_push_rx(cc13s_slave_t *s, uint8_t kind, const uint8_t *frame,
+                   size_t len, int8_t rssi_dbm, uint32_t cc_time)
 {
+    if (!s || !frame || len > UINT16_MAX ||
+        !rp_cc13xx_uat_kind_len_valid(kind, (uint16_t)len)) {
+        if (s) s->invalid_frames++;
+        return false;
+    }
+    const uint16_t frame_seq = s->next_frame_seq++;
     if (s->qn >= CC13S_MAXQ) {
         /* §4.5：队满丢弃新帧（或按实现丢弃队头——本实现弃新，与
          * events_dropped 口径一致）、置 qfull 通知 master。 */
         s->dropped++;
         s->qfull = true;
-        return;
+        return false;
     }
-    memcpy(s->q[s->qn], frame, CC13S_UAT_LEN);
-    s->q_rssi[s->qn] = rssi;
-    s->q_ts[s->qn]   = ts_us;
+    memcpy(s->q[s->qn], frame, len);
+    s->q_len[s->qn] = (uint16_t)len;
+    s->q_frame_seq[s->qn] = frame_seq;
+    s->q_rssi_dbm[s->qn] = rssi_dbm;
+    s->q_kind[s->qn] = kind;
+    s->q_flags[s->qn] = RP_CC13XX_DESC_F_SYNC36_OK |
+                         RP_CC13XX_DESC_F_RF_STATUS_OK |
+                         RP_CC13XX_DESC_F_SET_LEN_OK;
+    s->q_cc_time[s->qn] = cc_time;
     s->qn++;
+    return true;
 }
 
 void cc13s_raise_async(cc13s_slave_t *s, uint8_t code)
 {
-    (void)code;
     s->aerr = true;                /* code 存入装载时的 ERROR 帧（0x04/0x05）*/
     s->async_code = code;
+    s->async_has_detail = false;
+    s->async_detail = 0;
+}
+
+void cc13s_raise_async_detail(cc13s_slave_t *s, uint8_t code,
+                              uint16_t detail)
+{
+    s->aerr = true;
+    s->async_code = code;
+    s->async_has_detail = true;
+    s->async_detail = detail;
+}
+
+void cc13s_publish_rf_health(cc13s_slave_t *s,
+                             const rp_cc13xx_rf_health_t *health)
+{
+    if (!s || !health) return;
+    s->rf_health = *health;
+    s->rf_health_pending = true;
 }
 
 /* §2.3 五步装载链。 */
@@ -98,10 +146,10 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
         if (s->cmd_err_pending) {
             rp_cc13xx_error_t e = { .code = s->cmd_err_code, .msg_len = 3,
                                     .msg = { 'D','E','N' } };
-            uint8_t f[CC13S_TXN_LEN];
-            size_t n = rp_cc13xx_encode_error(f, sizeof(f),
+            size_t n = rp_cc13xx_encode_error(g_frame_scratch,
+                                              sizeof(g_frame_scratch),
                                               s->cmd_err_seq, &e);
-            load_frame(s, f, n, RP_CC13XX_MSG_ERROR);
+            load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_ERROR);
             s->cmd_err_pending = false;
             return;
         }
@@ -112,9 +160,10 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
             rp_cc13xx_hello_t h = { .fw_ver_major = s->fw_major,
                                     .fw_ver_minor = s->fw_minor,
                                     .reset_reason = s->reset_reason };
-            uint8_t f[CC13S_TXN_LEN];
-            size_t n = rp_cc13xx_encode_hello(f, sizeof(f), in->seq, &h);
-            load_frame(s, f, n, RP_CC13XX_MSG_HELLO);
+            size_t n = rp_cc13xx_encode_hello(g_frame_scratch,
+                                              sizeof(g_frame_scratch),
+                                              in->seq, &h);
+            load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_HELLO);
             s->state = CC13S_LINKED;    /* 握手段不删（§6.2）*/
         } else {
             if (cmd_ok && in->type == RP_CC13XX_MSG_ERROR) {
@@ -131,20 +180,24 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
     /* 规则 1：取片延续（命令为 IRQ_ACK 且报文有剩余）——优先于一切。 */
     if (cmd_ok && in->type == RP_CC13XX_MSG_IRQ_ACK &&
         s->cur >= 0 && s->cur_sent < s->cur_total) {
-        rp_cc13xx_chunk_t c = {
+        g_chunk_scratch = (rp_cc13xx_chunk_t) {
             .desc_id   = s->cur_desc_id,
             .offset    = s->cur_sent,
             .total_len = s->cur_total,
         };
         const uint16_t left = (uint16_t)(s->cur_total - s->cur_sent);
-        c.data_len = left > RP_CC13XX_CHUNK_MAX_DATA
-                   ? RP_CC13XX_CHUNK_MAX_DATA : left;
-        memcpy(c.data, s->q[s->cur] + s->cur_sent, c.data_len);
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_rx_chunk(f, sizeof(f), s->ev_seq++, &c);
-        load_frame(s, f, n, RP_CC13XX_MSG_RX_PAYLOAD_CHUNK);
-        s->pend_dlen  = c.data_len;
-        s->pend_final = (uint16_t)(s->cur_sent + c.data_len) >= s->cur_total;
+        g_chunk_scratch.data_len = left > RP_CC13XX_CHUNK_MAX_DATA
+                                 ? RP_CC13XX_CHUNK_MAX_DATA : left;
+        memcpy(g_chunk_scratch.data, s->q[s->cur] + s->cur_sent,
+               g_chunk_scratch.data_len);
+        size_t n = rp_cc13xx_encode_rx_chunk(
+            g_frame_scratch, sizeof(g_frame_scratch), s->ev_seq++,
+            &g_chunk_scratch);
+        load_frame(s, g_frame_scratch, n,
+                   RP_CC13XX_MSG_RX_PAYLOAD_CHUNK);
+        s->pend_dlen  = g_chunk_scratch.data_len;
+        s->pend_final =
+            (uint16_t)(s->cur_sent + g_chunk_scratch.data_len) >= s->cur_total;
         return;
     }
     /* 规则 2：顺延的命令性 ERROR——无后备队列，被挤掉即永久丢失
@@ -152,9 +205,11 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
     if (s->cmd_err_pending) {
         rp_cc13xx_error_t e = { .code = s->cmd_err_code, .msg_len = 3,
                                 .msg = { 'D','E','N' } };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_error(f, sizeof(f), s->cmd_err_seq, &e);
-        load_frame(s, f, n, RP_CC13XX_MSG_ERROR);   /* 命令性：非 async */
+        size_t n = rp_cc13xx_encode_error(g_frame_scratch,
+                                          sizeof(g_frame_scratch),
+                                          s->cmd_err_seq, &e);
+        load_frame(s, g_frame_scratch, n,
+                   RP_CC13XX_MSG_ERROR);   /* 命令性：非 async */
         s->cmd_err_pending = false;
         return;
     }
@@ -165,17 +220,19 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
         rp_cc13xx_hello_t h = { .fw_ver_major = s->fw_major,
                                 .fw_ver_minor = s->fw_minor,
                                 .reset_reason = s->reset_reason };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_hello(f, sizeof(f), in->seq, &h);
-        load_frame(s, f, n, RP_CC13XX_MSG_HELLO);
+        size_t n = rp_cc13xx_encode_hello(g_frame_scratch,
+                                          sizeof(g_frame_scratch),
+                                          in->seq, &h);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_HELLO);
         if (s->cur >= 0) pop_queue(s);   /* §6.5：半交付报文作废出队 */
         return;
     }
     if (cmd_ok && in->type == RP_CC13XX_MSG_PING) {
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_empty(f, sizeof(f),
+        size_t n = rp_cc13xx_encode_empty(g_frame_scratch,
+                                          sizeof(g_frame_scratch),
                                           RP_CC13XX_MSG_PONG, in->seq);
-        load_frame(s, f, n, RP_CC13XX_MSG_PONG);        /* 规则 3 */
+        load_frame(s, g_frame_scratch, n,
+                   RP_CC13XX_MSG_PONG);                 /* 规则 3 */
         return;
     }
     if (cmd_ok && in->type == RP_CC13XX_MSG_RF_CONFIG) {
@@ -193,74 +250,92 @@ static void load_next(cc13s_slave_t *s, const rp_cc13xx_msg_t *in, bool cmd_ok)
                                           * 保留现行配置，不装 STATUS。 */
             }
         }
-        uint8_t f[CC13S_TXN_LEN];
         size_t n;
         int    kind;
         if (deny) {
             rp_cc13xx_error_t e = { .code = 0x03, .msg_len = 3,
                                     .msg = { 'D','E','N' } };
-            n = rp_cc13xx_encode_error(f, sizeof(f), in->seq, &e);
+            n = rp_cc13xx_encode_error(g_frame_scratch,
+                                       sizeof(g_frame_scratch), in->seq, &e);
             kind = RP_CC13XX_MSG_ERROR;
         } else {
-            n = rp_cc13xx_encode_rf_config(f, sizeof(f),
+            n = rp_cc13xx_encode_rf_config(g_frame_scratch,
+                                           sizeof(g_frame_scratch),
                                            RP_CC13XX_MSG_RF_CONFIG_STATUS,
                                            in->seq, &s->rf);
             kind = RP_CC13XX_MSG_RF_CONFIG_STATUS;
         }
-        load_frame(s, f, n, kind);
+        load_frame(s, g_frame_scratch, n, kind);
         return;
     }
     if (cmd_ok && in->type == RP_CC13XX_MSG_RESET_STATUS_REQ) {
         rp_cc13xx_reset_status_t st = { .reset_reason = s->reset_reason,
                                         .uptime_ms = 0 };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_reset_status(f, sizeof(f), in->seq, &st);
-        load_frame(s, f, n, RP_CC13XX_MSG_RESET_STATUS);
+        size_t n = rp_cc13xx_encode_reset_status(
+            g_frame_scratch, sizeof(g_frame_scratch), in->seq, &st);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_RESET_STATUS);
         return;
     }
     if (cmd_ok && in->type == RP_CC13XX_MSG_UPGRADE_STATUS_REQ) {
         rp_cc13xx_upgrade_status_t u = { .state = RP_CC13XX_UPG_NORMAL,
                                          .running_image_version = 0 };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_upgrade_status(f, sizeof(f), in->seq, &u);
-        load_frame(s, f, n, RP_CC13XX_MSG_UPGRADE_STATUS);
+        size_t n = rp_cc13xx_encode_upgrade_status(
+            g_frame_scratch, sizeof(g_frame_scratch), in->seq, &u);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_UPGRADE_STATUS);
         return;
     }
     if (s->qfull) {                       /* 规则 4a：通知优先（§4.5） */
         rp_cc13xx_queue_full_t q = { .events_dropped = (uint16_t)s->dropped,
                                      .queue_depth = (uint8_t)s->qn };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_queue_full(f, sizeof(f),
+        size_t n = rp_cc13xx_encode_queue_full(g_frame_scratch,
+                                               sizeof(g_frame_scratch),
                                                s->ev_seq++, &q);
-        load_frame(s, f, n, RP_CC13XX_MSG_QUEUE_FULL);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_QUEUE_FULL);
         return;
     }
     if (s->qn > 0 && s->cur < 0) {        /* 规则 4b：队头事件 → DESC */
         rp_cc13xx_rx_desc_t d = {
-            .desc_id   = (uint16_t)(s->last_desc_id + 1),
+            .frame_seq = s->q_frame_seq[0],
             .freq_hz   = 978000000u,
-            .ts_us     = s->q_ts[0],
-            .total_len = CC13S_UAT_LEN,
-            .rssi      = s->q_rssi[0],
+            .cc_time   = s->q_cc_time[0],
+            .total_len = s->q_len[0],
+            .rssi_dbm  = s->q_rssi_dbm[0],
+            .kind      = s->q_kind[0],
+            .flags     = s->q_flags[0],
         };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_rx_descriptor(f, sizeof(f),
+        size_t n = rp_cc13xx_encode_rx_descriptor(g_frame_scratch,
+                                                  sizeof(g_frame_scratch),
                                                   s->ev_seq++, &d);
-        load_frame(s, f, n, RP_CC13XX_MSG_RX_DESCRIPTOR);
-        s->last_desc_id = d.desc_id;
+        load_frame(s, g_frame_scratch, n,
+                   RP_CC13XX_MSG_RX_DESCRIPTOR_V2);
+        s->last_desc_id = d.frame_seq;
         s->cur          = 0;
-        s->cur_desc_id  = d.desc_id;
+        s->cur_desc_id  = d.frame_seq;
         s->cur_sent     = 0;
-        s->cur_total    = CC13S_UAT_LEN;
+        s->cur_total    = d.total_len;
         return;
     }
     if (s->aerr) {                        /* 规则 4c：异步 ERROR（seq 哨兵） */
         rp_cc13xx_error_t e = { .code = s->async_code ? s->async_code : 0x04,
                                 .msg_len = 4, .msg = { 'F','W','E','R' } };
-        uint8_t f[CC13S_TXN_LEN];
-        size_t n = rp_cc13xx_encode_error(f, sizeof(f), 0x0000, &e);
-        load_frame(s, f, n, RP_CC13XX_MSG_ERROR);
+        if (s->async_has_detail) {
+            e.msg[0] = 'R';
+            e.msg[1] = 'F';
+            e.msg[2] = (uint8_t)(s->async_detail & 0xFFu);
+            e.msg[3] = (uint8_t)(s->async_detail >> 8);
+        }
+        size_t n = rp_cc13xx_encode_error(g_frame_scratch,
+                                          sizeof(g_frame_scratch), 0x0000, &e);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_ERROR);
         s->pend_async = true;             /* 交付沿清 aerr（§1）          */
+        return;
+    }
+    if (s->rf_health_pending) {
+        size_t n = rp_cc13xx_encode_rf_health(g_frame_scratch,
+                                               sizeof(g_frame_scratch),
+                                               s->ev_seq++, &s->rf_health);
+        load_frame(s, g_frame_scratch, n, RP_CC13XX_MSG_RF_HEALTH_STATUS);
+        s->pend_rf_health = true;
         return;
     }
     load_all_zero(s);                     /* 规则 5 */
@@ -277,17 +352,19 @@ void cc13s_txn_done(cc13s_slave_t *s, const uint8_t mosi[CC13S_TXN_LEN])
     const uint16_t dd   = s->pend_dlen;
     const bool     fin  = s->pend_final;
     const bool     asyn = s->pend_async;
+    const bool     rfhl = s->pend_rf_health;
     if (kind == RP_CC13XX_MSG_QUEUE_FULL) s->qfull = false;
     if (kind == RP_CC13XX_MSG_ERROR && asyn) s->aerr = false;
+    if (kind == RP_CC13XX_MSG_RF_HEALTH_STATUS && rfhl)
+        s->rf_health_pending = false;
     if (kind == RP_CC13XX_MSG_RX_PAYLOAD_CHUNK) {
         s->cur_sent = (uint16_t)(s->cur_sent + dd);
         if (fin) pop_queue(s);
     }
 
     /* 2) 处理 MOSI（帧级校验：magic→len→CRC→ver，§5.1）。 */
-    rp_cc13xx_msg_t in;
     const rp_cc13xx_status_t st =
-        rp_cc13xx_decode_frame(mosi, CC13S_TXN_LEN, &in);
+        rp_cc13xx_decode_frame(mosi, CC13S_TXN_LEN, &g_input_scratch);
     bool cmd_ok = false;
     switch (st) {
     case RP_CC13XX_OK:
@@ -321,5 +398,5 @@ void cc13s_txn_done(cc13s_slave_t *s, const uint8_t mosi[CC13S_TXN_LEN])
     }
 
     /* 3) 装载下一 pending（§2.3）。 */
-    load_next(s, &in, cmd_ok);
+    load_next(s, &g_input_scratch, cmd_ok);
 }

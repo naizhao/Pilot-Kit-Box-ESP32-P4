@@ -39,15 +39,15 @@ static int g_fail;
 
 static uint8_t  cap_frame[CC13S_UAT_LEN];
 static int      cap_n;
-static uint8_t  cap_rssi;
+static int8_t   cap_rssi;
 static uint32_t cap_ts;
 
-static void uat_cb(const uint8_t *f, size_t len, uint8_t rssi,
-                   uint32_t ts, void *u)
+static void uat_cb(const uint8_t *f, size_t len,
+                   const rp_cc13xx_rx_meta_t *meta, void *u)
 {
     (void)u;
     if (len == CC13S_UAT_LEN) memcpy(cap_frame, f, len);
-    cap_n++; cap_rssi = rssi; cap_ts = ts;
+    cap_n++; cap_rssi = meta->rssi_dbm; cap_ts = meta->cc_time;
 }
 
 /* ── 互通驱动：一个事务把两侧接起来 ────────────────────────────────
@@ -114,8 +114,9 @@ static void duo_handshake(duo_t *d)
 static void push_uat(duo_t *d, uint8_t seed)
 {
     uint8_t f[CC13S_UAT_LEN];
-    for (int i = 0; i < CC13S_UAT_LEN; i++) f[i] = (uint8_t)(seed + i);
-    cc13s_push_uat(&d->s, f, 0x2A, 987654u + (uint32_t)d->s.qn);
+    for (size_t i = 0; i < CC13S_UAT_LEN; i++) f[i] = (uint8_t)(seed + i);
+    cc13s_push_rx(&d->s, RP_CC13XX_UAT_UPLINK, f, sizeof f, 0x2A,
+                  987654u + (uint32_t)d->s.qn);
 }
 
 /* ── 场景 ─────────────────────────────────────────────────────────── */
@@ -171,9 +172,11 @@ static void e2e_async_race(void)
     duo_t d; duo_init(&d);
     duo_handshake(&d);
     const uint16_t ping_seq = d.m.cmd_seq; /* 即将发出的 PING 的 seq */
+    const uint16_t raw_rf_status = 0x3802u;
 
     duo_txn(&d, 1000000);                  /* PING（IRQ 低时发出） */
-    cc13s_raise_async(&d.s, 0x04);         /* 事务中到达 → IRQ 升高 */
+    cc13s_raise_async_detail(&d.s, 0x04, raw_rf_status);
+                                                /* 事务中到达 → IRQ 升高 */
     duo_txn(&d, 1000);                     /* master IRQ_ACK：收 PONG */
     duo_txn(&d, 1000);                     /* master IRQ_ACK：收 ERROR */
     CHECK(!d.s.aerr, "e2e3 aerr cleared\n");
@@ -193,6 +196,12 @@ static void e2e_async_race(void)
           sniff_seq[sniff_n - 2], ping_seq);
     /* 异步 ERROR 的 seq 哨兵（§3.5：固定 0x0000）。 */
     CHECK(sniff_seq[sniff_n - 1] == 0x0000, "e2e3 error sentinel\n");
+    CHECK(d.m.last_error_code == 0x04, "e2e3 error code %02x\n",
+          d.m.last_error_code);
+    CHECK(d.m.last_error_msg_len == 4 && d.m.last_error_msg[0] == 'R' &&
+          d.m.last_error_msg[1] == 'F' && d.m.last_error_msg[2] == 0x02 &&
+          d.m.last_error_msg[3] == 0x38,
+          "e2e3 raw RF status not preserved\n");
 
     /* 哨兵不污染 gap 链：ERROR 后注入完整事件帧，gaps 必须为 0
      * （T3 审查 Important-1 的端到端复验）。 */
@@ -209,10 +218,22 @@ static void e2e_split_brain(void)
     duo_t d; duo_init(&d);
     duo_handshake(&d);
 
+    const rp_cc13xx_rf_health_t health = {
+        .flags = RP_CC13XX_RF_HEALTH_ACTIVE | RP_CC13XX_RF_HEALTH_PROBE_OK,
+        .idle_rssi_dbm = -104,
+        .probe_successes = 2,
+    };
+    cc13s_publish_rf_health(&d.s, &health);
+    for (int i = 0; i < 4 && !d.m.peer_rf_health_valid; i++) duo_txn(&d, 1000);
+    CHECK(d.m.peer_rf_health_valid,
+          "e2e4 precondition: RF health did not reach RP\n");
+
     cc13s_init(&d.s, 1, 0);                /* slave 自主复位 */
     int guard = 0;
     while (d.m.state == SPIM_LINKED && guard++ < 8) duo_txn(&d, 1000000);
     CHECK(d.m.state == SPIM_RECOVERY, "e2e4 recovery\n");
+    CHECK(!d.m.peer_rf_health_valid,
+          "e2e4 stale RF health survived CC recovery\n");
 
     duo_txn(&d, 1000);                     /* RESET 脉冲 + 启动等待 */
     CHECK(d.m.state == SPIM_WAIT_HELLO, "e2e4 wait\n");
@@ -340,6 +361,31 @@ static void e2e_rehello_clears(void)
     CHECK(d.m.stats.recoveries == 0, "e2e8 no recovery needed\n");
 }
 
+static void e2e_rf_health_event(void)
+{
+    duo_t d; duo_init(&d);
+    duo_handshake(&d);
+    const rp_cc13xx_rf_health_t health = {
+        .flags = RP_CC13XX_RF_HEALTH_ACTIVE |
+                 RP_CC13XX_RF_HEALTH_PROBE_OK |
+                 RP_CC13XX_RF_HEALTH_RSSI_VALID,
+        .idle_rssi_dbm = -101,
+        .last_raw_status = 0x3802,
+        .probe_successes = 7,
+        .probe_errors = 1,
+        .rf_reinits = 2,
+    };
+    cc13s_publish_rf_health(&d.s, &health);
+    CHECK(cc13s_irq(&d.s), "e2e9 RF health did not raise IRQ\n");
+    for (int i = 0; i < 4 && d.s.rf_health_pending; i++) duo_txn(&d, 1000);
+    CHECK(!d.s.rf_health_pending, "e2e9 RF health event not delivered\n");
+    CHECK(d.m.peer_rf_health_valid &&
+          d.m.peer_rf_health.idle_rssi_dbm == -101 &&
+          d.m.peer_rf_health.probe_successes == 7 &&
+          d.m.peer_rf_health.rf_reinits == 2,
+          "e2e9 RP did not retain RF health\n");
+}
+
 int main(void)
 {
     e2e_event_flow();
@@ -350,6 +396,7 @@ int main(void)
     e2e_version_deny();
     e2e_rf_monotonic();
     e2e_rehello_clears();
+    e2e_rf_health_event();
     if (g_fail) { printf("test_cc13_slave: %d FAIL\n", g_fail); return 1; }
     printf("test_cc13_slave: all OK\n");
     return 0;

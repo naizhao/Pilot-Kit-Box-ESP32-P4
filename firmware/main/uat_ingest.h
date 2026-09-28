@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include "uat_decode.h"
 
@@ -59,3 +60,33 @@ void uat_ingest_feed(const uint8_t frame[UAT_UPLINK_FRAME_BYTES],
  */
 void uat_ingest_get_stats(uint32_t *frames_total, uint32_t *bad_rs,
                           uint32_t *no_sync);
+
+/* 978 MHz ADS-B/TIS-B downlink path. The CC1312R delivers the exact RF
+ * packet length: 30 bytes for a basic frame or 48 bytes for a long frame.
+ * Receiver metadata stays in the CC clock domain and is not compared with
+ * the RP2040 timestamp used by 1090 MHz frames. */
+typedef struct {
+    int8_t   rssi_dbm;
+    uint16_t frame_seq;
+    uint32_t cc_time;
+} uat_downlink_meta_t;
+
+typedef void (*uat_downlink_ingest_sink_fn)(
+    const uat_aircraft_msg_t *msg,
+    const uat_downlink_meta_t *meta,
+    uint8_t rs_corrected,
+    void *user);
+
+typedef struct {
+    uint32_t frames_total;   /* RS-correct and frame kind matches 30/48 B */
+    uint32_t aircraft_msgs;  /* parsed ADS-B/TIS-B aircraft reports */
+    uint32_t unhandled_type; /* valid UAT MDB not carrying aircraft state */
+    uint32_t bad_rs;         /* non-zero frame rejected by FEC/type check */
+    uint32_t no_sync;        /* all-zero RF sentinel */
+    uint32_t bad_length;     /* anything other than exactly 30 or 48 B */
+} uat_downlink_ingest_stats_t;
+
+void uat_downlink_ingest_init(uat_downlink_ingest_sink_fn sink, void *user);
+void uat_downlink_ingest_feed(const uint8_t *frame, size_t frame_len,
+                              const uat_downlink_meta_t *meta);
+void uat_downlink_ingest_get_stats(uat_downlink_ingest_stats_t *out);

@@ -229,7 +229,7 @@ static void ms_txn(ms_t *s, const uint8_t *mosi, uint8_t *miso)
     }
     if (s->aerr) {                        /* 规则 4c：异步 ERROR（seq 哨兵） */
         rp_cc13xx_error_t e = { .code = 0x04, .msg_len = 4,
-                                .msg = { 'F','W','E','R' } };
+                                .msg = { 'R','F',0x02,0x38 } };
         uint8_t f[512];
         size_t n = rp_cc13xx_encode_error(f, sizeof(f), 0x0000, &e);
         ms_load(s, f, n, RP_CC13XX_MSG_ERROR);
@@ -243,18 +243,18 @@ static void ms_txn(ms_t *s, const uint8_t *mosi, uint8_t *miso)
 static uint32_t g_now;
 static uint8_t  cap_frame[UAT_LEN];
 static size_t   cap_len;
-static uint8_t  cap_rssi;
+static int8_t   cap_rssi;
 static uint32_t cap_ts;
 static int      cap_n;
 
 static void uat_capture(const uint8_t *frame, size_t len,
-                        uint8_t rssi, uint32_t ts_us, void *user)
+                        const rp_cc13xx_rx_meta_t *meta, void *user)
 {
     (void)user;
     if (len <= UAT_LEN) memcpy(cap_frame, frame, len);
     cap_len  = len;
-    cap_rssi = rssi;
-    cap_ts   = ts_us;
+    cap_rssi = meta->rssi_dbm;
+    cap_ts   = meta->cc_time;
     cap_n++;
 }
 
@@ -433,6 +433,12 @@ static void sc5_async_ping_race(void)
     CHECK(m.state == SPIM_LINKED && m.stats.recoveries == 0,
           "sc5 still linked\n");
     CHECK(m.stats.legal_frames == 6, "sc5 legal %u\n", m.stats.legal_frames);
+    CHECK(m.last_error_code == 0x04, "sc5 error code %02x\n",
+          m.last_error_code);
+    CHECK(m.last_error_msg_len == 4 && m.last_error_msg[0] == 'R' &&
+          m.last_error_msg[1] == 'F' && m.last_error_msg[2] == 0x02 &&
+          m.last_error_msg[3] == 0x38,
+          "sc5 raw RF status not preserved\n");
 
     /* 哨兵污染回归（审查 Important-1 的证伪断言）：异步 ERROR 之后
      * 交付一帧完整事件——§3.5 明文异步 ERROR 不入 gap 链，基线不得

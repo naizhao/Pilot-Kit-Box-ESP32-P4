@@ -183,8 +183,10 @@ static void actdb_smoke_check(void);
  * 再试——同一份坏文件每 3 s 重读一遍毫无意义）或 ABSENT。 */
 static bool actdb_load_once(void)
 {
+    if (!pk_sdcard_io_acquire()) return false;
     struct stat fst;
     if (stat(ACTDB_PATH, &fst) != 0 || !S_ISREG(fst.st_mode)) {
+        pk_sdcard_io_release();
         return false;   /* 没有文件：保持 ABSENT，周期性重试 */
     }
     size_t len = (size_t)fst.st_size;
@@ -193,6 +195,7 @@ static bool actdb_load_once(void)
         s_state = ACTDB_ERROR;
         s_err   = "file too small";
         ESP_LOGE(TAG, "%s: %u B — too small", ACTDB_PATH, (unsigned)len);
+        pk_sdcard_io_release();
         return false;
     }
 
@@ -207,6 +210,7 @@ static bool actdb_load_once(void)
         s_state = ACTDB_ERROR;
         s_err   = "psram alloc";
         ESP_LOGE(TAG, "PSRAM alloc %u B failed", (unsigned)len);
+        pk_sdcard_io_release();
         return false;
     }
 
@@ -221,6 +225,8 @@ static bool actdb_load_once(void)
         fclose(f);
     }
     xSemaphoreGive(s_io_lock);
+
+    pk_sdcard_io_release();  /* No SD access during the following RAM decode. */
 
     pk_actdb_t db;
     if (ok) {

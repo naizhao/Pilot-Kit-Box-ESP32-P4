@@ -23,6 +23,7 @@
 #include "pk_callsign.h"  /* pk_callsign_sanitize —— 拒收含保留码位的呼号 */
 #include "demo_data.h"
 #include "mode_s.h"   /* struct mode_s_msg + MODE_S_UNIT_FEET */
+#include "uat_decode.h" /* struct uat_aircraft_msg */
 #include "ui_state.h" /* pk_ui_get_own_icao() — pin the bound own-ship
                        * slot against LRU eviction (see lookup_or_claim) */
 
@@ -209,6 +210,141 @@ static void set_air_ground(aircraft_t *a, bool on_ground, int64_t now_us)
     a->air_ground_us  = now_us;
 }
 
+/* UAT emitter-category numbers use the same category sets flattened into
+ * one byte: 1..7 = Set A, 9..15 = Set B, 17..23 = Set C. Reserved entries
+ * intentionally remain unknown rather than inventing a wake class. */
+static pk_wake_t decode_uat_emitter_category(uint8_t category)
+{
+    switch (category) {
+    case 1:  return PK_WAKE_LIGHT;
+    case 2:  return PK_WAKE_SMALL;
+    case 3:  return PK_WAKE_LARGE;
+    case 4:  return PK_WAKE_HIGH_VORTEX;
+    case 5:  return PK_WAKE_HEAVY;
+    case 6:  return PK_WAKE_HIGH_PERF;
+    case 7:  return PK_WAKE_ROTOR;
+    case 9:  return PK_WAKE_GLIDER;
+    case 10: return PK_WAKE_LTA;
+    case 11: return PK_WAKE_PARACHUTE;
+    case 12: return PK_WAKE_ULTRALIGHT;
+    case 14: return PK_WAKE_UAV;
+    case 15: return PK_WAKE_SPACE;
+    case 17: return PK_WAKE_SURFACE_EMERG;
+    case 19: return PK_WAKE_SURFACE_SERVICE;
+    case 20: case 21: case 22: case 23:
+        return PK_WAKE_SURFACE_OBSTACLE;
+    default:
+        return PK_WAKE_NONE;
+    }
+}
+
+static void set_uat_altitude(aircraft_t *a, uat_altitude_source_t source,
+                             int altitude_ft, int64_t now_us)
+{
+    if (source == UAT_ALT_BARO) {
+        a->altitude_ft   = altitude_ft;
+        a->have_altitude = true;
+        a->altitude_us   = now_us;
+    } else if (source == UAT_ALT_GEO) {
+        a->gnss_altitude_ft   = altitude_ft;
+        a->have_gnss_altitude = true;
+        a->gnss_altitude_us   = now_us;
+    }
+}
+
+bool aircraft_state_ingest_uat(const struct uat_aircraft_msg *m,
+                               int64_t now_us)
+{
+    if (m == NULL || !m->address_is_icao || m->address == 0 ||
+        m->address > 0xFFFFFFU) {
+        return false;
+    }
+
+    take_lock();
+    aircraft_t *a = lookup_or_claim(m->address, now_us);
+    a->last_seen_us = now_us;
+    if (m->addr_qualifier == UAT_ADDR_ADSB_ICAO) {
+        a->address_type = 0;
+        a->address_direct = true;
+    } else if (!a->address_direct) {
+        a->address_type = 2;
+    }
+
+    if (m->has_mode_status) {
+        if (m->callsign_valid && m->callsign_is_flight_id) {
+            char cs[PK_CALLSIGN_LEN];
+            if (pk_callsign_sanitize(m->callsign, cs)) {
+                memcpy(a->callsign, cs, sizeof(cs));
+                a->have_callsign = true;
+                a->callsign_us   = now_us;
+            }
+        }
+        const pk_wake_t wake = decode_uat_emitter_category(m->emitter_category);
+        if (wake != PK_WAKE_NONE) {
+            a->wake    = wake;
+            a->wake_us = now_us;
+        }
+    }
+
+    if (m->has_state_vector) {
+        if (m->position_valid) {
+            a->lat           = (double)m->lat_deg_e6 / 1000000.0;
+            a->lon           = (double)m->lon_deg_e6 / 1000000.0;
+            a->have_position = true;
+            a->position_us   = now_us;
+        }
+        if (m->altitude_valid) {
+            set_uat_altitude(a, m->altitude_source, m->altitude_ft, now_us);
+        }
+
+        if (m->speed_valid) {
+            a->ground_speed_kt   = (int)m->speed_kt;
+            a->have_ground_speed = true;
+            a->ground_speed_us   = now_us;
+        } else {
+            a->ground_speed_kt   = 0;
+            a->have_ground_speed = false;
+        }
+
+        /* Airborne UAT reports encode track. Ground reports may encode true
+         * or magnetic heading instead; the shared field is explicitly a
+         * ground track, so do not relabel a heading merely to draw an arrow. */
+        if (m->track_valid && !m->track_is_heading) {
+            a->heading_deg  = (int)(m->track_deg % 360U);
+            a->have_heading = true;
+            a->heading_us   = now_us;
+        } else {
+            a->heading_deg  = 0;
+            a->have_heading = false;
+        }
+        a->have_velocity = a->have_ground_speed && a->have_heading;
+
+        if (m->vertical_rate_valid) {
+            a->vert_rate_fpm      = (int)m->vertical_rate_fpm;
+            a->have_vertical_rate = true;
+            a->vert_rate_us       = now_us;
+        } else {
+            a->vert_rate_fpm      = 0;
+            a->have_vertical_rate = false;
+        }
+
+        if (m->air_ground == UAT_AG_GROUND) {
+            set_air_ground(a, true, now_us);
+        } else if (m->air_ground == UAT_AG_SUBSONIC ||
+                   m->air_ground == UAT_AG_SUPERSONIC) {
+            set_air_ground(a, false, now_us);
+        }
+    }
+
+    if (m->has_aux_state && m->aux_altitude_valid) {
+        set_uat_altitude(a, m->aux_altitude_source,
+                         m->aux_altitude_ft, now_us);
+    }
+
+    release_lock();
+    return true;
+}
+
 void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
 {
     if (mm == NULL || !mm->crcok || mm->errorbit >= 0) return;
@@ -232,6 +368,8 @@ void aircraft_state_ingest(const struct mode_s_msg *mm, int64_t now_us)
 
     take_lock();
     aircraft_t *a = lookup_or_claim(icao24, now_us);
+    a->address_type = 0;
+    a->address_direct = true;
     /* 目标级时间戳：任何一帧都刷新，包括只带地址的 DF11。字段级时间戳
      * 只由携带该字段的分支各自打——这两者混为一谈就是整个问题的根源。 */
     a->last_seen_us = now_us;

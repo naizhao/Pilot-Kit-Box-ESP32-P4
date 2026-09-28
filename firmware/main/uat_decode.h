@@ -26,6 +26,7 @@
  */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* ── 帧尺寸（事实卡 §1；单位字节）─────────────────────────────── */
@@ -65,6 +66,7 @@ typedef struct {
 } uat_info_frame_t;
 
 typedef struct {
+    const uint8_t *raw_data; /* 完整纠错后 432 B，生命周期同 data_out */
     /* 坐标以 24 bit 原始码给出（整数，换算不丢精度）：
      * lat = raw·360/2²⁴，>90 再 −180；lon 同式，>180 再 −360
      * （事实卡 §4）。deg_e6 为换算后的百万分之一度。 */
@@ -85,6 +87,90 @@ typedef struct {
     uint8_t addr_qualifier; /* d0&7                      */
     uint32_t address;       /* d1..d3，24 bit            */
 } uat_dl_hdr_t;
+
+/* 下行地址限定符。只有 ADS-B ICAO 与 TIS-B ICAO 能安全并入以 ICAO24
+ * 为键的现有 aircraft_state；track-file/车辆/固定信标地址不能伪装成
+ * ICAO，否则地面站复用 track id 时会把不同目标写进同一个槽。 */
+typedef enum {
+    UAT_ADDR_ADSB_ICAO = 0,
+    UAT_ADDR_NATIONAL = 1,
+    UAT_ADDR_TISB_ICAO = 2,
+    UAT_ADDR_TISB_TRACK = 3,
+    UAT_ADDR_VEHICLE = 4,
+    UAT_ADDR_FIXED_BEACON = 5,
+    UAT_ADDR_RESERVED_6 = 6,
+    UAT_ADDR_RESERVED_7 = 7,
+} uat_addr_qualifier_t;
+
+typedef enum {
+    UAT_ALT_NONE = 0,
+    UAT_ALT_BARO,
+    UAT_ALT_GEO,
+} uat_altitude_source_t;
+
+typedef enum {
+    UAT_AG_SUBSONIC = 0,
+    UAT_AG_SUPERSONIC = 1,
+    UAT_AG_GROUND = 2,
+    UAT_AG_RESERVED = 3,
+} uat_air_ground_t;
+
+/* 已纠错的 UAT ADS-B/TIS-B Message Data Block。坐标保留为 e-6 度整数，
+ * 避免 P4 与 host 因 double 舍入产生不同测试结果。每个数值都有独立 valid，
+ * 0 高度/0 速度不能拿来充当“无数据”哨兵。 */
+typedef struct uat_aircraft_msg {
+    uint8_t mdb_type;
+    uat_addr_qualifier_t addr_qualifier;
+    uint32_t address;
+    bool address_is_icao;
+
+    bool has_state_vector;
+    bool has_mode_status;
+    bool has_aux_state;
+    uint8_t nic;
+    bool position_valid;
+    int32_t lat_deg_e6;
+    int32_t lon_deg_e6;
+    bool altitude_valid;
+    int32_t altitude_ft;
+    uat_altitude_source_t altitude_source;
+    uat_air_ground_t air_ground;
+    bool ns_velocity_valid;
+    int16_t ns_velocity_kt;
+    bool ew_velocity_valid;
+    int16_t ew_velocity_kt;
+    bool speed_valid;
+    uint16_t speed_kt;
+    bool track_valid;
+    uint16_t track_deg;
+    bool track_is_heading;
+    bool track_is_magnetic;
+    bool vertical_rate_valid;
+    int16_t vertical_rate_fpm;
+    uat_altitude_source_t vertical_rate_source;
+    bool utc_coupled;
+    uint8_t tisb_site_id;
+
+    uint8_t emitter_category;
+    char callsign[9];
+    bool callsign_valid;
+    bool callsign_is_flight_id;
+    uint8_t emergency_status;
+    uint8_t uat_version;
+    uint8_t sil;
+    uint8_t nac_p;
+    uint8_t nac_v;
+    bool nic_baro;
+    bool has_cdti;
+    bool has_acas;
+    bool acas_ra_active;
+    bool ident_active;
+    bool atc_services;
+
+    bool aux_altitude_valid;
+    int32_t aux_altitude_ft;
+    uat_altitude_source_t aux_altitude_source;
+} uat_aircraft_msg_t;
 
 /* ── API ───────────────────────────────────────────────────────── */
 
@@ -113,3 +199,8 @@ bool uat_uplink_decode(const uint8_t frame[UAT_UPLINK_FRAME_BYTES],
 int uat_downlink_decode(const uint8_t frame[UAT_DL_LONG_FRAME_BYTES],
                         uint8_t data_out[UAT_DL_LONG_DATA_BYTES],
                         uat_dl_hdr_t *hdr, uint8_t *rs_corrected);
+
+/* 解析已完成 RS 纠错的 18 B short / 34 B long Message Data Block。
+ * 长度必须与 MDB type 所需字段相容；失败时 out 保持不变。 */
+bool uat_downlink_parse_aircraft(const uint8_t *data, size_t data_len,
+                                 uat_aircraft_msg_t *out);
