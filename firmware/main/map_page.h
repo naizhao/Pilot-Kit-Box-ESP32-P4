@@ -59,6 +59,11 @@ void pk_map_page_on_search(void);
  * 弱符号，理由同上。 */
 void pk_map_page_on_apt_detail(uint32_t apt_idx);
 
+/* 点中了地图上的 ADS-B 目标：宿主跳到 ADS-B 列表页并展开该目标的详情
+ * 抽屉。icao24 = 目标地址（由 map_page 的命中快照给出）。弱符号，理由同上
+ * ——飞机排在机场之前判定：目标是移动的、符号更小，命中窗口转瞬即逝。 */
+void pk_map_page_on_aircraft_detail(uint32_t icao24);
+
 /*
  * 收起的搜索/详情 sheet —— 本页左上角那枚返回钮（2026-08-04）。
  *

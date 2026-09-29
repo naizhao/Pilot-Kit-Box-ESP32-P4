@@ -15,6 +15,7 @@
 #include "esp_log.h"
 
 #include "apt_detail_page.h"
+#include "adsb_list.h"
 #include "config_fab.h"
 #include "i18n_catalog.h"
 #include "imu_task.h"
@@ -112,6 +113,17 @@ void pk_map_page_on_search(void)
 void pk_map_page_on_apt_detail(uint32_t apt_idx)
 {
     pk_apt_detail_page_open(apt_idx, PK_APT_DETAIL_FROM_MAP);
+}
+
+/*
+ * 地图上点中 ADS-B 目标 —— map_page.c 里弱符号 pk_map_page_on_aircraft_detail
+ * 的强实现。切到列表页并展开该目标的详情抽屉；详情内容（呼号/机型/注册号/
+ * 高度/速度/绑定为本机）完全复用列表页现成的抽屉，零新 UI。
+ */
+void pk_map_page_on_aircraft_detail(uint32_t icao24)
+{
+    pk_adsb_list_focus_icao(icao24);
+    pk_ui_set_mode(PK_UI_MODE_ADSB_LIST);
 }
 
 /*

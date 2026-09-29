@@ -1385,3 +1385,11 @@ void pk_adsb_list_touch_up(void)
         }
     }
 }
+
+void pk_adsb_list_focus_icao(uint32_t icao24)
+{
+    /* 与行点击行为同款：再点同一架等于收起（地图上重复点一架飞机，第二次
+     * 大概率是"刚才没看清想再看一眼"，保持开更有用——这里不做成 toggle）。 */
+    s_drawer_icao = icao24;
+    s_scroll_first = -1;      /* 回到自动锚定：抽屉行必须钉进可见区 */
+}

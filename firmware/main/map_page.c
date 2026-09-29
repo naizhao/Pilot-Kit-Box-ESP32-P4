@@ -54,6 +54,9 @@
 #include "pk_win.h"           /* pk_win_set_viewport（W1.5：视口格钉住）*/
 #include "pk_callsign.h"    /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "aircraft_db.h"    /* pk_aircraft_registration —— 呼号缺失时的注册号回退 */
+#include "traffic_geom.h"   /* pk_traffic_own_press_alt —— 威胁色板的相对高度基准 */
+#include "baro.h"             /* pk_baro_get —— 相对高度基准的气压计印证源 */
+#include "gps.h"              /* pk_gps_get  —— 同上，GNSS 正高印证/兜底源 */
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
@@ -209,6 +212,34 @@ static char   s_pin_label[8];
  * 是用户操作决定的持久状态，是每帧从实时航向算出来的，所以单独存一份供
  * touch_up 读，不重新走一遍航向解析（触摸回调没有 own/src，也不该现查）。 */
 static float  s_map_rot_deg = 0.0f;
+
+/* ADS-B 目标命中快照：render() 每帧发布屏上目标（通过屏内过滤与本机剔除
+ * 之后）的屏幕坐标，touch_up() 的点击命中读它。与 s_map_rot_deg 同一条
+ * "看得见的就是点得中的"原则——坐标来自与绘制**同一帧**的投影，不存在
+ * 一帧的错位。render 与触摸回调都跑在 pfd 任务上，无并发。
+ * 只存 icao + 坐标（各 8 字节 × 64 目标 = 512 B），放 PSRAM 保内部堆。 */
+static EXT_RAM_BSS_ATTR struct { uint32_t icao; int16_t x, y; } s_ac_hits[AIRCRAFT_TABLE_CAPACITY];
+static int s_n_ac_hits;
+
+/* 容差 28 px：取 aero 层同款上限（GT911 抖动比手机大，见 0088a64f）。
+ * 飞机符号本体 9 px，容差给到符号半径外 ~20 px 才点得中。 */
+#define AC_HIT_RADIUS_PX 28
+
+/* 点击命中测试：28 px 内最近的目标；没有返回 0。触摸回调跑在 pfd 任务的
+ * 6 KB 栈上（见 0088a64f 的栈约束说明），这里只读快照数组，最坏 64 次
+ * 距离比较，无库查询、无动态分配。 */
+static uint32_t pk_map_page_hit_aircraft(int lx, int ly)
+{
+    uint32_t best = 0;
+    int best_d2 = AC_HIT_RADIUS_PX * AC_HIT_RADIUS_PX;
+    for (int i = 0; i < s_n_ac_hits; i++) {
+        const int dx = lx - s_ac_hits[i].x;
+        const int dy = ly - s_ac_hits[i].y;
+        const int d2 = dx * dx + dy * dy;
+        if (d2 < best_d2) { best_d2 = d2; best = s_ac_hits[i].icao; }
+    }
+    return best;
+}
 
 /* ── Web Mercator 世界像素 ↔ 经纬度（度）── */
 static void lonlat_to_world(double lon, double lat, uint8_t z, double *wx, double *wy)
@@ -887,8 +918,25 @@ void pk_map_page_render(uint16_t *fb)
     /* 航空叠加层分两趟夹住 ADS-B：符号垫在飞机之下，标签排在呼号之后
      * （交通信息优先于机场位置，见 pk_aero_layer.h）。 */
     pk_aero_layer_render_symbols(fb, s_center_lat, s_center_lon, s_zoom, map_rot_deg);
-    const uint16_t col_ac  = pk_rgb565(0, 210, 235);
     const uint16_t col_lbl = pk_rgb565(207, 211, 220);
+    /* ── 空中目标威胁色板（与 PFD 交通叠加/交通页同源同值）────────────
+     * ±1000 ft 内琥珀（同高度=威胁）、高于本机青、低于蓝灰、无高度中性灰。
+     * 判据统一走 pk_traffic_own_press_alt（三页→四页共用，见 traffic_geom.h）：
+     * 没绑定本机或本机无气压高度时**全部**空中目标退灰——按编造的高度
+     * 分档配色等于编造威胁等级。地面目标的独立绿见下（它不进威胁色板）。 */
+    const uint16_t COL_TGT_LEVEL = pk_rgb565(255, 176,   0);  /* ±1000 ft 内 */
+    const uint16_t COL_TGT_ABOVE = pk_rgb565(  0, 210, 235);  /* 高于本机     */
+    const uint16_t COL_TGT_BELOW = pk_rgb565( 95, 150, 190);  /* 低于本机     */
+    const uint16_t COL_TGT_NOALT = pk_rgb565(150, 155, 165);  /* 无高度数据   */
+    pk_baro_state_t baro;
+    const bool baro_ok = pk_baro_get(&baro);
+    pk_gps_state_t gnss;
+    const bool gnss_ok = pk_gps_get(&gnss) && gnss.have_fix && gnss.have_altitude;
+    const int own_palt = pk_traffic_own_press_alt(
+        own_valid && src == PK_OWN_SRC_BOUND_ADSB,
+        own.have_altitude, own.altitude_ft,
+        baro_ok, baro.pressure_pa, baro.alt_ft,
+        gnss_ok, gnss.altitude_ft);
     /*
      * 地面目标独立色相（阶段 4d）：土黄偏黄绿，不进威胁色板（本机没有气压
      * 高度，参与威胁配色本身就是编造信息，见 pfd_draw.h pk_pfd_draw_aircraft_outline
@@ -923,6 +971,8 @@ void pk_map_page_render(uint16_t *fb)
     const bool own_on_ground = pk_flight_phase_is_ground_family(own_phase);
     const bool own_airborne  = (own_phase == PK_PHASE_AIRBORNE);
 
+    s_n_ac_hits = 0;   /* 命中快照每帧整批重建（见定义处注释） */
+
     for (size_t i = 0; i < n && i < MAP_LBL_MAX; i++) {
         aircraft_t *a = &s_scratch[i];
         if (!a->have_position) continue;
@@ -933,6 +983,14 @@ void pk_map_page_render(uint16_t *fb)
         world_to_screen_rot(wx, wy, cwx, cwy, cos_r, sin_r, &sx, &sy);
         if (sx < -20 || sx > PK_DISPLAY_W + 20 || sy < MAP_TOP - 20 || sy > PK_DISPLAY_H + 20)
             continue;
+
+        /* 发布命中快照：屏内过滤与本机剔除都已完成，坐标与本帧绘制同源。 */
+        if (s_n_ac_hits < (int)(sizeof(s_ac_hits) / sizeof(s_ac_hits[0]))) {
+            s_ac_hits[s_n_ac_hits].icao = a->icao24;
+            s_ac_hits[s_n_ac_hits].x    = (int16_t)sx;
+            s_ac_hits[s_n_ac_hits].y    = (int16_t)sy;
+            s_n_ac_hits++;
+        }
 
         uint8_t sal_pct = 100;
         if (own_on_ground && !a->on_ground) sal_pct = MAP_SALIENCY_DIM_PCT; /* 本机在地面：压暗空中目标 */
@@ -953,7 +1011,16 @@ void pk_map_page_render(uint16_t *fb)
             pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 11, hcol);
             pk_pfd_draw_aircraft_outline(fb, sx, sy, rot, 9, gcol);
         } else {
-            const uint16_t acol = pk_pfd_scale_rgb565(col_ac, sal_pct);
+            /* 空中目标按相对高度分档，色值与语义同 PFD 交通叠加（该层头注：
+             * 扫描时先看到的是符号不是数字）。无高度/基准不可用 → 中性灰。 */
+            uint16_t acol = COL_TGT_NOALT;
+            if (own_palt != PK_ALT_UNAVAIL && a->have_altitude) {
+                const int diff = a->altitude_ft - own_palt;
+                acol = (diff > -1000 && diff < 1000) ? COL_TGT_LEVEL
+                     : (diff >= 1000)                ? COL_TGT_ABOVE
+                                                     : COL_TGT_BELOW;
+            }
+            acol = pk_pfd_scale_rgb565(acol, sal_pct);
             pk_pfd_draw_aircraft(fb, sx, sy, rot, 9, acol);
         }
 
@@ -1225,6 +1292,16 @@ void pk_map_page_touch_up(void)
      */
     const bool tap = s_press_active && s_btn_down < 0 && !s_press_moved;
     if (tap) {
+        /* ① 先问飞机：目标是移动的、符号只有 9 px，命中窗口比静止的机场小
+         * 得多——排后面的话，密集区里想点飞机永远会被旁边的机场/航路点抢走
+         * （aero 层那条"先机场后导航台"的同一条理由，方向相反：移动的、
+         * 转瞬即逝的优先）。命中坐标用渲染趟刚发布的快照（同一帧的投影），
+         * 看得见的就是点得中的。 */
+        const uint32_t ac = pk_map_page_hit_aircraft(s_press_lx, s_press_ly);
+        if (ac != 0) {
+            pk_map_page_on_aircraft_detail(ac);
+            return;
+        }
         pk_aero_layer_hit_t hit;
         /* 投影参数（含旋转角 s_map_rot_deg）用本页当前的视图状态，与刚画完
          * 的那一帧完全一致——看得见的就是点得中的。 */
@@ -1308,4 +1385,11 @@ __attribute__((weak)) void pk_map_page_on_sheet_restore(void)
 __attribute__((weak)) void pk_map_page_on_apt_detail(uint32_t apt_idx)
 {
     (void)apt_idx;
+}
+
+/* 点中 ADS-B 目标：默认空实现（模拟器/host 不链列表页），固件侧由导航宿主
+ * 跳 ADS-B 列表并展开该目标的详情抽屉。 */
+__attribute__((weak)) void pk_map_page_on_aircraft_detail(uint32_t icao24)
+{
+    (void)icao24;
 }
