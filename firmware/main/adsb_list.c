@@ -46,6 +46,8 @@
 #include "imu_task.h"
 #include "mag_var.h"
 #include "own_ship.h"
+#include "baro.h"             /* pk_baro_get —— 相对高度基准的气压计印证源 */
+#include "gps.h"              /* pk_gps_get  —— 同上，GNSS 正高印证/兜底源 */
 #include "pfd_aa_font.h"
 #include "pfd_aa_text.h"
 #include "pfd_draw.h"
@@ -1049,11 +1051,18 @@ void pk_adsb_list_render(uint16_t *fb)
             mag_var = pk_mag_var_lookup(own.lat, own.lon);
     }
 
-    /* 与交通页同一条判据（pk_traffic_own_press_alt）：只有绑定 ADS-B 本机
-     * 自报的气压高度能当基准，舱内 BMP388 不行——见 traffic_geom.h。 */
+    /* 与交通页同一条判据（pk_traffic_own_press_alt）：绑定机压力高度 >
+     * 气压计（与 GNSS 互相印证）> GNSS 兜底——见 traffic_geom.h。两页对
+     * 同一架飞机算出的方位/距离/相对高度必须一模一样，取数也完全同源。 */
+    pk_baro_state_t baro;
+    const bool baro_ok = pk_baro_get(&baro);
+    pk_gps_state_t gnss;
+    const bool gnss_ok = pk_gps_get(&gnss) && gnss.have_fix && gnss.have_altitude;
     const int own_palt = pk_traffic_own_press_alt(
         own_valid && src == PK_OWN_SRC_BOUND_ADSB,
-        own.have_altitude, own.altitude_ft);
+        own.have_altitude, own.altitude_ft,
+        baro_ok, baro.pressure_pa, baro.alt_ft,
+        gnss_ok, gnss.altitude_ft);
 
     /* ── 组行 ──
      * 与交通页的关键差别：**没有量程过滤，也不因本机无位置而放弃**。

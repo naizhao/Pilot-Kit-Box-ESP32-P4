@@ -38,8 +38,12 @@
  *   2. 该 ownship 编出来的 GDL90 0x0A，高度字段必须是 0xFFF（未知），
  *      不是 1789 ft；
  *   3. 绑定 ADS-B 本机时压力高度照常出现在 0x0A 里（不能把功能修没）；
- *   4. 增压舱 8000 ft + 目标 FL350 + 无可信本机压力高度 → 相对高度
- *      **不可用**，而不是 +27000 ft。
+ *   4. 增压舱 8000 ft 舱压 + GNSS 报真实 35000 ft + 目标 FL350 → 气压计与
+ *      GNSS 交叉校验判气压计失准，**GNSS 兜底**，相对高度 0——既不是
+ *      +27000（盲信舱压的老缺陷），也不是 N/A（砍掉一切兜底的过矫正）。
+ *   5. 相对高度基准的降级链（pk_traffic_own_press_alt）：绑定机压力高度 >
+ *      气压计标准气压高度（与 GNSS 差异小 = 互相印证）> GNSS MSL 兜底
+ *      （气压计失准或缺失）> 不可用（气压计无独立印证时不自证）。
  *
  * 不在本文件范围内
  * ----------------
@@ -54,6 +58,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "aircraft_state.h"
 #include "gdl90.h"
@@ -271,20 +276,33 @@ static void test_bound_adsb_pressure_altitude_still_encoded(void)
 }
 
 /* ════════════════════════════════════════════════════════════════════
- * 4. 增压舱：舱内 BMP388 绝不能当相对高度基准
+ *  相对高度基准的降级链（pk_traffic_own_press_alt）
  * ════════════════════════════════════════════════════════════════════ */
+
+/* ISA 反推：等效标准气压高度 → 静压 Pa。与实现里的正向换算互逆，
+ * 往返 float 误差 < 1 ft，断言容差取 ±5 ft。 */
+static float pressure_pa_for_std_alt_ft(int alt_ft)
+{
+    const float alt_m = (float)alt_ft / 3.28084f;
+    return 101325.0f * powf(1.0f - alt_m / 44330.0f, 5.2558797f);
+}
+
+/* 4. 增压舱：舱内 BMP388 与 GNSS 差异巨大 → 交叉校验判气压计失准，GNSS 兜底。 */
 static void test_pressurized_cabin_relative_altitude_unavailable(void)
 {
     /* 场景：巡航 FL350，舱压等效 8000 ft，未绑定 ADS-B 本机。
      * 目标也在 FL350（同高度迎头）。 */
-    const int cabin_baro_ft = 8000;
-    const int tgt_alt_ft    = 35000;
+    const int tgt_alt_ft = 35000;
+    const float cabin_pa = pressure_pa_for_std_alt_ft(8000);
 
     int own_palt = pk_traffic_own_press_alt(/*own_bound_adsb=*/false,
                                             /*own_has_press_alt=*/false,
-                                            /*own_press_alt_ft=*/cabin_baro_ft);
-    CHECK(own_palt == PK_ALT_UNAVAIL,
-          "未绑定 ADS-B 本机时相对高度基准必须不可用，got=%d\n", own_palt);
+                                            /*own_press_alt_ft=*/0,
+                                            /*baro_valid=*/true, cabin_pa,
+                                            /*baro_qnh_alt_ft=*/8000,
+                                            /*gnss_has_msl=*/true, tgt_alt_ft);
+    CHECK(own_palt == tgt_alt_ft,
+          "增压舱内气压计与 GNSS 差异巨大，应以 GNSS 兜底 got=%d\n", own_palt);
 
     pk_traffic_rel_t rel = pk_traffic_rel_calc(
         /*own_has_pos=*/true, 31.0, 121.0, /*own_hdg=*/0.0f, /*mag_var=*/0.0f,
@@ -293,20 +311,26 @@ static void test_pressurized_cabin_relative_altitude_unavailable(void)
         /*tgt_has_alt=*/true, tgt_alt_ft,
         /*tgt_has_vs=*/false, 0);
 
-    CHECK(!rel.rel_alt_valid,
-          "增压舱内不得算出相对高度（本该 N/A，got %+d ft）\n", rel.rel_alt_ft);
-    CHECK(rel.rel_alt_ft != tgt_alt_ft - cabin_baro_ft,
-          "相对高度等于 目标−舱压高度 = %+d ft，正是要修的缺陷\n",
-          tgt_alt_ft - cabin_baro_ft);
+    CHECK(rel.rel_alt_valid,
+          "GNSS 兜底后相对高度必须可用（不能退回 N/A）\n");
+    CHECK(rel.rel_alt_ft == 0,
+          "同高度迎头目标相对高度应为 0（盲信舱压是 +27000，N/A 是过矫正）"
+          "got=%+d ft\n", rel.rel_alt_ft);
 }
 
-/* 5. 绑定本机时相对高度照常可用（同基准相减）。 */
+/* 5. 绑定本机时相对高度照常可用（同基准相减），且不被气压计/GNSS 干扰。 */
 static void test_bound_ownship_relative_altitude_available(void)
 {
+    const float cabin_pa = pressure_pa_for_std_alt_ft(8000);
     int own_palt = pk_traffic_own_press_alt(/*own_bound_adsb=*/true,
                                             /*own_has_press_alt=*/true,
-                                            /*own_press_alt_ft=*/35000);
-    CHECK(own_palt == 35000, "绑定本机的基准应是它的压力高度 got=%d\n", own_palt);
+                                            /*own_press_alt_ft=*/35000,
+                                            /*baro_valid=*/true, cabin_pa,
+                                            /*baro_qnh_alt_ft=*/8000,
+                                            /*gnss_has_msl=*/true, 8000);
+    CHECK(own_palt == 35000,
+          "绑定本机的基准应是它的压力高度，不受气压计/GNSS 干扰 got=%d\n",
+          own_palt);
 
     pk_traffic_rel_t rel = pk_traffic_rel_calc(
         true, 31.0, 121.0, 0.0f, 0.0f, own_palt,
@@ -315,12 +339,92 @@ static void test_bound_ownship_relative_altitude_available(void)
     CHECK(rel.rel_alt_ft == 0, "同高度目标相对高度应为 0 got=%+d\n", rel.rel_alt_ft);
 }
 
-/* 6. 绑定本机但它自己没有压力高度（只发过 DF11）→ 仍然不可用。 */
-static void test_bound_without_pressure_altitude_is_unavailable(void)
+/* 6. 绑定本机但它自己没有压力高度（只发过 DF11）→ GNSS 兜底。 */
+static void test_bound_without_pressure_altitude_falls_back_to_gnss(void)
 {
-    int own_palt = pk_traffic_own_press_alt(true, false, 8000);
+    int own_palt = pk_traffic_own_press_alt(true, false, 8000,
+                                            true, pressure_pa_for_std_alt_ft(8000),
+                                            8000, true, 35200);
+    CHECK(own_palt == 35200,
+          "绑定本机但无压力高度时 GNSS 应兜底 got=%d\n", own_palt);
+}
+
+/* 7. 未绑定 + 气压计与 GNSS 差异小 → 互相印证，用气压计的标准气压高度
+ *    （与目标 Mode-C 严格同基准，比 GNSS 兜底精度高）。 */
+static void test_baro_agrees_with_gnss_uses_baro(void)
+{
+    /* GNSS 正高 1000 ft；气压计按 QNH 修正后的海压高度也是 1000 ft——
+     * 印证量是「QNH 修正高度 vs GNSS」（都是相对海平面），它只反映传感器
+     * 健康度，不随飞行高度累积。静压本身对应 1013.25 标准气压高度 1200 ft
+     * （= 当地 QNH 992 hPa 的正常天气偏差），印证通过后输出的正是它。 */
+    const float pa = pressure_pa_for_std_alt_ft(1200);
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0,
+        /*baro_valid=*/true, pa, /*baro_qnh_alt_ft=*/1000,
+        /*gnss_has_msl=*/true, 1000);
+    CHECK(own_palt >= 1195 && own_palt <= 1205,
+          "气压计与 GNSS 互相印证 → 用气压计标准气压高度(≈1200) got=%d\n",
+          own_palt);
+}
+
+/* 7b. 巡航非标准大气：QNH 修正高度与 GNSS 一致（传感器健康），即使静压的
+ *     标准气压高度与 GNSS 差 1700+ ft（ISA+15 暖柱的固有气压高度误差），
+ *     也必须用气压计——它才是与目标 Mode-C 同基准、零残差的那个量。
+ *     直接拿静压换算值与 GNSS 比会把巡航恒判成"失准"，转 GNSS 兜底后
+ *     残留 1710 ft，±1000 ft 威胁分档整体翻转。 */
+static void test_cruise_non_isa_atmosphere_still_uses_baro(void)
+{
+    const int std_alt = 33290;            /* 静压对应的 1013.25 气压高度 */
+    const int true_alt = 35000;           /* ISA+15 暖柱下的真实几何高度 */
+    const float pa = pressure_pa_for_std_alt_ft(std_alt);
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0,
+        /*baro_valid=*/true, pa, /*baro_qnh_alt_ft=*/true_alt,
+        /*gnss_has_msl=*/true, true_alt);
+    CHECK(own_palt >= std_alt - 5 && own_palt <= std_alt + 5,
+          "巡航非标准大气(传感器健康) → 用气压计(≈%d) got=%d\n",
+          std_alt, own_palt);
+
+    /* 同高度迎头目标（Mode-C 也报 33290）：相对高度必须≈0（±10 ft 是静压
+     * 换算的 float 往返舍入）。落到 GNSS 兜底的话这里会是 -1710，
+     * ±1000 威胁分档被翻转。 */
+    pk_traffic_rel_t rel = pk_traffic_rel_calc(
+        true, 31.0, 121.0, 0.0f, 0.0f, own_palt,
+        true, 31.1, 121.0, true, std_alt, false, 0);
+    CHECK(rel.rel_alt_valid && rel.rel_alt_ft >= -10 && rel.rel_alt_ft <= 10,
+          "同高度目标相对高度应为≈0(±10舍入) got=%+d\n", rel.rel_alt_ft);
+}
+
+/* 8. 无气压计（传感器坏/没焊）→ GNSS 仍然兜底，不能退回 N/A。 */
+static void test_no_baro_gnss_fallback(void)
+{
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0,
+        /*baro_valid=*/false, 0.0f, 0,
+        /*gnss_has_msl=*/true, 12345);
+    CHECK(own_palt == 12345, "无气压计时 GNSS 应兜底 got=%d\n", own_palt);
+}
+
+/* 9. 只有气压计、没有 GNSS 印证 → 不可用。气压计无法自证自己读的不是座舱
+ *    高度——这正是老缺陷的成因，独立气压计永远过不了交叉校验这一关。 */
+static void test_baro_without_gnss_is_unavailable(void)
+{
+    const float pa = pressure_pa_for_std_alt_ft(8000);
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0,
+        /*baro_valid=*/true, pa, /*baro_qnh_alt_ft=*/8000,
+        /*gnss_has_msl=*/false, 0);
     CHECK(own_palt == PK_ALT_UNAVAIL,
-          "绑定本机但无压力高度时基准必须不可用 got=%d\n", own_palt);
+          "气压计无 GNSS 印证时必须不可用 got=%d\n", own_palt);
+}
+
+/* 10. 什么都没有 → 不可用。 */
+static void test_no_sensors_unavailable(void)
+{
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0, false, 0.0f, 0, false, 0);
+    CHECK(own_palt == PK_ALT_UNAVAIL, "无任何传感器时必须不可用 got=%d\n",
+          own_palt);
 }
 
 int main(void)
@@ -330,7 +434,12 @@ int main(void)
     test_bound_adsb_pressure_altitude_still_encoded();
     test_pressurized_cabin_relative_altitude_unavailable();
     test_bound_ownship_relative_altitude_available();
-    test_bound_without_pressure_altitude_is_unavailable();
+    test_bound_without_pressure_altitude_falls_back_to_gnss();
+    test_baro_agrees_with_gnss_uses_baro();
+    test_cruise_non_isa_atmosphere_still_uses_baro();
+    test_no_baro_gnss_fallback();
+    test_baro_without_gnss_is_unavailable();
+    test_no_sensors_unavailable();
 
     if (g_fail) {
         printf("test_own_ship_datum: %d assertion(s) FAILED\n", g_fail);

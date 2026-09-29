@@ -36,6 +36,8 @@
 #include "aircraft_state.h"
 #include "own_ship.h"
 #include "imu_task.h"
+#include "baro.h"             /* pk_baro_get —— 相对高度基准的气压计印证源 */
+#include "gps.h"              /* pk_gps_get  —— 同上，GNSS 正高印证/兜底源 */
 
 #include "config_traffic.h"
 #include "traffic_geom.h"
@@ -847,14 +849,22 @@ void pk_traffic_page_render(uint16_t *fb)
             mag_var = pk_mag_var_lookup(own.lat, own.lon);
     }
 
-    /* 相对高度的本机基准：唯一合法来源是绑定 ADS-B 本机自报的气压高度，
-     * 判据统一在 pk_traffic_own_press_alt()（三页共用）。
-     * 这里曾经在没有绑定本机时退到舱内 BMP388——增压座舱里那个数恒等于座舱
-     * 高度(约 8000 ft)，巡航 FL350 的同高度迎头目标会被算成 +27000 ft 并被
-     * 判成"远在高空"，告警随之抑制。详见 traffic_geom.h 的说明。 */
+    /* 相对高度的本机基准：降级链统一在 pk_traffic_own_press_alt()（三页共用）
+     * ——绑定 ADS-B 本机自报的气压高度 > 气压计（与 GNSS 互相印证）> GNSS 兜底。
+     * 这里曾经在没绑定本机时退到舱内 BMP388 且**无印证**——增压座舱里那个数
+     * 恒等于座舱高度(约 8000 ft)，巡航 FL350 的同高度迎头目标会被算成
+     * +27000 ft 并被判成"远在高空"，告警随之抑制；随后的过矫正把它整个砍掉，
+     * 未绑定时屏上又全是 ---。交叉校验同时治两头：差异大=座舱指纹 → 转用
+     * GNSS，差异小=互相印证 → 用与目标同基准的气压高度。详见 traffic_geom.h。 */
+    pk_baro_state_t baro;
+    const bool baro_ok = pk_baro_get(&baro);
+    pk_gps_state_t gnss;
+    const bool gnss_ok = pk_gps_get(&gnss) && gnss.have_fix && gnss.have_altitude;
     const int own_palt = pk_traffic_own_press_alt(
         own_valid && src == PK_OWN_SRC_BOUND_ADSB,
-        own.have_altitude, own.altitude_ft);
+        own.have_altitude, own.altitude_ft,
+        baro_ok, baro.pressure_pa, baro.alt_ft,
+        gnss_ok, gnss.altitude_ft);
 
     pk_map_orient_t orient = pk_map_orient_get();
     /*

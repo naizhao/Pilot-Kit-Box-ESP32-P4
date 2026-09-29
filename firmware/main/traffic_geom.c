@@ -10,12 +10,41 @@ static float norm180(float a){ a = norm360(a); return a > 180.0f ? a - 360.0f : 
 
 int pk_traffic_own_press_alt(bool own_bound_adsb,
                              bool own_has_press_alt,
-                             int  own_press_alt_ft)
+                             int  own_press_alt_ft,
+                             bool baro_valid, float baro_pressure_pa,
+                             int  baro_qnh_alt_ft,
+                             bool gnss_has_msl, int gnss_msl_ft)
 {
-    /* 两个条件缺一不可：没绑定 ADS-B 本机 → 手上根本没有本机的气压高度；
-     * 绑定了但它只发过 DF11/身份帧 → 同样没有。见头文件里的增压舱说明。 */
-    if(!own_bound_adsb || !own_has_press_alt) return PK_ALT_UNAVAIL;
-    return own_press_alt_ft;
+    /* 1. 绑定机自报的气压高度与目标 Mode-C 同源同基准，永远优先。 */
+    if(own_bound_adsb && own_has_press_alt) return own_press_alt_ft;
+
+    /* 守卫 p<=0：powf 底数为负会产生 NaN。 */
+    if(baro_valid && baro_pressure_pa > 0.0f && gnss_has_msl){
+        /* 印证量：QNH 修正高度（≈MSL 口径）vs GNSS 正高。同为「相对海平面」，
+         * 差值只反映传感器健康度，不随飞行高度累积——巡航 ISA+15 暖柱里
+         * 静压换算的标准气压高度本来就与 GNSS 差 1700+ ft（那是要用的量，
+         * 不是失准证据），而 QNH 修正高度照样贴着 GNSS。 */
+        const int diff = baro_qnh_alt_ft - gnss_msl_ft;
+        if(diff <= PK_OWN_ALT_XCHECK_MAX_DIFF_FT &&
+           diff >= -PK_OWN_ALT_XCHECK_MAX_DIFF_FT){
+            /* 2. 印证通过：输出静压换算的 1013.25 标准气压高度——与目标
+             * Mode-C 同基准相减零残差，这是兜底链里精度最高的一条。 */
+            const float alt_m = 44330.0f *
+                (1.0f - powf(baro_pressure_pa / 101325.0f, 0.190295f));
+            return (int)(alt_m * 3.28084f);
+        }
+        /* 3. 差异巨大 = 座舱指纹/传感器故障：GNSS 兜底（真实高度，基准偏差
+         * 只剩气压高度误差的量级）。 */
+        return gnss_msl_ft;
+    }
+
+    /* 3. BMP388 缺失但 GNSS 在：GNSS 兜底（用户口径：GNSS 高度永远是兜底）。 */
+    if(gnss_has_msl) return gnss_msl_ft;
+
+    /* 4. 只剩一个无法自证的气压计（或全无）：N/A。
+     * 独立气压计盲用正是增压舱老缺陷的成因——没有 GNSS 印证就分不清它读的
+     * 是外界静压还是座舱高度。 */
+    return PK_ALT_UNAVAIL;
 }
 
 pk_traffic_rel_t pk_traffic_rel_calc(
