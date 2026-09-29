@@ -81,6 +81,13 @@ void pk_ui_nav_on_fab_moved(bool left, int y_pct)
  */
 void pk_ui_nav_on_back(void)
 {
+    /* 校准向导的返回 = 关闭校准，回「来时的页」（pk_ui_cal_wizard_dismiss
+     * 记着进入前的 mode）。此前这里没有这一分支，写死的 DIAG 会把从设置页/
+     * 地图页进校准的用户直接甩到诊断页——"返回"的落点与来路毫无关系。 */
+    if (pk_ui_get_mode() == PK_UI_MODE_CAL_WIZARD) {
+        pk_ui_cal_wizard_dismiss();
+        return;
+    }
     /* 诊断的子系统详情是"页内的第二层"，不是独立页面：在它里面按返回应该
      * 回到诊断总览，而不是把整页切一遍（那样会连滚动位置一起丢掉）。
      * 只有不在详情里时，返回才是"切回诊断页"。 */

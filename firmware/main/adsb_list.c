@@ -1109,6 +1109,8 @@ void pk_adsb_list_render(uint16_t *fb)
             }
 
     for (int k = 0; k < nr; ++k) s_icaos[k] = s_rows[k].ac->icao24;
+    /* sel 可为 -1 = 无显式选中：高亮条件 i==sel 恒假（不画），滚动锚定
+     * 经 anchor → first 的 clamp 落回顶部。见 pk_ui_list_resolve_row。 */
     const int sel = pk_ui_list_resolve_row(s_icaos, (size_t)nr);
 
     draw_header(fb, nr, COL_DIM);

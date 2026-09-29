@@ -38,6 +38,12 @@ static const char *TAG = "ui";
 static SemaphoreHandle_t s_lock;
 static volatile bool     s_ready;
 static pk_ui_mode_t      s_mode               = PK_UI_MODE_PFD;
+/* 校准向导的「来时的页」。四个进出点（设置页进入 / advisor 自动进入 /
+ * 用户关闭 / 收敛自动退出）曾经各写各的：关闭与自动退出一律写死 PFD，
+ * 于是从地图页/列表页进校准的用户，画完 8 字就被扔到 PFD——"我在哪一页"
+ * 的上下文被凭空丢掉。进入时任一入口先记当前页，退出时回去；开机自动
+ * 弹出的场景 s_pre_cal_mode 就是开机默认页 PFD，行为不变。 */
+static pk_ui_mode_t      s_pre_cal_mode       = PK_UI_MODE_PFD;
 
 /* List selection is tracked by ICAO, not row index. s_list_selected_icao
  * is the aircraft the user last had highlighted (0 = "no commitment
@@ -229,11 +235,12 @@ void pk_ui_cal_wizard_dismiss(void)
     if (s_lock == NULL) return;
     uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_mode = PK_UI_MODE_PFD;
+    s_mode = s_pre_cal_mode;
     pk_cal_advisor_dismiss(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
-    ESP_LOGI(TAG, "mode → PFD (user dismissed cal wizard; auto-enter "
+    ESP_LOGI(TAG, "mode → %s (user dismissed cal wizard; auto-enter "
                   "suppressed until acc≥%u holds for >%ums)",
+             mode_name(s_mode),
              (unsigned)PK_CAL_EXIT_ACCURACY, (unsigned)PK_CAL_REARM_MS);
 }
 
@@ -274,6 +281,7 @@ void pk_ui_cal_wizard_enter(void)
     if (s_lock == NULL) return;
     uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_pre_cal_mode = s_mode;      /* 记住来时的页，关闭/收敛后回去 */
     s_mode = PK_UI_MODE_CAL_WIZARD;
     pk_cal_advisor_user_open(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
@@ -312,6 +320,7 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase
     bool take_page = (advice == PK_CAL_ADVICE_WIZARD) && valid;
 
     if (take_page && s_mode != PK_UI_MODE_CAL_WIZARD) {
+        s_pre_cal_mode = s_mode;   /* 自动拽进来也要记：退出时回这一页 */
         s_mode = PK_UI_MODE_CAL_WIZARD;
         xSemaphoreGive(s_lock);
         ESP_LOGW(TAG, "mode → CAL_WIZARD (auto: acc=0 for >%ums, parked and "
@@ -322,10 +331,11 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase
 
     if (s_mode == PK_UI_MODE_CAL_WIZARD &&
         pk_cal_advisor_should_exit_wizard(&s_cal_advisor)) {
-        s_mode = PK_UI_MODE_PFD;
+        s_mode = s_pre_cal_mode;
         xSemaphoreGive(s_lock);
-        ESP_LOGI(TAG, "mode → PFD (auto: acc≥%u for >%ums — fusion converged, "
-                       "dismissing wizard)",
+        ESP_LOGI(TAG, "mode → %s (auto: acc≥%u for >%ums — fusion converged, "
+                      "dismissing wizard)",
+                 mode_name(s_mode),
                  (unsigned)PK_CAL_EXIT_ACCURACY, (unsigned)PK_CAL_EXIT_MS);
         return;
     }
@@ -426,6 +436,16 @@ int pk_ui_list_resolve_row(const uint32_t *icaos, size_t n)
                 break;
             }
         }
+    }
+    /* 从未显式选中（或选中的飞机已过期）且没有滚动意图 → 维持无选中，
+     * 返回 -1。曾经这里无条件锚 row 0 并把它的 ICAO 提交成"选中"——用户
+     * 从没碰过列表，第一行却永远挂着一条干不掉的高亮，点行只是开关抽屉
+     * （高亮另有其源），反选自然无从谈起。雷达页 pk_ui_traffic_resolve
+     * 的头注记着同一条教训。 */
+    if (cur_row < 0 && s_list_pending_delta == 0) {
+        s_list_selected_icao = 0;
+        xSemaphoreGive(s_lock);
+        return -1;
     }
     /* No prior selection, or the aircraft expired out of the snapshot:
      * anchor at row 0. */

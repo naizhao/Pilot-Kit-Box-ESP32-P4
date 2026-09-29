@@ -177,7 +177,7 @@ int  pk_ui_diag_scroll_y(void);
  * The list renderer calls this once per frame, passing the sorted
  * ICAO array from aircraft_state_snapshot(). The function:
  *   1. finds the row currently occupied by the previously-selected
- *      ICAO (0 if no prior selection or the aircraft has expired),
+ *      ICAO (none if no prior selection or the aircraft has expired),
  *   2. adds any pending scroll delta accumulated by pk_ui_list_scroll
  *      (the delta is cleared atomically inside the call),
  *   3. clamps to [0, n-1],
@@ -185,6 +185,13 @@ int  pk_ui_diag_scroll_y(void);
  *      future call after a snapshot reshuffle still tracks the same
  *      aircraft,
  *   5. returns the new row index.
+ *
+ * Returns **-1 when there is no explicit selection and no pending
+ * scroll delta** — the renderer must then draw no highlight at all.
+ * (Anchoring at row 0 unconditionally used to paint a permanent
+ * highlight the user had no way to get rid of: row taps toggle the
+ * detail drawer, not the selection.) With a pending delta the anchor
+ * is row 0, so keyboard/scroll entry still works.
  *
  * For n == 0 the call returns 0, leaves the pending delta intact, and
  * does not touch the saved ICAO — so an empty-list refresh doesn't
