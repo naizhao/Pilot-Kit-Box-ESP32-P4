@@ -21,9 +21,10 @@ int pk_traffic_own_press_alt(bool own_bound_adsb,
     /* 守卫 p<=0：powf 底数为负会产生 NaN。 */
     if(baro_valid && baro_pressure_pa > 0.0f && gnss_has_msl){
         /* 印证量：QNH 修正高度（≈MSL 口径）vs GNSS 正高。同为「相对海平面」，
-         * 差值只反映传感器健康度，不随飞行高度累积——巡航 ISA+15 暖柱里
-         * 静压换算的标准气压高度本来就与 GNSS 差 1700+ ft（那是要用的量，
-         * 不是失准证据），而 QNH 修正高度照样贴着 GNSS。 */
+         * 差值与「静压换算的标准气压高度 vs GNSS」之差（QNH+温度累积，巡航
+         * 1~2 kft 级）相比小得多。窗口语义随 QNH 模式而变（AUTO=压力源粗判、
+         * MANUAL=温度+QNH 误差之和），但增压舱指纹（≥12 kft）在两种模式下
+         * 都远超窗口——拦的都是同一种事，见 traffic_geom.h。 */
         const int diff = baro_qnh_alt_ft - gnss_msl_ft;
         if(diff <= PK_OWN_ALT_XCHECK_MAX_DIFF_FT &&
            diff >= -PK_OWN_ALT_XCHECK_MAX_DIFF_FT){

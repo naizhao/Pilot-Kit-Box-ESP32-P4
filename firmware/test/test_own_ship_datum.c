@@ -395,6 +395,34 @@ static void test_cruise_non_isa_atmosphere_still_uses_baro(void)
           "同高度目标相对高度应为≈0(±10舍入) got=%+d\n", rel.rel_alt_ft);
 }
 
+/* 7c. MANUAL QNH（用户在设置页手设本地 QNH，无 AUTO 拟合）+ 非标准温度巡航：
+ *     QNH 修正只修海平面基准、不修温度误差，QNH 修正高度与 GNSS 差
+ *     ≈1710 ft（4 ft/1000ft/°C × 35000 ft × ISA+15）纯属大气物理，不是
+ *     传感器故障。此刻气压计是健康的，且它的标准气压高度与目标 Mode-C
+ *     同基准零残差——必须仍然走气压计。误判失准转 GNSS 会留下同量级的
+ *     异基准残差（同高度目标 -1710），±1000 ft 威胁分档整体翻转。 */
+static void test_manual_qnh_cruise_temperature_error_still_uses_baro(void)
+{
+    const int std_alt = 33290;            /* 静压对应的 1013.25 气压高度 */
+    const int true_alt = 35000;           /* 真实几何高度（GNSS 所报） */
+    const float pa = pressure_pa_for_std_alt_ft(std_alt);
+    /* MANUAL：baro.alt_ft = QNH 修正高度，QNH≈1013 时它与静压同源，
+     * 与 GNSS 的 1710 ft 差全是温度误差。 */
+    const int own_palt = pk_traffic_own_press_alt(
+        false, false, 0,
+        /*baro_valid=*/true, pa, /*baro_qnh_alt_ft=*/std_alt,
+        /*gnss_has_msl=*/true, true_alt);
+    CHECK(own_palt >= std_alt - 5 && own_palt <= std_alt + 5,
+          "MANUAL 巡航温度误差(1710 ft)不得误判失准 → 用气压计(≈%d) got=%d\n",
+          std_alt, own_palt);
+
+    pk_traffic_rel_t rel = pk_traffic_rel_calc(
+        true, 31.0, 121.0, 0.0f, 0.0f, own_palt,
+        true, 31.1, 121.0, true, std_alt, false, 0);
+    CHECK(rel.rel_alt_valid && rel.rel_alt_ft >= -10 && rel.rel_alt_ft <= 10,
+          "同高度目标相对高度应为≈0(±10舍入) got=%+d\n", rel.rel_alt_ft);
+}
+
 /* 8. 无气压计（传感器坏/没焊）→ GNSS 仍然兜底，不能退回 N/A。 */
 static void test_no_baro_gnss_fallback(void)
 {
@@ -437,6 +465,7 @@ int main(void)
     test_bound_without_pressure_altitude_falls_back_to_gnss();
     test_baro_agrees_with_gnss_uses_baro();
     test_cruise_non_isa_atmosphere_still_uses_baro();
+    test_manual_qnh_cruise_temperature_error_still_uses_baro();
     test_no_baro_gnss_fallback();
     test_baro_without_gnss_is_unavailable();
     test_no_sensors_unavailable();
