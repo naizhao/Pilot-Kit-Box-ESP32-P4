@@ -1,8 +1,8 @@
-# V4.10 Two Variants: Powered / Unpowered
+# V4.11 Two Variants: Powered / Unpowered
 
 Chinese version: [`VARIANTS-zh_CN.md`](VARIANTS-zh_CN.md)
 
-> 2026-08-23. This file is the **single source of truth for the variant design**; the selective placement
+> Updated for the frozen V4.11 board on 2026-09-29. This file is the **single source of truth for the variant design**; the selective placement
 > rules in ASSEMBLY-zh_CN.md also defer to this file.
 
 ## 1. Division principle
@@ -12,7 +12,7 @@ Not "leave out a few parts", but **two complete, self-contained power systems**:
 | | F side | B side |
 |---|---|---|
 | **Unpowered variant** | All sensors + RP2040 + CC1312R + RF chains + three LDOs | **Zero placed parts** |
-| **Powered variant** | Same as above | J4 (USB-C PD) + CH224K + SY6970 + SY7069 + L16/L17 + J9 battery holder + passives |
+| **Powered variant** | Same as above + the power main section (all except `BT1`/`J9`/`RT1`) | Only `BT1`, `J9` and `RT1`, all hand-soldered after F-side SMT |
 
 The unpowered variant **doesn't even fit the battery holder** — power and battery-level info all go through the Waveshare mainboard (`VCC_5V` enters from J1 pin1/pin3,
 feeding the three LDOs U1/U2/U3). The `VCC_5V` net is bidirectional: on the powered variant SY7069 outputs and back-feeds J1;
@@ -23,34 +23,32 @@ on the unpowered variant it is an input from J1. Same trace, two directions — 
 > comes from `VCC_5V`, so on the unpowered variant airband depends on the carrier feeding 5 V into J1 pin1/pin3.
 > Everything else in the group runs off `3V3_RF`.
 
-## 2. Why split: the cost is in SMT side count, not component fees
+## 2. Current SMT-side result
 
-Measured with JLC SMT online quoting (board 10.00×6.20 cm, 5 pcs, 2026-08-23).
-The table below uses **relative multiples**; absolute quotes change with time and batch size, so get your own quote before ordering:
+The **F side carries the power section** on V4.11. The released V4.11 CPL files contain
+only `T` (top/F-side) rows. `BT1`, `J9` and `RT1` are the only power-section references on
+the B side; none is in the current CPL, and all three are hand-soldered. Therefore both variants
+can use single-sided SMT. The powered variant is not a double-sided SMT build.
 
-| Option | Placement sides | Available tier | Relative cost |
-|---|---|---|---|
-| Powered variant (697 solder joints / 38 part types) | Double-sided | **Standard only** | **2.43×** (2.43 times the baseline) |
-| Unpowered variant (598 solder joints / 32 part types), **still double-sided** | Double-sided | Standard only | 2.30× |
-| Unpowered variant (602 solder joints / 33 part types), **single-sided** | Single-sided | **Economy** | **1.00× (baseline)** |
-| Same as above on Standard | Single-sided | Standard | 1.57× |
+| Option | Machine placement | B-side follow-up |
+|---|---|---|
+| Powered variant | **F side only** | Hand-solder `BT1`, `J9` and `RT1` |
+| Unpowered variant | **F side only** | None |
 
-Cost structure (this is the key — the difference is almost entirely fixed fees, not solder-joint count):
+The relative-price table previously kept here was a 2026-08-23 quote for an older placement
+state in which the power block was described as B-side SMT. It does not describe the frozen
+V4.11 board and must not be used for ordering. Request a fresh quote from the current CPL.
 
-```
-                 Double-sided Standard   Single-sided Economy
-Engineering fee      High        Low      ← main source of the difference
-Stencil fee          Yes         No       ← single-sided is stencil-free
-Placement joint fee  ≈           ≈        ← essentially identical between the two
-Reel change fee (after full reels) ≈  ≈
-```
+The variant switch itself is the **39-designator** `board_meta.PWR_REFS` set:
 
-**Two conclusions**:
+`BT1` `C70` `C71` `C72` `C73` `C74` `C75` `C76` `C77` `C78` `C79` `C80`
+`C101` `C102` `D7` `D9` `D10` `J9` `L16` `L17` `R37` `R38` `R39` `R40`
+`R41` `R42` `R43` `R44` `R45` `R46` `R63` `R65` `R67` `RT1` `SW3` `U18`
+`U19` `U20` `U23`.
 
-1. **The savings hinge entirely on unlocking the Economy tier** — JLC's "double-sided placement does not yet support Economy" is a hard gate.
-   Single-sided saves only half even on the Standard tier; only the Economy tier captures the full difference.
-2. **Without getting to single-sided, splitting into variants is almost pointless** — the two double-sided variants differ by only 5%; the saved placement fees
-   are eaten by the fixed engineering fee + stencil fee.
+The powered variant places all 39 and omits `R7`/`R8`; the unpowered variant omits all
+39 and places `R7`/`R8`. This remains an electrical rule even though both SMT outputs are
+single-sided.
 
 ## 3. What counts as "one placement side"
 
@@ -59,15 +57,17 @@ The criterion is **whether that side has parts that need machine placement**, no
 | | Occupies a side | Note |
 |---|---|---|
 | Pad-only items: the J11 debug pads (V4.10 2x10 bare pads; they replaced the SW2 solder jumper, removed in V4.9) | **No** | Nothing placed, no process step, no stencil, no oven run |
-| Through-hole parts (if J9 switches to bent-pin) | **No** | Counted in the "through-hole" column (hand-soldering fee ¥2 + hand-assembly engineering fee ¥20, fixed) |
-| J4 (USB-C, 16 SMD contacts) | **Yes** | As long as it sits on the B side, that side is a placement side |
-| The 28 power SMDs | Yes | The powered variant is necessarily double-sided |
+| `BT1` / `J9` / `RT1` on the B side | **No machine-placement side** | Deliberately excluded from CPL; hand-solder after F-side SMT |
+| `J4` (USB-C, 16 SMD contacts) | **Yes, F side** | Present on both variants |
+| Power section (39-designator variant set) | **F side SMT only** | 36 references are on F; only `BT1`/`J9`/`RT1` are on B and hand-soldered |
 
-So leaving pad-only items (formerly SW2, now the J11 debug pads) on the B side has zero cost impact; no adjustment needs to be made for them.
+So leaving pad-only J11 on the B side has zero cost impact. The same is true of the two
+explicit hand-solder exceptions `BT1`/`J9`/`RT1`; none creates a B-side SMT run.
 
 ## 4. 【Implemented 2026-08-23】How single-sided usability was achieved
 
-Product principle: **single-sided usability is the floor; double-sided is better**. So the unpowered variant's B side must have **zero placed parts**.
+Product principle: **single-sided SMT is the floor**. The unpowered variant's B side has
+zero parts; the powered variant's B side has only the three hand-solder parts `BT1`/`J9`/`RT1`.
 
 Three things were done:
 
@@ -77,7 +77,9 @@ Three things were done:
 | **Added R7/R8 (5.1k CC pull-downs) → F side**, 2.2mm right next to J4 | The unpowered variant has no CH224K; with CC floating, the host simply won't recognize the device (the USB-C spec requires Rd on the device side). **Either-or with CH224K**: not placed on the powered variant |
 | R37 moved from (138.80,69.84) to (137.75,70.75) | J4's through-hole mounting legs poke through to the B side and landed inside R37's courtyard. This also shrank its distance to the CFG1 pin from 2.97mm to 2.56mm |
 
-**Acceptance criterion: the unpowered variant's B-side placed parts = 0** (only pad-only items that count no side remain — since V4.9 the SW2 jumper and TP1–7 are gone, folded into the J11 debug pads).
+**Acceptance criterion:** every released V4.11 CPL row is F-side. The unpowered variant's
+B-side part count is zero; the powered variant's B-side exceptions are exactly `BT1`, `J9`
+and `RT1`, all hand-soldered (pad-only J11 does not count as a part).
 
 The proxy-flashing scheme (former §4 Option A) was rejected; reasons in §5 — GPIO24/25 are USB Serial/JTAG and cannot do host,
 and switching requires burning an irreversible eFuse. No gamble taken; J4 stays.

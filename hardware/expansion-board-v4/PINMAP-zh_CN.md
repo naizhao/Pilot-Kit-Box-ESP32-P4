@@ -1,4 +1,4 @@
-# 扩展板 V4.10 — 权威引脚/网络映射（原理图单一事实来源）
+# 扩展板 V4.11 — 权威引脚/网络映射（原理图单一事实来源）
 
 英文版：[`PINMAP.md`](PINMAP.md)
 
@@ -7,14 +7,15 @@
 > 器件具体 pin 号（QFN48 等）在阶段 2 建符号时从 datasheet 填入，并按 PAD_NET 教训逐脚复核。
 > 来源标注：〔A〕=同类参考设计原理图拓扑（仅事实参考）；〔F〕=本仓库固件现有定义；〔D〕=本项目决策。
 
-## 1. 对主板接口：2×20 排母，直插微雪载板 J3（HAT 式堆叠）〔D〕
+## 1. 对主板接口：扩展板 J1（2×20 排母）直插微雪载板 J3（HAT 式堆叠）〔D〕
 
 只列扩展板实际使用的脚，其余脚过孔留空：
 
-| J3 脚 | P4 GPIO | 网络 | 方向（P4 视角） | 依据 |
+| 扩展板 J1 / 载板 J3 脚 | P4 GPIO | 网络 | 方向（P4 视角） | 依据 |
 |---|---|---|---|---|
 | 1, 3（下排末端） | — | VCC_5V | 供电入 | 载板 pinout 下排全表复核〔F〕 |
 | 5,10,13,19,26,29,33,40 | — | GND | — | 上排 40/26/10 + 下排 33/29/19/13/5〔F〕 |
+| 14 | GPIO4 | P4_GPIO4_SW3_SENSE | 输入（低有效） | V4.11 SW3 隔离感知通路；`docs/hardware/board_pinout-zh_CN.md`、`firmware/main/sw3_button.c`〔F〕+〔D〕 |
 | 4 | GPIO7 | I2C_SDA | 双向 | imu_task.c:49〔F〕 |
 | 6 | GPIO8 | I2C_SCL | 输出 | imu_task.c:50〔F〕 |
 | 32 | GPIO49 | GNSS_RXD（P4 TX → GNSS） | 输出 | gps_task.c:20〔F〕 |
@@ -25,6 +26,30 @@
 | 24 | GPIO31 | BARO_INT（可选） | 输入 | baro_task.c:32〔F〕 |
 | 35 | GPIO46 | ADSB_TXD（RP2040 → P4 RX）**新增** | 输入 | 载板标空闲〔F〕+〔D〕 |
 | 31 | GPIO32 | ADSB_RXD（P4 TX → RP2040，配置/控制）**新增** | 输出 | 载板标空闲〔F〕+〔D〕 |
+
+### V4.11 J1.14 / 载板 J3-14 的 SW3 感知
+
+完整单向感知通路为 `GPIO4 → J3-14/J1.14 → R67（1 kΩ）→ D10 → CHG_QON`。
+`SW3.1` 仍直接把 `CHG_QON` / SY6970 `/QON` 拉低，`SW3.2` 仍接 GND，因此
+ship mode 唤醒仍是不依赖 P4 的纯硬件功能。D10 的**阳极在 GPIO4/R67 一侧**，
+D10 的**阴极在 CHG_QON 一侧**：按下时向 GPIO4 复制低电平，松开时隔离实测约
+3.57V 的 `/QON` 高电平。MCU 只能把该脚当输入，不得用 GPIO 驱动或把
+3.3V 上拉直接接到 `/QON`。
+
+复用/占用依据如下：
+
+- `docs/hardware/board_pinout-zh_CN.md` 将载板 J3 pin 14 对应到 ESP32-P4 GPIO4；
+  扩展板一侧位号为 J1，所以对插点是扩展板 J1.14。
+- 本 ECO 之前精确搜索生产固件未发现 GPIO4 占用；当前唯一占用者是
+  `firmware/main/sw3_button.c`，它将 `GPIO_NUM_4` 配置为内部上拉输入，从不输出驱动。
+- GPIO4 不是 ESP32-P4 strapping pin，但可复用为 PAD-JTAG `MTMS`。2026-09-29
+  实机只读核对为 `DIS_PAD_JTAG=0`、`DIS_USB_JTAG=0`、`JTAG_SEL_ENABLE=0`、
+  `SOFT_DIS_JTAG=0`，当前选择 USB Serial/JTAG，不会切到 GPIO2–5 的 PAD-JTAG 组。
+  未来若烧录 `DIS_USB_JTAG` 或 `JTAG_SEL_ENABLE`，必须重新审查该引脚冲突。
+
+电气计算和 V4.10 飞线完整台架闭环证据见
+`docs/internal/2026-09-29-sw3-gpio4-flywire.md`；V4.11 在该闭环后才冻结，
+最终连通性以当前原理图、网表和 PCB 为准。
 
 ### V4.6 AIRBAND 新增（BK4819 三线 SPI + PCM1808 走 P4 第二路 I2S）
 

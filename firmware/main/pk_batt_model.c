@@ -7,6 +7,18 @@
  */
 #include "pk_batt_model.h"
 
+int pk_batt_equiv_loaded_mv(int batt_mv, bool external_power_detected,
+                            bool charging, int ichg_ma)
+{
+    int mv = batt_mv;
+    if (!external_power_detected) return mv;
+
+    if (charging && ichg_ma > 0)
+        mv -= ichg_ma * PK_BATT_R_CHG_MOHM / 1000;
+    mv -= PK_BATT_LOAD_NOM_MA * PK_BATT_R_DIS_MOHM / 1000;
+    return mv;
+}
+
 int pk_batt_mv_to_pct(int mv)
 {
     if (mv >= 4026) return 100;

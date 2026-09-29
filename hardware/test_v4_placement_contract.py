@@ -77,6 +77,7 @@ V48_LABELS = ("PWR↓", "CHG↓")
 # 同样单列而不是把 FINALIZED_GRAPHICS_COUNT 改大，理由见上面 V47_LABELS。
 V410_ROW_MARKERS = tuple(str(2 * i + 2) for i in range(10))
 # V4.10 新增：D7 / D8 / D9 的阴极极性带（gen_polarity_marks.py 画的 PCB_SHAPE）。
+# SW3 GPIO 感知 ECO 再加入 D10，仍由同一脚本按网表的 K/A 引脚自动识别方向。
 #
 # 起因是维护者 2026-09-21 贴片时发现「新做的一批 D 完全分不清极向」：官方封装
 # 给的「⊏」两条边线和阴极横线一样粗（0.12mm），拿元件上的带/点根本对不上。
@@ -84,7 +85,7 @@ V410_ROW_MARKERS = tuple(str(2 * i + 2) for i in range(10))
 #
 # D2~D6 **不在其列且不该在**：它们是 TPESD8L3.3 双向 TVS，两脚都是阳极
 # （网表引脚名 A1/A2），本来就没有安装极性，画阴极带反而误导。
-V410_POLARITY_MARKS = 3
+V410_POLARITY_MARKS = 4
 BOARD_GRAPHICS_COUNT = (FINALIZED_GRAPHICS_COUNT + len(DEBUG_LABELS)
                         + len(V47_LABELS) + len(V48_LABELS)
                         + len(V410_ROW_MARKERS) + V410_POLARITY_MARKS)
@@ -183,6 +184,27 @@ def footprint_placement(footprint: str) -> tuple[float, float, float, str]:
     return float(at.group(1)), float(at.group(2)), float(at.group(3) or 0.0), layer.group(1)
 
 
+def segment_hits_rect(x1: float, y1: float, x2: float, y2: float,
+                      left: float, top: float, right: float, bottom: float) -> bool:
+    """Liang-Barsky：线段是否进入闭合矩形。"""
+    dx, dy = x2 - x1, y2 - y1
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x1 - left), (dx, right - x1),
+                 (-dy, y1 - top), (dy, bottom - y1)):
+        if p == 0:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return False
+    return True
+
+
 class V4PlacementContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -194,6 +216,50 @@ class V4PlacementContractTest(unittest.TestCase):
     def test_functional_silkscreen_texts_are_preserved(self):
         actual = set(re.findall(r'\(gr_text "([^"]*)"', self.text))
         self.assertLessEqual(REQUIRED_TEXTS, actual, sorted(REQUIRED_TEXTS - actual))
+
+    def test_smt_fiducials_and_ep_paste_apertures_are_present(self):
+        """制造板必须带 3 个 MARK 点和 5 个 EP 的 3×3 钢网开孔。"""
+        self.assertLessEqual({"FID1", "FID2", "FID3"}, set(self.footprints))
+        paste_only = len(re.findall(r'\(layers "F\.Paste"\)', self.text))
+        self.assertEqual(paste_only, 45, "5 个散热 EP 应各有 9 个避孔锡膏开口")
+
+    def test_fiducial_keepouts_do_not_cross_tracks_on_any_copper_layer(self):
+        """MARK 点的六层禁布区不能只避 F.Cu、再压到内层线。"""
+        rects = []
+        cursor = 0
+        while True:
+            start = self.text.find("\n\t(zone", cursor)
+            if start < 0:
+                break
+            zone = extract_sexpr(self.text, start + 2)
+            cursor = start + len(zone) + 2
+            name = re.search(r'\(name "(fid_keepout_[^"]+)"\)', zone)
+            if not name:
+                continue
+            polygon_start = zone.find("(polygon")
+            self.assertGreaterEqual(polygon_start, 0, name.group(1))
+            polygon = extract_sexpr(zone, polygon_start)
+            pts = [(float(x), float(y)) for x, y in
+                   re.findall(r'\(xy ([-0-9.]+) ([-0-9.]+)\)', polygon)]
+            self.assertGreaterEqual(len(pts), 4, name.group(1))
+            xs, ys = zip(*pts)
+            rects.append((name.group(1), min(xs), min(ys), max(xs), max(ys)))
+
+        conflicts = []
+        for block in re.findall(r'\n\t\(segment\s+(.*?)\n\t\)', self.text, re.S):
+            start = re.search(r'\(start ([-0-9.]+) ([-0-9.]+)\)', block)
+            end = re.search(r'\(end ([-0-9.]+) ([-0-9.]+)\)', block)
+            layer = re.search(r'\(layer "([^"]+)"\)', block)
+            net = re.search(r'\(net "([^"]+)"\)', block)
+            if not (start and end and layer):
+                continue
+            x1, y1 = map(float, start.groups())
+            x2, y2 = map(float, end.groups())
+            for name, left, top, right, bottom in rects:
+                if segment_hits_rect(x1, y1, x2, y2, left, top, right, bottom):
+                    conflicts.append((name, layer.group(1), net.group(1) if net else "",
+                                      (x1, y1), (x2, y2)))
+        self.assertEqual(conflicts, [], conflicts)
 
     def test_zone_fill_params_are_frozen(self):
         """ZONES.json 必须给每个非规则区覆铜存齐填充参数。

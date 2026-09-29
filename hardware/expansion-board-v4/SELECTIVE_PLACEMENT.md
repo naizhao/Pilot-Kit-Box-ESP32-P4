@@ -1,4 +1,4 @@
-# V4.10 Selective Placement / Mutually Exclusive Parts Reference
+# V4.11 Selective Placement / Mutually Exclusive Parts Reference
 
 Chinese version: [`SELECTIVE_PLACEMENT-zh_CN.md`](SELECTIVE_PLACEMENT-zh_CN.md)
 
@@ -16,8 +16,8 @@ The airband group (stage G — 22 designators: `U21` `U22` `Y4` `J10` `D6` `L18`
 is **not** in any selective or mutex group: it is placed unconditionally, on both variants. It is listed here
 only so that its absence from the tables below is not read as an omission.
 
-Designator locations on the board: [ASSEMBLY_MAP-V4.10.pdf](ASSEMBLY_MAP-V4.10.pdf) (public version),
-`internal/装配图-本轮打板-V4.10-zh_CN.pdf` (parts each board of this batch must hand-place itself).
+Designator locations on the board: [ASSEMBLY_MAP-V4.11.pdf](ASSEMBLY_MAP-V4.11.pdf) (public version),
+`internal/装配图-本轮打板-V4.11-zh_CN.pdf` (parts each board of this batch must hand-place itself).
 Both are generated from the criteria in this table, so they cannot disagree with it.
 
 ---
@@ -26,13 +26,15 @@ Both are generated from the criteria in this table, so they cannot disagree with
 
 The same PCB is built in two versions, and **this is the only group in the whole table where a wrong placement burns the board**:
 
-| | Power section (37 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
+| | Power section (39 designators) | `R7` `R8` (5.1kΩ CC pulldowns) |
 |---|---|---|
 | **Powered variant** (this board) | ✅ place all | ❌ **must never be placed** |
 | Unpowered variant | ❌ place none | ✅ must be placed |
 
-**Power section**: `U18` `U19` `U20` `L16` `L17` `J9` `RT1` **`SW3`**
-**`U23` `C101` `C102` `D7` `R63` `BT1`** **`D9` `R65`** `C70`~`C80` `R37`~`R46`
+**Power section (the `board_meta.PWR_REFS` set):** `BT1` `C70` `C71` `C72` `C73` `C74`
+`C75` `C76` `C77` `C78` `C79` `C80` `C101` `C102` `D7` `D9` `D10` `J9` `L16`
+`L17` `R37` `R38` `R39` `R40` `R41` `R42` `R43` `R44` `R45` `R46` `R63` `R65`
+`R67` `RT1` `SW3` `U18` `U19` `U20` `U23`.
 
 (`U23`/`C101`/`C102`/`D7`/`R63`/`BT1` are the V4.8 GNSS VBAT backup rail. They all
 hang off `BAT_P`, which is produced by `U19` + `J9` — the unpowered variant omits
@@ -48,6 +50,9 @@ light up** — populating it is pure waste.
 both variants: they sit between `3V3_DIG` and `GND`, and `3V3_DIG` comes from `U1`
 stepping down `VCC_5V`, which the unpowered variant still has.)
 (`SW3` is the V4.7 power button on SY6970's `/QON`; without `U19` it connects to nothing.)
+(`R67`/`D10` are the V4.11 isolated SW3-sense branch to P4 GPIO4. `D10` blocks the
+approximately 3.57 V `/QON` pull-up from feeding the 3.3 V GPIO; without `U19`/`SW3`
+the branch has no useful source and therefore belongs to the same power-section variant.)
 
 **Why it burns**: for USB-C to be recognized by the host, the CC pin must have Rd. In the powered variant this is provided internally by CH224K(`U18`);
 if an external 5.1k is then added in parallel on top of that, **the CC resistance is pulled down → PD negotiation misjudges → it may request

@@ -1,4 +1,4 @@
-# Expansion Board V4.10 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
+# Expansion Board V4.11 — Authoritative Pin/Net Mapping (Single Source of Truth for the Schematic)
 
 Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 
@@ -6,14 +6,15 @@ Chinese version: [`PINMAP-zh_CN.md`](PINMAP-zh_CN.md)
 > Device-specific pin numbers (QFN48 etc.) are filled in from the datasheet when creating symbols in Phase 2, and re-verified pin by pin per the PAD_NET lesson.
 > Source tags: 〔A〕=schematic topology of a similar reference design (factual reference only); 〔F〕=existing definitions in this repo's firmware; 〔D〕=this project's decision.
 
-## 1. Interface to the main board: 2×20 female header, plugs straight into the Waveshare carrier board J3 (HAT-style stacking)〔D〕
+## 1. Interface to the main board: expansion-board J1 (2×20 female) plugs straight into carrier-board J3 (HAT-style stacking)〔D〕
 
 Only pins actually used by the expansion board are listed; the remaining pins are left as unconnected through-holes:
 
-| J3 pin | P4 GPIO | Net | Direction (from P4's perspective) | Basis |
+| Expansion J1 / carrier J3 pin | P4 GPIO | Net | Direction (from P4's perspective) | Basis |
 |---|---|---|---|---|
 | 1, 3 (bottom-row ends) | — | VCC_5V | power in | carrier board pinout, full bottom-row cross-check〔F〕 |
 | 5,10,13,19,26,29,33,40 | — | GND | — | top row 40/26/10 + bottom row 33/29/19/13/5〔F〕 |
+| 14 | GPIO4 | P4_GPIO4_SW3_SENSE | input (active-low) | V4.11 isolated SW3 sense path; `docs/hardware/board_pinout.md`, `firmware/main/sw3_button.c`〔F〕+〔D〕 |
 | 4 | GPIO7 | I2C_SDA | bidirectional | imu_task.c:49〔F〕 |
 | 6 | GPIO8 | I2C_SCL | output | imu_task.c:50〔F〕 |
 | 32 | GPIO49 | GNSS_RXD (P4 TX → GNSS) | output | gps_task.c:20〔F〕 |
@@ -24,6 +25,32 @@ Only pins actually used by the expansion board are listed; the remaining pins ar
 | 24 | GPIO31 | BARO_INT (optional) | input | baro_task.c:32〔F〕 |
 | 35 | GPIO46 | ADSB_TXD (RP2040 → P4 RX) **new** | input | marked free on the carrier board〔F〕+〔D〕 |
 | 31 | GPIO32 | ADSB_RXD (P4 TX → RP2040, config/control) **new** | output | marked free on the carrier board〔F〕+〔D〕 |
+
+### V4.11 SW3 sensing on J1.14 / carrier J3-14
+
+The complete one-way sensing path is `GPIO4 → J3-14/J1.14 → R67 (1 kΩ) → D10 → CHG_QON`.
+`SW3.1` still directly pulls `CHG_QON` / SY6970 `/QON` low and `SW3.2` still goes to GND,
+so ship-mode wake remains a hardware function independent of the P4. D10's **anode is on the
+GPIO4/R67 side** and D10's **cathode is on the CHG_QON side**. This copies an asserted low to
+GPIO4 while isolating the measured approximately 3.57 V `/QON` released level; the MCU must
+never drive this input or add a 3.3 V pull-up directly to `/QON`.
+
+The reuse/occupancy decision is evidence-backed:
+
+- `docs/hardware/board_pinout.md` maps carrier J3 pin 14 to ESP32-P4 GPIO4; the expansion
+  connector is J1, hence the mated point is expansion J1.14.
+- A source search found no production GPIO4 owner before this ECO. The current sole owner is
+  `firmware/main/sw3_button.c`, which configures `GPIO_NUM_4` as a pulled-up input and never
+  drives it.
+- GPIO4 is not an ESP32-P4 strapping pin, but it can be PAD-JTAG `MTMS`. The 2026-09-29
+  read-only device audit recorded `DIS_PAD_JTAG=0`, `DIS_USB_JTAG=0`,
+  `JTAG_SEL_ENABLE=0`, and `SOFT_DIS_JTAG=0`, selecting USB Serial/JTAG rather than the
+  GPIO2–5 PAD-JTAG group. If `DIS_USB_JTAG` or `JTAG_SEL_ENABLE` is changed later, this pin
+  assignment must be reviewed again.
+
+Electrical design and the completed V4.10 flywire closed-loop evidence are recorded in
+`docs/internal/2026-09-29-sw3-gpio4-flywire.md`. V4.11 was frozen only after that bench
+closed-loop; the schematic/netlist/PCB remain the authority for its final connectivity.
 
 ### V4.6 AIRBAND additions (BK4819 SPI + PCM1808 I2S on the second P4 I2S)
 

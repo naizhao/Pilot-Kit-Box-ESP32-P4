@@ -47,6 +47,24 @@ try:
 except ImportError:                                    # pragma: no cover
     pcbnew = None
 
+# ⚠️ 光判 `pcbnew is None` 不够 —— 会被**别的测试文件污染**。
+#
+# test_assembly_batch_match.py 为了在系统 python3 上测纯字符串逻辑，往
+# sys.modules 里塞了个空壳（`sys.modules.setdefault("pcbnew", ModuleType(...))`）。
+# 那个副作用是**全局**的：本文件随后 `import pcbnew` 拿到的是空壳而不是抛
+# ImportError，于是 `pcbnew is None` 为 False，skipIf 失效 → 本文件的用例真的
+# 跑起来 → 空壳没有 LoadBoard/FromMM → 5 个用例全 AttributeError。
+#
+# 症状很有迷惑性：**单独跑本文件是 5 skipped（全绿），跟全量一起跑就 5 failed**，
+# 看起来像"我的改动弄坏了测试"。2026-09-27 排查确认与任何 BOM/名单改动无关
+# （本文件不读 BOM，改的是 sys.modules 污染）。
+#
+# 判据改成「有没有真的能用的 API」：空壳、残缺的 pcbnew 一律 skip，
+# 完整的 KiCad python 照常跑。这样污染源怎么注入都影响不到本文件。
+_PCBNEW_API = ("LoadBoard", "FromMM", "VECTOR2I", "ToMM")
+_HAS_PCBNEW = pcbnew is not None and all(
+    hasattr(pcbnew, a) for a in _PCBNEW_API)
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BOARDS = {
     "v3": os.path.join(ROOT, "expansion-board-v3", "kicad",
@@ -85,7 +103,7 @@ def stale_zones(pcb_path):
     return bad
 
 
-@unittest.skipIf(pcbnew is None, "需要 KiCad 的 python（pcbnew）")
+@unittest.skipIf(not _HAS_PCBNEW, "需要完整 KiCad 的 python（pcbnew 缺 LoadBoard/FromMM）")
 class ZoneFillCurrencyTest(unittest.TestCase):
 
     def test_stored_zone_fills_are_current(self):
@@ -160,7 +178,7 @@ class ZoneFillCurrencyTest(unittest.TestCase):
                     f"（多半是改了禁铜区没重灌）：{bad[:5]}")
 
 
-@unittest.skipIf(pcbnew is None, "需要 KiCad 的 python（pcbnew）")
+@unittest.skipIf(not _HAS_PCBNEW, "需要完整 KiCad 的 python（pcbnew 缺 LoadBoard/FromMM）")
 class TopKeepoutBandTest(unittest.TestCase):
     """顶部禁铜带必须**通长贯穿整板**，中间不许有缝。
 
@@ -222,7 +240,7 @@ class TopKeepoutBandTest(unittest.TestCase):
                     f"正落在天线开路端外侧。改天线长度时两块板级禁铜区必须跟着走。")
 
 
-@unittest.skipIf(pcbnew is None, "需要 KiCad 的 python（pcbnew）")
+@unittest.skipIf(not _HAS_PCBNEW, "需要完整 KiCad 的 python（pcbnew 缺 LoadBoard/FromMM）")
 class CurrencyCheckSelfTest(unittest.TestCase):
     """🔴 让这份测试自己证明它抓得住——**新检查必须先拿坏样本验红**。
 

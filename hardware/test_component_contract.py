@@ -856,20 +856,47 @@ class ComponentContractTest(unittest.TestCase):
                 m = re.match(r"CPL-(?:(V[\d.]+)-)?(\w+)\.csv$", path.name)
                 self.assertIsNotNone(m, f"CPL 文件名不合规范：{path.name}")
                 by_rev[m.group(1) or "(无版本)"].add(m.group(2))
-            with self.subTest(board=board, check="CPL 文件齐全"):
-                self.assertTrue(by_rev, "一个 CPL 都没有，是不是漏跑了 gen_jlc_smt.py")
-                for rev, plans in sorted(by_rev.items()):
-                    self.assertEqual(
-                        sorted(plans), ["full", "minimal", "passives"],
-                        f"{rev} 的三个方案没齐（缺 gen_jlc_smt.py 的某一档）",
-                    )
-            # 坐标只对**当前版本**那套校验。带旧版本号的是归档（留着给已打样的
-            # 板子做贴片参考），它们本来就对不上当前板——拿当前板去要求它们，
-            # 只会逼着人把归档删掉。当前版本取自板上的版本丝印。
+            # 当前版本取自板上的版本丝印。**必须先算**——下面的「CPL 齐全性」
+            # 和「坐标」两处都要用它：「当前版本」要求全档齐全，
+            # 「历史归档」不可能补出新方案（板子早打完样了），只要求基础三档。
             pcb_text = (ROOT / "hardware" / board / "kicad"
                         / f"{board}.kicad_pcb").read_text(encoding="utf-8")
             m = re.search(r'\(gr_text "(V[\d.]+) \(', pcb_text)
             cur_rev = m.group(1) if m else None
+
+            # 方案集从该板自己的 board_meta.py 读（单一数据源），别在测试里再抄一份。
+            #
+            # 2026-09-27 修：原来这里把期望写成 ["full","minimal","passives"]，
+            # 2026-09-22 加了 max 方案之后它就红了。测试自己的注释写着
+            # 「别写死文件名——加一版板子就要改一次测试的话，迟早会有人为了
+            # 让它绿而把新版本删掉」，可它恰恰把**方案列表**写死了，同一种病。
+            # 而且 v4 的 V4.4~V4.8 确实只有三档（那时还没有 max），
+            # 用一个期望去套所有版本，本身就要求历史归档凭空多出一档。
+            supported = None
+            _bm = (ROOT / "hardware" / board / "internal" / "tools" / "board_meta.py")
+            if _bm.is_file():
+                _spec = importlib.util.spec_from_file_location(f"_bm_{board}", _bm)
+                _mod = importlib.util.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                supported = set(getattr(_mod, "SUPPORTED_SMT_PLANS", ()))
+
+            with self.subTest(board=board, check="CPL 文件齐全"):
+                self.assertTrue(by_rev, "一个 CPL 都没有，是不是漏跑了 gen_jlc_smt.py")
+                base_plans = {"full", "minimal", "passives"}
+                for rev, plans in sorted(by_rev.items()):
+                    self.assertTrue(
+                        base_plans <= plans,
+                        f"{rev} 缺基础方案 {sorted(base_plans - set(plans))}"
+                        f"（gen_jlc_smt.py 的某一档没跑）")
+                    if rev == cur_rev and supported:
+                        # 当前版本要与声明的方案集**完全一致**：
+                        # 少了 = 漏跑某一档；多了 = 加了方案却没登记进
+                        # board_meta.SUPPORTED_SMT_PLANS（那正是本测试的守卫作用）。
+                        self.assertEqual(
+                            set(plans), supported,
+                            f"{rev} 的方案集与 board_meta.SUPPORTED_SMT_PLANS 不符："
+                            f"缺 {sorted(supported - set(plans))}，"
+                            f"多 {sorted(set(plans) - supported)}")
             for path in files:
                 with path.open(encoding="utf-8-sig") as fh:
                     rows = list(csv.DictReader(fh))
@@ -1022,6 +1049,55 @@ class ComponentContractTest(unittest.TestCase):
         self.assertEqual(pin_nets[("C72", "2")], "GND")
         self.assertEqual(pcb_pad_nets("expansion-board-v4", "U18")["6"], "USB_CC2")
         self.assertEqual(pcb_pad_nets("expansion-board-v4", "U18")["7"], "USB_CC1")
+
+    def test_v4_sw3_mcu_sense_is_diode_isolated(self):
+        """GPIO4 只能隔离感知 /QON；二极管方向必须允许按键把 GPIO 拉低。"""
+        if "expansion-board-v4" not in BOARDS:
+            self.skipTest("当前分支不维护 v4")
+        pin_nets, values = self.schematic["expansion-board-v4"]
+        expected = {
+            ("J1", "14"): "P4_GPIO4_SW3_SENSE",
+            ("R67", "1"): "P4_GPIO4_SW3_SENSE",
+            ("R67", "2"): "SW3_SENSE_A",
+            # Device:D 的 pin 2 是阳极、pin 1 是阴极。这样只能由 GPIO 侧
+            # 经 1k/二极管流向 CHG_QON，不能把 /QON 的内部上拉灌进 GPIO。
+            ("D10", "2"): "SW3_SENSE_A",
+            ("D10", "1"): "CHG_QON",
+            ("SW3", "1"): "CHG_QON",
+            ("SW3", "2"): "GND",
+        }
+        self.assertEqual({key: pin_nets.get(key) for key in expected}, expected)
+        self.assertEqual(values.get("R67"), "1k")
+        self.assertEqual(values.get("D10"), "1N4148WS")
+
+        for ref in ("J1", "R67", "D10", "SW3"):
+            wanted = {
+                pad: net for (component, pad), net in expected.items()
+                if component == ref
+            }
+            actual = pcb_pad_nets("expansion-board-v4", ref)
+            self.assertEqual({pad: actual.get(pad) for pad in wanted}, wanted)
+
+        # 顶层布局按信号方向从左到右：J1 网络 -> R67 -> D10(A/K) -> SW3。
+        # 这既固定了 D10 色环朝 SW3，也避免用户布线时交叉换脚。
+        r67_1 = pcb_pad_position("expansion-board-v4", "R67", "1")
+        r67_2 = pcb_pad_position("expansion-board-v4", "R67", "2")
+        d10_a = pcb_pad_position("expansion-board-v4", "D10", "2")
+        d10_k = pcb_pad_position("expansion-board-v4", "D10", "1")
+        sw3_qon = pcb_pad_position("expansion-board-v4", "SW3", "1")
+        self.assertLess(r67_1[0], r67_2[0])
+        self.assertLess(r67_2[0], d10_a[0])
+        self.assertLess(d10_a[0], d10_k[0])
+        self.assertLess(d10_k[0], sw3_qon[0])
+
+        # 这两个器件只服务于带电源版的 U19 /QON。若漏出 PWR_REFS，
+        # unpowered 方案仍会把它们塞进 SMT BOM，留下没有用途的悬空网络。
+        import importlib.util
+        meta_path = ROOT / "hardware" / "expansion-board-v4" / "internal" / "tools" / "board_meta.py"
+        spec = importlib.util.spec_from_file_location("v4_board_meta_sw3", meta_path)
+        meta = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(meta)
+        self.assertLessEqual({"R67", "D10"}, meta.PWR_REFS)
 
     def test_bno085_environment_bus_has_required_pullups(self):
         expected = {

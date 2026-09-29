@@ -6,10 +6,11 @@
  * 这份测试**先于重构存在**：曲线原本长在 power_eta6098.c 里（一颗充电芯片
  * 的文件），一个测试都没有，而 SY6970 backend 又在跨文件借它出电量。搬家
  * 之前先把行为钉死，搬完再跑一遍——否则"重构没改行为"这句话没有凭据。
- * 2026-09-13 曲线换成本机实测标定值（8.37h / 502 采样点），期望值随之全改；
+ * 2026-09-13 曲线换成本机实测标定值（原始 8.37h / 502 点；剔除开头 7 分钟
+ * H1 空载段后，有效放电 8.25h / 495 点），期望值随之全改；
  * 那次搬家的等价性由当时的绿灯记录背书，不靠现在这份文件复现。
  *
- * 六段，每段压一件事：
+ * 七段，每段压一件事：
  *   1) 七个拐点的绝对值——2026-09-13 本机实测标定，改了必须有新数据支撑；
  *   2) 段内线性插值——拐点对了不代表段内斜率对；
  *   3) 上下饱和——超出量程必须钳死，不许算出 >100 或负数；
@@ -18,6 +19,9 @@
  *      按这个区间存，越界会静默截断；
  *   6) 非线性形状——带负载曲线末期陡降，低压段每毫伏崩得远比平台段快，
  *      退回线性映射这条会红。
+ *   7) U19 可观测工况折算——仅电池时不重复扣负载压降；U19 检出的外部
+ *      供电空载/充电端电压要折回同一条带载曲线。这里使用 2026-09-13
+ *      的两组拔线实测电压作数值合同；它不能证明当前 P4 看不到的 H1 插拔。
  */
 #include <stdio.h>
 
@@ -39,7 +43,8 @@ static void chk_true(const char *what, int cond)
 }
 
 /* ── 1) 七个拐点（2026-09-13 实测标定值，起点已剔除空载段）──────────────────────────
- * 这些数来自本机 8.37 小时放电实测（502 采样点，见 pk_batt_model.h），
+ * 这些数来自本机原始 8.37 小时 / 502 点记录中剔除 H1 空载段后的
+ * 8.25 小时 / 495 个有效放电点（见 pk_batt_model.h），
  * 不是通用曲线。改动任何一个都意味着"重新标定过"，必须有新的实测数据
  * 支撑——所以钉死在这里。 */
 static void test_knees(void)
@@ -130,6 +135,37 @@ static void test_curve_is_not_linear(void)
     chk_true("末期每毫伏崩得比平台段快（曲线非线性）", low_per100 > plat_per100);
 }
 
+/* ── 7) U19 可观测工况折回同一条“606mA 带载”曲线 ─────────────────
+ *
+ * 曲线采样本身就是仅电池、满负载状态，所以 battery-only 的 BATV 已经是
+ * 查表输入，不能再减一次 LOAD_NOM*R_DIS。
+ *
+ * 两组实测拔线电压提供了折算函数的数值合同：
+ *   终充维持：插电空载 4164mV → 拔线满载 4044mV；
+ *   2050mA 充电：插电 4184mV → 拔线满载 3624mV。
+ * 同一瞬间的 SoC 没有突变，若调用方能正确给出外部供电状态，折算后的电压
+ * 最多只容许 ADC 量化级以内差异。H1 的 USB0_5V 从 U19 下游供电，当前
+ * P4 没有 H1 VBUS 信号，所以这不是 H1 插拔端到端闭环测试。
+ */
+static void test_operating_point_normalization(void)
+{
+    const int full_battery = pk_batt_equiv_loaded_mv(4044, false, false, 0);
+    const int full_hold = pk_batt_equiv_loaded_mv(4164, true, false, 250);
+    chk_int("仅电池 BATV 已是带载曲线口径", full_battery, 4044);
+    chk_true("终充维持拔线前后连续",
+             full_hold >= full_battery - 1 && full_hold <= full_battery + 1);
+
+    const int mid_battery = pk_batt_equiv_loaded_mv(3624, false, false, 0);
+    const int mid_charging = pk_batt_equiv_loaded_mv(4184, true, true, 2050);
+    chk_int("仅电池中段不重复扣 121mV", mid_battery, 3624);
+    chk_true("2050mA 充电拔线前后连续",
+             mid_charging >= mid_battery - 1 && mid_charging <= mid_battery + 1);
+
+    /* ICHGR 在非充电状态会保留陈值；闸门必须忽略它。 */
+    chk_int("非充电时忽略陈旧 ICHGR", 
+            pk_batt_equiv_loaded_mv(4164, true, false, 2050), full_hold);
+}
+
 int main(void)
 {
     test_knees();
@@ -138,6 +174,7 @@ int main(void)
     test_monotonic();
     test_range();
     test_curve_is_not_linear();
+    test_operating_point_normalization();
 
     if (g_fail == 0) { printf("test_pk_batt_model: all OK\n"); return 0; }
     printf("test_pk_batt_model: %d FAIL\n", g_fail);

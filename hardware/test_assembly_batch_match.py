@@ -33,6 +33,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# ⚠️ 副作用是**全局**的：这个空壳留在 sys.modules 里，之后任何测试
+# `import pcbnew` 都会拿到它而不是抛 ImportError。test_zone_fill_currency.py
+# 就因此中招过——它的 `skipIf(pcbnew is None)` 失效、真空跑，
+# 然后空壳没有 LoadBoard/FromMM 而 AttributeError（单独跑 skip、全量跑 fail）。
+# 那边已改用「检查 API 完整性」的判据自保；这里保留注入（本文件确实需要它）。
 sys.modules.setdefault("pcbnew", types.ModuleType("pcbnew"))
 _spec = importlib.util.spec_from_file_location(
     "gen_assembly_web", ROOT / "hardware" / "tools" / "gen_assembly_web.py")

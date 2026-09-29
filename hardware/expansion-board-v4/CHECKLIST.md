@@ -1,11 +1,11 @@
-# V4.10 BOM Verification Checklist (reference-designator order)
+# V4.11 BOM Verification Checklist (reference-designator order)
 
 Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-233 designators in total.
+238 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -163,6 +163,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **R64** | 1k | R_0603_1608Metric | (145.8, 80.3) | A Power |  |
 | ☐ | **R65** | 1k | R_0603_1608Metric | (145.8, 84.2) | A Power |  |
 | — | **R66** | 0R DNP(TCXO探测隔离) | R_0603_1608Metric | (138.1, 103.8) | **Not placed** (DNP) |  |
+| ☐ | **R67** | 1k | R_0603_1608Metric | (138.2, 91.7) | A Power |  |
 | ☐ | **L1** | 18nH 0402CS-18NXGRW | L_0402_1005Metric | (110.4, 59.8) | E 1090 Receive Chain |  |
 | ☐ | **L2** | 33nH | L_0402_1005Metric | (57.7, 75.4) | C Sensors + GNSS |  |
 | ☐ | **L7** | 6.8uH | L_0805_2012Metric | (97.3, 94.7) | D 978 Transceiver |  |
@@ -185,6 +186,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | ☐ | **D7** | 1N4148WS | D_SOD-323 | (80.9, 87.6) | A Power | See the Chinese companion for the detailed engineering note |
 | ☐ | **D8** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 80.3) | A Power | See the Chinese companion for the detailed engineering note |
 | ☐ | **D9** | LED 红/黄(Vf2.0-2.2) | LED_0805_2012Metric | (148.5, 84.2) | A Power | See the Chinese companion for the detailed engineering note |
+| ☐ | **D10** | 1N4148WS | D_SOD-323 | (141.5, 91.7) | A Power | See the Chinese companion for the detailed engineering note |
 | ☐ | **F2** | 6V/200mA | Fuse_0805_2012Metric | (122.0, 91.0) | D 978 Transceiver |  |
 | ☐ | **F3** | 6V/200mA | Fuse_0805_2012Metric | (98.3, 71.7) | E 1090 Receive Chain |  |
 | ☐ | **F4** | 6V/200mA | Fuse_0805_2012Metric | (60.3, 75.9) | C Sensors + GNSS |  |
@@ -241,4 +243,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | — | **H3** | — | MountingHole_2.7mm_M2. | (54.0, 106.0) | **Not placed** (mounting hole) |  |
 | — | **H4** | — | MountingHole_2.7mm_M2. | (146.0, 106.0) | **Not placed** (mounting hole) |  |
 | ☐ | **BT1** | MS621FE-FL11E(选贴) | MS621FE-FL11E | (138.8, 105.1) | A Power |  |
+| ☐ | **FID1** | — |  | (59.2, 56.0) | ? ? |  |
+| ☐ | **FID2** | — |  | (140.8, 56.0) | ? ? |  |
+| ☐ | **FID3** | — |  | (62.2, 106.5) | ? ? |  |
 | ☐ | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (54.8, 100.9) | A Power |  |

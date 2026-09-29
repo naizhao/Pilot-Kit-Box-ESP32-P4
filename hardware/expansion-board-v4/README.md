@@ -1,10 +1,10 @@
-# Pilot Kit Avionics Board V4.10
+# Pilot Kit Avionics Board V4.11
 
 **Integrated ADS-B / GNSS / IMU expansion board for the Pilot Kit Box**
 集成 ADS-B / GNSS / IMU 扩展板
 
 <p align="center">
-  <img src="render/top.png" alt="Expansion board V4.10 top side" width="900">
+  <img src="render/top.png" alt="Expansion board V4.11 top side" width="900">
 </p>
 
 A 6-layer, 100.1 × 62.1 mm HAT that stacks onto the Waveshare
@@ -21,7 +21,11 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 
 ## ⚠️ Status / 当前状态
 
-> **V4.4 has been fabricated and operated; V4.10 is the current design.**
+> **V4.10 hardware has been powered and tested; V4.11 is the current design.**
+> V4.11 adds the validated SW3 sensing ECO: `J1.14` / ESP32-P4 `GPIO4` reaches
+> `CHG_QON` through `R67` (1 kΩ) and `D10` (1N4148WS), while SW3 remains directly
+> connected to the SY6970 `/QON` input for battery-only hardware wake. The diode
+> isolates the charger's ~3.56 V `/QON` pull-up from the 3.3 V GPIO domain.
 >
 > V4.9 introduced `J11`, the board's single debug connector. Before it there was **no way
 > to reach the CC1312R's cJTAG pins** — `SUBG_TMSC`/`SUBG_TCKC`/`SUBG_RESET` ran
@@ -62,14 +66,16 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > V4.3 electrical corrections and the V4.0 measured 50.0mm IFA geometry, and
 > fixed GNSS active-antenna detection: the module's `VCC_RF` (U7.14) now feeds
 > the two bias-tee PMOS sources instead of being left unconnected, so `$GPTXT`
-> can report `ANTENNA OK/OPEN/SHORT`. V4.7 has DRC 0 violations / 0 unconnected, current zone fills,
-> and ERC 0 errors / 10 warnings. Two C84 sub-assertions in the existing component
-> tests fail; C84 is outside this review's agreed change scope and was not modified.
-> The user confirmed a working V4.4 board; V4.7 airband and power-button behavior
-> still need hardware validation. The existing 3.3 V supply to Y4 is accepted for this prototype; U22 VREF now has C100 (100 nF / 0603) in parallel with C92 (10 µF). Owners of V4.0 boards must follow the
+> can report `ANTENNA OK/OPEN/SHORT`. Current V4.11 DRC has 0 unconnected and
+> 0 copper findings, with two retained D9 silkscreen overlaps; ERC remains
+> 0 errors / 10 warnings. The V4.10 SW3 flywire closed-loop is complete; airband
+> RF performance still needs bench validation. The existing 3.3 V supply to Y4 is accepted for this prototype; U22 VREF now has C100 (100 nF / 0603) in parallel with C92 (10 µF). Owners of V4.0 boards must follow the
 > internal rework record before powering the 1090 MHz chain.
 >
-> **V4.4 已回板并运行；V4.10 是当前设计版本。**
+> **V4.10 实板已上电并完成电源键飞线验证；V4.11 是当前设计版本。**
+> V4.11 固化该 SW3 感知 ECO：`J1.14` / ESP32-P4 `GPIO4` 经 `R67`（1kΩ）和
+> `D10`（1N4148WS）单向感知 `CHG_QON`，SW3 仍直接连接 SY6970 `/QON`，保留
+> 仅电池关机后的硬件唤醒；二极管隔离 `/QON` 实测约 3.56V 的内部上拉与 3.3V GPIO 域。
 >
 > V4.9 引入了 `J11` 这个全板唯一的调试口。在此之前**板上没有任何办法接触 CC1312R
 > 的 cJTAG**：`SUBG_TMSC`/`SUBG_TCKC`/`SUBG_RESET` 在 `U8`(RP2040) 与 `U10` 之间
@@ -99,21 +105,21 @@ GT-U8 GNSS、BMP388）整合成一块板，**自带 1090 MHz 接收链，不再�
 > （BK4819 + 26MHz TCXO + PCM1808 I²S 采集，对应贴片清单阶段 G）。V4.5 继承 V4.3 的
 > 电气修正和 V4.0 逐刀实测定型的 50.0mm IFA 几何，并修复 GNSS 有源天线检测：模块
 > `VCC_RF`(U7.14) 不再悬空，改为两路偏置 Tee PMOS 的源极电源，模块据此才能输出
-> `ANTENNA OK/OPEN/SHORT`。V4.7 当前 DRC 0 违例 / 0 未连通，覆铜为最新；ERC 0 error / 10 warning。
-> 既有元件测试的 C84 两条子断言失败，按用户范围未修改 C84 或测试。用户已确认 V4.4 实板运行良好，
-> V4.7 航空波段与电源键仍待实板验证；用户接受本轮样板保留 Y4 的3.3V供电，回板验证；U22 VREF 已增加 C100（100nF／0603），与 C92（10µF）并联。
+> `ANTENNA OK/OPEN/SHORT`。当前 V4.11 DRC 未连通 0 / 铜 0，保留 2 个 D9 丝印重叠；
+> ERC 0 error / 10 warning。V4.10 SW3 飞线实物闭环已完成，航空波段 RF 性能仍待台架验证；
+> 用户接受本轮样板保留 Y4 的3.3V供电，回板验证；U22 VREF 已增加 C100（100nF／0603），与 C92（10µF）并联。
 > V4.0 实物在开启 1090 MHz 链路前必须先按内部返修记录处理。
 
 | | Status / 状态 |
 |---|---|
 | Schematic / 原理图 | ✅ Complete / 完成 |
-| Layout & routing / 布局布线 | ✅ Complete — 0 DRC violations, 0 unconnected nets / 零违例、未连通 0 |
+| Layout & routing / 布局布线 | ✅ Complete — unconnected 0, copper 0; 2 known D9 silkscreen overlaps / 未连通 0、铜 0；已知 D9 丝印重叠 2 |
 | Manufacturing files / 制造文件 | ✅ Gerber + drill export cleanly / 可正常导出 |
-| **Fabrication / 打样** | ⚠️ V4.0 fabricated; V4.10 not yet fabricated / V4.0 已打样，V4.10 待打样 |
-| **Bring-up / 上电验证** | ⚠️ V4.0 rework procedure prepared; V4.10 pending / V4.0 返修流程已就绪，V4.10 待验证 |
+| **Fabrication / 打样** | ⚠️ V4.10 fabricated; V4.11 is the SW3 ECO spin / V4.10 已打样，V4.11 为 SW3 ECO 新版 |
+| **Bring-up / 上电验证** | ✅ V4.10 SW3 ECO validated by flywire; V4.11 PCB pending / V4.10 飞线已验证，V4.11 新板待回板 |
 | **Debug access / 可测性** | ⚠️ `J11` 2x10 bare-pad array (V4.10), 20 signals incl. airband; never used on hardware / `J11` 2x10 裸焊盘阵列（V4.10），20 路含 airband，未实板验证 |
 | **Airband RX / 航空波段接收** | ⚠️ New in V4.6, never fabricated or bench-tested / V4.6 新增，未打样未台架验证 |
-| **Power button / 电源键** | ⚠️ New in V4.7 (`SW3` → SY6970 `/QON`), never tested / V4.7 新增（`SW3` 接 SY6970 `/QON`），未验证 |
+| **Power button / 电源键** | ✅ Battery-only wake and GPIO short/long press validated on V4.10 flywire; frozen in V4.11 / 仅电池唤醒与 GPIO 短长按已在 V4.10 飞线验证，V4.11 已固化 |
 | **On-board IFA antenna / 板载 IFA 天线** | ✅ V4.0 per-cut measured 50.0mm geometry transferred / V4.0 逐刀实测 50.0mm 几何已回灌 |
 
 **About the IFA antenna** — V4.7 keeps the V4.0 physical-board result: a
@@ -148,14 +154,14 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 219 placements (233 designators; 9 DNP, plus `H1`–`H4` and `J11` which are not parts), 502 vias (all 0.30 mm drill, 0.45/0.50 mm pad), 1937 track segments |
+| **Scale** | 231 electrical placements + 4 mounting holes + 3 fiducials; 506 vias; 1952 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
 两个装配变体（带/不带板载电源），选贴规则见该文档。
 
 <p align="center">
-  <img src="render/bottom.png" alt="Expansion board V4.10 bottom side" width="900">
+  <img src="render/bottom.png" alt="Expansion board V4.11 bottom side" width="900">
 </p>
 
 ---
@@ -171,9 +177,9 @@ authored in. Tables, part numbers, and net names are identical in both.
 | [`PINMAP.md`](PINMAP.md) | Authoritative pin and net map — the single source of truth for the schematic | EN / 中文 |
 | [`VARIANTS.md`](VARIANTS.md) | Powered vs. unpowered assembly variants (inverted logic — read before ordering) | EN / 中文 |
 | [`ASSEMBLY.md`](ASSEMBLY.md) | Hand-assembly placement list, generated from the board | EN / 中文 |
-| [`ASSEMBLY_MAP-V4.10.pdf`](ASSEMBLY_MAP-V4.10.pdf) / [`ASSEMBLY_MAP-V4.10-zh_CN.pdf`](ASSEMBLY_MAP-V4.10-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
+| [`ASSEMBLY_MAP-V4.11.pdf`](ASSEMBLY_MAP-V4.11.pdf) / [`ASSEMBLY_MAP-V4.11-zh_CN.pdf`](ASSEMBLY_MAP-V4.11-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
 | [`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md) | Selective-placement groups and **mutex rules** — which parts must never be populated together | EN / 中文 |
-| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST-V4.10.xlsx) / [.pdf](CHECKLIST-V4.10.pdf)) | EN / 中文 |
+| [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST-V4.11.xlsx) / [.pdf](CHECKLIST-V4.11.pdf)) | EN / 中文 |
 | [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md) | Authoritative purchasing list, generated from the netlist | 中文 |
 | [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / 中文 |
@@ -184,9 +190,9 @@ authored in. Tables, part numbers, and net names are identical in both.
 
 Pre-built packages live in [`release/`](release/):
 
-> 本次发布为 **V4.10**：`J11` 由 2x8 贴片排针改为 **2x10 裸焊盘阵列**（配 2x10p
-> 测试夹，不贴任何件），脚号整体后移 4 位，三对短接改用镊子/锡桥；新增 airband
-> 四脚，其中 26MHz 那一脚经 `R66`（0Ω，**默认不贴**）隔离。
+> 本次发布为 **V4.11**：在 V4.10 的 2x10 `J11` 与 airband 调试能力基础上，
+> 新增 `R67` + `D10` 的 SW3 单向 GPIO 感知通路。`D10` 方向为阳极接 `GPIO4`、
+> 阴极接 `CHG_QON`，同时保留 `/QON` 的直接机械按键唤醒。
 >
 > 以下 **V4.9** 的内容仍然全部有效：相对 V4.8 新增调试口 `J11`，
 > CC1312R 的 cJTAG 三根首次引出；原 `TP1`~`TP7` 与 `SW1`/`SW2` 共九个已删除，
@@ -197,16 +203,19 @@ Pre-built packages live in [`release/`](release/):
 > 上一版 README 中「备用供电尚未进板、本次发布排除」的说法对应 V4.7，已不再适用。
 >
 > ⚠️ V4.9 的 `J11` 在 B 面、不进 CPL、需手焊；**V4.10 起它是裸焊盘，什么都不用焊**。
-> 需手焊、不在任何 CPL 里的件：`J11`（仅 V4.9 的 2x8 排针）、`BT1`（B 面，经济型 SMT 只贴一面）、
-> `D8`/`D9`（自备 LED，无嘉立创料号，且只能用 Vf 2.0~2.2V 的红/黄/橙/普绿——
+> V4.11 不进任何 CPL、需在 B 面手焊的件是 `BT1`/`J9`/`RT1`；`J11` 已是裸焊盘，不贴件。
+> `D8`/`D9` 在 `max` BOM/CPL 中有推荐型号，在常用 `full` 方案中作为自备 LED 后焊；
+> 只能用 Vf 2.0~2.2V 的红/黄/橙/普绿——
 > 蓝、翠绿、白是 3.0~3.1V，在 3.3V 轨上点不亮）。
 
-**Regenerated on 2026-09-22 from the revised PCB — `J11` becomes a 2x10 bare-pad array for a test clip (pin numbers shift by four, no jumper caps), the four airband debug nets join it, and `R66` (0 R, not fitted) isolates the 26 MHz probe point from the TCXO. Release files are synchronized. The user has accepted retaining Y4 on 3.3 V for this prototype, with bench verification; this is no longer a required PCB change for this build. U22 VREF includes C100 = 100 nF in parallel with C92.**
+**Regenerated on 2026-09-29 from the frozen V4.11 PCB. The Gerber package, KiCad source package, four SMT BOM/CPL variants, assembly maps and checklists are synchronized. The complete board rebuild is semantically equivalent to the frozen user-routed board.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.10-20260922.zip` | **Current V4.10 export** — `J11` is now a 2x10 bare-pad array carrying 20 debug signals including airband, with the pin numbers silkscreened alongside the pads; RS-274-X, 15 files; see the open electrical items below before ordering |
-| `expansion-board-v4-kicad-V4.10-20260922.zip` | Source matching the current PCB byte for byte; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.11-20260929.zip` | **Current V4.11 export** — SW3 GPIO sensing via `R67`/`D10`; RS-274-X, 15 files; 6 copper layers and split PTH/NPTH drill files |
+| `expansion-board-v4-kicad-V4.11-20260929.zip` | Source matching the current V4.11 PCB; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.10-20260922.zip` | ⚠️ Superseded by V4.11 — lacks the `R67`/`D10` SW3 GPIO sensing path. Do not order for the new power-button interaction |
+| `expansion-board-v4-kicad-V4.10-20260922.zip` | ⚠️ Matching superseded V4.10 source archive |
 | `expansion-board-v4-gerber-JLC-V4.9-20260915.zip` | ⚠️ Superseded by V4.10 — `J11` is a 2x8 header there, so a 2x10 test clip will not seat and every pin number is shifted by four. Do not order |
 | `expansion-board-v4-kicad-V4.9-20260915.zip` | ⚠️ Matching superseded V4.9 source archive |
 | `expansion-board-v4-gerber-JLC-V4.8-20260914.zip` | ⚠️ Superseded by V4.9 — no `J11`, so the CC1312R cJTAG pins have no landing point on the board. Moved out of `release/` (kept in `build/v48-superseded/`). Do not order |
@@ -255,8 +264,9 @@ and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink
 2. **Via solder-mask state comes from the file, not the order form.** JLCPCB,
    HQPCB and JiePei all state the same thing: *"if the file is Gerber, we
    process strictly per the file; this option has no effect"* — Gerber cannot
-   tell a via from a component hole. This board ships 502 vias: 431 tented,
-   71 exposed (all 71 inside pad mask openings, 33 of them thermal via-in-pad).
+   tell a via from a component hole. This board ships **506 vias: 435 tented +
+   71 exposed (33 EP)**. All 71 exposed vias are inside pad mask openings; the
+   33 EP subset are thermal via-in-pad.
    `internal/tools/gerber.sh` recomputes this split on every release — never
    copy the numbers from an older revision.
 3. **`J4`'s four `SH` holes must NOT be resin-plugged.** They are ⌀0.60 mm
@@ -264,6 +274,10 @@ and [TI PCM1808 reference-decoupling guidance](https://www.ti.com/lit/ds/symlink
    receptacle. Plug them and the connector will tear off after a few
    insertions. If you order resin-filled via-in-pad, exclude these explicitly
    in the order notes.
+
+Current V4.11 manufacturing snapshot: **PTH: 515 round holes + 4 slots = 519;
+NPTH: 8**. Board DRC has **unconnected 0** and **copper 0**; the only retained
+findings are **D9 silkscreen 2** overlaps, which are known silkscreen-only items.
 
 ### Stackup: preferred, not mandatory
 
@@ -309,22 +323,22 @@ modify the design; send `release/` straight to a board house.
 |---|---|
 | `kicad/` | Schematic + PCB source, openable and editable in KiCad 10 |
 | `release/` | Gerber, drill, BOM and CPL — ready to send to a fab |
-| `ASSEMBLY_MAP-V4.10.pdf` | Per-designator placement map with orientation and polarity |
+| `ASSEMBLY_MAP-V4.11.pdf` | Per-designator placement map with orientation and polarity |
 | `CHECKLIST.md` | Line-by-line check sheet for hand assembly |
 | `SELECTIVE_PLACEMENT.md` | Which designators must **not** simply be populated from the BOM |
 | `BOM_PURCHASE-zh_CN.md` | Parts list with values, packages and selection constraints |
 
 The release source package has been checked against the finalized PCB, including
 component values, footprints and pad nets. The working directory also contains
-the GNSS backup-power design and the `J11` debug pad array, both part of this release (V4.10).
-Internal scripts export placement, routing, zones and silkscreen from the manually
-finalized board. A known zone-restoration error still blocks a complete rebuild;
-lossless script replay is not claimed. These internal tools are not published.
+the GNSS backup-power design, `J11` debug pad array and V4.11 SW3 sensing ECO.
+Internal scripts freeze placement, routing, zones and silkscreen from the manually
+finalized board; `rebuild.sh` has been run from zero and compared semantically across
+footprints, copper, board text and zones. These internal tools are not published.
 
 本次发布源包已按用户完成的 PCB 核对元件料值、封装及引脚网络。工作区还保留
-GNSS 备用供电设计与 `J11` 调试焊盘阵列，均已随 V4.10 纳入本次发布。内部脚本从手工定稿的板子导出
-布局、布线、覆铜与丝印；完整从零重建仍有已知覆铜恢复错误，尚不能保证脚本
-无损重放。内部工具不在公开范围内；恢复本次板子请使用发布源包。
+GNSS 备用供电、`J11` 调试焊盘阵列与 V4.11 SW3 感知 ECO 均已纳入本次发布。
+内部脚本固化布局、布线、覆铜与丝印；`rebuild.sh` 已从零重建，并对封装、铜、
+板级文字与覆铜做了语义等价比对。内部工具不在公开范围内；外部恢复请使用发布源包。
 
 Requires KiCad 10 to open the project (it uses KiCad 10 file formats).
 打开工程需要 KiCad 10（文件格式为 KiCad 10）。
