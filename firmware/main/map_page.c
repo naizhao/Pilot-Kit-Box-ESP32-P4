@@ -15,9 +15,10 @@
  * 渲染顺序严格按 spec：底图 blit（含缺瓦片占位）→ ADS-B 目标 → 本机符号 →
  * 比例尺 + 署名 → 最后是页头/按钮等 UI 铬层。
  *
- * north-up / heading-up（2026-08-03 加）：朝向设置复用 config_traffic.h 的
- * pk_map_orient_t（交通页与设置页"地图朝向"那一行已经在用同一个开关，本页
- * 直接读，不新建设置项）。north-up 时 map_rot_deg 恒为 0，底图走原来的
+ * north-up / heading-up（2026-08-03 加）：朝向设置用 config_traffic.h 的
+ * pk_map_orient_t（设置页"地图朝向"行 + 本页按钮，同一个开关）。2026-09-29
+ * 起与雷达页的朝向分拆成两个设置（pk_radar_orient_*）——两页的"机头朝上"
+ * 说的不是同一件事，互不踩。north-up 时 map_rot_deg 恒为 0，底图走原来的
  * 轴对齐 blit（memcpy 级，帧率关键路径不碰三角函数）；heading-up 且拿到本机
  * 航向时，底图整体绕视口中心反向旋转 map_rot_deg，走 render_tiles_heading_up()
  * 的逐像素旋转扫描线（整数增量步进 + 按瓦片边界锁采样，不逐像素查表/浮点，
@@ -46,7 +47,8 @@
 
 #include "aircraft_state.h"
 #include "config_traffic.h"  /* pk_map_orient_get —— north-up/heading-up 开关，
-                              * 与交通页/设置页"地图朝向"是同一个设置 */
+                              * 设置页"地图朝向"与本页按钮共用（雷达页另有
+                              * pk_radar_orient_*，互不影响） */
 #include "imu_task.h"   /* pk_imu_sample_get —— 本机符号旋转的 IMU 航向来源 */
 #include "mag_var.h"    /* 磁->真 修正，见 own_heading_true_deg 注释 */
 #include "own_ship.h"

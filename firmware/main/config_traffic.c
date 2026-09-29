@@ -16,7 +16,8 @@
 static const char *TAG = "cfg_tfc";
 
 #define TFC_NVS_NAMESPACE   "pk_tfc"
-#define TFC_NVS_KEY_ORIENT  "orient"
+#define TFC_NVS_KEY_ORIENT  "orient"        /* 地图页朝向（存量键，分拆前唯一那份） */
+#define TFC_NVS_KEY_RADAR_ORIENT "rorient"  /* 雷达页朝向（2026-09-29 分拆新键） */
 #define TFC_NVS_KEY_RANGE   "range"
 /* 默认 20 NM（spec §5.2 的距离环就是按这一档画的）。
  *
@@ -26,7 +27,8 @@ static const char *TAG = "cfg_tfc";
 
 static const int RANGE_NM[4] = { 2, 5, 10, 20 };
 
-static volatile uint8_t s_orient    = PK_MAP_HEADING_UP;
+static volatile uint8_t s_map_orient   = PK_MAP_HEADING_UP;
+static volatile uint8_t s_radar_orient = PK_MAP_HEADING_UP;
 static volatile uint8_t s_range_idx = RANGE_IDX_DEFAULT;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -60,7 +62,7 @@ static void save_u8(const char *key, uint8_t v)
 pk_map_orient_t pk_map_orient_get(void)
 {
     portENTER_CRITICAL(&s_mux);
-    uint8_t v = s_orient;
+    uint8_t v = s_map_orient;
     portEXIT_CRITICAL(&s_mux);
     return (pk_map_orient_t)v;
 }
@@ -69,10 +71,28 @@ void pk_map_orient_set(pk_map_orient_t m)
 {
     uint8_t v = (m == PK_MAP_NORTH_UP) ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP;
     portENTER_CRITICAL(&s_mux);
-    s_orient = v;
+    s_map_orient = v;
     portEXIT_CRITICAL(&s_mux);
     save_u8(TFC_NVS_KEY_ORIENT, v);
     ESP_LOGI(TAG, "map orient -> %s", v ? "NORTH-UP" : "HDG-UP");
+}
+
+pk_map_orient_t pk_radar_orient_get(void)
+{
+    portENTER_CRITICAL(&s_mux);
+    uint8_t v = s_radar_orient;
+    portEXIT_CRITICAL(&s_mux);
+    return (pk_map_orient_t)v;
+}
+
+void pk_radar_orient_set(pk_map_orient_t m)
+{
+    uint8_t v = (m == PK_MAP_NORTH_UP) ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP;
+    portENTER_CRITICAL(&s_mux);
+    s_radar_orient = v;
+    portEXIT_CRITICAL(&s_mux);
+    save_u8(TFC_NVS_KEY_RADAR_ORIENT, v);
+    ESP_LOGI(TAG, "radar orient -> %s", v ? "NORTH-UP" : "HDG-UP");
 }
 
 int pk_traffic_range_idx_get(void)
@@ -108,17 +128,21 @@ void pk_config_traffic_load(void)
     esp_err_t err = nvs_open(TFC_NVS_NAMESPACE, NVS_READONLY, &h);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "no traffic config (%s), using defaults", esp_err_to_name(err));
-        s_orient    = PK_MAP_HEADING_UP;
+        s_map_orient   = PK_MAP_HEADING_UP;
+        s_radar_orient = PK_MAP_HEADING_UP;
         s_range_idx = RANGE_IDX_DEFAULT;
         return;
     }
-    uint8_t o = PK_MAP_HEADING_UP, r = RANGE_IDX_DEFAULT;
-    if (nvs_get_u8(h, TFC_NVS_KEY_ORIENT, &o) != ESP_OK) o = PK_MAP_HEADING_UP;
+    uint8_t o = PK_MAP_HEADING_UP, ro = PK_MAP_HEADING_UP, r = RANGE_IDX_DEFAULT;
+    if (nvs_get_u8(h, TFC_NVS_KEY_ORIENT,       &o)  != ESP_OK) o  = PK_MAP_HEADING_UP;
+    if (nvs_get_u8(h, TFC_NVS_KEY_RADAR_ORIENT, &ro) != ESP_OK) ro = PK_MAP_HEADING_UP;
     if (nvs_get_u8(h, TFC_NVS_KEY_RANGE,  &r) != ESP_OK) r = RANGE_IDX_DEFAULT;
     nvs_close(h);
 
-    s_orient    = (o == PK_MAP_NORTH_UP) ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP;
+    s_map_orient   = (o  == PK_MAP_NORTH_UP) ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP;
+    s_radar_orient = (ro == PK_MAP_NORTH_UP) ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP;
     s_range_idx = (r <= 3) ? r : RANGE_IDX_DEFAULT;
-    ESP_LOGI(TAG, "traffic config: orient=%s range=%dNM",
-             s_orient ? "N-UP" : "H-UP", RANGE_NM[s_range_idx]);
+    ESP_LOGI(TAG, "traffic config: map=%s radar=%s range=%dNM",
+             s_map_orient ? "N-UP" : "H-UP", s_radar_orient ? "N-UP" : "H-UP",
+             RANGE_NM[s_range_idx]);
 }

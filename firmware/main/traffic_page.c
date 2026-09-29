@@ -870,7 +870,7 @@ void pk_traffic_page_render(uint16_t *fb)
         baro_ok, baro.pressure_pa, baro.alt_ft,
         gnss_ok, gnss.altitude_ft);
 
-    pk_map_orient_t orient = pk_map_orient_get();
+    pk_map_orient_t orient = pk_radar_orient_get();
     /*
      * 没有航向就画不出「机头朝上」——那幅图的上方是哪儿全靠 own_heading，
      * 而此刻它只是个占位的 0。数值上此时 rel_bearing 恒等于 abs_bearing，
@@ -1128,9 +1128,10 @@ bool pk_traffic_page_touch(int x, int y)
 {
     if (hit_btn(x, y, BTN_ORI_X, BTN_ORI_Y)) {
         s_btn_down = 0;
-        /* 在两种投影间来回切，与高德点指北针的行为一致。 */
-        pk_map_orient_set(pk_map_orient_get() == PK_MAP_HEADING_UP
-                              ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP);
+        /* 在两种投影间来回切，与高德点指北针的行为一致。雷达页的朝向
+         * 独立于地图页（2026-09-29 分拆），互不踩。 */
+        pk_radar_orient_set(pk_radar_orient_get() == PK_MAP_HEADING_UP
+                                ? PK_MAP_NORTH_UP : PK_MAP_HEADING_UP);
         return true;
     }
     if (hit_btn(x, y, BTN_ZIN_X, BTN_ZIN_Y)) {
