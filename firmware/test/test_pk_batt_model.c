@@ -162,7 +162,7 @@ static void test_operating_point_normalization(void)
              mid_charging >= mid_battery - 1 && mid_charging <= mid_battery + 1);
 
     /* ICHGR 在非充电状态会保留陈值；闸门必须忽略它。 */
-    chk_int("非充电时忽略陈旧 ICHGR", 
+    chk_int("非充电时忽略陈旧 ICHGR",
             pk_batt_equiv_loaded_mv(4164, true, false, 2050), full_hold);
 }
 
