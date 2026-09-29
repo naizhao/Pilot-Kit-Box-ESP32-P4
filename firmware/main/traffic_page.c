@@ -191,11 +191,14 @@ typedef struct {
     pk_traffic_rel_t  rel;
 } vis_t;
 
-/* 呼号(去尾空格)；无呼号回退 ICAO 十六进制。实现收敛到 pk_callsign.c，
- * 这里留个薄封装只为少改一堆调用点。 */
+/* 可显示标识（去尾空格)；呼号缺失回退注册号，再回退 ICAO 十六进制。
+ * 实现收敛到 pk_callsign.c，这里留个薄封装只为少改一堆调用点。reg 的
+ * 指针只保到下一次机型库查询，查到立即传下去拷走。 */
 static void callsign_of(const aircraft_t *a, char *out, size_t cap)
 {
-    pk_callsign_display(a->have_callsign, a->callsign, a->icao24, out, cap);
+    pk_callsign_display(a->have_callsign, a->callsign,
+                        pk_aircraft_registration(a->icao24), a->icao24,
+                        out, cap);
 }
 
 /* 目标在雷达上的落点。 */
@@ -583,7 +586,8 @@ static void draw_detail_bar(uint16_t *fb, const vis_t *v)
         p += snprintf(line1 + p, sizeof(line1) - p, "  %s", code);
     if (desc && desc[0] && p > 0 && (size_t)p < sizeof(line1))
         p += snprintf(line1 + p, sizeof(line1) - p, " %s", desc);
-    if (reg && reg[0] && p > 0 && (size_t)p < sizeof(line1))
+    /* cs 无呼号时会回退成注册号——与尾部再拼的 reg 相同就别重复了。 */
+    if (reg && reg[0] && strcmp(cs, reg) != 0 && p > 0 && (size_t)p < sizeof(line1))
         snprintf(line1 + p, sizeof(line1) - p, "  %s", reg);
     pk_font_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H, 4, 223, line1,
                  pk_rgb565(0, 210, 235), 1);

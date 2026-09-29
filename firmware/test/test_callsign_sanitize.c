@@ -143,7 +143,7 @@ static void test_display_no_callsign_falls_back_to_icao(void)
 {
     char out[10];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(false, "", 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(false, "", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strcmp(out, "ABCDEF") == 0);
 }
 
@@ -152,7 +152,7 @@ static void test_display_empty_callsign_falls_back(void)
 {
     char out[10];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(true, "", 0x123456, out, sizeof(out));
+    pk_callsign_display(true, "", /*reg=*/NULL, 0x123456, out, sizeof(out));
     CHECK(strcmp(out, "123456") == 0);
 }
 
@@ -161,7 +161,7 @@ static void test_display_all_space_callsign_falls_back(void)
 {
     char out[10];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(true, "        ", 0x00BEEF, out, sizeof(out));
+    pk_callsign_display(true, "        ", /*reg=*/NULL, 0x00BEEF, out, sizeof(out));
     CHECK(strcmp(out, "00BEEF") == 0);
 }
 
@@ -169,14 +169,14 @@ static void test_display_normal_callsign(void)
 {
     char out[10];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(true, "CES9982", 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(true, "CES9982", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strcmp(out, "CES9982") == 0);
 }
 
 static void test_display_strips_trailing_pad(void)
 {
     char out[10];
-    pk_callsign_display(true, "CCA101  ", 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(true, "CCA101  ", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strcmp(out, "CCA101") == 0);
 }
 
@@ -184,7 +184,7 @@ static void test_display_strips_trailing_pad(void)
 static void test_display_keeps_interior_space(void)
 {
     char out[10];
-    pk_callsign_display(true, "N1 2AB", 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(true, "N1 2AB", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strcmp(out, "N1 2AB") == 0);
 }
 
@@ -193,7 +193,7 @@ static void test_display_truncates_safely(void)
 {
     char out[5];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(true, "ABCD1234", 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(true, "ABCD1234", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strlen(out) < sizeof(out));
     CHECK(strncmp(out, "ABCD", 4) == 0);
 }
@@ -203,7 +203,7 @@ static void test_display_icao_fallback_truncates_safely(void)
 {
     char out[4];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(false, NULL, 0xABCDEF, out, sizeof(out));
+    pk_callsign_display(false, NULL, /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
     CHECK(strlen(out) < sizeof(out));
 }
 
@@ -213,8 +213,61 @@ static void test_display_null_callsign_safe(void)
 {
     char out[10];
     memset(out, 'Z', sizeof(out));
-    pk_callsign_display(true, NULL, 0x0000FF, out, sizeof(out));
+    pk_callsign_display(true, NULL, /*reg=*/NULL, 0x0000FF, out, sizeof(out));
     CHECK(strcmp(out, "0000FF") == 0);
+}
+
+/* ── 注册号回退（2026-09-29）：身份帧在真实空域极稀疏（实测 9 架 0~1 条/s，
+ * 多数目标开机几分钟收不到），呼号缺失回退 ICAO hex 对飞行员毫无用处。
+ * 回退链升级为 呼号 → 注册号 → ICAO hex，reg 由调用方查机型库后传入
+ * （pk_callsign.c 保持零依赖）。 ────────────────────────────────────── */
+
+/* 无呼号 + 注册号 → 显示注册号，不是 hex。 */
+static void test_display_reg_fallback(void)
+{
+    char out[10];
+    memset(out, 'Z', sizeof(out));
+    pk_callsign_display(false, "", /*reg=*/"B-5797", 0xABCDEF, out, sizeof(out));
+    CHECK(strcmp(out, "B-5797") == 0);
+}
+
+/* have_callsign 为真但内容为空串/全空格 → 同样走 reg。 */
+static void test_display_empty_or_space_callsign_uses_reg(void)
+{
+    char out[10];
+    pk_callsign_display(true, "", /*reg=*/"N5130E", 0x123456, out, sizeof(out));
+    CHECK(strcmp(out, "N5130E") == 0);
+    pk_callsign_display(true, "   ", /*reg=*/"N5130E", 0x123456, out, sizeof(out));
+    CHECK(strcmp(out, "N5130E") == 0);
+}
+
+/* 有真呼号时 reg 不许顶掉呼号——呼号才是频率里听到的东西。 */
+static void test_display_real_callsign_beats_reg(void)
+{
+    char out[10];
+    pk_callsign_display(true, "CES9982", /*reg=*/"B-5797", 0xABCDEF, out, sizeof(out));
+    CHECK(strcmp(out, "CES9982") == 0);
+}
+
+/* reg 为空串 / NULL → 退回 ICAO hex（机型库未加载或查不到）。 */
+static void test_display_empty_reg_falls_back_to_icao(void)
+{
+    char out[10];
+    pk_callsign_display(false, "", /*reg=*/"", 0xABCDEF, out, sizeof(out));
+    CHECK(strcmp(out, "ABCDEF") == 0);
+    pk_callsign_display(false, "", /*reg=*/NULL, 0xABCDEF, out, sizeof(out));
+    CHECK(strcmp(out, "ABCDEF") == 0);
+}
+
+/* reg 超长时截断且 NUL 结尾——机型库实测 reg 最长 17 字符，标签缓冲 9~10。 */
+static void test_display_reg_truncates_safely(void)
+{
+    char out[9];
+    memset(out, 'Z', sizeof(out));
+    pk_callsign_display(false, "", /*reg=*/"N12345678901234567", 0xABCDEF,
+                        out, sizeof(out));
+    CHECK(strlen(out) < sizeof(out));
+    CHECK(strncmp(out, "N1234567", 8) == 0);
 }
 
 int main(void)
@@ -243,6 +296,11 @@ int main(void)
     test_display_truncates_safely();
     test_display_icao_fallback_truncates_safely();
     test_display_null_callsign_safe();
+    test_display_reg_fallback();
+    test_display_empty_or_space_callsign_uses_reg();
+    test_display_real_callsign_beats_reg();
+    test_display_empty_reg_falls_back_to_icao();
+    test_display_reg_truncates_safely();
 
     if (g_fail == 0) {
         printf("test_callsign_sanitize: PASS\n");

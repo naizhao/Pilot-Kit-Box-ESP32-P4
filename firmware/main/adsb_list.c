@@ -425,7 +425,9 @@ static const char *emergency_tag(const aircraft_t *a)
  * 行为不一致，"N1 2AB" 两页显示不同。现在统一成只剔尾部填充。 */
 static void callsign_of(const aircraft_t *a, char *out, size_t cap)
 {
-    pk_callsign_display(a->have_callsign, a->callsign, a->icao24, out, cap);
+    pk_callsign_display(a->have_callsign, a->callsign,
+                        pk_aircraft_registration(a->icao24), a->icao24,
+                        out, cap);
 }
 
 /* 一行的数据 + 算好的相对几何。 */

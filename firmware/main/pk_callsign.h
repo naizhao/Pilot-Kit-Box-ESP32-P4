@@ -37,8 +37,18 @@
 bool pk_callsign_sanitize(const char *raw, char out[PK_CALLSIGN_LEN]);
 
 /*
- * 取一架飞机的**可显示**呼号，没有呼号就退回 ICAO 十六进制。
+ * 取一架飞机的**可显示**呼号，回退链：呼号 → 注册号(reg) → ICAO 十六进制。
  * out 保证非空且 NUL 结尾——留空会被看成渲染坏了，比退回 ICAO 更糟。
+ *
+ * reg 是调用方查机型库（pk_aircraft_registration）拿到的注册号，可传
+ * NULL/空串（库未就绪或查不到）。放参数而不是让本模块去查，为的是这个
+ * 文件零依赖、能直接 include 进 host 测试。呼号永远是第一优先——它是
+ * 频率里飞行员真正听到的东西；身份帧在真实空域极稀疏（实测 9 架目标
+ * 0~1 条/s），多数目标开机几分钟都没有呼号，注册号（机尾号）是比 hex
+ * 有用得多的第二选择。
+ *
+ * 注意 reg 的指针生命周期归调用方管理（机型库缓存只保到下次查询）：
+ * 本函数在返回前把它拷进 out，调用方拿到 reg 后立即调用即可。
  *
  * 不收 aircraft_t 而是散参数，为的是这个文件零依赖、能直接 include 进
  * host 测试；aircraft_state.h 会拖 mode-s.h 进来。
@@ -55,4 +65,5 @@ bool pk_callsign_sanitize(const char *raw, char out[PK_CALLSIGN_LEN]);
  * 每帧乱变、混进 '\' 这类 ADS-B 字符集里根本不存在的字符。
  */
 void pk_callsign_display(bool have_callsign, const char *callsign,
+                         const char *reg,
                          uint32_t icao24, char *out, size_t cap);

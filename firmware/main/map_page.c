@@ -53,6 +53,7 @@
 #include "pk_aero_layer.h"
 #include "pk_win.h"           /* pk_win_set_viewport（W1.5：视口格钉住）*/
 #include "pk_callsign.h"    /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
+#include "aircraft_db.h"    /* pk_aircraft_registration —— 呼号缺失时的注册号回退 */
 #include "pk_own_sampler.h"   /* pk_own_sampler_get_phase() —— 显著性跟随本机相位 */
 #include "pk_sdcard.h"
 #include "pk_tile_loader.h"
@@ -957,7 +958,8 @@ void pk_map_page_render(uint16_t *fb)
         }
 
         char cs[10];
-        pk_callsign_display(a->have_callsign, a->callsign, a->icao24,
+        pk_callsign_display(a->have_callsign, a->callsign,
+                            pk_aircraft_registration(a->icao24), a->icao24,
                             cs, sizeof(cs));
 
         const int lw = pk_aa_text_width(cs, PK_AA_XS);
