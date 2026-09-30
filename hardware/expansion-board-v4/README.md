@@ -154,7 +154,7 @@ still needs a VNA spot check. See [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md).
 | **Sensors** | BNO085 IMU (100 Hz fusion), BMP388 barometer, QMC5883P magnetometer |
 | **Power** (optional) | CH224K USB-PD sink @9 V → SY6970 charger + fuel gauge → SY7069 5 V boost, single-cell Li-po |
 | **Host interface** | 2×20 SMD header, HAT-style stacking onto the carrier |
-| **Scale** | 231 electrical placements + 4 mounting holes + 3 fiducials; 506 vias; 1952 track segments |
+| **Scale** | 231 electrical placements + 4 mounting holes; no MARK/fiducials; 506 vias; 1952 track segments |
 
 Two assembly variants — with and without the on-board power section.
 See [`VARIANTS.md`](VARIANTS.md).
@@ -208,12 +208,12 @@ Pre-built packages live in [`release/`](release/):
 > 只能用 Vf 2.0~2.2V 的红/黄/橙/普绿——
 > 蓝、翠绿、白是 3.0~3.1V，在 3.3V 轨上点不亮）。
 
-**Regenerated on 2026-09-29 from the frozen V4.11 PCB. The Gerber package, KiCad source package, four SMT BOM/CPL variants, assembly maps and checklists are synchronized. The complete board rebuild is semantically equivalent to the frozen user-routed board.**
+**Corrected on 2026-09-30: all MARK/fiducials and their keepouts were removed at the user's request. No new MARKs may be added without a new explicit requirement. Gerber, KiCad source, assembly maps and checklists were regenerated; electrical placements, tracks, vias and EP paste openings match the preceding V4.11 PCB. The four SMT BOM/CPL variants remain applicable.**
 
 | File | Use |
 |---|---|
-| `expansion-board-v4-gerber-JLC-V4.11-20260929.zip` | **Current V4.11 export** — SW3 GPIO sensing via `R67`/`D10`; RS-274-X, 15 files; 6 copper layers and split PTH/NPTH drill files |
-| `expansion-board-v4-kicad-V4.11-20260929.zip` | Source matching the current V4.11 PCB; supplied for review, not uploaded to the fab |
+| `expansion-board-v4-gerber-JLC-V4.11-20260930.zip` | **Current V4.11 export** — SW3 GPIO sensing via `R67`/`D10`; RS-274-X, 15 files; 6 copper layers and split PTH/NPTH drill files |
+| `expansion-board-v4-kicad-V4.11-20260930.zip` | Source matching the current V4.11 PCB; supplied for review, not uploaded to the fab |
 | `expansion-board-v4-gerber-JLC-V4.10-20260922.zip` | ⚠️ Superseded by V4.11 — lacks the `R67`/`D10` SW3 GPIO sensing path. Do not order for the new power-button interaction |
 | `expansion-board-v4-kicad-V4.10-20260922.zip` | ⚠️ Matching superseded V4.10 source archive |
 | `expansion-board-v4-gerber-JLC-V4.9-20260915.zip` | ⚠️ Superseded by V4.10 — `J11` is a 2x8 header there, so a 2x10 test clip will not seat and every pin number is shifted by four. Do not order |

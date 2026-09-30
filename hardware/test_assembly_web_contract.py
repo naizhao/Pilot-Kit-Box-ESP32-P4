@@ -37,8 +37,10 @@ DATA = ROOT / "web" / "assembly" / "data"
 # 数量写下限而不是精确值：改板加件是常态，加了件不该让这份测试红，
 # 但整批消失（解析挂了、过滤写反）一定要红。
 VARIANTS = {
-    # V4.10 是当前板（J11 改 2x10 裸焊盘阵列），V4.9 起为存档，
+    # V4.11 是当前板（新增 SW3 单向软件感知），V4.10 起为存档，
     # 但图还可能被人拿去贴板，一样要过全部契约。
+    "v4.11-pwr": "expansion-board-v4",
+    "v4.11-nopwr": "expansion-board-v4",
     "v4.10-pwr": "expansion-board-v4",
     "v4.10-nopwr": "expansion-board-v4",
     "v4.9-pwr": "expansion-board-v4",
@@ -59,7 +61,7 @@ VARIANTS = {
 
 # 带电源/不带电源成对出现的版本。加新版本时往这里加一对，
 # 别再往下面的用例里塞字面量。
-PWR_PAIRS = [("v4.10-pwr", "v4.10-nopwr"), ("v4.9-pwr", "v4.9-nopwr"),
+PWR_PAIRS = [("v4.11-pwr", "v4.11-nopwr"), ("v4.10-pwr", "v4.10-nopwr"), ("v4.9-pwr", "v4.9-nopwr"),
              ("v4.8-pwr", "v4.8-nopwr"), ("v4.7-pwr", "v4.7-nopwr"),
              ("v4.6-pwr", "v4.6-nopwr"), ("v4.5-pwr", "v4.5-nopwr")]
 
@@ -82,6 +84,7 @@ POWER_REFS_BASE = (
 # 注意 BT1 虽是手焊件，但它是 BOM 上的真器件，两个变体的数据里都有它，
 # 「nopwr 一个不贴」对它同样成立。
 POWER_REFS_EXTRA = {
+    "v4.11": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65", "R67", "D10"},
     "v4.7": {"SW3"},
     "v4.8": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65"},
     "v4.9": {"SW3", "U23", "C101", "C102", "D7", "R63", "BT1", "D9", "R65"},
@@ -161,6 +164,30 @@ def body_area(part: dict) -> float:
 
 
 class AssemblyWebDataContract(unittest.TestCase):
+    def test_current_board_is_first_in_version_selector(self):
+        index = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["id"] for item in index[:2]],
+                         ["v4.11-pwr", "v4.11-nopwr"])
+        for item in index[:2]:
+            self.assertEqual(item["total"], load(item["id"])["total"])
+
+    def test_v411_sw3_sense_parts_follow_power_variant(self):
+        for variant in ("v4.11-pwr", "v4.11-nopwr"):
+            path = DATA / f"{variant}.json"
+            self.assertTrue(path.exists(), f"缺当前板数据：{path}")
+            parts = {p["ref"]: (p, g) for g in load(variant)["groups"] for p in g["parts"]}
+            for ref, value, lcsc in (("R67", "1k", "C21190"),
+                                     ("D10", "1N4148WS", "C2128")):
+                with self.subTest(variant=variant, ref=ref):
+                    if variant.endswith("-nopwr"):
+                        self.assertNotIn(ref, parts)
+                    else:
+                        self.assertIn(ref, parts)
+                        part, group = parts[ref]
+                        self.assertEqual(part["val"], value)
+                        self.assertEqual(group["lcsc"], lcsc)
+
+
     def test_all_variants_present(self):
         missing = [v for v in VARIANTS if not (DATA / f"{v}.json").exists()]
         self.assertEqual(missing, [], f"缺变体数据：{missing}")
@@ -540,8 +567,29 @@ class PolarityContract(unittest.TestCase):
 
         walk(root)
         checked = 0
-        for g in load("v4.10-pwr")["groups"]:
+        # 当前板中不能存在 MARK；仅从待贴列表过滤会掩盖实际 PCB 的回归。
+        self.assertEqual({ref for ref in fps if ref.startswith(("FID", "MARK"))}, set())
+        # 原点独立现读板框线及笔宽，不沿用旧版本 JSON 的坐标。
+        edges = [n for n in root if isinstance(n, list) and n and n[0] == "gr_line"
+                 and ["layer", "Edge.Cuts"] in n]
+        bounds = []
+        for edge in edges:
+            stroke = next(c for c in edge if isinstance(c, list) and c[0] == "stroke")
+            width = float(next(c[1] for c in stroke if isinstance(c, list) and c[0] == "width"))
+            for c in edge:
+                if isinstance(c, list) and c[0] in ("start", "end"):
+                    bounds.append((float(c[1]) - width / 2, float(c[2]) - width / 2))
+        self.assertTrue(bounds, "当前板框没有 Edge.Cuts 直线")
+        ox, oy = min(x for x, _ in bounds), min(y for _, y in bounds)
+        self.assertTrue((DATA / "v4.11-pwr.json").exists(), "缺当前 V4.11 贴片数据")
+        for g in load("v4.11-pwr")["groups"]:
             for p in g["parts"]:
+                with self.subTest(ref=p["ref"]):
+                    self.assertIn(p["ref"], fps)
+                    (fx, fy, ang), pads = fps[p["ref"]]
+                    self.assertAlmostEqual(p["x"], fx - ox, delta=0.002, msg=p["ref"])
+                    self.assertAlmostEqual(p["y"], fy - oy, delta=0.002, msg=p["ref"])
+                    self.assertAlmostEqual(p["rot"] % 360, ang % 360, delta=0.01, msg=p["ref"])
                 if not p.get("pin1"):
                     continue
                 with self.subTest(ref=p["ref"]):

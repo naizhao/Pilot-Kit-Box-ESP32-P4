@@ -7,7 +7,7 @@
         Versions/Current/bin/python3 hardware/tools/gen_assembly_web.py
 
 产出 `web/assembly/data/{各版本}.json` 与 `index.json`（版本清单见下方 VARIANTS
-表，当前为 v4.10/v4.9/v4.8/v4.7/v4.6/v4.5 双变体 + v3），契约见
+表，当前为 v4.11/v4.10/v4.9/v4.8/v4.7/v4.6/v4.5 双变体 + v3），契约见
 `hardware/test_assembly_web_contract.py`（跑在系统 python3 上）。
 
 ## 几何一律现读 .kicad_pcb，不读 render/ 下的图
@@ -15,6 +15,9 @@
 `render/*.svg` 和 `*.png` 是某次导出的快照。写这个脚本时 v4 的 render/ 停在
 08-28，而 PCB 已经走到 09-04 的 V4.4——拿它当底图，高亮框会指到旧位置上，
 而且**看起来完全正常**。焊盘轮廓、板框、元件外框全部从 PCB 当场算。
+
+2026-09-30 用户要求：未经用户新的明确需求，禁止向 PCB 或生成流程添加
+MARK / FID 定位标记；本脚本只读取当前无 MARK 的 V4.11 PCB。EP 锡膏开口保留。
 
 BOM 只用来补「这是什么料」（材质、耐压、料号、备注），补不到就降级成
 值+封装，网页上明确显示「无料号信息」而不是留白——留白会被当成"不用管"。
@@ -73,12 +76,14 @@ POWER_SECTION = (
     # 注意 D8/R64（电源指示）**不在**本表：它接 3V3_DIG 与 GND，
     # 而 3V3_DIG 由 U1 从 VCC_5V 降压得到，不带电源版照样有电、照样该亮。
     + ["D9", "R65"]
+    # V4.11：SW3 隔离软件感知支路，依赖 U19 /QON；无电源版不贴。
+    + ["R67", "D10"]
     + [f"C{n}" for n in range(70, 81)]      # C70~C80
     + [f"R{n}" for n in range(37, 47)]      # R37~R46
 )
-POWER_SECTION_COUNT = 37                    # 文档原文写死的数量，对不上就是抄错了
-# 37 = 原 28 + V4.7 的 SW3 + V4.8 的 6 件（U23/C101/C102/D7/R63/BT1）
-#      + V4.8 充电灯 2 件（D9/R65）。
+POWER_SECTION_COUNT = 39                    # 文档原文写死的数量，对不上就是抄错了
+# 39 = 原 28 + V4.7 的 SW3 + V4.8 的 6 件（U23/C101/C102/D7/R63/BT1）
+#      + V4.8 充电灯 2 件（D9/R65）+ V4.11 SW3 隔离感知 2 件（R67/D10）。
 # SW3 接 SY6970 的 /QON，而 U19(SY6970) 就在电源区——不带电源版没有 U19，
 # 这颗键按设计就不该贴。
 # ⚠️ 这个数字是**写死**的，新增电源相关件必须同时改这里，否则断言会拦下。
@@ -124,7 +129,30 @@ class Variant:
 
 
 VARIANTS = [
-    # ── V4.10（当前板：V4.9 的 J11 从 2x8 排针改成 2x10 裸焊盘阵列）──────
+    # ── V4.11（当前板：SW3 新增 R67/D10 单向软件感知，无 MARK）──────
+    Variant(
+        "v4.11-pwr", "V4.11 带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；"
+                 "新增 R67(1k)/D10(1N4148WS) 单向感知 SW3，接 P4 GPIO4，"
+                 "保留 SY6970 /QON 硬件唤醒；无 MARK，EP 锡膏开口保留；"
+                 "J11 是 2x10 裸焊盘，不贴器件，配 2x10p 测试夹："
+                 "5-6 复位、7-8 BOOTSEL、19-20 自检回环；BT1/D8/D9 手焊不进 SMT；"
+                 "R7/R8 绝不能贴（与 CH224K 并存会烧板）",
+        force_skip=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    Variant(
+        "v4.11-nopwr", "V4.11 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        subtitle="电源区 39 个位号一个不贴（含 SW3、U23/BT1 备份供电、"
+                 "D9 充电灯与 R67/D10 按键感知支路）；"
+                 "无 MARK，EP 锡膏开口保留；J11 是裸焊盘，不贴器件，"
+                 "D8 电源灯照贴（吃 3V3_DIG）；"
+                 "R7/R8 必贴（不贴则电脑不认，刷不进固件）",
+        force_skip=POWER_SECTION,
+        force_place=CC_PULLDOWN,
+        bom=("csv", "internal/BOM_MASTER.csv"),
+    ),
+    # ── V4.10（存档：J11 是 2x10 裸焊盘阵列）──────────────────────
     #
     # ⚠️ 版本号在本表里是**写死**的，升板必须在这里加一组新 Variant 并把上一版
     # 转成 archived=True。2026-09-13 升 V4.8 时踩过：只改 board_meta.BOARD_REV、
@@ -136,6 +164,7 @@ VARIANTS = [
     # 迭代，上一版的几何就重算不出来了，只能靠 archived 沿用已生成的 json。
     Variant(
         "v4.10-pwr", "V4.10 带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="含 AIRBAND、SW3 电源键、GNSS VBAT 常供电与 D8/D9 指示灯；"
                  "J11 由 V4.9 的 2x8 排针改成 2x10 裸焊盘阵列——**不贴任何件**，"
                  "配 2x10p 测试夹；脚号整体后移 4 位，短接改用镊子/锡桥："
@@ -146,6 +175,7 @@ VARIANTS = [
     ),
     Variant(
         "v4.10-nopwr", "V4.10 不带电源版", "expansion-board-v4", "expansion-board-v4",
+        archived=True,
         subtitle="电源区一个不贴（SW3、U23/BT1 备份供电、D9 充电灯都在内——"
                  "它们都挂在 BAT_P/SY6970 上，没有电源区就没有对象）；"
                  "J11 是裸焊盘、本来就不用贴，D8 电源灯照贴（吃 3V3_DIG）；"

@@ -15,13 +15,14 @@
 > pin1 的 26MHz 参考经 **`R66`（0Ω，默认不贴）** 隔离——直连会给 TCXO 加约 17pF，
 > 而手册负载预算只有 10pF ±10%，参考幅度不够则 airband 整条收不了。
 
-**当前制造包已从 V4.11 固化板重新生成。** 完整重建板与用户定稿板在封装、铜、
-板级文字和覆铜区四个维度语义等价；原理图、Gerber、BOM/CPL 和装配文档均已刷新。
+**2026-09-30 修正版：按用户要求移除全部 MARK（FID1–FID3）及对应禁布区，保留五颗 EP 的 3×3 锡膏开口。未经新的明确需求禁止再次添加 MARK。**
+
+当前制造包已从无 MARK 的 V4.11 板重新生成。电气元件、走线、过孔、板级文字与 EP 开口保持不变；Gerber、源包和装配文档已刷新，原理图及四套 SMT BOM/CPL 沿用当前 V4.11 数据。
 
 **用户已接受本轮样板保留 Y4 的3.3V供电，不再因此要求改板；回板验证启动、频率及输出幅度。U22 VREF 已通过 C100 并联100nF，见[当前电气复查结论](../README.md#airband-reference-clock--v47-recheck)。**
 
-- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.11-20260929.zip)
-- [配套 KiCad 源包](expansion-board-v4-kicad-V4.11-20260929.zip)
+- [Gerber/钻孔包](expansion-board-v4-gerber-JLC-V4.11-20260930.zip)
+- [配套 KiCad 源包](expansion-board-v4-kicad-V4.11-20260930.zip)
 
 板上的主电源键是 **SW3**（TS24CA 侧按，直接接 SY6970 `/QON`），所以仅电池关机
 后的硬件唤醒不依赖 MCU。同时 V4.11 通过 `R67`/`D10` 将按键低电平单向送到
@@ -36,10 +37,13 @@ ESP32-P4 `GPIO4`，用于固件短按息屏/恢复和长按关机；禁止把 `/
 
 ## 本次快照校验
 
-PCB SHA-256：`888fc11accab489014d6eee8ea59e017b57e85a104f75406139db445a81414d0`。
+**20260929 的 V4.11 两包包含已取消的 MARK，已归档到 `archive/20260930-with-mark/`，仅保留追溯，不用于新订单。**
+修正版使用 20260930 日期，旧文件未覆盖。校验和文件为 `SHA256SUMS-V4.11-20260930.txt`。
 
-- `expansion-board-v4-gerber-JLC-V4.11-20260929.zip`：`bc474e3b3438441c0e195bf6a7e9cfeca62d80ed937214448dffa1840ba5660c`
-- `expansion-board-v4-kicad-V4.11-20260929.zip`：`9418a9e18dafb40caa4966b074b4eb3a8bd38296adebf18d5003f3ef8b41933a`
+PCB SHA-256：`b2818c83f2bac774c4fedc2afe88993232f6c2d46450d18b1661af9d66f8c322`。
+
+- `expansion-board-v4-gerber-JLC-V4.11-20260930.zip`：`386548d408bae8392fd21cb0a8f0c33de64ee8f5441e19681b56cfc9332525db`
+- `expansion-board-v4-kicad-V4.11-20260930.zip`：`da3f3972215cdf111f1668b26be756081a193803af70d23b28b3af1b3486a6b4`
 
 较早的同名 V4.7 两包已保留在 `archive/20260913-before-c99-100nF/`，不可用于新订单。
 **V4.8 的两个包已移出 `release/`**（在 `build/v48-superseded/`）：它们没有下面的
@@ -96,7 +100,7 @@ B 面丝印：**20 格对照表**（每格 = 脚号 + 缩写，如 `5 GND`、`8 
 
 ⚠️ `D8`/`D9` 只能用 **Vf 2.0~2.2V** 的红 / 黄 / 橙 / 普绿。蓝、翠绿、白的 Vf 是
 3.0~3.1V，挂 3.3V 轨上点不亮——充电灯还要再扣 `STAT` 的 0.4V 饱和压降，只剩 0.2V。
-两颗的位号和全板其余 238 个一样印在 **F.Silkscreen、字高 0.8mm**，
+两颗的位号和全板其余 235 个一样印在 **F.Silkscreen、字高 0.8mm**，
 板面直接可读；封装自带的阴极标记线也在，极性照它焊。
 装配图 `ASSEMBLY_MAP-V4.11-zh_CN.pdf` 可作交叉核对。
 

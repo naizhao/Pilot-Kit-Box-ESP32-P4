@@ -5,7 +5,7 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 > Generated from the authoritative schematic and PCB coordinates. Do not hand-edit.
 > `Not placed` is authoritative: DNP parts, test pads, solder bridges, mounting holes, and PCB antennas do not receive components.
 
-238 designators in total.
+235 designators in total.
 
 | ✓ | Designator | Value / Model | Footprint | Position (x, y) | Stage | Notes |
 |---|---|---|---|---|---|---|
@@ -243,7 +243,4 @@ Chinese companion: [`CHECKLIST-zh_CN.md`](CHECKLIST-zh_CN.md)
 | — | **H3** | — | MountingHole_2.7mm_M2. | (54.0, 106.0) | **Not placed** (mounting hole) |  |
 | — | **H4** | — | MountingHole_2.7mm_M2. | (146.0, 106.0) | **Not placed** (mounting hole) |  |
 | ☐ | **BT1** | MS621FE-FL11E(选贴) | MS621FE-FL11E | (138.8, 105.1) | A Power |  |
-| ☐ | **FID1** | — |  | (59.2, 56.0) | ? ? |  |
-| ☐ | **FID2** | — |  | (140.8, 56.0) | ? ? |  |
-| ☐ | **FID3** | — |  | (62.2, 106.5) | ? ? |  |
 | ☐ | **RT1** | NCP18XH103F03RB 10k NTC | R_0603_1608Metric | (54.8, 100.9) | A Power |  |

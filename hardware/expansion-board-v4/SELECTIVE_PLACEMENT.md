@@ -161,7 +161,10 @@ These three are **placed as 0R by default**; they are not DNP and not mutually e
 |---|---|
 | `ANT1` | Onboard IFA — it is just the PCB copper itself |
 | `H1`~`H4` | M2.5 mounting holes (⌀2.7mm NPTH) |
-| `FID1`~`FID3` | Optical fiducials (a simplified placement process does not use them; kept for lines that do) |
+
+All MARK/fiducials (`FID1`~`FID3`) and their keepouts were removed at the user's
+request on 2026-09-30. Do not add MARKs to the PCB or generation/rebuild flow
+without a new explicit requirement.
 
 ---
 
