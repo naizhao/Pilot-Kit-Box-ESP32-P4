@@ -1,0 +1,22 @@
+# ESP32-P4 rev 0.x/1.x 芯片变体片段 —— 给手上仍在服役的老硅片板子。
+#
+# 用法（独立 build 目录；不要和默认的 v3.x 共用一个目录，否则会留下上一代的
+# .o，症状是"改了却没生效"，很难查）：
+#
+#     cd firmware
+#     ./build.sh -B build_p4rev1 \
+#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+#       -DSDKCONFIG=build_p4rev1/sdkconfig build
+#
+# 烧录同理，把最后的 build 换成 `-p <端口> flash`。
+#
+# 为什么单独存在：2026-09-30 起 sdkconfig.defaults 的默认是 v3.x（供应链换料，
+# 新板子已是 rev v3.2）。IDF 里 <3.0 与 >=3.0 的支持**互斥**，编一份两代通用
+# 的固件不存在。这份文件让 v1.x 老板子仍有一条可复现、可进 CI 的构建路径，
+# 而不是靠"记得去 menuconfig 切一下"——忘了切的后果是 esptool 直接拒绝烧录
+# （v3.x 镜像装不进 v1.x 芯片），属于显式失败，不会静默出错。
+#
+# 判据：config 阶段打出 `chip revision = v1.x family`，开机日志里
+# `imu` 那行会打印板型与安装四元数，两代固件行为一致（芯片 rev 不影响板型）。
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y

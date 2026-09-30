@@ -164,7 +164,7 @@ Important defaults already live in `firmware/sdkconfig.defaults`:
 - `CONFIG_IDF_TARGET="esp32p4"`
 - `CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y`
 - custom `partitions.csv` with a 10 MiB LittleFS storage partition and optional MicroSD file backend
-- ESP32-P4 v1.x silicon support for current Waveshare boards
+- ESP32-P4 **v3.x** silicon target (the default since 2026-09-30); v1.x boards build against `sdkconfig.defaults.p4rev1`
 - ESP-Hosted SDIO pins for the on-board C6
 - BLE enabled by default through `CONFIG_PK_BLE_ENABLED=y`
 
@@ -316,16 +316,40 @@ Optional hardware expectations:
 
 ## Troubleshooting
 
-### Bootloader requires chip revision v3.1+
+### Bootloader rejected: chip revision out of range
 
-Current Waveshare ESP32-P4-WIFI6 boards are often ESP32-P4 v1.x silicon. Ensure `sdkconfig.defaults` includes:
+esptool refuses to flash when the image's declared revision range does not
+contain the chip's actual revision, e.g.:
 
 ```text
-CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-CONFIG_ESP32P4_REV_MIN_100=y
+A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision
+in range [v1.0 - v1.99] (this chip is revision v3.2).
 ```
 
-Then regenerate `sdkconfig` and rebuild.
+ESP32-P4 v1.x and v3.x are **not binary-compatible** — IDF states it as
+`Support of ESP32-P4 rev. <3.0 and >=3.0 is mutually exclusive`. One binary
+cannot cover both; there is no "flash anyway" that boots.
+
+Since 2026-09-30 the default is **v3.x**, so this most often means you have an
+older v1.x board. Build it against the `p4rev1` fragment instead:
+
+```bash
+cd firmware
+./build.sh -B build_p4rev1 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+  -DSDKCONFIG=build_p4rev1/sdkconfig build
+```
+
+The reverse (v3.x chip, v1.x image) is fixed by removing the fragment, i.e. the
+plain `./build.sh build`. Confirm which generation you have first:
+
+```bash
+python -m esptool --port /dev/cu.usbmodemXXXX --connect-attempts 3 read-mac
+#   Chip type:          ESP32-P4 (revision v3.2)
+```
+
+Never share a build directory between the two generations — the stale `.o` files
+show up as "I changed it but nothing happened".
 
 ### ESP-Hosted boots as H2/SPI instead of C6/SDIO
 

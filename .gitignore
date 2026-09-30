@@ -54,6 +54,10 @@ firmware/sdkconfig.*
 # 板型 profile 默认值是一等公民构建输入（F3 阶段 5/7 产物），必须进版本库
 !firmware/sdkconfig.defaults.v3
 !firmware/sdkconfig.defaults.v4
+# 硅片代际片段同理：<3.0 与 >=3.0 互斥，新板子是 v3.x（默认）、旧板子靠这份
+# 变体，缺了它 v1.x 那条构建路径对其他人就是不可见的。同上，必须显式豁免——
+# 第 53 行的 firmware/sdkconfig.* 会把它一起吞掉，而且 git add 是静默跳过。
+!firmware/sdkconfig.defaults.p4rev1
 firmware/managed_components/
 firmware/dependencies.lock
 

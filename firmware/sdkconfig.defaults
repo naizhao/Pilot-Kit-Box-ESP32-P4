@@ -14,14 +14,24 @@ CONFIG_IDF_TARGET="esp32p4"
 CONFIG_PK_BLE_ENABLED=y
 
 # --- ESP32-P4 silicon revision ---------------------------------------------
-# IDF v6.0 defaults to P4 ECO5 (v3.1+). The Waveshare ESP32-P4-WIFI6 boards
-# in our supply chain still ship with the original v1.x silicon (one of
-# our test boards reports v1.3), so the bootloader refuses to start until
-# we opt into the v0.x/v1.x family. Hardware revisions ≥ 3.0 are NOT
-# binary-compatible with this build — if a v3.x P4 ever shows up we'll
-# have to ship a second sdkconfig variant.
-CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-CONFIG_ESP32P4_REV_MIN_100=y
+# 默认 v3.x（ECO5）。2026-09-30 产品裁定：供应链在往 v3.x 走，新到货的板子
+# 已经是 rev v3.2，默认跟着切过去；手上仍在服役的 v1.x 老板子改走变体
+# `sdkconfig.defaults.p4rev1`（见那份文件里的用法）。
+#
+# 为什么必须二选一：IDF 的 Kconfig 原文写着
+#   "Support of ESP32-P4 rev. <3.0 and >=3.0 is mutually exclusive"
+# （components/esp_hw_support/port/esp32p4/Kconfig.hw_support:1）。
+# 两代硅片硬件差异巨大，一个二进制覆盖不了：按 v1.x 编出来的 bootloader
+# 只接受 rev [v1.0-1.99]，烧进 v3.2 会被 esptool 当场拒绝——
+#   'bootloader.bin' requires chip revision in range [v1.0 - v1.99]
+#   (this chip is revision v3.2)
+# 反过来同理。所以这是一道显式的岔路，不存在"编一份两代通用"的选项。
+#
+# 显式写出默认值，好让"这一版是给哪代硅片编的"在文件里一眼可见，而不是
+# 隐含在 IDF 的默认值里；变体片段后加载，覆盖它即可切到 v1.x。
+# 选 v3.x 的附带收益（这些在 v1.x 上选项根本不可见）：CPU 360→400 MHz、
+# bootloader 90→100 MHz、CPU 掉电保持等电源管理特性、flash suspend。
+CONFIG_ESP32P4_REV_MIN_301=y
 
 # --- External PSRAM (32 MB stacked HEX, on-die with ESP32-P4NRW32) ----------
 # The ESP32-P4NRW32 chip on the Waveshare board ships with 32 MiB of

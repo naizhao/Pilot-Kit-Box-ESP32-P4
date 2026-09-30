@@ -174,21 +174,51 @@ configure 阶段（首次构建、以及每次 `menuconfig` / `sdkconfig` 变动
 
 ## 2. 硬件目标 (P4 silicon revision)
 
+**默认已是 v3.x**（2026-09-30 产品裁定）：供应链换料，新到货的板子是 rev v3.2。
+手上仍在服役的 v1.x 老板子改走变体 `sdkconfig.defaults.p4rev1`。
+
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
 | `CONFIG_IDF_TARGET` | `"esp32p4"` | 目标芯片，**绝对不要改** |
-| `CONFIG_ESP32P4_SELECTS_REV_LESS_V3` | `y` | 选择支持 v0.x / v1.x silicon。当前 Waveshare ESP32-P4-WIFI6 出货的是 v1.3 silicon，必须 `y`。**如果未来你拿到了 ECO5 (v3.x) 的 Waveshare 板**，把这个改成 `n` 并把下面的 `REV_MIN_*` 改成 `300` 或 `301` |
-| `CONFIG_ESP32P4_REV_MIN_100` | `y` | 最低支持 v1.0 silicon。配合上面那一项使用 |
+| `CONFIG_ESP32P4_REV_MIN_301` | `y` | 最低支持 v3.1 silicon（ECO5 家族），覆盖到 rev v3.99 |
+| `CONFIG_ESP32P4_SELECTS_REV_LESS_V3` | *(未设)* | 未设 = 走 v3.x 家族。**不要手改**，要切家族请用下面两个 defaults 片段之一 |
 
 ### 二进制兼容性警告
 
-**ESP32-P4 v1.x 和 v3.x 之间不二进制兼容**——硬件 bug 修复不同，启动序列不同。如果你的板子是 v3.x，必须改用 `CONFIG_ESP32P4_REV_MIN_300` 或 `_301`，并把 `SELECTS_REV_LESS_V3` 关掉，重新编译。
+**ESP32-P4 v1.x 和 v3.x 之间不二进制兼容**——两代硅片硬件差异巨大。IDF 的
+Kconfig 原文写着 `Support of ESP32-P4 rev. <3.0 and >=3.0 is mutually exclusive`，
+**一个二进制覆盖不了两代**。这不是"编错顶多降级"的问题，而是硬性二选一：
 
-确认你的板子是哪个 revision：烧固件时 esptool 会打印：
+- 按 v1.x 编出来的 bootloader 只接受 rev `[v1.0 - v1.99]`，烧进 v3.2 会被
+  esptool 当场拒绝（`requires chip revision in range [v1.0 - v1.99]`）；
+- 反过来，按 v3.x 编的镜像也装不进 v1.x 芯片，同样拒绝。
+
+所以换板子前**先确认芯片是哪一代**：
+
+```bash
+python -m esptool --port /dev/cu.usbmodemXXXX --connect-attempts 3 read-mac
+# 输出里这一行就是答案：
+#   Chip type:          ESP32-P4 (revision v3.2)
 ```
-Chip type:          ESP32-P4 (revision v1.3)
-                                    ^^^^
+
+两代各有一条可复现、可进 CI 的构建路径（两个片段都进 git）：
+
+```bash
+cd firmware
+# v3.x —— 默认，也是供应链当前的货
+./build.sh build
+
+# v1.x —— 旧板子
+./build.sh -B build_p4rev1 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+  -DSDKCONFIG=build_p4rev1/sdkconfig build
 ```
+
+用独立 build 目录是**必须**的：两代共用一个目录会留下上一代的 `.o`，症状是
+"改了却没生效"，很难查。
+
+选 v3.x 的附带收益（这些选项在 v1.x 上根本不可见）：CPU 360→400 MHz、
+bootloader 90→100 MHz、CPU 掉电保持等电源管理特性、flash suspend。
 
 ---
 

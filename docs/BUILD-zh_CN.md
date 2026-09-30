@@ -312,11 +312,13 @@ sed -i '' 's/^CONFIG_PK_BOARD_PROFILE_V4=y$/# CONFIG_PK_BOARD_PROFILE_V4 is not 
 - `CONFIG_IDF_TARGET="esp32p4"` — 目标芯片
 - `CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y` — Waveshare 板有 32 MB Nor flash
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` + `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"` — 使用自定义分区表（含 10 MiB LittleFS 区；另支持可选 MicroSD 文件后端）
-- `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` + `CONFIG_ESP32P4_REV_MIN_100=y` — **针对 v1.x silicon 的 Waveshare 板**。IDF v6.0 默认编 v3.1+ 目标，而当前 Waveshare 出货的 P4 多是 v1.3 silicon，不打开这两个开关会出现：
+- `CONFIG_ESP32P4_REV_MIN_301=y` — 目标硅片是 **v3.x（ECO5）系列**，覆盖到 rev v3.99。2026-09-30 起这是默认（供应链换料，新板子是 rev v3.2）。**手上是 v1.x 老板子**的话要用变体片段 `sdkconfig.defaults.p4rev1`：
+  ```bash
+  ./build.sh -B build_p4rev1 \
+    -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+    -DSDKCONFIG=build_p4rev1/sdkconfig build
   ```
-  A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision
-  in range [v3.1 - v3.99] (this chip is revision v1.3).
-  ```
+  两代不二进制兼容（IDF 原文 `rev. <3.0 and >=3.0 is mutually exclusive`），一个二进制覆盖不了；编错的那一代会被 esptool 直接拒绝烧录。
 - `CONFIG_BT_ENABLED=y` + `CONFIG_BT_CONTROLLER_DISABLED=y` + ESP_HOSTED SDIO 引脚 — BLE 走 C6 协处理器
 
 ### 想改配置？
@@ -546,22 +548,47 @@ I (5439) pfd:         PFD 32 FPS  | roll= +0.00 pitch= +0.00 yaw=  0.00 ...    �
 
 ## 9. 常见问题 / Troubleshooting
 
-### `A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision in range [v3.1 - v3.99]`
+### `A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision in range [...]`
 
-**原因**：IDF v6.0 默认编 P4 ECO5 (v3.1+) 目标，但你板上的 P4 是 v1.x silicon。
+完整报错形如：
 
-**修复**：检查 `firmware/sdkconfig.defaults` 里是否有：
 ```
-CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
-CONFIG_ESP32P4_REV_MIN_100=y
+A fatal error occurred: 'bootloader/bootloader.bin' requires chip revision
+in range [v1.0 - v1.99] (this chip is revision v3.2).
 ```
-没有的话加上，然后：
+
+**原因**：镜像是给另一代硅片编的。ESP32-P4 v1.x 与 v3.x **不二进制兼容**
+（IDF 原文 `Support of ESP32-P4 rev. <3.0 and >=3.0 is mutually exclusive`），
+一个二进制覆盖不了两代，且**没有"强制烧进去也能跑"这回事**。
+
+**判断方向**——看报错里两个区间的归属：
+
+| 报错 | 含义 | 修复 |
+|---|---|---|
+| 镜像要 `[v1.0 - v1.99]`，芯片是 v3.2 | 镜像给旧硅片编的 | 用默认（v3.x）重建：`./build.sh build` |
+| 镜像要 `[v3.1 - v3.99]`，芯片是 v1.3 | 镜像给新硅片编的 | 用 v1.x 变体重建（见下） |
+
+**修复（v1.x 板子）**：
+
 ```bash
 cd firmware
-[ -f sdkconfig ] && mv sdkconfig sdkconfig.bad-rev-$(date +%Y%m%d-%H%M)
-idf.py build
+./build.sh -B build_p4rev1 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+  -DSDKCONFIG=build_p4rev1/sdkconfig build
+./build.sh -B build_p4rev1 -DSDKCONFIG=build_p4rev1/sdkconfig -p <端口> flash
 ```
-重新烧。
+
+**先确认芯片是哪一代**，别靠猜：
+
+```bash
+python -m esptool --port /dev/cu.usbmodemXXXX --connect-attempts 3 read-mac
+#   Chip type:          ESP32-P4 (revision v3.2)
+```
+
+> **不要靠"删掉 `sdkconfig` 重新生成"来解决问题**。本地 `sdkconfig` 常带有
+> `sdkconfig.defaults` 之外的自定义（例如 LVGL 控件开关、ESP-Hosted 吞吐选项），
+> 删掉会静默丢失这些设置。切硅片代际请用上面带 `-B`/`-DSDKCONFIG` 的变体方式，
+> 它不会动到你以为在用的那份 `sdkconfig`。
 
 ### 启动早期 `HS_MP: mempool create failed: no mem` panic
 

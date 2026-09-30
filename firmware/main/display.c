@@ -314,7 +314,29 @@ esp_err_t pk_display_init(void)
     const esp_lcd_dsi_bus_config_t bus_config = {
         .bus_id = 0,
         .num_data_lanes = PK_LCD_DSI_LANE_COUNT,
-        .phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
+        /* 刻意留 0 = "没指定"，让 esp_lcd_new_dsi_bus() 内部按**编译期的芯片家族**
+         * 选参考时钟源：
+         *     if (phy_clk_src == 0) {
+         *     #if SOC_IS(ESP32P4) && HAL_CONFIG(CHIP_SUPPORT_MIN_REV) < 300
+         *         phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT_LEGACY;  // PLL_F20M
+         *     #else
+         *         phy_clk_src = MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT;         // XTAL
+         *     #endif
+         *     }
+         * HAL_CONFIG_CHIP_SUPPORT_MIN_REV 就是 CONFIG_ESP_REV_MIN_FULL，所以两代
+         * 构建各自拿到正确的那一个（v1.x 变体=100 → PLL_F20M；v3.x 默认=301 → XTAL）。
+         *
+         * **不要**写回 MIPI_DSI_PHY_CLK_SRC_DEFAULT：名字像"默认值"，实为
+         * clk_tree_defs.h 里 `#define MIPI_DSI_PHY_CLK_SRC_DEFAULT
+         * MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT_LEGACY`，恒等于 PLL_F20M。而 IDF 在
+         * 该枚举上标注 PLL_F20M "only available on esp32p4 version < 3.0"。
+         * 传它 = 拿走上面那个按代分叉，让 v3.x 芯片也去用 v1.x 的 20 MHz PLL 参考
+         * 时钟。实测后果：板子起不来，abort 在
+         * `mipi_dsi_host_ll_set_escape_clock_division` 的
+         * `HAL_ASSERT(div > 1 && div < 256)`（mipi_dsi_host_ll.h:98），
+         * 表现为 ~6 秒一轮的重启循环，且日志停在 NimBLE 广播之后就断，极易误判成
+         * BLE/ESP-Hosted 的问题。 */
+        .phy_clk_src = 0,
         .lane_bit_rate_mbps = PK_LCD_DSI_LANE_BIT_RATE_MBPS,
     };
     err = esp_lcd_new_dsi_bus(&bus_config, &s_dsi_bus);

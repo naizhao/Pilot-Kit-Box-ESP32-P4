@@ -143,13 +143,53 @@ To change the project-wide default, add the `CONFIG_PK_BOARD_PROFILE_*` line to
 
 ## Hardware Target
 
+**The default is v3.x** (product decision 2026-09-30): the supply chain has moved
+on, and newly delivered boards are rev v3.2. Boards still in service with v1.x
+silicon build against the `sdkconfig.defaults.p4rev1` fragment.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `CONFIG_IDF_TARGET` | `"esp32p4"` | Target chip. Do not change for this board. |
-| `CONFIG_ESP32P4_SELECTS_REV_LESS_V3` | `y` | Enables support for ESP32-P4 v0.x / v1.x silicon. Current Waveshare ESP32-P4-WIFI6 boards are commonly v1.3. |
-| `CONFIG_ESP32P4_REV_MIN_100` | `y` | Minimum supported silicon revision is v1.0. |
+| `CONFIG_ESP32P4_REV_MIN_301` | `y` | Minimum supported silicon revision is v3.1 (the ECO5 family); covers up to v3.99. |
+| `CONFIG_ESP32P4_SELECTS_REV_LESS_V3` | *(unset)* | Unset means the v3.x family. Do not edit by hand — pick a family via one of the two `sdkconfig.defaults` fragments below. |
 
-ESP32-P4 v1.x and v3.x are not binary-compatible. If a future Waveshare board ships v3.x silicon, disable `SELECTS_REV_LESS_V3`, select the correct `REV_MIN_300` or `REV_MIN_301`, rebuild, and reflash.
+ESP32-P4 v1.x and v3.x are **not binary-compatible**. IDF's Kconfig says so
+outright: `Support of ESP32-P4 rev. <3.0 and >=3.0 is mutually exclusive` — one
+binary cannot cover both generations. This is a hard either/or, not a
+"worst case it degrades" choice:
+
+- A bootloader built for v1.x accepts only rev `[v1.0 - v1.99]`; esptool refuses
+  to flash it onto a v3.2 chip (`requires chip revision in range [v1.0 - v1.99]`).
+- The reverse holds too: a v3.x image will not install on a v1.x chip.
+
+So **identify the silicon before flashing**:
+
+```bash
+python -m esptool --port /dev/cu.usbmodemXXXX --connect-attempts 3 read-mac
+# This line is the answer:
+#   Chip type:          ESP32-P4 (revision v3.2)
+```
+
+Both generations have a first-class, CI-friendly build path (both files are in git):
+
+```bash
+cd firmware
+# v3.x — the default, and what current stock ships
+./build.sh build
+
+# v1.x — older boards
+./build.sh -B build_p4rev1 \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev1" \
+  -DSDKCONFIG=build_p4rev1/sdkconfig build
+```
+
+Separate build directories are mandatory: sharing one leaves the previous
+generation's `.o` files behind, which shows up as "I changed it but nothing
+happened" and is painful to diagnose.
+
+Targeting v3.x also unlocks options that simply do not exist on v1.x: CPU
+360→400 MHz, bootloader 90→100 MHz, CPU power-down retention in light sleep,
+and flash suspend.
 
 ## Flash And Partitions
 
