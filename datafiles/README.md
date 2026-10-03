@@ -59,6 +59,17 @@ will make the firmware refuse to load it. It is kept here so that a real sample 
 
 ### pk_actdb.bin — ICAO24 Aircraft Database
 
+When this generated container exists at configure time, the firmware embeds it in Flash.
+At runtime it uses that copy only when the SD container length and complete 64-byte header
+(including the payload SHA-256) match, saving the full database's PSRAM allocation and SD read.
+Different SD database releases still use the original SD/PSRAM loader. This is a memory-budget
+hotfix for matching datasets, not a general solution: an updated SD database can restore the
+memory pressure. Without the generated file, source-only builds retain the SD loader.
+The matching container is still not committed to Git; regenerate it using the recipe below
+before configuring a firmware that needs the Flash memory saving. The deployed hotfix used
+cycle `20260802`, 8,604,583 bytes. Flash embedding increases application partition usage;
+keep the existing build-time partition-size check.
+
 Produced by this repo itself:
 
 ```bash

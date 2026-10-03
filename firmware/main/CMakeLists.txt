@@ -17,6 +17,17 @@ if(DEFINED PK_BOARD_PROFILE_NAME)
                    "  (改：idf.py menuconfig -> Pilot Kit Box -> Expansion board profile)")
 endif()
 
+# A generated offline DB may be embedded to preserve PSRAM on small-memory
+# configurations. It remains an ignored data artifact; source-only builds use SD.
+set(PK_ACTDB_EMBED_FILES)
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../datafiles/data/pk_actdb.bin")
+    list(APPEND PK_ACTDB_EMBED_FILES "../../datafiles/data/pk_actdb.bin")
+    set(PK_ACTDB_FLASH_COPY 1)
+else()
+    set(PK_ACTDB_FLASH_COPY 0)
+    message(STATUS "Pilot Kit: no generated pk_actdb.bin; aircraft DB uses SD/PSRAM")
+endif()
+
 idf_component_register(
     SRCS
         "main.c"
@@ -232,6 +243,7 @@ idf_component_register(
         # Pilot-Kit-Dashboard/public/pilot-kit-export-logo.png).
         # Linked into .rodata via _binary_pk_logo_rgb565_{start,end}.
         "pk_logo.rgb565"
+        ${PK_ACTDB_EMBED_FILES}
         # 机型库（8.16 MB 的 ICAO24 → 型号/注册号）曾经在这里 EMBED，
         # 2026-08 搬到 SD 卡 /sdcard/aero/pk_actdb.bin 懒加载（见
         # aircraft_db.c 文件头：tar1090-db 周更 vs AIRAC 28 天，节奏不同
@@ -267,6 +279,9 @@ idf_component_register(
         sdmmc                    # sdmmc_card_t protocol layer
         mbedtls                  # PSA Crypto：pk_aero_db 的 AES-CTR + SHA-256
 )
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    PK_ACTDB_FLASH_COPY=${PK_ACTDB_FLASH_COPY})
 
 # 瓦片解码热路径单独 -O2：全工程默认 -Os，lodepng 的 inflate/unfilter 与
 # pmtiles 目录解析是地图页加载耗时大头，换 -O2 立省 30% 上下,只多几 KB flash。

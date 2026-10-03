@@ -64,6 +64,13 @@
 
 static const char *TAG = "acdb";
 
+/* Exact SD container identity selects the immutable Flash copy. Different SD
+ * releases keep the existing loader, so independent database updates still work. */
+#if PK_ACTDB_FLASH_COPY
+extern const uint8_t actdb_flash_start[] asm("_binary_pk_actdb_bin_start");
+extern const uint8_t actdb_flash_end[] asm("_binary_pk_actdb_bin_end");
+#endif
+
 #define ACTDB_PATH           "/sdcard/aero/pk_actdb.bin"
 
 /* 分块尺寸沿用 pk_aero_db 的实测甜点（64 KB = 5.99 MB/s；SHA 走内存，
@@ -204,33 +211,55 @@ static bool actdb_load_once(void)
              ACTDB_PATH, len / 1048576.0);
     int64_t t0 = esp_timer_get_time();
 
-    uint8_t *buf = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-    if (buf == NULL) {
-        s_err_generation = pk_sdcard_mount_generation();
-        s_state = ACTDB_ERROR;
-        s_err   = "psram alloc";
-        ESP_LOGE(TAG, "PSRAM alloc %u B failed", (unsigned)len);
-        pk_sdcard_io_release();
-        return false;
-    }
-
+    const uint8_t *flash_data = NULL;
+    size_t flash_len = 0;
+#if PK_ACTDB_FLASH_COPY
+    flash_data = actdb_flash_start;
+    flash_len = (size_t)(actdb_flash_end - actdb_flash_start);
+#endif
+    uint8_t header[PK_ACTDB_HEADER_SIZE];
+    bool flash_match = false;
     const char *why = "?";
     xSemaphoreTake(s_io_lock, portMAX_DELAY);
-    FILE *f = fopen(ACTDB_PATH, "rb");   /* SD 只读红线：只 "rb" */
-    bool ok = false;
-    if (f == NULL) {
-        why = "fopen";
-    } else {
-        ok = actdb_read(f, buf, len, &why);
-        fclose(f);
+    FILE *probe = flash_data != NULL ? fopen(ACTDB_PATH, "rb") : NULL;
+    if (probe != NULL) {
+        flash_match = len == flash_len &&
+            fread(header, 1, sizeof(header), probe) == sizeof(header) &&
+            memcmp(header, flash_data, sizeof(header)) == 0;
+        fclose(probe);
     }
     xSemaphoreGive(s_io_lock);
 
-    pk_sdcard_io_release();  /* No SD access during the following RAM decode. */
+    uint8_t *buf = NULL; /* Only heap-owned storage is published in s_buf. */
+    const uint8_t *data = flash_data;
+    bool ok = flash_match;
+    if (!flash_match) {
+        buf = heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+        if (buf == NULL) {
+            s_err_generation = pk_sdcard_mount_generation();
+            s_state = ACTDB_ERROR;
+            s_err = "psram alloc";
+            ESP_LOGE(TAG, "PSRAM alloc %u B failed", (unsigned)len);
+            pk_sdcard_io_release();
+            return false;
+        }
+        data = buf;
+        xSemaphoreTake(s_io_lock, portMAX_DELAY);
+        FILE *f = fopen(ACTDB_PATH, "rb");
+        if (f == NULL) {
+            why = "fopen";
+        } else {
+            ok = actdb_read(f, buf, len, &why);
+            fclose(f);
+        }
+        xSemaphoreGive(s_io_lock);
+    }
+    pk_sdcard_io_release();
+    if (flash_match) ESP_LOGI(TAG, "SD container matches Flash: released %.2f MiB PSRAM budget", len / 1048576.0);
 
     pk_actdb_t db;
     if (ok) {
-        int rc = pk_actdb_init(&db, buf, len, true);
+        int rc = pk_actdb_init(&db, data, len, true);
         if (rc != PK_ACTDB_OK) {
             ok = false;
             why = rc == PK_ACTDB_ERR_MAGIC     ? "bad magic"
