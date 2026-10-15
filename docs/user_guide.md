@@ -93,13 +93,32 @@ Leveling cannot correct a wrong axis mapping; it only cages the horizon.
 | **Map** | Offline basemap with an aviation overlay (airports, navaids, fixes); tap a symbol for its detail page |
 | **List** | Tracked-aircraft table; tap headers to sort, drag to scroll and tap a row to open its detail drawer |
 | **Search** | Search the local aviation databases for airports, navaids and fixes; open details or show one on the map |
+| **Airband** | Airband listening: pick a channel from the list or key in a frequency directly; audio plays live |
+| **Recordings** | Browse and play back Airband recordings: tap an entry to select and play, step previous/next, set playback volume |
 | **Setup** | Language, QNH, map orientation, range, log backend, demo mode and MicroSD formatting controls |
 | **About** | Project version, build information and hardware summary |
 | **Diag** | Live SDR (ADS-B link), BLE, GPS, IMU, barometer, battery, storage and other subsystem cards; tap a card for detail. The battery card follows the power backend: SY6970 charger state on powered v4 boards, ETA6098 carrier voltage sampling otherwise (percentage is voltage-estimated, not a coulomb count) |
 
-**Log** and **Tools** are greyed placeholders in the grid; those pages are
-not implemented yet. The grid switches top-level pages only; detail pages
-never show a second navigation grid.
+**Tools** is the one greyed placeholder in the grid; its page is not
+implemented yet. The **Recordings** entry opens the Airband recording
+browser. The grid switches top-level pages only; detail pages never show a
+second navigation grid.
+
+### Airband and recordings
+
+The **Airband** page listens to 118–137 MHz air-ground communication: tap a
+channel in the list, or tap the frequency field and key one in on the numeric
+keypad (e.g. 121.500). It requires the BK4819 receive chain on hardware V4.6
+or later; without that hardware the page says so.
+
+The **Recordings** page lists Airband WAV recordings on the microSD card:
+tapping an entry selects it and starts playback, with previous/next stepping
+and bottom buttons for playback volume. Recordings are produced in the
+background by the Airband page while listening; with a receiver attached but
+demo mode on there is no real signal, so empty recordings are expected.
+
+On-screen labels and timestamps depend on system time; until the clock is
+synced, recordings show an "time unknown" placeholder.
 
 ### Storage setting
 

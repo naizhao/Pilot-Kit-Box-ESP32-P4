@@ -77,7 +77,7 @@ flowchart LR
 | `usb_host_lib` / `sdr` / `dsp` | — | — | — | **已退役**（2026-09 随 v1/v2 USB RTL-SDR 接收链移除）：历史细节见 git 历史；解码/分发职责现位于 RP2040（`modes_edge`）+ `adsb_lnk`/modes_ingest 链。 |
 | `adsb_lnk` | 1 | 5 | 8 KiB | 运行 RP2040 UART 链路（adsb_link codec @ 921600 波特，256 字节分片读）：把 RP2040 前端送来的 CRC 前置 Mode-S 帧喂进 modes_ingest（Mode-S 24-bit 校验，mode_s.c；check_crc=1，不做纠错），对每个 HELLO 回帧，并承接原 DSP 业务链（CPR/航迹/记录/1 Hz 看板）。RP2040 侧自身经 PIO+DMA 捕获双沿、用 modes_edge 解码 56/112-bit 帧；USB RTL-SDR 任务对（`usb_host_lib`/`sdr`）已退役；`adsb_link_task.c` 沿用 `dsp` TAG 保持日志检索连续。 |
 | `rec_file` | 0 | 3 | 4 KiB | 文件写入任务；启动时按 NVS 设置选择 LittleFS 或 MicroSD，缺卡时回退 LittleFS，避免 DSP hot path 被存储写入阻塞。 |
-| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；GPIO50 PPS 已被固件消费（GPIO ISR 计数 + 自旋锁快照，1 Hz 采样进入时间锁定状态），授时（settimeofday 级）接线仍是后续任务。 |
+| `gps` | 0 | 4 | 4 KiB | 解析 GT-U8 UART1 NMEA（RMC/GGA/GSV/TXT），维护 GPS/北斗定位、卫星/SNR、天线状态，并从 RMC 设置系统时间；GPIO50 PPS 已被固件消费（GPIO ISR 计数 + 自旋锁快照，1 Hz 采样进入时间锁定状态）。校时统一走 `pk_clock`：BLE 粗校兜底、GPS fix 后偏差超阈值精校，GPS 优先于蓝牙；PPS/NMEA 新鲜度实时参与时钟可信度判定仍是后续任务。 |
 | `imu` | 0 | 5 | 4 KiB | 以 100 Hz 读取 BNO085 Rotation Vector，应用软件 tare，提供给 PFD 和校准向导。 |
 | `baro` | 0 | 4 | 4 KiB | 轻量独立任务：以 ~10 Hz 经 I²C0 轮询 BMP388，运行温度补偿气压→高度换算并计算升降率，结果写入 `g_baro_state`（QNH 可调）。 |
 | `sd_detect` | 0 | 2 | 4 KiB | MicroSD 插拔探测：无卡时每 3 秒尝试挂载，已挂载时每 2 秒探活并刷新容量缓存。 |
@@ -144,8 +144,8 @@ BLE peer drops -> NimBLE 处理断连；没有订阅者时 notify 被跳过；
 ### 载板传感器（GPS / 气压 / microSD）
 
 Pilot Kit 通过 UART 连接 GT-U8 GPS，通过 I²C0（`0x76`）连接 BMP388，
-并使用 Rev1.2 板载 microSD 卡槽。GPIO50 可为未来 PPS 预留，但当前路径
-未实现。各能力如何接入上面的架构：
+并使用 Rev1.2 板载 microSD 卡槽。GPIO50 PPS 输入已被消费进时间锁定状态，
+但 PPS 边沿级时间修正尚未实现。各能力如何接入上面的架构：
 
 - **GPS 授时**（`gps_task.c`）：GPS RMC UTC 设置 `settimeofday()`。**GPS 优先**，
   BLE 作备份；有覆盖保护，低质量源不会盖掉已校准好的 GPS 时间。设备无需手机即可

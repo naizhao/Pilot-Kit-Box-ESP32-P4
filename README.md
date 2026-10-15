@@ -133,22 +133,27 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 
 ## 当前状态 / Current Status
 
-截至 **2026-07-29**，当前 4.3 寸固件已经覆盖 ADS-B 接收与解码、BLE
-GDL90 分发、GPS 定位与 RMC 授时、BMP388 气压高度、LittleFS/MicroSD
-记录、ST7701 MIPI-DSI 横屏显示、GT911 触摸导航、交通雷达、ADS-B 列表、
-实时诊断、本地航空识别数据库和 BNO085 姿态融合。
+截至 **2026-10-15**，当前 4.3 寸固件已经覆盖 ADS-B 接收与解码、BLE
+GDL90 分发、GPS 定位与两段式授时（`pk_clock`：BLE 粗校 + GPS fix 精校）、
+BMP388 气压高度、LittleFS/MicroSD 记录、ST7701 MIPI-DSI 横屏显示、
+GT911 触摸导航、交通雷达、ADS-B 列表、离线地图（microSD pmtiles 底图 +
+机场/导航台/FIX 航空叠加层）、Airband 航空电台收听与录音回放（ES8311
+音频输出）、实时诊断、本地航空识别数据库和 BNO085 姿态融合。
 
-As of **2026-07-29**, the current 4.3-inch firmware includes ADS-B reception
-and decode, BLE GDL90 distribution, GPS positioning and RMC time sync,
-BMP388 barometric altitude, LittleFS/MicroSD recording, an ST7701 MIPI-DSI
-landscape display, GT911 touch navigation, traffic radar, ADS-B list, live
+As of **2026-10-15**, the current 4.3-inch firmware includes ADS-B reception
+and decode, BLE GDL90 distribution, GPS positioning and two-stage time
+discipline (`pk_clock`: BLE coarse sync + GPS fine sync after fix), BMP388
+barometric altitude, LittleFS/MicroSD recording, an ST7701 MIPI-DSI
+landscape display, GT911 touch navigation, traffic radar, an ADS-B list,
+the offline map (microSD pmtiles basemap plus airport/navaid/FIX overlay),
+Airband listening with recording playback (ES8311 audio output), live
 diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 ### `v0.8.0` 发布重点 / Release Highlights
 
 - 新增 360° 交通雷达、PFD HSI 前方交通叠加和统一 own-ship 航向决策。<br>Adds the 360-degree traffic radar, forward-traffic HSI overlay, and unified own-ship heading selection.
 - 新增 BMP388 气压高度/升降率、可调 QNH，以及可滚动实时 DIAG 页面。<br>Adds BMP388 altitude/vertical speed, adjustable QNH, and the scrollable live DIAG page.
-- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 已被固件消费，用于时间锁定判定（fix 有效 + PPS <2 s + NMEA <5 s）；把该新鲜度接入生产时间服务仍是后续任务。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS is now consumed for the time-lock status (valid fix + PPS <2 s + NMEA <5 s); wiring that freshness into the production time service remains a follow-up.
+- 增强 GT-U8 GPS/北斗诊断和 RMC 授时，并通过 BLE 输出 GDL90 Ownship Report；GPIO50 PPS 已被固件消费，用于时间锁定判定（fix 有效 + PPS <2 s + NMEA <5 s）。<br>Expands GT-U8 GPS/BeiDou diagnostics, RMC time sync, and BLE GDL90 Ownship Report output; GPIO50 PPS is consumed for the time-lock status (valid fix + PPS <2 s + NMEA <5 s).
 - 新增 MicroSD 探测、Flash/MicroSD 日志切换、约 1 GiB 轮转保留和受保护格式化。<br>Adds MicroSD detection, Flash/MicroSD log selection, about 1 GiB rotation retention, and guarded formatting.
 - 完成 2.4 寸载板、板载 1090 MHz IFA 天线、3D 打印外壳和面板原型实物验证。<br>Documents the fabricated 2.4-inch carrier, on-board 1090 MHz IFA antenna, printed enclosure, and faceplate prototype.
 
@@ -164,7 +169,7 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | UART、LittleFS / MicroSD 轮转文件、BLE raw ts-line 三路记录输出 | UART, rotating LittleFS/MicroSD files, and BLE raw ts-line output | 已实现 / Implemented |
 | BLE GATT：GDL90 Ownship、Traffic、Heartbeat、Raw、Time Sync | BLE GATT: GDL90 Ownship, Traffic, Heartbeat, Raw, and Time Sync | 已实现 / Implemented |
 | iOS Current Time Service 自动校时，Android/跨平台可写 Time Sync | iOS Current Time Service auto-sync, Android/cross-platform Time Sync writes | 已实现 / Implemented |
-| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；PPS 已接入时间锁定 / Implemented; PPS consumed for time-lock status |
+| GT-U8 GPS / 北斗定位、RMC 授时、GPS own-ship 兜底 | GT-U8 GPS/BeiDou positioning, RMC time sync, GPS own-ship fallback | 已实现；`pk_clock` 两段式校时（BLE 粗校 + GPS 精校）已接线 / Implemented; `pk_clock` two-stage discipline (BLE coarse + GPS fine) is wired |
 | BMP388 气压高度和升降率，QNH 可调 | BMP388 barometric altitude and vertical speed with adjustable QNH | 已实现 / Implemented |
 | ST7701 480×800 MIPI-DSI 面板，PPA 转为 800×480 横屏，双 DPI buffer | ST7701 480×800 MIPI-DSI panel, PPA-transformed to 800×480 landscape with dual DPI buffers | 已实现 / Implemented |
 | G1000 风格 PFD：姿态、航向/HSI、高度带、GS/VS、ADS-B 数量 | G1000-style PFD: attitude, heading/HSI, altitude tape, GS/VS, ADS-B count | 已实现 / Implemented |
@@ -182,6 +187,14 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 ### 硬件预览 / Hardware Preview
 
+> 下方 PFD / ADS-B LIST / Traffic Radar 为早期实机照片，UI 为当时版本；
+> 当前各页面的最新渲染以本节末尾的模拟器截图为准。设备与扩展板的最新
+> 装机照片待补充。
+>
+> The PFD / ADS-B LIST / Traffic Radar photos below were taken on an early
+> firmware build; the current pages look newer. The latest device and
+> expansion-board assembly photos are pending.
+
 | PFD / Primary Flight Display | ADS-B LIST / Aircraft List |
 |---|---|
 | <img src="images/PFD.jpg" alt="Pilot Kit Box PFD hardware preview" width="360"> | <img src="images/adsb-list.jpg" alt="Pilot Kit Box ADS-B list hardware preview" width="360"> |
@@ -189,6 +202,25 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | 交通雷达 / Traffic Radar | 完整原型 / Finished Prototype |
 |---|---|
 | <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
+
+当前界面（模拟器渲染，英文 UI）与实机同源同一份绘制代码 / Current UI,
+rendered by the simulator from the same drawing code as the device (English UI):
+
+| PFD | Aircraft List |
+|---|---|
+| <img src="images/ui-4.3-pfd.png" alt="Pilot Kit Box PFD (simulated)" width="360"> | <img src="images/ui-4.3-list-en.png" alt="Pilot Kit Box aircraft list (simulated)" width="360"> |
+
+| Traffic Radar | Offline Map |
+|---|---|
+| <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box traffic radar (simulated)" width="360"> | <img src="images/ui-4.3-map-en.png" alt="Pilot Kit Box offline map (simulated)" width="360"> |
+
+| Airband | Recordings |
+|---|---|
+| <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband page (simulated)" width="360"> | <img src="images/ui-4.3-recordings-en.png" alt="Pilot Kit Box recordings page (simulated)" width="360"> |
+
+| Diagnostics | Navigation Grid |
+|---|---|
+| <img src="images/ui-4.3-diag-en.png" alt="Pilot Kit Box diagnostics page (simulated)" width="360"> | <img src="images/ui-4.3-menu-en.png" alt="Pilot Kit Box navigation grid (simulated)" width="360"> |
 
 ### v1 载板与外壳实物 / v1 Carrier Board & Enclosure
 
@@ -227,6 +259,24 @@ board. Legacy EasyEDA sources:
 |---|---|
 | <img src="images/3d-case-finish.jpg" alt="3D printed Pilot Kit Box enclosure" width="360"> | <img src="images/assemble-finish.jpg" alt="Completed Pilot Kit Box prototype" width="360"> |
 
+### 当前 4.3 寸外壳（v4，FDM 打印）/ Current 4.3-inch Enclosure (v4, FDM)
+
+当前外壳为 3D 打印分体结构：主盒 + 顶盖 + GPS 托盘 + 电源按键销，源文件与
+打印/装配说明见
+[`docs/jlc/lcd-4.3in/3d-case/v4/`](docs/jlc/lcd-4.3in/3d-case/v4/README.md)。
+
+The current enclosure is a printed split design: main body + top cap + GPS
+tray + power plungers. Sources and print/assembly instructions live in
+[`docs/jlc/lcd-4.3in/3d-case/v4/`](docs/jlc/lcd-4.3in/3d-case/v4/README.md).
+
+| 装配 / Assembly | 爆炸图 / Exploded |
+|---|---|
+| <img src="images/case-v4-assembly.png" alt="Pilot Kit Box v4 enclosure assembly" width="420"> | <img src="images/case-v4-exploded.png" alt="Pilot Kit Box v4 enclosure exploded view" width="420"> |
+
+| GPS 仓剖面 / GPS bay section |  |
+|---|---|
+| <img src="images/case-v4-gps-section.png" alt="Pilot Kit Box v4 GPS bay cross-section" width="420"> |  |
+
 ### 必备硬件 / Required
 
 | 硬件 | Hardware | 说明 / Notes |
@@ -237,14 +287,14 @@ board. Legacy EasyEDA sources:
 | RTL-SDR FC0013 USB Dongle + OTG 转接头（仅 v1/v2 历史） | RTL-SDR FC0013 USB dongle + OTG adapter (v1/v2 historical only) | 已退役路径的遗留硬件：USB RTL-SDR 支持已从固件与组件树移除，仅旧载板存量用户参考。<br>Legacy hardware of a retired path: USB RTL-SDR support has been removed from the firmware and component tree; kept for reference by legacy v1/v2-carrier users only. |
 | 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接扩展板天线接口；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the expansion board's antenna port; real-world range depends strongly on antenna placement and power noise. |
 | GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
-| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 115200 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；GPIO50 PPS 已被固件消费（1 Hz 快照用于时间锁定状态，授时服务接线为后续任务）。<br>UART1 at 115200 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; the GPIO50 PPS input is consumed by firmware (1 Hz snapshot feeds the time-lock status; time-service wiring remains a follow-up). |
+| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 115200 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；GPIO50 PPS 已被固件消费（1 Hz 快照用于时间锁定状态；校时统一走 `pk_clock`：BLE 粗校兜底、GPS fix 后偏差超阈值精校，GPS 优先于蓝牙）。<br>UART1 at 115200 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; the GPIO50 PPS input is consumed by firmware (1 Hz snapshot feeds the time-lock status; clock discipline goes through `pk_clock` — BLE coarse sync as fallback, GPS fine sync after fix when the offset exceeds threshold, GPS taking priority over Bluetooth). |
 | BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
 
-### 集成扩展板 V4.0（研发中）/ Integrated Expansion Board V4.0 (In Development)
+### 集成扩展板 V4 / Integrated Expansion Board V4
 
 | 正面 / Top | 背面 / Bottom |
 |---|---|
-| <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.0, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.0, bottom side" width="420"> |
+| <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.11, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.11, bottom side" width="420"> |
 
 上面「必备硬件」里的 BNO085、GT-U8 和 BMP388 三个分立模块，正在被一块
 **集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
@@ -272,14 +322,19 @@ tree still carries it).
 | 电源（选贴）| Power (optional) | CH224K PD 诱骗 9V + SY6970 充电/电量计 + SY7069 升压 5V + 单节锂电<br>CH224K PD sink at 9V, SY6970 charger/fuel gauge, SY7069 5V boost, single-cell Li-po |
 | 规模 | Scale | 177 个位置、386 个过孔（全部 ≥0.3 mm 钻孔）<br>177 placements, 386 vias (all ≥0.3 mm drill) |
 
-**状态**：布局布线完成，DRC 零违例、未连通 0，Gerber/钻孔可导出；**尚未打样**。
-板载 IFA 天线已落板但**未经实测调谐**，必须装盒后用 VNA 校准，
-见 [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md)。
+**状态**：布局布线完成，DRC 零违例、未连通 0，Gerber/钻孔可导出；V4.10
+已打样并通过整板 bring-up，V4.11 为 SW3 ECO 新版（见
+[`release/`](hardware/expansion-board-v4/release/) 与该目录 README 的版本表）。
+板载 IFA 天线已落板，装盒后的 VNA 实测与调谐流程见
+[`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md)。
 
 **Status**: layout and routing complete with zero DRC violations and zero
-unconnected nets; Gerbers and drill files export cleanly. **Not yet fabricated.**
-The on-board IFA antenna is laid out but **not empirically tuned** — it requires
-VNA calibration in the final enclosure.
+unconnected nets; Gerbers and drill files export cleanly. V4.10 has been
+fabricated and brought up; V4.11 is the SW3 ECO spin (see the
+[`release/`](hardware/expansion-board-v4/release/) directory and the version
+table in that README). The on-board IFA antenna is laid out — the in-enclosure
+VNA measurement and tuning procedure is documented in
+[`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md).
 
 | 文档 | Document | 内容 / Contents |
 |---|---|---|
@@ -329,12 +384,13 @@ counterpart; see the v4 README for the full index.
 - ESP32-C6-MINI-1 通过 SDIO 作为 Wi-Fi 6 / BLE 5 协处理器；当前固件使用 BLE。
 - MicroSD 卡座已启用；设置页可在 10 MiB LittleFS 与 MicroSD 记录之间切换，并支持卡状态诊断和二次确认格式化。
 - CH343P USB-UART 桥用于 P4 烧录和串口监视。
-- ES8311 音频 codec、麦克风、扬声器功放为板载资源，当前航电路径尚未使用。
+- ES8311 音频 codec、麦克风、扬声器功放为板载资源；扬声器输出已用于 Airband
+  航空电台收听与录音回放。
 
 - The ESP32-C6-MINI-1 is connected over SDIO as the Wi-Fi 6 / BLE 5 co-processor; the current firmware uses BLE.
 - The MicroSD slot is active; Settings can select 10 MiB LittleFS or MicroSD recording, with card diagnostics and guarded formatting.
 - The CH343P USB-UART bridge handles P4 flashing and serial monitoring.
-- The ES8311 codec, microphone, and speaker amplifier are on-board resources, not currently used by the avionics path.
+- The ES8311 codec, microphone, and speaker amplifier are on-board; the speaker output now serves Airband listening and recording playback.
 
 ## 目录结构 / Repository Structure
 
@@ -418,7 +474,9 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - GDL90 Heartbeat 的 `utc_ok` 位尚未随 GPS/BLE 校时状态更新；客户端应以时间戳值为准。
 - Wi-Fi 分发、BLE 配置写特征和 OTA A/B 分区仍是后续工作。
 - GDL90 Ownship Report 需要有效 GPS fix 或编译期配置的本机 ICAO；无有效位置时不会发送可信本机位置。
-- GPIO50 PPS 已由固件消费：PPS GPIO 中断（1 Hz 快照）与时间锁定状态已实现；授时（settimeofday 级）接线仍为后续任务。
+- GPIO50 PPS 已由固件消费：PPS GPIO 中断（1 Hz 快照）与时间锁定状态已实现，
+  系统校时也统一走 `pk_clock`（BLE 粗校 + GPS 精校）；尚未接入的是「PPS/NMEA
+  新鲜度实时参与时钟可信度判定」——`pk_clock_is_synced()` 仍是校过一次即锁定。
 - 当前触摸 UI 没有旧 TARE 十秒工厂重置/DCD 擦除入口。
 
 - The current GT911 firmware consumes only the first contact; five-point gestures are not enabled.
@@ -426,7 +484,7 @@ source ~/.espressif/tools/activate_idf_v6.0.1.sh
 - The GDL90 Heartbeat `utc_ok` bit does not yet follow GPS/BLE clock discipline; clients should use the timestamp value.
 - Wi-Fi distribution, BLE configuration-write characteristics, and OTA A/B partitions remain future work.
 - GDL90 Ownship Report requires a valid GPS fix or a compile-time own-ship ICAO; the firmware does not advertise a trustworthy own position without one.
-- The GPIO50 PPS input is now consumed by firmware: a PPS GPIO interrupt (1 Hz snapshot) and the time-lock status are in place; time discipline at the settimeofday level remains a follow-up.
+- The GPIO50 PPS input is now consumed by firmware: a PPS GPIO interrupt (1 Hz snapshot) and the time-lock status are in place, and system clock discipline goes through `pk_clock` (BLE coarse + GPS fine sync). What remains a follow-up is feeding live PPS/NMEA freshness into the clock-trust decision — `pk_clock_is_synced()` still latches after the first successful sync.
 - The touch UI has no equivalent of the former ten-second TARE factory-reset/DCD-wipe gesture.
 
 ## 致谢 / Credits

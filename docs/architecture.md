@@ -136,7 +136,7 @@ flowchart LR
 | `adsb_lnk`        | 1   | 5    | 8 KiB | Runs the RP2040 UART link (adsb_link codec @ 921600 baud, 256-byte reads): feeds CRC-pre Mode-S frames from the RP2040 front-end into modes_ingest, replies to each HELLO, and carries the former DSP business chain (CPR/track/records/1 Hz dashboard). The RP2040 itself captures dual edges via PIO+DMA and decodes 56/112-bit frames with modes_edge; the USB RTL-SDR task pair (`usb_host_lib`/`sdr`) is retired. |
 | `dsp`             | —   | —    | —     | **RETIRED** — removed with the v1/v2 USB RTL-SDR path (2026-09); see git history. Its decode/dispatch duties live in the RP2040 (`modes_edge`) + `adsb_lnk`/modes_ingest chain. |
 | `rec_file`        | 0   | 3    | 4 KiB | File writer selected at boot from NVS: LittleFS or MicroSD, with LittleFS fallback when the requested card is absent. Keeps the link/decode path off storage writes. |
-| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot); feeding it into the system clock is a follow-up task. |
+| `gps`             | 0   | 4    | 4 KiB | Parses GT-U8 UART1 NMEA (RMC/GGA/GSV/TXT), maintains GPS/BeiDou fix, satellite/SNR and antenna state, and sets time from RMC. GPIO50 PPS is consumed into the `time_locked` status (ISR count + 1 Hz snapshot). Clock discipline goes through `pk_clock`: BLE coarse sync as fallback, GPS fine sync after fix when the offset exceeds threshold, GPS taking priority over Bluetooth; feeding live PPS/NMEA freshness into the clock-trust decision remains a follow-up. |
 | `imu`             | 0   | 5    | 4 KiB | Polls BNO085 rotation-vector reports at 100 Hz, applies software tare, and feeds the PFD / calibration wizard. |
 | `baro`            | 0   | 4    | 4 KiB | Lightweight task: polls BMP388 over I²C0 at ~10 Hz, runs temperature-compensated pressure-to-altitude conversion, computes vertical speed, and writes results into `g_baro_state` (QNH-adjustable). |
 | `sd_detect`       | 0   | 2    | 4 KiB | Probes an absent MicroSD every 3 seconds; checks mounted-card health and refreshes cached capacity every 2 seconds. |
@@ -254,8 +254,9 @@ discard them — the reference Pilot Kit app does.
 ### Carrier-board sensors (GPS / baro / microSD)
 
 Pilot Kit connects a GT-U8 GPS over UART, a BMP388 barometer (I²C0,
-`0x76`), and uses the Rev1.2 board's microSD slot. GPIO50 may be reserved
-for future PPS work, but that path is not implemented.
+`0x76`), and uses the Rev1.2 board's microSD slot. The GPIO50 PPS input is
+consumed into the time-lock status, but PPS-edge timestamp correction is
+not implemented.
 How each slots into the architecture:
 
 - **GPS time sync** (`gps_task.c`) — GPS UTC from RMC seeds `settimeofday()`. GPS is
