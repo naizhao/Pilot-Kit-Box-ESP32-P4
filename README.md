@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="images/system-v4-exploded.png" alt="Pilot Kit Box v4 system exploded view" width="80%">
+  <img src="images/system-v4-exploded.png?v=36f21e68195f" alt="Pilot Kit Box v4 system exploded view" width="80%">
 </p>
 <p align="center">
   <img src="images/ui-4.3-pfd.png" alt="Pilot Kit Box PFD — G1000-style primary flight display" width="49%">
