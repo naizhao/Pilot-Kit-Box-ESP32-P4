@@ -180,6 +180,7 @@ authored in. Tables, part numbers, and net names are identical in both.
 | [`ASSEMBLY_MAP-V4.11.pdf`](ASSEMBLY_MAP-V4.11.pdf) / [`ASSEMBLY_MAP-V4.11-zh_CN.pdf`](ASSEMBLY_MAP-V4.11-zh_CN.pdf) | Color-coded full-board assembly maps (placement semantics, three pages each) | PDF |
 | [`SELECTIVE_PLACEMENT.md`](SELECTIVE_PLACEMENT.md) | Selective-placement groups and **mutex rules** — which parts must never be populated together | EN / 中文 |
 | [`CHECKLIST.md`](CHECKLIST.md) | Per-reference BOM checklist for hand placement (also [.xlsx](CHECKLIST-V4.11.xlsx) / [.pdf](CHECKLIST-V4.11.pdf)) | EN / 中文 |
+| [`web/assembly/`](../../web/assembly/) | **Interactive placement assistant** (browser, Chinese UI): highlights the current designator on the pad map, kitting/changeover cards, group progress and timing; data generated per board revision by `hardware/tools/gen_assembly_web.py` — see that directory's README | 数据随板生成 |
 | [`BOM_PURCHASE-zh_CN.md`](BOM_PURCHASE-zh_CN.md) | Authoritative purchasing list, generated from the netlist | 中文 |
 | [`BOM_IFA_TUNING.md`](BOM_IFA_TUNING.md) | Antenna tuning kit and the VNA procedure | EN / 中文 |
 | [`BASEBOARD_REF.md`](BASEBOARD_REF.md) | Mechanical reference for the Waveshare carrier | EN / 中文 |

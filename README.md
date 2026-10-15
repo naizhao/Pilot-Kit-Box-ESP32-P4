@@ -341,6 +341,7 @@ VNA measurement and tuning procedure is documented in
 | [`PINMAP.md`](hardware/expansion-board-v4/PINMAP.md) | 权威引脚/网络映射 / Authoritative pin and net map |
 | [`ASSEMBLY.md`](hardware/expansion-board-v4/ASSEMBLY.md) | 手工贴片点位清单（脚本从板子生成）/ Hand-assembly placement list, generated from the board |
 | [`CHECKLIST.md`](hardware/expansion-board-v4/CHECKLIST.md) | 按位号贴片核对表（另附 .xlsx/.pdf 打印版）/ Per-reference placement checklist (with printable .xlsx/.pdf) |
+| [`web/assembly/`](web/assembly/) | **贴片助手**（浏览器交互式）：焊盘图高亮当前位号、备料/换料卡、整组推进与计时，覆盖 V3.2 与 V4.5–V4.11 各变体 / **Interactive placement assistant** (browser): pad-map highlight, kitting/changeover cards, per-group progress and timing, covering V3.2 and V4.5–V4.11 variants |
 | [`VARIANTS.md`](hardware/expansion-board-v4/VARIANTS.md) | 带电源 / 不带电源两个选贴版本 / Powered and unpowered assembly variants |
 | [`SELECTIVE_PLACEMENT.md`](hardware/expansion-board-v4/SELECTIVE_PLACEMENT.md) | 贴装分组与互斥规则（贴错会烧板）/ Placement groups and mutex rules |
 | [`BOM_PURCHASE-zh_CN.md`](hardware/expansion-board-v4/BOM_PURCHASE-zh_CN.md) | 权威采购清单（脚本从网表生成）/ Authoritative purchasing list, generated from the netlist |
@@ -405,6 +406,7 @@ counterpart; see the v4 README for the full index.
 | `datafiles/` | `datafiles/` | SD 卡离线数据工作区：`data/` 机型库与航空数据 bin、`maps/` 底图包（内容不进 git，见 `datafiles/README.md`） / microSD offline data workspace: `data/` aircraft and aeronautical binaries, `maps/` basemap packs (contents gitignored, see `datafiles/README.md`) |
 | `docs/` | `docs/` | 构建、协议、架构、用户和硬件文档 / Build, protocol, architecture, user, and hardware docs |
 | `web/flasher/` | `web/flasher/` | ESP Web Tools 网页刷机页面 / ESP Web Tools web flasher |
+| `web/assembly/` | `web/assembly/` | 贴片助手（浏览器交互式手工贴片向导，见上文文档表）/ Interactive browser placement assistant (see doc table above) |
 | `tools/firmware_release/` | `tools/firmware_release/` | 固件发布打包工具 / Firmware release packaging tools |
 
 ## 航空识别数据库 / Aviation Identity Databases
@@ -436,6 +438,7 @@ The box uses three local identity databases so ICAO24 addresses and ADS-B callsi
 | 使用 4.3 寸触摸 UI 和 PFD | Use the 4.3-inch touch UI and PFD | [`docs/user_guide.md`](docs/user_guide.md) | [`docs/user_guide-zh_CN.md`](docs/user_guide-zh_CN.md) |
 | 接 IMU、GPS、BMP388 或 J3 扩展（v1/v2 的 RTL-SDR 路径已退役） | Wire IMU, GPS, BMP388, or J3 expansion (v1/v2 RTL-SDR path retired) | [`docs/hardware/board_pinout.md`](docs/hardware/board_pinout.md) | [`docs/hardware/board_pinout-zh_CN.md`](docs/hardware/board_pinout-zh_CN.md) |
 | 装配 / 复刻 V4 扩展板 | Assemble or replicate the V4 expansion board | [`hardware/expansion-board-v4/README.md`](hardware/expansion-board-v4/README.md) | 同左（各文档附 `-zh_CN.md` 中文版）/ same (each doc has a `-zh_CN.md` counterpart) |
+| 手工贴片时对着屏幕走 | Walk through hand placement on screen | [`web/assembly/`](web/assembly/) | 中文界面；本地 `python3 -m http.server` 打开，见该目录 README |
 | 首次烧 ESP32-C6 slave 固件 | Flash ESP32-C6 slave firmware once | [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md) | [`docs/hardware/c6_slave_firmware-zh_CN.md`](docs/hardware/c6_slave_firmware-zh_CN.md) |
 | 浏览全部文档语言覆盖 | Browse all docs and language coverage | [`docs/README.md`](docs/README.md) | [`docs/README-zh_CN.md`](docs/README-zh_CN.md) |
 
