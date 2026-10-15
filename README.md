@@ -335,13 +335,17 @@ tray + power plungers. Sources and print/assembly instructions live in
 | 硬件 | Hardware | 说明 / Notes |
 |---|---|---|
 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | Rev1.2 一体板：ESP32-P4NRW32、32 MB NOR、32 MB PSRAM、ESP32-C6、ST7701 和 GT911。<br>Rev1.2 integrated board with ESP32-P4NRW32, 32 MB NOR, 32 MB PSRAM, ESP32-C6, ST7701, and GT911. |
+| 集成扩展板 V4.11 | Integrated expansion board V4.11 | 见下节与 [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)；带电源版 / 不带电源版两种选贴。<br>See the next section and [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/); powered and unpowered variants. |
 | USB-C 数据线 | USB-C data cable | 用于 P4 烧录、串口监视和供电；必须是数据线。<br>Used for P4 flashing, serial monitoring, and power; it must support data, not charge-only. |
-| 1090 MHz 前端：v3/v4 RP2040 扩展板 | 1090 MHz front-end: v3/v4 RP2040 expansion board | 板载接收链（QPL9547 LNA + TA0970A SAW + AD8313 + TLV3501）与 RP2040 解码，天线接扩展板天线接口（V4 为板载 ANT1）。<br>Onboard receive chain (QPL9547 LNA + TA0970A SAW + AD8313 + TLV3501) with RP2040 decode; the antenna connects to the expansion board's antenna port (V4: onboard ANT1). |
-| RTL-SDR FC0013 USB Dongle + OTG 转接头（仅 v1/v2 历史） | RTL-SDR FC0013 USB dongle + OTG adapter (v1/v2 historical only) | 已退役路径的遗留硬件：USB RTL-SDR 支持已从固件与组件树移除，仅旧载板存量用户参考。<br>Legacy hardware of a retired path: USB RTL-SDR support has been removed from the firmware and component tree; kept for reference by legacy v1/v2-carrier users only. |
-| 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 接扩展板天线接口；实际接收距离强依赖天线位置和供电噪声。<br>Connects to the expansion board's antenna port; real-world range depends strongly on antenna placement and power noise. |
-| GY-BN008X / BNO085 IMU 模块 | GY-BN008X / BNO085 IMU module | I2C0：SDA GPIO7、SCL GPIO8；RST GPIO28；INT GPIO34（轮询）；AD0 接 GND，地址 `0x4A`。<br>I2C0: SDA GPIO7, SCL GPIO8, RST GPIO28, INT GPIO34 (polled), AD0 grounded for `0x4A`. |
-| GT-U8（ATGM336H）GPS/北斗模块 | GT-U8 (ATGM336H) GPS/BeiDou module | UART1 115200 8N1：P4 TX GPIO49 → 模块 RXD，模块 TXD → P4 RX GPIO51；GPIO50 PPS 已被固件消费（1 Hz 快照用于时间锁定状态；校时统一走 `pk_clock`：BLE 粗校兜底、GPS fix 后偏差超阈值精校，GPS 优先于蓝牙）。<br>UART1 at 115200 8N1: P4 TX GPIO49 to module RXD, module TXD to P4 RX GPIO51; the GPIO50 PPS input is consumed by firmware (1 Hz snapshot feeds the time-lock status; clock discipline goes through `pk_clock` — BLE coarse sync as fallback, GPS fine sync after fix when the offset exceeds threshold, GPS taking priority over Bluetooth). |
-| BMP388 气压计模块 | BMP388 barometer module | I2C0：SDA GPIO7、SCL GPIO8；SDO 接 GND，地址 `0x76`；INT 接 GPIO31 但固件轮询。提供气压高度与升降率。<br>I2C0: SDA GPIO7, SCL GPIO8, SDO grounded for `0x76`; INT wired to GPIO31 but the driver polls. Supplies pressure altitude and vertical speed. |
+| microSD 卡 | microSD card | 飞行轨迹记录、Airband 录音与离线地图都在卡上；建议 Class 10 及以上。<br>Flight tracks, Airband recordings and offline maps live on the card; Class 10 or better recommended. |
+| 1090 MHz ADS-B 天线 | 1090 MHz ADS-B antenna | 默认用板载 IFA，无需外接；强信号需求场景可经 U.FL 外接（J6）。<br>The on-board IFA is the default; an external antenna can be attached via U.FL (J6) when range demands it. |
+
+分立模块（IMU / GPS / 气压计）已全部集成到扩展板上，不再需要单独购买和接线；
+旧 v1/v2 时代的 RTL-SDR dongle + OTG 方案已退役，固件不再包含该代码。
+
+The discrete sensor modules (IMU / GNSS / barometer) are all integrated on the
+expansion board — nothing to buy or wire separately. The legacy v1/v2-era
+RTL-SDR dongle + OTG path is retired and no longer in the firmware.
 
 ### 集成扩展板 V4 / Integrated Expansion Board V4
 
@@ -349,44 +353,49 @@ tray + power plungers. Sources and print/assembly instructions live in
 |---|---|
 | <img src="images/expansion-v4-top.png" alt="Pilot Kit avionics expansion board V4.11, top side" width="420"> | <img src="images/expansion-v4-bottom.png" alt="Pilot Kit avionics expansion board V4.11, bottom side" width="420"> |
 
-上面「必备硬件」里的 BNO085、GT-U8 和 BMP388 三个分立模块，正在被一块
-**集成扩展板**取代。它以 HAT 方式直插 Waveshare 载板的 2×20 排母，
-把接收链、传感器和电源整合到一块 6 层板上，并**自带 1090 MHz 接收链，
-不再需要 RTL-SDR dongle**（该 USB 路径已随 v1/v2 载板退役，固件与组件树
-均不再包含）。工程、文档与制造包在
+上面「必备硬件」里的分立传感器模块，已被 **V4.11 集成扩展板**取代。
+它以 HAT 方式直插 Waveshare 载板的 2×20 排母，把接收链、传感器和电源
+整合到一块 6 层板上，并**自带 1090 MHz 接收链，不再需要 RTL-SDR
+dongle**（该 USB 路径已随 v1/v2 载板退役，固件与组件树均不再包含）。
+工程、文档与制造包在
 [`hardware/expansion-board-v4/`](hardware/expansion-board-v4/)（该目录的
 [README](hardware/expansion-board-v4/README.md) 是双语的）。
 
-The three discrete modules listed under Required Hardware above (BNO085,
-GT-U8, BMP388) are being replaced by a single **integrated expansion
-board**. It stacks onto the Waveshare carrier's 2×20 header as a HAT and folds
-the receive chains, sensors, and power into one 6-layer PCB — including its own
-**1090 MHz receive chain, so no RTL-SDR dongle is needed** (that USB path is
-retired along with the v1/v2 carriers; neither the firmware nor the component
-tree still carries it).
+The discrete sensor modules listed under Required Hardware above have been
+replaced by the **V4.11 integrated expansion board**. It stacks onto the
+Waveshare carrier's 2×20 header as a HAT and folds the receive chains,
+sensors, and power into one 6-layer PCB — including its own **1090 MHz
+receive chain, so no RTL-SDR dongle is needed** (that USB path is retired
+along with the v1/v2 carriers; neither the firmware nor the component tree
+still carries it). Project, docs, and fabrication packages live in
+[`hardware/expansion-board-v4/`](hardware/expansion-board-v4/) (bilingual
+README).
 
 | 项目 | Item | 规格 / Specification |
 |---|---|---|
-| 板框 / 层数 | Outline / layers | 100.1 × 62.1 mm，6 层（JLC06161H-3313），L1→In1 介质 0.0994 mm，50Ω 微带 0.15 mm<br>100.1 × 62.1 mm, 6 layers; 0.0994 mm L1→In1 dielectric, 0.15 mm 50Ω microstrip |
-| 1090 MHz 接收 | 1090 MHz receive | QPL9547 LNA + TA0970A SAW + BGA2817 + AD8313 对数检波 + TLV3501 比较器 → RP2040 PIO 解码<br>QPL9547 LNA, TA0970A SAW, BGA2817, AD8313 log detector, TLV3501 comparator into an RP2040 PIO decoder |
-| 978 MHz UAT | 978 MHz UAT | CC1312R1F3RGZR Sub-GHz 收发器 + 差分 LC 匹配<br>CC1312R1F3RGZR sub-GHz transceiver with differential LC matching |
-| 天线 | Antennas | 板载 1090 IFA（PCB 铜箔，π 网络可调）+ 三个 U.FL 外接口（1090 / 978 / GNSS）<br>On-board 1090 IFA (PCB copper, tunable π network) plus three U.FL ports (1090 / 978 / GNSS) |
-| 传感器 | Sensors | ATGM336H-6N-74 GNSS、BNO085 IMU、BMP388 气压计、QMC5883P 磁力计<br>ATGM336H-6N-74 GNSS, BNO085 IMU, BMP388 barometer, QMC5883P magnetometer |
-| 电源（选贴）| Power (optional) | CH224K PD 诱骗 9V + SY6970 充电/电量计 + SY7069 升压 5V + 单节锂电<br>CH224K PD sink at 9V, SY6970 charger/fuel gauge, SY7069 5V boost, single-cell Li-po |
-| 规模 | Scale | 177 个位置、386 个过孔（全部 ≥0.3 mm 钻孔）<br>177 placements, 386 vias (all ≥0.3 mm drill) |
+| 板框 / 层数 | Outline / layers | 100.1 × 62.1 mm，6 层（JLC06161H-3313）<br>100.1 × 62.1 mm, 6 layers (JLC06161H-3313) |
+| 1090 MHz 接收 | 1090 MHz receive | LNA + SAW + 对数检波 + 比较器 → RP2040 PIO 解码<br>LNA, SAW, log detector, comparator into an RP2040 PIO decoder |
+| 978 MHz UAT | 978 MHz UAT | Sub-GHz 收发器 + 差分 LC 匹配<br>Sub-GHz transceiver with differential LC matching |
+| 航空电台接收 | Airband RX | 118–137 MHz AM 接收 + 24-bit I²S 采集（仅收音，无发射）<br>118–137 MHz AM receiver with 24-bit I²S capture (receive only, no TX) |
+| 天线 | Antennas | 板载 1090 IFA（π 网络可调）+ 四个 U.FL 外接口（1090 / 978 / GNSS / 航空电台）<br>On-board 1090 IFA (tunable π network) plus four U.FL ports (1090 / 978 / GNSS / airband) |
+| 传感器 | Sensors | 四星座 GNSS（内置 patch / 外接可切）、BNO085 IMU、气压计、磁力计<br>4-constellation GNSS (internal patch / external switchable), IMU, barometer, magnetometer |
+| 电源（选贴）| Power (optional) | USB-PD 诱骗 9V + 充电/电量计 + 升压 5V + 单节锂电<br>USB-PD sink at 9 V, charger/fuel gauge, 5 V boost, single-cell Li-po |
+| 规模 | Scale | 231 个位号 + 4 安装孔、506 个过孔、1952 段走线（无 MARK 点）<br>231 placements + 4 mounting holes, 506 vias, 1952 track segments (no MARK/fiducials) |
 
-**状态**：布局布线完成，DRC 零违例、未连通 0，Gerber/钻孔可导出；V4.10
-已打样并通过整板 bring-up，V4.11 为 SW3 ECO 新版（见
-[`release/`](hardware/expansion-board-v4/release/) 与该目录 README 的版本表）。
-板载 IFA 天线已落板，装盒后的 VNA 实测与调谐流程见
+**状态**：**V4.11 已打板并通过整机测试**（当前版本；带电源版 176 件
+SMT + 43 件手贴已核对）。历史版本 V4.10 亦完成整板 bring-up；SW3 检测
+ECO 已在 V4.11 固化。制造包与版本表见
+[`release/`](hardware/expansion-board-v4/release/)；板载 IFA 装盒后的
+VNA 实测与调谐流程见
 [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md)。
 
-**Status**: layout and routing complete with zero DRC violations and zero
-unconnected nets; Gerbers and drill files export cleanly. V4.10 has been
-fabricated and brought up; V4.11 is the SW3 ECO spin (see the
-[`release/`](hardware/expansion-board-v4/release/) directory and the version
-table in that README). The on-board IFA antenna is laid out — the in-enclosure
-VNA measurement and tuning procedure is documented in
+**Status**: **V4.11 fabricated and verified on the full stack** (current
+version; the powered variant's 176 SMT + 43 hand placements are checked
+off). The earlier V4.10 also completed a full-board bring-up, and the
+validated SW3 sensing ECO is frozen into V4.11. Fabrication packages and
+the version table live in
+[`release/`](hardware/expansion-board-v4/release/); the in-enclosure VNA
+measurement and tuning procedure for the on-board IFA is documented in
 [`BOM_IFA_TUNING.md`](hardware/expansion-board-v4/BOM_IFA_TUNING.md).
 
 | 文档 | Document | 内容 / Contents |
@@ -427,11 +436,10 @@ counterpart; see the v4 README for the full index.
 | 硬件 | Hardware | 说明 / Notes |
 |---|---|---|
 | USB-UART 转接器 | USB-UART adapter | 每块新 Waveshare 板首次烧 ESP32-C6 hosted slave 固件时需要；详见 [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md)。<br>Required once per fresh Waveshare board to flash the ESP32-C6 hosted slave firmware; see [`docs/hardware/c6_slave_firmware.md`](docs/hardware/c6_slave_firmware.md). |
-| 杜邦线 / 短接线 | Jumper wires / shorting wire | 连接 IMU/GPS/BMP388，以及 C6 首次烧录时把 P1-3 IO9 短接到 GND。<br>Used for IMU/GPS/BMP388 wiring and shorting P1-3 IO9 to GND during first-time C6 flashing. |
+| 杜邦线 / 短接线 | Jumper wires / shorting wire | C6 首次烧录时把 P1-3 IO9 短接到 GND。<br>For shorting P1-3 IO9 to GND during first-time C6 flashing. |
+| 3.7V 4000mAh 锂电池 | 3.7V 4000mAh lithium battery | 便携版本的标准电池；整机实测平均功耗约 606 mA，续航 5 小时以上。<br>The standard battery for portable builds; measured average draw is about 606 mA, giving 5+ hours of runtime. |
 | 5V 2A / 2.4A Type-C 口充电模块 | 5V 2A / 2.4A Type-C charging module | 电池供电版本使用；给系统提供稳定 5V 输入。<br>Used in battery-powered builds to provide a stable 5V system input. |
-| 3.7V 10000mAh 锂电池 | 3.7V 10000mAh lithium battery | 便携版本的电源选项；容量可按外壳和续航目标调整。<br>Portable power option; capacity can be adjusted for enclosure size and endurance target. |
-| 5 V 外部供电 | External 5 V power | 1090 MHz 接收链（LNA 偏置 + RP2040 扩展板）功耗数百 mA，电脑 USB 口供电不稳时建议使用更可靠供电。<br>The 1090 MHz receive chain (LNA bias + RP2040 expansion board) draws a few hundred mA; use a reliable 5V supply if a computer USB port is unstable. |
-| 外壳、支架、屏蔽和固定件 | Enclosure, mounts, shielding, fixtures | 当前仓库主要维护固件和接线文档，机械结构可按实际安装补充。<br>This repository mainly maintains firmware and wiring docs; mechanical parts should be adapted to the actual installation. |
+| 外壳、支架、屏蔽和固定件 | Enclosure, mounts, shielding, fixtures | 当前外壳的源文件与打印/装配说明见 [`docs/jlc/lcd-4.3in/3d-case/v4/`](docs/jlc/lcd-4.3in/3d-case/v4/README.md)。<br>Sources and print/assembly instructions for the current enclosure live in [`docs/jlc/lcd-4.3in/3d-case/v4/`](docs/jlc/lcd-4.3in/3d-case/v4/README.md). |
 
 ### 板载资源 / On-board Resources
 
