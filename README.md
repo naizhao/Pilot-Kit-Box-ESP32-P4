@@ -14,6 +14,9 @@
   <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box 360-degree traffic radar" width="49%">
   <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband radio with recording playback" width="49%">
 </p>
+<p align="center">
+  <img src="images/system-v4-exploded.png" alt="Pilot Kit Box v4 system exploded view" width="80%">
+</p>
 
 **一块扩展板，一整套航空电子**：G1000 风格 PFD、360° 交通雷达、离线
 航空地图（机场/导航台/FIX 叠加层）、航空电台收听与录音回放——中英
@@ -53,14 +56,13 @@ over both Bluetooth and Wi-Fi for phones and EFBs.
   work only, the radio hardware is already on board
 - 🛩️ 已与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
   Already works with EFBs such as Garmin Pilot and ForeFlight
-- 📼 **飞行轨迹记录，项目的起点**。1 Hz 逐秒记录本机位置与飞行相位，
-  周边 ADS-B 目标与原始报文同步落盘；microSD 约 1 GiB 轮转保留，飞得多
-  也不用天天清卡；换卡自动开新段，时间戳由 GNSS 授时保持准确<br>
-  **Flight track logging — where this project started.** Own position and
-  flight phase sampled at 1 Hz, with surrounding ADS-B targets and raw
-  frames written alongside; ~1 GiB rotating retention on microSD means no
-  daily card clearing, and swapping a card starts a new session with
-  GNSS-disciplined timestamps
+- 📼 **飞行轨迹记录**。轨迹与周边飞机数据保存到 SD 卡，dump1090 兼容
+  格式，拔卡即读、随时导出；可回放自己的航线与当时的空域，配合
+  Pilot Kit App 做飞行日志、复盘与分享<br>
+  **Flight track logging.** Track and nearby traffic saved to the SD card
+  in a dump1090-compatible format — pull the card, read it anywhere.
+  Replay your route and the airspace around it, and pair with the Pilot
+  Kit app for logbooks, review and sharing
 - 🖥️ **4.3 寸触摸屏，开机即用**。所有仪表直接画在板上 800×480 屏上，
   触摸切换页面，不需要掏手机就能看全景<br>
   **4.3-inch touchscreen, works out of the box.** Every instrument renders
