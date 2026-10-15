@@ -34,13 +34,10 @@
 | `case-ceramic-2mm.stl` | 118.5×90.68×29.15 |
 | `case-ceramic-4mm.stl` | 118.5×92.68×29.15 |
 
-推荐从脚本导出，需本机已安装 OpenSCAD、Python 3 和原流程使用的 admesh。示例输出目录必须尚不存在，脚本不会覆盖已有打印件：
+推荐从脚本导出，需本机已安装 OpenSCAD、Python 3 和原流程使用的 admesh。在本目录（`3d-case/`）下执行；示例输出目录必须尚不存在，脚本不会覆盖已有打印件：
 
 ```bash
-/Applications/ServBay/package/python/3.13/current/bin/python3 \
-  /Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/docs/jlc/lcd-4.3in/3d-case/export_a1mini.py \
-  --output /Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/outputs/case-a1mini-new \
-  --images
+python3 export_a1mini.py --output /absolute/path/to/case-a1mini-new --images
 ```
 
 脚本分别导出贴片版、两款陶瓷版、无内置 GPS 版、按键销及转接板，并写入日志和 `mesh-report.json`。遇到 OpenSCAD 错误、警告、破面、绕序冲突、错误连通数或尺寸超过 180 mm 会停止；三角面通过检查后，沿用 admesh 校正 STL 存储法线，再次核验网格。输出包围盒检查不包含切片时另加的裙边/底边。
@@ -80,13 +77,11 @@ USB、SW3、D8/D9 在右侧；三个 SMA 在顶部靠背板的接口区，通过
 ## 自动验证
 
 ```bash
-/Applications/ServBay/package/python/3.13/current/bin/python3 -m unittest discover \
-  -s /Users/samwu/hosts/Pilot-Kit-Box-ESP32-P4/docs/jlc/lcd-4.3in/3d-case \
-  -p 'test_*.py' -v
+python3 -m unittest discover -s docs/jlc/lcd-4.3in/3d-case -p 'test_*.py' -v
 ```
 
 测试运行真实 OpenSCAD，读取实际 PCB 坐标，对导出网格采样验证孔道与实体，不依赖 SCAD 中出现某个关键词。
 
 ## 分体顶部 v4
 
-分体顶部已另存为 `pilot-kit-box-43-base-v4.scad`，本说明对应的原版SCAD保持不变。v4的最终STL、预览和安装参数集中在 [v4目录](v4/README.md)；旧研究草稿和中间输出已移出项目。
+分体顶部另存为 `pilot-kit-box-43-base-v4.scad`，与本说明对应的一体版并行维护：两份 SCAD 都按 v4.11 扩展板参数校准，但打印流程与装配结论互不通用。v4 的最终 STL、预览和安装参数集中在 [v4目录](v4/README.md)。
