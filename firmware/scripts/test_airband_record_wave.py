@@ -30,7 +30,16 @@ for path in files:
         pcm = wav.readframes(wav.getnframes())
         assert len(pcm) == wav.getnframes()*2 == path.stat().st_size-44, path
         assert any(pcm), f'mute erased recording: {path}'
-recovered = directory/'s0000000999-c121500-f121500000-0000000001-interrupted.wav'
-with wave.open(str(recovered),'rb') as wav:
-    assert wav.readframes(3) == b'\xd2\x04\xd3\x04\xd4\x04'
+part = directory/'s0000000999-c121500-f121500000-0000000001.part.wav'
+expected = (b'RIFF'+(36).to_bytes(4,'little')+b'WAVEfmt '+(16).to_bytes(4,'little')+
+    b'\x01\x00\x01\x00'+(16000).to_bytes(4,'little')+(32000).to_bytes(4,'little')+
+    b'\x02\x00\x10\x00data'+bytes(4)+b'\xd2\x04\xd3\x04\xd4\x04\xff')
+assert part.read_bytes() == expected, part
+for session in (999,1000,1001):
+    pending = directory/f's{session:010d}-c121500-f121500000-0000000001.part.wav'
+    assert pending.exists(), pending
+    assert not pending.with_name(pending.name[:-9]+'-interrupted.wav').exists(), pending
+    if session != 999:
+        data = bytearray(expected[:-1]); data[4:8] = (42 if session==1000 else 99).to_bytes(4,'little'); data[40:44] = (6).to_bytes(4,'little')
+        assert pending.read_bytes() == data, pending
 print(f'OK: Python wave independently parsed {len(files)} actual recorder files; artifacts: {out}, {directory}')

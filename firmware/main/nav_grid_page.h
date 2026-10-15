@@ -167,6 +167,19 @@ int pk_nav_page_first(int page);
 /* 某一页实放几项（第 2 页只有 3 项，不是塞满的 8 项）。 */
 int pk_nav_page_count(int page);
 
+/* 导航格标签的自适应字号。调用方传入同一文本在 L/M 两档的实际像素宽度，
+ * 返回能完整落在可用宽度内的最大档；M 仍放不下时退到 S，由上层保留
+ * 完整文案而不是静默截断。枚举顺序不等同于 pk_aa_size_t，保持本纯函数头
+ * 无字体/IDF 依赖。 */
+typedef enum {
+    PK_NAV_LABEL_LARGE = 0,
+    PK_NAV_LABEL_MEDIUM,
+    PK_NAV_LABEL_SMALL,
+} pk_nav_label_size_t;
+
+pk_nav_label_size_t pk_nav_label_fit(int width_large, int width_medium,
+                                     int available_width);
+
 /* 某一项能不能点。未实现的页面（记录/工具）先置灰占位而不是从版面拿掉——
  * 格子位置要永久钉死，将来补上这两个页面时版面一个数都不用改（产品负责人
  * 2026-08-02 定）。越界 index 一律当不可用。 */

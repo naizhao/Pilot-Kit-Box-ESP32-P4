@@ -76,7 +76,15 @@ int pk_nav_page_count(int page)
     return page ? (PK_NAV_ITEM_CNT - PK_NAV_PAGE1_CNT) : PK_NAV_PAGE1_CNT;
 }
 
-/* index 5「记录」（飞行记录页）、index 6「工具」（工具页）尚未实现——
+pk_nav_label_size_t pk_nav_label_fit(int width_large, int width_medium,
+                                     int available_width)
+{
+    if (width_large <= available_width) return PK_NAV_LABEL_LARGE;
+    if (width_medium <= available_width) return PK_NAV_LABEL_MEDIUM;
+    return PK_NAV_LABEL_SMALL;
+}
+
+/* index 6「工具」（工具页）尚未实现——
  * 不是设计上永久禁用，是版面先钉死等实现跟上（产品负责人 2026-08-02 定，
  * 见 nav_grid_page.h 文件头）。做出来之后把这两个 case 删掉即可，其余项
  * 一律可点。越界 index（<0 或 >=PK_NAV_ITEM_CNT）一律当不可用，调用方
@@ -85,7 +93,6 @@ bool pk_nav_item_enabled(int index)
 {
     if (index < 0 || index >= PK_NAV_ITEM_CNT) return false;
     switch (index) {
-    case 5: /* 记录：飞行记录页还没写 */
     case 6: /* 工具：工具页还没写 */
         return false;
     default:
@@ -207,6 +214,7 @@ pk_nav_poweroff_outcome_t pk_nav_poweroff_outcome(bool vbus_present,
 #include "pfd_layout.h"
 #include "apt_detail_page.h"   /* pk_ui_fab_sync —— FAB 显隐的唯一入口 */
 #include "airband_page.h"
+#include "airband_recordings_page.h"
 #include "pk_ui_nav.h"
 #include "search_page.h"
 #include "ui_state.h"
@@ -304,6 +312,7 @@ _Static_assert(PWR_X0 - PWR_PAD >= 0 &&
 
 /* 图标与标签之间的间距，以及分页点的直径 / 点距（proto.c 的 render_c）。 */
 #define NAV_ICON_GAP   10
+#define NAV_LABEL_PAD  16
 #define NAV_DOT_D      12
 #define NAV_DOT_PITCH  26
 
@@ -329,7 +338,7 @@ static const nav_item_t ITEMS[] = {
     { PK_NAVICON_MAP,    PK_TR_NAV_MAP,      PK_UI_MODE_MAP       },
     { PK_NAVICON_LIST,   PK_TR_NAV_LIST,     PK_UI_MODE_ADSB_LIST },
     { PK_NAVICON_SEARCH, PK_TR_NAV_SEARCH,   MODE_NONE            },
-    { PK_NAVICON_REC,    PK_TR_NAV_LOGBOOK,  MODE_NONE            },
+    { PK_NAVICON_REC,    PK_TR_NAV_LOGBOOK,  PK_UI_MODE_AIRBAND_RECORDINGS },
     { PK_NAVICON_TOOL,   PK_TR_NAV_TOOLS,    MODE_NONE            },
     { PK_NAVICON_RADIO,  PK_TR_APTD_AIRBAND, PK_UI_MODE_AIRBAND   },
     /* ── 第 2 页：地面才碰的 ── */
@@ -455,8 +464,8 @@ static void draw_cell(uint16_t *fb, int x, int y, const nav_item_t *it,
 
     /* 图标与标签作为一个整体在格内垂直居中：图标高 + 间距 + 字高。
      * 不是"图标居中、标签往下塞"——那样整组的视觉重心会偏上。 */
-    const int lh    = pk_aa_cell_h(PK_AA_L);
-    const int total = PK_NAVICON_H + NAV_ICON_GAP + lh;
+    const int label_slot_h = pk_aa_cell_h(PK_AA_L);
+    const int total = PK_NAVICON_H + NAV_ICON_GAP + label_slot_h;
     const int top   = y + (h - total) / 2;
 
     draw_icon(fb, cx, top + PK_NAVICON_H / 2, it->icon, color);
@@ -464,10 +473,20 @@ static void draw_cell(uint16_t *fb, int x, int y, const nav_item_t *it,
     /* 宽度必须走 pk_aa_text_width：strlen × cell_w 数的是字节，一个汉字
      * 3 字节却只画一个字形，中文标签会被推到格子左边去。 */
     const char *label = pk_i18n_text((pk_tr_id_t)it->label);
-    const int   tw    = pk_aa_text_width(label, PK_AA_L);
+    const int avail = w - NAV_LABEL_PAD * 2;
+    const pk_nav_label_size_t tier = pk_nav_label_fit(
+        pk_aa_text_width(label, PK_AA_L),
+        pk_aa_text_width(label, PK_AA_M), avail);
+    const pk_aa_size_t size = tier == PK_NAV_LABEL_LARGE ? PK_AA_L
+                                : tier == PK_NAV_LABEL_MEDIUM ? PK_AA_M
+                                                              : PK_AA_S;
+    const int tw = pk_aa_text_width(label, size);
+    /* 降档只改变文字本身，不改变图标或整组的重心：把 M/S 垂直居中在原来的
+     * L 高度标签槽里。否则只有长标签的图标会比相邻格低 5~8 px。 */
+    const int label_y = top + PK_NAVICON_H + NAV_ICON_GAP +
+                        (label_slot_h - pk_aa_cell_h(size)) / 2;
     pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               cx - tw / 2, top + PK_NAVICON_H + NAV_ICON_GAP,
-               label, color, PK_AA_L);
+               cx - tw / 2, label_y, label, color, size);
 }
 
 /*
@@ -937,6 +956,8 @@ static void activate_item(int index)
     if (ITEMS[index].mode >= 0) {
         if ((pk_ui_mode_t)ITEMS[index].mode == PK_UI_MODE_AIRBAND)
             pk_airband_page_open();
+        if ((pk_ui_mode_t)ITEMS[index].mode == PK_UI_MODE_AIRBAND_RECORDINGS)
+            pk_airband_recordings_page_open();
         pk_ui_set_mode((pk_ui_mode_t)ITEMS[index].mode);
     } else if (ITEMS[index].label == PK_TR_NAV_SEARCH) {
         /*

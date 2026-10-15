@@ -56,6 +56,8 @@ typedef enum {
      * 只能从设置页点进来、用页内「返回」退出。它是调试工具，不该出现在
      * 日常轮播里被误入。 */
     PK_UI_MODE_ANT_ADV,
+    /* 追加在末尾，避免改变既有 mode 的数值（模拟器/诊断脚本曾传裸枚举值）。 */
+    PK_UI_MODE_AIRBAND_RECORDINGS, /* microSD 航空电台录音浏览与回放 */
 } pk_ui_mode_t;
 
 /* Initialise the UI state mutex. Must be called once before the
@@ -240,7 +242,7 @@ void     pk_ui_clear_own_icao(void);
  * follows the active language) and an error flag (true → red banner,
  * false → green). The PFD render loop polls pk_ui_toast_get() once per
  * frame and overlays the banner on top of whichever page is showing
- * until the ~1.5 s window elapses.
+ * until the display window elapses (normally 1.5 s, playback notice 8 s).
  */
 void pk_ui_toast_show(pk_tr_id_t id, bool is_error);
 bool pk_ui_toast_get(pk_tr_id_t *out_id, bool *out_error);
@@ -253,7 +255,7 @@ bool pk_ui_ready(void);
  * 用，阶段 5b：ADS-B 数据持久化设计（内部文档）
  * 「告警呈现」节，评审要求"复用现有实现、闪 3 次、不阻断飞行"）。
  *
- * blink_times<=0 等价于 pk_ui_toast_show()：不闪、固定 1.5 s。blink_times>0
+ * blink_times<=0 等价于 pk_ui_toast_show()：不闪、通常 1.5 s，回放说明 8 s。blink_times>0
  * 时时长改为 blink_times × 800 ms（400 ms 一拍，一亮一灭算一次"闪"）——
  * 不能沿用固定 1.5 s：3 次闪需要 2.4 s，toast 会在闪完前就被 1.5 s 的老
  * 生命周期收起。闪烁相位由 pk_ui_toast_blink_visible() 逐帧给出，

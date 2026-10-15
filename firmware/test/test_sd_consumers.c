@@ -3,7 +3,8 @@
  * cc -std=c11 -Wall -Wextra -Werror -O2 -pthread -D_DEFAULT_SOURCE \
  * -I firmware/test/record_stubs -I firmware/test/host_stubs -I firmware/main \
  * -I firmware/components/adsb_link_codec -I firmware/rp2040 \
- * -o /tmp/test_sd_consumers firmware/test/test_sd_consumers.c -lm \
+ * -o /tmp/test_sd_consumers firmware/test/test_sd_consumers.c \
+ * firmware/main/pk_sd_transaction_safety.c -lm \
  * && /tmp/test_sd_consumers
  */
 #include <stdio.h>

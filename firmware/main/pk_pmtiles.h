@@ -154,8 +154,35 @@ void pk_pmtiles_close(pk_pmtiles_t *pm);
  * spec 原文注明）。 */
 uint64_t pk_pmtiles_zxy_to_tileid(uint8_t z, uint32_t x, uint32_t y);
 
+/* 查找 (z,x,y) 对应瓦片的三态结果（2026-10-01 调查 §8.2 C3）。
+ *
+ * 为什么不能只用 bool：目录 entries 的 calloc / 目录段的 raw malloc 失败
+ * （内存紧张）与"目录里确实没有这块瓦片"返回同一个 false，上层把它当
+ * "确认缺失"钉进 30s 负缓存——PSRAM 吃紧时整片区域被误判成数据缺失。
+ * 三态把"资源不足，可重试"从"未找到"里拆出来：
+ *   FOUND           命中，*out 已写；
+ *   NOT_FOUND       目录可读但没有这个 tile_id（含越界）——维持旧"未找到"语义；
+ *   RESOURCE_ERROR  目录自身没读出来且原因是内存不足（分配失败）——上层应按
+ *                   瞬时失败退避，绝不能进 30s 负缓存。
+ * 读盘失败仍属于 NOT_FOUND 通道：它由 pm->io_error 粘滞标记 + 调用方
+ * reopen（pk_pmtiles_reopen_file）那条独立机制转成瞬时重试，不归这里管。
+ *
+ * 线程模型：同下（本模块不加锁，由调用方锁保护）。 */
+typedef enum {
+    PK_PMTILES_FIND_FOUND = 0,
+    PK_PMTILES_FIND_NOT_FOUND,
+    PK_PMTILES_FIND_RESOURCE_ERROR,
+} pk_pmtiles_find_status_t;
+
+pk_pmtiles_find_status_t pk_pmtiles_find_tile_status(pk_pmtiles_t *pm, uint8_t z,
+                                                      uint32_t x, uint32_t y,
+                                                      pk_pmtiles_tile_loc_t *out);
+
 /* 查找 (z,x,y) 对应瓦片，命中写 *out（tile_data 段内 offset+length）并返回
  * true；越界/未命中（含目录里干脆没有这个 tile_id）返回 false。
+ * 旧公共 API：等价于 pk_pmtiles_find_tile_status(...) == FOUND——
+ * RESOURCE_ERROR 也返回 false（保持旧语义以缩小调用面），需要区分的调用方
+ * （pk_tile_loader）请用三态版。
  *
  * 线程模型：本模块不加锁，pm->leaf_cache 的读写（含 LRU 淘汰）与其余状态
  * 一样由调用方自己的锁保护——真机 fetch/scan 路径都在 pk_tile_loader.c 的

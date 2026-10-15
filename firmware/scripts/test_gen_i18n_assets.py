@@ -132,6 +132,33 @@ class I18nAssetGeneratorTest(unittest.TestCase):
         self.assertIn("无法判定", strings["DIAG_V_ANT_OPEN"]["zh"])
         self.assertIn("indeterminate", strings["DIAG_V_ANT_OPEN"]["en"].lower())
 
+    def test_recordings_page_has_complete_bilingual_state_vocabulary(self) -> None:
+        strings = dict(i18n_catalog.STRINGS)
+        required = {
+            "RECORDINGS_TITLE", "RECORDINGS_CURRENT", "RECORDINGS_INTERRUPTED",
+            "RECORDINGS_EMPTY", "RECORDINGS_SCANNING", "RECORDINGS_SD_MISSING",
+            "RECORDINGS_SCAN_ERROR", "RECORDINGS_MEMORY_ERROR",
+            "RECORDINGS_CATALOG_UNAVAILABLE",
+            "RECORDINGS_PLAYBACK_UNAVAILABLE",
+            "RECORDINGS_SEQUENCE_FORMAT", "RECORDINGS_RF_FORMAT",
+            "RECORDINGS_PAUSED_LIVE", "RECORDINGS_PAUSED_PRESSURE",
+            "RECORDINGS_PLAYBACK_NOTICE", "RECORDINGS_INVALID_FORMAT",
+        }
+        self.assertTrue(required <= strings.keys(), required - strings.keys())
+        for key in required:
+            self.assertEqual(set(strings[key]), {"en", "zh"})
+            self.assertTrue(strings[key]["en"])
+            self.assertTrue(strings[key]["zh"])
+
+    def test_airband_display_name_uses_requested_case(self) -> None:
+        strings = dict(i18n_catalog.STRINGS)
+        self.assertEqual(strings["APTD_AIRBAND"]["en"], "Airband")
+        for key in ("AIRBAND_FREQ_INVALID", "RECORDINGS_TITLE",
+                    "RECORDINGS_EMPTY", "RECORDINGS_PAUSED_LIVE"):
+            with self.subTest(key=key):
+                self.assertIn("Airband", strings[key]["en"])
+                self.assertNotIn("AIRBAND", strings[key]["en"])
+
     def test_every_text_id_has_every_language(self) -> None:
         for text_id, translations in i18n_catalog.STRINGS:
             with self.subTest(text_id=text_id):

@@ -15,7 +15,6 @@
 #include "esp_log.h"
 
 #include "apt_detail_page.h"
-#include "adsb_list.h"
 #include "config_fab.h"
 #include "i18n_catalog.h"
 #include "imu_task.h"
@@ -123,15 +122,15 @@ void pk_map_page_on_apt_detail(uint32_t apt_idx)
 }
 
 /*
- * 地图上点中 ADS-B 目标 —— map_page.c 里弱符号 pk_map_page_on_aircraft_detail
- * 的强实现。切到列表页并展开该目标的详情抽屉；详情内容（呼号/机型/注册号/
- * 高度/速度/绑定为本机）完全复用列表页现成的抽屉，零新 UI。
+ * 地图上点中 ADS-B 目标 —— 已删除（2026-10-03）。
+ *
+ * 此前这里跳 ADS-B 列表页展开抽屉：产品形态改为地图页**原地**开关详情
+ * 抽屉（adsb_drawer.c，与列表页共用同一实现），那是页内 UI 而不是页面
+ * 跳转，归 map_page 自己，不再经过导航宿主。顺带消灭了这条路径上的
+ * 导航卡死：map_page.c 的 touch_up 曾因跳页后的提前 return 漏清按压态，
+ * 触摸驱动每次松手都无条件回调 touch_up，残留按压态把任何一次导航点击
+ * 都拽回列表页，只有重启能解。详见 map_page.c touch_up 里的事故注释。
  */
-void pk_map_page_on_aircraft_detail(uint32_t icao24)
-{
-    pk_adsb_list_focus_icao(icao24);
-    pk_ui_set_mode(PK_UI_MODE_ADSB_LIST);
-}
 
 /*
  * 地图页左上那枚「回结果列表」—— map_page.c 里两个弱符号的强实现。

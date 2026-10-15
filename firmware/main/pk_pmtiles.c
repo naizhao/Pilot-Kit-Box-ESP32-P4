@@ -29,6 +29,18 @@ static const char *TAG = "pk_pmtiles";
  * 同时防corrupt/循环数据把我们拖进死循环。 */
 #define PK_PMTILES_MAX_DIR_DEPTH 8
 
+/* 目录装载失败的内部分类（2026-10-01 调查 §8.2 C3）：
+ *   FAIL —— 数据损坏/不合法/读盘失败（io_error 已另行置位）。维持旧"未找到"
+ *           语义：IO 故障由 io_error → reopen 那条独立通道转成瞬时重试
+ *           （见 pk_tile_loader reopen_faulted_packs），损坏数据重试无意义；
+ *   OOM  —— entries calloc / 目录段或解压器 malloc 失败：内存紧张是瞬态，
+ *           绝不等于"瓦片不存在"，上层必须走短退避而不是 30s 负缓存。 */
+typedef enum {
+    PK_PM_DIR_OK = 0,
+    PK_PM_DIR_FAIL,
+    PK_PM_DIR_OOM,
+} pk_pm_dir_status_t;
+
 /* ---------------------------------------------------------------- 读盘 */
 
 static bool read_at(pk_pmtiles_t *pm, uint64_t off, void *buf, size_t len)
@@ -47,19 +59,19 @@ static uint32_t rd_le32(const uint8_t *p)
 /* 解一段 gzip 容器：跳过头部可选字段，找到 raw deflate 数据区，用尾部
  * ISIZE（解压后长度模 2^32，PMTiles 目录体量下足够）预分配输出缓冲，交给
  * tinfl 一把梭解开。成功时 *out 是 malloc 出来的 *out_len 字节，调用方负责
- * free；失败返回 false，*out 不变。 */
-static bool gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t *out_len)
+ * free；返回目录装载状态（分配失败 = OOM，数据坏 = FAIL，见 pk_pm_dir_status_t）。 */
+static pk_pm_dir_status_t gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t *out_len)
 {
     /* 最短合法 gzip：10B 头 + 2B 空 deflate block + 8B 尾。 */
     if (in_len < 20 || in[0] != 0x1f || in[1] != 0x8b || in[2] != 8) {
         PK_PM_LOGE("gzip: bad magic/method (len=%zu)", in_len);
-        return false;
+        return PK_PM_DIR_FAIL;
     }
     uint8_t flg = in[3];
     size_t pos = 10;
 
     if (flg & 0x04) { /* FEXTRA */
-        if (pos + 2 > in_len) return false;
+        if (pos + 2 > in_len) return PK_PM_DIR_FAIL;
         uint16_t xlen = (uint16_t)(in[pos] | (in[pos + 1] << 8));
         pos += 2 + xlen;
     }
@@ -76,7 +88,7 @@ static bool gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t
     }
     if (pos + 8 > in_len) {
         PK_PM_LOGE("gzip: header overruns buffer (pos=%zu len=%zu)", pos, in_len);
-        return false;
+        return PK_PM_DIR_FAIL;
     }
 
     size_t deflate_start = pos;
@@ -87,15 +99,15 @@ static bool gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t
         /* 空目录理论上不会出现（open 时至少有 1 个 entry），但別把 0 当错误，
            给个最小 1 字节缓冲让 tinfl 走一遍，避免 malloc(0) 的实现定义行为。 */
         *out = malloc(1);
-        if (!*out) return false;
+        if (!*out) return PK_PM_DIR_OOM;
         *out_len = 0;
-        return true;
+        return PK_PM_DIR_OK;
     }
 
     uint8_t *outbuf = malloc(isize);
     if (!outbuf) {
         PK_PM_LOGE("gzip: OOM allocating %u bytes", isize);
-        return false;
+        return PK_PM_DIR_OOM;
     }
     /* 不能用 tinfl_decompress_mem_to_mem：它把 ~11KB 的 tinfl_decompressor
        放在调用方栈上（ROM 实现同样），真机 main/loader 任务栈直接打穿
@@ -104,7 +116,7 @@ static bool gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t
     if (!decomp) {
         PK_PM_LOGE("gzip: OOM allocating decompressor (%zu bytes)", sizeof(tinfl_decompressor));
         free(outbuf);
-        return false;
+        return PK_PM_DIR_OOM;
     }
     tinfl_init(decomp);
     size_t in_bytes  = deflate_len;
@@ -117,11 +129,11 @@ static bool gzip_inflate(const uint8_t *in, size_t in_len, uint8_t **out, size_t
         PK_PM_LOGE("gzip: tinfl_decompress failed (st=%d deflate_len=%zu isize=%u)",
                    (int)st, deflate_len, isize);
         free(outbuf);
-        return false;
+        return PK_PM_DIR_FAIL;
     }
     *out     = outbuf;
     *out_len = out_bytes;
-    return true;
+    return PK_PM_DIR_OK;
 }
 
 /* ------------------------------------------------------------- varint */
@@ -150,20 +162,22 @@ static uint64_t read_varint(const uint8_t *buf, size_t len, size_t *pos)
  *   entry_count 个 varint：offset 编码——v==0（且非第一条）表示"紧接上一条
  *     entry 的 offset+length"（聚簇写入省的空间），否则实际 offset=v-1。
  */
-static bool parse_directory(const uint8_t *buf, size_t len, pk_pmtiles_dir_entry_t **out_entries, size_t *out_count)
+static pk_pm_dir_status_t parse_directory(const uint8_t *buf, size_t len, pk_pmtiles_dir_entry_t **out_entries, size_t *out_count)
 {
     size_t pos = 0;
     uint64_t count = read_varint(buf, len, &pos);
     if (count == 0) {
         *out_entries = NULL;
         *out_count   = 0;
-        return true;
+        return PK_PM_DIR_OK;
     }
 
     pk_pmtiles_dir_entry_t *entries = calloc((size_t)count, sizeof(*entries));
     if (!entries) {
         PK_PM_LOGE("dir: OOM for %llu entries", (unsigned long long)count);
-        return false;
+        /* C3：分配失败是资源问题，与"目录里没有"必须可区分（否则上层把它
+         * 当确认缺失钉 30s 负缓存）。 */
+        return PK_PM_DIR_OOM;
     }
 
     uint64_t tile_id = 0;
@@ -191,46 +205,47 @@ static bool parse_directory(const uint8_t *buf, size_t len, pk_pmtiles_dir_entry
 
     *out_entries = entries;
     *out_count   = (size_t)count;
-    return true;
+    return PK_PM_DIR_OK;
 }
 
 /* 从盘上读一段目录（可能是根目录，也可能是叶目录），按 header 里的
- * internal_compression 解开，解析成 entry 数组。 */
-static bool load_directory(pk_pmtiles_t *pm, uint64_t off, uint64_t len,
-                            pk_pmtiles_dir_entry_t **out_entries, size_t *out_count)
+ * internal_compression 解开，解析成 entry 数组。返回目录装载状态
+ * （分配失败 = OOM，其余失败 = FAIL，见 pk_pm_dir_status_t）。 */
+static pk_pm_dir_status_t load_directory(pk_pmtiles_t *pm, uint64_t off, uint64_t len,
+                                         pk_pmtiles_dir_entry_t **out_entries, size_t *out_count)
 {
     if (len == 0 || len > 32u * 1024 * 1024) { /* 32MB 防corrupt length 把内存吃爆 */
         PK_PM_LOGE("dir: implausible length %llu at off %llu", (unsigned long long)len, (unsigned long long)off);
-        return false;
+        return PK_PM_DIR_FAIL;
     }
     uint8_t *raw = malloc((size_t)len);
-    if (!raw) return false;
+    if (!raw) return PK_PM_DIR_OOM;
     if (!read_at(pm, off, raw, (size_t)len)) {
         PK_PM_LOGE("dir: read failed off=%llu len=%llu", (unsigned long long)off, (unsigned long long)len);
         /* 目录读不出来是 I/O 故障，不是"这块瓦片不存在"——打上标记，别让
          * 上层把整片区域记成确认缺失（详见 pk_pmtiles_t::io_error）。 */
         pm->io_error = true;
         free(raw);
-        return false;
+        return PK_PM_DIR_FAIL;
     }
 
-    bool ok;
+    pk_pm_dir_status_t st;
     if (pm->header.internal_compression == PK_PMTILES_COMPRESSION_NONE) {
-        ok = parse_directory(raw, (size_t)len, out_entries, out_count);
+        st = parse_directory(raw, (size_t)len, out_entries, out_count);
     } else if (pm->header.internal_compression == PK_PMTILES_COMPRESSION_GZIP) {
         uint8_t *inflated = NULL;
         size_t inflated_len = 0;
-        ok = gzip_inflate(raw, (size_t)len, &inflated, &inflated_len);
-        if (ok) {
-            ok = parse_directory(inflated, inflated_len, out_entries, out_count);
+        st = gzip_inflate(raw, (size_t)len, &inflated, &inflated_len);
+        if (st == PK_PM_DIR_OK) {
+            st = parse_directory(inflated, inflated_len, out_entries, out_count);
             free(inflated);
         }
     } else {
         PK_PM_LOGE("dir: unsupported internal_compression=%u (只实现了 none/gzip)", pm->header.internal_compression);
-        ok = false;
+        st = PK_PM_DIR_FAIL;
     }
     free(raw);
-    return ok;
+    return st;
 }
 
 /* ------------------------------------------------------ 叶目录 LRU 缓存 */
@@ -358,8 +373,8 @@ bool pk_pmtiles_open(pk_pmtiles_t *pm, pk_pmtiles_read_fn read_fn, void *read_ct
         return false;
     }
 
-    if (!load_directory(pm, pm->header.root_dir_offset, pm->header.root_dir_length,
-                         &pm->root_entries, &pm->root_count)) {
+    if (load_directory(pm, pm->header.root_dir_offset, pm->header.root_dir_length,
+                       &pm->root_entries, &pm->root_count) != PK_PM_DIR_OK) {
         PK_PM_LOGE("open: root directory load failed");
         memset(pm, 0, sizeof(*pm));
         return false;
@@ -506,7 +521,7 @@ static int find_entry_index(const pk_pmtiles_dir_entry_t *entries, size_t count,
     return -1;
 }
 
-bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, pk_pmtiles_tile_loc_t *out)
+pk_pmtiles_find_status_t pk_pmtiles_find_tile_status(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, pk_pmtiles_tile_loc_t *out)
 {
     uint64_t tile_id = pk_pmtiles_zxy_to_tileid(z, x, y);
 
@@ -514,6 +529,7 @@ bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, p
     size_t count = pm->root_count;
 
     bool found = false;
+    bool dir_oom = false;
     for (int depth = 0; depth < PK_PMTILES_MAX_DIR_DEPTH; depth++) {
         int idx = find_entry_index(entries, count, tile_id);
         if (idx < 0) break;
@@ -535,7 +551,15 @@ bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, p
         size_t next_count = 0;
         pk_pmtiles_dir_entry_t *next_entries = leaf_cache_find(pm, leaf_off, &next_count);
         if (!next_entries) {
-            if (!load_directory(pm, leaf_off, e->length, &next_entries, &next_count)) break;
+            pk_pm_dir_status_t st =
+                load_directory(pm, leaf_off, e->length, &next_entries, &next_count);
+            if (st != PK_PM_DIR_OK) {
+                /* C3：只有"分配失败"记为资源错（上层短退避、不进 30s 负缓存）；
+                 * 读盘失败(io_error 已置位)与数据损坏维持旧"未找到"语义，由
+                 * io_error → reopen 通道兜底。 */
+                if (st == PK_PM_DIR_OOM) dir_oom = true;
+                break;
+            }
             leaf_cache_insert(pm, leaf_off, next_entries, next_count);
         }
 
@@ -543,5 +567,13 @@ bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, p
         count   = next_count;
     }
 
-    return found;
+    if (found) return PK_PMTILES_FIND_FOUND;
+    return dir_oom ? PK_PMTILES_FIND_RESOURCE_ERROR : PK_PMTILES_FIND_NOT_FOUND;
+}
+
+bool pk_pmtiles_find_tile(pk_pmtiles_t *pm, uint8_t z, uint32_t x, uint32_t y, pk_pmtiles_tile_loc_t *out)
+{
+    /* 旧公共 API：RESOURCE_ERROR 也返回 false（保持旧语义以缩小调用面），
+     * 需要区分的调用方（pk_tile_loader）用三态版。 */
+    return pk_pmtiles_find_tile_status(pm, z, x, y, out) == PK_PMTILES_FIND_FOUND;
 }

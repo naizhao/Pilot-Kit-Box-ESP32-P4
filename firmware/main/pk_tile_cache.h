@@ -40,7 +40,8 @@ extern "C" {
  * PSRAM 还大 2.85MB，数学上必然把内存吃穿**。吃穿之后不是"少一张瓦片"，
  * 是整条链路一起垮：
  *   - lodepng 分配 256KB RGBA 失败 → `PNG 解码失败 … err=83`
- *   - SD 读回 `sdmmc_read_blocks failed (0x106)`(ESP_ERR_NO_MEM)
+ *   - SD 读回 `sdmmc_read_blocks failed (0x106)`（当前 SDK 为 ESP_ERR_NOT_SUPPORTED，
+ *     不能仅据该码归因内存耗尽或物理超时）
  *   - pmtiles 目录读不出来 → 被记成 `所有包目录均未命中`（误判成数据缺失）
  * 三者都走 put_negative()，负缓存条目再把正常瓦片从 LRU 里挤出去，缓存清空
  * → PSRAM 又空出来 → 30 s 负缓存 TTL 到期 → 重新灌满 → 再撞墙。实测这个
@@ -65,12 +66,12 @@ extern "C" {
  * 确认缺失"一个不至于永久卡死的有效期，防止极端场景下的误判长期粘住。 */
 #define PK_TILE_CACHE_NEGATIVE_TTL_MS (30u * 1000u)
 
-/* 临时负缓存（IO 失败退避，2026-08-04）。与上面那条"瓦片真缺失"的 30s 负缓存
- * 是两条独立的路——真机抓包证实 sdmmc_read_blocks 0x106（SD 并发过载超时）
+/* 临时负缓存（IO/资源失败退避，2026-08-04）。与上面那条"瓦片真缺失"的 30s 负缓存
+ * 是两条独立的路——历史抓包中的 sdmmc_read_blocks 读取失败
  * 被标 TRANSIENT 每帧重试，会刷屏 + 火上浇油抢更多 SD。临时负缓存给 IO 类
  * 失败一个短 TTL 退避：这段时间内 map_page 走 ancestor blit（糊但不空白）、
- * 不再 request → 不再抢 SD。失败计数到阈值才插（偶发 1-2 次不插，只计数），
- * 持续失败（≥5 次）升级到长 TTL。read 成功后计数清零——一次 SD 拥塞不该
+ * 不再 request → 不再抢 SD。IO 失败计数到阈值才插（偶发 1-2 次不插，只计数）；资源失败一次即插，
+ * 任一类持续失败（≥5 次）升级到长 TTL。瓦片成功后两类计数清零——一次 SD 拥塞不该
  * 永久污染这块瓦片。 */
 #define PK_TILE_CACHE_TEMP_NEG_TTL_MS      (2u * 1000u)   /* 3-4 次连续失败 */
 #define PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS (5u * 1000u)   /* ≥5 次持续失败 */
@@ -85,19 +86,22 @@ typedef struct {
 typedef struct {
     bool          used;
     bool          negative;          /* true: 确认缺失（data 恒 NULL） */
-    bool          temp_negative;     /* true: IO 失败退避（短 TTL，区别于上面的 30s） */
+    bool          temp_negative;     /* true: IO/资源失败退避（短 TTL，区别于上面的 30s） */
     pk_tile_key_t key;
     uint16_t     *data;              /* used&&!negative 时非 NULL，PK_TILE_BUF_BYTES 字节 */
     uint32_t      generation;
     uint32_t      last_used_seq;     /* LRU：数值越大越新近使用 */
     uint32_t      neg_timestamp_ms;  /* negative 或 temp_negative 时有意义 */
-    uint8_t       sd_fail_count;     /* 连续 IO(0x106) 失败次数；read 成功后清零 */
+    uint8_t       resource_fail_count; /* 连续资源/解码失败；不影响首次 SD 重开判据 */
+    uint8_t       sd_fail_count;     /* 连续 IO 失败次数；瓦片成功后清零 */
 } pk_tile_cache_slot_t;
 
 typedef struct {
     pk_tile_cache_slot_t slots[PK_TILE_CACHE_SLOTS];
     uint32_t              generation;
     uint32_t              seq_counter;
+    uint32_t              memory_evicts; /* 主动为水位线/分配让路的真实瓦片 */
+    uint32_t              capacity_evicts; /* 满槽插入挤出的真实瓦片 */
 } pk_tile_cache_t;
 
 void pk_tile_cache_init(pk_tile_cache_t *cache);
@@ -150,7 +154,7 @@ void pk_tile_cache_put(pk_tile_cache_t *cache, pk_tile_key_t key, uint16_t *data
 void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
 
 /* ── IO 失败退避（临时负缓存，2026-08-04）────────────────────────────
- * 真机抓包：sdmmc_read_blocks 0x106（SD 并发过载）被标 TRANSIENT 每帧重试，
+ * 历史抓包：sdmmc_read_blocks 读取失败被标 TRANSIENT 每帧重试，
  * 刷屏且火上浇油。这三个函数让 IO 类连续失败先累积计数、到阈值再插短 TTL
  * 临时负缓存（map_page 退避期间走 ancestor blit），成功后清零。
  * 见 pk_tile_cache.h 顶部 PK_TILE_CACHE_TEMP_NEG_* 常量的说明。 */
@@ -162,13 +166,17 @@ void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint3
  * 返回递增后的计数（供调用方判断是否到退避阈值）。 */
 uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
 
-/* 按 key 当前的 sd_fail_count 插临时负缓存：3-4 次→短 TTL，≥5 次→长 TTL。
- * 必须在 bump_sd_fail 之后调（它读 count 决定 TTL）。幂等：重复插只刷新
+/* 资源/解码失败单独累计，避免 OOM 吃掉“首次 SD 失败重开句柄”。
+ * 与 SD 计数共用槽位和 2/5s 临时负缓存；成功后两类计数一起清零。 */
+uint8_t pk_tile_cache_bump_resource_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
+
+/* 按 key 当前的 SD/资源失败计数插临时负缓存：任一≥5 次→长 TTL，其余短 TTL。
+ * 必须在 bump_sd_fail 或 bump_resource_fail 之后调。幂等：重复插只刷新
  * 时间戳。调用方仍要 return TRANSIENT（临时负缓存不等于"确认缺失"，
  * 只是"这段时间内别再 request"）。 */
 void pk_tile_cache_put_temp_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms);
 
-/* read 成功后清掉 key 的失败计数（一次 SD 拥塞不该永久污染这块瓦片）。
+/* read/解码成功后清掉 key 的 SD 和资源失败计数（一次 SD 拥塞不该永久污染这块瓦片）。
  * 找不到条目时空操作。 */
 void pk_tile_cache_reset_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key);
 
@@ -182,6 +190,13 @@ void pk_tile_cache_reset_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key);
  * 任一 out 指针可为 NULL。只统计当前 generation 的条目。 */
 void pk_tile_cache_stats(const pk_tile_cache_t *cache, int *out_used,
                          int *out_negative, size_t *out_bytes);
+
+/* 调用方持 cache 锁；只读快照，不触发分配、淘汰或读盘。 */
+typedef struct {
+    uint32_t tiles, missing, temporary, retry;
+    uint32_t memory_evicts, capacity_evicts;
+} pk_tile_cache_diag_t;
+void pk_tile_cache_diag(const pk_tile_cache_t *cache, pk_tile_cache_diag_t *out);
 
 /* pk_tile_cache_alloc_tile_buffer() 返回 NULL 的累计次数（模块级，非按实例）。 */
 uint32_t pk_tile_cache_alloc_fail_count(void);

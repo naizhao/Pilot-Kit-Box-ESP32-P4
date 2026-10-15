@@ -25,6 +25,8 @@
 #define SPK_PA_GPIO   GPIO_NUM_53
 #define SPK_RATE_HZ   48000u
 #define SPK_QUEUE_DEPTH 4u
+#define SPK_PLAYBACK_QUEUE_DEPTH 1u
+#define SPK_PLAYBACK_RESULT_DEPTH 4u
 #define SPK_DEFAULT_VOLUME 35u
 #define ES8311_ADDR7 0x18u
 #define SPK_RETRY_MS 2000u
@@ -34,8 +36,21 @@ typedef struct {
     int16_t pcm[PK_AIRBAND_I2S_DMA_FRAME_NUM * 2u];
 } speaker_block_t;
 
+typedef struct {
+    uint32_t id;
+    uint32_t generation;
+    speaker_block_t block;
+} playback_request_t;
+
+typedef struct {
+    uint32_t id;
+    pk_airband_speaker_playback_result_t result;
+} playback_response_t;
+
 static const char *TAG = "airband_spk";
 static QueueHandle_t s_queue;
+static QueueHandle_t s_playback_queue;
+static QueueHandle_t s_playback_result_queue;
 static i2s_chan_handle_t s_tx;
 static const audio_codec_if_t *s_codec;
 /* GPIO interface has process lifetime. Reusing it prevents a heap leak every
@@ -50,7 +65,10 @@ static atomic_bool s_tone_cancel;
 static atomic_bool s_tone_active;
 static atomic_bool s_pa_enabled;
 static atomic_bool s_program_playable;
+static atomic_bool s_playback_active;
+static atomic_bool s_playback_muted;
 static atomic_uchar s_volume = SPK_DEFAULT_VOLUME;
+static atomic_uchar s_playback_volume = SPK_DEFAULT_VOLUME;
 static atomic_uint s_control_generation;
 static atomic_uint s_output_frames;
 static atomic_uint s_queue_drops;
@@ -59,11 +77,41 @@ static atomic_uint s_codec_restarts;
 static atomic_uint s_test_result;
 static atomic_uint s_test_expected_frames;
 static atomic_uint s_test_written_frames;
+static atomic_uint s_playback_generation;
+static atomic_uint s_playback_next_id;
+static atomic_uint s_playback_last_result;
+
+static void playback_abort(pk_airband_speaker_playback_result_t result);
 
 static void queue_drain(void)
 {
     speaker_block_t drop;
     while (s_queue != NULL && xQueueReceive(s_queue, &drop, 0) == pdTRUE) { }
+}
+
+static void playback_response_send(uint32_t id,
+                                   pk_airband_speaker_playback_result_t result)
+{
+    if (s_playback_result_queue == NULL) return;
+    const playback_response_t response = {.id = id, .result = result};
+    if (xQueueSend(s_playback_result_queue, &response, 0) != pdTRUE) {
+        playback_response_t stale;
+        (void)xQueueReceive(s_playback_result_queue, &stale, 0);
+        (void)xQueueSend(s_playback_result_queue, &response, 0);
+    }
+    atomic_store(&s_playback_last_result, result);
+}
+
+static void playback_abort(pk_airband_speaker_playback_result_t result)
+{
+    atomic_store(&s_playback_last_result, result);
+    atomic_fetch_add(&s_playback_generation, 1);
+    const bool was_active = atomic_exchange(&s_playback_active, false);
+    playback_request_t request;
+    while (s_playback_queue != NULL &&
+           xQueueReceive(s_playback_queue, &request, 0) == pdTRUE)
+        playback_response_send(request.id, result);
+    if (was_active) atomic_fetch_add(&s_control_generation, 1);
 }
 
 static esp_err_t i2s_init(void)
@@ -139,6 +187,7 @@ static int pa_set(bool enabled)
 static void codec_shutdown(void)
 {
     atomic_store(&s_online, false);
+    playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_ERROR);
     pk_airband_speaker_set_program_playable(false);
     (void)pa_set(false);
     if (s_codec != NULL) {
@@ -154,16 +203,35 @@ static void codec_shutdown(void)
  * 短促爆音。 */
 static int apply_mute_and_pa(bool tone_active)
 {
-    const bool audible = pk_airband_speaker_pa_enabled(
+    const bool audible = pk_airband_speaker_source_audible(
         atomic_load(&s_online),
         atomic_load(&s_muted) || atomic_load(&s_remote_muted),
-        atomic_load(&s_program_playable), tone_active);
+        atomic_load(&s_program_playable), atomic_load(&s_playback_active),
+        atomic_load(&s_playback_muted), tone_active);
     int pa_rc = ESP_CODEC_DEV_OK;
     if (!audible) pa_rc = pa_set(false);
     const int mute_rc = s_codec->mute(s_codec, !audible);
     if (mute_rc == ESP_CODEC_DEV_OK && audible) pa_rc = pa_set(true);
     if (mute_rc != ESP_CODEC_DEV_OK) (void)pa_set(false);
     return mute_rc != ESP_CODEC_DEV_OK ? mute_rc : pa_rc;
+}
+
+static uint8_t active_volume(void)
+{
+    return pk_airband_speaker_source_volume(
+        atomic_load(&s_volume), atomic_load(&s_playback_volume),
+        atomic_load(&s_playback_active));
+}
+
+static void apply_control_if_needed(uint32_t *applied_control)
+{
+    const uint32_t control = atomic_load(&s_control_generation);
+    if (control == *applied_control) return;
+    *applied_control = control;
+    int rc = s_codec->set_vol(
+        s_codec, pk_airband_speaker_volume_db(active_volume()));
+    rc |= apply_mute_and_pa(false);
+    if (rc != ESP_CODEC_DEV_OK) atomic_fetch_add(&s_write_errors, 1);
 }
 
 static esp_err_t codec_bringup(void)
@@ -201,7 +269,7 @@ static esp_err_t codec_bringup(void)
     int rc = s_codec->set_fs(s_codec, &sample);
     if (rc == ESP_CODEC_DEV_OK)
         rc = s_codec->set_vol(
-            s_codec, pk_airband_speaker_volume_db(atomic_load(&s_volume)));
+            s_codec, pk_airband_speaker_volume_db(active_volume()));
     if (rc == ESP_CODEC_DEV_OK)
         rc = s_codec->mute(s_codec, true);
     if (rc != ESP_CODEC_DEV_OK) {
@@ -261,6 +329,7 @@ static void task(void *arg)
     bool tone_setup_ok = false;
     int64_t retry_at_us = 0;
     speaker_block_t block;
+    playback_request_t playback;
 
     for (;;) {
         const int64_t now_us = esp_timer_get_time();
@@ -312,7 +381,7 @@ static void task(void *arg)
                              PK_AIRBAND_SPEAKER_TEST_STOPPED);
                 int restore_rc = s_codec->set_vol(
                     s_codec,
-                    pk_airband_speaker_volume_db(atomic_load(&s_volume)));
+                    pk_airband_speaker_volume_db(active_volume()));
                 restore_rc |= apply_mute_and_pa(false);
                 if (restore_rc != ESP_CODEC_DEV_OK)
                     atomic_fetch_add(&s_write_errors, 1);
@@ -322,16 +391,10 @@ static void task(void *arg)
             continue;
         }
 
-        const uint32_t control = atomic_load(&s_control_generation);
-        if (control != applied_control && tone_remaining == 0) {
-            applied_control = control;
-            int rc = s_codec->set_vol(
-                s_codec, pk_airband_speaker_volume_db(atomic_load(&s_volume)));
-            rc |= apply_mute_and_pa(false);
-            if (rc != ESP_CODEC_DEV_OK) atomic_fetch_add(&s_write_errors, 1);
-        }
+        if (tone_remaining == 0) apply_control_if_needed(&applied_control);
 
         if (atomic_exchange(&s_tone_request, false)) {
+            playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_TONE_BUSY);
             queue_drain();
             tone_remaining = pk_airband_speaker_tone_begin(0, SPK_RATE_HZ);
             tone_phase = 0;
@@ -341,7 +404,7 @@ static void task(void *arg)
             atomic_store(&s_test_written_frames, 0);
             atomic_store(&s_test_result, PK_AIRBAND_SPEAKER_TEST_RUNNING);
             const float user_db =
-                pk_airband_speaker_volume_db(atomic_load(&s_volume));
+                pk_airband_speaker_volume_db(active_volume());
             int tone_rc = s_codec->set_vol(
                 s_codec, pk_airband_speaker_test_volume_db(user_db));
             tone_rc |= apply_mute_and_pa(true);
@@ -377,7 +440,7 @@ static void task(void *arg)
                 atomic_store(&s_tone_active, false);
                 int restore_rc = s_codec->set_vol(
                     s_codec,
-                    pk_airband_speaker_volume_db(atomic_load(&s_volume)));
+                    pk_airband_speaker_volume_db(active_volume()));
                 restore_rc |= apply_mute_and_pa(false);
                 if (restore_rc != ESP_CODEC_DEV_OK)
                     atomic_fetch_add(&s_write_errors, 1);
@@ -407,15 +470,37 @@ static void task(void *arg)
             atomic_store(&s_test_written_frames, tone_written);
             atomic_store(&s_test_result, PK_AIRBAND_SPEAKER_TEST_FAIL);
             (void)s_codec->set_vol(
-                s_codec, pk_airband_speaker_volume_db(atomic_load(&s_volume)));
+                s_codec, pk_airband_speaker_volume_db(active_volume()));
             (void)apply_mute_and_pa(false);
             ESP_LOGE(TAG, "local speaker test FAIL before PCM: expected=%u "
                           "written=%u PA=%d", SPK_RATE_HZ, tone_written,
                      gpio_get_level(SPK_PA_GPIO));
         }
 
-        if (xQueueReceive(s_queue, &block, pdMS_TO_TICKS(20)) == pdTRUE)
+        if (xQueueReceive(s_queue, &block, 0) == pdTRUE) {
             (void)write_pcm(block.pcm, block.frames);
+            continue;
+        }
+        if (xQueueReceive(s_playback_queue, &playback,
+                          pdMS_TO_TICKS(4)) == pdTRUE) {
+            /* playback_active/mute/volume may change while this task is already
+             * blocked in xQueueReceive. Re-apply after wake and before the
+             * first I2S block so it never leaks the previous source settings. */
+            apply_control_if_needed(&applied_control);
+            pk_airband_speaker_playback_result_t result =
+                pk_airband_speaker_playback_prewrite(
+                    atomic_load(&s_online),
+                    playback.generation == atomic_load(&s_playback_generation),
+                    atomic_load(&s_playback_last_result),
+                    atomic_load(&s_tone_active),
+                    atomic_load(&s_program_playable));
+            if (result == PK_AIRBAND_SPEAKER_PLAYBACK_WRITTEN &&
+                write_pcm(playback.block.pcm, playback.block.frames) != ESP_OK)
+                result = PK_AIRBAND_SPEAKER_PLAYBACK_ERROR;
+            if (result != PK_AIRBAND_SPEAKER_PLAYBACK_WRITTEN)
+                playback_abort(result);
+            playback_response_send(playback.id, result);
+        }
     }
 }
 
@@ -443,10 +528,34 @@ esp_err_t pk_airband_speaker_start(void)
         i2s_cleanup();
         return ESP_ERR_NO_MEM;
     }
+    s_playback_queue = xQueueCreate(SPK_PLAYBACK_QUEUE_DEPTH,
+                                     sizeof(playback_request_t));
+    s_playback_result_queue = xQueueCreate(SPK_PLAYBACK_RESULT_DEPTH,
+                                            sizeof(playback_response_t));
+    if (s_playback_queue == NULL || s_playback_result_queue == NULL) {
+        if (s_playback_queue) vQueueDelete(s_playback_queue);
+        if (s_playback_result_queue) vQueueDelete(s_playback_result_queue);
+        s_playback_queue = NULL;
+        s_playback_result_queue = NULL;
+        vQueueDelete(s_queue);
+        s_queue = NULL;
+        i2s_cleanup();
+        return ESP_ERR_NO_MEM;
+    }
     atomic_store(&s_muted, false);
     atomic_store(&s_program_playable, false);
+    atomic_store(&s_playback_active, false);
+    atomic_store(&s_playback_muted, false);
+    atomic_store(&s_playback_generation, 1);
+    atomic_store(&s_playback_next_id, 1);
+    atomic_store(&s_playback_last_result, PK_AIRBAND_SPEAKER_PLAYBACK_STOPPED);
     atomic_store(&s_volume, SPK_DEFAULT_VOLUME);
+    atomic_store(&s_playback_volume, SPK_DEFAULT_VOLUME);
     if (xTaskCreate(task, "airband_spk", 6144, NULL, 4, NULL) != pdPASS) {
+        vQueueDelete(s_playback_result_queue);
+        vQueueDelete(s_playback_queue);
+        s_playback_result_queue = NULL;
+        s_playback_queue = NULL;
         vQueueDelete(s_queue);
         s_queue = NULL;
         i2s_cleanup();
@@ -486,9 +595,84 @@ bool pk_airband_speaker_submit(const int16_t *stereo, size_t frames,
 void pk_airband_speaker_set_program_playable(bool playable)
 {
     const bool was_playable = atomic_exchange(&s_program_playable, playable);
+    if (playable && !was_playable)
+        playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_LIVE_PREEMPTED);
     if (!playable) queue_drain();
     if (was_playable != playable)
         atomic_fetch_add(&s_control_generation, 1);
+}
+
+pk_airband_speaker_playback_result_t pk_airband_speaker_playback_submit(
+    const int16_t *stereo, size_t frames, uint32_t timeout_ms)
+{
+    return pk_airband_speaker_playback_submit_checked(
+        stereo, frames, timeout_ms, atomic_load(&s_playback_generation));
+}
+
+uint32_t pk_airband_speaker_playback_token(void)
+{
+    return atomic_load(&s_playback_generation);
+}
+
+pk_airband_speaker_playback_result_t pk_airband_speaker_playback_submit_checked(
+    const int16_t *stereo, size_t frames, uint32_t timeout_ms,
+    uint32_t expected_generation)
+{
+    if (s_playback_queue == NULL || s_playback_result_queue == NULL ||
+        stereo == NULL || frames == 0 ||
+        frames > PK_AIRBAND_I2S_DMA_FRAME_NUM || timeout_ms == 0)
+        return PK_AIRBAND_SPEAKER_PLAYBACK_ERROR;
+    pk_airband_speaker_playback_result_t gate =
+        pk_airband_speaker_playback_prewrite(
+            atomic_load(&s_online), true,
+            PK_AIRBAND_SPEAKER_PLAYBACK_STOPPED,
+            atomic_load(&s_tone_active),
+            atomic_load(&s_program_playable));
+    if (gate != PK_AIRBAND_SPEAKER_PLAYBACK_WRITTEN) return gate;
+
+    playback_response_t stale;
+    while (xQueueReceive(s_playback_result_queue, &stale, 0) == pdTRUE) { }
+    if (expected_generation != atomic_load(&s_playback_generation))
+        return atomic_load(&s_playback_last_result);
+    playback_request_t request = {
+        .id = atomic_fetch_add(&s_playback_next_id, 1),
+        .generation = expected_generation,
+        .block.frames = (uint16_t)frames,
+    };
+    memcpy(request.block.pcm, stereo, frames * 2u * sizeof(int16_t));
+    if (!atomic_exchange(&s_playback_active, true))
+        atomic_fetch_add(&s_control_generation, 1);
+    if (xQueueSend(s_playback_queue, &request, 0) != pdTRUE) {
+        playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_ERROR);
+        return PK_AIRBAND_SPEAKER_PLAYBACK_ERROR;
+    }
+    for (;;) {
+        playback_response_t response;
+        if (xQueueReceive(s_playback_result_queue, &response,
+                          pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+            playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_ERROR);
+            return PK_AIRBAND_SPEAKER_PLAYBACK_ERROR;
+        }
+        if (response.id == request.id) return response.result;
+    }
+}
+
+void pk_airband_speaker_playback_stop(void)
+{
+    playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_STOPPED);
+}
+
+void pk_airband_speaker_playback_set_muted(bool muted)
+{
+    atomic_store(&s_playback_muted, muted);
+    atomic_fetch_add(&s_control_generation, 1);
+}
+
+void pk_airband_speaker_playback_set_volume(uint8_t volume)
+{
+    if (volume > 100) volume = 100;
+    atomic_store(&s_playback_volume, volume);
+    atomic_fetch_add(&s_control_generation, 1);
 }
 
 bool pk_airband_speaker_get(pk_airband_speaker_status_t *out)
@@ -508,6 +692,13 @@ bool pk_airband_speaker_get(pk_airband_speaker_status_t *out)
         .write_errors = atomic_load(&s_write_errors),
         .codec_restarts = atomic_load(&s_codec_restarts),
         .queued_blocks = s_queue ? uxQueueMessagesWaiting(s_queue) : 0,
+        .program_playable = atomic_load(&s_program_playable),
+        .playback_active = atomic_load(&s_playback_active),
+        .playback_muted = atomic_load(&s_playback_muted),
+        .playback_volume = atomic_load(&s_playback_volume),
+        .playback_queued_blocks = s_playback_queue
+            ? uxQueueMessagesWaiting(s_playback_queue) : 0,
+        .playback_last_result = atomic_load(&s_playback_last_result),
     };
     return s_queue != NULL;
 }
@@ -558,6 +749,7 @@ pk_airband_speaker_test_click_t pk_airband_speaker_test_tone_action(void)
         ESP_LOGI(TAG, "speaker test became active; stop requested");
         return PK_AIRBAND_SPEAKER_TEST_CLICK_STOP;
     }
+    playback_abort(PK_AIRBAND_SPEAKER_PLAYBACK_TONE_BUSY);
     atomic_store(&s_tone_cancel, false);
     atomic_store(&s_test_expected_frames, SPK_RATE_HZ);
     atomic_store(&s_test_written_frames, 0);

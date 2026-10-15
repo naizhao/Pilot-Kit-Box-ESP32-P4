@@ -57,6 +57,7 @@
 #include "pk_callsign.h"     /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "traffic_geom.h"
 #include "ui_state.h"
+#include "adsb_drawer.h"     /* 详情抽屉的共享实现（2026-10-03 起与地图页共用） */
 
 /* ── 版面 ───────────────────────────────────────────────────── */
 
@@ -67,26 +68,9 @@
 #define ROW_N         8
 #define LIST_BOT      (ROW0_Y + ROW_N * ROW_H) /* 462 */
 
-/* 抽屉：贴底，高 230（spec §5.3）。开着时数据区只画得下 DRAWER_ROWS 行。 */
-#define DRAWER_H      230
-#define DRAWER_TOP    (PK_DISPLAY_H - DRAWER_H)      /* 250 */
-#define DRAWER_ROWS   ((DRAWER_TOP - ROW0_Y) / ROW_H)
-
-/* 抽屉底部的「绑定为本机」按钮。
- *
- * 键值矩阵：y0=DRAWER_TOP+62(=312)、line_h=34、4 行，矩阵底在 312+4*34=448。
- * 抽屉底=480，剩 32 px。按钮取 h=30（紧凑但可点），y0=448，底部=478（还留 2 px
- * 到屏底）。按钮上方与矩阵第 4 行文字（实际渲染到 ~444）有 4 px 间隙——不压字。
- * 命中区在 y 方向往上放宽 12 px（到 436）、往下到 480（屏底），x 方向往外各放
- * 16 px——手指比按钮胖（apt_detail_page.c 的 HIT 范式）。 */
-#define DRAWER_BIND_Y0   (DRAWER_TOP + 198)             /* 448 */
-#define DRAWER_BIND_H    30
-#define DRAWER_BIND_W    240
-#define DRAWER_BIND_X0   ((PK_DISPLAY_W - DRAWER_BIND_W) / 2)   /* 280 */
-#define DRAWER_BIND_HIT_Y0 (DRAWER_BIND_Y0 - 12)        /* 436 */
-#define DRAWER_BIND_HIT_Y1  PK_DISPLAY_H                /* 480（屏底） */
-#define DRAWER_BIND_HIT_X0 (DRAWER_BIND_X0 - 16)
-#define DRAWER_BIND_HIT_X1 (DRAWER_BIND_X0 + DRAWER_BIND_W + 16)
+/* 抽屉：贴底（几何与内容在 adsb_drawer.c，与地图页共用同一实现）。
+ * 开着时数据区只画得下 DRAWER_ROWS 行。 */
+#define DRAWER_ROWS   ((PK_ADSB_DRAWER_TOP - ROW0_Y) / ROW_H)
 
 /* 整页左边距走 pfd_layout.h 的共用 token（值仍是 16）。反过来说：本页是把
  * PK_UI_PAD_L 钉在 16 的那个页面——BRG 列最宽 71 px，从 16 起画到 87，右边的
@@ -395,30 +379,10 @@ static void puts_right(uint16_t *fb, int right_x, int y, const char *s,
  * 共用同一张表，同一个方位在三页必须长得一样。 */
 
 /*
- * 紧急应答机码 → 短标签。无则返回 NULL。
- *
- * spec §5.3 把 SQK 归到详情抽屉里。三个国际通用紧急码是例外，必须留在主表：
- *
- *   7500  劫机   7600  通信失效   7700  一般紧急
- *
- * 它们是「这架飞机现在有事」的最强信号，而抽屉一次只能开一架——真出事时
- * 要挨个点开十几行才能找到那一架，等于没有。放在呼号右边，扫一眼就到。
- *
- * 只认这三个，不显示普通 SQK：普通码（1200、2000、管制分配的四位数）在
- * 主表里既不影响决策也占地方，那才是抽屉该干的活。
+ * 紧急应答机码 → 短标签。实现与抽屉标题徽章共用一份（adsb_drawer.c 的
+ * pk_adsb_emergency_tag）：主表行内徽章讲的是同一件事，两处判定分家后，
+ * "行里挂着 EMG、抽屉里却没有"这种分叉没有任何测试能抓到。
  */
-static const char *emergency_tag(const aircraft_t *a)
-{
-    if (!a->have_squawk) return NULL;
-    switch (a->squawk) {
-    /* 三个都压到 3 字符：徽章列只有 30 px（见列位那段的宽度账），
-     * NORDO 这种 5 字符的标准缩写塞不下，只能退到 RDO。 */
-    case 7500: return "HJK";   /* 劫机 */
-    case 7600: return "RDO";   /* 通信失效 */
-    case 7700: return "EMG";   /* 一般紧急 */
-    default:   return NULL;
-    }
-}
 
 /* 呼号；没广播过就退回 ICAO 十六进制。留空会被当成渲染坏了。实现收敛到
  * pk_callsign.c——原先这份剔掉**所有**空格，与 traffic 页那份（只剔尾部）
@@ -703,7 +667,7 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
     /* 紧急码标签：红底白字的小徽章，紧跟呼号。
      * 用 XS 档而不是正文档——它要显眼，但不能挤掉呼号本身的位置；红底已经
      * 提供了足够的对比，字号再大就是喧宾夺主。 */
-    const char *tag = emergency_tag(a);
+    const char *tag = pk_adsb_emergency_tag(a);
     if (tag) {
         const uint16_t COL_EMG = pk_rgb565(220, 40, 40);
         const int tx = COL_FLAG_X;
@@ -796,215 +760,9 @@ static void draw_row(uint16_t *fb, const row_t *r, int y0, bool sel)
 
 /*
  * 详情抽屉：把主表放不下的字段补齐（spec §5.3 点名的机型 / SQK / ICAO /
- * 航司 / 国籍）。
- *
- * 为什么这些字段进抽屉而不是主表：它们是**身份**信息，不随时间变，看一次
- * 就够；主表那八列全是**状态**，每秒都在变，得能一眼扫完一屏。把机型塞进
- * 主表只会挤掉一列真正需要盯着的数。
- *
- * 排成两列键值：左列身份（呼号/ICAO/注册号/机型），右列归属与状态
- * （航司/国籍/应答机/上次报文）。值缺就写 ---，不留空白——空白让人以为
- * 这一格没画出来，而这里"查不到"本身就是有用的信息（多半是军机或未收录）。
+ * 航司 / 国籍）。版面与内容 2026-10-03 起平移到 adsb_drawer.c，与地图页
+ * 共用同一实现——两页的抽屉不可能走偏。
  */
-/*
- * 抽屉里的一个值：先逐级降字号（M→S→XS），仍放不下才截断并加省略号。
- *
- * 只降一档是不够的——"China Southern Airlines" 23 个字符，S 档仍要 253 px，
- * 而右列只有 200 px，结果溢出去被 FAB 盖掉了尾巴。截断放在最后一步：机型和
- * 航司截短了还能认，字号小一点则是无损的，所以先榨字号。
- *
- * 不同字号的字高不同，按各自 cell 高在行内居中，否则几行值会一高一低。
- */
-static void put_val(uint16_t *fb, int x, int y_top, int avail,
-                    const char *val, uint16_t col)
-{
-    /* 宽度一律问渲染器：抽屉里的值有中文（「秒前」），也有航司/国家名这类
-     * 纯 ASCII 的库数据。strlen 会把一个汉字数成 3 格，于是中文界面下每一行
-     * 都被误判为放不下而降到 XS，甚至被截成「秒..」。 */
-    pk_aa_size_t sz = PK_AA_M;
-    if (pk_aa_text_width(val, PK_AA_M) > avail)
-        sz = (pk_aa_text_width(val, PK_AA_S) <= avail) ? PK_AA_S : PK_AA_XS;
-
-    const int y = y_top + (PK_AA_M_H - pk_aa_cell_h(sz)) / 2;
-
-    if (pk_aa_text_width(val, sz) <= avail) {
-        LST_PUTS(fb, x, y, val, col, sz);
-        return;
-    }
-
-    /* 还是放不下：截断 + ".."。按**码点**走而不是按字节切——UTF-8 从中间
-     * 切开会留下半个汉字，渲染成一个空白格（CJK 字库是 catalog 子集，
-     * 无效码点不落任何字形），看上去像丢了字而不像被截断。 */
-    const int dots = pk_aa_text_width("..", sz);
-    char tmp[64];
-    size_t out = 0;
-    int w = 0;
-    /* 余量按最坏情况留：一个码点最多 4 字节，后面还要放 ".." 和结尾符。 */
-    for (const char *p = val; *p && out + 4 + 3 <= sizeof(tmp); ) {
-        /* UTF-8 首字节决定这个码点占几字节；续字节一律 10xxxxxx。 */
-        int n = 1;
-        const unsigned char c = (unsigned char)*p;
-        if      ((c & 0xE0) == 0xC0) n = 2;
-        else if ((c & 0xF0) == 0xE0) n = 3;
-        else if ((c & 0xF8) == 0xF0) n = 4;
-        char one[5];
-        memcpy(one, p, (size_t)n);
-        one[n] = '\0';
-        const int cw = pk_aa_text_width(one, sz);
-        if (w + cw + dots > avail) break;
-        memcpy(tmp + out, one, (size_t)n);
-        out += (size_t)n;
-        w   += cw;
-        p   += n;
-    }
-    /* 一个码点都放不下也要给个交代，否则那一行整个空掉。 */
-    if (out == 0) { LST_PUTS(fb, x, y, "..", col, sz); return; }
-    tmp[out++] = '.';
-    tmp[out++] = '.';
-    tmp[out]   = '\0';
-    LST_PUTS(fb, x, y, tmp, col, sz);
-}
-
-/* 一枚按钮：圆角底 + 居中文字。照抄 apt_detail_page.c:479 的 draw_button
- * （同一套视觉语言，各页各留一份 static 函数）。 */
-static void draw_button(uint16_t *fb, int x0, int y0, int w, int h,
-                        const char *label, uint16_t bg, uint16_t fg,
-                        pk_aa_size_t size)
-{
-    pk_pfd_fill_round_rect(fb, x0, y0, x0 + w, y0 + h, 10, bg);
-    const int tw = pk_aa_text_width(label, size);
-    pk_aa_puts(fb, PK_DISPLAY_W, PK_DISPLAY_H,
-               x0 + (w - tw) / 2, y0 + (h - pk_aa_cell_h(size)) / 2,
-               label, fg, size);
-}
-
-static void draw_drawer(uint16_t *fb, const row_t *r,
-                        uint16_t col_key, uint16_t col_val, uint16_t col_dim)
-{
-    const aircraft_t *a = r->ac;
-
-    pk_pfd_fill_rect(fb, 0, DRAWER_TOP, PK_DISPLAY_W, PK_DISPLAY_H,
-                     pk_rgb565(14, 20, 30));
-    /* 顶边一条亮线，把抽屉和它盖住的表格分开——没有这条线，抽屉看起来像是
-     * 表格的又一行，而它其实是浮在上面的。 */
-    pk_pfd_fill_rect(fb, 0, DRAWER_TOP, PK_DISPLAY_W, DRAWER_TOP + 2,
-                     pk_rgb565(70, 130, 190));
-
-    char cs[AIRCRAFT_CALLSIGN_LEN];
-    callsign_of(a, cs, sizeof(cs));
-
-    /* 标题行：呼号用 L 档——抽屉一次只讲一架飞机，它是这块区域的主语。 */
-    LST_PUTS(fb, PAD_L + 8, DRAWER_TOP + 14, cs, col_val, PK_AA_L);
-
-    const char *tag = emergency_tag(a);
-    if (tag) {
-        const int tx = PAD_L + 8 + pk_aa_text_width(cs, PK_AA_L) + 12;
-        const int tw = pk_aa_text_width(tag, PK_AA_S);
-        pk_pfd_fill_rect(fb, tx - 5, DRAWER_TOP + 16, tx + tw + 5,
-                         DRAWER_TOP + 16 + PK_AA_S_H + 6, pk_rgb565(220, 40, 40));
-        LST_PUTS(fb, tx, DRAWER_TOP + 19, tag, pk_rgb565(255, 255, 255), PK_AA_S);
-    }
-
-    /* 两列键值。键用 XS 暗色、值用 M——扫的时候眼睛只需要抓值。
-     *
-     * 右列起点从 420 挪到 404：两列的值不是一回事，左列最长是机型全称
-     * （"Boeing 737-8 MAX" 一类，本就短），右列是航司全称
-     * （"China Southern Airlines"），后者一路要靠截断才塞得进去。把 16 px
-     * 从宽裕的一侧还给紧张的一侧，两边同时变好。 */
-    const int col_x[2]  = { PAD_L + 8, 404 };
-    const int y0        = DRAWER_TOP + 62;
-    const int line_h    = 34;
-
-    /* 键存词条 id 而不是字符串：语言能在运行时切，static 的字符串表会停在
-     * 旧语言上（列头 COLS[] 已经栽过这一次）。 */
-    static const pk_tr_id_t keys[2][4] = {
-        { PK_TR_LIST_D_ICAO,    PK_TR_LIST_D_REG,     PK_TR_LIST_D_TYPE,
-          PK_TR_LIST_D_MODEL },
-        { PK_TR_LIST_D_AIRLINE, PK_TR_LIST_D_COUNTRY, PK_TR_LIST_D_SQUAWK,
-          PK_TR_LIST_D_LAST_SEEN },
-    };
-    /*
-     * 键列宽按**本列最长的那条键**实测算，不写死。
-     *
-     * 原来两列共用一个 96：英文 "LAST SEEN" 在 XS 档实测 90 px，键与值之间只
-     * 剩 6 px，低于本文件自己给列间距定的 SEP_GAP=7；而中文「上次报文」只有
-     * 48 px，右边白白空出一大片。一个常量同时伺候两种语言、两列不同的词条，
-     * 必然在某一头翻车——加宽到能装下 "LAST SEEN" 又会连累左列（那边最长的
-     * "MODEL" 只有 50 px，凭什么也让出 96 px 的值宽）。
-     *
-     * 按列各算各的之后，左列省下来的宽度直接还给值，机型/型号那种长串少截
-     * 一截；右列则拿到刚好够用的键宽，间距不再低于标准。
-     *
-     * 宽度一律问 pk_aa_text_width：中文一个字三字节，strlen 会把「上次报文」
-     * 数成 12 格。
-     */
-    /* 键与值的最小间隙。取 10 而不是贴着 SEP_GAP=7：列与列之间隔的是一条
-     * 分隔线，键与值之间什么都没有，靠留白分组就得多给一点。 */
-    #define KEY_GAP  10
-    _Static_assert(KEY_GAP >= SEP_GAP, "键值间距不得低于本页列间距标准");
-    int key_w[2];
-    for (int c = 0; c < 2; ++c) {
-        int w = 0;
-        for (int i = 0; i < 4; ++i) {
-            const int kw = pk_aa_text_width(pk_i18n_text(keys[c][i]), PK_AA_XS);
-            if (kw > w) w = kw;
-        }
-        key_w[c] = w + KEY_GAP;
-    }
-
-    char v[8][48];
-
-    snprintf(v[0], sizeof(v[0]), "%06lX", (unsigned long)a->icao24);
-    const char *reg = pk_aircraft_registration(a->icao24);
-    snprintf(v[1], sizeof(v[1]), "%s", (reg && reg[0]) ? reg : "---");
-    const char *tc = pk_aircraft_type_code(a->icao24);
-    snprintf(v[2], sizeof(v[2]), "%s", (tc && tc[0]) ? tc : "---");
-    const char *tm = pk_aircraft_type_model(a->icao24);
-    snprintf(v[3], sizeof(v[3]), "%s", (tm && tm[0]) ? tm : "---");
-
-    /* 航司按呼号前三字母查。查不到不是错误：尾号呼号（N12345）、军用呼号
-     * 本来就不带航司前缀。 */
-    const char *fnum = NULL;
-    const pk_airline_t *al = a->have_callsign
-                           ? pk_airline_from_callsign(a->callsign, &fnum) : NULL;
-    snprintf(v[4], sizeof(v[4]), "%s", al ? al->name : "---");
-
-    const pk_country_t *cn = pk_country_from_icao24(a->icao24);
-    snprintf(v[5], sizeof(v[5]), "%s", cn ? cn->name : "---");
-
-    if (a->have_squawk) snprintf(v[6], sizeof(v[6]), "%04d", a->squawk);
-    else                snprintf(v[6], sizeof(v[6]), "---");
-
-    snprintf(v[7], sizeof(v[7]), "%d %s", r->age_s,
-             pk_i18n_text(PK_TR_LIST_D_AGO));
-
-    for (int c = 0; c < 2; ++c)
-        for (int i = 0; i < 4; ++i) {
-            const int y = y0 + i * line_h;
-            LST_PUTS(fb, col_x[c], y + (PK_AA_M_H - PK_AA_XS_H) / 2,
-                     pk_i18n_text(keys[c][i]), col_key, PK_AA_XS);
-            const char *val = v[c * 4 + i];
-            const int avail = (c == 0 ? col_x[1] - 16 : CONTENT_R)
-                            - col_x[c] - key_w[c];
-            put_val(fb, col_x[c] + key_w[c], y, avail, val, col_val);
-            (void)col_dim;
-        }
-    #undef KEY_GAP
-
-    /* 绑定为本机按钮：未绑定该机 → 蓝底「绑定为本机」；已绑定 → 绿底「取消绑定」。
-     * 照搬 main.c 旧 TARE 处理的切换语义（现已改用屏幕触摸入口）。 */
-    {
-        const bool is_own = (pk_ui_get_own_icao() == s_drawer_icao);
-        const pk_tr_id_t label = is_own ? PK_TR_LIST_D_UNBIND
-                                        : PK_TR_LIST_D_BIND;
-        const uint16_t bg = is_own ? pk_rgb565( 60, 160,  80)   /* 绿：已绑定 */
-                                   : pk_rgb565( 40, 100, 200);   /* 蓝：可绑定 */
-        draw_button(fb, DRAWER_BIND_X0, DRAWER_BIND_Y0,
-                    DRAWER_BIND_W, DRAWER_BIND_H,
-                    pk_i18n_text(label), bg, pk_rgb565(255, 255, 255),
-                    PK_AA_S);
-    }
-}
 
 void pk_adsb_list_render(uint16_t *fb)
 {
@@ -1180,7 +938,8 @@ void pk_adsb_list_render(uint16_t *fb)
     draw_col_seps(fb, drawn);
 
     if (drawer_row >= 0) {
-        draw_drawer(fb, &s_rows[drawer_row], COL_TITL, COL_HDR, COL_DIM);
+        pk_adsb_drawer_render(fb, s_rows[drawer_row].ac,
+                              s_rows[drawer_row].age_s);
         return;   /* 抽屉盖住了底部的滚动条，不必再画 */
     }
 
@@ -1234,7 +993,7 @@ static bool in_list_area(int x, int y)
         x >= fx && x < fx + fw && y >= fy && y < fy + fh)
         return false;
 
-    if (s_drawer_icao && y >= DRAWER_TOP) return true;
+    if (s_drawer_icao && y >= PK_ADSB_DRAWER_TOP) return true;
     if (y >= HDR_HIT_TOP && y < LIST_BOT && x >= PAD_L - 8 && x < CONTENT_R + 8)
         return true;
     if (y >= 0 && y < PFD_BAR_BOT && x >= RESET_X0 && x < RESET_X1 &&
@@ -1334,22 +1093,12 @@ void pk_adsb_list_touch_up(void)
         return;
     }
 
-    /* 抽屉区域。先检测绑定按钮命中，其余区域只吃掉点击不做反应。 */
-    if (s_drawer_icao && y >= DRAWER_TOP) {
-        if (x >= DRAWER_BIND_HIT_X0 && x <  DRAWER_BIND_HIT_X1 &&
-            y >= DRAWER_BIND_HIT_Y0 && y <  DRAWER_BIND_HIT_Y1) {
-            /* 照搬 main.c 旧 TARE 短按的切换逻辑。 */
-            const uint32_t drawer = s_drawer_icao;
-            if (pk_ui_get_own_icao() == drawer) {
-                pk_ui_clear_own_icao();
-                pk_ui_toast_show(PK_TR_TOAST_OWN_CLEARED, false);
-                /* 解绑留在列表，不跳页 */
-            } else {
-                pk_ui_set_own_icao(drawer);
-                pk_ui_toast_show(PK_TR_TOAST_OWN_BOUND, false);
-                pk_ui_set_mode(PK_UI_MODE_PFD);  /* 绑定后跳 PFD 看效果 */
-            }
-        }
+    /* 抽屉区域。先检测绑定按钮命中，其余区域只吃掉点击不做反应。
+     * 命中区与绑定动作都在 adsb_drawer.c——地图页的抽屉用的是同一组
+     * 矩形与同一个动作，两页不可能分叉。 */
+    if (s_drawer_icao && y >= PK_ADSB_DRAWER_TOP) {
+        if (pk_adsb_drawer_bind_hit(x, y))
+            pk_adsb_drawer_bind_activate(s_drawer_icao);
         return;   /* 抽屉吃掉这次点击，不继续别的分派 */
     }
 
@@ -1378,20 +1127,13 @@ void pk_adsb_list_touch_up(void)
         const uint32_t icao = (row < rows_vis) ? pk_adsb_row_icao(row) : 0;
 
         if (icao) {
-            /* 点别的行直接换一架讲，不必先关再开；点同一行才收起。 */
-            s_drawer_icao = (s_drawer_icao == icao) ? 0 : icao;
+            /* 点别的行直接换一架讲，不必先关再开；点同一行才收起。
+             * 判定与地图页点飞机共用（pk_adsb_drawer_tap_target）。 */
+            s_drawer_icao = pk_adsb_drawer_tap_target(s_drawer_icao, icao);
         } else {
             /* 空白处（列表不满一屏留下的空行，或抽屉盖住的那段）：关抽屉。
              * 这是最符合直觉的退出方式——不必回头去找刚才点的是哪一行。 */
             s_drawer_icao = 0;
         }
     }
-}
-
-void pk_adsb_list_focus_icao(uint32_t icao24)
-{
-    /* 与行点击行为同款：再点同一架等于收起（地图上重复点一架飞机，第二次
-     * 大概率是"刚才没看清想再看一眼"，保持开更有用——这里不做成 toggle）。 */
-    s_drawer_icao = icao24;
-    s_scroll_first = -1;      /* 回到自动锚定：抽屉行必须钉进可见区 */
 }

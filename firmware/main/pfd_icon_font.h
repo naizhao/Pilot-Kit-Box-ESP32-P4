@@ -46,7 +46,10 @@ typedef enum {
     PK_ICON_REMOVE = 32,   /* remove  U+E15B  FILL=1 */
     PK_ICON_VOLUME_DOWN = 33,   /* volume_down  U+E04D  FILL=1 */
     PK_ICON_BRAND_AWARENESS = 34,   /* brand_awareness  U+E98E  FILL=1 */
-    PK_ICON_COUNT = 35
+    PK_ICON_PLAY_ARROW = 35,   /* play_arrow  U+E037  FILL=1 */
+    PK_ICON_SKIP_PREVIOUS = 36,   /* skip_previous  U+E045  FILL=1 */
+    PK_ICON_SKIP_NEXT = 37,   /* skip_next  U+E044  FILL=1 */
+    PK_ICON_COUNT = 38
 } pk_icon_id_t;
 
 /* 单一字重（见脚本头「字重」一节）。所有图标按 PK_ICON_W×H 顺序拼接。 */

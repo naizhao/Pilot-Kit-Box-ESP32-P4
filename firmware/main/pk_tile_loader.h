@@ -93,13 +93,19 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
  * scale 是为了让调用方用移位代替除法（除数不是编译期常量，编译器优化不掉）。
  * scale==1（精确命中）时 shift=0。
  *
+ * out_negative：与 try_blit 同语义的负缓存出口——返回 false 时若该瓦片处于
+ * 负缓存（30s 确认缺失或 2/5s IO/资源退避），*out_negative=true，调用方
+ * **不应**再 request（2026-10-01 调查 §8.2 C2：机头朝上分支旧实现丢弃该
+ * 信息，导致旋转模式绕过负缓存每帧重发请求）。
+ *
  * 返回 false：没有包覆盖 / 未缓存 / 负缓存——调用方不持有任何锁，应退回占位
  * 色，不阻塞（不在这里做 ancestor 回退，那是 try_blit_ancestor 的职责，逐
  * 像素路径为了控制成本不重复实现那一套，见 map_page.c 的耗时评估注释）。
  */
 bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
                                 const uint16_t **out_data, uint32_t *out_shift,
-                                uint32_t *out_crop_x0, uint32_t *out_crop_y0);
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0,
+                                bool *out_negative);
 
 /* 与 pk_tile_loader_lock_sample() 配对：仅在其返回 true 时调用一次。 */
 void pk_tile_loader_unlock_sample(void);

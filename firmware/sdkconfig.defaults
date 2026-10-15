@@ -262,3 +262,23 @@ CONFIG_LV_FONT_MONTSERRAT_22=y
 # implicit declaration。
 #
 # 本项目的 BLE GDL90 输出依赖它，必开。
+
+# ── 显示中断 IRAM-safe（DW-GDMA / MIPI-DSI）────────────────────────
+#
+# 2026-10-01 闪屏调查的新候选机制（docs/internal/2026-10-01-sd-death-
+# flicker-investigation-final.md §9.4）：已开 LCD_DSI_ISR_HANDLER_IN_IRAM
+# 却没开 DW_GDMA_ISR_IRAM_SAFE / LCD_DSI_ISR_CACHE_SAFE，DW 中断不带
+# ESP_INTR_FLAG_IRAM 注册——函数进 IRAM ≠ 中断拿到 cache-off 执行许可；
+# 内部 Flash 写擦（/storage LittleFS sink）屏蔽非 IRAM 中断并关 cache 时，
+# 每帧续链的 DPI DMA 完成中断可能被延迟，扫描续接受影响。
+#
+# 键名核对（IDF 6.0.1）：esp_driver_dma/Kconfig:72 定义 DW_GDMA_ISR_IRAM_SAFE；
+# esp_lcd/Kconfig:32 定义 LCD_DSI_ISR_CACHE_SAFE（它本身 select 了
+# LCD_DSI_ISR_HANDLER_IN_IRAM 与 DW_GDMA_ISR_IRAM_SAFE，这里两行都显式
+# 写出）。注意 CACHE_SAFE 的可见性条件是 !SPI_FLASH_AUTO_SUSPEND——本项目
+# 未开 auto suspend（sdkconfig:4177），赋值有效。
+#
+# 代价：增加 IRAM 占用；若 rev3 构建链接溢出，构建侧回退这两行即可
+# （尽力项，不阻塞其余修复）。
+CONFIG_DW_GDMA_ISR_IRAM_SAFE=y
+CONFIG_LCD_DSI_ISR_CACHE_SAFE=y

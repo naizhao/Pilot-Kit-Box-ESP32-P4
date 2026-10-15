@@ -2,6 +2,7 @@
  * cc -std=c11 -Wall -Wextra -Werror -O2 -pthread \
  * -I firmware/test/record_stubs -I firmware/test/host_stubs -I firmware/main \
  * -o /tmp/test_sd_format_barrier firmware/test/test_sd_format_barrier.c \
+ * firmware/main/pk_sd_transaction_safety.c \
  * && /tmp/test_sd_format_barrier
  */
 #include <stdio.h>

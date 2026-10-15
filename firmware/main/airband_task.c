@@ -16,9 +16,12 @@
 #include "airband_audio.h"
 #include "airband_speaker.h"
 #include "airband_record.h"
+#include "airband_recording_store.h"
+#include "airband_playback.h"
 #include "airband_frequency_input.h"
 #include "ble_gatt.h"
 #include "config_airband.h"
+#include "display.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -26,6 +29,7 @@
 
 #include "driver/gpio.h"
 #include "driver/i2s_std.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
@@ -307,7 +311,9 @@ static void task(void *arg)
         const bool reconfigure = !online && before_read >= next_configure_at_us;
         const bool retune = online && ctl.requested_hz != active_hz;
         if (reconfigure || retune) {
-            (void)pk_airband_record_submit(NULL,0,false,false,0,0);
+            /* Retuning is an intentional clean segment boundary, not an RF
+             * capture fault. */
+            (void)pk_airband_record_submit(NULL,0,true,false,0,0);
             ble_gatt_airband_stream_break();
             /* ESP-IDF disable clears curr_ptr; enable resets RX msg_queue. Stop
              * capture before changing RF, so queued samples cannot be the
@@ -457,7 +463,7 @@ static void task(void *arg)
         /* Record the shared 16k mono program before the speaker/test-tone
          * branch. Every read publishes its gate, including timeout/bad PCM. */
         (void)pk_airband_record_submit(program_pcm,program_frames,
-            online && read_ok && pcm_valid,program_open,
+            online,program_open,
             ctl.requested_channel_khz,active_hz);
         (void)ble_gatt_airband_submit(program_pcm, program_frames,
             online && read_ok && pcm_valid && program_frames != 0);
@@ -583,6 +589,18 @@ static void task(void *arg)
                      speaker.volume,
                      speaker.queue_drops, speaker.write_errors);
         }
+        pk_airband_record_status_t record = {0};
+        pk_airband_record_get(&record);
+        ESP_LOGI(TAG,
+                 "REC enabled=%d active=%d gap=%d q=%" PRIu32 "/%" PRIu32
+                 " source_gap=%" PRIu32 " drop=%" PRIu32 "/%" PRIu32
+                 " io_max=%" PRIu32 "/%" PRIu32 "us err=%" PRIu32 "/%" PRIu32 "/%" PRIu32,
+                 record.enabled, record.active, record.interrupted,
+                 record.queued_blocks, record.queue_high_water,
+                 record.source_gaps, record.dropped_blocks,
+                 record.dropped_samples, record.max_write_us,
+                 record.max_sync_us, record.write_errors,
+                 record.sync_errors, record.close_errors);
         pk_airband_audio_stats_reset(&audio);
         ESP_LOGI(TAG, "AM gain=%u/%ddB reason=%s obs_x2=%d ref_x2=%d r7e=%04X r13=%04X "
                  "gain_err[w=%" PRIu32 " r=%" PRIu32 "] ctrl[max=%" PRIu32 "us late=%" PRIu32
@@ -597,7 +615,15 @@ static void task(void *arg)
                  pk_airband_audio_rms(pcm16.stats.raw_sum_sq, pcm16.stats.input_frames),
                  pk_airband_audio_rms(pcm16.stats.pre_sum_sq, pcm16.stats.output_frames),
                  pk_airband_audio_rms(pcm16.stats.post_sum_sq, pcm16.stats.output_frames),
-                 pcm16.stats.raw_clips, pcm16.stats.pre_clips, pcm16.stats.post_clips);
+                  pcm16.stats.raw_clips, pcm16.stats.pre_clips, pcm16.stats.post_clips);
+        /* 内存与 DSI underrun 同窗观测（§9.5）：psram/内部各报
+         * 空闲总量/最大连续块（KB）；und 是桥 ISR 累计的 underrun 次数。 */
+        ESP_LOGI(TAG, "mem/underrun: psram=%uK/%uK int=%u/%u und=%lu",
+                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                 (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                 (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+                 (unsigned long)pk_display_underrun_count());
         pk_airband_pcm16_stats_reset(&pcm16);
         control_max_us = 0;
         control_max_late_us = 0;
@@ -644,6 +670,12 @@ esp_err_t pk_airband_start(void)
     pk_airband_speaker_set_muted(saved.muted);
     if (!pk_airband_record_init()) {
         ESP_LOGE(TAG,"cannot start AIRBAND SD recording task");
+    }
+    if (!pk_airband_recording_store_start()) {
+        ESP_LOGE(TAG, "cannot start AIRBAND recording catalog task");
+    }
+    if (!pk_airband_playback_start()) {
+        ESP_LOGE(TAG, "cannot start AIRBAND recording playback task");
     }
     if (!pk_airband_config_start()) {
         ESP_LOGE(TAG, "cannot start NVS persistence task");

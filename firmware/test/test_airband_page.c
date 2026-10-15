@@ -464,18 +464,44 @@ static void test_list_publish_cancels_only_station_row_gestures(void)
     }
 }
 
-static void test_active_recording_wins_over_sticky_drop_warning(void)
+static void test_recording_gap_is_diagnostic_only(void)
 {
     const pk_airband_record_visual_t active =
         pk_airband_record_visual_resolve(false, false, false, true, true, true);
     CHECK(active.label == PK_AIRBAND_REC_VIS_ACTIVE && active.red &&
-              active.warning,
-          "recovered active recording is not red/active with a warning marker\n");
+              !active.warning,
+          "recovered active recording must be red/active without a GAP marker\n");
     const pk_airband_record_visual_t held =
         pk_airband_record_visual_resolve(false, false, false, true, false, true);
-    CHECK(held.label == PK_AIRBAND_REC_VIS_DROPPED && !held.red &&
-              held.warning,
-          "inactive sticky interruption did not remain an amber warning\n");
+    CHECK(held.label == PK_AIRBAND_REC_VIS_ARMED && held.red &&
+              !held.warning,
+          "enabled recording with historical GAP must remain ARMED\n");
+    const pk_airband_record_visual_t error =
+        pk_airband_record_visual_resolve(false, true, false, true, true, true);
+    CHECK(error.label == PK_AIRBAND_REC_VIS_ERROR && error.warning,
+          "interrupted recording must retain a real write error\n");
+    const pk_airband_record_visual_t missing =
+        pk_airband_record_visual_resolve(false, false, true, true, true, true);
+    CHECK(missing.label == PK_AIRBAND_REC_VIS_SD_MISSING && missing.warning,
+          "interrupted recording must retain missing-card warning\n");
+}
+
+static void test_stopped_recording_does_not_show_historical_gap(void)
+{
+    const pk_airband_record_visual_t idle =
+        pk_airband_record_visual_resolve(false, false, false, true, false, false);
+    CHECK(idle.label == PK_AIRBAND_REC_VIS_IDLE && !idle.red && !idle.warning,
+          "stopped recording still shows an amber historical GAP\n");
+    const pk_airband_record_visual_t writing =
+        pk_airband_record_visual_resolve(true, false, false, true, true, false);
+    CHECK(writing.label == PK_AIRBAND_REC_VIS_WRITING && !writing.warning,
+          "stopping interrupted recording must remain WRITING until drained\n");
+    CHECK(pk_airband_record_visual_resolve(false, true, false, true, false, false)
+              .label == PK_AIRBAND_REC_VIS_ERROR,
+          "stopping recording hides a real write error\n");
+    CHECK(pk_airband_record_visual_resolve(false, false, true, true, false, false)
+              .label == PK_AIRBAND_REC_VIS_SD_MISSING,
+          "stopping recording hides a missing SD card\n");
 }
 
 static void test_record_icon_and_label_are_centered_as_one_group(void)
@@ -643,7 +669,8 @@ int main(void)
     test_volume_button_feedback_tracks_press_drag_and_release();
     test_new_gesture_prevents_old_volume_feedback_from_resurrecting();
     test_list_publish_cancels_only_station_row_gestures();
-    test_active_recording_wins_over_sticky_drop_warning();
+    test_recording_gap_is_diagnostic_only();
+    test_stopped_recording_does_not_show_historical_gap();
     test_record_icon_and_label_are_centered_as_one_group();
     test_volume_controls_are_three_equal_separated_buttons();
     test_mute_button_uses_unambiguous_state_colors();

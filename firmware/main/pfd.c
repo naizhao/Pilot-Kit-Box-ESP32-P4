@@ -28,6 +28,7 @@
 #include "adsb_list.h"
 #include "diag_page.h"
 #include "airband_page.h"
+#include "airband_recordings_page.h"
 #include "aircraft_state.h"
 #include "ble_gatt.h"
 #include "gps.h"
@@ -234,6 +235,10 @@ static void pfd_task(void *arg)
 
         case PK_UI_MODE_AIRBAND:
             pk_airband_page_render(fb);
+            break;
+
+        case PK_UI_MODE_AIRBAND_RECORDINGS:
+            pk_airband_recordings_page_render(fb);
             break;
 
         case PK_UI_MODE_SETTINGS:
@@ -515,6 +520,8 @@ static void pfd_task(void *arg)
         int64_t now = esp_timer_get_time();
         if (now - fps_window_start_us >= 1000000) {
             const char *mode_label = (mode == PK_UI_MODE_ADSB_LIST)  ? "LIST"
+                                   : (mode == PK_UI_MODE_AIRBAND)    ? "AIR"
+                                   : (mode == PK_UI_MODE_AIRBAND_RECORDINGS) ? "REC"
                                    : (mode == PK_UI_MODE_SETTINGS)   ? "SET"
                                    : (mode == PK_UI_MODE_ABOUT)      ? "ABOUT"
                                    : (mode == PK_UI_MODE_DIAG)       ? "DIAG"

@@ -39,6 +39,7 @@
 #include "cal_wizard.h"
 #include "diag_page.h"
 #include "airband_page.h"
+#include "airband_recordings_page.h"
 #include "apt_detail_page.h"
 #include "keyboard_page.h"
 #include "nav_grid_page.h"
@@ -80,6 +81,7 @@ static void touch_release_all(void)
     pk_map_page_touch_up();
     pk_adsb_list_touch_up();
     pk_airband_page_touch_up();
+    pk_airband_recordings_page_touch_up();
     pk_diag_page_touch_up();
     pk_settings_page_touch_up();
     pk_keyboard_page_touch_up();
@@ -233,6 +235,8 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                      || (m == PK_UI_MODE_MAP       && pk_map_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ADSB_LIST && pk_adsb_list_touch(lx, ly))
                      || (m == PK_UI_MODE_AIRBAND   && pk_airband_page_touch(lx, ly))
+                     || (m == PK_UI_MODE_AIRBAND_RECORDINGS &&
+                         pk_airband_recordings_page_touch(lx, ly))
                      || (m == PK_UI_MODE_DIAG      && pk_diag_page_touch(lx, ly))
                      || (m == PK_UI_MODE_SETTINGS  && pk_settings_page_touch(lx, ly))
                      || (m == PK_UI_MODE_ABOUT     && pk_about_page_touch(lx, ly))
@@ -292,6 +296,8 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
                 eaten = pk_adsb_list_drag(lx, ly);
             } else if (m == PK_UI_MODE_AIRBAND) {
                 eaten = pk_airband_page_drag(lx, ly);
+            } else if (m == PK_UI_MODE_AIRBAND_RECORDINGS) {
+                eaten = pk_airband_recordings_page_drag(lx, ly);
             }
             break;
 

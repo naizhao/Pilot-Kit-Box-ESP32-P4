@@ -71,6 +71,8 @@ for name, filename, source, harness_name in variants:
     test_path.write_text(harness)
     binary = out / name
     cmd = base + [str(test_path)]
+    if harness_name == 'test_sd_consumers.c':
+        cmd += [str(MAIN / 'pk_sd_transaction_safety.c')]
     if harness_name == 'test_airband_retune.c':
         cmd += [str(MAIN / f) for f in ['airband_bk4819.c', 'airband_audio.c',
                 'airband_pcm16.c', 'airband_am_gain.c', 'airband_frequency_input.c',

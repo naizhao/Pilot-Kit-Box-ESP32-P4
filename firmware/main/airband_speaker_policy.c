@@ -85,6 +85,22 @@ bool pk_airband_speaker_pa_enabled(bool codec_online, bool muted,
     return codec_online && (tone_active || (!muted && program_playable));
 }
 
+bool pk_airband_speaker_source_audible(
+    bool codec_online, bool live_muted, bool program_playable,
+    bool playback_active, bool playback_muted, bool tone_active)
+{
+    return codec_online &&
+           (tone_active || (playback_active ? !playback_muted
+                                            : (!live_muted && program_playable)));
+}
+
+uint8_t pk_airband_speaker_source_volume(uint8_t live_volume,
+                                         uint8_t playback_volume,
+                                         bool playback_active)
+{
+    return playback_active ? playback_volume : live_volume;
+}
+
 float pk_airband_speaker_volume_db(uint8_t volume_percent)
 {
     if (volume_percent > 100u) volume_percent = 100u;

@@ -29,6 +29,15 @@ endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(pilot_kit_box)
 
+# Confirm DMA framebuffer adoption independently of rev3 bridge VSYNC.
+# The patched DPI translation unit is generated inside this build directory.
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/display_dma_sync.cmake")
+pk_enable_display_dma_sync()
+
+# Preserve SDMMC transaction errors and isolate failed microSD data access.
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/sd_transaction_safety.cmake")
+pk_enable_sd_transaction_safety()
+
 # 构建期护栏：调度器启动前那段内部堆窗口只有 ~65KB，余量已不足 2KB，再往
 # 内部 .bss 加静态数据就会开机 boot loop（机理见脚本头注释，2026-08-01 实测）。
 idf_build_get_property(python PYTHON)

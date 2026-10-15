@@ -1,0 +1,2 @@
+# Only the existing lower-level diagnostic log switch is enabled.
+CONFIG_PK_SDMMC_VERBOSE=y

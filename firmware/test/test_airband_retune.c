@@ -69,6 +69,8 @@ esp_err_t i2s_channel_read(i2s_chan_handle_t rx,void *dst,size_t capacity,size_t
     *got=0;now_us=1100000;return ESP_ERR_TIMEOUT;
 }
 esp_err_t pk_airband_speaker_start(void) { return ESP_OK; }
+/* display.c 不在本测试的链接集里；underrun 观测计数在 host 上恒 0。 */
+uint32_t pk_display_underrun_count(void) { return 0; }
 bool pk_airband_speaker_submit(const int16_t *p,size_t n,bool play) { (void)p;(void)n;(void)play;return true; }
 void pk_airband_speaker_set_program_playable(bool play) { (void)play; }
 bool pk_airband_speaker_get(pk_airband_speaker_status_t *s) { memset(s,0,sizeof(*s));return true; }
@@ -79,8 +81,12 @@ pk_airband_speaker_test_click_t pk_airband_speaker_test_tone_action(void) { retu
 bool pk_airband_speaker_test_tone_active(void) { return false; }
 bool pk_airband_speaker_test_tone(void) { return false; }
 bool pk_airband_record_init(void) { return true; }
+bool pk_airband_recording_store_start(void) { return true; }
+bool pk_airband_playback_start(void) { return true; }
 bool pk_airband_record_submit(const int16_t *p,size_t n,bool rf,bool sq,uint32_t channel,uint32_t carrier)
 { (void)p;(void)n;(void)rf;(void)sq;(void)channel;(void)carrier;return true; }
+void pk_airband_record_get(pk_airband_record_status_t *out)
+{ if(out) *out=(pk_airband_record_status_t){0}; }
 bool ble_gatt_airband_submit(const int16_t *p,size_t n,bool valid)
 { (void)p;(void)n;(void)valid;return true; }
 void ble_gatt_airband_stream_break(void) { }

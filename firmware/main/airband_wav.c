@@ -97,7 +97,8 @@ pk_airband_wav_result_t pk_airband_wav_append(pk_airband_wav_t *w,
     if (w->errors) return w->errors;
     size_t to_write = pk_airband_wav_remaining_samples(w);
     if (to_write > sample_count) to_write = sample_count;
-    uint8_t packed[512];
+    /* One recorder batch is 2048 mono samples = one 4 KiB FAT sector. */
+    uint8_t packed[4096];
     while (*consumed_samples < to_write) {
         size_t n = to_write - *consumed_samples;
         if (n > sizeof(packed) / 2) n = sizeof(packed) / 2;

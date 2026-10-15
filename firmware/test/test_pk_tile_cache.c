@@ -11,7 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../main/pk_tile_cache.c"
+#ifndef PK_TEST_CACHE_SOURCE
+#define PK_TEST_CACHE_SOURCE "../main/pk_tile_cache.c"
+#endif
+#include PK_TEST_CACHE_SOURCE
 
 static int g_fail = 0;
 
@@ -383,14 +386,90 @@ static void test_acquire_buffer(void)
     pk_tile_cache_deinit(&c);
 }
 
+/* C1（2026-10-01 调查 §8.2）：资源/解码类瞬时失败使用独立 resource_fail 退避时的
+ * 语义契约——loader 新行为是"一次失败即 bump + put_temp_negative"（不再等
+ * 计数到 3），本用例用真缓存钉住它依赖的三件事：
+ *   1) count=1 就插临时负缓存也走**短档 2s**（get 的 TTL 只看 count≥5 才升级）；
+ *   2) 2s 过期后立刻允许重试（资源失败退避必须短，不能误伤成 30s）；
+ *   3) 期间计数保留（持续失败仍会沿既有 3/5 次机制升级），成功 put 后清零。 */
+static void test_single_fail_short_backoff_semantics(void)
+{
+    printf("-- C1 语义：单次资源失败即插 2s 短退避 --\n");
+    pk_tile_cache_t c;
+    pk_tile_cache_init(&c);
+    pk_tile_key_t k = mk_key(9, 10, 833, 443);
+
+    pk_tile_cache_bump_resource_fail(&c, k, 1000);
+    pk_tile_cache_put_temp_negative(&c, k, 1000);
+    bool neg = false;
+    const uint16_t *r = pk_tile_cache_get(&c, k, 1500, &neg);
+    chk_true("count=1 的退避：期内 get → is_negative=true", r == NULL && neg);
+
+    neg = true;
+    r = pk_tile_cache_get(&c, k, 1000 + PK_TILE_CACHE_TEMP_NEG_TTL_MS + 1, &neg);
+    chk_true("短档 2s 到期 → 不再 negative（允许重试）", r == NULL && !neg);
+
+    chk_u32("过期后计数保留（下次失败从 2 起）",
+            pk_tile_cache_bump_resource_fail(&c, k, 4000), 2);
+
+    /* 成功 put 清账：瓦片真到了，退避态/计数一并作废 */
+    uint16_t *tile = mk_tile(0x0F0F);
+    pk_tile_cache_put(&c, k, tile);
+    neg = true;
+    chk_true("put 后命中真瓦片（退避态被顶掉）",
+             pk_tile_cache_get(&c, k, 4100, &neg) != NULL && !neg);
+    chk_u32("put 后计数清零", pk_tile_cache_bump_resource_fail(&c, k, 4200), 1);
+
+    pk_tile_cache_deinit(&c);
+}
+
+static void test_diagnostic_real_residency(void)
+{
+    pk_tile_cache_t c; pk_tile_cache_init(&c);
+    pk_tile_cache_put(&c, mk_key(1,0,0,0), mk_tile(1));
+    pk_tile_cache_bump_sd_fail(&c, mk_key(1,0,1,0), 0);
+    pk_tile_cache_bump_resource_fail(&c, mk_key(1,0,2,0), 0);
+    pk_tile_cache_put_temp_negative(&c, mk_key(1,0,2,0), 0);
+    pk_tile_cache_put_negative(&c, mk_key(1,0,3,0), 0);
+    int tiles, neg; size_t bytes;
+    pk_tile_cache_stats(&c, &tiles, &neg, &bytes);
+    chk_u32("diagnostic counts only real resident pixels", (uint32_t)tiles, 1);
+    chk_u32("diagnostic resident bytes exclude retry markers", (uint32_t)bytes, PK_TILE_BUF_BYTES);
+    pk_tile_cache_diag_t diag;
+    pk_tile_cache_diag(&c, &diag);
+    chk_u32("diagnostic true missing marker", diag.missing, 1);
+    chk_u32("diagnostic temporary marker", diag.temporary, 1);
+    chk_u32("diagnostic pending retry marker", diag.retry, 1);
+    chk_u32("diagnostic actual tiles", diag.tiles, 1);
+    chk_true("diagnostic eviction performs real memory release", pk_tile_cache_evict_lru(&c));
+    pk_tile_cache_diag(&c, &diag);
+    chk_u32("memory eviction cumulative", diag.memory_evicts, 1);
+    chk_u32("eviction does not count markers", diag.tiles, 0);
+    chk_true("no pixel buffer to evict", !pk_tile_cache_evict_lru(&c));
+    pk_tile_cache_diag(&c, &diag);
+    chk_u32("failed eviction not counted", diag.memory_evicts, 1);
+    pk_tile_cache_bump_generation(&c);
+    pk_tile_cache_diag(&c, &diag);
+    chk_u32("generation removes temporary", diag.temporary, 0);
+    chk_u32("generation preserves cumulative eviction", diag.memory_evicts, 1);
+    for (int i=0; i<PK_TILE_CACHE_SLOTS+1; i++)
+        pk_tile_cache_put(&c, mk_key(2,0,(uint32_t)i,0), mk_tile(1));
+    pk_tile_cache_diag(&c, &diag);
+    chk_u32("capacity eviction cumulative", diag.capacity_evicts, 1);
+    chk_u32("capacity full counts real tiles", diag.tiles, PK_TILE_CACHE_SLOTS);
+    pk_tile_cache_deinit(&c);
+}
+
 int main(void)
 {
+    test_diagnostic_real_residency();
     test_basic_put_get();
     test_lru_eviction_order();
     test_lru_promotion_on_get();
     test_negative_cache_and_expiry();
     test_temp_negative_backoff();
     test_temp_negative_frees_real_tile();
+    test_single_fail_short_backoff_semantics();
     test_put_overwrites_same_key();
     test_generation_bump_clears_all();
     test_evict_lru();

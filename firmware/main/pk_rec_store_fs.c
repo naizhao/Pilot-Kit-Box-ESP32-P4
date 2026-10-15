@@ -371,10 +371,12 @@ static bool ensure_session_open_locked(void)
 
 /* --- 降级档位 -------------------------------------------------------------- */
 
-static pk_rec_degrade_t current_degrade_tier_locked(void)
+static pk_rec_degrade_t current_degrade_tier_locked(bool *out_known)
 {
     uint64_t total = 0, free_b = 0;
-    if (!pk_sdcard_info(&total, &free_b)) {
+    bool known = pk_sdcard_info(&total, &free_b);
+    if (out_known) *out_known = known;
+    if (!known) {
         return PK_REC_DEGRADE_OWN_ONLY;   /* 拿不到容量信息，按最保守档位处理 */
     }
     return pk_rec_store_degrade_tier(free_b);
@@ -401,13 +403,14 @@ static void degrade_alert_check_locked(pk_rec_degrade_t tier)
     }
 }
 
-/* current_degrade_tier_locked() 的告警版：无卡时不算"降级事件"（开机没
- * 插卡不该被当成"SD 空间告急"），只在卡确实挂载时才拿真实档位去跟上次比。
+/* 容量未知只影响保守写入策略，不作为真实低空间事件；只有卡已挂载且
+ * 同一次容量查询成功时，才拿真实档位与上次已知档位比较。
  * append 系列函数改用这个而不是裸的 current_degrade_tier_locked()。 */
 static pk_rec_degrade_t degrade_tier_check_locked(void)
 {
-    pk_rec_degrade_t tier = current_degrade_tier_locked();
-    if (pk_sdcard_is_mounted()) degrade_alert_check_locked(tier);
+    bool known = false;
+    pk_rec_degrade_t tier = current_degrade_tier_locked(&known);
+    if (known && pk_sdcard_is_mounted()) degrade_alert_check_locked(tier);
     return tier;
 }
 
@@ -693,10 +696,11 @@ void pk_rec_store_get_health(pk_rec_store_health_t *out)
     if (s_lock == NULL) { out->tier = PK_REC_DEGRADE_FULL; return; }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    /* 无卡时不报"降级"——那一格另有 microSD 卡片说"无卡"，这里报 FULL
-     * 只是"没有降级要说"，不是撒谎说"空间充裕"。 */
-    out->tier = pk_sdcard_is_mounted() ? current_degrade_tier_locked()
-                                       : PK_REC_DEGRADE_FULL;
+    /* 无卡或容量未知时不报空间降级。FULL 仅表示没有可信降级可报告，
+     * 不代表空间充裕；未知时的内部写入策略仍是 OWN_ONLY。 */
+    bool known = false;
+    pk_rec_degrade_t tier = current_degrade_tier_locked(&known);
+    out->tier = known && pk_sdcard_is_mounted() ? tier : PK_REC_DEGRADE_FULL;
     for (int i = 0; i < REC_SINK_COUNT; i++) {
         if (s_sink_disabled[i]) out->disabled_count++;
     }

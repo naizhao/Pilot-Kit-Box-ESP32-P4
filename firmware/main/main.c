@@ -26,6 +26,7 @@
 #include "gps.h"
 #include "airband.h"
 #include "airband_page.h"
+#include "airband_recordings_page.h"
 #include "pk_clock_persist.h"
 #include "ble_gatt.h"
 #include "boot_splash.h"
@@ -220,6 +221,7 @@ void app_main(void)
      * 本来就与它写的一致，但生命周期得走全，不留「这一个例外不用 init」。 */
     pk_nav_grid_page_init();
     pk_airband_page_init();
+    pk_airband_recordings_page_init();
     /* 机场详情页**没有**初始化：它没有后台任务也没有 NVS，打开那一刻同步
      * 取数就够（89 条记录读全是 µs 级，见 apt_detail_page.h）。这里只挂一个
      * 默认关闭的自检钩子——PK_APT_DETAIL_SMOKE=0 时它是个空函数。 */

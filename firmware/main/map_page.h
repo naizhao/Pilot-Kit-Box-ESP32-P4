@@ -59,10 +59,13 @@ void pk_map_page_on_search(void);
  * 弱符号，理由同上。 */
 void pk_map_page_on_apt_detail(uint32_t apt_idx);
 
-/* 点中了地图上的 ADS-B 目标：宿主跳到 ADS-B 列表页并展开该目标的详情
- * 抽屉。icao24 = 目标地址（由 map_page 的命中快照给出）。弱符号，理由同上
- * ——飞机排在机场之前判定：目标是移动的、符号更小，命中窗口转瞬即逝。 */
-void pk_map_page_on_aircraft_detail(uint32_t icao24);
+/*
+ * 点中了地图上的 ADS-B 目标：**不再有这个回调**。2026-10-03 起点飞机是
+ * 页内动作——原地开关详情抽屉（adsb_drawer.h，与 ADS-B 列表页共用同一
+ * 实现），不跳页。此前"跳列表页"的强实现（pk_ui_nav_host.c）连同它引出
+ * 的导航卡死（touch_up 早退跳过按压清理）一起删除，详见 map_page.c
+ * touch_up 里那段事故注释。
+ */
 
 /*
  * 收起的搜索/详情 sheet —— 本页左上角那枚返回钮（2026-08-04）。

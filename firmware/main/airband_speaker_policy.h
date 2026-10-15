@@ -69,6 +69,14 @@ pk_airband_speaker_test_result_t pk_airband_speaker_tone_result(
 bool pk_airband_speaker_pa_enabled(bool codec_online, bool muted,
                                    bool program_playable, bool tone_active);
 
+/* 实时接收与历史回放是两个独立音源。历史回放不能继承实时接收的静音或音量。 */
+bool pk_airband_speaker_source_audible(
+    bool codec_online, bool live_muted, bool program_playable,
+    bool playback_active, bool playback_muted, bool tone_active);
+uint8_t pk_airband_speaker_source_volume(uint8_t live_volume,
+                                         uint8_t playback_volume,
+                                         bool playback_active);
+
 /* UI 音量是线性幅度百分比，codec 接口收 dB；0 使用 ES8311 的安全下限。 */
 float pk_airband_speaker_volume_db(uint8_t volume_percent);
 

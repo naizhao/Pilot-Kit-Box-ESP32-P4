@@ -45,12 +45,19 @@ idf_component_register(
         "airband_ble_codec.c"
         "airband_ble_stream.c"
         "airband_wav.c"
+        "airband_wav_reader.c"
+        "airband_recording_catalog.c"
+        "airband_recording_store.c"
+        "airband_recording_service.c"
+        "airband_playback_policy.c"
+        "airband_playback.c"
         "airband_record.c"
         "airband_speaker_policy.c"
         "pk_codec_ctrl.c"
         "airband_speaker.c"
         "airband_task.c"
         "airband_page.c"
+        "airband_recordings_page.c"
         "airband_frequency_input.c"
         "config_airband.c"
         "pk_clock.c"
@@ -77,6 +84,10 @@ idf_component_register(
         "config_ac_category.c"
         "config_own_icao.c"
         "pk_sdcard.c"
+        "pk_sd_transaction_safety.c"
+        # SD TRIM/CMD38 链接期 no-op 守卫（--wrap=sdmmc_erase_sectors，
+        # 见文件头与 2026-10-01 事故调查 §4-3）。
+        "pk_sd_trim_guard.c"
         "pk_rec_format.c"
         "pk_rec_idx.c"
         "pk_rec_ingest.c"
@@ -154,6 +165,8 @@ idf_component_register(
         # 的 pk_aa_puts（与其余各页同一份抗锯齿字体）。整套 1.8 MB 源码、约
         # 96 KB 只读数据从此零调用者。
         "adsb_list.c"
+        # 每机详情抽屉：列表页与地图页共用（点地图上的飞机原地开，不跳页）。
+        "adsb_drawer.c"
         "settings_page.c"
         "settings_draw.c"
         "keyboard_page.c"
@@ -282,6 +295,40 @@ idf_component_register(
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     PK_ACTDB_FLASH_COPY=${PK_ACTDB_FLASH_COPY})
+
+# TRIM no-op guard: SD erase commands are neutralized at link time (see
+# docs/internal/2026-10-01-sd-death-flicker-investigation-final.md §4-3).
+# The guard TU itself is registered in SRCS above, like every other source.
+# -u 是必须的：libmain.a 在链接线上只被扫一次，且早于 libfatfs.a 的 diskio
+# 成员被提取——没有 -u 预置未定义，归档单遍语义下 wrap 定义永远不会被拉入
+# （实测 2026-10-01：undefined reference to __wrap_sdmmc_erase_sectors）。
+target_link_options(${COMPONENT_LIB} INTERFACE
+    "-Wl,--wrap=sdmmc_erase_sectors"
+    "-Wl,-u,__wrap_sdmmc_erase_sectors")
+
+if(PK_SD_READ_DIAGNOSTIC)
+    # Standalone diagnostic build only. No SD operation is added or retried.
+    target_sources(${COMPONENT_LIB} PRIVATE "../diagnostics/sd_read_probe.c")
+    target_link_options(${COMPONENT_LIB} INTERFACE
+        "-Wl,--wrap=fopen"
+        "-Wl,--wrap=opendir"
+        "-Wl,--wrap=sdmmc_read_sectors"
+        "-Wl,--wrap=sdmmc_host_do_transaction")
+endif()
+
+if(PK_SD_DRIVER_LOG_DIAGNOSTIC)
+    # Native I/O path, only add the current SDK transaction log tag.
+    target_sources(${COMPONENT_LIB} PRIVATE "../diagnostics/sd_driver_log_probe.c")
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_log_level_set")
+endif()
+
+if(PK_SD_FAILURE_DIAGNOSTIC)
+    # Keep production log levels and I/O; report failed data operations only.
+    target_sources(${COMPONENT_LIB} PRIVATE "../diagnostics/sd_failure_probe.c")
+    target_link_options(${COMPONENT_LIB} INTERFACE
+        "-Wl,--wrap=sdmmc_read_sectors"
+        "-Wl,--wrap=sdmmc_host_do_transaction")
+endif()
 
 # 瓦片解码热路径单独 -O2：全工程默认 -Os，lodepng 的 inflate/unfilter 与
 # pmtiles 目录解析是地图页加载耗时大头，换 -O2 立省 30% 上下,只多几 KB flash。

@@ -116,6 +116,9 @@ ICONS = [
     ("REMOVE",     "remove",              0xE15B, 1),
     ("VOLUME_DOWN", "volume_down",        0xE04D, 1),
     ("BRAND_AWARENESS", "brand_awareness",0xE98E, 1),
+    ("PLAY_ARROW", "play_arrow",          0xE037, 1),
+    ("SKIP_PREVIOUS", "skip_previous",    0xE045, 1),
+    ("SKIP_NEXT", "skip_next",            0xE044, 1),
 ]
 
 # 图标不能与文字等高。图形内部留白远多于字母笔画（fiber_manual_record

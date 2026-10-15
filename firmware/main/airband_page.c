@@ -270,6 +270,7 @@ pk_airband_record_visual_t pk_airband_record_visual_resolve(
     bool stopping, bool error, bool sd_missing, bool interrupted,
     bool active, bool enabled)
 {
+    (void)interrupted; /* GAP remains in diagnostics, not user controls. */
     if (stopping)
         return (pk_airband_record_visual_t){PK_AIRBAND_REC_VIS_WRITING,
                                              false, false};
@@ -281,10 +282,7 @@ pk_airband_record_visual_t pk_airband_record_visual_resolve(
                                              false, true};
     if (active)
         return (pk_airband_record_visual_t){PK_AIRBAND_REC_VIS_ACTIVE,
-                                             true, interrupted};
-    if (interrupted)
-        return (pk_airband_record_visual_t){PK_AIRBAND_REC_VIS_DROPPED,
-                                             false, true};
+                                             true, false};
     if (enabled)
         return (pk_airband_record_visual_t){PK_AIRBAND_REC_VIS_ARMED,
                                              true, false};

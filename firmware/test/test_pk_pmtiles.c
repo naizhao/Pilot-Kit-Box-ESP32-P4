@@ -35,12 +35,26 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/* calloc 注入（只作用于 pk_pmtiles.c TU）：macOS 的 calloc 对超大请求走
+ * overcommit mmap——entry_count=2^40 的 calloc 在 host 上不会失败（先成功、
+ * 再被 2^40 次解析循环拖死），而真机 PSRAM 吃紧时这恰是最先失败的分配。
+ * 注入点只把"条数超出真机可行域"的 calloc 变成失败，其余走真 calloc；
+ * 被测的分类逻辑（OOM ≠ 未找到）仍是被测的真代码。默认 0=全放行。 */
+static uint64_t g_calloc_fail_nmemb = 0;
+void *pk_test_calloc(size_t nmemb, size_t size)
+{
+    if (g_calloc_fail_nmemb && (uint64_t)nmemb >= g_calloc_fail_nmemb) return NULL;
+    return calloc(nmemb, size);
+}
+
 /* pk_tinfl.c 直接把实现拉进本 TU（同 geo.c/traffic_geom.c 的惯例：test 文件
    负责把多个 .c 拼成一个翻译单元）。third_party/ 前缀相对 -I firmware/main。
    同一 TU 也意味着 leaf_cache_find/leaf_cache_insert 这些 static 函数对本
    文件可见，白盒测 LRU 逻辑不用绕 API。 */
 #include "../main/third_party/pk_tinfl.c"
+#define calloc pk_test_calloc
 #include "../main/pk_pmtiles.c"
+#undef calloc
 
 /* 样本包所在目录：默认仓库内 datafiles/maps/（相对仓库根目录），
    PK_MAP_TEST_DATA_DIR 可覆盖。 */
@@ -191,7 +205,8 @@ static void test_runlength_and_binary_search(void)
 
     pk_pmtiles_dir_entry_t *entries = NULL;
     size_t count = 0;
-    bool ok = parse_directory(blob, pos, &entries, &count);
+    /* parse_directory 已改返回 pk_pm_dir_status_t（C3 三态改造），0=OK。 */
+    bool ok = parse_directory(blob, pos, &entries, &count) == PK_PM_DIR_OK;
     chk_true("parse_directory ok", ok);
     chk_u64("entry count", count, 3);
     if (ok && count == 3) {
@@ -611,12 +626,106 @@ static void test_leaf_cache_reduces_real_reads_cn(void)
     fclose(f);
 }
 
+/* ------------------------------------------------- find_tile 三态（C3） */
+
+/* 2026-10-01 调查 §8.2 C3：目录 entries calloc / raw malloc 失败与"未找到"
+ * 不可区分，loader 把资源失败当"瓦片不存在"钉进 30s 负缓存。三态 API
+ * （FOUND / NOT_FOUND / RESOURCE_ERROR）把这两类分开；旧 bool API 保持旧
+ * 语义（FOUND 才 true）。
+ *
+ * 全部用手搓内存镜像（不依赖样本包）：复用上面的 mem_read；OOM 镜像的叶
+ * 目录 varint entry_count = 2^40，配合文件头的 calloc 注入复现真机
+ * "entries 分配失败"——且读盘本身成功（io_error 不置位），精确对上
+ * "目录 OOM 被误判缺失"的原始条件。 */
+static void test_find_tile_three_state(void)
+{
+    printf("-- find_tile 三态：目录 OOM ≠ 未找到 --\n");
+
+    /* GOOD 镜像：root 一条 run_length=1 真瓦片（tile_id 0 = z0(0,0)） */
+    uint8_t good[256];
+    memset(good, 0, sizeof(good));
+    memcpy(good, "PMTiles", 7);
+    good[7] = 3;
+    good[97] = PK_PMTILES_COMPRESSION_NONE;
+    good[99] = PK_PMTILES_TYPE_PNG;
+    size_t pos = 127;
+    put_varint(good, &pos, 1);   /* entry_count */
+    put_varint(good, &pos, 0);   /* tile_id delta → 0 */
+    put_varint(good, &pos, 1);   /* run_length */
+    put_varint(good, &pos, 64);  /* length */
+    put_varint(good, &pos, 1);   /* offset 编码 = 0+1 */
+    for (int i = 0; i < 64; i++) good[pos + (size_t)i] = 0xEE;
+    for (int i = 0; i < 8; i++) { good[8 + i]  = (uint8_t)(127 >> (8 * i));
+                                  good[16 + i] = (uint8_t)(5   >> (8 * i));
+                                  good[56 + i] = (uint8_t)((127 + 5) >> (8 * i));
+                                  good[64 + i] = (uint8_t)(64 >> (8 * i)); }
+    pos += 64;
+
+    pk_pmtiles_t pm;
+    mem_ctx_t good_ctx = {good, pos};
+    bool opened = pk_pmtiles_open(&pm, mem_read, &good_ctx);
+    chk_true("GOOD 镜像 open", opened);
+    if (opened) {
+        pk_pmtiles_tile_loc_t loc;
+        pk_pmtiles_find_status_t st = pk_pmtiles_find_tile_status(&pm, 0, 0, 0, &loc);
+        chk_true("命中 → FOUND（且 loc 正确）",
+                 st == PK_PMTILES_FIND_FOUND && loc.offset == 0 && loc.length == 64);
+        st = pk_pmtiles_find_tile_status(&pm, 1, 0, 0, &loc);   /* tile_id 1，root 只盖 0 */
+        chk_true("干净未命中 → NOT_FOUND", st == PK_PMTILES_FIND_NOT_FOUND);
+        chk_true("旧 bool API 语义保持（NOT_FOUND → false）",
+                 !pk_pmtiles_find_tile(&pm, 1, 0, 0, &loc));
+        pk_pmtiles_close(&pm);
+    }
+
+    /* OOM_LEAF 镜像：root 一条叶目录指针，叶目录 entry_count = 2^40 */
+    uint8_t oom[256];
+    memset(oom, 0, sizeof(oom));
+    memcpy(oom, "PMTiles", 7);
+    oom[7] = 3;
+    oom[97] = PK_PMTILES_COMPRESSION_NONE;
+    oom[99] = PK_PMTILES_TYPE_PNG;
+    pos = 127;
+    put_varint(oom, &pos, 1);    /* entry_count */
+    put_varint(oom, &pos, 0);    /* tile_id delta → 0 */
+    put_varint(oom, &pos, 0);    /* run_length=0：叶目录指针 */
+    put_varint(oom, &pos, 12);   /* 叶目录长 12B */
+    put_varint(oom, &pos, 1);    /* 相对 leaf_dirs 偏移 0 */
+    size_t leaf_off = pos;
+    put_varint(oom, &pos, (uint64_t)1 << 40);   /* entry_count=2^40 → calloc 必败 */
+    while (pos < leaf_off + 12) oom[pos++] = 0;
+    for (int i = 0; i < 8; i++) { oom[8 + i]  = (uint8_t)(127 >> (8 * i));
+                                  oom[16 + i] = (uint8_t)(5 >> (8 * i));
+                                  oom[40 + i] = (uint8_t)(leaf_off >> (8 * i));
+                                  oom[48 + i] = (uint8_t)(12 >> (8 * i));
+                                  oom[56 + i] = (uint8_t)(pos >> (8 * i)); }
+    mem_ctx_t oom_ctx = {oom, pos};
+    opened = pk_pmtiles_open(&pm, mem_read, &oom_ctx);
+    chk_true("OOM_LEAF 镜像 open（root 本身可解析）", opened);
+    if (opened) {
+        pk_pmtiles_tile_loc_t loc;
+        /* root 已在 open 时装好（count=1，低于注入阈值）；这里让叶目录
+         * entries 的 calloc（nmemb=2^40）失败，复现真机 PSRAM 不足。 */
+        g_calloc_fail_nmemb = 1;
+        pk_pmtiles_find_status_t st = pk_pmtiles_find_tile_status(&pm, 0, 0, 0, &loc);
+        chk_true("目录 calloc OOM → RESOURCE_ERROR（旧实现与未命中不可区分）",
+                 st == PK_PMTILES_FIND_RESOURCE_ERROR);
+        chk_true("io_error 未置位（读盘本身成功，OOM≠IO 故障）", !pm.io_error);
+        /* 包装校验同样在注入下进行——真 calloc(2^40) 在 macOS 上会 overcommit
+         * 成功后被 2^40 次解析循环拖死（OOM killer 接管），测不了。 */
+        chk_true("旧 bool API 语义保持（RESOURCE_ERROR → false）",
+                 !pk_pmtiles_find_tile(&pm, 0, 0, 0, &loc));
+        g_calloc_fail_nmemb = 0;
+        pk_pmtiles_close(&pm);
+    }
+}
+
 int main(void)
 {
     init_sample_paths();
     test_hilbert_vectors();
     test_runlength_and_binary_search();
     test_corrupt_input_no_crash();
+    test_find_tile_three_state();
     test_real_sample();
     test_global_leaf_directory();
     test_leaf_cache_lru();

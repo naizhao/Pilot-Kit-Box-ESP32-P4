@@ -6,14 +6,20 @@
  *     格式化不会互踩。
  *   - 板上无 CD 脚（docs/hardware/board_pinout.md: "No card-detect pin
  *     to a P4 GPIO — detect via mount-retry"）：
- *       未挂载 → 每 3 s 重试 esp_vfs_fat_sdmmc_mount；
- *       已挂载 → 每 2 s sdmmc_get_status 探活，失败即视为拔卡卸载。
+ *       未挂载 → 重试 esp_vfs_fat_sdmmc_mount，头 3 次每 3 s，连续失败
+ *                起退避 ×1.5 封顶 12 s；最多连续 8 次（含 boot），
+ *                预算耗尽完全停探直至重启（见
+ *                sd_probe_period_for_streak 与 SD_PROBE_* 常量）；
+ *       已挂载 → 每 2 s sdmmc_get_status 探活；真实块传输失败立即关闭
+ *                新 I/O，探测任务安全卸载并隔离至重启。
  *   - 无卡时 sdmmc 驱动层会刷错误日志，init 时把相关 TAG 静音，
  *     状态变化由本模块自己打一条简洁 INFO。
  */
 
 #include "pk_sdcard.h"
+#include "pk_sd_transaction_safety.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -22,6 +28,8 @@
 #include "driver/gpio.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
+#include "soc/soc_caps.h"
 #include "esp_vfs_fat.h"
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
@@ -46,17 +54,33 @@ static const char *TAG = "pk_sd";
 #define SD_SLOT          SDMMC_HOST_SLOT_0
 #define SD_LDO_CHAN      4
 
-#define SD_PROBE_PERIOD_MS    3000   /* 未挂载时重试间隔 */
+#define SD_PROBE_PERIOD_MS    3000   /* 未挂载时重试间隔（退避基数） */
 #define SD_ALIVE_PERIOD_MS    2000   /* 已挂载时探活间隔 */
+/* 无 CD 脚，init 失败无法区分无卡/原卡/替换卡。头 3 次失败保持
+ * 3 s，之后每次 ×1.5 封顶 12 s；最多连续 8 次初始化尝试（含 boot）。
+ * 预算耗尽后停止上电/挂载，晚插卡或换卡必须重启；成功挂载清零，正常
+ * 拔卡后允许新一轮预算。GPIO/LDO 准备失败同样计入这 8 次。 */
+#define SD_PROBE_BACKOFF_MAX_MS  12000
+#define SD_INIT_ATTEMPT_LIMIT        8
 #define SD_TASK_STACK         4096
 
 static sdmmc_card_t          *s_card;
 static volatile pk_sd_state_t s_state = PK_SD_NO_CARD;
 /* 累计挂载尝试次数。诊断页用它区分"没插卡"与"插了但挂不上"——两者在
- * 状态上都是 PK_SD_NO_CARD，但前者计数不动、后者每 3 s 涨一次。 */
+ * 状态上都是 PK_SD_NO_CARD，但前者计数不动、后者每轮探测涨一次
+ * （节奏随退避从 3 s 放慢到 12 s，预算耗尽后不再增长）。 */
 static volatile uint32_t s_mount_attempts;
 /* 成功挂载次数（挂载代数），拔插检测用。见 pk_sdcard.h 的说明。 */
 static volatile uint32_t s_mount_generation;
+/* --- init 失败有界重试（探测任务/写者私有） -------------------------------
+ * s_mount_fail_streak 在上电前消耗预算，成功挂载清零，只在 s_lock 内写
+ * （boot 尝试发生在探测任务创建
+ * 之前）；探测循环在锁外读 s_probe_period_ms 决定下一次延时——读和写来自
+ * 同一个探测任务，无竞争。 */
+static uint32_t s_mount_fail_streak;
+static uint32_t s_probe_period_ms = SD_PROBE_PERIOD_MS;
+/* Protected by s_io_mux for read-only UI callers on either core. */
+static bool s_probe_exhausted;
 /* 「卡在位，但文件系统挂不上」。契约见 pk_sdcard.h。 */
 static volatile bool     s_media_error;
 static SemaphoreHandle_t      s_lock;
@@ -88,17 +112,30 @@ static void sd_wait_io_idle(void)
 static volatile uint64_t s_total_bytes;
 static volatile uint64_t s_free_bytes;
 
+static void sd_set_info(uint64_t total, uint64_t free_b)
+{
+    portENTER_CRITICAL(&s_io_mux);
+    s_total_bytes = total;
+    s_free_bytes = free_b;
+    portEXIT_CRITICAL(&s_io_mux);
+}
+
 static void sd_refresh_info_locked(void)
 {
     uint64_t total = 0, free_b = 0;
-    if (s_state == PK_SD_MOUNTED &&
-        esp_vfs_fat_info(SD_MOUNT_POINT, &total, &free_b) == ESP_OK) {
-        s_total_bytes = total;
-        s_free_bytes  = free_b;
-    } else {
-        s_total_bytes = 0;
-        s_free_bytes  = 0;
+    if (s_state == PK_SD_MOUNTED) {
+        /* INVALID_STATE does not set errno; do not mistake an old timeout for
+         * this query's result. The detector keeps retrying every two seconds. */
+        errno = 0;
+        if (esp_vfs_fat_info(SD_MOUNT_POINT, &total, &free_b) == ESP_OK) {
+            sd_set_info(total, free_b);
+            return;
+        }
+        /* FAT lock contention is transient. Keep only this mount's last good
+         * observation; unmount/format/new mount invalidate it below. */
+        if (errno == ETIMEDOUT) return;
     }
+    sd_set_info(0, 0);
 }
 
 /* --- mount / unmount（调用方须持锁） ----------------------------------- */
@@ -163,20 +200,80 @@ static bool sd_power_on_locked(void)
     return true;
 }
 
+/* The SDK alignment callback only tests address/length divisibility. P4's
+ * ordinary heap also contains RTC/scratch memory which SDMMC cannot access.
+ * Reject the entire non-DMA range so native sdmmc_{read,write}_sectors uses
+ * its MALLOC_CAP_DMA bounce buffer instead of starting an invalid transfer. */
+static bool sd_dma_buffer_alignment(int slot, const void *buf, size_t size)
+{
+    if (slot != SD_SLOT) return sdmmc_host_check_buffer_alignment(slot, buf, size);
+    if (buf == NULL || size == 0) return false;
+    uintptr_t first = (uintptr_t)buf;
+    if (size - 1 > UINTPTR_MAX - first) return false;
+    const void *last = (const void *)(first + size - 1);
+    bool dma_range = esp_ptr_dma_capable(buf) && esp_ptr_dma_capable(last);
+#if SOC_SDMMC_PSRAM_DMA_CAPABLE
+    dma_range = dma_range || (esp_ptr_dma_ext_capable(buf) && esp_ptr_dma_ext_capable(last));
+#endif
+    return dma_range && sdmmc_host_check_buffer_alignment(slot, buf, size);
+}
+
 static void sd_power_off_locked(void)
 {
     if (!s_card_power_gpio_ready) return;
     gpio_set_level(SD_PIN_PWR_EN, 1);
-    /* 给卡电源去耦放电；下一次 3 s 探测再拉低并等待 POR。 */
+    /* 给卡电源去耦放电；下一次探测再拉低并等待 POR。 */
     vTaskDelay(pdMS_TO_TICKS(5));
+}
+
+/* 连续挂载失败 streak 次后的下一次探测间隔：头 3 次失败保持 3 s，
+ * 从第 4 次连续失败起每次 ×1.5，封顶 12 s。整数 ×1.5 用 *3/2；
+ * ms 达到封顶即提前返回，循环最多 4 步，不退化成忙等。
+ * 该间隔只调度探测任务；预算耗尽后 sd_mount_locked 不再触碰卡。 */
+static uint32_t sd_probe_period_for_streak(uint32_t streak)
+{
+    uint32_t ms = SD_PROBE_PERIOD_MS;
+    for (uint32_t i = 3; i < streak; i++) {
+        ms = ms * 3 / 2;
+        if (ms >= SD_PROBE_BACKOFF_MAX_MS) return SD_PROBE_BACKOFF_MAX_MS;
+    }
+    return ms;
+}
+
+static void sd_mount_failed_locked(void)
+{
+    uint32_t next_probe_ms = sd_probe_period_for_streak(s_mount_fail_streak);
+    if (s_mount_fail_streak >= SD_INIT_ATTEMPT_LIMIT) {
+        portENTER_CRITICAL(&s_io_mux);
+        s_probe_exhausted = true;
+        portEXIT_CRITICAL(&s_io_mux);
+        ESP_LOGW(TAG, "microSD init failed %lu times — probing stopped until reboot",
+                 (unsigned long)s_mount_fail_streak);
+    } else if (next_probe_ms != s_probe_period_ms) {
+        ESP_LOGI(TAG, "mount failed %lu times in a row — probing every %lu ms",
+                 (unsigned long)s_mount_fail_streak, (unsigned long)next_probe_ms);
+    }
+    s_probe_period_ms = next_probe_ms;
 }
 
 static bool sd_mount_locked(void)
 {
-    if (!sd_power_on_locked()) return false;
+    /* A failed data transaction is not proof that a different card is now
+     * inserted. No CD pin: do not automatically resume writes until reboot. */
+    if (pk_sd_transaction_fault() != ESP_OK) return false;
+    if (s_mount_fail_streak >= SD_INIT_ATTEMPT_LIMIT) return false;
+    /* Count before any power preparation: GPIO/LDO failures and unarmed
+     * initialization errors must not bypass the finite retry budget. */
+    s_mount_fail_streak++;
+    sd_set_info(0, 0);
+    if (!sd_power_on_locked()) {
+        sd_mount_failed_locked();
+        return false;
+    }
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot   = SD_SLOT;
+    host.check_buffer_alignment = sd_dma_buffer_alignment;
 #if SD_HOST_SHARED_WITH_HOSTED
     host.init   = &sdmmc_host_init_dummy;
     host.deinit = &sdmmc_host_deinit_dummy;
@@ -209,10 +306,11 @@ static bool sd_mount_locked(void)
     if (err != ESP_OK) {
         /* 每次都打，带尝试序号。
          *
-         * 原先"只在错误码变化时打一条"是为了防 3 s 重试刷屏，代价是**热插拔
+         * 原先"只在错误码变化时打一条"是为了防重试刷屏，代价是**热插拔
          * 失败时日志里一条都看不到**——2026-07-29 排查"插卡后一直 retry 挂不
          * 上"时，抓了 20 s 串口一行 SD 日志都没有，因为错误码从开机起就没变
-         * 过。3 s 一条的频率完全可接受，可见性比省日志重要。 */
+         * 过。每轮一条（3 s 起随退避最长 12 s，最多 8 次）的频率完全可接受，可见性比
+         * 省日志重要。 */
         ESP_LOGW(TAG, "mount attempt #%lu failed: %s",
                  (unsigned long)s_mount_attempts, esp_err_to_name(err));
         s_card = NULL;
@@ -226,8 +324,9 @@ static bool sd_mount_locked(void)
          * 所以 ESP_FAIL 等价于「卡确实在位、CMD0/CMD8 都谈成了，但分区上不是
          * 能挂的 FAT」——值得单独提示用户去格式化，而不是笼统地说"没有卡"。
          *
-         * 只在这里赋值、不做累加：探测任务每 3 s 重试一次，卡不动的话每轮结论
-         * 相同，边沿判定交给上层（pk_tile_loader 的 handle_sd_transition）。
+         * 只在这里赋值、不做累加：探测任务每轮重试一次（3 s 起随退避放慢），
+         * 卡不动的话每轮结论相同，边沿判定交给上层（pk_tile_loader 的
+         * handle_sd_transition）。
          */
         s_media_error = (err == ESP_FAIL);
 
@@ -258,11 +357,18 @@ static bool sd_mount_locked(void)
          * 这里明确只切 GPIO45 控制的卡电源 PMOS。
          */
         sd_power_off_locked();
+        sd_mount_failed_locked();
         return false;
     }
 
-    s_media_error = false;  /* 挂上了，之前那张读不出的卡已经被换掉 */
+    s_media_error = false;  /* 挂载成功，清除此前的挂载错误结论 */
+    s_mount_fail_streak = 0;        /* 成功挂载必须清零退避（§4-2） */
+    s_probe_period_ms = SD_PROBE_PERIOD_MS;
+    portENTER_CRITICAL(&s_io_mux);
+    s_probe_exhausted = false;
+    portEXIT_CRITICAL(&s_io_mux);
     s_mount_generation++;   /* 契约见 pk_sdcard.h：只增不减的「卡换过了」凭据 */
+    pk_sd_transaction_arm();
     sd_set_state(PK_SD_MOUNTED);
     sd_refresh_info_locked();
     ESP_LOGI(TAG, "microSD mounted at %s: %s %.1f GB",
@@ -297,8 +403,7 @@ static void sd_unmount_locked(void)
      *    也会无条件释放 FIL 槽与 fd，所以「卸载前 fclose」能可靠清空句柄）。
      */
     sd_set_state(PK_SD_NO_CARD);
-    s_total_bytes = 0;
-    s_free_bytes  = 0;
+    sd_set_info(0, 0);
     /* One-shot consumers close their own handles before release. Drain these
      * before taking any persistent consumer's module lock in its callback. */
     sd_wait_io_idle();
@@ -352,7 +457,13 @@ static void sd_detect_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(SD_ALIVE_PERIOD_MS));
             xSemaphoreTake(s_lock, portMAX_DELAY);
             if (s_state == PK_SD_MOUNTED && s_card != NULL) {
-                if (sdmmc_get_status(s_card) != ESP_OK) {
+                esp_err_t data_error = pk_sd_transaction_fault();
+                if (data_error != ESP_OK) {
+                    s_media_error = true;
+                    ESP_LOGE(TAG, "microSD data transaction failed (%s) — isolating until reboot",
+                             esp_err_to_name(data_error));
+                    sd_unmount_locked();
+                } else if (sdmmc_get_status(s_card) != ESP_OK) {
                     ESP_LOGW(TAG, "microSD removed — unmounting");
                     sd_unmount_locked();
                 } else {
@@ -361,9 +472,11 @@ static void sd_detect_task(void *arg)
             }
             xSemaphoreGive(s_lock);
         } else if (s_state == PK_SD_NO_CARD) {
-            vTaskDelay(pdMS_TO_TICKS(SD_PROBE_PERIOD_MS));
+            /* 间隔在 mount 尝试前按当前退避取值；写它的只有本任务
+             * （及任务创建前的 boot 尝试），锁外读是安全的。 */
+            vTaskDelay(pdMS_TO_TICKS(s_probe_period_ms));
             xSemaphoreTake(s_lock, portMAX_DELAY);
-            if (s_state == PK_SD_NO_CARD) {
+            if (s_state == PK_SD_NO_CARD && pk_sd_transaction_fault() == ESP_OK) {
                 (void)sd_mount_locked();
             }
             xSemaphoreGive(s_lock);
@@ -406,8 +519,8 @@ void pk_sdcard_init(void)
      * ESP_LOGE 报「挂载失败在哪一步」（sdcard_init = slot/控制器层，
      * mount_initialized = VFS 层），是热插拔排障唯一能区分这两层的线索。
      * 之前设成 NONE，等于把最关键的一句话堵死，出事只能重烧诊断固件。
-     * 留在 ERROR：正常运行不吭声，失败时每次重试多一行,频率与本模块自己的
-     * 3 s 一条相当。 */
+     * 留在 ERROR：正常运行不吭声，失败时每次重试多一行，频率与本模块自己的
+     * 挂载失败日志同节奏。 */
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_ERROR);
 
     /* SLOT_0 / GPIO39..48 IO 供电由首次 sd_power_on_locked() 建立后
@@ -415,7 +528,8 @@ void pk_sdcard_init(void)
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!sd_mount_locked()) {
-        ESP_LOGI(TAG, "no microSD card at boot (will keep probing)");
+        ESP_LOGI(TAG, "microSD unavailable at boot (up to %d init attempts)",
+                 SD_INIT_ATTEMPT_LIMIT);
     }
     xSemaphoreGive(s_lock);
 
@@ -427,6 +541,9 @@ pk_sd_state_t pk_sdcard_state(void)
 {
     portENTER_CRITICAL(&s_io_mux);
     pk_sd_state_t state = s_state;
+    if (state == PK_SD_MOUNTED && pk_sd_transaction_fault() != ESP_OK) {
+        state = PK_SD_NO_CARD;
+    }
     portEXIT_CRITICAL(&s_io_mux);
     return state;
 }
@@ -440,6 +557,7 @@ bool pk_sdcard_io_acquire(void)
 {
     portENTER_CRITICAL(&s_io_mux);
     bool admitted = s_state == PK_SD_MOUNTED;
+    admitted = admitted && pk_sd_transaction_fault() == ESP_OK;
     if (admitted) ++s_io_users;
     portEXIT_CRITICAL(&s_io_mux);
     return admitted;
@@ -460,7 +578,15 @@ uint32_t pk_sdcard_mount_generation(void)
 
 bool pk_sdcard_media_error(void)
 {
-    return s_media_error;
+    return s_media_error || pk_sd_transaction_fault() != ESP_OK;
+}
+
+bool pk_sdcard_probe_exhausted(void)
+{
+    portENTER_CRITICAL(&s_io_mux);
+    bool exhausted = s_probe_exhausted;
+    portEXIT_CRITICAL(&s_io_mux);
+    return exhausted;
 }
 
 const char *pk_sdcard_mount_point(void)
@@ -471,10 +597,15 @@ const char *pk_sdcard_mount_point(void)
 bool pk_sdcard_info(uint64_t *out_total, uint64_t *out_free)
 {
     /* 只读缓存（探测任务每 2s 刷新），渲染路径调用零 I/O。 */
-    if (s_state != PK_SD_MOUNTED || s_total_bytes == 0) return false;
-    if (out_total) *out_total = s_total_bytes;
-    if (out_free)  *out_free  = s_free_bytes;
-    return true;
+    portENTER_CRITICAL(&s_io_mux);
+    bool known = s_state == PK_SD_MOUNTED &&
+                 pk_sd_transaction_fault() == ESP_OK && s_total_bytes != 0;
+    if (known) {
+        if (out_total) *out_total = s_total_bytes;
+        if (out_free) *out_free = s_free_bytes;
+    }
+    portEXIT_CRITICAL(&s_io_mux);
+    return known;
 }
 
 bool pk_sdcard_register_pre_unmount_cb(void (*cb)(void))
@@ -510,14 +641,13 @@ esp_err_t pk_sdcard_format(void)
     if (s_lock == NULL) return ESP_ERR_INVALID_STATE;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (s_state != PK_SD_MOUNTED || s_card == NULL) {
+    if (s_state != PK_SD_MOUNTED || s_card == NULL || pk_sd_transaction_fault() != ESP_OK) {
         xSemaphoreGive(s_lock);
         return ESP_ERR_INVALID_STATE;
     }
 
     sd_set_state(PK_SD_FORMATTING);
-    s_total_bytes = 0;
-    s_free_bytes = 0;
+    sd_set_info(0, 0);
     sd_wait_io_idle();
     /* Same lifetime barrier as removal: all consumers see not-mounted before
      * their callbacks run, and every open fd/in-flight I/O is gone before FAT
@@ -525,6 +655,9 @@ esp_err_t pk_sdcard_format(void)
     for (int i = 0; i < s_pre_unmount_cb_n; ++i) s_pre_unmount_cb[i]();
     ESP_LOGI(TAG, "formatting microSD (FAT32)…");
     esp_err_t err = esp_vfs_fat_sdcard_format(SD_MOUNT_POINT, s_card);
+    if (err == ESP_OK && pk_sd_transaction_fault() != ESP_OK) {
+        err = pk_sd_transaction_fault();
+    }
     if (err == ESP_OK) {
         s_mount_generation++;
         sd_set_state(PK_SD_MOUNTED);

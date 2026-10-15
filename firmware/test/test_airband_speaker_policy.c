@@ -132,6 +132,24 @@ static void test_pa_is_only_enabled_for_audible_online_output(void)
           "local test tone did not override mute/gate temporarily\n");
 }
 
+static void test_history_playback_has_independent_mute_and_volume(void)
+{
+    /* 实时 AIRBAND 静音不能泄漏到历史回放；两个来源也不能偷用对方音量。 */
+    CHECK(pk_airband_speaker_source_audible(
+              true, true, false, true, false, false),
+          "live mute incorrectly silenced history playback\n");
+    CHECK(!pk_airband_speaker_source_audible(
+              true, false, false, true, true, false),
+          "history playback mute did not silence history playback\n");
+    CHECK(pk_airband_speaker_source_audible(
+              true, true, true, false, true, true),
+          "diagnostic tone did not remain an explicit override\n");
+    CHECK(pk_airband_speaker_source_volume(20, 65, false) == 20,
+          "live output did not retain live volume\n");
+    CHECK(pk_airband_speaker_source_volume(20, 65, true) == 65,
+          "history playback did not use its own volume\n");
+}
+
 static void test_volume_percent_is_amplitude_not_linear_db(void)
 {
     CHECK(fabsf(pk_airband_speaker_volume_db(0) - (-49.5f)) < 0.01f,
@@ -194,6 +212,7 @@ int main(void)
     test_cancel_before_start_consumption_reports_zero_frames();
     test_tone_result_requires_every_frame_and_no_error();
     test_pa_is_only_enabled_for_audible_online_output();
+    test_history_playback_has_independent_mute_and_volume();
     test_volume_percent_is_amplitude_not_linear_db();
     test_entire_tone_table_is_a_minus_3_dbfs_sine();
     puts(fail ? "FAILED" : "OK");

@@ -83,7 +83,9 @@ void pk_display_panel_off(void);
 
 /*
  * 提交一个逻辑横屏矩形。传入像素按紧凑行排列；函数返回前数据已经复制到
- * 固件 framebuffer，并在下一个 VSYNC 切换到旋转后的 DPI framebuffer。
+ * 固件 framebuffer。ESP_OK 表示 DMA 已确认采用旋转后的 DPI framebuffer。
+ * ESP_ERR_TIMEOUT 时可能已提交，后续调用会先确认该帧，再重用已释放的 buffer。
+ * 所有绘制/提交接口仅由显示任务串行调用。
  */
 esp_err_t pk_display_draw(uint16_t x0, uint16_t y0,
                           uint16_t x1, uint16_t y1,
@@ -98,9 +100,15 @@ esp_err_t pk_display_flush_full(void);
 /* 显示 R/G/B 渐变，用于真机方向、颜色和全屏覆盖检查。 */
 void pk_display_test_pattern(void);
 
+/* DSI 桥 underrun（DMA 供帧跟不上扫描节奏）累计计数。由 DPI overlay 驱动
+ * 的桥 ISR 调 pk_display_underrun_bump() 原子递增（IRAM/DRAM，cache-safe）；
+ * 周期状态日志与诊断经 pk_display_underrun_count() 只读，不清零。 */
+void pk_display_underrun_bump(void);
+uint32_t pk_display_underrun_count(void);
+
 #ifdef __cplusplus
 }
 #endif
 
-/* 诊断：取出并清零 PPA 旋转 / 等 VSYNC 的累计耗时。 */
+/* 诊断：取出并清零 PPA 旋转 / 等 DMA 采用的累计耗时。 */
 void pk_display_flush_split(int64_t *ppa_us, int64_t *wait_us, uint32_t *cnt);

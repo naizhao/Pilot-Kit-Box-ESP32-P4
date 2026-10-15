@@ -61,6 +61,27 @@ static void test_cell_position_stable(void)
     chk_int("第 2 页首格 index", b.index, 8);
 }
 
+/* ── 2b) 长标签必须降档留在格子边框内 ────────────────────────────
+ * 生产回归：英文 Recordings 在 L 档是 10×21=210 px，而 200 px 格子扣掉
+ * 左右各 16 px 的边框呼吸区只剩 168 px。继续用 L 会同时压出格子和选中框。
+ * 期望值由生成字体的固定 cell 尺寸手算，不调用被测逻辑构造。
+ * 突变哨兵：删掉 L→M 降档分支，第一条必须红。 */
+static void test_long_label_uses_largest_fitting_size(void)
+{
+    chk_int("Recordings 210px 超宽时降到 M(150px)",
+            pk_nav_label_fit(210, 150, 168),
+            PK_NAV_LABEL_MEDIUM);
+    chk_int("Settings 168px 刚好装下时保留 L",
+            pk_nav_label_fit(168, 120, 168),
+            PK_NAV_LABEL_LARGE);
+    chk_int("极长标签 M 仍超宽时继续降到 S",
+            pk_nav_label_fit(252, 180, 168),
+            PK_NAV_LABEL_SMALL);
+    chk_int("录音中文 64px 保留 L",
+            pk_nav_label_fit(64, 44, 168),
+            PK_NAV_LABEL_LARGE);
+}
+
 /* 第 1 页原本留空的第 8 格现在是航空电台。缺这一格就只能从机场详情或
  * 诊断页间接进入，用户在主导航中找不到功能。 */
 static void test_airband_is_reachable_from_primary_navigation(void)
@@ -212,7 +233,7 @@ static void test_disabled_items(void)
 {
     chk_true("PFD 可点",    pk_nav_item_enabled(0));
     chk_true("搜索可点",    pk_nav_item_enabled(4));
-    chk_true("记录不可点", !pk_nav_item_enabled(5));
+    chk_true("录音可点",    pk_nav_item_enabled(5));
     chk_true("工具不可点", !pk_nav_item_enabled(6));
     chk_true("诊断可点",    pk_nav_item_enabled(7));
     chk_true("关于可点",    pk_nav_item_enabled(9));
@@ -223,18 +244,18 @@ static void test_disabled_items(void)
 }
 
 /* ── 8) 点在置灰格上：命中判定必须返回 NONE，不能返回 CELL ────────── */
-static void test_disabled_cell_not_hittable(void)
+static void test_recordings_reachable_and_tools_disabled(void)
 {
-    /* 第 1 页第 6 格（index 5「记录」）= 第 2 行第 2 列。 */
+    /* 第 1 页第 6 格（index 5「录音」）= 第 2 行第 2 列。 */
     const int x = 1 * PK_NAV_CELL_W + 10;
     const int y = PK_NAV_BAR_BOT + PK_NAV_CELL_H + 10;
     pk_nav_hit_t h = pk_nav_hit_test(x, y, 0, false);
-    chk_int("点「记录」不命中", h.kind, PK_NAV_HIT_NONE);
+    chk_int("点「录音」命中", h.kind, PK_NAV_HIT_CELL);
+    chk_int("命中的是 index 5", h.index, 5);
 
-    /* 相邻的第 5 格（index 4「搜索」）仍然可点——别一刀切把整行禁掉。 */
-    pk_nav_hit_t ok = pk_nav_hit_test(0 * PK_NAV_CELL_W + 10, y, 0, false);
-    chk_int("点「搜索」命中", ok.kind, PK_NAV_HIT_CELL);
-    chk_int("命中的是 index 4", ok.index, 4);
+    /* 相邻的工具仍是未实现占位，必须 disabled 且不产生错误动作。 */
+    pk_nav_hit_t off = pk_nav_hit_test(2 * PK_NAV_CELL_W + 10, y, 0, false);
+    chk_int("点「工具」不命中", off.kind, PK_NAV_HIT_NONE);
 }
 
 /* ── 9) 滑动翻页的阈值 ───────────────────────────────────────────
@@ -253,6 +274,7 @@ int main(void)
 {
     test_paging();
     test_cell_position_stable();
+    test_long_label_uses_largest_fitting_size();
     test_airband_is_reachable_from_primary_navigation();
     test_empty_cell();
     test_power_pop();
@@ -261,7 +283,7 @@ int main(void)
     test_pop_swallows_grid();
     test_x_out_of_bounds();
     test_disabled_items();
-    test_disabled_cell_not_hittable();
+    test_recordings_reachable_and_tools_disabled();
     test_swipe();
     printf("%s (%d fail)\n", g_fail ? "FAILED" : "PASSED", g_fail);
     return g_fail ? 1 : 0;

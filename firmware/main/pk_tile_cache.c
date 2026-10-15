@@ -65,11 +65,26 @@ void pk_tile_cache_stats(const pk_tile_cache_t *cache, int *out_used,
         const pk_tile_cache_slot_t *s = &cache->slots[i];
         if (!s->used || s->generation != cache->generation) continue;
         if (s->negative) neg++;
-        else             used++;
+        else if (s->data != NULL) used++;
     }
     if (out_used)     *out_used = used;
     if (out_negative) *out_negative = neg;
     if (out_bytes)    *out_bytes = (size_t)used * (size_t)PK_TILE_BUF_BYTES;
+}
+
+void pk_tile_cache_diag(const pk_tile_cache_t *cache, pk_tile_cache_diag_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->memory_evicts = cache->memory_evicts;
+    out->capacity_evicts = cache->capacity_evicts;
+    for (int i = 0; i < PK_TILE_CACHE_SLOTS; i++) {
+        const pk_tile_cache_slot_t *s = &cache->slots[i];
+        if (!s->used || s->generation != cache->generation) continue;
+        if (s->data) out->tiles++;
+        else if (s->negative) out->missing++;
+        else if (s->temp_negative) out->temporary++;
+        else out->retry++;
+    }
 }
 
 uint16_t *pk_tile_cache_alloc_tile_buffer(void)
@@ -88,6 +103,7 @@ bool pk_tile_cache_evict_lru(pk_tile_cache_t *cache)
         if (victim == NULL || s->last_used_seq < victim->last_used_seq) victim = s;
     }
     if (victim == NULL) return false;
+    cache->memory_evicts++;
     slot_free_data(victim);
     memset(victim, 0, sizeof(*victim));
     return true;
@@ -146,6 +162,7 @@ static pk_tile_cache_slot_t *find_slot_for_insert(pk_tile_cache_t *cache)
             victim = &cache->slots[i];
         }
     }
+    if (victim->data) cache->capacity_evicts++;
     slot_free_data(victim);
     return victim;
 }
@@ -170,21 +187,24 @@ const uint16_t *pk_tile_cache_get(pk_tile_cache_t *cache, pk_tile_key_t key,
     if (!s) return NULL;
 
     if (s->negative || s->temp_negative) {
-        uint32_t age = now_ms - s->neg_timestamp_ms; /* 无符号回绕对 TTL 量级无影响 */
+        /* 渲染整帧的 now_ms 可能早于 worker 刚写入的时间戳。模 32 位
+         * 差值按有符号解释，保留这种“尚未到时”的退避，也支持时钟回绕。
+         * TTL 及正常采样间隔均远小于半个 uint32_t 时钟周期。 */
+        int32_t age = (int32_t)(now_ms - s->neg_timestamp_ms);
         uint32_t ttl;
         if (s->temp_negative) {
-            /* 临时负缓存 TTL 看失败次数：≥5 次升级到长 TTL，否则短 TTL。
+            /* 临时负缓存 TTL 看 SD/资源各自失败次数：任一≥5 次升级到长 TTL，否则短 TTL。
              * 短(2s) < 长(5s)，短到期先返回 not-negative（允许重试）。 */
-            ttl = (s->sd_fail_count >= 5) ? PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS
+            ttl = (s->sd_fail_count >= 5 || s->resource_fail_count >= 5) ? PK_TILE_CACHE_TEMP_NEG_LONG_TTL_MS
                                           : PK_TILE_CACHE_TEMP_NEG_TTL_MS;
         } else {
             ttl = PK_TILE_CACHE_NEGATIVE_TTL_MS;   /* 真缺失：30s */
         }
-        if (age > ttl) {
+        if (age >= 0 && (uint32_t)age > ttl) {
             /* 过期：当作未命中，让调用方重新发起加载。
              * 真缺失负缓存(negative)：整个槽回收（memset）。
-             * 临时负缓存(temp_negative)：只清标志，**保留 sd_fail_count 和槽位**——
-             * 清零是 read 成功后 reset_sd_fail 的职责；过期重试若又失败，count
+             * 临时负缓存(temp_negative)：只清标志，**保留两类失败计数和槽位**——
+             * 清零由成功 put/reset_sd_fail 负责；过期重试若又失败，count
              * 要从原值继续往上走，退避升级路径才成立。槽位留着占住，避免下次
              * bump 又重新找位。 */
             if (s->temp_negative) {
@@ -221,6 +241,7 @@ void pk_tile_cache_put(pk_tile_cache_t *cache, pk_tile_key_t key, uint16_t *data
     s->last_used_seq     = ++cache->seq_counter;
     s->neg_timestamp_ms  = 0;
     s->sd_fail_count     = 0;       /* 成功 → 计数清零，一次拥塞不永久污染 */
+    s->resource_fail_count = 0;
 }
 
 void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
@@ -238,7 +259,7 @@ void pk_tile_cache_put_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint3
     s->neg_timestamp_ms  = now_ms;
 }
 
-uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
+static uint8_t bump_fail(pk_tile_cache_t *cache, pk_tile_key_t key, bool resource)
 {
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) {
@@ -257,16 +278,28 @@ uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, ui
     }
     /* 上限保护：uint8_t 不会溢出到 0（255 后 bump 留在 255），且阈值是 3/5，
      * 远在这之下。 */
-    if (s->sd_fail_count < 255) s->sd_fail_count++;
+    uint8_t *count = resource ? &s->resource_fail_count : &s->sd_fail_count;
+    if (*count < 255) (*count)++;
+    return *count;
+}
+
+uint8_t pk_tile_cache_bump_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
+{
     (void)now_ms;
-    return s->sd_fail_count;
+    return bump_fail(cache, key, false);
+}
+
+uint8_t pk_tile_cache_bump_resource_fail(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
+{
+    (void)now_ms;
+    return bump_fail(cache, key, true);
 }
 
 void pk_tile_cache_put_temp_negative(pk_tile_cache_t *cache, pk_tile_key_t key, uint32_t now_ms)
 {
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) return;   /* 没有计数条目 = 没 bump 过，不该插临时负缓存 */
-    /* 保留 sd_fail_count（退避升级靠它），只置临时负缓存态 + 刷新时间戳。
+    /* 保留两类失败计数（退避升级靠它们），只置临时负缓存态 + 刷新时间戳。
      * 槽里可能装着之前 read 成功的真瓦片（put 存的、sd_fail_count 当时清 0；
      * 后来该 key fetch 连续失败、bump 累积到阈值）——覆盖 data 前必须先释放，
      * 否则那 64KB PSRAM 再无人持有、无法回收（review 2026-08-04）。 */
@@ -282,9 +315,10 @@ void pk_tile_cache_reset_sd_fail(pk_tile_cache_t *cache, pk_tile_key_t key)
 {
     pk_tile_cache_slot_t *s = find_slot(cache, key);
     if (!s) return;
-    /* 成功了：计数清零，临时负缓存态也清。槽位本身可以留着（万一马上又失败，
+    /* 成功了：两类计数清零，临时负缓存态也清。槽位本身可以留着（万一马上又失败，
      * 不用重新占位），但既不再是负缓存也不再占数据。 */
     s->sd_fail_count  = 0;
+    s->resource_fail_count = 0;
     s->temp_negative  = false;
     /* 如果这个槽只用来记过失败计数、从没装过真瓦片，回收它腾给真正需要的 key。 */
     if (!s->negative && s->data == NULL) {

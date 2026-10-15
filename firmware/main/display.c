@@ -3,14 +3,18 @@
  *
  * ST7701 以 2-lane MIPI-DSI 接入，DPI 按原生 480×800 连续扫描。上层仍
  * 在 800×480 RGB565-swapped framebuffer 中绘制；每帧由 PPA 顺时针旋转
- * 90°并同时 byte-swap 到非活动 DPI framebuffer，再于 VSYNC 切换。
+ * 90°并同时 byte-swap 到非活动 DPI framebuffer，等待 DMA 确认采用后
+ * 才允许重用上一帧的 framebuffer。
  */
 
 #include "display.h"
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <string.h>
+
+#include "display_dma_sync.h"
 
 #include "driver/ledc.h"
 #include "driver/ppa.h"
@@ -46,11 +50,17 @@ static SemaphoreHandle_t s_refresh_done;
 static uint16_t *s_fb;
 static uint16_t *s_dpi_fb[2];
 
-/* 诊断：PPA 旋转与等 VSYNC 分别的累计耗时。 */
+/* 诊断：PPA 旋转与等 DMA 采用分别的累计耗时。 */
 static int64_t  s_ppa_us, s_ppa_wait_us;
 static uint32_t s_ppa_cnt;
+/* front/pending 仅由显示任务访问；ISR 只发布实际采用的 framebuffer。 */
 static unsigned s_front_fb;
-static volatile uint32_t s_refresh_count;
+static unsigned s_pending_fb;
+static bool s_have_pending;
+static _Atomic unsigned s_active_fb;
+static _Atomic unsigned s_dma_sync_ready;
+_Static_assert(sizeof(unsigned) == 4 && ATOMIC_INT_LOCK_FREE == 2,
+               "DMA ISR requires lock-free 32-bit atomic state");
 
 /* 微雪 4.3 寸板官方 BSP 的 ST7701 模组专用初始化序列。 */
 static const st7701_lcd_init_cmd_t s_st7701_init[] = {
@@ -102,18 +112,41 @@ static const st7701_lcd_init_cmd_t s_st7701_init[] = {
     {0x29, NULL, 0, 0},
 };
 
-static bool IRAM_ATTR lcd_refresh_done_cb(
-    esp_lcd_panel_handle_t panel,
-    esp_lcd_dpi_panel_event_data_t *event_data,
-    void *user_ctx)
+bool IRAM_ATTR pk_lcd_dma_frame_selected(esp_lcd_panel_handle_t panel,
+                                        const void *framebuffer)
 {
-    (void)panel;
-    (void)event_data;
+    if (!atomic_load_explicit(&s_dma_sync_ready, memory_order_acquire) ||
+        panel != s_panel) {
+        return false;
+    }
+
+    unsigned selected;
+    if (framebuffer == s_dpi_fb[0]) {
+        selected = 0;
+    } else if (framebuffer == s_dpi_fb[1]) {
+        selected = 1;
+    } else {
+        return false;
+    }
 
     BaseType_t high_task_woken = pdFALSE;
-    ++s_refresh_count;
-    xSemaphoreGiveFromISR((SemaphoreHandle_t)user_ctx, &high_task_woken);
+    atomic_store_explicit(&s_active_fb, selected, memory_order_release);
+    xSemaphoreGiveFromISR(s_refresh_done, &high_task_woken);
     return high_task_woken == pdTRUE;
+}
+
+/* DSI 桥 underrun 观测（§9.5 闪屏因果链的同步观测）：ISR 里原子递增。
+ * uint32_t 的 fetch_add 在 P4 上 lock-free，cache-safe ISR 可直接调用。 */
+static _Atomic uint32_t s_underrun;
+
+void IRAM_ATTR pk_display_underrun_bump(void)
+{
+    atomic_fetch_add(&s_underrun, 1);
+}
+
+uint32_t pk_display_underrun_count(void)
+{
+    return atomic_load(&s_underrun);
 }
 
 static esp_err_t backlight_init(void)
@@ -210,8 +243,43 @@ void pk_display_panel_off(void)
     }
 }
 
+static esp_err_t wait_for_pending_frame(int64_t deadline_us)
+{
+    while (s_have_pending) {
+        if (atomic_load_explicit(&s_active_fb, memory_order_acquire) ==
+            s_pending_fb) {
+            s_front_fb = s_pending_fb;
+            s_have_pending = false;
+            return ESP_OK;
+        }
+        const int64_t remaining_us = deadline_us - esp_timer_get_time();
+        if (remaining_us <= 0) {
+            ESP_LOGE(TAG, "waiting for LCD DMA framebuffer adoption timed out after %u ms",
+                     LCD_REFRESH_TIMEOUT_MS);
+            return ESP_ERR_TIMEOUT;
+        }
+        /* Semaphore 只负责唤醒；旧 token、重复通知或丢失唤醒都不能代替
+         * framebuffer 身份确认。每次等待只用剩余预算，绝不重置超时。 */
+        TickType_t remaining_ticks = pdMS_TO_TICKS((remaining_us + 999) / 1000);
+        if (remaining_ticks == 0) {
+            remaining_ticks = 1;
+        }
+        (void)xSemaphoreTake(s_refresh_done, remaining_ticks);
+    }
+    return ESP_OK;
+}
+
 static esp_err_t rotate_and_present(void)
 {
+    const int64_t wait_budget_us = (int64_t)LCD_REFRESH_TIMEOUT_MS * 1000;
+    const int64_t t_pending0 = esp_timer_get_time();
+    esp_err_t err = wait_for_pending_frame(t_pending0 + wait_budget_us);
+    const int64_t pending_wait_us = esp_timer_get_time() - t_pending0;
+    s_ppa_wait_us += pending_wait_us;
+    if (err != ESP_OK) {
+        /* 超时后的提交可能已经成为活动帧。未确认前不能再次写任一 buffer。 */
+        return err;
+    }
     const unsigned back_fb = s_front_fb ^ 1U;
     const ppa_srm_oper_config_t operation = {
         .in = {
@@ -245,13 +313,16 @@ static esp_err_t rotate_and_present(void)
     };
 
     const int64_t t_ppa0 = esp_timer_get_time();
-    esp_err_t err = ppa_do_scale_rotate_mirror(s_ppa, &operation);
+    err = ppa_do_scale_rotate_mirror(s_ppa, &operation);
     s_ppa_us += esp_timer_get_time() - t_ppa0;
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "PPA rotate failed: %s", esp_err_to_name(err));
         return err;
     }
     const int64_t t_wait0 = esp_timer_get_time();
+    /* 100 ms 是一次调用两段等待的总预算，不包含旋转和提交时间。 */
+    const int64_t remaining_wait_us = pending_wait_us < wait_budget_us ?
+        wait_budget_us - pending_wait_us : 0;
 
     err = esp_lcd_panel_draw_bitmap(s_panel, 0, 0,
                                     PK_LCD_NATIVE_W, PK_LCD_NATIVE_H,
@@ -261,27 +332,16 @@ static esp_err_t rotate_and_present(void)
         return err;
     }
 
-    /*
-     * draw_bitmap() 只更新下一帧要扫描的 framebuffer 指针。单纯等待 binary
-     * semaphore 有一个竞态：提交前留下的 VSYNC token 会让函数过早返回，
-     * 下一次 PPA 就可能覆盖仍在扫描的 buffer。提交后采样计数，再等它变化；
-     * 若采样前已发生 VSYNC，最多多等一帧，但绝不会少等一帧。
-     */
-    const uint32_t refresh_after_submit = s_refresh_count;
-    while (xSemaphoreTake(s_refresh_done, 0) == pdTRUE) {
-        /* 清掉与当前计数对应的旧 token。 */
-    }
-    while (s_refresh_count == refresh_after_submit) {
-        if (xSemaphoreTake(s_refresh_done,
-                           pdMS_TO_TICKS(LCD_REFRESH_TIMEOUT_MS)) != pdTRUE) {
-            ESP_LOGE(TAG, "waiting for LCD VSYNC timed out after %u ms",
-                     LCD_REFRESH_TIMEOUT_MS);
-            return ESP_ERR_TIMEOUT;
-        }
-    }
+    /* draw_bitmap() 仅提交下一帧指针。P4 v3 的 VSYNC 独立于 DMA 采用事件，
+     * 因此必须确认 DMA 真正选中的 buffer，而不能据 VSYNC 推断旧帧已释放。 */
+    s_pending_fb = back_fb;
+    s_have_pending = true;
+    err = wait_for_pending_frame(esp_timer_get_time() + remaining_wait_us);
     s_ppa_wait_us += esp_timer_get_time() - t_wait0;
+    if (err != ESP_OK) {
+        return err;
+    }
     s_ppa_cnt++;
-    s_front_fb = back_fb;
     return ESP_OK;
 }
 
@@ -295,6 +355,7 @@ void pk_display_flush_split(int64_t *ppa_us, int64_t *wait_us, uint32_t *cnt)
 
 esp_err_t pk_display_init(void)
 {
+    atomic_store_explicit(&s_dma_sync_ready, 0, memory_order_release);
     esp_err_t err = backlight_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "backlight init failed: %s", esp_err_to_name(err));
@@ -417,18 +478,8 @@ esp_err_t pk_display_init(void)
 
     s_refresh_done = xSemaphoreCreateBinary();
     if (s_refresh_done == NULL) {
-        ESP_LOGE(TAG, "LCD VSYNC semaphore allocation failed");
+        ESP_LOGE(TAG, "LCD DMA adoption semaphore allocation failed");
         return ESP_ERR_NO_MEM;
-    }
-    const esp_lcd_dpi_panel_event_callbacks_t callbacks = {
-        .on_refresh_done = lcd_refresh_done_cb,
-    };
-    err = esp_lcd_dpi_panel_register_event_callbacks(
-        s_panel, &callbacks, s_refresh_done);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "LCD VSYNC callback registration failed: %s",
-                 esp_err_to_name(err));
-        return err;
     }
 
     const ppa_client_config_t ppa_config = {
@@ -453,10 +504,15 @@ esp_err_t pk_display_init(void)
     }
     memset(s_fb, 0, PK_DISPLAY_FB_BYTES);
     s_front_fb = 0;
+    s_pending_fb = 0;
+    s_have_pending = false;
+    atomic_store_explicit(&s_active_fb, 0, memory_order_relaxed);
+    /* DMA 已从初始 buffer 0 连续扫描。所有供 ISR 读取的资源在此发布。 */
+    atomic_store_explicit(&s_dma_sync_ready, 1, memory_order_release);
 
     ESP_LOGI(TAG,
              "ST7701 DSI ready: logical %dx%d -> PPA 90 CW -> native %dx%d, "
-             "2 DPI buffers, app framebuffer %u KiB PSRAM",
+             "2 DPI buffers, DMA adoption sync, app framebuffer %u KiB PSRAM",
              PK_DISPLAY_W, PK_DISPLAY_H, PK_LCD_NATIVE_W, PK_LCD_NATIVE_H,
              (unsigned)(PK_DISPLAY_FB_BYTES / 1024));
     return ESP_OK;

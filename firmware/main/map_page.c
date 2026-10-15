@@ -56,6 +56,7 @@
 #include "pk_win.h"           /* pk_win_set_viewport（W1.5：视口格钉住）*/
 #include "pk_callsign.h"    /* pk_callsign_display —— 呼号/ICAO 回退，三页共用 */
 #include "aircraft_db.h"    /* pk_aircraft_registration —— 呼号缺失时的注册号回退 */
+#include "adsb_drawer.h"    /* 点飞机 → 页内详情抽屉（与列表页共用实现） */
 #include "traffic_geom.h"   /* pk_traffic_own_press_alt —— 威胁色板的相对高度基准 */
 #include "baro.h"             /* pk_baro_get —— 相对高度基准的气压计印证源 */
 #include "gps.h"              /* pk_gps_get  —— 同上，GNSS 正高印证/兜底源 */
@@ -223,6 +224,15 @@ static float  s_map_rot_deg = 0.0f;
 static EXT_RAM_BSS_ATTR struct { uint32_t icao; int16_t x, y; } s_ac_hits[AIRCRAFT_TABLE_CAPACITY];
 static int s_n_ac_hits;
 
+/*
+ * 飞机详情抽屉（2026-10-03 起）：点地图上的飞机原地开关，不再跳 ADS-B 列表。
+ * 讲哪架按 ICAO 记（行号会随视口/目标进出漂移），目标过期由 render 收起。
+ * s_press_drawer 记"这次按压落在抽屉上"——抽屉区的按压不归地图（不平移、
+ * 不判飞机命中），松手时只有绑定按钮有动作，其余只吃掉。
+ */
+static uint32_t s_drawer_icao;
+static bool     s_press_drawer;
+
 /* 容差 28 px：取 aero 层同款上限（GT911 抖动比手机大，见 0088a64f）。
  * 飞机符号本体 9 px，容差给到符号半径外 ~20 px 才点得中。 */
 #define AC_HIT_RADIUS_PX 28
@@ -357,10 +367,16 @@ static void render_tiles_heading_up(uint16_t *fb, double cwx, double cwy, uint8_
             if (tx != cur_tx || ty != cur_ty) {
                 if (cur_locked) { pk_tile_loader_unlock_sample(); cur_locked = false; }
                 cur_tx = tx; cur_ty = ty;
+                bool tile_neg = false;
                 cur_locked = pk_tile_loader_lock_sample((uint8_t)zoom, (uint32_t)tx,
                                                         (uint32_t)ty, now_ms, &cur_data,
-                                                        &cur_shift, &cur_crop_x0, &cur_crop_y0);
-                if (!cur_locked) {
+                                                        &cur_shift, &cur_crop_x0,
+                                                        &cur_crop_y0, &tile_neg);
+                /* C2（2026-10-01 调查 §8.2）：得 neg 即采用，不重发 request——
+                 * 对齐北朝上分支 try_blit 的判定（neg=确认缺失 30s 或 IO/资源
+                 * 退避 2-5s）。旧实现对该分支所有采样失败一律 request，负缓存
+                 * 与退避在旋转模式下全部被绕过。 */
+                if (!cur_locked && !tile_neg) {
                     pk_map_route_result_t route;
                     if (pk_tile_loader_route((uint8_t)zoom, (uint32_t)tx, (uint32_t)ty, &route))
                         pk_tile_loader_request(&route);
@@ -725,6 +741,10 @@ void pk_map_page_render(uint16_t *fb)
     const bool sd_mounted = pk_sdcard_is_mounted();
     if (!sd_mounted || pk_tile_loader_pack_count() == 0) {
         draw_no_data_state(fb, sd_mounted);
+        /* 主渲染路径整段没走：命中快照与抽屉不重建就会滞留上一幅地图的
+         * 几何——无数据页上点飞机会命中看不见的幽灵。一并清掉。 */
+        s_n_ac_hits   = 0;
+        s_drawer_icao = 0;
         return;
     }
 
@@ -1169,6 +1189,29 @@ void pk_map_page_render(uint16_t *fb)
      * 不重复画——两处都画会互相压。 ── */
 
     draw_chrome(fb, mpp, map_rot_deg, n);
+
+    /* ── 飞机详情抽屉：盖在整幅铬层之上（含 footer 与底部按钮列——那些
+     * 按钮 y≥266，全在抽屉底下；抽屉开着时按下去的也是抽屉，见 touch 的
+     * 抽屉分支）。与 ADS-B 列表页共用同一实现（adsb_drawer.c）。
+     *
+     * 目标按 ICAO 每帧从本帧快照重查：飞机过期/滚出 60 s 窗口时抽屉自然
+     * 收起——与列表页"目标不在快照里就收抽屉"同一条规矩。绑定成本机后
+     * 目标仍在快照里（地图绘制剔掉本机，但那只是画不画，不是查不到），
+     * 抽屉照常讲它，绑定按钮翻成绿底「取消绑定」。 ── */
+    if (s_drawer_icao) {
+        const aircraft_t *d = NULL;
+        for (size_t i = 0; i < n; ++i)
+            if (s_scratch[i].icao24 == s_drawer_icao) { d = &s_scratch[i]; break; }
+        if (d) {
+            const int64_t dsec = (now_us - d->last_seen_us) / 1000000;
+            int age = (int)dsec;
+            if (age < 0)   age = 0;
+            if (age > 99)  age = 99;   /* 与列表行 age_s 同一口径 */
+            pk_adsb_drawer_render(fb, d, age);
+        } else {
+            s_drawer_icao = 0;   /* 讲的飞机没了：收起，不留一屏死信息 */
+        }
+    }
 }
 
 /* ── 触摸 ─────────────────────────────────────────────────────────── */
@@ -1189,6 +1232,18 @@ bool pk_map_page_touch(int x, int y)
     }
 
     if (!s_press_active) {
+        /* 抽屉开着时，抽屉那一片（y≥250，含被它盖住的按钮列与 footer）整块
+         * 归抽屉：不平移地图、不判飞机/机场命中，松手时只有绑定按钮有动作。
+         * FAB 在上面那道闸门里已经放行过了——抽屉再大也不能挡住切页的路。
+         * 按下那一刻归属就定死，与 pk_touch_arbiter 同一条规矩。 */
+        if (s_drawer_icao && y >= PK_ADSB_DRAWER_TOP) {
+            s_press_drawer = true;
+            s_press_active = true;
+            s_press_moved  = false;
+            s_press_lx = x;
+            s_press_ly = y;
+            return true;
+        }
         int search_y, zin_y, zout_y, rc_y, orient_y;
         btn_layout(&search_y, &zin_y, &zout_y, &rc_y, &orient_y);
         /* 命中按钮同样要把这次按压标记为 active：触摸驱动在手指按住期间会
@@ -1260,6 +1315,17 @@ bool pk_map_page_touch(int x, int y)
      * 松手由 pk_map_page_touch_up() 清 s_btn_down/s_press_active。 */
     if (s_btn_down >= 0) return true;
 
+    /* 归抽屉的按压：不拖地图（拖了地图，抽屉底下的飞机就跑了，等于边看
+     * 详情边把详情的对象拖走）。累计位移超 12 px 记一次"动过"——列表页
+     * s_moved 的同一阈值，斜着滑一下的手不应该当成点在绑定钮上。锚点不
+     * 跟手更新，判的是"有没有一直按在原处"。 */
+    if (s_press_drawer) {
+        const int ddx = x - s_press_lx, ddy = y - s_press_ly;
+        if (ddx < -12 || ddx > 12 || ddy < -12 || ddy > 12)
+            s_press_moved = true;
+        return true;
+    }
+
     const int dx = x - s_press_lx;
     const int dy = y - s_press_ly;
     if (dx != 0 || dy != 0) {
@@ -1293,40 +1359,65 @@ void pk_map_page_touch_up(void)
      * 的闸门（s_press_active / s_btn_down）都在 touch() 里，这里够不着。
      */
     const bool tap = s_press_active && s_btn_down < 0 && !s_press_moved;
-    if (tap) {
+
+    /* 归抽屉的按压：松手只结算绑定按钮，抽屉其余区域吃掉这一下。
+     * s_drawer_icao 为 0 时跳过：按压期间目标过期/掉卡会被 render 收掉
+     * 抽屉，这一下不能再对"0 号目标"做绑定动作（bind_activate(0) 在
+     * own!=0 时等于把本机绑成 0）。 */
+    if (s_press_drawer) {
+        if (tap && s_drawer_icao != 0 &&
+            pk_adsb_drawer_bind_hit(s_press_lx, s_press_ly))
+            pk_adsb_drawer_bind_activate(s_drawer_icao);
+    } else if (tap) {
         /* ① 先问飞机：目标是移动的、符号只有 9 px，命中窗口比静止的机场小
          * 得多——排后面的话，密集区里想点飞机永远会被旁边的机场/航路点抢走
          * （aero 层那条"先机场后导航台"的同一条理由，方向相反：移动的、
          * 转瞬即逝的优先）。命中坐标用渲染趟刚发布的快照（同一帧的投影），
-         * 看得见的就是点得中的。 */
+         * 看得见的就是点得中的。
+         *
+         * 点中飞机 = 原地开关详情抽屉（同架收起 / 别架换讲，与列表行点击
+         * 同一条判定）。2026-10-03 之前这里跳 ADS-B 列表页，且 return 跳过
+         * 了底下的清理——触摸驱动每次松手都会无条件调本函数，残留的按压态
+         * 每次松手都用旧坐标重新命中那架飞机，把任何一次导航点击都拽回
+         * 列表页，只有重启能解（8c3fbce6 引入）。两个问题一起在此了断：
+         * 不跳页、不提前 return。 */
         const uint32_t ac = pk_map_page_hit_aircraft(s_press_lx, s_press_ly);
         if (ac != 0) {
-            pk_map_page_on_aircraft_detail(ac);
-            return;
-        }
-        pk_aero_layer_hit_t hit;
-        /* 投影参数（含旋转角 s_map_rot_deg）用本页当前的视图状态，与刚画完
-         * 的那一帧完全一致——看得见的就是点得中的。 */
-        if (pk_aero_layer_hit_test(s_press_lx, s_press_ly, s_center_lat,
-                                   s_center_lon, s_zoom, s_map_rot_deg, &hit)) {
-            if (hit.kind == PK_AERO_LAYER_KIND_AIRPORT) {
-                pk_map_page_on_apt_detail(hit.idx);
-            } else {
-                /* 导航台 / FIX 没有详情可看（数据包里只有 ident+坐标+频率），
-                 * 但"这个三角是什么"是个真实的问题——落一枚带 ident 的 PIN
-                 * 就地回答它，与搜索结果点导航台落到的是同一个终态。 */
-                pk_map_page_set_pin(hit.lat, hit.lon, hit.code);
-            }
+            s_drawer_icao = pk_adsb_drawer_tap_target(s_drawer_icao, ac);
+        } else if (s_drawer_icao) {
+            /* 抽屉开着时点空地图 = 收抽屉。不再级联进机场详情/落 PIN：
+             * 一下只做一件事，收抽屉之后那一想点的位置再点一下就是。 */
+            s_drawer_icao = 0;
         } else {
-            /* PIN 的清除时机必须是用户能想到的动作，而不是某个定时器：定时
-             * 消失会让人以为"刚才那个机场没找到"。另一条清除路径是再搜一次
-             * （set_pin 直接覆盖）。 */
-            s_pin_valid = false;
+            pk_aero_layer_hit_t hit;
+            /* 投影参数（含旋转角 s_map_rot_deg）用本页当前的视图状态，与刚画完
+             * 的那一帧完全一致——看得见的就是点得中的。 */
+            if (pk_aero_layer_hit_test(s_press_lx, s_press_ly, s_center_lat,
+                                       s_center_lon, s_zoom, s_map_rot_deg, &hit)) {
+                if (hit.kind == PK_AERO_LAYER_KIND_AIRPORT) {
+                    pk_map_page_on_apt_detail(hit.idx);
+                } else {
+                    /* 导航台 / FIX 没有详情可看（数据包里只有 ident+坐标+频率），
+                     * 但"这个三角是什么"是个真实的问题——落一枚带 ident 的 PIN
+                     * 就地回答它，与搜索结果点导航台落到的是同一个终态。 */
+                    pk_map_page_set_pin(hit.lat, hit.lon, hit.code);
+                }
+            } else {
+                /* PIN 的清除时机必须是用户能想到的动作，而不是某个定时器：定时
+                 * 消失会让人以为"刚才那个机场没找到"。另一条清除路径是再搜一次
+                 * （set_pin 直接覆盖）。 */
+                s_pin_valid = false;
+            }
         }
     }
+    /* 清理一律执行到底，任何分支都不许提前 return：touch_gt911.c 的
+     * touch_release_all() 每次松手都会无条件调到这里，留下的任何残留按压态
+     * 会在下一次松手时被当成一次没发生过的点击重新结算（上面的注释就是
+     * 那次事故）。 */
     s_press_active = false;
     s_press_moved  = false;
-    s_btn_down = -1;
+    s_btn_down     = -1;
+    s_press_drawer = false;
 }
 
 /* ── 搜索页的两个入口（见 map_page.h）───────────────────────────── */
@@ -1387,11 +1478,4 @@ __attribute__((weak)) void pk_map_page_on_sheet_restore(void)
 __attribute__((weak)) void pk_map_page_on_apt_detail(uint32_t apt_idx)
 {
     (void)apt_idx;
-}
-
-/* 点中 ADS-B 目标：默认空实现（模拟器/host 不链列表页），固件侧由导航宿主
- * 跳 ADS-B 列表并展开该目标的详情抽屉。 */
-__attribute__((weak)) void pk_map_page_on_aircraft_detail(uint32_t icao24)
-{
-    (void)icao24;
 }

@@ -364,7 +364,7 @@ static const diag_card_title_t CARD_TITLE[] = {
     {true, PK_TR_DIAG_CARD_UPTIME, NULL},
     {false, PK_TR_DIAG_TITLE, "AERO DB"},
     {false, PK_TR_DIAG_TITLE, "WINDOW"},
-    {false, PK_TR_DIAG_TITLE, "AIRBAND"},
+    {true, PK_TR_APTD_AIRBAND, NULL},
 };
 #define CARD_N  ((int)(sizeof(CARD_TITLE) / sizeof(CARD_TITLE[0])))
 _Static_assert(CARD_N == PK_DIAG_CARD_N,
@@ -793,16 +793,17 @@ void pk_diag_page_render(uint16_t *fb)
                       pk_i18n_text(PK_TR_DIAG_V_SD_FORMATTING), ST_WARN);
             break;
         default:
-            /* 只说"没插卡"。
-             *
-             * retry 计数是排查 slot 没注销那个 bug 时加的临时诊断，问题定位
-             * 之后它就成了噪音——不插卡使用是完全正常的用法，屏上却挂着一个
-             * 一直在涨的数字，看起来像有什么东西反复失败。
-             *
-             * 重试逻辑本身保留（热插拔靠它），只是不再摆到台面上。真要再排查
-             * 同类问题，看串口日志里的 "mount attempt #N failed" 就够了。 */
-            draw_card(fb, 0, 4, card_title(8),
-                      pk_i18n_text(PK_TR_DIAG_V_SD_NO_CARD), ST_BAD);
+            /* No CD pin: after the finite probe budget, a late insertion
+             * requires restart. Keep this distinct from a FAT/media error. */
+            if (pk_sdcard_probe_exhausted()) {
+                snprintf(buf, sizeof(buf), "%s / %s",
+                         pk_i18n_text(PK_TR_DIAG_V_SD_NO_CARD),
+                         pk_i18n_text(PK_TR_POWER_RESTART));
+                draw_card(fb, 0, 4, card_title(8), buf, ST_WARN);
+            } else {
+                draw_card(fb, 0, 4, card_title(8),
+                          pk_i18n_text(PK_TR_DIAG_V_SD_NO_CARD), ST_BAD);
+            }
             break;
         }
     }
@@ -1829,7 +1830,9 @@ static void draw_detail(uint16_t *fb, int which)
                      (double)free_b / (1024.0 * 1024.0 * 1024.0));
             det_kv_tr(fb, line++, PK_TR_DIAG_K_FREE, buf, COL_VAL);
         } else if (!mounted) {
-            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT, PK_TR_DIAG_V_SD_HINT,
+            det_kv_tr2(fb, line++, PK_TR_DIAG_K_HINT,
+                       pk_sdcard_probe_exhausted() ? PK_TR_POWER_RESTART
+                                                  : PK_TR_DIAG_V_SD_HINT,
                        COL_WARN);
         }
         break;
@@ -2122,8 +2125,9 @@ static void draw_detail(uint16_t *fb, int which)
         }
         pk_airband_record_status_t rec;
         pk_airband_record_get(&rec);
-        snprintf(buf,sizeof(buf),"%s enabled=%u active=%u q=%lu",
-            pk_airband_record_label(&rec),rec.enabled,rec.active,(unsigned long)rec.queued_blocks);
+        snprintf(buf,sizeof(buf),"%s enabled=%u active=%u q=%lu/%lu",
+            pk_airband_record_label(&rec),rec.enabled,rec.active,
+            (unsigned long)rec.queued_blocks,(unsigned long)rec.queue_high_water);
         det_kv(fb,line++,"SD REC",buf,rec.error ? COL_ALERT : COL_VAL);
         det_kv(fb,line++,"REC FILE",rec.file[0] ? rec.file : "--",COL_VAL);
         snprintf(buf,sizeof(buf),"%llu B / %lu segments / gen %lu",
@@ -2133,8 +2137,13 @@ static void draw_detail(uint16_t *fb, int which)
             (unsigned long)rec.dropped_blocks,(unsigned long)rec.dropped_samples,
             (unsigned long)rec.write_errors,(unsigned long)rec.sync_errors,(unsigned long)rec.close_errors);
         det_kv(fb,line++,"REC ERR",buf,rec.error || rec.dropped_blocks ? COL_WARN : COL_VAL);
-        snprintf(buf,sizeof(buf),"recovered %lu / errors %lu",
-            (unsigned long)rec.recovered,(unsigned long)rec.recovery_errors);
+        snprintf(buf,sizeof(buf),"source %lu  write/sync max %lu/%lu us",
+            (unsigned long)rec.source_gaps,(unsigned long)rec.max_write_us,
+            (unsigned long)rec.max_sync_us);
+        det_kv(fb,line++,"REC LATENCY",buf,
+               rec.dropped_blocks ? COL_WARN : COL_VAL);
+        snprintf(buf,sizeof(buf),"kept %lu / errors %lu",
+            (unsigned long)rec.recovery_skipped,(unsigned long)rec.recovery_errors);
         det_kv(fb,line++,"REC REPAIR",buf,rec.recovery_errors ? COL_ALERT : COL_VAL);
         break;
     }

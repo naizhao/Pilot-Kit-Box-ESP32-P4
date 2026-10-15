@@ -81,6 +81,62 @@ static bool               s_sd_media_err_seen;
 typedef struct { bool used; size_t pack_index; uint8_t z; uint32_t x, y; } inflight_t;
 EXT_RAM_BSS_ATTR static inflight_t s_inflight[LOADER_INFLIGHT_MAX];
 
+/* 任务上下文诊断：两个 worker 共用 s_lock 抢占 2s 日志时点；锁外打印。
+ * 仅累计既有工作，不新增读盘/分配，不在 ISR 或逐像素路径计数。 */
+typedef enum {
+    DIAG_READ, DIAG_READ_BYTES, DIAG_IO, DIAG_DIR_OOM, DIAG_INPUT_OOM,
+    DIAG_BUFFER_OOM, DIAG_PNG_OOM, DIAG_PNG_BAD, DIAG_JPEG_BAD,
+    DIAG_SIZE_BAD, DIAG_COUNT
+} loader_diag_event_t;
+typedef struct {
+    uint32_t events[DIAG_COUNT];
+    uint32_t calls, ok, missing, transient, max_total_ms;
+    int64_t last_log_us;
+    bool logged;
+} loader_diag_t;
+EXT_RAM_BSS_ATTR static loader_diag_t s_diag;
+
+static void diag_add(loader_diag_event_t event, uint32_t amount)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_diag.events[event] += amount;
+    xSemaphoreGive(s_lock);
+}
+
+/* 返回值同时供 host 证明跨 worker 限频。 */
+static bool diagnostic_log_maybe(void)
+{
+    loader_diag_t d;
+    pk_tile_cache_diag_t c;
+    int64_t now = esp_timer_get_time();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_diag.calls == 0 || (s_diag.logged && now - s_diag.last_log_us < 2000000)) {
+        xSemaphoreGive(s_lock);
+        return false;
+    }
+    s_diag.logged = true;
+    s_diag.last_log_us = now;
+    d = s_diag;
+    pk_tile_cache_diag(&s_cache, &c);
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "MAP_DIAG cumulative fetch=%lu ok=%lu missing=%lu transient=%lu "
+                  "resident=%lu/%uKB neg=%lu temp=%lu retry=%lu mem_evict=%lu slot_evict=%lu "
+                  "tile_read=%lu tile_bytes=%lu io=%lu dir_oom=%lu input_oom=%lu buffer_oom=%lu "
+                  "png83=%lu png_bad=%lu jpeg_bad=%lu size_bad=%lu max_total=%lums",
+             (unsigned long)d.calls, (unsigned long)d.ok, (unsigned long)d.missing,
+             (unsigned long)d.transient, (unsigned long)c.tiles,
+             (unsigned)(c.tiles * PK_TILE_BUF_BYTES / 1024),
+             (unsigned long)c.missing, (unsigned long)c.temporary, (unsigned long)c.retry,
+             (unsigned long)c.memory_evicts, (unsigned long)c.capacity_evicts,
+             (unsigned long)d.events[DIAG_READ], (unsigned long)d.events[DIAG_READ_BYTES],
+             (unsigned long)d.events[DIAG_IO], (unsigned long)d.events[DIAG_DIR_OOM],
+             (unsigned long)d.events[DIAG_INPUT_OOM], (unsigned long)d.events[DIAG_BUFFER_OOM],
+             (unsigned long)d.events[DIAG_PNG_OOM], (unsigned long)d.events[DIAG_PNG_BAD],
+             (unsigned long)d.events[DIAG_JPEG_BAD], (unsigned long)d.events[DIAG_SIZE_BAD],
+             (unsigned long)d.max_total_ms);
+    return true;
+}
+
 static bool key_eq(size_t pi, uint8_t z, uint32_t x, uint32_t y,
                    size_t pi2, uint8_t z2, uint32_t x2, uint32_t y2)
 {
@@ -205,8 +261,10 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
 
 bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
                                 const uint16_t **out_data, uint32_t *out_shift,
-                                uint32_t *out_crop_x0, uint32_t *out_crop_y0)
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0,
+                                bool *out_negative)
 {
+    *out_negative = false;
     pk_map_route_result_t route;
     if (!pk_tile_loader_route(z, tx, ty, &route)) return false;
 
@@ -228,6 +286,11 @@ bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t no
     const uint16_t *data = pk_tile_cache_get(&s_cache, key, now_ms, &neg);
     if (data == NULL) {
         xSemaphoreGive(s_lock);
+        /* C2（2026-10-01 调查 §8.2）：负缓存结果必须上抛——机头朝上分支旧实现
+         * 拿到 neg 却丢弃、对所有采样失败重新 request，30s 缺失缓存与 2/5s
+         * 退避在旋转模式下全部失效（每帧重灌请求队列）。对齐北朝上 try_blit
+         * 的语义：neg=true 时调用方不再发起加载。 */
+        *out_negative = neg;
         return false;
     }
     *out_data = data;
@@ -343,7 +406,27 @@ typedef enum {
     FETCH_TRANSIENT,    /* 内存不足、SD 读失败等 → 不进负缓存，下一帧重试 */
 } fetch_result_t;
 
-static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
+/* C1（2026-10-01 调查 §8.2）：资源/解码类瞬时失败的短退避标记。
+ *
+ * 旧实现里输入 malloc 失败 / 输出缓冲 acquire 失败 / PNG 解码 OOM(83) /
+ * JPEG 解码失败这几条路径只 return TRANSIENT：inflight 清掉后下一帧立刻
+ * 重发请求，每次都是完整的"目录查找 + SD 全读 + 解码"白做——SD 并发过载
+ * 时正是在给自己火上浇油。
+ *
+ * 资源失败使用独立计数，和 SD 失败共用槽位及 2/5s 临时负缓存。
+ * 不得累计到 sd_fail_count：首次 SD 失败必须仍能重开 FatFs 粘滞句柄。
+ * 资源失败一次即插，持续≥5次升级为5s；成功 put 同时清两类计数。 */
+static void mark_transient_backoff(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
+{
+    pk_tile_key_t key = { .pack_id = (uint32_t)pack_index, .z = z, .x = x, .y = y };
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    pk_tile_cache_bump_resource_fail(&s_cache, key, now_ms);
+    pk_tile_cache_put_temp_negative(&s_cache, key, now_ms);
+    xSemaphoreGive(s_lock);
+}
+
+static fetch_result_t fetch_and_decode_inner(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
 {
     int64_t t0 = esp_timer_get_time();
     pk_map_pack_t *pack;
@@ -369,7 +452,16 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
     xSemaphoreGive(s_lock);          /* meta 校验完立刻放,I/O 只握 io_lock */
     (void)route_unused;
 
-    bool found = idx_ok && pk_pmtiles_find_tile(&pack->pm, z, x, y, &loc);
+    /* C3（2026-10-01 调查 §8.2）：三态查找。"目录里确实没有"才允许进 MISSING；
+     * 目录自身分配失败（RESOURCE_ERROR）是内存紧张，按瞬时失败走 C1 短退避，
+     * 绝不进 30s 负缓存——旧 bool API 把两类混在一起，PSRAM 吃紧时整片区域
+     * 被误钉"确认缺失"半分钟，还叠加 C2 让旋转模式反复重查。 */
+    bool dir_oom = false;
+    pk_pmtiles_find_status_t st = idx_ok
+        ? pk_pmtiles_find_tile_status(&pack->pm, z, x, y, &loc)
+        : PK_PMTILES_FIND_NOT_FOUND;
+    bool found = (st == PK_PMTILES_FIND_FOUND);
+    if (st == PK_PMTILES_FIND_RESOURCE_ERROR) dir_oom = true;
     if (!found) {
         /* 路由只看包的 bounds/zoom 矩形范围，命中的包不一定真有这块瓦片：
          * 边界那一列瓦片"贴着"包边界时会被判为覆盖，而出包渲染的是严格落在
@@ -386,9 +478,12 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
             bool z_ok = alt && z >= alt->meta.min_zoom && z <= alt->meta.max_zoom;
             xSemaphoreGive(s_lock);
             if (!z_ok) continue;
-            if (pk_pmtiles_find_tile(&alt->pm, z, x, y, &loc)) {
+            st = pk_pmtiles_find_tile_status(&alt->pm, z, x, y, &loc);
+            if (st == PK_PMTILES_FIND_FOUND) {
                 pack = alt;
                 found = true;
+            } else if (st == PK_PMTILES_FIND_RESOURCE_ERROR) {
+                dir_oom = true;   /* 别的包目录 OOM 也记下：全都未命中时按资源错退避 */
             }
         }
     }
@@ -399,7 +494,16 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
          * 一次 sdmmc 0x106 之后，剩下 120 s 里该包一张瓦片都没能读出来）。 */
         bool io_fault = reopen_faulted_packs(pack_count);
         xSemaphoreGive(s_io_lock);
-        if (io_fault) return FETCH_TRANSIENT;
+        if (io_fault) { diag_add(DIAG_IO, 1); return FETCH_TRANSIENT; }
+        if (dir_oom) {
+            diag_add(DIAG_DIR_OOM, 1);
+            /* C3：目录分配失败 ≠ 瓦片不存在。短退避（C1 同款标记）后重试，
+             * 不进 30s 负缓存。 */
+            ESP_LOGW(TAG, "瓦片 z%u(%u,%u) 目录内存不足（resource error），短退避",
+                     z, x, y);
+            mark_transient_backoff(pack_index, z, x, y);
+            return FETCH_TRANSIENT;
+        }
         /* 这条曾经是整条链路上唯一一个「静默失败」：目录没命中就直接进负缓存，
          * 屏上表现为网格占位，但串口里一个字都没有——排查时分不清瓦片到底是
          * 「没请求」「读失败」还是「解码失败」，三者修法完全不同。补一条 W。 */
@@ -408,6 +512,7 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
         return FETCH_MISSING;
     }
     if (loc.length == 0 || loc.length > LOADER_PNG_MAX_BYTES) {
+        diag_add(DIAG_SIZE_BAD, 1);
         xSemaphoreGive(s_io_lock);
         ESP_LOGW(TAG, "tile z%u(%u,%u) 长度异常 %u,当失败处理", z, x, y,
                 (unsigned)loc.length);
@@ -416,22 +521,27 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
 
     uint8_t *png = malloc(loc.length);
     if (png == NULL) {
+        diag_add(DIAG_INPUT_OOM, 1);
         xSemaphoreGive(s_io_lock);
         ESP_LOGW(TAG, "png scratch alloc 失败 (%u B)", (unsigned)loc.length);
+        mark_transient_backoff(pack_index, z, x, y);   /* C1：短退避，防每帧重查重读 */
         return FETCH_TRANSIENT;
     }
 
     int64_t t_find = esp_timer_get_time();
+    diag_add(DIAG_READ, 1);
     bool ok = pack->pm.read(pack->pm.read_ctx,
                             pack->pm.header.tile_data_offset + loc.offset,
                             png, loc.length) == 0;
     xSemaphoreGive(s_io_lock);
     int64_t t_read = esp_timer_get_time();
+    if (ok) diag_add(DIAG_READ_BYTES, loc.length);
     if (!ok) {
+        diag_add(DIAG_IO, 1);
         free(png);
-        /* SD 读失败（sdmmc 0x106 超时 / NO_MEM 等）：环境问题，不是"瓦片不存在"。
+        /* SD 读取失败（0x106 在当前 SDK 为 ESP_ERR_NOT_SUPPORTED，不能据此判超时/内存不足）：瞬时错误，不是"瓦片不存在"。
          *
-         * 退避（2026-08-04）：真机抓包发现 0x106 在 SD 并发过载时密集重试——
+         * 退避（2026-08-04）：历史抓包发现读取失败后密集重试——
          * 旧逻辑每次失败都 reopen（reopen 本身要读 FAT 表，火上浇油），且
          * TRANSIENT 不进负缓存、每帧重试 → "失败-重开-再失败"死循环刷屏。
          * 现在改为：
@@ -484,7 +594,9 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
     uint16_t *buf = pk_tile_cache_acquire_buffer(&s_cache);
     xSemaphoreGive(s_lock);
     if (buf == NULL) {
+        diag_add(DIAG_BUFFER_OOM, 1);
         free(png);
+        mark_transient_backoff(pack_index, z, x, y);   /* C1：SD 已全读，短退避防每帧重读 */
         return FETCH_TRANSIENT;
     }
 
@@ -493,9 +605,11 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
          * RGB888→RGB565 转换）。png 这个变量名是历史遗留（原 PNG 路径），
          * 这里装的是 JPEG 压缩数据，语义不变。 */
         if (!pk_jpeg_decode_tile(png, loc.length, buf)) {
+            diag_add(DIAG_JPEG_BAD, 1);
             free(png);
             free(buf);
             ESP_LOGW(TAG, "JPEG 解码失败 z%u(%u,%u) len=%u", z, x, y, (unsigned)loc.length);
+            mark_transient_backoff(pack_index, z, x, y);   /* C1 */
             return FETCH_TRANSIENT;
         }
         free(png);
@@ -506,14 +620,20 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
         unsigned err = lodepng_decode32(&rgba, &pw, &ph, png, loc.length);
         free(png);
         if (err != 0 || rgba == NULL) {
+            diag_add(err == LODEPNG_ERR_OUT_OF_MEMORY ? DIAG_PNG_OOM : DIAG_PNG_BAD, 1);
             ESP_LOGW(TAG, "PNG 解码失败 z%u(%u,%u): lodepng err=%u", z, x, y, err);
             free(rgba);
             free(buf);
             /* lodepng 的 83 = "memory allocation failed"（它自己的错误码表）。
              * 这条是内存紧张的信号，不是 PNG 坏了，绝不能记成"确认缺失"。 */
-            return (err == LODEPNG_ERR_OUT_OF_MEMORY) ? FETCH_TRANSIENT : FETCH_MISSING;
+            if (err == LODEPNG_ERR_OUT_OF_MEMORY) {
+                mark_transient_backoff(pack_index, z, x, y);   /* C1 */
+                return FETCH_TRANSIENT;
+            }
+            return FETCH_MISSING;
         }
         if (pw != PK_TILE_PIXELS || ph != PK_TILE_PIXELS) {
+            diag_add(DIAG_SIZE_BAD, 1);
             ESP_LOGW(TAG, "瓦片尺寸异常 z%u(%u,%u): %ux%u（期望 %dx%d）",
                     z, x, y, pw, ph, PK_TILE_PIXELS, PK_TILE_PIXELS);
             free(rgba);
@@ -543,6 +663,21 @@ static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x,
         ESP_LOGD(TAG, "tile z%u(%u,%u) total=%dms", z, x, y, (int)((t_done - t0) / 1000));
     }
     return FETCH_OK;
+}
+
+static fetch_result_t fetch_and_decode(size_t pack_index, uint8_t z, uint32_t x, uint32_t y)
+{
+    int64_t start = esp_timer_get_time();
+    fetch_result_t result = fetch_and_decode_inner(pack_index, z, x, y);
+    uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - start) / 1000);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_diag.calls++;
+    if (result == FETCH_OK) s_diag.ok++;
+    else if (result == FETCH_MISSING) s_diag.missing++;
+    else s_diag.transient++;
+    if (elapsed_ms > s_diag.max_total_ms) s_diag.max_total_ms = elapsed_ms;
+    xSemaphoreGive(s_lock);
+    return result;
 }
 
 /* 认领一次布尔跳变：*flag（上一轮观测值）与 now（本轮观测值）不同时，把 *flag
@@ -604,7 +739,7 @@ static void handle_sd_transition(void)
 
     /* 「插了张读不出的卡」是独立于挂载状态的一条线：这种卡永远挂不上，
      * mounted 一直是 false，上面两支边沿都不会响。同样只在跳变时提示一次，
-     * 否则 3 s 一轮的重试会把 toast 一直顶在屏上。 */
+     * 否则周期重试（3 s 起随探测退避放慢到 12 s，最多尝试 8 次）会把 toast 一直顶在屏上。 */
     bool media_err = pk_sdcard_media_error();
     if (claim_edge(&s_sd_media_err_seen, media_err) && media_err) {
         ESP_LOGW(TAG, "SD 卡在位但文件系统挂不上");
@@ -633,6 +768,7 @@ static void loader_task(void *arg)
     (void)arg;
     while (1) {
         handle_sd_transition();
+        diagnostic_log_maybe();
 
         loader_req_t req;
         if (xQueueReceive(s_queue, &req, pdMS_TO_TICKS(LOADER_POLL_MS)) != pdTRUE)

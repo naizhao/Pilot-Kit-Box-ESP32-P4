@@ -1,5 +1,6 @@
 #include "airband_record.h"
 #include "airband_wav.h"
+#include "airband_recording_store.h"
 #include "pk_sdcard.h"
 #include <dirent.h>
 #include <errno.h>
@@ -21,14 +22,23 @@ typedef struct {
     bool end, interrupted;
     int16_t pcm[PK_AIRBAND_RECORD_BLOCK_SAMPLES];
 } record_block_t;
+#define RECORD_STDIO_BUFFER_BYTES 4096u
+#define RECORD_CHECKPOINT_INTERVAL_US 2000000LL
+#define RECORD_WRITE_BATCH_BLOCKS 32u
+#define RECORD_PREPARE_RETRY_US 1000000LL
 /* Copy-only critical section, independent of the filesystem mutex. The tail
  * remains owned until I/O finishes, so a close/overflow can mark its end even
  * when the writer has already copied that block. */
 static EXT_RAM_BSS_ATTR record_block_t s_blocks[PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+static EXT_RAM_BSS_ATTR char s_stdio_buffer[RECORD_STDIO_BUFFER_BYTES];
+static EXT_RAM_BSS_ATTR int16_t
+    s_write_pcm[RECORD_WRITE_BATCH_BLOCKS * PK_AIRBAND_RECORD_BLOCK_SAMPLES];
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static SemaphoreHandle_t s_io;
 static uint32_t s_head, s_tail, s_segment, s_next_segment, s_session;
 static uint32_t s_channel, s_carrier, s_mount;
+static uint32_t s_source_gap_run;
+static uint32_t s_pending_interrupted_segment;
 static bool s_ready, s_holdoff;
 static pk_airband_record_status_t s_status;
 /* Everything below is writer/I/O-mutex owned. Never take the SD module lock. */
@@ -36,14 +46,35 @@ static pk_airband_wav_t s_wav;
 static FILE *s_fp;
 static char s_root[192], s_part[320];
 static uint32_t s_prepared_mount, s_sequence, s_file_session, s_io_session, s_io_segment, s_volume;
+static uint32_t s_prepare_mount;
+static int64_t s_prepare_retry_at;
 static int64_t s_checkpoint_at;
 
+static void update_io_max(uint32_t *maximum, int64_t started)
+{
+    int64_t elapsed = esp_timer_get_time() - started;
+    uint32_t value = elapsed <= 0 ? 0u : elapsed > UINT32_MAX
+        ? UINT32_MAX : (uint32_t)elapsed;
+    portENTER_CRITICAL(&s_mux);
+    if (value > *maximum) *maximum = value;
+    portEXIT_CRITICAL(&s_mux);
+}
 static int file_write(void *ctx, const uint8_t *p, size_t n, size_t *written)
-{ *written = fwrite(p, 1, n, ctx); return *written == n ? 0 : -1; }
+{
+    const int64_t started = esp_timer_get_time();
+    *written = fwrite(p, 1, n, ctx);
+    if (ctx == s_fp) update_io_max(&s_status.max_write_us, started);
+    return *written == n ? 0 : -1;
+}
 static int file_seek(void *ctx, uint32_t offset)
 { return fseek(ctx, (long)offset, SEEK_SET); }
 static int file_sync(void *ctx)
-{ int a = fflush(ctx); int b = fsync(fileno(ctx)); return a || b ? -1 : 0; }
+{
+    const int64_t started = esp_timer_get_time();
+    int a = fflush(ctx); int b = fsync(fileno(ctx));
+    if (ctx == s_fp) update_io_max(&s_status.max_sync_us, started);
+    return a || b ? -1 : 0;
+}
 static int file_close(void *ctx) { return fclose(ctx); }
 static pk_airband_wav_io_t file_io(FILE *fp)
 { return (pk_airband_wav_io_t){fp,file_write,file_seek,file_sync,file_close}; }
@@ -63,14 +94,24 @@ static void errors_locked(pk_airband_wav_result_t e)
 /* Caller holds the producer mux. Control does not consume a queue slot. */
 static void end_segment(bool interrupted)
 {
+    const uint32_t ended_segment = s_segment;
+    bool marker_attached = false;
     if (s_segment && s_head != s_tail) {
         record_block_t *last = &s_blocks[(s_head - 1u) % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
         if (last->segment == s_segment) {
             last->end = true;
             last->interrupted |= interrupted;
+            marker_attached = true;
         }
     }
-    if (interrupted && s_segment) s_status.interrupted = true;
+    if (interrupted && ended_segment) {
+        s_status.interrupted = true;
+        /* The writer leaves a WAV open between polls.  If all PCM blocks have
+         * already drained, there is no queue entry on which to carry the
+         * interrupted bit, so retain it against that exact logical segment. */
+        if (!marker_attached)
+            s_pending_interrupted_segment = ended_segment;
+    }
     s_segment = 0;
 }
 
@@ -89,8 +130,14 @@ static bool publish_final(const char *part, bool interrupted, char *final, size_
 static bool close_segment(bool interrupted)
 {
     if (!s_fp) return true;
+    portENTER_CRITICAL(&s_mux);
+    if (s_pending_interrupted_segment == s_io_segment) {
+        interrupted = true;
+        s_pending_interrupted_segment = 0;
+    }
+    portEXIT_CRITICAL(&s_mux);
     /* Odd short writes must not leave a dangling half-sample. Failure leaves
-     * the .part.wav for recovery and is surfaced; it is never published. */
+     * the .part.wav for manual inspection and is surfaced; it is never published. */
     bool truncate_ok = true;
     if (s_wav.data_bytes & 1u) {
         truncate_ok = fflush(s_fp) == 0 &&
@@ -111,35 +158,30 @@ static bool close_segment(bool interrupted)
         snprintf(s_status.file,sizeof(s_status.file),"%s",strrchr(final,'/')+1);
     }
     portEXIT_CRITICAL(&s_mux);
+    if (published) pk_airband_recording_store_request_refresh();
     s_io_segment = 0;
     return !e;
 }
 
-static bool recover_part(const char *path)
+/* Automatic preparation never repairs or publishes an existing .part.wav.
+ * A checkpoint is not proof of a complete recording: retaining the original
+ * name and bytes also retains any PCM beyond it. Content, size and non-file
+ * entries remain pending; genuine filesystem I/O failures stay visible.
+ * Explicit low-level WAV recovery remains available to its existing callers. */
+static bool inspect_part(const char *path)
 {
     struct stat st;
-    if (stat(path,&st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 44) return false;
-    FILE *fp = fopen(path,"r+b");
+    if (stat(path,&st) != 0) return false;
+    if (!S_ISREG(st.st_mode)) return true;
+    FILE *fp = fopen(path,"rb");
     if (!fp) return false;
-    unsigned char header[44];
-    static const unsigned char format[28] = {
-        'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,1,0,
-        0x80,0x3e,0,0,0,0x7d,0,0,2,0,16,0,
-    };
-    bool ok = setvbuf(fp,NULL,_IONBF,0) == 0 && fread(header,1,44,fp) == 44 &&
-        memcmp(header,"RIFF",4) == 0 && memcmp(header+8,format,sizeof(format)) == 0 &&
-        memcmp(header+36,"data",4) == 0;
-    if (!ok) { fclose(fp); return false; }
-    pk_airband_wav_t wav = {0};
-    const pk_airband_wav_io_t io = file_io(fp);
-    pk_airband_wav_result_t e = pk_airband_wav_recover(&wav,&io,(uint64_t)st.st_size);
-    if (!e && ftruncate(fileno(fp),pk_airband_wav_file_size(&wav)) != 0)
-        e |= PK_AIRBAND_WAV_ERR_WRITE;
-    if (wav.is_open) e |= pk_airband_wav_close(&wav);
-    else if (fclose(fp) != 0) e |= PK_AIRBAND_WAV_ERR_CLOSE;
-    char final[320];
-    ok = !e && publish_final(path,true,final,sizeof(final));
-    return ok;
+    unsigned char header[PK_AIRBAND_WAV_HEADER_BYTES];
+    /* Read only a bounded prefix to expose read errors. No header is trusted
+     * or used to decide whether an old file should become a final recording. */
+    (void)fread(header,1,sizeof(header),fp);
+    const bool read_ok = ferror(fp) == 0;
+    const bool close_ok = fclose(fp) == 0;
+    return read_ok && close_ok;
 }
 
 static bool prepare_mount(uint32_t mount)
@@ -149,6 +191,12 @@ static bool prepare_mount(uint32_t mount)
     if (mkdir(s_root,0775) != 0 && errno != EEXIST) return false;
     DIR *d = opendir(s_root);
     if (!d) return false;
+    /* Existing-part inspection is read-only; once a scan starts we do not retry
+     * it against the same mount: the verdicts (pending / error)
+     * are stable for an unchanged directory, and a failing card must not be
+     * rescanned at poll rate.  Early mkdir/opendir failures remain safe to
+     * retry at a bounded interval. */
+    s_prepared_mount = mount;
     bool ok = true;
     s_sequence = 0;
     struct dirent *ent;
@@ -160,18 +208,19 @@ static bool prepare_mount(uint32_t mount)
         if (len >= 9 && strcmp(ent->d_name+len-9,".part.wav") == 0) {
             char path[320];
             n = snprintf(path,sizeof(path),"%s/%s",s_root,ent->d_name);
-            bool recovered = n > 0 && (size_t)n < sizeof(path) && recover_part(path);
+            const bool inspected = n > 0 && (size_t)n < sizeof(path) && inspect_part(path);
             portENTER_CRITICAL(&s_mux);
-            if (recovered) s_status.recovered++;
+            if (inspected) s_status.recovery_skipped++;
             else { s_status.recovery_errors++; s_status.error = true; }
             portEXIT_CRITICAL(&s_mux);
-            if (!recovered) ok = false;
+            /* Pending files are not failures: recording stays usable, the
+             * .part.wav simply remains for a human decision. */
+            if (!inspected) ok = false;
         }
         errno = 0;
     }
     if (errno != 0) ok = false;
     if (closedir(d) != 0) ok = false;
-    s_prepared_mount = mount;
     s_io_session = 0;
     return ok;
 }
@@ -193,14 +242,19 @@ static bool open_segment(const record_block_t *b)
     if (fd < 0) return false;
     s_fp = fdopen(fd,"wb");
     if (!s_fp) { close(fd); return false; }
-    if (setvbuf(s_fp,NULL,_IONBF,0) != 0) { fclose(s_fp);s_fp=NULL;return false; }
+    /* The capture task produces 128 B every 4 ms.  A sector-sized stdio
+     * buffer turns those tiny FAT calls into sequential 4 KiB writes; the
+     * explicit checkpoints below remain the durability boundary. */
+    if (setvbuf(s_fp,s_stdio_buffer,_IOFBF,sizeof(s_stdio_buffer)) != 0) {
+        fclose(s_fp);s_fp=NULL;return false;
+    }
     s_wav = (pk_airband_wav_t){0};
     const pk_airband_wav_io_t io = file_io(s_fp);
     pk_airband_wav_result_t e = pk_airband_wav_init(&s_wav,&io);
     errors_locked(e);
     if (e) { close_segment(true); return false; }
     s_io_segment = b->segment;
-    s_checkpoint_at = esp_timer_get_time() + 1000000;
+    s_checkpoint_at = esp_timer_get_time() + RECORD_CHECKPOINT_INTERVAL_US;
     portENTER_CRITICAL(&s_mux);
     s_status.active = true;
     snprintf(s_status.file,sizeof(s_status.file),"%s",strrchr(s_part,'/')+1);
@@ -226,6 +280,8 @@ static void pre_unmount(void)
     s_status.stopping = false;
     portEXIT_CRITICAL(&s_mux);
     s_prepared_mount = 0;
+    s_prepare_mount = 0;
+    s_prepare_retry_at = 0;
     xSemaphoreGive(s_io);
 }
 
@@ -236,53 +292,105 @@ static void record_poll(void)
     if (!pk_sdcard_is_mounted()) {
         close_segment(true);
         portENTER_CRITICAL(&s_mux);
-        s_ready = false;s_status.sd_missing = true;
+        s_ready = false;s_status.sd_missing = true;s_status.stopping = false;
         if (pk_sdcard_media_error()) s_status.error = true;
         portEXIT_CRITICAL(&s_mux);
         xSemaphoreGive(s_io);return;
     }
-    if (s_prepared_mount != mount) {
+    if (s_prepare_mount != mount) {
         close_segment(true);
-        bool ready = prepare_mount(mount);
+        s_prepare_mount = mount;
+        s_prepared_mount = 0;
+        s_prepare_retry_at = 0;
         portENTER_CRITICAL(&s_mux);
         s_head = s_tail = 0;s_segment = 0;s_mount = mount;
-        s_ready = ready && pk_sdcard_is_mounted() && pk_sdcard_mount_generation() == mount;
+        s_ready = false;
         s_status.mount_generation = mount;
-        s_status.sd_missing = !s_ready;
+        portEXIT_CRITICAL(&s_mux);
+    }
+    portENTER_CRITICAL(&s_mux);
+    s_status.sd_missing = false;
+    const bool needs_io = s_status.enabled || s_status.stopping || s_tail != s_head;
+    portEXIT_CRITICAL(&s_mux);
+    if (!needs_io && !s_fp) {
+        xSemaphoreGive(s_io);return;
+    }
+    if (s_prepared_mount != mount && esp_timer_get_time() >= s_prepare_retry_at) {
+        bool ready = prepare_mount(mount);
+        s_prepare_retry_at = esp_timer_get_time() + RECORD_PREPARE_RETRY_US;
+        portENTER_CRITICAL(&s_mux);
+        s_ready = ready && pk_sdcard_is_mounted() && pk_sdcard_mount_generation() == mount;
+        s_status.sd_missing = !pk_sdcard_is_mounted();
+        if (s_ready) s_status.error = false;
         if (!ready) { s_status.error = true;s_status.write_errors++; }
         portEXIT_CRITICAL(&s_mux);
     }
     record_block_t b;
+    uint32_t batch_blocks = 0;
+    size_t batch_samples = 0;
     portENTER_CRITICAL(&s_mux);
     bool have = s_ready && s_tail != s_head;
-    if (have) b = s_blocks[s_tail % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+    if (have) {
+        b = s_blocks[s_tail % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+        while (batch_blocks < RECORD_WRITE_BATCH_BLOCKS &&
+               s_tail + batch_blocks != s_head) {
+            const record_block_t *next =
+                &s_blocks[(s_tail + batch_blocks) % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+            if (next->segment != b.segment || next->session != b.session ||
+                next->mount != b.mount || next->channel != b.channel ||
+                next->carrier != b.carrier) break;
+            batch_samples += next->count;
+            batch_blocks++;
+            if (next->end) break;
+        }
+    }
     const bool enabled = s_status.enabled;
     portEXIT_CRITICAL(&s_mux);
     if (have) {
+        /* tail does not advance until I/O completes, so these owned PCM slots
+         * cannot be overwritten.  Copy 4 KiB outside the critical section. */
+        size_t copied = 0;
+        for (uint32_t i = 0; i < batch_blocks; ++i) {
+            const record_block_t *owned =
+                &s_blocks[(s_tail + i) % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+            memcpy(s_write_pcm + copied, owned->pcm,
+                   owned->count * sizeof(*owned->pcm));
+            copied += owned->count;
+        }
         bool ok = b.mount == mount && pk_sdcard_is_mounted();
         if (s_fp && s_io_segment != b.segment) ok = close_segment(false) && ok;
         if (ok && !s_fp) ok = open_segment(&b);
         size_t offset = 0;
-        while (ok && offset < b.count) {
+        while (ok && offset < batch_samples) {
             size_t consumed = 0;
             const uint32_t bytes_before = s_wav.data_bytes;
-            pk_airband_wav_result_t e = pk_airband_wav_append(&s_wav,b.pcm+offset,b.count-offset,&consumed);
+            pk_airband_wav_result_t e = pk_airband_wav_append(
+                &s_wav,s_write_pcm+offset,batch_samples-offset,&consumed);
             offset += consumed;
             portENTER_CRITICAL(&s_mux);s_status.bytes += s_wav.data_bytes-bytes_before;portEXIT_CRITICAL(&s_mux);
             if (e == PK_AIRBAND_WAV_FULL) {
                 ok = close_segment(false);
-                if (ok && offset < b.count) ok = open_segment(&b);
+                if (ok && offset < batch_samples) ok = open_segment(&b);
             } else if (e) { errors_locked(e);ok = false; }
         }
         if (ok && s_fp && esp_timer_get_time() >= s_checkpoint_at) {
             pk_airband_wav_result_t e = pk_airband_wav_checkpoint(&s_wav);
-            errors_locked(e);ok = !e;s_checkpoint_at = esp_timer_get_time()+1000000;
+            errors_locked(e);ok = !e;
+            s_checkpoint_at = esp_timer_get_time()+RECORD_CHECKPOINT_INTERVAL_US;
         }
         portENTER_CRITICAL(&s_mux);
-        /* Re-read the end marker written by stop/overflow while I/O ran. */
-        b.end = s_blocks[s_tail % PK_AIRBAND_RECORD_QUEUE_BLOCKS].end;
-        b.interrupted = s_blocks[s_tail % PK_AIRBAND_RECORD_QUEUE_BLOCKS].interrupted;
-        s_tail++;
+        /* Re-read markers written by stop/overflow while the batch was in
+         * FAT I/O.  The producer cannot overwrite these owned slots until
+         * tail advances here. */
+        b.end = false;
+        b.interrupted = false;
+        for (uint32_t i = 0; i < batch_blocks; ++i) {
+            const record_block_t *done =
+                &s_blocks[(s_tail + i) % PK_AIRBAND_RECORD_QUEUE_BLOCKS];
+            b.end |= done->end;
+            b.interrupted |= done->interrupted;
+        }
+        s_tail += batch_blocks;
         if (!ok) {
             s_status.error = true;s_status.write_errors++;
             end_segment(true);s_holdoff = true;s_ready = false;s_tail = s_head;
@@ -303,7 +411,15 @@ static void record_poll(void)
 static void writer_task(void *arg)
 {
     (void)arg;
-    for (;;) { record_poll();vTaskDelay(pdMS_TO_TICKS(1)); }
+    for (;;) {
+        /* Drain a backlog immediately.  Sleeping after every 4 ms audio block
+         * unnecessarily cuts the writer's recovery headroom under SD jitter. */
+        record_poll();
+        portENTER_CRITICAL(&s_mux);
+        const bool pending = s_ready && s_tail != s_head;
+        portEXIT_CRITICAL(&s_mux);
+        if (!pending) vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }
 
 bool pk_airband_record_init(void)
@@ -324,7 +440,7 @@ bool pk_airband_record_init(void)
             return false;
         }
     }
-    if (xTaskCreatePinnedToCore(writer_task,"airband_rec",4096,NULL,2,NULL,0) != pdTRUE) {
+    if (xTaskCreatePinnedToCore(writer_task,"airband_rec",8192,NULL,2,NULL,0) != pdTRUE) {
         /* The registered callback owns this one mutex for the application
          * lifetime. Retain it on task failure so a later init can retry safely. */
         portENTER_CRITICAL(&s_mux);s_status.error=true;portEXIT_CRITICAL(&s_mux);
@@ -338,10 +454,12 @@ bool pk_airband_record_init(void)
 
 bool pk_airband_record_set_enabled(bool enabled)
 {
+    const bool mounted = !enabled || pk_sdcard_is_mounted();
     portENTER_CRITICAL(&s_mux);
-    bool ok = s_status.started && (!enabled || (s_ready && !s_status.stopping));
+    bool ok = s_status.started && (!enabled || (mounted && !s_status.stopping));
     if (ok && enabled != s_status.enabled) {
-        if (enabled) { s_session++;s_holdoff=false;s_status.interrupted=false;s_status.error=false; }
+        s_source_gap_run=0;
+        if (enabled) { s_session++;s_holdoff=false;s_status.interrupted=false;if(s_ready)s_status.error=false; }
         else { end_segment(false);s_status.stopping=s_status.active || s_head!=s_tail; }
         s_status.enabled=enabled;
     }
@@ -354,7 +472,22 @@ bool pk_airband_record_submit(const int16_t *pcm,size_t frames,bool rf,bool sq,
 {
     portENTER_CRITICAL(&s_mux);
     const bool gate = rf && sq && pcm && frames;
-    if (!gate || channel != s_channel || carrier != s_carrier) end_segment(!rf || (sq && !frames));
+    const bool channel_changed = channel != s_channel || carrier != s_carrier;
+    const bool source_gap = rf && sq && (!pcm || frames == 0);
+    if (channel_changed) { end_segment(false);s_source_gap_run=0; }
+    if (!rf) { end_segment(true);s_source_gap_run=0; }
+    else if (!sq) { end_segment(false);s_source_gap_run=0; }
+    else if (source_gap && s_segment) {
+        s_status.source_gaps++;
+        s_source_gap_run++;
+        if (s_source_gap_run >= PK_AIRBAND_RECORD_SOURCE_GAP_LIMIT_BLOCKS) {
+            s_status.dropped_samples +=
+                PK_AIRBAND_RECORD_SOURCE_GAP_LIMIT_BLOCKS *
+                PK_AIRBAND_RECORD_BLOCK_SAMPLES;
+            end_segment(true);
+            s_holdoff=true;
+        }
+    } else if (gate) s_source_gap_run=0;
     if (!gate) {
         if (!sq) s_holdoff=false;
         portEXIT_CRITICAL(&s_mux);return false;
@@ -380,6 +513,9 @@ bool pk_airband_record_submit(const int16_t *pcm,size_t frames,bool rf,bool sq,
             .channel=channel,.carrier=carrier};
         size_t n=frames-offset;if(n>PK_AIRBAND_RECORD_BLOCK_SAMPLES)n=PK_AIRBAND_RECORD_BLOCK_SAMPLES;
         b->count=(uint16_t)n;memcpy(b->pcm,pcm+offset,n*sizeof(*pcm));s_head++;
+        const uint32_t queued = s_head-s_tail;
+        if (queued > s_status.queue_high_water)
+            s_status.queue_high_water = queued;
     }
     portEXIT_CRITICAL(&s_mux);
     return ok;
@@ -395,7 +531,7 @@ const char *pk_airband_record_label(const pk_airband_record_status_t *s)
     if (s->stopping) return "WRITING";
     if (s->error) return "ERROR";
     if (s->sd_missing) return "SD MISSING";
-    if (s->interrupted) return "DROP";
+    if (s->enabled && s->interrupted) return "GAP";
     if (s->active) return "REC";
     return s->enabled ? "ARMED" : "IDLE";
 }

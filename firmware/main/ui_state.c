@@ -7,6 +7,7 @@
  */
 
 #include "ui_state.h"
+#include "airband_recordings_page.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -34,6 +35,7 @@ static const char *TAG = "ui";
 #define UI_DIAG_SCROLL_MAX_PX      300   /* 诊断页比 about 长(GPS 多行 + 每星座一行 SNR 柱状图) */
 
 #define UI_TOAST_DURATION_US      (1500 * 1000)  /* toast 在屏幕上停留 1.5s */
+#define UI_PLAYBACK_NOTICE_DURATION_US (8000 * 1000)
 
 static SemaphoreHandle_t s_lock;
 static volatile bool     s_ready;
@@ -149,6 +151,7 @@ static const char *mode_name(pk_ui_mode_t m)
     case PK_UI_MODE_MAP:         return "MAP";
     case PK_UI_MODE_ADSB_LIST:   return "ADSB_LIST";
     case PK_UI_MODE_AIRBAND:     return "AIRBAND";
+    case PK_UI_MODE_AIRBAND_RECORDINGS: return "AIRBAND_RECORDINGS";
     case PK_UI_MODE_SETTINGS:    return "SETTINGS";
     case PK_UI_MODE_ABOUT:       return "ABOUT";
     case PK_UI_MODE_DIAG:        return "DIAG";
@@ -171,6 +174,7 @@ void pk_ui_toggle_mode(void)
 {
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool leaving_recordings = s_mode == PK_UI_MODE_AIRBAND_RECORDINGS;
     /* User-visible cycle: PFD → ADSB_LIST → SETTINGS → ABOUT → PFD …
      * The CAL_WIZARD mode is outside the cycle: pressing MODE while
      * in it returns to PFD and dismisses the wizard (the auto-
@@ -181,6 +185,7 @@ void pk_ui_toggle_mode(void)
     case PK_UI_MODE_MAP:         s_mode = PK_UI_MODE_ADSB_LIST; break;
     case PK_UI_MODE_ADSB_LIST:   s_mode = PK_UI_MODE_SETTINGS;  break;
     case PK_UI_MODE_AIRBAND:     s_mode = PK_UI_MODE_PFD;       break;
+    case PK_UI_MODE_AIRBAND_RECORDINGS: s_mode = PK_UI_MODE_PFD; break;
     case PK_UI_MODE_SETTINGS:    s_mode = PK_UI_MODE_ABOUT;
                                   s_about_scroll_y = 0;          break;
     case PK_UI_MODE_ABOUT:       s_mode = PK_UI_MODE_DIAG;
@@ -199,6 +204,7 @@ void pk_ui_toggle_mode(void)
     }
     pk_ui_mode_t new_mode = s_mode;
     xSemaphoreGive(s_lock);
+    if (leaving_recordings) pk_airband_recordings_page_leave();
     ESP_LOGI(TAG, "mode → %s", mode_name(new_mode));
 }
 
@@ -206,6 +212,9 @@ void pk_ui_set_mode(pk_ui_mode_t mode)
 {
     if (s_lock == NULL) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool leaving_recordings =
+        s_mode == PK_UI_MODE_AIRBAND_RECORDINGS &&
+        mode != PK_UI_MODE_AIRBAND_RECORDINGS;
     /* 从校准页**主动切走**（导航网格里选了别的页）同样算"用户不想校准"。
      * 不这么做的话，用户用 FAB 切出去 10 s 后又被拽回来——真机上遇到的
      * 正是这一条。判据刻意收紧成"离开时正好在校准页"：只要写成"任何一次
@@ -219,6 +228,7 @@ void pk_ui_set_mode(pk_ui_mode_t mode)
     if (mode == PK_UI_MODE_ABOUT) s_about_scroll_y = 0;
     if (mode == PK_UI_MODE_DIAG)  s_diag_scroll_y  = 0;
     xSemaphoreGive(s_lock);
+    if (leaving_recordings) pk_airband_recordings_page_leave();
     ESP_LOGI(TAG, "mode → %s (direct)", mode_name(mode));
 }
 
@@ -236,8 +246,11 @@ void pk_ui_cal_wizard_dismiss(void)
     uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_mode = s_pre_cal_mode;
+    const bool returning_recordings =
+        s_mode == PK_UI_MODE_AIRBAND_RECORDINGS;
     pk_cal_advisor_dismiss(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
+    if (returning_recordings) pk_airband_recordings_page_open();
     ESP_LOGI(TAG, "mode → %s (user dismissed cal wizard; auto-enter "
                   "suppressed until acc≥%u holds for >%ums)",
              mode_name(s_mode),
@@ -281,10 +294,12 @@ void pk_ui_cal_wizard_enter(void)
     if (s_lock == NULL) return;
     uint32_t now_ms = cal_now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool leaving_recordings = s_mode == PK_UI_MODE_AIRBAND_RECORDINGS;
     s_pre_cal_mode = s_mode;      /* 记住来时的页，关闭/收敛后回去 */
     s_mode = PK_UI_MODE_CAL_WIZARD;
     pk_cal_advisor_user_open(&s_cal_advisor, now_ms);
     xSemaphoreGive(s_lock);
+    if (leaving_recordings) pk_airband_recordings_page_leave();
     ESP_LOGI(TAG, "mode → CAL_WIZARD (user opened it from settings; "
                   "auto-enter re-armed)");
 }
@@ -320,9 +335,12 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase
     bool take_page = (advice == PK_CAL_ADVICE_WIZARD) && valid;
 
     if (take_page && s_mode != PK_UI_MODE_CAL_WIZARD) {
+        const bool leaving_recordings =
+            s_mode == PK_UI_MODE_AIRBAND_RECORDINGS;
         s_pre_cal_mode = s_mode;   /* 自动拽进来也要记：退出时回这一页 */
         s_mode = PK_UI_MODE_CAL_WIZARD;
         xSemaphoreGive(s_lock);
+        if (leaving_recordings) pk_airband_recordings_page_leave();
         ESP_LOGW(TAG, "mode → CAL_WIZARD (auto: acc=0 for >%ums, parked and "
                        "no magnetic jamming — device needs figure-8 motion)",
                  (unsigned)PK_CAL_ENTER_MS);
@@ -332,7 +350,10 @@ void pk_ui_cal_wizard_tick(bool valid, uint8_t accuracy, pk_flight_phase_t phase
     if (s_mode == PK_UI_MODE_CAL_WIZARD &&
         pk_cal_advisor_should_exit_wizard(&s_cal_advisor)) {
         s_mode = s_pre_cal_mode;
+        const bool returning_recordings =
+            s_mode == PK_UI_MODE_AIRBAND_RECORDINGS;
         xSemaphoreGive(s_lock);
+        if (returning_recordings) pk_airband_recordings_page_open();
         ESP_LOGI(TAG, "mode → %s (auto: acc≥%u for >%ums — fusion converged, "
                       "dismissing wizard)",
                  mode_name(s_mode),
@@ -546,7 +567,9 @@ static void toast_show_impl(pk_tr_id_t id, bool is_error, int blink_times)
     int64_t now = esp_timer_get_time();
     int64_t duration_us = (blink_times > 0)
                          ? (int64_t)blink_times * 2 * UI_TOAST_BLINK_HALF_US
-                         : UI_TOAST_DURATION_US;
+                         : id == PK_TR_RECORDINGS_PLAYBACK_NOTICE
+                             ? UI_PLAYBACK_NOTICE_DURATION_US
+                             : UI_TOAST_DURATION_US;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_toast_id          = id;
     s_toast_is_error    = is_error;
