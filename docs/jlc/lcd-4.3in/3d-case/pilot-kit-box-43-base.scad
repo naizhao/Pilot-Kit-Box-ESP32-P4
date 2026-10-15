@@ -1,5 +1,5 @@
 // =============================================================
-// Pilot Kit Box — 4.3" 触摸屏版 3D 打印底座（盒体）v2
+// Pilot Kit Box — 4.3" 触摸屏版 3D 打印底座（盒体）v4.11 / FDM
 // =============================================================
 // 结构：单件薄壁盒体，全部自顶部装配（无底盖）。
 //
@@ -7,9 +7,9 @@
 //   M2.5 螺丝从底面沉孔穿入 → 打印套筒柱（φ2.9 通孔）
 //   → 扩展板安装孔 → 跨过 HAT 对接造成的悬空段（stack_h−铜柱长）
 //   → 锁进挂在微雪板下的 3.8 铜柱。
-//   堆叠实测：微雪板 → HAT母3.5+HAT公3.5（板间距 7.0）→ 扩展板；
-//   铜柱 3.8 悬空 3.2。建议螺丝上套 3.2 隔套（或换 7mm 铜柱）再锁紧，
-//   否则拧紧力矩会压在 HAT 排针上。
+//   板间距 7.0 是历史初值，不能把两个塑胶座高度相加当作插合后净距；
+//   铜柱 3.8，隔套须按实际插合净距配合，不能用紧固力强行拉合 HAT。
+//   玻璃支撑面固定；exp_support_adjust 只调整扩展板支撑及其接口高度。
 //
 // 减料设计：
 //   - 内腔按【玻璃轮廓】而非 PCB 轮廓，四周到板边 ≥3.8mm，
@@ -17,21 +17,20 @@
 //   - 玻璃仅靠周圈薄支撑舌托住（螺丝已锁死整叠，只需扣住）
 //   - 底板条栅镂空，侧壁 1.8；开孔处仅外沉 0.5、余厚 1.3
 //
-// 打印提示：底面 4 个外凸脚（免贴胶），意味着底面悬空 foot_h，
-//   切片开「仅打印板支撑」或接受底面轻微垂丝（朝下不可见）。
+// 打印提示：默认平底，盒体、按键销、转接板分别导出。
 //   沉孔配盘头/沉头 M2.5（圆柱头太高会露出底面）。
 //
 // 坐标系（俯视，屏朝上，原点 = 屏板 X-/Y- 角）：
 //   X+ = USB 壁（H1 Type-C，玻璃悬出 3.7）
-//   X- = SMA 壁（无板载元件，玻璃悬出 8.2，内侧留 8.6 给螺母/线柱）
-//   Y+ = SD 卡槽 + RESET/BOOT/POWER 按键壁
+//   X- = C6 壁（玻璃悬出 8.2）；SMA 已移到 Y+ 顶部接口舱
+//   Y+ = 朝天顶部：SD 卡槽；背板侧加深接口舱容纳 SMA / 内置 GPS
 //   Y- = 40PIN 边（不开孔）
 //
 // 尺寸来源：
 //   - 微雪 dimensions.pdf（20260411）：玻璃 114.4×66.8，
 //     PCB 102.5×60，孔距 92×50 M2.5，厚 11.15（玻璃 1.6/板下净空 4）
-//   - 扩展板 docs/jlc/lcd-4.3in/pcb（实读）：100×60，
-//     4 孔 φ2.6 @ (4,5)/(96,5)/(4,55)/(96,55)，孔距同 92×50
+//   - 扩展板 v4.11 正式 PCB：100×62，原点为 KiCad (50,50)，
+//     4 孔 drill φ2.7 @ (4,6)/(96,6)/(4,56)/(96,56)，孔距同 92×50
 //
 // 实测记录（2026-07-31 卡尺，一切以玻璃为基准）：
 //   - H1：座顶距玻璃顶边 20 / 座底距底边 37 → 中心 y=38.5 ✓与推导吻合
@@ -44,28 +43,27 @@
 // ⚠ 仍待实测：
 //   1. glass_ov_xm/xp —— 玻璃悬出方向。一个量法定乾坤：H1 座端面
 //      距玻璃右边缘的缩进 ≈2.4 → 当前假设对；≈6.9 → 对调两参数
-//   2. stack_h —— 两板对插实际间距（= 铜柱长度）
-//   3. sma_y / sma_z —— 面板 SMA 孔位（自定）
+//   2. stack_h —— 两板完全插合后的净距；不能由铜柱长度单独确定
+//   3. J4 / LED 中心高度、SMA 螺母和尾柱包络 —— 装机前按实物校准
 // =============================================================
 
 /* ---------- 输出选择 ---------- */
-part = "print";       // "print" 盒体+按键销连筋一体（下单用这个）
-                      // "box" 仅盒体 / "plungers" 仅按键销 / "section" X 剖面
+part = "box";         // "box" 盒体 / "print" 同盒体（兼容旧入口）
+                      // "plungers" 独立按键销 / "plate" 独立转接板 / "section" X 剖面
+                      // "assembly" 仅装配预览：含 PCB / IFA / 天线及金属包络
 align_origin = true;  // true = 输出平移到包围盒角点(0,0,0)，方便量尺；
                       // 内部坐标系不变（原点=屏板 X-/Y- 角）
 
 /* ---------- 打印公差 ---------- */
-fit_glass = 0.10;     // 玻璃四周单边间隙。9600 树脂实测：模型 115.2x67.68
-                      // 印出 115.4~115.6 x 67.6~67.9，即 X 向偏大 0.2~0.4、
-                      // Y 向 -0.08~+0.22。取 0.1 是让最坏一档(Y 偏小 0.08)
-                      // 仍有 0.12 总间隙；取 0 会装不进去。
+fit_glass = 0.25;     // FDM 玻璃四周单边间隙；首件按实际打印尺寸校准
 $fn = 64;
 
 /* ---------- 屏组件（微雪板）---------- */
 glass_l = 114.4;  glass_w = 66.88; glass_t = 1.0;  glass_r = 2.5;  // 玻璃实测 114.4×66.88，厚+背胶 1.0
 scr_pcb_l = 102.5;  scr_pcb_w = 60.0;  scr_pcb_t = 1.6;
-scr_under = 4.0;                       // 屏板下方元件净空
-scr_glass_gap = 11.15 - glass_t - scr_pcb_t - scr_under;  // 3.95
+scr_under = 4.0;                       // 图纸背部尺寸参考，不作为HAT插合高度
+glass_to_screen_back = 6.15;           // 玻璃内支撑面→屏PCB背面；沿用原模型初值，待实物校准
+scr_glass_gap = glass_to_screen_back - scr_pcb_t;
 glass_ov_xm = 8.2;    // 玻璃悬出：X-（非 USB 侧）
 glass_ov_xp = 3.7;    // 玻璃悬出：X+（USB 侧）
 glass_ov_y  = (glass_w - scr_pcb_w) / 2;                  // 3.4
@@ -80,18 +78,16 @@ exp_l = 100;  exp_w = 62;              // 板框（Y 向比屏板各多 1mm，�
 hole_dx = 92;  hole_dy = 50;           // 安装孔距（两板一致）
 // PCB 坐标 → 本文件坐标的换算。两板孔距相同，所以 X 只差板宽之半：
 exp_x_off = (scr_pcb_l - exp_l) / 2;   // = 1.25
-// Y 要翻：KiCad 的 y 轴向下、本文件向上，且两板孔位 5↔55 互换。
-// 判据（都验过）：J1 排针 y_pcb 56.3 → 3.7 落在 Y−(40PIN 边)；
-// J8 内置 GNSS y_pcb 19.2 → 40.8 对上 sma_y[1]=41；
-// J4 扩展板 USB-C y_pcb 23.0 → 37.0 与微雪 H1 孔 37.85 几乎同高（两个 C 口本就上下对齐）。
-function exp_y(y_pcb) = scr_pcb_w - y_pcb;
+// 输入为相对板框 (50,50) 的 PCB 坐标；用安装孔对齐，板框 Y=-1…61。
+function exp_y(y_pcb) = (scr_pcb_w + exp_w) / 2 - y_pcb;
 function exp_x(x_pcb) = x_pcb + exp_x_off;
 
-/* ---------- 高度链（自内底面起）---------- */
+/* ---------- 高度链（固定玻璃支撑面向下）---------- */
 floor_t = 2.4;        // 底板厚（含沉孔）
-bat_h   = 11.0;       // 电池仓净高 = 套筒柱高（电池 9.5 + 余量 1.5，首装宽松）
-stack_h    = 7.0;     // 实测：HAT 母 3.5 + HAT 公 3.5 对接 = 板间距 7.0
-pillar_len = 3.8;     // 挂在微雪板下的铜柱长；悬空 = stack_h - pillar_len = 3.2
+glass_seat_z = 28.15; // 玻璃内支撑面到盒底外面的距离；保持原外形
+stack_h    = 7.0;     // HAT插合板间净距的历史初值，非已核实连接器规格
+exp_support_adjust = 0; // 正值抬高扩展板，使其靠近屏板；不是按目测缝隙直接补高
+pillar_len = 3.8;     // 屏板下铜柱长；隔套参考值由实际 board_gap 推导
 
 /* ---------- 壁与柱 ---------- */
 wall_t     = 1.8;
@@ -105,7 +101,7 @@ slot_r     = 2.0;     // 开孔圆角上限（原自动取 min(w,h)/2，孔成�
 lbl_pwr  = "PWR";
 lbl_sd   = "SD";
 lbl_usb  = "USB";     // H1 = USB TO UART；想标 UART 改这里
-lbl_sma  = ["GPS", "ADS-B"];   // 对应 sma_y 的两个孔，顺序可对调
+lbl_sma  = ["GPS", "ADS-B", "AIR"]; // 对应 sma_x 的三个面板孔
 
 /* ---------- 玻璃支撑舌 ---------- */
 tab_w = 8;            // 舌宽
@@ -120,11 +116,22 @@ tab_p_left = 5.0;     // 左(C6)侧加深：该侧玻璃悬出最大，多托一
 /* ---------- USB H1（X+ 壁）---------- */
 h1_y     = glass_bot + 41.25;  // 量尺 y=43.20（距玻璃下边 41.25）
 usb_w    = 11.5;  usb_h = 7.0; // 直插穿墙孔：公头包胶(宽11)整体穿入，
-                               // 实测插满时包胶面与玻璃边平齐，故不做外沉槽
+                               // 实测插满时包胶面与玻璃边平齐，浅槽不能替代穿孔
 usb_glass_d = 9.35;            // 量尺 z=19.80
-usb_rec  = [14.5, 10];         // 外侧圆角浅沉槽：四周统一 1.5 边框
+usb_rec  = [14.5, 10];         // H1 浅槽外廓；J4 沿用相同扩边量，连成整体并避让 LED
 usb_zoff = glass_t + scr_glass_gap + scr_pcb_t - usb_glass_d;  // -2.35
-rec_depth = 0.5;               // SD 外沉深度（1.8 壁余厚 1.3）
+rec_depth = 0.5;               // 接口浅槽深度（1.8 壁余厚 1.3）
+
+/* ---------- v4.11 USB J4 与 D8/D9 侧面观察窗（X+ 壁）---------- */
+j4_pcb = [95.805, 23.0];
+j4_y = exp_y(j4_pcb[1]);
+j4_w = usb_w;  j4_h = usb_h; // 缩进约 7.5 mm，包胶须整段穿墙，沿用 H1 实测开口
+j4_ctr_z = 1.6;       // USB 中心离扩展板顶面，暂定值，装机前实测校准
+led_pcb = [[98.5, 30.3], [98.5, 34.2]]; // D8 / D9
+led_ys = [for (p = led_pcb) exp_y(p[1])];
+led_ctr_z = 0.6;      // LED 发光中心离板顶面，暂定值，支持独立校准
+led_window_d = 1.3;   // 统一 USB 轮廓后保留实体；仅观察通道，不是导光柱
+led_rim = 0.7;        // 孔周完整实体留边；统一 USB 穿孔到 D8 孔最窄 0.71
 
 /* ---------- 按键（Y+ 壁）：只开 POWER ---------- */
 // 实测：中心=玻璃左+31(POWER) / +39(BOOT) / +47(RESET)
@@ -157,7 +164,7 @@ pl_shaft_d  = 3.7;                 // 按压销杆径
 pl_flange_d = 6.2;  pl_flange_t = 1.0;
 pl_nose     = 1.0;                 // Y+ 壁顶鼻：够长才不会按到底时法兰撞屏板边缘
 pl_proud    = 1.2;                 // Y+ 壁静止时销尾高出外壁量（原 2.0 太凸）
-n_plungers  = 4;                   // 一体打印的按键销数量（1 用 2 备）
+n_plungers  = 4;                   // 独立打印的 SW3 按键销数量（1 用 3 备）
 
 /* ---------- SW3 主电源键（X+ 壁，扩展板上的 TS24CA 侧按键）----------
  *
@@ -181,26 +188,27 @@ n_plungers  = 4;                   // 一体打印的按键销数量（1 用 2 �
  *    0.15±0.05，压一点就触发）。所以 gap 取到 0.5 附近，靠 sw3_proud 给够行程，
  *    而不是靠缩小 gap 去省行程。
  */
-sw3_pcb = [97.882, 39.103];        // SW3 在扩展板 PCB 上的位置（KiCad 坐标）
+sw3_pcb = [97.882, 39.1032];        // SW3 在扩展板 PCB 上的位置（KiCad 坐标）
 sw3_btn_proud = 2.85;              // 按钮尖端相对元件原点的 X（封装 F.Fab 同值）
 sw3_btn_ctr_z = 0.95;              // 按钮中心离板面的高度（TS24CA 图纸 1.9/2）
 sw3_seat_x    = 1.60;              // 座子前表面相对元件原点的 X（封装同值），
                                    // 用来校验顶鼻不会压到座子外壳/固定脚牛角
 sw3_travel    = 0.20;              // 按键行程上限（图纸 0.15±0.05）
 sw3_fit       = 0.2;               // 扩展板装配游动（螺丝孔间隙单边）
-sw3_y     = exp_y(sw3_pcb[1]);                   // = 20.897
+sw3_y     = exp_y(sw3_pcb[1]);                   // = 21.8968
 sw3_key_x = exp_x(sw3_pcb[0]) + sw3_btn_proud;   // 键帽面 = 101.982
 // sw3_z（孔中心高）依赖 z_exp_top，挪到下面「派生尺寸」段定义，
 // 不在这里写 —— 顶层变量先用后定义会静默拿到 undef，孔就悄悄没了。
 
 sw3_d       = btn_d;               // 导孔 φ4.1，与 Y+ 壁同销径
-sw3_rec_d   = btn_rec_d;           // 外侧圆凹 φ8.0（深 rec_depth）
+sw3_rec_d   = 6.4;                 // 外侧圆凹避开 D9，导孔/内部导向套尺寸不变
 sw3_boss_d  = btn_boss_d;          // 导向套外径 φ9.0
 sw3_guide   = 4.0;                 // 导向套自内壁面伸入长度（须容下沉腔+法兰+行程）
 sw3_bore_in = 1.6;                 // 其中做导向孔的前段 → 导向总长 wall_t+1.6 = 3.4
 sw3_nose    = 1.2;                 // 顶鼻
 sw3_proud   = 1.6;                 // 静止时销尾高出外壁量（= 可用行程）
-sw3_lbl_z   = 8.6;                 // 标注基线：压在外凹槽（下缘 11.95）下方
+side_lbl_z  = 9.4;                 // PWR / USB 共用文字中心高度
+sw3_lbl_z   = side_lbl_z;
 
 /* ---------- SD 卡槽（Y+ 壁）---------- */
 sd_cx    = glass_left + 59;    // 50.8。实测：卡座中心=玻璃左+59
@@ -210,18 +218,40 @@ sd_zoff  = glass_t + scr_glass_gap + scr_pcb_t - sd_glass_d;      // -1.85
 sd_rec   = [22, 8];            // 外侧圆角沉槽（深 rec_depth）
 sd_notch = 10;                 // 指甲槽宽（圆角，贯穿余壁）
 
-/* ---------- SMA ×2（X- 壁，面板式穿墙）---------- */
-sma_y = [19, 41];     // 两孔中心 y
-sma_z = 19;           // 孔中心高（自内部坐标系底面；盒子变矮后下调留口沿余量）
-sma_d = 6.4;          // 面板 SMA 螺纹穿孔
-sma_cb_d = 9.5;  sma_cb_dp = 0.6;   // 内侧沉窝：留平面好上螺母
-sma_rec_d = 9.45; sma_rec_dp = 0.5;  // 外侧圆凹：卡垫片（深度按垫片厚度调）
+/* ---------- 顶部（Y+）接口舱；靠背板，避开 SD 操作高度 ---------- */
+top_depth = 17;
+top_h = 14;
+top_roof_t = 1.4;    // 内顶 12.6，给 φ9.5 螺母上下各留 0.35
+sma_x = [58, 78, 98];
+sma_z = 7.5;
+sma_d = 6.6;
+sma_cb_d = 9.5;       // 螺母/垫片包络直径，按实物校准
+sma_cb_dp = 0;        // 默认平面承压，不削薄 FDM 穿墙面
+sma_rec_d = 9.5; sma_rec_dp = 0;
+sma_tail_l = 12;      // 从内壁向内的金属尾柱/尾线接头长度，按实物校准
+sma_external_d = 12;  // 外部直杆天线根部包络；不代表任意弯头朝向
+sma_external_l = 30;  // 预览外部天线根部长度
+sma_lbl_z = 1.8;
+
+/* ---------- 壳内 GPS：朝天面在 Y+，天线平面为 XZ ---------- */
+gps_mode = "ceramic";   // "patch" 寒武纪薄壁 / "ceramic" 陶瓷凸仓 / "none"
+gps_cx = 17;
+gps_patch_size = [40, 6, 2.3];
+gps_patch_z = 7.5;
+gps_wall_t = 0.8;
+gps_fit = 0.6;        // 天线与仓侧壁的单边装配间隙
+gps_ceramic_size = 20;
+gps_ceramic_h = 6.6;  // 总高；2 mm 陶瓷款设 4.6，4 mm 款设 6.6
+gps_ceramic_cap_t = 1.2;
+gps_clearance = 10;   // 到板框/面板 SMA 金属的机械预留；不是 RF 认证
+// 薄片贴薄壁内面；陶瓷靠仓底和侧壁定位，以非金属胶仅固定允许粘贴的边缘。
+// 两类天线背面在同一 Y 平面，陶瓷凸出量随总高变化；线缆从内侧敞口引出。
 
 /* ---------- 1/4"-20 云台转接板（外挂盒底，与 4 颗底部螺丝共用）----------
    载荷路径：云台螺柱自板底旋入 → 螺母坐在板内六角腔 → 腔底实体承拉。
    螺母腔开口朝上，装到盒底后被盒体外底面封住，螺母跑不掉。
-   打印时用断颈筋悬在盒内，一个文件一个价；装配前掰下来。 */
-mount_plate = true;
+   转接板用 part="plate" 独立导出；mount_plate 仅控制装配预览。 */
+mount_plate = false;
 mp_t        = 6.0;    // 板厚
 mp_nut_af   = 11.3;   // 1/4-20 螺母对边（标准 11.11 + 0.2 装配间隙）
 mp_nut_t    = 3.4;    // 螺母腔深：配 3.2 薄螺母。换 5.56 标准螺母则改 5.8，
@@ -231,11 +261,9 @@ mp_arm_w    = 12;     // 臂宽
 mp_pad_d    = 12;     // 螺丝端圆盘直径
 mp_hub_d    = 24;     // 中央凸台直径
 mp_cb_d     = 5.6;  mp_cb_dp = 1.4;   // 板底沉孔（容螺丝头）
-mp_z        = 16;     // 打印时悬在盒内的高度
-mp_tab      = 1.6;    // 断颈连接筋截面（斜口钳剪断）
 
 /* ---------- 底面 ---------- */
-foot_d = 8;  foot_h = 1.2;  foot_inset = 5.5;  // 外凸脚，高过螺丝头余量
+foot_d = 8;  foot_h = 0;  foot_inset = 5.5;    // 默认平底；需要外凸脚时再设置高度
 lighten = true;       // 底板条栅镂空（6 条均布，兼顾透气与省料）
 slat_w  = 4;
 slat_xs = [14, 28, 42, 56, 70, 84];   // 关于板中心 x=51.25 大致对称
@@ -254,11 +282,40 @@ box_x0 = cav_x0 - wall_t;  box_x1 = cav_x1 + wall_t;
 box_y0 = cav_y0 - wall_t;  box_y1 = cav_y1 + wall_t;
 box_l = box_x1 - box_x0;   box_w = box_y1 - box_y0;
 
-z_exp_bot = floor_t + bat_h;
-z_exp_top = z_exp_bot + exp_t;
-z_scr_bot = z_exp_top + stack_h;          // 屏板底面
-z_glass_b = z_scr_bot + scr_pcb_t + scr_glass_gap;
+top_y0 = box_y1 - corner_r - 0.2; // 方形根部跨过原盒圆角，避免相切夹缝
+top_y1 = box_y1 + top_depth;
+top_inner_y1 = top_y1 - wall_t;
+gps_back_y = top_y1 - gps_wall_t - gps_patch_size[2];
+gps_ceramic_face_y = gps_back_y + gps_ceramic_h;
+gps_ceramic_y1 = gps_ceramic_face_y + gps_ceramic_cap_t;
+gps_ceramic_inner_w = gps_ceramic_size + 2 * gps_fit;
+gps_ceramic_z = floor_t + gps_ceramic_inner_w / 2;
+gps_ceramic_top = floor_t + gps_ceramic_inner_w + wall_t;
+print_y1 = gps_mode == "ceramic" ? max(top_y1, gps_ceramic_y1) : top_y1;
+
+z_glass_b = glass_seat_z;
+z_scr_bot = z_glass_b - glass_to_screen_back;
+z_exp_top = z_scr_bot - stack_h + exp_support_adjust;
+z_exp_bot = z_exp_top - exp_t;
+bat_h = z_exp_bot - floor_t;             // 派生柱高/电池仓高，不能再独立调整
+board_gap = z_scr_bot - z_exp_top;
+j4_z = z_exp_top + j4_ctr_z;
+led_z = z_exp_top + led_ctr_z;
 box_h     = z_glass_b + glass_t;          // 口沿与玻璃面齐平
+assert(glass_to_screen_back > scr_pcb_t && bat_h > 0 && board_gap >= pillar_len,
+       "高度链无效：玻璃/板面/铜柱相交，检查独立校准参数");
+assert(abs(bat_h - (z_exp_bot-floor_t)) < 0.001,
+       "bat_h是派生柱高，请用exp_support_adjust调整支撑");
+
+// 两个实际插座中心仍各自保留，外墙开口取共同包围框，直边不随上下接口错台。
+usb_y0 = min(h1_y-usb_w/2, j4_y-j4_w/2);
+usb_y1 = max(h1_y+usb_w/2, j4_y+j4_w/2);
+usb_z0 = min(z_scr_bot+usb_zoff-usb_h/2, j4_z-j4_h/2);
+usb_z1 = max(z_scr_bot+usb_zoff+usb_h/2, j4_z+j4_h/2);
+usb_open_y = (usb_y0+usb_y1)/2;
+usb_open_z = (usb_z0+usb_z1)/2;
+usb_open_w = usb_y1-usb_y0;
+usb_open_h = usb_z1-usb_z0;
 
 hx0 = (scr_pcb_l - hole_dx) / 2;          // 5.25
 hy0 = (scr_pcb_w - hole_dy) / 2;          // 5.0
@@ -275,10 +332,12 @@ echo(str("云台板: ", mp_t, " 厚  1/4-20 螺母腔 对边", mp_nut_af, " 深"
          "  腔底承拉肉 ", mp_t - mp_nut_t,
          "  装板后总高 ", box_h + mp_t,
          "  螺丝需 ≈ ", mp_t - mp_cb_dp + floor_t + bat_h + exp_t
-                        + (stack_h - pillar_len) + 3));
+                        + (board_gap - pillar_len) + 3));
 echo(str("螺丝参考长度 ≈ ",
-         floor_t - cb_depth + bat_h + exp_t + (stack_h - pillar_len) + 3,
-         " mm（含悬空 ", stack_h - pillar_len, " + 旋入铜柱 3）"));
+         floor_t - cb_depth + bat_h + exp_t + (board_gap - pillar_len) + 3,
+         " mm（含悬空 ", board_gap - pillar_len, " + 旋入铜柱 3）"));
+echo(str("玻璃基准→屏PCB背面 ", glass_to_screen_back, "，板间净距 ", board_gap,
+         "，支撑修正 ", exp_support_adjust, "（默认尺寸未代表实物插合已验证）"));
 assert(z_glass_b > z_scr_bot, "高度链错误");
 
 // 按键几何自检（y 向，越小越靠近屏板中心）
@@ -333,7 +392,64 @@ assert(cav_x1 - sw3_guide > sw3_exp_x1 + 0.3, "导向套会撞扩展板边缘：
 assert(sw3_z + sw3_boss_d / 2 < z_scr_bot - 0.3, "导向套顶会撞屏板底面：SW3 太高");
 assert(abs(sw3_y - h1_y) > (sw3_rec_d + usb_rec[0]) / 2 + 0.5,
        "SW3 外凹与 H1 USB 沉槽在 X+ 壁上重叠");
+// 圆角矩形有符号距离：校准接口高度/尺寸时，检查穿孔仍给 LED 留足实体。
+function slot_distance(y, z, cy, cz, w, h) =
+    let(r = min(slot_r, min(h, w)/2 - 0.01),
+        q = [abs(y-cy)-w/2+r, abs(z-cz)-h/2+r])
+    norm([max(q[0], 0), max(q[1], 0)]) + min(max(q), 0) - r;
+assert(led_rim >= 0.7 && led_window_d > 0, "LED 观察孔必须有至少 0.7 mm 留边");
+for (ly = led_ys) {
+    assert(slot_distance(ly, led_z, usb_open_y, usb_open_z, usb_open_w, usb_open_h) >= led_window_d/2+led_rim,
+           "USB 穿孔侵入 LED 留边：检查实测接口尺寸/高度");
+    assert(norm([ly-sw3_y, led_z-sw3_z]) >= (sw3_rec_d+led_window_d)/2+led_rim,
+           "电源键外凹侵入 LED 留边：缩小 sw3_rec_d");
+}
 // 「PWR 凹字不压进 SW3 外凹槽」那条断言依赖 emb_sz，放在它定义之后（见 labels 段前）。
+
+/* ---------- 顶部装配空间自检 ---------- */
+assert(gps_mode == "patch" || gps_mode == "ceramic" || gps_mode == "none", "未知 gps_mode");
+assert(gps_ceramic_h > 0 && gps_ceramic_size > 0 && gps_fit > 0, "GPS 尺寸必须为正");
+assert(min(gps_patch_size) > 0 && gps_ceramic_cap_t >= 0.6 && gps_clearance >= 10,
+       "GPS 天线尺寸/壁厚无效，或机械预留小于 10 mm");
+assert(gps_wall_t >= 0.6 && gps_wall_t <= wall_t, "薄壁厚度须在 0.6 与 wall_t 之间");
+assert(top_roof_t >= 1.0 && top_h > floor_t + top_roof_t, "顶部舱壁厚/高度无效");
+assert(len(sma_x) == 3 && len(lbl_sma) == 3, "需要 GPS、ADS-B、AIR 三个 SMA");
+assert(sma_d > 0 && sma_cb_d >= sma_d && sma_external_d > 0 && sma_external_l > 0,
+       "SMA 孔径/金属/外部天线包络无效");
+assert(sma_tail_l > 0 && top_inner_y1 - sma_tail_l > exp_y(0) + 0.5,
+       "SMA 尾柱进入扩展板边界：加深顶部舱或缩短实际接头");
+assert(sma_z - sma_cb_d / 2 >= floor_t + 0.25 &&
+       sma_z + sma_cb_d / 2 <= top_h - top_roof_t - 0.25, "SMA 螺母碰底板/顶棚");
+assert(wall_t - sma_cb_dp - sma_rec_dp >= 1.2, "SMA 穿墙承压面太薄");
+assert(sma_z + sma_external_d / 2 < z_scr_bot + sd_zoff - sd_h / 2 - 1,
+       "SMA 外部直杆包络遮挡 SD 通道；减小包络或降低接口");
+for (i = [0:len(sma_x)-1]) {
+    assert(sma_x[i] - sma_cb_d / 2 > cav_x0 && sma_x[i] + sma_cb_d / 2 < cav_x1,
+           "SMA 螺母碰舱侧壁");
+    if (i > 0) assert(sma_x[i] - sma_x[i-1] > max(sma_cb_d, sma_external_d) + 1,
+                     "SMA 间距不足或顺序错误");
+}
+if (gps_mode != "none") {
+    gps_width = gps_mode == "patch" ? gps_patch_size[0] : gps_ceramic_size;
+    assert(gps_back_y - exp_y(0) >= gps_clearance, "GPS 与扩展板边框预留不足");
+    assert(min(sma_x) - sma_cb_d/2 - gps_cx - gps_width/2 >= gps_clearance,
+           "GPS 与 SMA 金属的预留不足");
+}
+if (gps_mode == "patch") {
+    assert(gps_cx - gps_patch_size[0]/2 - gps_fit > cav_x0 &&
+           gps_cx + gps_patch_size[0]/2 + gps_fit < cav_x1, "贴片薄壁区越过侧壁");
+    assert(gps_patch_z - gps_patch_size[1]/2 - gps_fit > floor_t &&
+           gps_patch_z + gps_patch_size[1]/2 + gps_fit < top_h - top_roof_t,
+           "贴片薄壁区越过底板/顶棚");
+}
+if (gps_mode == "ceramic") {
+    assert(gps_cx - gps_ceramic_inner_w/2 - wall_t > box_x0 &&
+           gps_cx + gps_ceramic_inner_w/2 + wall_t < sd_cx - sd_rec[0]/2 - 1,
+           "陶瓷凸仓越界或遮挡 SD 操作区");
+    assert(gps_ceramic_top < z_glass_b - tab_t, "陶瓷凸仓与玻璃托舌相交");
+    for (bx = btns) assert(abs(bx - gps_cx) > gps_ceramic_inner_w/2 + wall_t + btn_boss_d/2,
+                          "可选屏板按键与陶瓷仓相交");
+}
 
 /* ---------- 基础形 ---------- */
 module rrect(l, w, r) { offset(r = r) offset(r = -r) square([l, w]); }
@@ -346,6 +462,32 @@ module box_shell() {
             linear_extrude(box_h - floor_t + 0.01)
                 rrect(cav_x1 - cav_x0, cav_y1 - cav_y0, glass_r + fit_glass);
     }
+}
+
+/* ---------- 顶部接口舱：内口与主腔连通，顶棚打印需要桥接/支撑 ---------- */
+module top_bay_outer() {
+    translate([box_x0, top_y0, 0]) linear_extrude(top_h)
+        hull() {
+            square([box_l, 0.1]);
+            for (x = [corner_r, box_l-corner_r])
+                translate([x, top_y1-top_y0-corner_r]) circle(r=corner_r);
+        }
+    if (gps_mode == "ceramic")
+        translate([gps_cx - gps_ceramic_inner_w/2 - wall_t, top_y0, 0])
+            cube([gps_ceramic_inner_w + 2*wall_t,
+                  gps_ceramic_y1 - top_y0, gps_ceramic_top]);
+}
+module top_bay_cavity() {
+    translate([cav_x0, top_y0 - 0.1, floor_t])
+        cube([cav_x1-cav_x0, top_inner_y1-top_y0+0.1, top_h-top_roof_t-floor_t]);
+    if (gps_mode == "patch")
+        translate([gps_cx-gps_patch_size[0]/2-gps_fit, top_inner_y1-0.01,
+                   gps_patch_z-gps_patch_size[1]/2-gps_fit])
+            cube([gps_patch_size[0]+2*gps_fit, wall_t-gps_wall_t+0.01,
+                  gps_patch_size[1]+2*gps_fit]);
+    if (gps_mode == "ceramic")
+        translate([gps_cx-gps_ceramic_inner_w/2, top_y0-0.1, floor_t])
+            cube([gps_ceramic_inner_w, gps_ceramic_face_y-top_y0+0.1, gps_ceramic_inner_w]);
 }
 
 /* ---------- 楔形凸台基元（底部 45° 自支撑，免打印支撑）---------- */
@@ -406,12 +548,26 @@ module slot_cut_y(x, z, w, h, from_y, len) {  // 沿 +Y 切
 
 cut_len = wall_t + max(glass_ov_xm, glass_ov_xp, glass_ov_y) + 4;
 
+module usb_recess() {
+    // 双口统一圆角矩形浅槽；LED 处保留实体岸，避免孔与浅槽边界粘连。
+    difference() {
+        slot_cut_x(usb_open_y, usb_open_z, usb_open_w+usb_rec[0]-usb_w,
+                   usb_open_h+usb_rec[1]-usb_h, box_x1-rec_depth, rec_depth+1);
+        for (ly = led_ys)
+            translate([box_x1-rec_depth-0.01, ly, led_z]) rotate([0, 90, 0])
+                cylinder(d=led_window_d+2*led_rim, h=rec_depth+1.02);
+    }
+}
+
 module wall_cutouts() {
     /* --- H1 Type-C（X+）：穿墙槽 + 外侧浅沉槽 --- */
-    z_usb = z_scr_bot + usb_zoff;
-    slot_cut_x(h1_y, z_usb, usb_w, usb_h, cav_x1 - 1, cut_len);
-    slot_cut_x(h1_y, z_usb, usb_rec[0], usb_rec[1],
-               box_x1 - rec_depth, rec_depth + 1);
+    slot_cut_x(usb_open_y, usb_open_z, usb_open_w, usb_open_h, cav_x1 - 1, cut_len);
+    usb_recess();
+
+    // 两个 USB 包胶的原窗口均被统一开孔覆盖。
+    for (ly = led_ys)
+        translate([cav_x1 - 1, ly, led_z]) rotate([0, 90, 0])
+            cylinder(d = led_window_d, h = cut_len);
 
     /* --- POWER 按键（Y+）：长导向孔 + 套内法兰沉腔 --- */
     z_btn = z_scr_bot + btn_zoff;
@@ -437,14 +593,16 @@ module wall_cutouts() {
     slot_cut_y(sd_cx, z_sd, sd_rec[0], sd_rec[1],
                box_y1 - rec_depth, rec_depth + 1);
 
-    /* --- SMA ×2（X- 壁）：穿孔 + 内侧沉窝 --- */
-    for (sy = sma_y) {
-        translate([box_x0 - 1, sy, sma_z])
-            rotate([0, 90, 0]) cylinder(d = sma_d, h = wall_t + 2);
-        translate([cav_x0 - sma_cb_dp, sy, sma_z])
-            rotate([0, 90, 0]) cylinder(d = sma_cb_d, h = sma_cb_dp + 1);
-        translate([box_x0 - 0.01, sy, sma_z])
-            rotate([0, 90, 0]) cylinder(d = sma_rec_d, h = sma_rec_dp + 0.01);
+    /* --- SMA ×3：顶部舱朝天面，平面承压 --- */
+    for (sx = sma_x) {
+        translate([sx, top_inner_y1-0.01, sma_z]) rotate([-90, 0, 0])
+            cylinder(d = sma_d, h = wall_t+0.02);
+        if (sma_cb_dp > 0)
+            translate([sx, top_inner_y1-0.01, sma_z]) rotate([-90, 0, 0])
+                cylinder(d = sma_cb_d, h = sma_cb_dp+0.01);
+        if (sma_rec_dp > 0)
+            translate([sx, top_y1-sma_rec_dp, sma_z]) rotate([-90, 0, 0])
+                cylinder(d = sma_rec_d, h = sma_rec_dp+0.01);
     }
 }
 
@@ -456,7 +614,7 @@ module floor_slats() {
                 cube([slat_w, slat_y1 - slat_y0, floor_t + 0.02]);
 }
 module feet() {
-    for (p = [[box_x0 + foot_inset, box_y0 + foot_inset],
+    if (foot_h > 0) for (p = [[box_x0 + foot_inset, box_y0 + foot_inset],
               [box_x1 - foot_inset, box_y0 + foot_inset],
               [box_x0 + foot_inset, box_y1 - foot_inset],
               [box_x1 - foot_inset, box_y1 - foot_inset]])
@@ -464,28 +622,27 @@ module feet() {
             cylinder(d1 = foot_d, d2 = foot_d + 2, h = foot_h + 0.01);
 }
 
-/* ---------- 开孔标识凹字（外壁，0.8 深，笔画≥0.8）----------
-   JLC 审核要求：凸起/凹陷特征树脂≥0.8mm。原凸字 emb_h=0.4/笔画0.36
-   双不达标，且凸字 polygon 三角化产生零面积退化面（JLC 报"反向三角面"）。
-   改凹字：①深度 0.8 达标 ②笔画 size=4→宽0.8 达标 ③凹槽有阴影更醒目
-   ④墙1.8 挖0.8 留1.0 肉，安全。
-   face: 0=Y+壁(PWR/SD)  1=X+壁(USB)  2=X-壁(SMA)。
-   凹字从墙面外测起挖穿 emb_h+0.1（多挖0.1保证完全贯穿墙面，不留薄膜）。*/
-emb_h    = 0.8;       // 凹槽深度（审核最低要求）
-emb_sz   = 4.0;       // 字号（笔画宽=0.2×size=0.8mm，达标）
+/* ---------- 开孔标识：FDM 浅凹小字，可关闭 ---------- */
+labels_enabled = true;
+emb_h    = 0.35;
+emb_sz   = 2.5;
 emb_cut  = 0.1;       // 起挖面外移量（保证挖穿，配合 difference）
 emb_font = "Liberation Sans:style=Bold";
 lbl_z    = 13.0;      // 统一基线高度（字缩小后上移贴近开孔；下缘留 0.6+）
+usb_lbl_z = side_lbl_z;
+sd_lbl_z = z_scr_bot + sd_zoff + sd_rec[1]/2 + emb_sz/2 + 0.5;
 // X+ 壁的 PWR 字不能用 lbl_z：SW3 外凹槽（中心 15.95、φ8）下缘 11.95，
 // 13.0 的字会挖进槽里。所以 SW3 单独用 sw3_lbl_z，并在这里护住。
-assert(sw3_lbl_z + emb_sz / 2 < sw3_z - sw3_rec_d / 2 - 0.3,
+assert(!labels_enabled || sw3_lbl_z + emb_sz / 2 < sw3_z - sw3_rec_d / 2 - 0.3,
        "PWR 凹字会压进 SW3 外凹槽：下调 sw3_lbl_z");
+assert(!labels_enabled || usb_lbl_z + emb_sz / 2 < j4_z - j4_h / 2 - 0.3,
+       "USB 凹字会压进 J4 包胶开口：下调 usb_lbl_z");
+assert(!labels_enabled || sd_lbl_z + emb_sz/2 < box_h - 0.5,
+       "SD 凹字超出口沿：缩小字或调整 SD 开口");
 module wall_text(txt, u, z, face) {
-    // 凹字：作为 difference 切割体。挤出沿墙面外法线（凸字同向，已验证），
-    // 起点退到墙内 emb_h+emb_cut 处，挤出 emb_h+2*emb_cut 穿出外墙面，
-    // 净效果：从外壁面往墙内挖 emb_h 深的凹槽。
-    _d = emb_h + 2 * emb_cut;
-    _back = emb_h + emb_cut;        // 起点退入量（从外墙面算）
+    // 从墙内 emb_h 起，向外多穿 emb_cut，实际凹深恰好为 emb_h。
+    _d = emb_h + emb_cut;
+    _back = emb_h;
     if (face == 0)      // Y+ 壁：外法线 +y，起点退到 box_y1-_back
         translate([u, box_y1 - _back, z]) rotate([-90, 0, 0]) rotate([0, 0, 180])
             linear_extrude(_d)
@@ -496,19 +653,18 @@ module wall_text(txt, u, z, face) {
             linear_extrude(_d)
                 text(txt, size = emb_sz, font = emb_font,
                      halign = "center", valign = "center");
-    else                // X- 壁：外法线 -x，起点退到 box_x0+_back
-        translate([box_x0 + _back, u, z]) rotate([90, 0, -90])
+    else                // 新 Y+ 顶部舱朝天面
+        translate([u, top_y1 - _back, z]) rotate([-90, 0, 0]) rotate([0, 0, 180])
             linear_extrude(_d)
                 text(txt, size = emb_sz, font = emb_font,
                      halign = "center", valign = "center");
 }
 module labels() {
     if (len(btns) > 0) wall_text(lbl_pwr, btn_power_x, lbl_z, 0);
-    wall_text(lbl_sd,  sd_cx,       lbl_z, 0);
-    wall_text(lbl_usb, h1_y,        lbl_z, 1);
+    wall_text(lbl_sd,  sd_cx,       sd_lbl_z, 0);
+    wall_text(lbl_usb, h1_y,        usb_lbl_z, 1);
     wall_text(lbl_pwr, sw3_y,       sw3_lbl_z, 1);   // SW3 在 X+ 壁，字在凹槽下方
-    wall_text(lbl_sma[0], sma_y[0], lbl_z, 2);
-    wall_text(lbl_sma[1], sma_y[1], lbl_z, 2);
+    for (i = [0:len(sma_x)-1]) wall_text(lbl_sma[i], sma_x[i], sma_lbl_z, 2);
 }
 
 /* ---------- 按键导向套（内壁，加长导向防倾斜）---------- */
@@ -539,15 +695,17 @@ module main_box() {
     difference() {
         union() {
             box_shell();
+            top_bay_outer();
             glass_tabs();
             bosses();
             btn_guides();
             feet();
         }
+        top_bay_cavity();
         boss_bores();
         wall_cutouts();
         floor_slats();
-        labels();          // 凹字：从外墙面挖入 emb_h 深
+        if (labels_enabled) labels();
     }
 }
 
@@ -575,35 +733,43 @@ module mount_plate_body() {
             cylinder(d = mp_nut_af / cos(30), h = mp_nut_t + 0.01, $fn = 6);
     }
 }
-module mp_tabs() {                    // 4 根断颈筋：焊盘外缘 → 最近内壁
-    for (q = boss_xy) {
-        low = q[1] < scr_pcb_w / 2;   // 两端各多咬 0.6/1.0，避免只相切
-        ya  = low ? cav_y0 - 0.6 : q[1] + mp_pad_d / 2 - 1.0;
-        yb  = low ? q[1] - mp_pad_d / 2 + 1.0 : cav_y1 + 0.6;
-        translate([q[0] - mp_tab / 2, ya, mp_z + mp_t / 2 - mp_tab / 2])
-            cube([mp_tab, yb - ya, mp_tab]);
-    }
+/* ---------- 独立打印：不在盒内悬挂销或转接板 ---------- */
+module print_plate() { main_box(); }
+module plunger_plate() {
+    assert(n_plungers >= 1 && floor(n_plungers) == n_plungers, "n_plungers 必须为正整数");
+    for (i = [0:n_plungers - 1]) translate([i * 12, 0, 0]) plunger();
 }
 
-/* ---------- 一体打印盘：按键销立在底边(Y-)栅格前的空地 ----------
-   法兰朝下悬 0.4，单根锥形断颈（底 φ2.2 / 顶 φ0.8）接法兰底面
-   正中心：断裂点被引导到细端，残根柱留在盒底板上（对内不可见），
-   销子上仅剩 φ0.8 小点，免打磨。
-   断口不能放细杆侧面——按压时整根杆会滑过 φ4.1 导孔，有残留必卡。
-   放底边栅格前的实心地板带（栅格 y≥10），四周无螺柱方便下手拧断；
-   销子在装电池前取下，占电池投影区无妨。 */
-module print_plate() {
-    main_box();
-    for (i = [0:n_plungers - 1]) {
-        px = 30 + i * 14;  py = 5.5;
-        translate([px, py, floor_t + 0.4]) plunger();
-        translate([px, py, floor_t - 0.01])
-            cylinder(d1 = 2.2, d2 = 0.8, h = 0.5 + 0.01);
+/* ---------- 装配预览（仅 part="assembly"，不可当打印模型）---------- */
+module assembly_preview() {
+    color([0.75, 0.8, 0.85, 0.35]) main_box();
+    color([0.1, 0.5, 0.2, 0.6])
+        translate([exp_x(0), exp_y(exp_w), z_exp_bot]) cube([exp_l, exp_w, exp_t]);
+    color([0.1, 0.3, 0.6, 0.5])
+        translate([0, 0, z_scr_bot]) cube([scr_pcb_l, scr_pcb_w, scr_pcb_t]);
+    // ANT1 F.Fab 实际本体。整条橙色带是 PCB 二维禁铜规则，不等于三维 RF 净空。
+    color([0.95, 0.6, 0.05, 0.8])
+        translate([24.672, 52.488, z_exp_top]) cube([50, 7.5, 0.15]);
+    color([0.95, 0.6, 0.05, 0.2])
+        translate([exp_x(0), 52.488, z_exp_top+0.16]) cube([exp_l, 8.435, 0.1]);
+    for (sx = sma_x) {
+        color([0.7, 0.6, 0.2, 0.7])
+            translate([sx, top_inner_y1-sma_tail_l, sma_z]) rotate([-90, 0, 0])
+                cylinder(d=sma_cb_d, h=sma_tail_l);
+        color([0.7, 0.6, 0.2, 0.7])
+            translate([sx, top_inner_y1, sma_z]) rotate([-90, 0, 0])
+                cylinder(d=sma_d-0.2, h=wall_t);
+        color([0.3, 0.3, 0.3, 0.25])
+            translate([sx, top_y1, sma_z]) rotate([-90, 0, 0])
+                cylinder(d=sma_external_d, h=sma_external_l);
     }
-    if (mount_plate) {
-        translate([0, 0, mp_z]) mount_plate_body();
-        mp_tabs();
-    }
+    if (gps_mode == "patch") color([0.8, 0.2, 0.5, 0.8])
+        translate([gps_cx-gps_patch_size[0]/2, gps_back_y, gps_patch_z-gps_patch_size[1]/2])
+            cube([gps_patch_size[0], gps_patch_size[2], gps_patch_size[1]]);
+    if (gps_mode == "ceramic") color([0.9, 0.85, 0.55, 0.8])
+        translate([gps_cx-gps_ceramic_size/2, gps_back_y, gps_ceramic_z-gps_ceramic_size/2])
+            cube([gps_ceramic_size, gps_ceramic_h, gps_ceramic_size]);
+    if (mount_plate) color([0.5, 0.5, 0.5, 0.5]) translate([0,0,-mp_t-foot_h]) mount_plate_body();
 }
 
 ozero = align_origin ? [-box_x0, -box_y0, foot_h] : [0, 0, 0];
@@ -624,6 +790,8 @@ echo(str("PWR/SW3 孔 y=", AY(sw3_y), "  z=", AZ(sw3_z),
          " (距玻璃面 ", box_h - sw3_z, ")  φ", sw3_d,
          "  外凹φ", sw3_rec_d, "深", rec_depth, "  在 x=", AX(box_x1),
          " 壁（USB 侧）  销凸出 ", sw3_proud));
+echo(str("J4 USB: y=", AY(j4_y), " z=", j4_z, "（Z 暂定，需实测）; D8/D9 y=",
+         [for (v = led_ys) AY(v)], " z=", led_z, "（侧窗不是导光柱）"));
 echo(str("Y+ 壁按键孔: ", btn_on ? str("开 ", btns) : "不开（V4.7 堵掉，见 btns 注释）"));
 echo(str("SD 槽     x=", AX(sd_cx), "  z=", AZ(z_scr_bot + sd_zoff),
          " (距玻璃面 ", sd_glass_d, ")  ", sd_w, "x", sd_h,
@@ -632,9 +800,10 @@ echo(str("USB 孔    y=", AY(h1_y), "  z=", AZ(z_scr_bot + usb_zoff),
          " (距玻璃面 ", usb_glass_d, ")  ", usb_w, "(y向)x", usb_h,
          "(z向)  外框", usb_rec[0], "x", usb_rec[1], "深", rec_depth,
          "  在 x=", AX(box_x1), " 壁"));
-echo(str("SMA 孔    y=", AY(sma_y[0]), " 和 ", AY(sma_y[1]),
-         "  z=", AZ(sma_z), " (距玻璃面 ", box_h - sma_z, ")  φ", sma_d,
-         "  外凹φ", sma_rec_d, "深", sma_rec_dp, "  在 x=", AX(box_x0), " 壁"));
+echo(str("顶部 SMA x=", [for (v=sma_x) AX(v)], " y=", AY(top_y1), " z=", sma_z,
+         " φ", sma_d, " 尾柱内端y=", AY(top_inner_y1-sma_tail_l)));
+echo(str("GPS 模式=", gps_mode, " 背面y=", AY(gps_back_y),
+         " 顶部总外形 Y=", print_y1-box_y0, "（不含外部天线）"));
 echo(str("螺柱中心  x=", AX(boss_xy[0][0]), "/", AX(boss_xy[1][0]),
          "  y=", AY(boss_xy[0][1]), "/", AY(boss_xy[2][1]),
          "  柱顶z=", AZ(floor_t + bat_h), "  孔φ", screw_d));
@@ -646,14 +815,14 @@ echo(str("align_origin=", align_origin,
 
 translate(ozero) {
     if (part == "print") print_plate();
-if (part == "plate") translate([0, 0, mp_z]) mount_plate_body();
+    if (part == "plate") mount_plate_body();
     if (part == "box") main_box();
+    if (part == "assembly") assembly_preview();
     if (part == "section")
         difference() {
             main_box();
             translate([scr_pcb_l / 2, box_y0 - 1, -1])
-                cube([box_l, box_w + 2, box_h + 2]);
+                cube([box_l, print_y1 - box_y0 + 2, box_h + 2]);
         }
 }
-if (part == "plungers")
-    for (i = [0:len(btns) - 1]) translate([i * 12, 0, 0]) plunger();
+if (part == "plungers") plunger_plate();
