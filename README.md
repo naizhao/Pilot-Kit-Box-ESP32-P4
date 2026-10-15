@@ -17,6 +17,14 @@
   <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box 360-degree traffic radar" width="49%">
   <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband radio with recording playback" width="49%">
 </p>
+<p align="center">
+  <img src="images/ui-4.3-list-en.png" alt="Pilot Kit Box aircraft list" width="49%">
+  <img src="images/ui-4.3-recordings-en.png" alt="Pilot Kit Box recordings page" width="49%">
+</p>
+<p align="center">
+  <img src="images/ui-4.3-diag-en.png" alt="Pilot Kit Box diagnostics page" width="49%">
+  <img src="images/ui-4.3-menu-en.png" alt="Pilot Kit Box navigation grid" width="49%">
+</p>
 
 **一块扩展板，一整套航空电子**：G1000 风格 PFD、360° 交通雷达、离线
 航空地图（机场/导航台/FIX 叠加层）、航空电台收听与录音回放——中英
@@ -266,17 +274,6 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 | 交通雷达 / Traffic Radar | 完整原型 / Finished Prototype |
 |---|---|
 | <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
-
-更多页面（模拟器渲染，英文 UI，与实机同一份绘制代码）/ More pages,
-rendered by the simulator from the same drawing code as the device (English UI):
-
-| Aircraft List | Recordings |
-|---|---|
-| <img src="images/ui-4.3-list-en.png" alt="Pilot Kit Box aircraft list (simulated)" width="360"> | <img src="images/ui-4.3-recordings-en.png" alt="Pilot Kit Box recordings page (simulated)" width="360"> |
-
-| Diagnostics | Navigation Grid |
-|---|---|
-| <img src="images/ui-4.3-diag-en.png" alt="Pilot Kit Box diagnostics page (simulated)" width="360"> | <img src="images/ui-4.3-menu-en.png" alt="Pilot Kit Box navigation grid (simulated)" width="360"> |
 
 ### v1 载板与外壳实物 / v1 Carrier Board & Enclosure
 
