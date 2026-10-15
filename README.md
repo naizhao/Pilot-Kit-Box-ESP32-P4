@@ -53,8 +53,19 @@ over both Bluetooth and Wi-Fi for phones and EFBs.
   work only, the radio hardware is already on board
 - 🛩️ 已与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
   Already works with EFBs such as Garmin Pilot and ForeFlight
-- 📼 飞行记录落 microSD<br>
-  Flights logged to microSD
+- 📼 **飞行轨迹记录，项目的起点**。1 Hz 逐秒记录本机位置与飞行相位，
+  周边 ADS-B 目标与原始报文同步落盘；microSD 约 1 GiB 轮转保留，飞得多
+  也不用天天清卡；换卡自动开新段，时间戳由 GNSS 授时保持准确<br>
+  **Flight track logging — where this project started.** Own position and
+  flight phase sampled at 1 Hz, with surrounding ADS-B targets and raw
+  frames written alongside; ~1 GiB rotating retention on microSD means no
+  daily card clearing, and swapping a card starts a new session with
+  GNSS-disciplined timestamps
+- 🖥️ **4.3 寸触摸屏，开机即用**。所有仪表直接画在板上 800×480 屏上，
+  触摸切换页面，不需要掏手机就能看全景<br>
+  **4.3-inch touchscreen, works out of the box.** Every instrument renders
+  on the onboard 800×480 display — the full picture without pulling out a
+  phone
 - 🔓 全链路开源：固件、KiCad 工程、制造包、字体与数据库管线<br>
   Fully open: firmware, KiCad projects, fabrication packages, font and database pipelines
 
