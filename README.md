@@ -17,25 +17,39 @@
 
 **一套固件，四种仪表**：G1000 风格 PFD、360° 交通雷达、离线航空地图
 （机场/导航台/FIX 叠加层）、航空电台收听与录音回放——全部跑在
-一块 ESP32-P4 上，中英双语，无需联网。
+一块 ESP32-P4 上，中英双语，无需联网；GDL90 数据经蓝牙与 Wi-Fi
+对外输出，手机/EFB 无线直连。
 **One firmware, four instruments**: a G1000-style PFD, a 360° traffic radar,
 an offline aviation map (airports / navaids / fixes), and an airband radio
-with recording playback — all on a single ESP32-P4, bilingual, offline.
+with recording playback — all on a single ESP32-P4, bilingual, offline,
+with GDL90 out over both Bluetooth and Wi-Fi for phones and EFBs.
 
-- 📡 **双链路同时接收：1090 MHz（ADS-B）+ 978 MHz（UAT）**。两条独立接收链
-  并发解码，目标汇入同一张融合表——一套天线布局同时覆盖两种信号，不换
-  dongle、不切频道<br>
-  **Dual-channel concurrent reception: 1090 MHz (ADS-B) + 978 MHz (UAT).**
-  Two independent receive chains decode in parallel into one fused traffic
-  table — one antenna setup covers both, no dongle swapping, no channel switching
-- 📻 **所有数据来自无线电波与机载传感器，实时、真实、零联网**——屏幕上的
+- 📶 **多链路同时接收，扫频方案做不到的事**。传统 RTL-SDR 方案带宽只有
+  约 2 MHz：收 1090 就收不了 978，听航空电台就得断 ADS-B，想全覆盖只能
+  跳频扫或插一堆 dongle。本机为每条链路配独立接收机——**1090 MHz
+  （ADS-B，RP2040 PIO 解码）+ 978 MHz（UAT，CC1312R）+ 航空电台
+  （BK4819，118–137 MHz）+ GNSS 四路并发**，互不抢占，目标汇入同一张
+  融合表<br>
+  **Multi-chain concurrent reception — the thing a scanning SDR cannot do.**
+  A classic RTL-SDR has only ~2 MHz of bandwidth: tune to 1090 and you lose
+  978, listen to the airband and your ADS-B feed goes dark, full coverage
+  means hopping frequencies or stacking dongles. This box gives every link
+  its own receiver — **1090 MHz (ADS-B, RP2040 PIO decode) + 978 MHz (UAT,
+  CC1312R) + airband (BK4819, 118–137 MHz) + GNSS, four chains in parallel**,
+  no contention, fused into one traffic table
+- 📡 所有数据来自无线电波与机载传感器，实时、真实、零联网——屏幕上的
   每一架飞机、每一条跑道、每一段通话都是本机直接接收解出来的，不是任何
   网络 API 的缓存或转售数据<br>
-  **Every bit of data comes off the air and onboard sensors — real-time, real,
-  zero internet.** Every aircraft, runway, and radio call on screen is received
+  Every bit of data comes off the air and onboard sensors — real-time, real,
+  zero internet. Every aircraft, runway, and radio call on screen is received
   and decoded by the device itself, not cached from or resold by any online API
-- 🛩️ 输出 GDL90 over BLE，已可与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
-  Speaks GDL90 over BLE, already works with EFBs such as Garmin Pilot and ForeFlight
+- 📡 蓝牙 + Wi-Fi 双通道对外输出：GDL90（Ownship / Traffic / Heartbeat）
+  经 BLE 即刻可用，Wi-Fi UDP 输出按同一 GDL90 标准实现中<br>
+  Bluetooth + Wi-Fi output: GDL90 (ownship / traffic / heartbeat) ships over
+  BLE today; the same GDL90 stream over Wi-Fi UDP is landing next — firmware
+  work only, the radio hardware is already on board
+- 🛩️ 已可与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
+  Already works with EFBs such as Garmin Pilot and ForeFlight
 - 📼 飞行记录落 microSD，航空电台通话可回放<br>
   Flights logged to microSD; radio transmissions recorded and replayable
 - 🔓 全链路开源：固件、KiCad 工程、制造包、字体与数据库管线<br>
