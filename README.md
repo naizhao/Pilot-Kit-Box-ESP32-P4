@@ -58,11 +58,11 @@ over both Bluetooth and Wi-Fi for phones and EFBs.
   Already works with EFBs such as Garmin Pilot and ForeFlight
 - 📼 **飞行轨迹记录**。轨迹与周边飞机数据保存到 SD 卡，dump1090 兼容
   格式，拔卡即读、随时导出；可回放自己的航线与当时的空域，配合
-  Pilot Kit App 做飞行日志、复盘与分享<br>
+  [Pilot Kit App](https://air.club) 做飞行日志、复盘与分享<br>
   **Flight track logging.** Track and nearby traffic saved to the SD card
   in a dump1090-compatible format — pull the card, read it anywhere.
-  Replay your route and the airspace around it, and pair with the Pilot
-  Kit app for logbooks, review and sharing
+  Replay your route and the airspace around it, and pair with the
+  [Pilot Kit app](https://air.club) for logbooks, review and sharing
 - 🖥️ **4.3 寸触摸屏，开机即用**。所有仪表直接画在板上 800×480 屏上，
   触摸切换页面，不需要掏手机就能看全景<br>
   **4.3-inch touchscreen, works out of the box.** Every instrument renders
