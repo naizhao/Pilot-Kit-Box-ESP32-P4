@@ -200,3 +200,11 @@ firmware/build-v3/
 /jlc_libcheck.json
 /official-store-*.png
 .pk_logs/
+/result.json
+
+# SD 排障工作区：带日期的观察目录里是设备日志（MAC/序列号/本机路径），
+# 绝不进公开仓库。目录里的 *.c 探针源文件被 main/CMakeLists.txt 的
+# PK_SD_*_DIAGNOSTIC 开关引用，属构建输入——它们单独走白名单保留。
+firmware/diagnostics/*
+!firmware/diagnostics/*.c
+!firmware/diagnostics/*.defaults
