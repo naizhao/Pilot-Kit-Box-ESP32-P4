@@ -33,13 +33,13 @@ over both Bluetooth and Wi-Fi for phones and EFBs.
   直接出声；飞行中没听清的复述，落地回放重听<br>
   **Airband radio (118–137 MHz) with recording playback.** Tower, approach,
   ATIS and CTAF out loud; replay anything you missed on the ground
-- 🧭 **全传感器套装，手持 GPS 都未必有**：BNO085 IMU 姿态（PFD 地平仪）、
-  BMP388 气压高度与升降率、QMC5883P 磁力计、ATGM336H **GPS/北斗/GLONASS/
-  Galileo 四星座 GNSS**（内置陶瓷天线 + 外接可切）<br>
-  **Full sensor suite, beyond most handheld GPSs**: BNO085 IMU attitude
-  (PFD horizon), BMP388 barometric altitude and vertical speed, QMC5883P
-  magnetometer, and ATGM336H **4-constellation GNSS (GPS/BeiDou/GLONASS/
-  Galileo)** with switchable internal patch / external antenna
+- 🧭 **全传感器套装，手持 GPS 都未必有**：IMU 姿态（PFD 地平仪）、气压
+  高度与升降率、磁力计、**GPS/北斗/GLONASS/Galileo 四星座 GNSS**
+  （内置陶瓷天线 + 外接可切）<br>
+  **Full sensor suite, beyond most handheld GPSs**: IMU attitude (PFD
+  horizon), barometric altitude and vertical speed, magnetometer, and
+  **4-constellation GNSS (GPS/BeiDou/GLONASS/Galileo)** with switchable
+  internal patch / external antenna
 - 📡 所有数据来自无线电波与机载传感器，实时、真实、零联网——屏幕上的
   每一架飞机、每一条跑道、每一段通话都是本机直接接收解出来的，不是任何
   网络 API 的缓存或转售数据<br>
