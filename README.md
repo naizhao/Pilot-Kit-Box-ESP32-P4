@@ -40,7 +40,7 @@ over both Bluetooth and Wi-Fi for phones and EFBs.
   horizon), barometric altitude and vertical speed, magnetometer, and
   **4-constellation GNSS (GPS/BeiDou/GLONASS/Galileo)** with switchable
   internal patch / external antenna
-- 📡 所有数据来自无线电波与机载传感器，实时、真实、零联网——屏幕上的
+- 📡 所有数据来自无线电波与板载传感器，实时、真实、零联网——屏幕上的
   每一架飞机、每一条跑道、每一段通话都是本机直接接收解出来的，不是任何
   网络 API 的缓存或转售数据<br>
   Every bit of data comes off the air and onboard sensors — real-time, real,
