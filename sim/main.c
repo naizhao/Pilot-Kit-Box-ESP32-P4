@@ -63,8 +63,8 @@
  *     PK_SIM_MENU_LEVEL=<pct>   打开并停在「调平」长按进行中：橙色进度填充走到
  *                               pct%（0~100，UX 规格 §6 的 ③）
  *     PK_SIM_MENU_LEVEL_DONE=1  打开并停在调平完成的绿闪那一帧（同 §6 的 ④）
- *     PK_SIM_UI_MODE=<n>     当前在哪一页（pk_ui_mode_t 序号），决定哪一格
- *                            画选中框；默认 0=PFD，第 2 页可给 6=DIAG
+ *     PK_SIM_UI_MODE=<name>  当前在哪一页，决定哪一格画选中框；默认 PFD，
+ *                            第 2 页用 diag（仍兼容临时传枚举数字）
  *
  * 版面位置类（与空态常配合用）：
  *     PK_SIM_DIAG_SCROLL / PK_SIM_SET_SCROLL / PK_SIM_ABOUT_SCROLL=<px>
@@ -95,6 +95,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "airband_page.h"
+#include "airband_recordings_page.h"
+#include "airband_speaker.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -418,6 +420,8 @@ static int run_headless(float at_sec, const char *out)
         getenv("PK_SIM_MENU_LEVEL_DONE"))
         pk_nav_grid_page_open();
     if (getenv("PK_SIM_TOAST")) pk_ui_nav_toast("已绑定本机", false);
+    if (getenv("PK_SIM_TOAST_PLAYBACK"))
+        pk_ui_nav_toast(pk_i18n_text(PK_TR_RECORDINGS_PLAYBACK_NOTICE), false);
     /* 阶段 5b：SD 写失败/降级告警——闪烁本身是逐帧现象，静态截图截不出
      * "亮/灭"两态交替，但能核对红色告警配色 + 较长文案（比 PK_SIM_TOAST
      * 那句"已绑定本机"长不少）在控件层会不会被裁切/压扁。直接调
@@ -701,7 +705,61 @@ static int run_headless(float at_sec, const char *out)
                            px, py, (int)eaten);
                 }
             }
+            const char *release_count = getenv("PK_SIM_AIRBAND_RELEASES");
+            if (release_count) {
+                for (int release = 0; release < atoi(release_count); ++release)
+                    pk_airband_page_touch_up();
+            }
             pk_airband_page_render(fb);
+        } else if (strcmp(page, "recordings") == 0) {
+            const char *initial_volume = getenv("PK_SIM_RECORDINGS_VOLUME");
+            if (initial_volume)
+                pk_airband_speaker_playback_set_volume((uint8_t)atoi(initial_volume));
+            pk_airband_recordings_page_init();
+            pk_airband_recordings_page_open();
+            const char *select = getenv("PK_SIM_RECORDINGS_SELECT");
+            if (select) {
+                const int row = atoi(select);
+                const int y = PK_AIRBAND_RECORDINGS_LIST_TOP +
+                              row * PK_AIRBAND_RECORDINGS_ROW_H + 20;
+                pk_airband_recordings_page_touch(200, y);
+                pk_airband_recordings_page_touch_up();
+            }
+            const char *scroll = getenv("PK_SIM_RECORDINGS_SCROLL");
+            if (scroll) {
+                pk_airband_recordings_page_touch(400, 300);
+                pk_airband_recordings_page_drag(400, 300 - atoi(scroll));
+                pk_airband_recordings_page_touch_up();
+            }
+            const char *press = getenv("PK_SIM_RECORDINGS_PRESS");
+            if (press) {
+                int press_x = 0, press_y = 0;
+                if (sscanf(press, "%d,%d", &press_x, &press_y) == 2)
+                    pk_airband_recordings_page_touch(press_x, press_y);
+            }
+            const char *release_count = getenv("PK_SIM_RECORDINGS_RELEASES");
+            if (release_count) {
+                for (int release = 0; release < atoi(release_count); ++release)
+                    pk_airband_recordings_page_touch_up();
+            }
+            const char *volume_taps = getenv("PK_SIM_RECORDINGS_VOLUME_TAPS");
+            const char *tap_interval = getenv("PK_SIM_RECORDINGS_TAP_INTERVAL_MS");
+            if (volume_taps) {
+                const int taps = atoi(volume_taps);
+                for (int tap = 0; tap < abs(taps); ++tap) {
+                    if (tap && tap_interval)
+                        pk_sim_clock_frozen_us += (int64_t)atoi(tap_interval) * 1000;
+                    pk_airband_recordings_page_touch(taps > 0 ? 224 : 52, 430);
+                    pk_airband_recordings_page_touch_up();
+                }
+            }
+            const char *delay = getenv("PK_SIM_RECORDINGS_DELAY_MS");
+            if (delay) pk_sim_clock_frozen_us += (int64_t)atoi(delay) * 1000;
+            if (getenv("PK_SIM_RECORDINGS_REOPEN")) {
+                pk_airband_recordings_page_leave();
+                pk_airband_recordings_page_open();
+            }
+            pk_airband_recordings_page_render(fb);
         } else if (strcmp(page, "airbandkbd") == 0) {
             pk_keyboard_page_open_numeric(
                 pk_i18n_text(PK_TR_AIRBAND_FREQ_INPUT),

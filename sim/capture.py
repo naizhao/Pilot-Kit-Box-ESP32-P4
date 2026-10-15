@@ -31,6 +31,13 @@ OUT = REPO / "images"
 # 俯仰正负刻度同时可见——是最能说明问题的一帧。换值会让所有图一起变。
 AT_SEC = "13.7"
 
+# airband 列表页的附近机场查询需要「数据库在位 + GPS fix」，且 fix 坐标必须
+# 落在 aero 桩表（珠三角，AERO_SIM_BASE_*）±1° 窗口内——GPS 桩默认北京，
+# 列表会只剩 GUARD/AIR-AIR 两条 fallback。钉到基准点后 ZGGG/ZGSZ 等桩表
+# 机场的频率照真机语义载入。
+AIRBAND_AERO_ENV = {"PK_SIM_AERO": "1", "PK_SIM_DIAG_OK": "1",
+                    "PK_SIM_GPS_LAT": "22.54", "PK_SIM_GPS_LON": "113.90"}
+
 # name → 环境变量。空 dict = 默认态（PFD 主页，中文，菜单未打开）。
 SCENES: list[tuple[str, dict[str, str], str]] = [
     # PFD 主页**没有**中英两版：这一屏全是国际通用的符号、数字与固定缩写
@@ -49,10 +56,10 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
     ("ui-4.3-menu",         {"PK_SIM_MENU": "1"},                 "主菜单第 1 页：8 项（含航空电台）+ 动作条"),
     ("ui-4.3-menu-en",      {"PK_SIM_MENU": "1",
                              "PK_SIM_LANG": "en"},                "主菜单第 1 页（英文，标签最宽的一版）"),
-    # PK_SIM_UI_MODE=6 = PK_UI_MODE_DIAG：让第 2 页也带一个选中框，
+    # 用枚举名而不是数字：新增顶层页面后枚举序号会变，数字会静默选错格。
     # 否则选中态只在第 1 页验得到。
     ("ui-4.3-menu-page2",   {"PK_SIM_MENU_PAGE": "1",
-                             "PK_SIM_UI_MODE": "6"},              "主菜单第 2 页：4 项从左上角起排，不居中"),
+                             "PK_SIM_UI_MODE": "diag"},           "主菜单第 2 页：4 项从左上角起排，不居中"),
     ("ui-4.3-menu-bright",  {"PK_SIM_MENU_BRIGHT": "1"},          "主菜单 + 亮度快调 pop：网格再压一档"),
     # 电源 pop（2026-09-12 新增）。必须带 PK_SIM_MENU_PAGE=1：弹层是从第 2
     # 页的「电源」格点出来的，画在第 1 页上会是一张现实中不存在的图。
@@ -220,12 +227,70 @@ SCENES: list[tuple[str, dict[str, str], str]] = [
                              "PK_SIM_DIAG_OK": "1",
                              "PK_SIM_CAL_JAM": "1"},              "诊断总览干扰态：IMU 卡第二格由航向换成「磁干扰」，状态色压成琥珀"),
 
+    # ── Airband 航空电台页 ──────────────────────────────────────────
+    #
+    # 与其他页面同一套约定：中英各一版。频率输入走独立键盘页（airbandkbd），
+    # 主页覆盖的是频道列表 + 当前频道 + 音量条的正常态。
+    # README 面向国际用户，主要页面截图一律用 -en 版（产品负责人 2026-10-15）。
+    #
+    # PK_SIM_AERO + PK_SIM_DIAG_OK + PK_SIM_GPS_LAT/LON：见 AIRBAND_AERO_ENV 注释。
+    ("ui-4.3-airband",      {"PK_SIM_PAGE": "airband", **AIRBAND_AERO_ENV},
+                                                                  "Airband 航空电台：附近机场频率 + GUARD/AIR-AIR + 音量"),
+    ("ui-4.3-airband-en",   {"PK_SIM_PAGE": "airband",
+                             "PK_SIM_LANG": "en", **AIRBAND_AERO_ENV},
+                                                                  "Airband 航空电台（英文，README 用图）"),
+    # 频率数字键盘是独立一站（7 字符定宽输入），单独一张。
+    ("ui-4.3-airband-kbd",  {"PK_SIM_PAGE": "airbandkbd"},        "Airband 频率输入数字键盘（121.500）"),
+    ("ui-4.3-airband-kbd-en", {"PK_SIM_PAGE": "airbandkbd",
+                             "PK_SIM_LANG": "en"},                "Airband 频率输入数字键盘（英文，README 用图）"),
+
+    # ── Airband 录音回放页 ─────────────────────────────────────────
+    #
+    # stub 默认 53 条录音（覆盖旧版静默上限的最糟情况），SELECT=1 让第二条
+    # 处于选中态，音量条与操作按钮都有内容可验。
+    ("ui-4.3-recordings",   {"PK_SIM_PAGE": "recordings",
+                             "PK_SIM_RECORDINGS_SELECT": "1"},    "录音回放：列表 + 选中条目 + 音量/操作按钮"),
+    ("ui-4.3-recordings-en", {"PK_SIM_PAGE": "recordings",
+                             "PK_SIM_RECORDINGS_SELECT": "1",
+                             "PK_SIM_LANG": "en"},                "录音回放（英文，README 用图）"),
+
+    # ── README 英文用图（主要页面正常态）───────────────────────────
+    #
+    # README 的硬件预览区块只放英文版：老外是主要读者，中文版场景仍保留作
+    # 回归基线。map/list/diag 此前只有中文正常态场景，这里补齐 -en。
+    ("ui-4.3-list-en",      {"PK_SIM_PAGE": "list",
+                             "PK_SIM_LANG": "en"},                "看板正常态（英文，README 用图）"),
+    ("ui-4.3-map-en",       {"PK_SIM_ORIENT": "north",
+                             "PK_SIM_PAGE": "map",
+                             "PK_SIM_SET_SD": "1",
+                             "PK_SIM_MAPS_DIR": str(REPO / "datafiles" / "maps"),
+                             "PK_SIM_LANG": "en"},                "地图页正常态（英文，README 用图）"),
+    ("ui-4.3-diag-en",      {"PK_SIM_PAGE": "diag",
+                             "PK_SIM_DIAG_OK": "1",
+                             "PK_SIM_LANG": "en"},                "诊断总览正常态（英文，README 用图）"),
+    ("ui-4.3-traffic-en",   {"PK_SIM_PAGE": "traffic",
+                             "PK_SIM_LANG": "en"},                "交通页正常态（英文，README 用图）"),
+
     # ── 演示模式开 ──────────────────────────────────────────────────
     #
     # 逐页各截一张，中英各一版。**这不是为了好看**：演示模式的安全底线是
     # 「开着就一定看得见」，而那枚徽标与红框画在控件层、与各页的绘制代码互不
     # 相干——唯一能证明「每一页都在」的办法就是每一页都截一张。少截一页，就是
     # 那一页可能没有标识而没人知道。
+    ("demo-4.3-airband",    {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "airband", **AIRBAND_AERO_ENV},
+                                                                  "演示模式 · Airband 航空电台"),
+    ("demo-4.3-airband-en", {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "airband",
+                             "PK_SIM_LANG": "en", **AIRBAND_AERO_ENV},
+                                                                  "演示模式 · Airband 航空电台（英文）"),
+    ("demo-4.3-recordings", {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "recordings",
+                             "PK_SIM_RECORDINGS_SELECT": "1"},    "演示模式 · 录音回放"),
+    ("demo-4.3-recordings-en", {"PK_SIM_DEMO": "1",
+                             "PK_SIM_PAGE": "recordings",
+                             "PK_SIM_RECORDINGS_SELECT": "1",
+                             "PK_SIM_LANG": "en"},                "演示模式 · 录音回放（英文）"),
     ("demo-4.3-pfd",        {"PK_SIM_DEMO": "1"},                 "演示模式 · PFD"),
     ("demo-4.3-pfd-en",     {"PK_SIM_DEMO": "1",
                              "PK_SIM_LANG": "en"},                "演示模式 · PFD（英文）"),

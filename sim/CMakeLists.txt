@@ -118,6 +118,8 @@ set(FW_DRAW_SRC
     ${FW}/boot_splash.c
     ${FW}/traffic_page.c
     ${FW}/adsb_list.c
+    # 每机详情抽屉：列表页与地图页共用同一实现（地图点飞机原地开抽屉）。
+    ${FW}/adsb_drawer.c
     ${FW}/diag_page.c
     ${FW}/settings_draw.c
     # 键盘编辑器同样是纯排版 + 命中判定，唯一的外部依赖是 config_devname 的
@@ -128,6 +130,7 @@ set(FW_DRAW_SRC
     ${FW}/airband_am_gain.c
     ${FW}/airband_bk4819.c
     ${FW}/airband_page.c
+    ${FW}/airband_recordings_page.c
     # 航空数据搜索页。版面、分桶排序、空态文案都要在模拟器上评审，所以原样
     # 编进来；host 上跑不起来的只有后台任务与 NVS 历史，那两段在 PK_SIM_BUILD
     # 下退化成"同步查 + 内存里的历史"（见 search_page.c 尾部）。数据源同样

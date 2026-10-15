@@ -127,14 +127,20 @@ void pk_ui_cal_wizard_dismiss(void) { }
  *
  * 固件里的真值在 ui_state.c（带互斥锁，多个任务读写），模拟器没有页面切换
  * 这回事——PK_SIM_PAGE 决定截哪一页，是另一套机制。所以这里做成一个环境
- * 变量旋钮：PK_SIM_UI_MODE=<pk_ui_mode_t 序号>，默认 0（PFD），正好让第 1 页
- * 的第 1 格带上选中框。截第 2 页时给 6（DIAG），选中态在两页上都验得到。
+ * 变量旋钮：PK_SIM_UI_MODE=<模式名或 pk_ui_mode_t 序号>，默认 PFD，正好让
+ * 第 1 页首格带选中框。截图台账使用 "diag" 而不是枚举数字，新增页面不会
+ * 静默把选中框挪到别的格；数字只保留给临时调试兼容。
  */
 #include "ui_state.h"
 
 pk_ui_mode_t pk_ui_get_mode(void)
 {
-    return (pk_ui_mode_t)sim_env("PK_SIM_UI_MODE", PK_UI_MODE_PFD);
+    const char *value = getenv("PK_SIM_UI_MODE");
+    if (value == NULL || value[0] == '\0') return PK_UI_MODE_PFD;
+    if (strcmp(value, "diag") == 0) return PK_UI_MODE_DIAG;
+    if (strcmp(value, "recordings") == 0)
+        return PK_UI_MODE_AIRBAND_RECORDINGS;
+    return (pk_ui_mode_t)atoi(value);
 }
 
 /* 写操作不进模拟器，同 pk_settings_apply / pk_demo_set_enabled：截图是
@@ -225,6 +231,7 @@ static pk_map_orient_t s_orient_init(void)
                                                : PK_MAP_HEADING_UP;
 }
 static pk_map_orient_t s_orient = (pk_map_orient_t)-1;
+static pk_map_orient_t s_radar_orient = (pk_map_orient_t)-1;
 static int             s_range_idx = 3;               /* 20 NM，同真机默认 */
 
 pk_map_orient_t pk_map_orient_get(void)
@@ -233,6 +240,17 @@ pk_map_orient_t pk_map_orient_get(void)
     return s_orient;
 }
 void pk_map_orient_set(pk_map_orient_t m)      { s_orient = m; }
+pk_map_orient_t pk_radar_orient_get(void)
+{
+    if ((int)s_radar_orient < 0) {
+        const char *e = getenv("PK_SIM_RADAR_ORIENT");
+        s_radar_orient = (e && (e[0] == 'n' || e[0] == 'N'))
+                             ? PK_MAP_NORTH_UP
+                             : PK_MAP_HEADING_UP;
+    }
+    return s_radar_orient;
+}
+void pk_radar_orient_set(pk_map_orient_t m)    { s_radar_orient = m; }
 int  pk_traffic_range_idx_get(void)            { return s_range_idx; }
 void pk_traffic_range_idx_set(int idx)         { s_range_idx = idx < 0 ? 0 : (idx > 3 ? 3 : idx); }
 
@@ -377,6 +395,10 @@ void pk_display_panel_off(void) { }
 /* 默认 false：无卡时格式化按钮置灰、存储那行也置灰，这是出厂开机的样子，
  * 也是最容易被漏掉的一种版面。 */
 bool pk_sdcard_is_mounted(void) { return sim_env("PK_SIM_SET_SD", 0) != 0; }
+bool pk_sdcard_probe_exhausted(void)
+{
+    return !pk_sdcard_is_mounted() && sim_env("PK_SIM_SD_PROBE_EXHAUSTED", 0) != 0;
+}
 
 int pk_settings_format_state(void) { return sim_env("PK_SIM_SET_FMT", 0); }
 
@@ -536,7 +558,16 @@ bool pk_gps_get(pk_gps_state_t *o)
     if (!diag_ok()) return false;          /* last_nmea_us=0 → "no module" */
     o->have_fix = true;  o->sats = 11;  o->hdop = 0.9f;
     o->sats_in_view = 17;  o->ant_status = PK_GPS_ANT_OK;
-    o->lat = 39.90750;  o->lon = 116.39125;
+    /* PK_SIM_GPS_LAT/LON 覆盖演示坐标。默认北京是给诊断页的「有 fix」画面用的；
+     * 需要与 aero 桩表（珠三角，见 pk_aero_layer_sim.c AERO_SIM_BASE_*）同域的
+     * 场景——airband 附近机场列表、地图页附近查询——用这个口子把 fix 钉到
+     * 基准点上，否则 nearby 按 ±1 度窗口过滤后永远 0 条。 */
+    {
+        const char *lat_e = getenv("PK_SIM_GPS_LAT");
+        const char *lon_e = getenv("PK_SIM_GPS_LON");
+        o->lat = lat_e ? atof(lat_e) : 39.90750;
+        o->lon = lon_e ? atof(lon_e) : 116.39125;
+    }
     /*
      * 两个时间戳按**当前单调时钟往回推**，不能是常量。
      *
@@ -800,10 +831,165 @@ static pk_airband_control_status_t s_sim_airband_ctl = {
 
 #include "airband_record.h"
 void pk_airband_record_get(pk_airband_record_status_t *out)
-{ if (out) *out=(pk_airband_record_status_t){.sd_missing=true}; }
+{
+    if (!out) return;
+    *out = (pk_airband_record_status_t){.sd_missing=false};
+    if (pk_sim_flag("PK_SIM_RECORDING_ACTIVE")) {
+        out->enabled = true;
+        out->active = true;
+        out->bytes = 384000u;
+    }
+}
 bool pk_airband_record_set_enabled(bool enabled) { return !enabled; }
 const char *pk_airband_record_label(const pk_airband_record_status_t *status)
 { (void)status;return "SD MISSING"; }
+
+/* 录音列表/回放桩只提供数据，页面的排序、滚动、disabled、绘制和触摸仍走
+ * 固件同一份 airband_recordings_page.c。默认 53 条，专门覆盖旧版静默上限。 */
+#include "airband_playback.h"
+#include "airband_recording_store.h"
+#include "airband_speaker.h"
+
+static pk_airband_playback_status_t s_sim_playback = {
+    .started = true,
+    .service_state = PK_AIRBAND_PLAYBACK_SERVICE_READY,
+};
+static pk_airband_speaker_status_t s_sim_recording_speaker = {
+    .online = true,
+    .playback_volume = 35,
+};
+
+bool pk_airband_speaker_get(pk_airband_speaker_status_t *out)
+{
+    if (!out) return false;
+    *out = s_sim_recording_speaker;
+    return true;
+}
+void pk_airband_speaker_playback_set_muted(bool muted)
+{ s_sim_recording_speaker.playback_muted = muted; }
+void pk_airband_speaker_playback_set_volume(uint8_t volume)
+{ s_sim_recording_speaker.playback_volume = volume > 100 ? 100 : volume; }
+
+pk_airband_recording_snapshot_result_t
+pk_airband_recording_store_snapshot_acquire_ex(
+    pk_airband_recording_snapshot_t *out)
+{
+    if (!out) return PK_AIRBAND_RECORDING_SNAPSHOT_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+    out->revision = 1u;
+    const char *state = getenv("PK_SIM_RECORDINGS_STATE");
+    if (state && strcmp(state, "sd") == 0) {
+        out->catalog_state = PK_AIRBAND_RECORDING_CATALOG_SD_UNAVAILABLE;
+        return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+    }
+    if (state && strcmp(state, "scan") == 0) {
+        out->catalog_state = PK_AIRBAND_RECORDING_CATALOG_SCAN_ERROR;
+        return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+    }
+    if (state && strcmp(state, "oom") == 0) {
+        out->catalog_state = PK_AIRBAND_RECORDING_CATALOG_OOM;
+        return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+    }
+    out->catalog_state = PK_AIRBAND_RECORDING_CATALOG_READY;
+    out->stale = state && strcmp(state, "stale") == 0;
+    const char *count_text = getenv("PK_SIM_RECORDINGS_COUNT");
+    const size_t count = state && strcmp(state, "empty") == 0 ? 0u :
+                         count_text ? (size_t)strtoul(count_text, NULL, 10) : 53u;
+    out->invalid_files = getenv("PK_SIM_RECORDINGS_INVALID") ?
+                         (size_t)strtoul(getenv("PK_SIM_RECORDINGS_INVALID"), NULL, 10) : 2u;
+    if (count == 0) return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+    out->entries = calloc(count, sizeof(*out->entries));
+    if (!out->entries) {
+        out->catalog_state = PK_AIRBAND_RECORDING_CATALOG_OOM;
+        return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+    }
+    out->count = count;
+    for (size_t i = 0; i < count; ++i) {
+        pk_airband_recording_entry_t *e = &out->entries[i];
+        e->id.session = (uint32_t)(count - i);
+        e->id.volume = 1u;
+        const char *gap = getenv("PK_SIM_RECORDINGS_GAP");
+        e->id.interrupted = gap ? strtoul(gap, NULL, 10) != 0u :
+                                 (i % 7u) == 3u;
+        e->name.session = e->id.session;
+        e->name.volume = 1u;
+        e->name.interrupted = e->id.interrupted;
+        e->name.channel_khz = 118000u + (uint32_t)(i % 76u) * 250u;
+        e->name.carrier_hz = e->name.channel_khz * 1000u;
+        e->wav.duration_ms = 18000u + (uint32_t)i * 1370u;
+        e->wav.data_bytes = e->wav.duration_ms * 32u;
+        e->mtime_sec = 1790640000 - (int64_t)i * 1800;
+    }
+    return PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+}
+
+bool pk_airband_recording_store_snapshot_acquire(
+    pk_airband_recording_snapshot_t *out)
+{
+    return pk_airband_recording_store_snapshot_acquire_ex(out) ==
+           PK_AIRBAND_RECORDING_SNAPSHOT_OK;
+}
+
+uint32_t pk_airband_recording_store_revision(void) { return 1u; }
+
+pk_airband_recording_store_token_t pk_airband_recording_store_token(void)
+{
+    const char *state = getenv("PK_SIM_RECORDINGS_STATE");
+    const bool mounted = !(state && strcmp(state, "sd") == 0);
+    return (pk_airband_recording_store_token_t){
+        .revision = 1u,
+        .mount_generation = mounted ? 1u : 0u,
+        .mounted = mounted,
+    };
+}
+
+void pk_airband_recording_snapshot_release(pk_airband_recording_snapshot_t *s)
+{
+    if (!s) return;
+    free(s->entries);
+    memset(s, 0, sizeof(*s));
+}
+
+bool pk_airband_recording_store_find(pk_airband_recording_id_t id,
+                                     pk_airband_recording_entry_t *out)
+{ (void)id; (void)out; return false; }
+bool pk_airband_recording_store_start(void) { return true; }
+void pk_airband_recording_store_set_visible(bool visible) { (void)visible; }
+void pk_airband_recording_store_request_refresh(void) { }
+
+bool pk_airband_playback_start(void) { s_sim_playback.started = true; return true; }
+pk_airband_playback_select_result_t pk_airband_playback_select_ex(
+    pk_airband_recording_id_t id)
+{
+    if (!s_sim_playback.started ||
+        s_sim_playback.service_state != PK_AIRBAND_PLAYBACK_SERVICE_READY)
+        return PK_AIRBAND_PLAYBACK_SELECT_SERVICE_UNAVAILABLE;
+    s_sim_playback.selected = true;
+    s_sim_playback.playing = false;
+    s_sim_playback.id = id;
+    s_sim_playback.pause_reason = PK_AIRBAND_PLAYBACK_PAUSE_USER;
+    s_sim_playback.duration_ms = 62000u;
+    s_sim_playback.data_bytes = 1984000u;
+    s_sim_playback.cursor_ms = 22000u;
+    s_sim_playback.cursor_bytes = 704000u;
+    return PK_AIRBAND_PLAYBACK_SELECT_OK;
+}
+bool pk_airband_playback_select(pk_airband_recording_id_t id)
+{
+    return pk_airband_playback_select_ex(id) == PK_AIRBAND_PLAYBACK_SELECT_OK;
+}
+void pk_airband_playback_toggle(void)
+{ if (s_sim_playback.selected) s_sim_playback.playing = !s_sim_playback.playing; }
+void pk_airband_playback_pause(pk_airband_playback_pause_reason_t reason)
+{ s_sim_playback.playing = false; s_sim_playback.pause_reason = reason; }
+void pk_airband_playback_stop(void)
+{
+    memset(&s_sim_playback, 0, sizeof(s_sim_playback));
+    s_sim_playback.started = true;
+    s_sim_playback.service_state = PK_AIRBAND_PLAYBACK_SERVICE_READY;
+}
+bool pk_airband_playback_get(pk_airband_playback_status_t *out)
+{ if (!out) return false; *out = s_sim_playback; return true; }
 
 bool pk_airband_get(pk_airband_state_t *out)
 {

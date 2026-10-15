@@ -236,9 +236,13 @@ bool pk_tile_loader_try_blit(const pk_map_route_result_t *route,
  * unlock_sample() 是空操作，但仍然要提供，因为 map_page.c 无条件调用它。 */
 bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t now_ms,
                                 const uint16_t **out_data, uint32_t *out_shift,
-                                uint32_t *out_crop_x0, uint32_t *out_crop_y0)
+                                uint32_t *out_crop_x0, uint32_t *out_crop_y0,
+                                bool *out_negative)
 {
     (void)now_ms;
+    /* 与 try_blit 的 sim 实现同款：同步实现没有负缓存 TTL，但负缓存结果
+     * 仍要经出口上抛——map_page 的机头朝上分支靠它决定是否重发 request。 */
+    *out_negative = false;
     pk_map_route_result_t route;
     if (!pk_tile_loader_route(z, tx, ty, &route)) return false;
 
@@ -258,7 +262,7 @@ bool pk_tile_loader_lock_sample(uint8_t z, uint32_t tx, uint32_t ty, uint32_t no
         slot->data     = found ? decode_tile(pack, &loc) : NULL;
         slot->negative = (slot->data == NULL);
     }
-    if (slot->negative) return false;
+    if (slot->negative) { *out_negative = true; return false; }
 
     uint32_t scale = route.scale;
     if (scale > PK_TILE_PIXELS) scale = PK_TILE_PIXELS;
