@@ -22,8 +22,18 @@
 an offline aviation map (airports / navaids / fixes), and an airband radio
 with recording playback — all on a single ESP32-P4, bilingual, offline.
 
-- 📡 **自带 1090 MHz 接收链**，直接解码 ADS-B，**不需要 RTL-SDR dongle**<br>
-  **On-board 1090 MHz receive chain** — decodes ADS-B directly, **no RTL-SDR dongle required**
+- 📡 **双链路同时接收：1090 MHz（ADS-B）+ 978 MHz（UAT）**。两条独立接收链
+  并发解码，目标汇入同一张融合表——一套天线布局同时覆盖两种信号，不换
+  dongle、不切频道<br>
+  **Dual-channel concurrent reception: 1090 MHz (ADS-B) + 978 MHz (UAT).**
+  Two independent receive chains decode in parallel into one fused traffic
+  table — one antenna setup covers both, no dongle swapping, no channel switching
+- 📻 **所有数据来自无线电波与机载传感器，实时、真实、零联网**——屏幕上的
+  每一架飞机、每一条跑道、每一段通话都是本机直接接收解出来的，不是任何
+  网络 API 的缓存或转售数据<br>
+  **Every bit of data comes off the air and onboard sensors — real-time, real,
+  zero internet.** Every aircraft, runway, and radio call on screen is received
+  and decoded by the device itself, not cached from or resold by any online API
 - 🛩️ 输出 GDL90 over BLE，已可与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
   Speaks GDL90 over BLE, already works with EFBs such as Garmin Pilot and ForeFlight
 - 📼 飞行记录落 microSD，航空电台通话可回放<br>
