@@ -6,6 +6,31 @@
   网页刷机 / Web flasher: <a href="https://updater.pilotkit.app">updater.pilotkit.app</a>
 </p>
 
+<p align="center">
+  <img src="images/ui-4.3-pfd.png" alt="Pilot Kit Box PFD — G1000-style primary flight display" width="49%">
+  <img src="images/ui-4.3-map-en.png" alt="Pilot Kit Box offline map with aviation overlay" width="49%">
+</p>
+<p align="center">
+  <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box 360-degree traffic radar" width="49%">
+  <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband radio with recording playback" width="49%">
+</p>
+
+**一套固件，四种仪表**：G1000 风格 PFD、360° 交通雷达、离线航空地图
+（机场/导航台/FIX 叠加层）、Airband 航空电台收听与录音回放——全部跑在
+一块 ESP32-P4 上，中英双语，无需联网。
+**One firmware, four instruments**: a G1000-style PFD, a 360° traffic radar,
+an offline aviation map (airports / navaids / fixes), and Airband listening
+with recording playback — all on a single ESP32-P4, bilingual, offline.
+
+- 📡 **自带 1090 MHz 接收链**，直接解码 ADS-B，**不需要 RTL-SDR dongle**<br>
+  **On-board 1090 MHz receive chain** — decodes ADS-B directly, **no RTL-SDR dongle required**
+- 🛩️ 输出 GDL90 over BLE，已可与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
+  Speaks GDL90 over BLE, already works with EFBs such as Garmin Pilot and ForeFlight
+- 📼 飞行记录落 microSD，Airband 通话可回放<br>
+  Flights logged to microSD; Airband transmissions recorded and replayable
+- 🔓 全链路开源：固件、KiCad 工程、制造包、字体与数据库管线<br>
+  Fully open: firmware, KiCad projects, fabrication packages, font and database pipelines
+
 > ## ⚠️ 免责声明 / Disclaimer
 >
 > 本设备及其固件为**辅助信息工具**，未取得任何适航认证，**不得用作主用或备用
@@ -187,13 +212,12 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 ### 硬件预览 / Hardware Preview
 
-> 下方 PFD / ADS-B LIST / Traffic Radar 为早期实机照片，UI 为当时版本；
-> 当前各页面的最新渲染以本节末尾的模拟器截图为准。设备与扩展板的最新
-> 装机照片待补充。
+> PFD / ADS-B LIST / Traffic Radar / 完整原型为早期实机照片，UI 为当时版本；
+> 设备与扩展板的最新装机照片待补充。
 >
-> The PFD / ADS-B LIST / Traffic Radar photos below were taken on an early
-> firmware build; the current pages look newer. The latest device and
-> expansion-board assembly photos are pending.
+> The PFD / ADS-B LIST / Traffic Radar / prototype photos below were taken on
+> an early firmware build; the latest device and expansion-board assembly
+> photos are pending.
 
 | PFD / Primary Flight Display | ADS-B LIST / Aircraft List |
 |---|---|
@@ -203,20 +227,12 @@ diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 |---|---|
 | <img src="images/radar-traffic.jpg" alt="Pilot Kit Box traffic radar running on hardware" width="360"> | <img src="images/assemble-finish.jpg" alt="Finished Pilot Kit Box prototype with printed faceplate" width="360"> |
 
-当前界面（模拟器渲染，英文 UI）与实机同源同一份绘制代码 / Current UI,
+更多页面（模拟器渲染，英文 UI，与实机同一份绘制代码）/ More pages,
 rendered by the simulator from the same drawing code as the device (English UI):
 
-| PFD | Aircraft List |
+| Aircraft List | Recordings |
 |---|---|
-| <img src="images/ui-4.3-pfd.png" alt="Pilot Kit Box PFD (simulated)" width="360"> | <img src="images/ui-4.3-list-en.png" alt="Pilot Kit Box aircraft list (simulated)" width="360"> |
-
-| Traffic Radar | Offline Map |
-|---|---|
-| <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box traffic radar (simulated)" width="360"> | <img src="images/ui-4.3-map-en.png" alt="Pilot Kit Box offline map (simulated)" width="360"> |
-
-| Airband | Recordings |
-|---|---|
-| <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband page (simulated)" width="360"> | <img src="images/ui-4.3-recordings-en.png" alt="Pilot Kit Box recordings page (simulated)" width="360"> |
+| <img src="images/ui-4.3-list-en.png" alt="Pilot Kit Box aircraft list (simulated)" width="360"> | <img src="images/ui-4.3-recordings-en.png" alt="Pilot Kit Box recordings page (simulated)" width="360"> |
 
 | Diagnostics | Navigation Grid |
 |---|---|
