@@ -7,15 +7,15 @@
 </p>
 
 <p align="center">
+  <img src="images/system-v4-exploded.png" alt="Pilot Kit Box v4 system exploded view" width="80%">
+</p>
+<p align="center">
   <img src="images/ui-4.3-pfd.png" alt="Pilot Kit Box PFD — G1000-style primary flight display" width="49%">
   <img src="images/ui-4.3-map-en.png" alt="Pilot Kit Box offline map with aviation overlay" width="49%">
 </p>
 <p align="center">
   <img src="images/ui-4.3-traffic-en.png" alt="Pilot Kit Box 360-degree traffic radar" width="49%">
   <img src="images/ui-4.3-airband-en.png" alt="Pilot Kit Box Airband radio with recording playback" width="49%">
-</p>
-<p align="center">
-  <img src="images/system-v4-exploded.png" alt="Pilot Kit Box v4 system exploded view" width="80%">
 </p>
 
 **一块扩展板，一整套航空电子**：G1000 风格 PFD、360° 交通雷达、离线
