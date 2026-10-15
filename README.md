@@ -16,18 +16,18 @@
 </p>
 
 **一套固件，四种仪表**：G1000 风格 PFD、360° 交通雷达、离线航空地图
-（机场/导航台/FIX 叠加层）、Airband 航空电台收听与录音回放——全部跑在
+（机场/导航台/FIX 叠加层）、航空电台收听与录音回放——全部跑在
 一块 ESP32-P4 上，中英双语，无需联网。
 **One firmware, four instruments**: a G1000-style PFD, a 360° traffic radar,
-an offline aviation map (airports / navaids / fixes), and Airband listening
+an offline aviation map (airports / navaids / fixes), and an airband radio
 with recording playback — all on a single ESP32-P4, bilingual, offline.
 
 - 📡 **自带 1090 MHz 接收链**，直接解码 ADS-B，**不需要 RTL-SDR dongle**<br>
   **On-board 1090 MHz receive chain** — decodes ADS-B directly, **no RTL-SDR dongle required**
 - 🛩️ 输出 GDL90 over BLE，已可与 Garmin Pilot / ForeFlight 等 EFB 配合<br>
   Speaks GDL90 over BLE, already works with EFBs such as Garmin Pilot and ForeFlight
-- 📼 飞行记录落 microSD，Airband 通话可回放<br>
-  Flights logged to microSD; Airband transmissions recorded and replayable
+- 📼 飞行记录落 microSD，航空电台通话可回放<br>
+  Flights logged to microSD; radio transmissions recorded and replayable
 - 🔓 全链路开源：固件、KiCad 工程、制造包、字体与数据库管线<br>
   Fully open: firmware, KiCad projects, fabrication packages, font and database pipelines
 
@@ -162,7 +162,7 @@ Pilot Kit Box is an open-source prototype and situational-awareness device. This
 GDL90 分发、GPS 定位与两段式授时（`pk_clock`：BLE 粗校 + GPS fix 精校）、
 BMP388 气压高度、LittleFS/MicroSD 记录、ST7701 MIPI-DSI 横屏显示、
 GT911 触摸导航、交通雷达、ADS-B 列表、离线地图（microSD pmtiles 底图 +
-机场/导航台/FIX 航空叠加层）、Airband 航空电台收听与录音回放（ES8311
+机场/导航台/FIX 航空叠加层）、航空电台（Airband）收听与录音回放（ES8311
 音频输出）、实时诊断、本地航空识别数据库和 BNO085 姿态融合。
 
 As of **2026-10-15**, the current 4.3-inch firmware includes ADS-B reception
@@ -171,7 +171,7 @@ discipline (`pk_clock`: BLE coarse sync + GPS fine sync after fix), BMP388
 barometric altitude, LittleFS/MicroSD recording, an ST7701 MIPI-DSI
 landscape display, GT911 touch navigation, traffic radar, an ADS-B list,
 the offline map (microSD pmtiles basemap plus airport/navaid/FIX overlay),
-Airband listening with recording playback (ES8311 audio output), live
+an airband radio with recording playback (ES8311 audio output), live
 diagnostics, local aviation identity databases, and BNO085 attitude fusion.
 
 ### `v0.8.0` 发布重点 / Release Highlights
@@ -401,8 +401,8 @@ counterpart; see the v4 README for the full index.
 - ESP32-C6-MINI-1 通过 SDIO 作为 Wi-Fi 6 / BLE 5 协处理器；当前固件使用 BLE。
 - MicroSD 卡座已启用；设置页可在 10 MiB LittleFS 与 MicroSD 记录之间切换，并支持卡状态诊断和二次确认格式化。
 - CH343P USB-UART 桥用于 P4 烧录和串口监视。
-- ES8311 音频 codec、麦克风、扬声器功放为板载资源；扬声器输出已用于 Airband
-  航空电台收听与录音回放。
+- ES8311 音频 codec、麦克风、扬声器功放为板载资源；扬声器输出已用于航空电台
+  （Airband）收听与录音回放。
 
 - The ESP32-C6-MINI-1 is connected over SDIO as the Wi-Fi 6 / BLE 5 co-processor; the current firmware uses BLE.
 - The MicroSD slot is active; Settings can select 10 MiB LittleFS or MicroSD recording, with card diagnostics and guarded formatting.
